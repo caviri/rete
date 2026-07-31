@@ -61,7 +61,11 @@ done
 ```
 
 Installed via the plugin they need no activation — they load namespaced as
-`/rete-graph:<skill>` in any project.
+`/rete-graph:<skill>` in any project. Skills are **auto-discovered** from this
+`skills/` directory at the plugin root; nothing declares them in `plugin.json`.
+If they do not show up right after `/plugin install rete-graph@rete`, run
+**`/reload-plugins`** — a session that was already open does not pick them up on
+its own.
 
 They also work as plain documentation/playbooks if you'd rather read and run them
 by hand.

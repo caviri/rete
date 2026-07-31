@@ -2,6 +2,7 @@
   "name": "rete-graph",
   "displayName": "rete — cloud-native RDF graphs",
   "description": "Build queryable single-file RDF graphs (.rete) from any data source, publish them to static hosting, and query 60+ public knowledge graphs (SPARQL, SHACL, media previews) through the rete MCP server.",
+  "version": "0.3.0",
   "author": {
     "name": "Carlos Vivar Rios",
     "url": "https://github.com/caviri"
@@ -9,7 +10,14 @@
   "homepage": "https://caviri.github.io/rete/",
   "repository": "https://github.com/caviri/rete",
   "license": "Apache-2.0",
-  "keywords": ["rdf", "sparql", "knowledge-graph", "shacl", "linked-data", "mcp"],
+  "keywords": [
+    "rdf",
+    "sparql",
+    "knowledge-graph",
+    "shacl",
+    "linked-data",
+    "mcp"
+  ],
   "mcpServers": {
     "rete-graphs": {
       "type": "http",
