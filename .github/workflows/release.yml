@@ -195,6 +195,12 @@ jobs:
           docker run --rm -e RETE_ADDON_VERSION=${{ needs.meta.outputs.version }} \
             -v "$PWD:/work" -w /work rete-blender sh clients/blender/build.sh
           mkdir -p dist
+          # The container runs as root, so clients/blender/dist and the zip land
+          # root-owned and the runner user cannot move them — the add-on builds
+          # fine and then the release fails on the last line. Take ownership
+          # first rather than sudo-ing the move, so the later steps that read
+          # the zip are not root-only either.
+          sudo chown -R "$(id -u):$(id -g)" clients/blender/dist
           mv clients/blender/dist/rete-*.zip \
             "dist/rete-blender-${{ needs.meta.outputs.version }}.zip"
       - name: Verify the packaged extension installs with no engine present
