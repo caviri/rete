@@ -65,10 +65,26 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          # `universal-apple-darwin` is not a rustup target: it is a lipo of the
-          # two real ones, so both have to be installed for Tauri to build it.
-          targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
+
+      # Targets are added in a separate step, run from the repo root, on purpose.
+      # rust-toolchain.toml pins 1.92.0, so the toolchain cargo actually resolves
+      # is NOT the one the action above installs targets into — the first attempt
+      # at this died with "Target x86_64-apple-darwin is not installed (installed
+      # targets: aarch64-apple-darwin, wasm32-unknown-unknown)". Running rustup
+      # here lets the toml resolve and adds them where they will be found.
+      #
+      # `universal-apple-darwin` is not itself a rustup target: it is a lipo of
+      # the two real ones, so both have to be present.
+      - name: Add the build targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.target }}" == "universal-apple-darwin" ]]; then
+            rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          else
+            rustup target add "${{ matrix.target }}"
+          fi
+          rustup show
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
