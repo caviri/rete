@@ -265,7 +265,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.3.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -410,6 +410,22 @@ Every client also exposes the engine version it embeds — <code>rete_graph .__e
 install support feature X?", since the binding's own version tracks the binding.</p>
 <p>Clients release from their own tags (<code>py-v0.3.0</code>, <code>js-v0.3.0</code>), not the <code>v*</code>
 release tag.</p>
+<h3>Cutting a version</h3>
+<p><code>scripts/sync_versions.py --set X.Y.Z</code> stamps the workspace, the exact
+<code>rete-core</code> pins the publishable crates carry, and every client manifest.
+<code>--write</code> will not do this: it only repairs <code>MAJOR.MINOR</code> drift (it writes
+<code>{minor}.0</code>), so it is a no-op for the patch bump that <em>is</em> the release.</p>
+<p>Two groups deliberately lag the bump, because they name a version a registry
+must already serve:</p>
+<table><thead><tr><th>what</th><th>when</th><th>why</th></tr></thead><tbody>
+<tr><td>the three PyPI floors — <code>hf-space/requirements.txt</code>, <code>clients/blender/{build.sh,Dockerfile}</code></td><td><strong>after</strong> the wheel is on PyPI, via <code>--set-published X.Y.Z</code></td><td>they <code>pip install rete-graph</code> at image-build time; bumping them early fails every image build with <code>Could not find a version that satisfies rete-graph&gt;=X.Y.Z</code></td></tr>
+<tr><td>the Pyodide fallback URL in <code>docs/python.md</code></td><td><strong>with</strong> the bump (<code>--set</code> does it)</td><td><code>publish_pyodide_wheel.sh</code> refuses to upload a wheel whose version disagrees with the docs, so the doc has to promise it first — the URL 404s until that upload</td></tr>
+</tbody></table>
+<p><code>--check</code> keeps passing while the floors lag, because the lockstep contract
+compares <code>MAJOR.MINOR</code> only.</p>
+<p>Also note the engine version is compiled into the wasm (<code>rete_core::VERSION</code>),
+so a bump changes the shipped browser binaries: rerun <code>scripts/build_wasm.sh</code>
+and commit the artifacts, or the parity gate rejects the release PR.</p>
 <h3>The Pyodide fallback wheel</h3>
 <p><code>%pip install rete-graph</code> resolves from PyPI and needs no pin. But Pyodide
 0.29's installer predates PEP 783, which renamed the wheel platform tag

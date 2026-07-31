@@ -4,24 +4,24 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
-<title>What&#39;s in the graph — opencitations</title>
-<meta name="description" content="Predicate totals: cito:cites citation edges and the Dublin Core / FOAF bibliographic metadata. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<title>One paper, fully unfolded — venue and every author in order — opencitations</title>
+<meta name="description" content="Authorship is REIFIED here, so every author arrives with the position they hold on the paper (oc:agentOrder) and, where OpenCitations knows it, an… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/opencitations-0.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
-<meta property="og:title" content="What&#39;s in the graph — opencitations" />
-<meta property="og:description" content="Predicate totals: cito:cites citation edges and the Dublin Core / FOAF bibliographic metadata. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<meta property="og:title" content="One paper, fully unfolded — venue and every author in order — opencitations" />
+<meta property="og:description" content="Authorship is REIFIED here, so every author arrives with the position they hold on the paper (oc:agentOrder) and, where OpenCitations knows it, an… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/opencitations-0.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/opencitations-0.png" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="What&#39;s in the graph — opencitations" />
+<meta property="og:image:alt" content="One paper, fully unfolded — venue and every author in order — opencitations" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="What&#39;s in the graph — opencitations" />
-<meta name="twitter:description" content="Predicate totals: cito:cites citation edges and the Dublin Core / FOAF bibliographic metadata. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<meta name="twitter:title" content="One paper, fully unfolded — venue and every author in order — opencitations" />
+<meta name="twitter:description" content="Authorship is REIFIED here, so every author arrives with the position they hold on the paper (oc:agentOrder) and, where OpenCitations knows it, an… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/opencitations-0.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What's in the graph","description":"Predicate totals: cito:cites citation edges and the Dublin Core / FOAF bibliographic metadata. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-0.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"One paper, fully unfolded — venue and every author in order","description":"Authorship is REIFIED here, so every author arrives with the position they hold on the paper (oc:agentOrder) and, where OpenCitations knows it, an… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-0.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -46,13 +46,18 @@
 </svg>
     <div class="head">
       <div class="brand"><b>rete</b><span>playground</span></div>
-      <div class="chip">Summary</div>
+      <div class="chip">Select</div>
     </div>
-    <h1 class="title s1">What&#39;s in the graph</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?p</span> (<span class="kw">COUNT</span>(*) <span class="kw">AS</span> <span class="v">?n</span>) <span class="kw">WHERE</span> { <span class="v">?s</span> <span class="v">?p</span> <span class="v">?o</span> } <span class="kw">GROUP BY</span> <span class="v">?p</span>…</pre></div></div><aside class="rail">
+    <h1 class="title s2">One paper, fully unfolded — venue and every author in order</h1>
+    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?work</span> <span class="v">?title</span> <span class="v">?year</span> <span class="v">?venue</span> <span class="v">?pos</span> <span class="v">?author</span> <span class="v">?orcid</span> WHER…
+  <span class="kw">VALUES</span> <span class="v">?work</span> { &lt;https://doi.org/10.4204/eptcs.181.2&gt; }
+  <span class="v">?work</span> oc:title <span class="v">?title</span> ;
+        oc:publicationYear <span class="v">?year</span> ;
+        oc:hasContributor <span class="v">?role</span> .
+  <span class="kw">OPTIONAL</span> { <span class="v">?work</span> oc:partOf <span class="v">?v</span> . <span class="v">?v</span> oc:title <span class="v">?venue</span> }</pre></div></div><aside class="rail">
       <div class="icon">🔗</div>
       <div class="key">opencitations</div>
-      <div class="facts"><b>8103</b> triples · 86 KB<br />remote · HTTP range</div>
+      <div class="facts"><b>5184588893</b> triples · 33.4 GB<br />remote · HTTP range</div>
       
     </aside></div>
     <div class="foot">
@@ -64,7 +69,18 @@
     <a class="go" href="../playground.html#dataset=opencitations&amp;load=lazy&amp;mode=sparql&amp;ex=0">Run this query in the playground →</a>
     <span class="alt">no server, no download — the query runs in your browser.</span>
   </div>
-  <div class="q"><h2>The query</h2>SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n) LIMIT 20</div>
+  <div class="q"><h2>The query</h2>PREFIX oc: &lt;https://w3id.org/rete/opencitations#&gt;
+SELECT ?work ?title ?year ?venue ?pos ?author ?orcid WHERE {
+  VALUES ?work { &lt;https://doi.org/10.4204/eptcs.181.2&gt; }
+  ?work oc:title ?title ;
+        oc:publicationYear ?year ;
+        oc:hasContributor ?role .
+  OPTIONAL { ?work oc:partOf ?v . ?v oc:title ?venue }
+  ?role oc:isHeldBy ?agent ; oc:agentOrder ?pos .
+  ?agent oc:agentName ?author .
+  OPTIONAL { ?agent oc:orcidId ?orcid }
+}
+ORDER BY ?pos</div>
   <p class="alt" style="margin-top:20px">
     <a href="../playground.html">rete playground</a> ·
     <a href="../index.html">documentation</a> ·

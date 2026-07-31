@@ -18,8 +18,15 @@ function extract(src, name) {
 function makeFn(fnSrc, fetchImpl) {
   const wasm = { memory: { buffer: new ArrayBuffer(16) } };
   const __reteStr = () => "http://host/f.rete";
-  const fn = new Function("fetch", "__reteStr", "wasm", "DataView", "setTimeout",
-    fnSrc + "\n;return __reteDoLen;")(fetchImpl, __reteStr, wasm, DataView, setTimeout);
+  // `__reteP` is the >2 GiB pointer normalizer the glue defines at module scope
+  // (see check_async_pointer_safety.mjs). Extracting __reteDoLen pulls it out of
+  // that scope, so the sandbox has to supply it or the call dies with
+  // `ReferenceError: __reteP is not defined` — a harness gap, not a page bug.
+  // Kept identical to the shipped definition so this cannot drift into masking
+  // a real one.
+  const __reteP = (ptr) => ptr >>> 0;
+  const fn = new Function("fetch", "__reteStr", "__reteP", "wasm", "DataView", "setTimeout",
+    fnSrc + "\n;return __reteDoLen;")(fetchImpl, __reteStr, __reteP, wasm, DataView, setTimeout);
   return { fn, wasm };
 }
 const readTotal = (wasm) => Number(new DataView(wasm.memory.buffer).getBigUint64(0, true));

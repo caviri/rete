@@ -91,6 +91,28 @@ install support feature X?", since the binding's own version tracks the binding.
 Clients release from their own tags (`py-v0.3.0`, `js-v0.3.0`), not the `v*`
 release tag.
 
+### Cutting a version
+
+`scripts/sync_versions.py --set X.Y.Z` stamps the workspace, the exact
+`rete-core` pins the publishable crates carry, and every client manifest.
+`--write` will not do this: it only repairs `MAJOR.MINOR` drift (it writes
+`{minor}.0`), so it is a no-op for the patch bump that *is* the release.
+
+Two groups deliberately lag the bump, because they name a version a registry
+must already serve:
+
+| what | when | why |
+|---|---|---|
+| the three PyPI floors — `hf-space/requirements.txt`, `clients/blender/{build.sh,Dockerfile}` | **after** the wheel is on PyPI, via `--set-published X.Y.Z` | they `pip install rete-graph` at image-build time; bumping them early fails every image build with `Could not find a version that satisfies rete-graph>=X.Y.Z` |
+| the Pyodide fallback URL in `docs/python.md` | **with** the bump (`--set` does it) | `publish_pyodide_wheel.sh` refuses to upload a wheel whose version disagrees with the docs, so the doc has to promise it first — the URL 404s until that upload |
+
+`--check` keeps passing while the floors lag, because the lockstep contract
+compares `MAJOR.MINOR` only.
+
+Also note the engine version is compiled into the wasm (`rete_core::VERSION`),
+so a bump changes the shipped browser binaries: rerun `scripts/build_wasm.sh`
+and commit the artifacts, or the parity gate rejects the release PR.
+
 ### The Pyodide fallback wheel
 
 `%pip install rete-graph` resolves from PyPI and needs no pin. But Pyodide

@@ -4,24 +4,24 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
-<title>Most-cited works — opencitations</title>
-<meta name="description" content="In-degree over cito:cites joined to dct:title - the references everything points back to. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<title>Everything one researcher published (by ORCID) — opencitations</title>
+<meta name="description" content="Start from a person, not a paper: bind the ORCID and walk back through the reified role to every work that person holds a contributor role on, with… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/opencitations-1.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
-<meta property="og:title" content="Most-cited works — opencitations" />
-<meta property="og:description" content="In-degree over cito:cites joined to dct:title - the references everything points back to. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<meta property="og:title" content="Everything one researcher published (by ORCID) — opencitations" />
+<meta property="og:description" content="Start from a person, not a paper: bind the ORCID and walk back through the reified role to every work that person holds a contributor role on, with… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/opencitations-1.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/opencitations-1.png" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Most-cited works — opencitations" />
+<meta property="og:image:alt" content="Everything one researcher published (by ORCID) — opencitations" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Most-cited works — opencitations" />
-<meta name="twitter:description" content="In-degree over cito:cites joined to dct:title - the references everything points back to. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server." />
+<meta name="twitter:title" content="Everything one researcher published (by ORCID) — opencitations" />
+<meta name="twitter:description" content="Start from a person, not a paper: bind the ORCID and walk back through the reified role to every work that person holds a contributor role on, with… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/opencitations-1.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Most-cited works","description":"In-degree over cito:cites joined to dct:title - the references everything points back to. Runs live in your browser over opencitations (8103 triples · 86 KB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-1.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Everything one researcher published (by ORCID)","description":"Start from a person, not a paper: bind the ORCID and walk back through the reified role to every work that person holds a contributor role on, with… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-1.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -46,13 +46,18 @@
 </svg>
     <div class="head">
       <div class="brand"><b>rete</b><span>playground</span></div>
-      <div class="chip">Aggregate</div>
+      <div class="chip">Select</div>
     </div>
-    <h1 class="title s1">Most-cited works</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?title</span> (<span class="kw">COUNT</span>(<span class="v">?citing</span>) <span class="kw">AS</span> <span class="v">?cites</span>) <span class="kw">WHERE</span> { <span class="v">?citing</span> …</pre></div></div><aside class="rail">
+    <h1 class="title s1">Everything one researcher published (by ORCID)</h1>
+    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?work</span> <span class="v">?title</span> <span class="v">?year</span> <span class="v">?type</span> <span class="v">?venue</span> <span class="kw">WHERE</span> {
+  <span class="v">?agent</span> oc:orcidId &quot;0000-0002-9061-3921&quot; .
+  <span class="v">?role</span> oc:isHeldBy <span class="v">?agent</span> .
+  <span class="v">?work</span> oc:hasContributor <span class="v">?role</span> ;
+        oc:title <span class="v">?title</span> ;
+        oc:publicationYear <span class="v">?year</span> ;</pre></div></div><aside class="rail">
       <div class="icon">🔗</div>
       <div class="key">opencitations</div>
-      <div class="facts"><b>8103</b> triples · 86 KB<br />remote · HTTP range</div>
+      <div class="facts"><b>5184588893</b> triples · 33.4 GB<br />remote · HTTP range</div>
       
     </aside></div>
     <div class="foot">
@@ -64,9 +69,17 @@
     <a class="go" href="../playground.html#dataset=opencitations&amp;load=lazy&amp;mode=sparql&amp;ex=1">Run this query in the playground →</a>
     <span class="alt">no server, no download — the query runs in your browser.</span>
   </div>
-  <div class="q"><h2>The query</h2>PREFIX cito: &lt;http://purl.org/spar/cito/&gt;
-PREFIX dct: &lt;http://purl.org/dc/terms/&gt;
-SELECT ?title (COUNT(?citing) AS ?cites) WHERE { ?citing cito:cites ?w . ?w dct:title ?title } GROUP BY ?title ORDER BY DESC(?cites) LIMIT 15</div>
+  <div class="q"><h2>The query</h2>PREFIX oc: &lt;https://w3id.org/rete/opencitations#&gt;
+SELECT ?work ?title ?year ?type ?venue WHERE {
+  ?agent oc:orcidId &quot;0000-0002-9061-3921&quot; .
+  ?role oc:isHeldBy ?agent .
+  ?work oc:hasContributor ?role ;
+        oc:title ?title ;
+        oc:publicationYear ?year ;
+        oc:resourceType ?type .
+  OPTIONAL { ?work oc:partOf ?v . ?v oc:title ?venue }
+}
+LIMIT 25</div>
   <p class="alt" style="margin-top:20px">
     <a href="../playground.html">rete playground</a> ·
     <a href="../index.html">documentation</a> ·

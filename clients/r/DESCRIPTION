@@ -1,6 +1,6 @@
 Package: rete
 Title: Query Local and Remote 'rete' RDF Graph Files with SPARQL
-Version: 0.3.0
+Version: 0.3.1
 Authors@R:
     person("Carlos", "Vivar Rios", , "carlos.vivarrios@epfl.ch", role = c("aut", "cre"))
 Description: Client for the 'rete' single-file RDF graph format: open a
