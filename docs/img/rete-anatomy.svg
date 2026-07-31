@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 900" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
+  <title id="t">Anatomy of a .rete file, shown on the real dblp.rete: a 1 KiB header with the section directory, the 731-byte dataset card, the front-coded dictionary (418 MB, 18%), six permutation indexes in ~64 KiB tiles with per-tile synopses (1.85 GB, 82%), the pyramid summary, and the trailing RETE magic that a truncated download cannot fake.</title>
+  <rect width="1560" height="900" fill="#f7f8fb"/>
+
+  <!-- ============ file-name chip ============ -->
+  <rect x="40" y="28" width="300" height="44" rx="22" fill="#ffffff"/>
+  <text x="62" y="56" font-size="17" fill="#8a919c">File name</text>
+  <text x="148" y="56" font-size="17" font-weight="700" fill="#14171c" font-family="ui-monospace,Consolas,monospace">dblp.rete</text>
+
+  <!-- ============ top byte strip ============ -->
+  <!-- brace labels -->
+  <g font-size="14" fill="#14171c" text-anchor="middle" font-weight="600">
+    <text x="225" y="118">1024 bytes</text>
+    <text x="302" y="118">731 B</text>
+    <text x="462" y="118">418 MB · 18%</text>
+    <text x="890" y="118">1.85 GB · 82%</text>
+    <text x="1222" y="118">M bytes</text>
+    <text x="1305" y="118">4 bytes</text>
+  </g>
+  <g stroke="#9aa2ad" stroke-width="1">
+    <path d="M182 128 h86" fill="none"/><path d="M182 124 v8" fill="none"/><path d="M268 124 v8" fill="none"/>
+    <path d="M276 128 h52" fill="none"/><path d="M276 124 v8" fill="none"/><path d="M328 124 v8" fill="none"/>
+    <path d="M336 128 h252" fill="none"/><path d="M336 124 v8" fill="none"/><path d="M588 124 v8" fill="none"/>
+    <path d="M596 128 h588" fill="none"/><path d="M596 124 v8" fill="none"/><path d="M1184 124 v8" fill="none"/>
+    <path d="M1192 128 h60" fill="none"/><path d="M1192 124 v8" fill="none"/><path d="M1252 124 v8" fill="none"/>
+    <path d="M1260 128 h90" fill="none"/><path d="M1260 124 v8" fill="none"/><path d="M1350 124 v8" fill="none"/>
+  </g>
+  <!-- segments: header | card | dictionary | index | pyramid | footer -->
+  <rect x="182" y="142" width="86"  height="18" rx="4" fill="#14171c"/>
+  <rect x="276" y="142" width="52"  height="18" rx="4" fill="#a259f7"/>
+  <rect x="336" y="142" width="252" height="18" rx="4" fill="#2bb673"/>
+  <rect x="596" y="142" width="588" height="18" rx="4" fill="#2bb673"/>
+  <rect x="1192" y="142" width="60" height="18" rx="4" fill="#a259f7"/>
+  <rect x="1260" y="142" width="90" height="18" rx="4" fill="#14171c"/>
+
+  <!-- segment names under the strip -->
+  <g font-size="14.5" font-family="ui-monospace,Consolas,monospace" font-weight="700">
+    <text x="225"  y="186" text-anchor="middle" fill="#14171c">header</text>
+    <text x="302"  y="186" text-anchor="middle" fill="#8338ec">card</text>
+    <text x="462"  y="186" text-anchor="middle" fill="#1a8a52">dictionary</text>
+    <text x="890"  y="186" text-anchor="middle" fill="#1a8a52">index — 6 permutations</text>
+    <text x="1222" y="186" text-anchor="middle" fill="#8338ec">pyramid</text>
+    <text x="1305" y="186" text-anchor="middle" fill="#14171c">footer</text>
+  </g>
+
+  <!-- magic callout (left) -->
+  <path d="M225 160 v58" stroke="#14171c" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
+  <rect x="120" y="218" width="220" height="76" rx="12" fill="#ffffff" stroke="#14171c" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text x="230" y="243" text-anchor="middle" font-size="14.5" font-weight="700" fill="#14171c">magic number</text>
+  <text x="230" y="264" text-anchor="middle" font-size="13.5" fill="#14171c" font-family="ui-monospace,Consolas,monospace">0x52 0x45 0x54 0x45</text>
+  <text x="230" y="283" text-anchor="middle" font-size="13.5" font-weight="700" fill="#14171c" font-family="ui-monospace,Consolas,monospace">R&#160;&#160;&#160;&#160;E&#160;&#160;&#160;&#160;T&#160;&#160;&#160;&#160;E</text>
+
+  <!-- trailing magic callout (right) -->
+  <path d="M1305 160 v58" stroke="#14171c" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
+  <rect x="1210" y="218" width="220" height="76" rx="12" fill="#ffffff" stroke="#14171c" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text x="1320" y="243" text-anchor="middle" font-size="14.5" font-weight="700" fill="#14171c">trailing magic</text>
+  <text x="1320" y="264" text-anchor="middle" font-size="13.5" fill="#14171c" font-family="ui-monospace,Consolas,monospace">RETE — integrity mark</text>
+  <text x="1320" y="283" text-anchor="middle" font-size="13" fill="#5b6570">a truncated download can't pass</text>
+
+  <!-- "header points at everything" arc -->
+  <path d="M268 136 C 500 60, 1000 60, 1220 136" stroke="#5b6570" stroke-width="1.2" fill="none" marker-end="url(#arr)"/>
+  <defs><marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/></marker></defs>
+  <text x="744" y="52" text-anchor="middle" font-size="14.5" font-weight="600" fill="#5b6570">the 1 KiB header addresses every section — a client's first request is</text>
+  <text x="744" y="72" text-anchor="middle" font-size="14.5" font-weight="700" fill="#14171c" font-family="ui-monospace,Consolas,monospace">GET bytes=0-1023</text>
+
+  <!-- ============ LEFT: Data side (green) ============ -->
+  <!-- dictionary zoom -->
+  <text x="70" y="342" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#1a8a52">dictionary</text>
+  <rect x="70"  y="352" width="130" height="16" rx="4" fill="#2bb673"/>
+  <rect x="206" y="352" width="130" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
+  <rect x="342" y="352" width="130" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
+  <rect x="478" y="352" width="130" height="16" rx="4" fill="#2bb673"/>
+  <text x="616" y="365" font-size="13.5" fill="#1a8a52" font-family="ui-monospace,Consolas,monospace">front-coded term sections</text>
+
+  <!-- one term section zoom -->
+  <path d="M100 368 L100 424" stroke="#2bb673" stroke-width="1.2" fill="none"/>
+  <text x="70" y="418" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#1a8a52">term section</text>
+  <rect x="70"  y="428" width="96" height="16" rx="4" fill="#a259f7"/>
+  <rect x="172" y="428" width="140" height="16" rx="4" fill="#2bb673"/>
+  <rect x="318" y="428" width="140" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
+  <rect x="464" y="428" width="140" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
+  <path d="M118 444 v26" stroke="#8338ec" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
+  <rect x="52" y="470" width="180" height="58" rx="12" fill="#ffffff" stroke="#8338ec" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="142" y="493" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">restart table</text>
+  <text x="142" y="512" text-anchor="middle" font-size="12.5" fill="#454c55">any chunk decodes alone</text>
+  <path d="M242 444 v26" stroke="#1a8a52" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
+  <rect x="252" y="470" width="268" height="58" rx="12" fill="#ffffff" stroke="#2bb673" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="386" y="493" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1a8a52">chunk: shared prefix + suffix</text>
+  <text x="386" y="512" text-anchor="middle" font-size="12.5" fill="#454c55">64M terms → sorted, delta-coded, zstd</text>
+
+  <!-- index zoom -->
+  <text x="70" y="582" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#1a8a52">index</text>
+  <g font-size="12.5" font-family="ui-monospace,Consolas,monospace" fill="#ffffff" font-weight="700" text-anchor="middle">
+    <rect x="70"  y="592" width="86" height="16" rx="4" fill="#2bb673"/><text x="113" y="605" fill="#0e5c36">SPO</text>
+    <rect x="162" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="205" y="605" fill="#7c8794">POS</text>
+    <rect x="254" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="297" y="605" fill="#7c8794">OSP</text>
+    <rect x="346" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="389" y="605" fill="#7c8794">SOP</text>
+    <rect x="438" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="481" y="605" fill="#7c8794">PSO</text>
+    <rect x="530" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="573" y="605" fill="#7c8794">OPS</text>
+  </g>
+  <text x="632" y="605" font-size="13.5" fill="#1a8a52" font-family="ui-monospace,Consolas,monospace">one sorted run each</text>
+
+  <!-- one permutation zoom: tiles -->
+  <path d="M113 608 L113 660" stroke="#2bb673" stroke-width="1.2" fill="none"/>
+  <text x="70" y="656" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#1a8a52">permutation</text>
+  <rect x="70"  y="666" width="120" height="16" rx="4" fill="#2bb673"/>
+  <rect x="196" y="666" width="120" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
+  <rect x="322" y="666" width="120" height="16" rx="4" fill="#2bb673"/>
+  <rect x="448" y="666" width="120" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
+  <rect x="574" y="666" width="96" height="16" rx="4" fill="#a259f7"/>
+  <path d="M130 682 v26" stroke="#1a8a52" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
+  <rect x="52" y="708" width="250" height="58" rx="12" fill="#ffffff" stroke="#2bb673" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="177" y="731" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1a8a52">~64 KiB tiles</text>
+  <text x="177" y="750" text-anchor="middle" font-size="12.5" fill="#454c55">a bounded fetch answers a pattern</text>
+  <path d="M622 682 v26" stroke="#8338ec" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
+  <rect x="420" y="708" width="290" height="58" rx="12" fill="#ffffff" stroke="#8338ec" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="565" y="731" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">tile synopsis — per-tile min/max</text>
+  <text x="565" y="750" text-anchor="middle" font-size="12.5" fill="#454c55">prune a tile before fetching it (flags bit 1)</text>
+
+  <!-- ============ RIGHT: Metadata side (purple) ============ -->
+  <!-- header layout zoom -->
+  <text x="850" y="342" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#8338ec">header — 1 KiB</text>
+  <rect x="850"  y="352" width="150" height="16" rx="4" fill="#a259f7"/>
+  <rect x="1006" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
+  <rect x="1088" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
+  <rect x="1170" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
+  <rect x="1252" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
+  <rect x="1334" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
+  <rect x="1416" y="352" width="90" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
+  <g font-size="12" fill="#5b6570" text-anchor="middle">
+    <text x="925"  y="386">core · 64 B</text>
+    <text x="1208" y="386">directory entries · 24 B each</text>
+    <text x="1461" y="386">zero pad</text>
+  </g>
+
+  <!-- core zoom -->
+  <path d="M880 368 L880 424" stroke="#a259f7" stroke-width="1.2" fill="none"/>
+  <text x="850" y="418" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#8338ec">core</text>
+  <g font-size="11.5" font-family="ui-monospace,Consolas,monospace" text-anchor="middle">
+    <rect x="850"  y="428" width="64"  height="16" rx="4" fill="#14171c"/><text x="882"  y="459" fill="#14171c">magic·4</text>
+    <rect x="920"  y="428" width="46"  height="16" rx="4" fill="#a259f7"/><text x="943"  y="459" fill="#8338ec">ver·1</text>
+    <rect x="972"  y="428" width="52"  height="16" rx="4" fill="#a259f7"/><text x="998"  y="459" fill="#8338ec">flags·1</text>
+    <rect x="1030" y="428" width="140" height="16" rx="4" fill="#a259f7"/><text x="1100" y="459" fill="#8338ec">blake3 hash·16</text>
+    <rect x="1176" y="428" width="80"  height="16" rx="4" fill="#a259f7"/><text x="1216" y="459" fill="#8338ec">quads·8</text>
+    <rect x="1262" y="428" width="80"  height="16" rx="4" fill="#a259f7"/><text x="1302" y="459" fill="#8338ec">terms·8</text>
+    <rect x="1348" y="428" width="90"  height="16" rx="4" fill="#a259f7" opacity="0.55"/><text x="1393" y="459" fill="#8338ec">counts…</text>
+  </g>
+  <path d="M1100 468 v22" stroke="#8338ec" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
+  <rect x="940" y="490" width="330" height="58" rx="12" fill="#ffffff" stroke="#8338ec" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="1105" y="513" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">content hash = the catalog's integrity id</text>
+  <text x="1105" y="532" text-anchor="middle" font-size="12.5" fill="#454c55" font-family="ui-monospace,Consolas,monospace">4d8eca2df600d18e108221aa47baa9ec</text>
+
+  <!-- directory entry zoom -->
+  <text x="850" y="582" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#8338ec">directory entry</text>
+  <g font-size="11.5" font-family="ui-monospace,Consolas,monospace" text-anchor="middle">
+    <rect x="850"  y="592" width="90"  height="16" rx="4" fill="#a259f7"/><text x="895"  y="623" fill="#8338ec">kind·u16</text>
+    <rect x="946"  y="592" width="90"  height="16" rx="4" fill="#a259f7" opacity="0.55"/><text x="991"  y="623" fill="#8338ec">flags·u16</text>
+    <rect x="1042" y="592" width="70"  height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="1077" y="623" fill="#7c8794">rsvd·4</text>
+    <rect x="1118" y="592" width="150" height="16" rx="4" fill="#a259f7"/><text x="1193" y="623" fill="#8338ec">offset·u64</text>
+    <rect x="1274" y="592" width="150" height="16" rx="4" fill="#a259f7"/><text x="1349" y="623" fill="#8338ec">length·u64</text>
+  </g>
+  <path d="M895 630 v22" stroke="#8338ec" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
+  <rect x="780" y="652" width="384" height="120" rx="12" fill="#ffffff" stroke="#8338ec" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="972" y="676" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">section kinds</text>
+  <g font-size="12.5" font-family="ui-monospace,Consolas,monospace" fill="#454c55">
+    <text x="802" y="698">1 dataset card    4 schema pyramid</text>
+    <text x="802" y="718">2 dictionary      5 named graphs</text>
+    <text x="802" y="738">3 index (6 perms) 6 text index</text>
+    <text x="802" y="760" fill="#8338ec">unknown kinds preserved — fwd-compat</text>
+  </g>
+
+  <!-- dataset card callout -->
+  <rect x="1180" y="652" width="350" height="120" rx="12" fill="#ffffff" stroke="#a259f7" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text x="1355" y="676" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">dataset card — 731 bytes of JSON</text>
+  <g font-size="12" font-family="ui-monospace,Consolas,monospace" fill="#454c55">
+    <text x="1200" y="698">{"title": "DBLP — computer-science</text>
+    <text x="1200" y="716">  bibliography", "license": "CC0-1.0",</text>
+    <text x="1200" y="734">  "quad_count": …, "term_count": …}</text>
+    <text x="1200" y="758" fill="#8338ec">the schema story, index never touched</text>
+  </g>
+
+  <!-- ============ bottom legend ============ -->
+  <path d="M780 800 v70" stroke="#9aa2ad" stroke-width="1.5" stroke-dasharray="6 5" fill="none"/>
+  <text x="756" y="846" text-anchor="end" font-size="17" font-weight="700" fill="#1a8a52" font-family="ui-monospace,Consolas,monospace">Data</text>
+  <text x="804" y="846" font-size="17" font-weight="700" fill="#8338ec" font-family="ui-monospace,Consolas,monospace">Metadata</text>
+</svg>

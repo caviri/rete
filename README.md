@@ -255,8 +255,10 @@ every section, so a client reads only what it needs (and new sections are just n
 directory entries).
 
 <p align="center">
-  <img src="docs/img/file-layout.svg" alt="On-disk layout: a fixed 1 KB header — a typed section directory holding the byte offset and length of every section — metadata (Dataset Card), dictionary, index (SPO/POS/OSP), pyramid-meta (community summary + schema pyramid), optional named graphs, and a footer magic." width="600">
+  <img src="docs/img/rete-anatomy.svg" alt="Anatomy of a .rete file, shown on the real dblp.rete: a 1 KiB header with the section directory, the 731-byte dataset card, the front-coded dictionary (418 MB, 18%), six permutation indexes in ~64 KiB tiles with per-tile synopses (1.85 GB, 82%), the pyramid summary, and the trailing RETE magic a truncated download cannot fake." width="760">
 </p>
+
+*The anatomy on a real specimen ([dblp.rete](https://data.graphplaza.com/dblp/dblp.rete), 179 M triples) — in the spirit of the classic Parquet file-layout figure.*
 
 See the **[format spec](https://caviri.github.io/rete/SPEC.html)** and
 **[architecture](https://caviri.github.io/rete/architecture.html)** for the details.
