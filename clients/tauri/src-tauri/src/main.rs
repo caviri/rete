@@ -171,11 +171,41 @@ fn graph_stats(state: tauri::State<'_, AppState>) -> Result<Stats, String> {
     })
 }
 
+/// Fit the window to the screen it opens on.
+///
+/// The configured default (1280×840) is bigger than plenty of real laptops once
+/// scaling is taken into account, and a window larger than the display opens
+/// with its edges off-screen — you cannot reach the corner to resize it, so the
+/// app looks like it needs scrolling to be usable. Clamp to 92% of the monitor's
+/// work area and centre.
+fn fit_to_monitor(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    let Some(monitor) = window.current_monitor()? else {
+        return Ok(()); // headless or an unknown display: keep the configured size
+    };
+    let scale = monitor.scale_factor();
+    let screen = monitor.size().to_logical::<f64>(scale);
+    let current = window.outer_size()?.to_logical::<f64>(scale);
+
+    let w = current.width.min(screen.width * 0.92);
+    let h = current.height.min(screen.height * 0.92);
+    if w < current.width || h < current.height {
+        window.set_size(tauri::LogicalSize::new(w, h))?;
+    }
+    window.center()?;
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(AppState::default());
+            if let Some(window) = app.get_webview_window("main") {
+                // Best-effort: a sizing failure must not stop the app opening.
+                if let Err(e) = fit_to_monitor(&window) {
+                    eprintln!("could not fit the window to the monitor: {e}");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

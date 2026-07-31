@@ -16,9 +16,26 @@
   </div>
 </div>
 
+<!-- Right-to-left marquee. Pauses on hover/focus, honours reduced-motion, and
+     can be dismissed for good — an unstoppable marquee is hostile. -->
+<div class="ticker" id="ticker" role="complementary" aria-label="About this project">
+  <div class="ticker-track" id="tickerTrack">
+    <span class="ticker-run">
+      <b>rete</b> is a cloud-native, range-queryable RDF graph file — one file, no database server.
+      <a href="https://github.com/caviri/rete" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+      <a href="https://caviri.github.io/rete/" target="_blank" rel="noopener">Documentation</a>
+      <i aria-hidden="true">◆</i>
+    </span>
+  </div>
+  <button class="ticker-x" id="tickerX" aria-label="Dismiss this message">×</button>
+</div>
+
 <header class="topbar">
   <div class="brand">
-    <span class="logo">▤</span>
+    <button class="logo" id="home" title="Back to the welcome screen" aria-label="Back to the welcome screen">▤</button>
     <div>
       <h1>rete file explorer</h1>
       <p>an archive browser for <code>.rete</code> graphs — folders, files, and extract</p>
@@ -28,6 +45,13 @@
     <input id="url" type="text" placeholder="https://data.graphplaza.com/…/x.rete" spellcheck="false">
     <button id="url-open">Open URL</button>
     <label class="filebtn">Open file…<input id="file" type="file" accept=".rete" hidden></label>
+    <!-- Permanent, because the marquee above can be dismissed for good. -->
+    <a class="iconlink" href="https://github.com/caviri/rete" target="_blank" rel="noopener" title="The project on GitHub" aria-label="The project on GitHub">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    </a>
+    <a class="iconlink" href="https://caviri.github.io/rete/" target="_blank" rel="noopener" title="Documentation" aria-label="Documentation">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M2 2.5A1.5 1.5 0 0 1 3.5 1H7v14H3.5A1.5 1.5 0 0 1 2 13.5v-11ZM9 1h3.5A1.5 1.5 0 0 1 14 2.5v11a1.5 1.5 0 0 1-1.5 1.5H9V1Z"/></svg>
+    </a>
   </div>
 </header>
 
@@ -37,8 +61,8 @@
     <p class="dz-small">or pick one below — the remote ones are never downloaded, only range-read</p>
   </div>
   <div id="catalog" class="catalog"></div>
-  <div class="explain">
-    <h3>What this is</h3>
+  <details class="explain">
+    <summary>What this is</summary>
     <p>
       A <code>.rete</code> file is a whole RDF graph in one immutable, range-queryable file.
       This page treats it the way an archive tool treats a <code>.zip</code>: it opens the
@@ -55,12 +79,12 @@
       Experiment. The tree is lazy and paginated because a class can hold fifty million
       instances; the counter in the footer shows exactly how many bytes browsing cost you.
     </p>
-  </div>
+  </details>
 </section>
 
 <main id="window" class="window" hidden>
   <div class="archivebar">
-    <span class="ab-icon">▤</span>
+    <button class="ab-back" id="back" title="Back to the welcome screen">← Archives</button>
     <span id="archive-name" class="ab-name"></span>
     <span id="archive-facts" class="ab-facts"></span>
   </div>
