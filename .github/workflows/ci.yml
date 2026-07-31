@@ -178,10 +178,16 @@ jobs:
       - run: docker load --input /tmp/rete-dev.tar
       - name: Rebuild every browser artifact from this commit
         run: |
+          # The stamp is the workspace version, READ from Cargo.toml — it used to
+          # be hard-coded (`0.3.0`), which silently turns every release into a
+          # parity failure the moment the version moves: CI rebuilds stamping the
+          # old version and the committed page carries the new one.
+          BUILD_STAMP=$(python3 -c "import re,pathlib; print(re.search(r'(?ms)^\[workspace\.package\].*?^version = \"([^\"]+)\"', pathlib.Path('Cargo.toml').read_text()).group(1))")
+          echo "build stamp: $BUILD_STAMP"
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target -e GITHUB_SHA="$GITHUB_SHA" \
-            -e RETE_BUILD_STAMP=0.3.0 \
+            -e RETE_BUILD_STAMP="$BUILD_STAMP" \
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/build_wasm.sh'
       - name: Verify provenance and generated browser files
