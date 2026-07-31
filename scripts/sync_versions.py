@@ -86,6 +86,15 @@ WHEEL_RE = re.compile(r"(rete_graph-)(\d+\.\d+\.\d+)(-cp\d+-abi3-[a-z0-9_]+\.whl
 
 ENGINE_RE = re.compile(r'(?ms)^\[workspace\.package\].*?^version = "([^"]+)"')
 
+# The workspace members that depend on rete-core pin it exactly, so a published
+# crate can only ever resolve the sibling it was built against.
+CORE_PIN_RE = re.compile(r'rete-core = \{ version = "=([^"]+)"')
+_CORE_PIN_FILES = [
+    "crates/bench/Cargo.toml",
+    "crates/rete-cli/Cargo.toml",
+    "crates/rete-wasm/Cargo.toml",
+]
+
 
 def engine_version() -> str:
     text = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
@@ -112,13 +121,72 @@ def _edit(path: pathlib.Path, pattern: re.Pattern, new: str) -> None:
     path.write_text(text[:start] + new + text[end:], encoding="utf-8")
 
 
+def _stamp(version: str) -> int:
+    """Stamp one exact version everywhere — the release cut.
+
+    `--write` deliberately only repairs MAJOR.MINOR drift (it writes `{minor}.0`),
+    because a client may legitimately carry its own PATCH. That makes it useless
+    for cutting 0.3.0 -> 0.3.1, where the patch IS the release. This reuses the
+    same anchored TARGETS regexes, so a reshuffled manifest still fails loudly
+    rather than getting the wrong field rewritten.
+    """
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        sys.exit(f"--set expects MAJOR.MINOR.PATCH, got {version!r}")
+
+    print(f"stamping {version} on the workspace and every client")
+    _edit(ROOT / "Cargo.toml", ENGINE_RE, version)
+    print(f"  wrote {'engine (workspace)':32} {version}")
+
+    # The publishable crates pin rete-core EXACTLY (`=X.Y.Z`) so a crates.io
+    # release can never resolve a sibling from a different engine build. That
+    # pin is not a client version, so it is not in TARGETS — but leaving it
+    # behind makes the workspace refuse to resolve at all ("candidate versions
+    # found which didn't match"), which is how this step was discovered.
+    for rel in _CORE_PIN_FILES:
+        _edit(ROOT / rel, CORE_PIN_RE, version)
+        print(f"  wrote {'rete-core pin: ' + rel.split('/')[1]:32} ={version}")
+
+    for rel, pattern, label in TARGETS:
+        path = ROOT / rel
+        if not path.exists():
+            sys.exit(f"{rel}: missing — cannot cut a release with a target gone")
+        _edit(path, pattern, version)
+        print(f"  wrote {label:32} {version}")
+
+    # The documented Pyodide fallback URL must promise the new version BEFORE
+    # `publish_pyodide_wheel.sh` runs — that script refuses to upload anything
+    # whose version disagrees with what docs/python.md advertises. So the URL is
+    # briefly a 404, from this commit until the wheel reaches the bucket.
+    wheel_path = ROOT / WHEEL_DOC
+    if wheel_path.exists():
+        text = wheel_path.read_text(encoding="utf-8")
+        new_text = WHEEL_RE.sub(lambda m: m.group(1) + version + m.group(3), text)
+        if new_text != text:
+            wheel_path.write_text(new_text, encoding="utf-8")
+            print(f"  wrote {'pyodide wheel url':32} {version}  (404 until uploaded)")
+
+    print("\nnow run --check to confirm the lockstep contract still holds")
+    print("the Pyodide URL resolves only after scripts/publish_pyodide_wheel.sh")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="report drift, write nothing")
     mode.add_argument("--write", action="store_true", help="realign drifted clients")
+    mode.add_argument(
+        "--set",
+        metavar="VERSION",
+        help="cut a release: stamp VERSION on the workspace AND every client, "
+        "patch included (--write only repairs MAJOR.MINOR drift, so it is a "
+        "no-op for a patch bump)",
+    )
     args = parser.parse_args()
     writing = args.write
+
+    if args.set:
+        return _stamp(args.set)
 
     engine = engine_version()
     target_minor = minor_of(engine)
@@ -126,6 +194,24 @@ def main() -> int:
 
     problems: list[str] = []
     python_versions: dict[str, str] = {}
+
+    # These are `=` pins, not minor-lockstep: they must equal the engine exactly,
+    # or `cargo` refuses to resolve the workspace at all.
+    for rel in _CORE_PIN_FILES:
+        found = CORE_PIN_RE.search((ROOT / rel).read_text(encoding="utf-8"))
+        if not found:
+            problems.append(f"{rel}: no exact rete-core pin matched")
+        elif found.group(1) != engine:
+            if writing:
+                _edit(ROOT / rel, CORE_PIN_RE, engine)
+                print(f"  wrote rete-core pin in {rel} ={found.group(1)} -> ={engine}")
+            else:
+                problems.append(
+                    f"{rel}: pins rete-core ={found.group(1)}, engine is {engine} "
+                    f"— the workspace will not resolve"
+                )
+        else:
+            print(f"  ok    {'rete-core pin: ' + rel.split('/')[1]:32} ={found.group(1)}")
 
     for rel, pattern, label in TARGETS:
         path = ROOT / rel

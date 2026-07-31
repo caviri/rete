@@ -5,22 +5,52 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-31
+
+A correctness release. The headline is a SPARQL bug that returned **wrong
+answers rather than an error**, so upgrading is not optional for anyone running
+sub-queries. It also carries the browser fix for graphs large enough to push the
+wasm heap past 2 GiB, and two additions that were already on main.
+
 ### Fixed
 
-- **Aggregation streams.** `GROUP BY` / `COUNT` / `SUM` / … fold solutions
-  through per-group accumulators instead of buffering every row, so resident
-  memory is **O(groups), not O(rows)** — a bare `COUNT(*)` is a single counter,
-  and a `GROUP BY` over the 1.38 B-row type slice of the 9.83 B-triple DataCite
-  graph completes inside a 4 GiB container (measurements on the benchmark
-  page). (#96)
-- **`rete info` / `rete card` no longer read the whole file.** Both use the
-  CARD tier — the same two small range reads `card-url` performs over HTTP —
-  so a 52 GB graph answers in ~1 s under a 1 GiB cap. A single-graph
-  `FROM <g>` now borrows that graph's index instead of copying every triple
-  into a fresh one. (#97)
-- **The PyPI publish job could ship the R2-only Pyodide-legacy wheel**, whose
-  platform tag PyPI rejects — the artifact now lives outside the publish job's
-  `wheel-*` download glob. (#98)
+- **A sub-SELECT's `LIMIT` / `OFFSET` / `DISTINCT` no longer leaks to the outer
+  query.** The planner peeled solution modifiers while walking down to the
+  projection and did not stop at the sub-query boundary, so
+  `SELECT … WHERE { { SELECT … LIMIT 10 } … }` applied that `LIMIT 10` to the
+  **outer** result set. The query still succeeded — it just answered a different
+  question than the one asked, which is the worst failure mode a query engine
+  has. The peel now stops at a `Slice` whenever it is inside a `WHERE` or the
+  projection is already bound, and lowers it as a nested plan instead. (#120)
+- **A wasm pointer above 2 GiB no longer bricks the async reader.** wasm32
+  pointers cross into JS through `i32` imports, so anything allocated past 2 GiB
+  arrives sign-extended — a negative number — and `mem.set(bytes, negative)`
+  throws `RangeError: offset is out of bounds`. Because wasm memory never
+  shrinks, every later read in that worker failed identically: one query ended
+  the page session. A remote scan of wikidata-1GB reached a 2050 MB heap and
+  produced `dstPtr = -2145787624`. Every pointer the glue dereferences now goes
+  through a `>>> 0` normalizer, and a G0 gate check asserts that in both the
+  generator and the generated file so regenerating cannot silently drop it.
+  (#121)
+- **The Claude Code plugin exposed no skills.** Its marketplace source resolved
+  only for one of the ways a plugin can be added, so `skills/` was never
+  discovered from the plugin root; the manifest is versioned now too. (#119)
+
+### Added
+
+- **`rete estimate`** — project a build's output size, wall time and temporary
+  spill *before* committing to it. Cardinality comes from a HyperLogLog sketch
+  (2^14 registers, 16 KiB) over a line-aligned sample, so the estimate costs a
+  read of the head of the input rather than a full pass. Reported as bands, not
+  false precision. (#114)
+- **The Python client streams every quad out in bounded memory.**
+  `dump_iter()` / `dump_each()` walk a graph without materializing it, so a
+  multi-gigabyte `.rete` can be piped into another store — Oxigraph, a triple
+  store load, an N-Quads file — from a small resident footprint, and with no
+  `unsafe` in the binding. (#118)
+
+### Fixed (build & tooling)
+
 - **The CI wasm-parity gate guards real files again.** Its diff listed
   gitignored directories and two paths that never existed (silent no-ops, which
   is how five different engine builds came to coexist across the shipped
@@ -101,6 +131,23 @@ until 1.0.0.
 - Browser WASM APIs for eager bytes, synchronous range reads, and asynchronous range reads.
 - RDF/XML ingestion, named-graph N-Quads, SPARQL, SHACL, reasoning, federation, GeoSPARQL, and Dataset Cards.
 - Reproducible playground generation, R2 catalog validation, coverage floors, fuzz targets, and release-gate browser tests.
+
+### Fixed
+
+- **Aggregation streams.** `GROUP BY` / `COUNT` / `SUM` / … fold solutions
+  through per-group accumulators instead of buffering every row, so resident
+  memory is **O(groups), not O(rows)** — a bare `COUNT(*)` is a single counter,
+  and a `GROUP BY` over the 1.38 B-row type slice of the 9.83 B-triple DataCite
+  graph completes inside a 4 GiB container (measurements on the benchmark
+  page). (#96)
+- **`rete info` / `rete card` no longer read the whole file.** Both use the
+  CARD tier — the same two small range reads `card-url` performs over HTTP —
+  so a 52 GB graph answers in ~1 s under a 1 GiB cap. A single-graph
+  `FROM <g>` now borrows that graph's index instead of copying every triple
+  into a fresh one. (#97)
+- **The PyPI publish job could ship the R2-only Pyodide-legacy wheel**, whose
+  platform tag PyPI rejects — the artifact now lives outside the publish job's
+  `wheel-*` download glob. (#98)
 
 ### Compatibility
 

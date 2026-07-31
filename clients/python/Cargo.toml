@@ -6,7 +6,7 @@ name = "rete-python"
 # Kept in lockstep with pyproject.toml's [project] version, and with the engine's
 # major.minor, by scripts/sync_versions.py (--check runs in CI). __version__ comes
 # from here (CARGO_PKG_VERSION), the wheel metadata from pyproject.
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/caviri/rete"
