@@ -1,0 +1,3714 @@
+{
+ "@context": {
+  "@language": "en",
+  "@vocab": "https://schema.org/",
+  "citeAs": "cr:citeAs",
+  "column": "cr:column",
+  "conformsTo": "dct:conformsTo",
+  "cr": "http://mlcommons.org/croissant/",
+  "data": {
+   "@id": "cr:data",
+   "@type": "@json"
+  },
+  "dataType": {
+   "@id": "cr:dataType",
+   "@type": "@vocab"
+  },
+  "dct": "http://purl.org/dc/terms/",
+  "equivalentProperty": "cr:equivalentProperty",
+  "examples": {
+   "@id": "cr:examples",
+   "@type": "@json"
+  },
+  "extract": "cr:extract",
+  "field": "cr:field",
+  "fileObject": "cr:fileObject",
+  "fileProperty": "cr:fileProperty",
+  "fileSet": "cr:fileSet",
+  "format": "cr:format",
+  "includes": "cr:includes",
+  "isLiveDataset": "cr:isLiveDataset",
+  "jsonPath": "cr:jsonPath",
+  "key": "cr:key",
+  "md5": "cr:md5",
+  "parentField": "cr:parentField",
+  "path": "cr:path",
+  "rai": "http://mlcommons.org/croissant/RAI/",
+  "recordSet": "cr:recordSet",
+  "references": "cr:references",
+  "regex": "cr:regex",
+  "repeated": "cr:repeated",
+  "replace": "cr:replace",
+  "samplingRate": "cr:samplingRate",
+  "sc": "https://schema.org/",
+  "separator": "cr:separator",
+  "source": "cr:source",
+  "subField": "cr:subField",
+  "transform": "cr:transform"
+ },
+ "@type": "Dataset",
+ "conformsTo": "http://mlcommons.org/croissant/1.0",
+ "name": "mirbase",
+ "description": "miRBase release 22.1 — the reference catalogue of published microRNA sequences and annotation — as Parquet. 38,589 hairpin stem-loops and 48,885 mature miRNAs across 271 species: the 17-table relational dump, the FASTA sequence sets, the EMBL flat files split into records/features/references/xrefs, and the 31 assembly-stamped GFF3 genome-coordinate files. Public domain.",
+ "url": "https://www.mirbase.org/",
+ "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+ "version": "22.1",
+ "citeAs": "Kozomara A, Birgaoanu M, Griffiths-Jones S. miRBase: from microRNA sequences to function. Nucleic Acids Res. 2019;47(D1):D155-D162.",
+ "datePublished": "2026-07-27",
+ "distribution": [
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_confidence.parquet",
+   "name": "parquet/db_confidence.parquet",
+   "description": "Per-stem-loop confidence evidence counts (read support, overhangs, folding energy). 28,962 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_confidence.parquet",
+   "contentSize": "403466 B",
+   "sha256": "ea76c3e587028f47364a3589a481d15f231b768a131e2951d81df5ff39623439"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_confidence_score.parquet",
+   "name": "parquet/db_confidence_score.parquet",
+   "description": "The miRBase high-confidence score (0, 1 or 2) per stem-loop. 28,717 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_confidence_score.parquet",
+   "contentSize": "84285 B",
+   "sha256": "acc03b16236d6c971fdedf49e24cde03f2a3d30fc1974c486f7d17f315f0cef9"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_dead_mirna.parquet",
+   "name": "parquet/db_dead_mirna.parquet",
+   "description": "Withdrawn accessions, with the entry each forwards to. 898 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_dead_mirna.parquet",
+   "contentSize": "27599 B",
+   "sha256": "7582c3b0382b649767c8ba7138d3d78aba1fa491ddc8640b44dc13cc479ca941"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_literature_references.parquet",
+   "name": "parquet/db_literature_references.parquet",
+   "description": "Cited publications (MEDLINE/PubMed id, title, authors, journal). 915 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_literature_references.parquet",
+   "contentSize": "70336 B",
+   "sha256": "5ab8b721e7e7d3d544ae45659edfe678b20e58b567c6d34600342feffa156119"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mature_database_links.parquet",
+   "name": "parquet/db_mature_database_links.parquet",
+   "description": "Cross-references from mature miRNAs to external databases. 26,257 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mature_database_links.parquet",
+   "contentSize": "345339 B",
+   "sha256": "5c8ac170ebe7f1361615d3286ae2ef04adb57b8f5623cce0e72fd2f9f50f3bd8"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mature_database_url.parquet",
+   "name": "parquet/db_mature_database_url.parquet",
+   "description": "URL templates for the mature cross-reference targets. 10 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mature_database_url.parquet",
+   "contentSize": "2542 B",
+   "sha256": "9df67ac5ed43465969e5654aa5e45c1c115091c93ca2a3b1f58ccd6fe4626a9c"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna.parquet",
+   "name": "parquet/db_mirna.parquet",
+   "description": "The stem-loop (hairpin precursor) table — accession, name, sequence, species. 39,233 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna.parquet",
+   "contentSize": "1812642 B",
+   "sha256": "d33027981f7a60111c4801b2093afdd98457952c08c76c6080c1f5769dd17e86"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_2_prefam.parquet",
+   "name": "parquet/db_mirna_2_prefam.parquet",
+   "description": "Stem-loop to miRNA-family membership. 19,907 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_2_prefam.parquet",
+   "contentSize": "85087 B",
+   "sha256": "c5e7d190102b2d004fa1e20461b1b21d27b2815a7ad1ec9f4f2e834c579e3a0e"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_chromosome_build.parquet",
+   "name": "parquet/db_mirna_chromosome_build.parquet",
+   "description": "Genome coordinates per stem-loop for 153 species (no assembly stamp). 35,202 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_chromosome_build.parquet",
+   "contentSize": "569913 B",
+   "sha256": "16f596e28a9b2501c8d79fd70cf96670db55bde7d22bc1c4aeb65b3437895231"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_context.parquet",
+   "name": "parquet/db_mirna_context.parquet",
+   "description": "Overlap of a stem-loop with a host transcript (exon/intron/3UTR/5UTR). 21,196 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_context.parquet",
+   "contentSize": "245785 B",
+   "sha256": "8c84a69bd2569e37d5e4e5a0789db6adfd79a2851bb6e53caf536ed7dba0e0ee"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_database_links.parquet",
+   "name": "parquet/db_mirna_database_links.parquet",
+   "description": "Cross-references from stem-loops to external databases. 14,655 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_database_links.parquet",
+   "contentSize": "172364 B",
+   "sha256": "83bffd85377a30c6f8e02cca56bdf6fc13da1b7e4d650c4d29e89a90ae4ae69e"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_database_url.parquet",
+   "name": "parquet/db_mirna_database_url.parquet",
+   "description": "URL templates for the stem-loop cross-reference targets. 5 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_database_url.parquet",
+   "contentSize": "1639 B",
+   "sha256": "0a00412c990ac52661f08eced6fb28befe837e149cf8f102d84040f398d9acd1"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_literature_references.parquet",
+   "name": "parquet/db_mirna_literature_references.parquet",
+   "description": "Stem-loop to publication links. 49,331 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_literature_references.parquet",
+   "contentSize": "150251 B",
+   "sha256": "f439c553532edd356a6eb25e74853ec58c94e6ffe23d47657e4ba30bba3f3c75"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_mature.parquet",
+   "name": "parquet/db_mirna_mature.parquet",
+   "description": "The mature miRNA table — accession, name, evidence, experiment. 49,168 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_mature.parquet",
+   "contentSize": "628569 B",
+   "sha256": "071a281d97dacf279f01b8dd77a1e6494754c3a0428aadecfcc92203439b1a62"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_pre_mature.parquet",
+   "name": "parquet/db_mirna_pre_mature.parquet",
+   "description": "Which matures are excised from which stem-loop, with offsets. 53,320 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_pre_mature.parquet",
+   "contentSize": "416911 B",
+   "sha256": "3e6250ff44874352d8efe47d0bc9302c6442657cb1038d87dace19298b8b8aa3"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_prefam.parquet",
+   "name": "parquet/db_mirna_prefam.parquet",
+   "description": "miRNA precursor families (MIPF accessions). 1,983 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_prefam.parquet",
+   "contentSize": "19785 B",
+   "sha256": "085ca5f5b944a25dadb437aae9622a6265b53d27a8e09a34a48c1e2195552d08"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/db_mirna_species.parquet",
+   "name": "parquet/db_mirna_species.parquet",
+   "description": "Organisms: miRBase code, NCBI taxon id, lineage, genome assembly. 286 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/db_mirna_species.parquet",
+   "contentSize": "14104 B",
+   "sha256": "b8d100b92b0317c7b90a401554f7f4e6519c0b2cbd175748890bfbbe9b373974"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/embl_features.parquet",
+   "name": "parquet/embl_features.parquet",
+   "description": "The EMBL FT block — mature products located on their stem-loop. 52,958 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/embl_features.parquet",
+   "contentSize": "1223757 B",
+   "sha256": "5cf96d49934f02e88c6346c96bda49385c0baabf9a83bfd781041e32f5ab72ee"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/embl_high_conf_features.parquet",
+   "name": "parquet/embl_high_conf_features.parquet",
+   "description": "As embl_features, for the high-confidence subset. 6,179 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/embl_high_conf_features.parquet",
+   "contentSize": "180293 B",
+   "sha256": "7f8e08c18d8e1ec3ece3f51d338518429ab9860a193140e458fc489e9d20be3b"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/embl_high_conf_records.parquet",
+   "name": "parquet/embl_high_conf_records.parquet",
+   "description": "As embl_records, for the high-confidence subset. 3,320 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/embl_high_conf_records.parquet",
+   "contentSize": "205367 B",
+   "sha256": "802616f8e4873cf3f71db8e831aee3b97a6c0f1a942f4a1aaf2a5c9e8efd778f"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/embl_high_conf_references.parquet",
+   "name": "parquet/embl_high_conf_references.parquet",
+   "description": "As embl_references, for the high-confidence subset. 7,936 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/embl_high_conf_references.parquet",
+   "contentSize": "64200 B",
+   "sha256": "b0caa8149096104604e2b5b7f7338f3fbe129538cfbc7406e18607b5197c0fe3"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/embl_high_conf_xrefs.parquet",
+   "name": "parquet/embl_high_conf_xrefs.parquet",
+   "description": "As embl_xrefs, for the high-confidence subset. 3,481 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/embl_high_conf_xrefs.parquet",
+   "contentSize": "38963 B",
+   "sha256": "d18ebdaec9ab85426403dc23826f93835adb689fb8272afd722a195a0072546f"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/embl_records.parquet",
+   "name": "parquet/embl_records.parquet",
+   "description": "One row per stem-loop in miRNA.dat (EMBL): ids, description, sequence. 38,589 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/embl_records.parquet",
+   "contentSize": "2269142 B",
+   "sha256": "f8464d9d4c441823e38d2d176b32035236728bdd163072d8d72897937088b34d"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/embl_references.parquet",
+   "name": "parquet/embl_references.parquet",
+   "description": "The EMBL RN/RX/RA/RT/RL citation blocks. 47,958 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/embl_references.parquet",
+   "contentSize": "272298 B",
+   "sha256": "f72c1516656043539461931a722f2a1c5c139a40b41b854a105b2fb28666f529"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/embl_xrefs.parquet",
+   "name": "parquet/embl_xrefs.parquet",
+   "description": "The EMBL DR cross-reference lines. 9,110 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/embl_xrefs.parquet",
+   "contentSize": "96227 B",
+   "sha256": "68052bc9f1b6b83d29885fa938932017e6c23b378717df978f5ae890f8a3f0c5"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/fasta_hairpin.parquet",
+   "name": "parquet/fasta_hairpin.parquet",
+   "description": "hairpin.fa — 38,589 stem-loop precursor sequences. 38,589 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/fasta_hairpin.parquet",
+   "contentSize": "1835838 B",
+   "sha256": "aff015c69f6ae672d5213d81a078e2b430b4e1d2e559982d897ebb71f2e485bb"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/fasta_hairpin_high_conf.parquet",
+   "name": "parquet/fasta_hairpin_high_conf.parquet",
+   "description": "hairpin_high_conf.fa — 3,320 high-confidence stem-loops. 3,320 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/fasta_hairpin_high_conf.parquet",
+   "contentSize": "150008 B",
+   "sha256": "4f671097b10fd09b5509ea169e14544f5279affd0d2b0399eef259d8ccf968d0"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/fasta_mature.parquet",
+   "name": "parquet/fasta_mature.parquet",
+   "description": "mature.fa — 48,885 mature miRNA sequences. 48,885 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/fasta_mature.parquet",
+   "contentSize": "1241818 B",
+   "sha256": "9471b6ae48893a9d86d3bdf823ad646d7117d6ee9940fab1cb81477a7e143e09"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/fasta_mature_high_conf.parquet",
+   "name": "parquet/fasta_mature_high_conf.parquet",
+   "description": "mature_high_conf.fa — 5,563 high-confidence matures. 5,563 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/fasta_mature_high_conf.parquet",
+   "contentSize": "117594 B",
+   "sha256": "00c10524a3ad72899e7b8ecb16fd866b39f4f596c89d9b68ea7223f32b02a923"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/gff3_features.parquet",
+   "name": "parquet/gff3_features.parquet",
+   "description": "The 31 GFF3 files as rows: assembly-stamped genome coordinates. 31,015 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/gff3_features.parquet",
+   "contentSize": "1267132 B",
+   "sha256": "60816f17902809e6cfe1c72ffb9388ceb069235e3df771740c5b04422aa98deb"
+  },
+  {
+   "@type": "cr:FileObject",
+   "@id": "parquet/gff3_headers.parquet",
+   "name": "parquet/gff3_headers.parquet",
+   "description": "Per-GFF3-file header block, genome build id and assembly accession. 31 rows.",
+   "encodingFormat": "application/x-parquet",
+   "contentUrl": "parquet/gff3_headers.parquet",
+   "contentSize": "6923 B",
+   "sha256": "4c89c84861e17ccb801e7f20a34070ea4bb76bc6fa768783157a6003f761a504"
+  }
+ ],
+ "recordSet": [
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_confidence",
+   "name": "db_confidence",
+   "description": "Per-stem-loop confidence evidence counts (read support, overhangs, folding energy). 28,962 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/mirna_id",
+     "name": "mirna_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "mirna_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/exp_count",
+     "name": "exp_count",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "exp_count"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/5p_count",
+     "name": "5p_count",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "5p_count"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/5p_raw_count",
+     "name": "5p_raw_count",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "5p_raw_count"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/3p_count",
+     "name": "3p_count",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "3p_count"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/3p_raw_count",
+     "name": "3p_raw_count",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "3p_raw_count"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/5p_consistent",
+     "name": "5p_consistent",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "5p_consistent"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/5p_mature_consistent",
+     "name": "5p_mature_consistent",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "5p_mature_consistent"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/3p_consistent",
+     "name": "3p_consistent",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "3p_consistent"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/3p_mature_consistent",
+     "name": "3p_mature_consistent",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "3p_mature_consistent"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/5p_overhang",
+     "name": "5p_overhang",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "5p_overhang"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/3p_overhang",
+     "name": "3p_overhang",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "3p_overhang"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/energy_precursor",
+     "name": "energy_precursor",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "energy_precursor"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/energy_by_length",
+     "name": "energy_by_length",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "energy_by_length"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/paired_hairpin",
+     "name": "paired_hairpin",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "paired_hairpin"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence/mirdeep_score",
+     "name": "mirdeep_score",
+     "dataType": "sc:Float",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence.parquet"
+      },
+      "extract": {
+       "column": "mirdeep_score"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_confidence_score",
+   "name": "db_confidence_score",
+   "description": "The miRBase high-confidence score (0, 1 or 2) per stem-loop. 28,717 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence_score/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence_score.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_confidence_score/confidence",
+     "name": "confidence",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_confidence_score.parquet"
+      },
+      "extract": {
+       "column": "confidence"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_dead_mirna",
+   "name": "db_dead_mirna",
+   "description": "Withdrawn accessions, with the entry each forwards to. 898 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_dead_mirna/mirna_acc",
+     "name": "mirna_acc",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_dead_mirna.parquet"
+      },
+      "extract": {
+       "column": "mirna_acc"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_dead_mirna/mirna_id",
+     "name": "mirna_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_dead_mirna.parquet"
+      },
+      "extract": {
+       "column": "mirna_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_dead_mirna/previous_id",
+     "name": "previous_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_dead_mirna.parquet"
+      },
+      "extract": {
+       "column": "previous_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_dead_mirna/forward_to",
+     "name": "forward_to",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_dead_mirna.parquet"
+      },
+      "extract": {
+       "column": "forward_to"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_dead_mirna/comment",
+     "name": "comment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_dead_mirna.parquet"
+      },
+      "extract": {
+       "column": "comment"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_literature_references",
+   "name": "db_literature_references",
+   "description": "Cited publications (MEDLINE/PubMed id, title, authors, journal). 915 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_literature_references/auto_lit",
+     "name": "auto_lit",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_literature_references.parquet"
+      },
+      "extract": {
+       "column": "auto_lit"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_literature_references/medline",
+     "name": "medline",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_literature_references.parquet"
+      },
+      "extract": {
+       "column": "medline"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_literature_references/title",
+     "name": "title",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_literature_references.parquet"
+      },
+      "extract": {
+       "column": "title"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_literature_references/author",
+     "name": "author",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_literature_references.parquet"
+      },
+      "extract": {
+       "column": "author"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_literature_references/journal",
+     "name": "journal",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_literature_references.parquet"
+      },
+      "extract": {
+       "column": "journal"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mature_database_links",
+   "name": "db_mature_database_links",
+   "description": "Cross-references from mature miRNAs to external databases. 26,257 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mature_database_links/auto_mature",
+     "name": "auto_mature",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mature_database_links.parquet"
+      },
+      "extract": {
+       "column": "auto_mature"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mature_database_links/auto_db",
+     "name": "auto_db",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mature_database_links.parquet"
+      },
+      "extract": {
+       "column": "auto_db"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mature_database_links/link",
+     "name": "link",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mature_database_links.parquet"
+      },
+      "extract": {
+       "column": "link"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mature_database_links/display_name",
+     "name": "display_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mature_database_links.parquet"
+      },
+      "extract": {
+       "column": "display_name"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mature_database_url",
+   "name": "db_mature_database_url",
+   "description": "URL templates for the mature cross-reference targets. 10 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mature_database_url/auto_db",
+     "name": "auto_db",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mature_database_url.parquet"
+      },
+      "extract": {
+       "column": "auto_db"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mature_database_url/display_name",
+     "name": "display_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mature_database_url.parquet"
+      },
+      "extract": {
+       "column": "display_name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mature_database_url/url",
+     "name": "url",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mature_database_url.parquet"
+      },
+      "extract": {
+       "column": "url"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mature_database_url/type",
+     "name": "type",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mature_database_url.parquet"
+      },
+      "extract": {
+       "column": "type"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna",
+   "name": "db_mirna",
+   "description": "The stem-loop (hairpin precursor) table — accession, name, sequence, species. 39,233 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/mirna_acc",
+     "name": "mirna_acc",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "mirna_acc"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/mirna_id",
+     "name": "mirna_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "mirna_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/previous_mirna_id",
+     "name": "previous_mirna_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "previous_mirna_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/description",
+     "name": "description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/sequence",
+     "name": "sequence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "sequence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/comment",
+     "name": "comment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "comment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/auto_species",
+     "name": "auto_species",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "auto_species"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna/dead_flag",
+     "name": "dead_flag",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna.parquet"
+      },
+      "extract": {
+       "column": "dead_flag"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_2_prefam",
+   "name": "db_mirna_2_prefam",
+   "description": "Stem-loop to miRNA-family membership. 19,907 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_2_prefam/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_2_prefam.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_2_prefam/auto_prefam",
+     "name": "auto_prefam",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_2_prefam.parquet"
+      },
+      "extract": {
+       "column": "auto_prefam"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_chromosome_build",
+   "name": "db_mirna_chromosome_build",
+   "description": "Genome coordinates per stem-loop for 153 species (no assembly stamp). 35,202 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_chromosome_build/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_chromosome_build.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_chromosome_build/xsome",
+     "name": "xsome",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_chromosome_build.parquet"
+      },
+      "extract": {
+       "column": "xsome"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_chromosome_build/contig_start",
+     "name": "contig_start",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_chromosome_build.parquet"
+      },
+      "extract": {
+       "column": "contig_start"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_chromosome_build/contig_end",
+     "name": "contig_end",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_chromosome_build.parquet"
+      },
+      "extract": {
+       "column": "contig_end"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_chromosome_build/strand",
+     "name": "strand",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_chromosome_build.parquet"
+      },
+      "extract": {
+       "column": "strand"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_context",
+   "name": "db_mirna_context",
+   "description": "Overlap of a stem-loop with a host transcript (exon/intron/3UTR/5UTR). 21,196 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_context/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_context.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_context/transcript_id",
+     "name": "transcript_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_context.parquet"
+      },
+      "extract": {
+       "column": "transcript_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_context/overlap_sense",
+     "name": "overlap_sense",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_context.parquet"
+      },
+      "extract": {
+       "column": "overlap_sense"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_context/overlap_type",
+     "name": "overlap_type",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_context.parquet"
+      },
+      "extract": {
+       "column": "overlap_type"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_context/number",
+     "name": "number",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_context.parquet"
+      },
+      "extract": {
+       "column": "number"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_context/transcript_source",
+     "name": "transcript_source",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_context.parquet"
+      },
+      "extract": {
+       "column": "transcript_source"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_context/transcript_name",
+     "name": "transcript_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_context.parquet"
+      },
+      "extract": {
+       "column": "transcript_name"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_database_links",
+   "name": "db_mirna_database_links",
+   "description": "Cross-references from stem-loops to external databases. 14,655 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_database_links/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_database_links.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_database_links/auto_db",
+     "name": "auto_db",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_database_links.parquet"
+      },
+      "extract": {
+       "column": "auto_db"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_database_links/link",
+     "name": "link",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_database_links.parquet"
+      },
+      "extract": {
+       "column": "link"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_database_links/display_name",
+     "name": "display_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_database_links.parquet"
+      },
+      "extract": {
+       "column": "display_name"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_database_url",
+   "name": "db_mirna_database_url",
+   "description": "URL templates for the stem-loop cross-reference targets. 5 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_database_url/auto_db",
+     "name": "auto_db",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_database_url.parquet"
+      },
+      "extract": {
+       "column": "auto_db"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_database_url/display_name",
+     "name": "display_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_database_url.parquet"
+      },
+      "extract": {
+       "column": "display_name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_database_url/url",
+     "name": "url",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_database_url.parquet"
+      },
+      "extract": {
+       "column": "url"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_literature_references",
+   "name": "db_mirna_literature_references",
+   "description": "Stem-loop to publication links. 49,331 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_literature_references/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_literature_references.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_literature_references/auto_lit",
+     "name": "auto_lit",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_literature_references.parquet"
+      },
+      "extract": {
+       "column": "auto_lit"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_literature_references/comment",
+     "name": "comment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_literature_references.parquet"
+      },
+      "extract": {
+       "column": "comment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_literature_references/order_added",
+     "name": "order_added",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_literature_references.parquet"
+      },
+      "extract": {
+       "column": "order_added"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_mature",
+   "name": "db_mirna_mature",
+   "description": "The mature miRNA table — accession, name, evidence, experiment. 49,168 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_mature/auto_mature",
+     "name": "auto_mature",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_mature.parquet"
+      },
+      "extract": {
+       "column": "auto_mature"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_mature/mature_name",
+     "name": "mature_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_mature.parquet"
+      },
+      "extract": {
+       "column": "mature_name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_mature/previous_mature_id",
+     "name": "previous_mature_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_mature.parquet"
+      },
+      "extract": {
+       "column": "previous_mature_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_mature/mature_acc",
+     "name": "mature_acc",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_mature.parquet"
+      },
+      "extract": {
+       "column": "mature_acc"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_mature/evidence",
+     "name": "evidence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_mature.parquet"
+      },
+      "extract": {
+       "column": "evidence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_mature/experiment",
+     "name": "experiment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_mature.parquet"
+      },
+      "extract": {
+       "column": "experiment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_mature/similarity",
+     "name": "similarity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_mature.parquet"
+      },
+      "extract": {
+       "column": "similarity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_mature/dead_flag",
+     "name": "dead_flag",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_mature.parquet"
+      },
+      "extract": {
+       "column": "dead_flag"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_pre_mature",
+   "name": "db_mirna_pre_mature",
+   "description": "Which matures are excised from which stem-loop, with offsets. 53,320 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_pre_mature/auto_mirna",
+     "name": "auto_mirna",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_pre_mature.parquet"
+      },
+      "extract": {
+       "column": "auto_mirna"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_pre_mature/auto_mature",
+     "name": "auto_mature",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_pre_mature.parquet"
+      },
+      "extract": {
+       "column": "auto_mature"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_pre_mature/mature_from",
+     "name": "mature_from",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_pre_mature.parquet"
+      },
+      "extract": {
+       "column": "mature_from"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_pre_mature/mature_to",
+     "name": "mature_to",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_pre_mature.parquet"
+      },
+      "extract": {
+       "column": "mature_to"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_prefam",
+   "name": "db_mirna_prefam",
+   "description": "miRNA precursor families (MIPF accessions). 1,983 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_prefam/auto_prefam",
+     "name": "auto_prefam",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_prefam.parquet"
+      },
+      "extract": {
+       "column": "auto_prefam"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_prefam/prefam_acc",
+     "name": "prefam_acc",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_prefam.parquet"
+      },
+      "extract": {
+       "column": "prefam_acc"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_prefam/prefam_id",
+     "name": "prefam_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_prefam.parquet"
+      },
+      "extract": {
+       "column": "prefam_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_prefam/description",
+     "name": "description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_prefam.parquet"
+      },
+      "extract": {
+       "column": "description"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "db_mirna_species",
+   "name": "db_mirna_species",
+   "description": "Organisms: miRBase code, NCBI taxon id, lineage, genome assembly. 286 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/auto_id",
+     "name": "auto_id",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "auto_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/organism",
+     "name": "organism",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "organism"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/division",
+     "name": "division",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "division"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/taxon_id",
+     "name": "taxon_id",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "taxon_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/taxonomy",
+     "name": "taxonomy",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "taxonomy"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/genome_assembly",
+     "name": "genome_assembly",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "genome_assembly"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/genome_accession",
+     "name": "genome_accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "genome_accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "db_mirna_species/ensembl_db",
+     "name": "ensembl_db",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/db_mirna_species.parquet"
+      },
+      "extract": {
+       "column": "ensembl_db"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "embl_features",
+   "name": "embl_features",
+   "description": "The EMBL FT block — mature products located on their stem-loop. 52,958 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/record_accession",
+     "name": "record_accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "record_accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/key",
+     "name": "key",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "key"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/location",
+     "name": "location",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "location"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/start",
+     "name": "start",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "start"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/end",
+     "name": "end",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "end"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/accession",
+     "name": "accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/product",
+     "name": "product",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "product"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/evidence",
+     "name": "evidence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "evidence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/experiment",
+     "name": "experiment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "experiment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/similarity",
+     "name": "similarity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "similarity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_features/qualifiers_raw",
+     "name": "qualifiers_raw",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_features.parquet"
+      },
+      "extract": {
+       "column": "qualifiers_raw"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "embl_high_conf_features",
+   "name": "embl_high_conf_features",
+   "description": "As embl_features, for the high-confidence subset. 6,179 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/record_accession",
+     "name": "record_accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "record_accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/key",
+     "name": "key",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "key"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/location",
+     "name": "location",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "location"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/start",
+     "name": "start",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "start"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/end",
+     "name": "end",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "end"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/accession",
+     "name": "accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/product",
+     "name": "product",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "product"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/evidence",
+     "name": "evidence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "evidence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/experiment",
+     "name": "experiment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "experiment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/similarity",
+     "name": "similarity",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "similarity"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_features/qualifiers_raw",
+     "name": "qualifiers_raw",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_features.parquet"
+      },
+      "extract": {
+       "column": "qualifiers_raw"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "embl_high_conf_records",
+   "name": "embl_high_conf_records",
+   "description": "As embl_records, for the high-confidence subset. 3,320 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/accession",
+     "name": "accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/description",
+     "name": "description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/division",
+     "name": "division",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "division"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/mol_type",
+     "name": "mol_type",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "mol_type"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/id_rest",
+     "name": "id_rest",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "id_rest"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/seq_length",
+     "name": "seq_length",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "seq_length"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/sequence",
+     "name": "sequence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "sequence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/sq_header",
+     "name": "sq_header",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "sq_header"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/comment",
+     "name": "comment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "comment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_records/raw_block",
+     "name": "raw_block",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_records.parquet"
+      },
+      "extract": {
+       "column": "raw_block"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "embl_high_conf_references",
+   "name": "embl_high_conf_references",
+   "description": "As embl_references, for the high-confidence subset. 7,936 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/record_accession",
+     "name": "record_accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "record_accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/number",
+     "name": "number",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "number"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/pubmed",
+     "name": "pubmed",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "pubmed"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/medline",
+     "name": "medline",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "medline"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/rx_raw",
+     "name": "rx_raw",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "rx_raw"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/comment",
+     "name": "comment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "comment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/authors",
+     "name": "authors",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "authors"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/title",
+     "name": "title",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "title"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_references/journal",
+     "name": "journal",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_references.parquet"
+      },
+      "extract": {
+       "column": "journal"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "embl_high_conf_xrefs",
+   "name": "embl_high_conf_xrefs",
+   "description": "As embl_xrefs, for the high-confidence subset. 3,481 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_xrefs/record_accession",
+     "name": "record_accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_xrefs.parquet"
+      },
+      "extract": {
+       "column": "record_accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_xrefs/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_xrefs.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_high_conf_xrefs/line",
+     "name": "line",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_high_conf_xrefs.parquet"
+      },
+      "extract": {
+       "column": "line"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "embl_records",
+   "name": "embl_records",
+   "description": "One row per stem-loop in miRNA.dat (EMBL): ids, description, sequence. 38,589 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/accession",
+     "name": "accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/description",
+     "name": "description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/division",
+     "name": "division",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "division"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/mol_type",
+     "name": "mol_type",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "mol_type"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/id_rest",
+     "name": "id_rest",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "id_rest"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/seq_length",
+     "name": "seq_length",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "seq_length"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/sequence",
+     "name": "sequence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "sequence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/sq_header",
+     "name": "sq_header",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "sq_header"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/comment",
+     "name": "comment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "comment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_records/raw_block",
+     "name": "raw_block",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_records.parquet"
+      },
+      "extract": {
+       "column": "raw_block"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "embl_references",
+   "name": "embl_references",
+   "description": "The EMBL RN/RX/RA/RT/RL citation blocks. 47,958 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/record_accession",
+     "name": "record_accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "record_accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/number",
+     "name": "number",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "number"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/pubmed",
+     "name": "pubmed",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "pubmed"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/medline",
+     "name": "medline",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "medline"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/rx_raw",
+     "name": "rx_raw",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "rx_raw"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/comment",
+     "name": "comment",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "comment"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/authors",
+     "name": "authors",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "authors"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/title",
+     "name": "title",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "title"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_references/journal",
+     "name": "journal",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_references.parquet"
+      },
+      "extract": {
+       "column": "journal"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "embl_xrefs",
+   "name": "embl_xrefs",
+   "description": "The EMBL DR cross-reference lines. 9,110 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "embl_xrefs/record_accession",
+     "name": "record_accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_xrefs.parquet"
+      },
+      "extract": {
+       "column": "record_accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_xrefs/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_xrefs.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "embl_xrefs/line",
+     "name": "line",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/embl_xrefs.parquet"
+      },
+      "extract": {
+       "column": "line"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "fasta_hairpin",
+   "name": "fasta_hairpin",
+   "description": "hairpin.fa — 38,589 stem-loop precursor sequences. 38,589 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin/accession",
+     "name": "accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin.parquet"
+      },
+      "extract": {
+       "column": "accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin/description",
+     "name": "description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin.parquet"
+      },
+      "extract": {
+       "column": "description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin/organism",
+     "name": "organism",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin.parquet"
+      },
+      "extract": {
+       "column": "organism"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin/sequence",
+     "name": "sequence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin.parquet"
+      },
+      "extract": {
+       "column": "sequence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin/seq_length",
+     "name": "seq_length",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin.parquet"
+      },
+      "extract": {
+       "column": "seq_length"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin/wrap",
+     "name": "wrap",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin.parquet"
+      },
+      "extract": {
+       "column": "wrap"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "fasta_hairpin_high_conf",
+   "name": "fasta_hairpin_high_conf",
+   "description": "hairpin_high_conf.fa — 3,320 high-confidence stem-loops. 3,320 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin_high_conf/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin_high_conf.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin_high_conf/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin_high_conf.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin_high_conf/accession",
+     "name": "accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin_high_conf.parquet"
+      },
+      "extract": {
+       "column": "accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin_high_conf/description",
+     "name": "description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin_high_conf.parquet"
+      },
+      "extract": {
+       "column": "description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin_high_conf/organism",
+     "name": "organism",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin_high_conf.parquet"
+      },
+      "extract": {
+       "column": "organism"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin_high_conf/sequence",
+     "name": "sequence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin_high_conf.parquet"
+      },
+      "extract": {
+       "column": "sequence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin_high_conf/seq_length",
+     "name": "seq_length",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin_high_conf.parquet"
+      },
+      "extract": {
+       "column": "seq_length"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_hairpin_high_conf/wrap",
+     "name": "wrap",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_hairpin_high_conf.parquet"
+      },
+      "extract": {
+       "column": "wrap"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "fasta_mature",
+   "name": "fasta_mature",
+   "description": "mature.fa — 48,885 mature miRNA sequences. 48,885 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature/accession",
+     "name": "accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature.parquet"
+      },
+      "extract": {
+       "column": "accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature/description",
+     "name": "description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature.parquet"
+      },
+      "extract": {
+       "column": "description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature/organism",
+     "name": "organism",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature.parquet"
+      },
+      "extract": {
+       "column": "organism"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature/sequence",
+     "name": "sequence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature.parquet"
+      },
+      "extract": {
+       "column": "sequence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature/seq_length",
+     "name": "seq_length",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature.parquet"
+      },
+      "extract": {
+       "column": "seq_length"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature/wrap",
+     "name": "wrap",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature.parquet"
+      },
+      "extract": {
+       "column": "wrap"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "fasta_mature_high_conf",
+   "name": "fasta_mature_high_conf",
+   "description": "mature_high_conf.fa — 5,563 high-confidence matures. 5,563 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature_high_conf/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature_high_conf.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature_high_conf/name",
+     "name": "name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature_high_conf.parquet"
+      },
+      "extract": {
+       "column": "name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature_high_conf/accession",
+     "name": "accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature_high_conf.parquet"
+      },
+      "extract": {
+       "column": "accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature_high_conf/description",
+     "name": "description",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature_high_conf.parquet"
+      },
+      "extract": {
+       "column": "description"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature_high_conf/organism",
+     "name": "organism",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature_high_conf.parquet"
+      },
+      "extract": {
+       "column": "organism"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature_high_conf/sequence",
+     "name": "sequence",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature_high_conf.parquet"
+      },
+      "extract": {
+       "column": "sequence"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature_high_conf/seq_length",
+     "name": "seq_length",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature_high_conf.parquet"
+      },
+      "extract": {
+       "column": "seq_length"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "fasta_mature_high_conf/wrap",
+     "name": "wrap",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/fasta_mature_high_conf.parquet"
+      },
+      "extract": {
+       "column": "wrap"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "gff3_features",
+   "name": "gff3_features",
+   "description": "The 31 GFF3 files as rows: assembly-stamped genome coordinates. 31,015 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/organism",
+     "name": "organism",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "organism"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/ordinal",
+     "name": "ordinal",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "ordinal"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/seqid",
+     "name": "seqid",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "seqid"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/source",
+     "name": "source",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "source"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/type",
+     "name": "type",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "type"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/start",
+     "name": "start",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "start"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/end",
+     "name": "end",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "end"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/score",
+     "name": "score",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "score"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/strand",
+     "name": "strand",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "strand"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/phase",
+     "name": "phase",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "phase"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/attributes",
+     "name": "attributes",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "attributes"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/attr_id",
+     "name": "attr_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "attr_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/attr_alias",
+     "name": "attr_alias",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "attr_alias"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/attr_name",
+     "name": "attr_name",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "attr_name"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_features/derives_from",
+     "name": "derives_from",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_features.parquet"
+      },
+      "extract": {
+       "column": "derives_from"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@type": "cr:RecordSet",
+   "@id": "gff3_headers",
+   "name": "gff3_headers",
+   "description": "Per-GFF3-file header block, genome build id and assembly accession. 31 rows.",
+   "field": [
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_headers/organism",
+     "name": "organism",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_headers.parquet"
+      },
+      "extract": {
+       "column": "organism"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_headers/header",
+     "name": "header",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_headers.parquet"
+      },
+      "extract": {
+       "column": "header"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_headers/genome_build_id",
+     "name": "genome_build_id",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_headers.parquet"
+      },
+      "extract": {
+       "column": "genome_build_id"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_headers/genome_build_accession",
+     "name": "genome_build_accession",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_headers.parquet"
+      },
+      "extract": {
+       "column": "genome_build_accession"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_headers/gff_date",
+     "name": "gff_date",
+     "dataType": "sc:Text",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_headers.parquet"
+      },
+      "extract": {
+       "column": "gff_date"
+      }
+     }
+    },
+    {
+     "@type": "cr:Field",
+     "@id": "gff3_headers/feature_count",
+     "name": "feature_count",
+     "dataType": "sc:Integer",
+     "source": {
+      "fileObject": {
+       "@id": "parquet/gff3_headers.parquet"
+      },
+      "extract": {
+       "column": "feature_count"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}
