@@ -115,10 +115,16 @@ jobs:
       - name: Package browser artifacts
         run: |
           name="rete-wasm-${{ needs.meta.outputs.version }}"
-          mkdir -p "dist/$name/web" "dist/$name/docs"
+          mkdir -p "dist/$name/web" "dist/$name/docs/engine"
           cp -a web/pkg web/pkg-nomodules web/pkg-nomodules-async "dist/$name/web/"
-          cp docs/rete_wasm.js docs/rete_wasm_bg.wasm \
-            docs/rete_wasm_async.js docs/rete_wasm_async.wasm \
+          # The ESM pair lives in docs/engine/, not docs/ — build_wasm.sh moved it
+          # there and ci.yml's parity list was corrected in #100, but this bundle
+          # kept copying the old paths. Since release.yml only runs on a v* tag,
+          # nothing exercised it until v0.3.1 died on `cp: cannot stat
+          # 'docs/rete_wasm.js'`.
+          cp docs/engine/rete_wasm.js docs/engine/rete_wasm_bg.wasm \
+            "dist/$name/docs/engine/"
+          cp docs/rete_wasm_async.js docs/rete_wasm_async.wasm \
             docs/wasm-build.json "dist/$name/docs/"
           cp crates/rete-wasm/README.md LICENSE CHANGELOG.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
