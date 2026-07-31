@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Rete Quick Look</string>
+  <key>CFBundleExecutable</key>
+  <string>ReteQuickLook</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.graphplaza.rete-file-explorer.quicklook</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>ReteQuickLook</string>
+  <key>CFBundlePackageType</key>
+  <string>XPC!</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.3.0</string>
+  <key>CFBundleVersion</key>
+  <string>0.3.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSExtension</key>
+  <dict>
+    <key>NSExtensionAttributes</key>
+    <dict>
+      <!-- Only files of our exported UTI reach this extension. The host app
+           declares that type; see tauri.conf.json → bundle.fileAssociations. -->
+      <key>QLSupportedContentTypes</key>
+      <array>
+        <string>com.graphplaza.rete</string>
+      </array>
+      <!-- The card is read positionally from the file itself, so there is no
+           searchable text to hand back to Spotlight from here. -->
+      <key>QLSupportsSearchableItems</key>
+      <false/>
+    </dict>
+    <key>NSExtensionPointIdentifier</key>
+    <string>com.apple.quicklook.preview</string>
+    <key>NSExtensionPrincipalClass</key>
+    <string>PreviewViewController</string>
+  </dict>
+</dict>
+</plist>

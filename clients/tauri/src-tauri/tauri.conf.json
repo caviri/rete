@@ -39,6 +39,17 @@
     "longDescription": "Open a .rete knowledge-graph file the way an archive tool opens a zip: folders, files, a preview pane, and extract to CSV/JSON/N-Triples. Reads local files and remote URLs over HTTP range requests, so a multi-gigabyte graph opens without downloading it.",
     "macOS": {
       "minimumSystemVersion": "10.15"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "rete"
+        ],
+        "name": "com.graphplaza.rete",
+        "description": "Rete graph file",
+        "role": "Viewer",
+        "mimeType": "application/vnd.rete"
+      }
+    ]
   }
 }
