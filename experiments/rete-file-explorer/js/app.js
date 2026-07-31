@@ -9,6 +9,7 @@ import {
   readSelfDescription, parseHeader, humanBytes, humanCount, localName, parseTerm,
 } from "./rete-fs.js";
 import { isTauri, makeTauriWorkerShim, pickReteFile } from "./tauri-bridge.js";
+import { initTicker } from "./ticker.js";
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -582,6 +583,25 @@ function paintLabelPicker() {
   sel.value = "";
 }
 
+/**
+ * Back to the welcome screen. The open archive is deliberately left resident —
+ * the worker keeps its handle and its warmed block cache, so re-opening the
+ * same file from the catalog costs nothing and the traffic meter keeps counting
+ * from where it was.
+ */
+function goHome() {
+  $("#window").hidden = true;
+  $("#empty").hidden = false;
+  setStatus(state.meta ? `${state.meta.source} still open — pick another, or reopen it` : "pick an archive, drop a .rete, or paste a URL");
+}
+
+function wireHome() {
+  for (const id of ["home", "back"]) {
+    const b = $(`#${id}`);
+    if (b) b.addEventListener("click", goHome);
+  }
+}
+
 function wireToolbar() {
   $("#labelpred").addEventListener("change", async (e) => {
     if (!state.ctx) return;
@@ -941,4 +961,6 @@ paintCatalog();
 paintViewTabs();
 wireDrop();
 wireToolbar();
+wireHome();
+initTicker();
 setStatus("pick an archive, drop a .rete, or paste a URL");

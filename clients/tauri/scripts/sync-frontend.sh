@@ -17,6 +17,17 @@ DIST="dist"
 rm -rf "$DIST"
 mkdir -p "$DIST/js"
 cp "$SRC/index.html" "$SRC/styles.css" "$DIST/"
-cp "$SRC/js/rete-fs.js" "$SRC/js/app.js" "$SRC/js/tauri-bridge.js" "$DIST/js/"
+
+# Copy every module EXCEPT the wasm worker, rather than naming them one by one:
+# a hardcoded list silently drops any module added later, and a missing import
+# means app.js never evaluates — a blank window with the reason buried in a
+# devtools console the user has no reason to open.
+for f in "$SRC"/js/*.js; do
+  case "$(basename "$f")" in
+    fs-worker.js) continue ;;
+  esac
+  cp "$f" "$DIST/js/"
+done
 
 echo "sync-frontend: staged $(find "$DIST" -type f | wc -l) files into $DIST/"
+echo "sync-frontend: js -> $(ls "$DIST/js" | tr '\n' ' ')"

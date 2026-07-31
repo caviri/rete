@@ -11,11 +11,13 @@
     "windows": [
       {
         "title": "Rete File Explorer",
-        "width": 1280,
-        "height": 840,
-        "minWidth": 720,
-        "minHeight": 480,
-        "dragDropEnabled": true
+        "width": 1180,
+        "height": 800,
+        "minWidth": 640,
+        "minHeight": 420,
+        "dragDropEnabled": true,
+        "center": true,
+        "resizable": true
       }
     ],
     "security": {
