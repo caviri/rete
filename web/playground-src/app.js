@@ -1162,7 +1162,16 @@ self.onmessage = function (e) {
   }
 
   function setDatasetHeader(title, tagline, key) {
-    const t = $("dsTitle"); if (t) t.textContent = title || "—";
+    // The title text lives in an inner span so the phone's condensed-header
+    // marquee (styles.css ≤560px) can slide it; everywhere else it's inert.
+    const t = $("dsTitle");
+    if (t) {
+      t.textContent = "";
+      const inner = document.createElement("span");
+      inner.className = "ds-title-inner";
+      inner.textContent = title || "—";
+      t.appendChild(inner);
+    }
     const g = $("dsTagline"); if (g) g.textContent = tagline || "";
     // Descriptive tag chips + license + capability chips under the tagline, so the
     // loaded dataset's description carries the same at-a-glance chips as the picker.
@@ -9183,6 +9192,20 @@ self.onmessage = function (e) {
         if (want !== condensed) {
           condensed = want;
           dsHeader.classList.toggle("condensed", want);
+          // Phone: a title too long for the one-line bar runs as a right-to-left
+          // marquee so the whole name stays readable without expanding. Only when
+          // it actually overflows; duration tracks the text length (~45 px/s).
+          let marquee = false;
+          if (want && isPhone()) {
+            const titleEl = dsHeader.querySelector(".ds-title");
+            const inner = titleEl && titleEl.querySelector(".ds-title-inner");
+            if (inner && titleEl && inner.offsetWidth > titleEl.clientWidth + 2) {
+              marquee = true;
+              inner.style.animationDuration =
+                Math.max(8, Math.round(inner.offsetWidth / 45)) + "s";
+            }
+          }
+          dsHeader.classList.toggle("title-marquee", marquee);
           updateGeometry();
         }
       };
