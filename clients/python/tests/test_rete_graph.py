@@ -296,6 +296,273 @@ def test_embedded_example_queries(tmp_path, nt_text):
     assert rete.open(path).examples() == examples
 
 
+# --- lazy quad dump -------------------------------------------------------
+
+
+def test_iter_quads_round_trips_the_default_graph(rete_bytes):
+    g = rete.open(rete_bytes)
+    quads = list(g.iter_quads())
+
+    assert len(quads) == g.quads == 6
+    assert all(graph is None for *_spo, graph in quads)
+
+    # Differential check against an independent engine path: the same triples
+    # the BGP evaluator sees, in the same canonical token form.
+    rows = g.query_raw("SELECT ?s ?p ?o WHERE { ?s ?p ?o }")["rows"]
+    assert sorted(tuple(spo) for *spo, _ in quads) == sorted(
+        (r["s"], r["p"], r["o"]) for r in rows
+    )
+
+    # Tokens are the lossless N-Triples surface form, so they re-parse.
+    by_predicate = {p: o for _s, p, o, _g in quads}
+    label = "<http://www.w3.org/2000/01/rdf-schema#label>"
+    labels = {rete.Term.parse(o).value for _s, p, o, _g in quads if p == label}
+    assert labels == {'Alice "the researcher"', "Bob"}
+    assert rete.Term.parse(by_predicate["<http://example.org/age>"]).to_python() == 42
+
+
+def test_iter_quads_covers_blank_node_and_quoted_triple_subjects():
+    """The walk is driven by subject ids, and blank nodes and RDF-star quoted
+    triples share that id space with IRIs — none of them may be skipped."""
+    exotic = (
+        "_:b0 <http://example.org/p> <http://example.org/o> .\n"
+        "_:b0 <http://example.org/q> _:b1 .\n"
+        "<http://example.org/s> <http://example.org/p> _:b1 .\n"
+        "<<<http://example.org/s> <http://example.org/p> <http://example.org/o>>>"
+        ' <http://example.org/certainty> "0.9" .\n'
+        "<http://example.org/s> <http://example.org/p> <http://example.org/o> .\n"
+    )
+    g = rete.open(rete.build(exotic))
+    quads = sorted(g.iter_quads())
+
+    assert len(quads) == g.quads == 5
+    kinds = {rete.Term.parse(s).kind for s, _p, _o, _g in quads}
+    assert kinds == {"iri", "bnode", "triple"}
+    rows = g.query_raw("SELECT ?s ?p ?o WHERE { ?s ?p ?o }")["rows"]
+    assert sorted((r["s"], r["p"], r["o"]) for r in rows) == [q[:3] for q in quads]
+
+
+def test_iter_quads_preserves_named_graphs(nq_bytes):
+    g = rete.open(nq_bytes)
+    quads = list(g.iter_quads())
+
+    assert len(quads) == g.quads == 5
+    by_graph = {}
+    for s, p, o, graph in quads:
+        by_graph.setdefault(graph, set()).add((s, p, o))
+    assert set(by_graph) == {
+        None,
+        "<http://example.org/g1>",
+        "<http://example.org/g2>",
+    }
+    assert len(by_graph[None]) == 2
+    assert len(by_graph["<http://example.org/g1>"]) == 2
+    assert by_graph["<http://example.org/g2>"] == {
+        (
+            "<http://example.org/bob>",
+            "<http://example.org/knows>",
+            "<http://example.org/alice>",
+        )
+    }
+
+    # Scoping: the default graph alone, one named graph alone (bare IRI or
+    # `<token>`), and an IRI that is not in the file.
+    assert {q[3] for q in g.iter_quads(rete.DEFAULT_GRAPH)} == {None}
+    assert len(list(g.iter_quads(rete.DEFAULT_GRAPH))) == 2
+    named = list(g.iter_quads("http://example.org/g1"))
+    assert len(named) == 2
+    assert named == list(g.iter_quads("<http://example.org/g1>"))
+    assert list(g.iter_quads("http://example.org/nope")) == []
+
+
+def test_iter_quads_batching_is_invisible(big_rete_bytes):
+    """Any batch size yields the same quads in the same order — batching is an
+    implementation detail of *how much* is resolved per call, never of what."""
+    g = rete.open(big_rete_bytes)
+    reference = list(g.iter_quads(batch_size=10_000))
+    assert len(reference) == g.quads
+    for batch_size in (1, 7, 999):
+        assert list(g.iter_quads(batch_size=batch_size)) == reference
+
+
+def test_iter_quads_memory_is_bounded_by_the_batch(big_rete_bytes):
+    """The point of the whole exercise: streaming N quads must not cost N
+    quads of RAM. tracemalloc counts Python allocations exactly, so this is a
+    measurement, not a vibe."""
+    import tracemalloc
+
+    g = rete.open(big_rete_bytes)
+    total = g.quads
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        assert sum(1 for _ in g.iter_quads(batch_size=1_000)) == total
+        small_batch = tracemalloc.get_traced_memory()[1]
+
+        tracemalloc.reset_peak()
+        assert sum(1 for _ in g.iter_quads(batch_size=20_000)) == total
+        big_batch = tracemalloc.get_traced_memory()[1]
+
+        tracemalloc.reset_peak()
+        materialized = list(g.iter_quads(batch_size=1_000))
+        whole_list = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    del materialized
+
+    # Streaming peaks at one batch; the list peaks at the whole graph. With
+    # 40 000 quads vs a 1 000-quad batch the gap is ~40×, so 5× is a wide
+    # margin that still fails loudly if laziness ever regresses.
+    assert small_batch * 5 < whole_list, (small_batch, whole_list)
+    # And the bound really is the batch: 20× the batch, ~20× the peak.
+    assert big_batch > small_batch * 4, (small_batch, big_batch)
+
+
+def test_iter_quads_over_a_lazy_remote_graph_is_ranged(serve_bytes, multiblock_rete_bytes):
+    """A lazy (HTTP range) open must stay ranged all the way through a dump —
+    the walk faults index tiles and dictionary chunks as it needs them, so it
+    never degenerates into "download the file, then iterate"."""
+    import itertools
+
+    url = serve_bytes(multiblock_rete_bytes)
+
+    peek = rete.open(url)
+    opened_bytes = peek.stats()["bytes"]
+    first = list(itertools.islice(peek.iter_quads(), 1))
+    assert len(first) == 1 and first[0][0].startswith("<http://example.org/s")
+    peeked_bytes = peek.stats()["bytes"]
+
+    full = rete.open(url)
+    assert sum(1 for _ in full.iter_quads()) == full.quads == 200_000
+    dumped_bytes = full.stats()["bytes"]
+
+    # Never a download: 200 000 quads come out of a fraction of the file.
+    assert dumped_bytes < len(multiblock_rete_bytes) / 2, dumped_bytes
+    # And the walk is incremental — one quad costs no more than all of them,
+    # and no more than the open that preceded it plus what it actually read.
+    assert opened_bytes <= peeked_bytes <= dumped_bytes
+
+
+def test_iter_quads_early_exit_stops_the_walk(big_rete_bytes):
+    """Abandoning the generator must abandon the scan: no thread to join, no
+    background work, nothing left running."""
+    import itertools
+
+    g = rete.open(big_rete_bytes)
+    walk = g.iter_quads(batch_size=16)
+    assert len(list(itertools.islice(walk, 3))) == 3
+    walk.close()  # a plain generator: closing it is the whole cleanup
+
+    # `break` out of a for-loop is the same thing, and the graph stays usable.
+    for i, _quad in enumerate(g.iter_quads()):
+        if i == 2:
+            break
+    assert sum(1 for _ in g.iter_quads()) == g.quads
+
+
+def test_iter_quads_matches_across_every_open_path(rete_bytes, tmp_path, serve_bytes):
+    path = tmp_path / "example.rete"
+    path.write_bytes(rete_bytes)
+
+    class MemReader:
+        def __init__(self, data):
+            self.data = data
+
+        def len(self):
+            return len(self.data)
+
+        def read_at(self, offset, length):
+            return self.data[offset : offset + length]
+
+    reference = sorted(rete.open(rete_bytes).iter_quads())
+    assert sorted(rete.open(path).iter_quads()) == reference
+    assert sorted(rete.open(serve_bytes(rete_bytes)).iter_quads()) == reference
+    assert sorted(rete.open(reader=MemReader(rete_bytes)).iter_quads()) == reference
+
+
+def test_to_nquads_round_trips_through_a_file(tmp_path, nq_bytes):
+    g = rete.open(nq_bytes)
+    out = tmp_path / "dump.nq"
+
+    assert g.to_nquads(out) == g.quads
+    text = out.read_text(encoding="utf-8")
+    assert len(text.splitlines()) == 5
+    assert text.endswith(" .\n")
+
+    # The real proof: rebuild from the dump and get the same graph back.
+    rebuilt = rete.open(rete.build(text, "nq"))
+    assert rebuilt.quads == g.quads
+    assert sorted(rebuilt.iter_quads()) == sorted(g.iter_quads())
+    assert rebuilt.graph_names() == g.graph_names()
+
+
+def test_to_nquads_accepts_text_and_binary_streams(nq_bytes, tmp_path):
+    import gzip
+    import io as _io
+
+    g = rete.open(nq_bytes)
+
+    text_sink = _io.StringIO()
+    assert g.to_nquads(text_sink) == 5
+    binary_sink = _io.BytesIO()
+    assert g.to_nquads(binary_sink) == 5
+    assert binary_sink.getvalue().decode("utf-8") == text_sink.getvalue()
+    assert not text_sink.closed  # a caller's stream is never closed for them
+
+    gz = tmp_path / "dump.nq.gz"
+    with gzip.open(gz, "wb") as fh:
+        g.to_nquads(fh)
+    with gzip.open(gz, "rt", encoding="utf-8") as fh:
+        assert fh.read() == text_sink.getvalue()
+
+
+def test_to_nquads_scopes_and_escapes(rete_bytes, nq_bytes):
+    # Default-graph-only scoping writes plain N-Triples lines (no graph term).
+    g = rete.open(nq_bytes)
+    only_default = _io_text(g, rete.DEFAULT_GRAPH)
+    assert len(only_default.splitlines()) == 2
+    assert "http://example.org/g1" not in only_default
+
+    # Escapes and language tags survive verbatim into the serialization.
+    text = _io_text(rete.open(rete_bytes), None)
+    assert '"Alice \\"the researcher\\""' in text
+    assert '"Bob"@en' in text
+
+
+def _io_text(graph, scope):
+    import io as _io
+
+    sink = _io.StringIO()
+    graph.to_nquads(sink, graph=scope)
+    return sink.getvalue()
+
+
+def test_to_nquads_streams_a_big_graph_in_bounded_memory(big_rete_bytes, tmp_path):
+    import tracemalloc
+
+    g = rete.open(big_rete_bytes)
+    out = tmp_path / "big.nq"
+
+    def peak_writing(batch_size):
+        tracemalloc.reset_peak()
+        assert g.to_nquads(out, batch_size=batch_size) == g.quads
+        return tracemalloc.get_traced_memory()[1]
+
+    tracemalloc.start()
+    try:
+        small_batch = peak_writing(1_000)
+        big_batch = peak_writing(20_000)
+    finally:
+        tracemalloc.stop()
+
+    written = out.stat().st_size
+    assert len(out.read_text(encoding="utf-8").splitlines()) == g.quads
+    # Peak Python memory tracks the batch, not the 5 MB serialization.
+    assert small_batch < written / 3, (small_batch, written)
+    assert big_batch > small_batch * 3, (small_batch, big_batch)
+
+
 @pytest.mark.skipif(
     not os.environ.get("RETE_REMOTE_URL"),
     reason="set RETE_REMOTE_URL to a public .rete URL for the live smoke test",

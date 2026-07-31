@@ -18,8 +18,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use rete_core::{
     eval_query, eval_query_reasoned, results_envelope_json, schema_classes, schema_summary,
-    validate_shacl, BlockCacheReader, CountingReader, DataGraph, RangeReader, Rete, ReteGraph,
-    ShaclShapes, DEFAULT_BLOCK,
+    validate_shacl, BlockCacheReader, CountingReader, DataGraph, IndexPermutation, RangeReader,
+    Rete, ReteGraph, ShaclShapes, DEFAULT_BLOCK,
 };
 #[cfg(not(target_os = "emscripten"))]
 use rete_core::{parse_sparql_json_results, Binding, ServiceClient};
@@ -34,6 +34,18 @@ const JSON_SCHEMA_VERSION: u8 = 1;
 /// Cap on a SERVICE response body — a runaway endpoint must not exhaust RAM.
 #[cfg(not(target_os = "emscripten"))]
 const MAX_SERVICE_RESPONSE: u64 = 256 * 1024 * 1024;
+
+/// Quads resolved per [`Graph::dump_batch`] call — the memory bound of the
+/// whole lazy dump path (`Graph.iter_quads` / `Graph.to_nquads` upstream).
+/// 10 000 triples of typical terms is a few MB of Python objects in flight:
+/// small enough to be noise beside the interpreter, large enough that the
+/// per-call cost (one GIL round trip, one coalesced dictionary prefetch)
+/// amortizes to nothing. The caller may override it.
+const DUMP_BATCH: usize = 10_000;
+
+/// One [`Graph::dump_batch`] answer: the batch's `(s, p, o)` term tokens, the
+/// cursor to resume from, and whether the graph is exhausted.
+type DumpBatch = (Vec<(String, String, String)>, u32, bool);
 
 /// `SERVICE <endpoint> { … }` transport: SPARQL Protocol over blocking HTTP,
 /// the native twin of the CLI's `HttpServiceClient`. Native-only — a SERVICE
@@ -136,6 +148,130 @@ impl Graph {
     fn fresh_verdict(&self) {
         self.rete.reset_load_failures();
     }
+
+    /// Resolve one bounded slice of a graph's triples — the engine-side half of
+    /// the lazy dump. Returns `(triples, next_cursor, done)`.
+    ///
+    /// The cursor is a **subject id**, and that is the whole trick. The engine's
+    /// constant-memory walk (`Rete::dump_each`) is *push*-based: it drives the
+    /// scan itself and hands each triple to a callback. Python wants a *pull*
+    /// API (a generator), and inverting push into pull needs the scan's stack
+    /// held between calls — either a thread (impossible on the Pyodide wheel,
+    /// which has no threads) or a self-referential `#[pyclass]` holding an
+    /// iterator that borrows the `Rete` it is stored next to (`unsafe`, plus an
+    /// `Arc` refactor of this struct). Both are a lot of machinery for a dump.
+    ///
+    /// So instead the scan is made *resumable*: SPO tiles are ordered by
+    /// subject id, so "all triples of subject `sid`, for `sid` ascending" visits
+    /// exactly the same tiles in exactly the same order as the full scan, and
+    /// the entire resume state collapses to one `u32` the caller keeps. No
+    /// thread, no `unsafe`, no borrow held across calls, works identically on
+    /// the Pyodide build — and unlike a `(offset, limit)` API it is O(n) overall
+    /// rather than O(n²/limit), because nothing is ever re-scanned.
+    ///
+    /// Memory is bounded by `max_quads` (plus, at most, one subject's fan-out —
+    /// a batch is cut at a subject boundary, never inside one). Work per call is
+    /// bounded too, by a probe budget: a sparse named graph whose few subjects
+    /// are spread over a huge id space returns early with `done = false` instead
+    /// of grinding through absent ids, and the caller simply asks again.
+    fn dump_batch_inner(&self, graph: Option<&str>, cursor: u32, max_quads: usize) -> DumpBatch {
+        let index = match graph {
+            None => self.rete.default_index(),
+            // An unknown graph IRI is an empty dump, not an error — same as
+            // `Rete::dump_each`.
+            Some(g) => match self.rete.graph_index(g) {
+                Some(i) => i,
+                None => return (Vec::new(), cursor, true),
+            },
+        };
+        // Tile leading ranges are known WITHOUT fetching a tile (they live in
+        // the section directory), so both the span and the gap jumps below are
+        // free on a lazy/remote open.
+        let tiles = index.tile_sections()[IndexPermutation::Spo.section_index()];
+        let (Some(first), Some(last)) = (
+            tiles.first().map(|t| t.leading_range().0),
+            tiles.last().map(|t| t.leading_range().1),
+        ) else {
+            return (Vec::new(), cursor, true); // empty graph
+        };
+
+        let mut sid = cursor.max(first);
+        let mut probes = max_quads.saturating_mul(4).max(1 << 16);
+        let mut ids: Vec<(u32, u32, u32)> = Vec::new();
+        let mut exhausted = false;
+        while sid <= last && probes > 0 {
+            probes -= 1;
+            let hits = index.match_pattern((Some(sid), None, None));
+            if hits.is_empty() {
+                // No triples at this id. If it also falls in a hole BETWEEN
+                // tiles, jump straight to the next tile's first id instead of
+                // stepping through the gap one absent id at a time.
+                match next_tile_start(tiles, sid) {
+                    None => {
+                        exhausted = true;
+                        break;
+                    }
+                    Some(next) if next > sid => {
+                        sid = next;
+                        continue;
+                    }
+                    Some(_) => {}
+                }
+            } else {
+                ids.extend(hits);
+            }
+            if sid == u32::MAX {
+                exhausted = true;
+                break;
+            }
+            sid += 1;
+            // Cut on a subject boundary: `max_quads` is the floor of a batch,
+            // never a hard truncation, so no subject is ever split across two
+            // batches (which would force a re-scan to resume).
+            if ids.len() >= max_quads {
+                break;
+            }
+        }
+        let done = exhausted || sid > last;
+
+        // One coalesced dictionary fault for the whole batch, then resolve.
+        // Deliberately NOT `Dictionary::prefetch_all` (what `dump_each` uses):
+        // on a lazy open that would pull the *entire* dictionary — gigabytes on
+        // a big file — before the first quad, so `islice(g.iter_quads(), 5)`
+        // would cost as much as a full dump. Per-batch prefetch keeps a partial
+        // walk proportional to what it actually read.
+        let dict = self.rete.dictionary();
+        if !ids.is_empty() {
+            let mut nodes = Vec::with_capacity(ids.len() * 2);
+            let mut preds = Vec::with_capacity(ids.len());
+            for &(s, p, o) in &ids {
+                nodes.push(dict.subject_node(s));
+                nodes.push(dict.object_node(o));
+                preds.push(p);
+            }
+            dict.prefetch_terms(&nodes, &preds);
+        }
+        let triples = ids
+            .into_iter()
+            .filter_map(|(s, p, o)| {
+                Some((
+                    dict.subject_term(s)?,
+                    dict.predicate_term(p)?,
+                    dict.object_term(o)?,
+                ))
+            })
+            .collect();
+        (triples, sid, done)
+    }
+}
+
+/// The first subject id at or after `sid` that any SPO tile can hold, or `None`
+/// when `sid` is past the last tile. Tiles are ascending by leading range, so
+/// this is a binary search; it returns `sid` itself when a tile already covers
+/// it (an ordinary "this subject has no triples" step).
+fn next_tile_start(tiles: &[rete_core::index::Tile], sid: u32) -> Option<u32> {
+    let i = tiles.partition_point(|t| t.leading_range().1 < sid);
+    tiles.get(i).map(|t| t.leading_range().0.max(sid))
 }
 
 #[pymethods]
@@ -191,6 +327,31 @@ impl Graph {
             &out,
             &format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#),
         ))
+    }
+
+    /// One bounded slice of a lazy triple dump — the primitive the pure-Python
+    /// `Graph.iter_quads()` / `Graph.to_nquads()` drive in a loop.
+    ///
+    /// `graph` is `None` for the default graph or a named-graph token
+    /// (`<iri>`); `cursor` is 0 on the first call and the value returned by the
+    /// previous one afterwards. Returns `(triples, next_cursor, done)` where
+    /// `triples` holds at most `max_quads` (+ one subject's fan-out) canonical
+    /// N-Triples term tokens. See `Graph::dump_batch_inner` for why the cursor
+    /// is a subject id.
+    #[pyo3(signature = (graph=None, cursor=0, max_quads=DUMP_BATCH))]
+    fn dump_batch(
+        &self,
+        py: Python<'_>,
+        graph: Option<&str>,
+        cursor: u32,
+        max_quads: usize,
+    ) -> PyResult<DumpBatch> {
+        self.fresh_verdict();
+        let out = py.allow_threads(|| self.dump_batch_inner(graph, cursor, max_quads.max(1)));
+        // A batch computed over a half-fetched index/dictionary would silently
+        // drop quads from the dump; refuse it like every other entry point.
+        self.incomplete_guard()?;
+        Ok(out)
     }
 
     /// Header summary as JSON:
@@ -481,6 +642,9 @@ fn _rete(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open_reader, m)?)?;
     m.add_function(wrap_pyfunction!(build, m)?)?;
     m.add_function(wrap_pyfunction!(build_dataset, m)?)?;
+    // Single source of truth for the dump batch size, so the pure-Python
+    // wrapper's default cannot drift from the binding's.
+    m.add("DUMP_BATCH", DUMP_BATCH)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     // The binding's version tracks the binding; this reports the engine actually
     // compiled into the wheel, which is what "does my install support X?" means.

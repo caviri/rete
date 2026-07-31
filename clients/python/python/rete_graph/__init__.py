@@ -23,7 +23,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 from . import _rete
 
@@ -31,7 +31,37 @@ __version__ = _rete.__version__
 #: Version of the Rust engine compiled into this wheel. Tracks `__version__`'s
 #: major.minor; the patch components move independently.
 __engine_version__ = _rete.__engine_version__
-__all__ = ["open", "build", "Builder", "Graph", "Term"]
+__all__ = ["open", "build", "Builder", "Graph", "Term", "DEFAULT_GRAPH"]
+
+
+class _DefaultGraph:
+    """Sentinel for ``graph=``: *the unnamed default graph only*.
+
+    ``graph=None`` means "the whole dataset" (default graph + every named
+    graph), so the default graph on its own needs a value of its own —
+    :data:`DEFAULT_GRAPH`.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return "rete_graph.DEFAULT_GRAPH"
+
+
+#: Pass as ``graph=`` to restrict to the unnamed default graph (see
+#: :meth:`Graph.iter_quads`).
+DEFAULT_GRAPH = _DefaultGraph()
+
+#: Quads resolved per underlying Rust call by :meth:`Graph.iter_quads` and
+#: :meth:`Graph.to_nquads` — the memory ceiling of both. Defined by the
+#: binding so the two cannot drift apart.
+_BATCH = _rete.DUMP_BATCH
+
+#: Serialized N-Quads lines :meth:`Graph.to_nquads` joins per ``write`` call.
+#: Deliberately small and independent of ``batch_size``: joining only exists to
+#: amortize write calls, and it costs a temporary as large as the run itself,
+#: so a big buffer would inflate peak memory for no throughput.
+_NQ_WRITE_LINES = 1024
 
 _XSD = "http://www.w3.org/2001/XMLSchema#"
 _INT_TYPES = frozenset(
@@ -162,6 +192,39 @@ def _parse_literal(token: str) -> Term:
 
 Row = Dict[str, Term]
 Triple = Tuple[Term, Term, Term]
+#: One statement from :meth:`Graph.iter_quads`: subject, predicate, object as
+#: N-Triples term tokens, plus the graph token (``None`` = default graph).
+Quad = Tuple[str, str, str, Optional[str]]
+
+
+class _EncodingWriter:
+    """Adapts a binary stream to ``write(str)``, encoding as UTF-8 — what
+    N-Quads requires, and what lets :meth:`Graph.to_nquads` accept
+    ``io.BytesIO`` / ``gzip.open(...)`` alongside text streams."""
+
+    __slots__ = ("_raw",)
+
+    def __init__(self, raw: Any):
+        self._raw = raw
+
+    def write(self, text: str) -> int:
+        return self._raw.write(text.encode("utf-8"))
+
+
+def _open_text_sink(dest: Any) -> Tuple[Any, Any]:
+    """``(writer, close)`` for a path or an already-open text/binary stream.
+
+    Only a stream this function opened is closed again — a caller's
+    ``sys.stdout`` or ``StringIO`` is left open.
+    """
+    if hasattr(dest, "write"):
+        try:
+            dest.write("")  # cheap probe: a no-op on text, TypeError on binary
+        except TypeError:
+            return _EncodingWriter(dest), lambda: None
+        return dest, lambda: None
+    handle = io.open(os.fspath(dest), "w", encoding="utf-8", newline="\n")
+    return handle, handle.close
 
 
 class Graph:
@@ -214,6 +277,102 @@ class Graph:
             for v in vars_
         }
         return pandas.DataFrame(data, columns=vars_)
+
+    # -- streaming the whole graph out --------------------------------------
+
+    def iter_quads(
+        self,
+        graph: Union[str, "_DefaultGraph", None] = None,
+        *,
+        batch_size: int = _BATCH,
+    ) -> Iterator[Quad]:
+        """Lazily yield every quad as ``(s, p, o, g)`` **N-Triples tokens**.
+
+        A generator, not a list: the graph is walked in slices of
+        ``batch_size`` quads (default ``10_000``), so the quads in flight are
+        one slice's worth however large the file is — flat in the quad count,
+        where ``list(g.iter_quads())`` is linear in it. (Total process memory
+        also carries the engine's faulted index tiles and dictionary chunks,
+        which grow with the *file's* size, not with how far the walk has got.)
+        Abandoning the iterator (``break``, :func:`itertools.islice`) stops the
+        walk immediately; on a remote graph only the byte ranges actually
+        consumed are fetched.
+
+        ``s``/``p``/``o`` are canonical N-Triples tokens (``<iri>``,
+        ``"lit"@en``, ``"lit"^^<dt>``, ``_:b0``) — the lossless surface form,
+        ready to concatenate into N-Triples/N-Quads or hand to another parser.
+        Use :meth:`Term.parse` for structure. ``g`` is ``None`` for the default
+        graph, else the named graph's ``<iri>`` token.
+
+        ``graph`` selects the scope: ``None`` (default) walks the **whole
+        dataset** — default graph first, then each named graph;
+        :data:`DEFAULT_GRAPH` walks only the unnamed default graph; an IRI
+        (bare or ``<bracketed>``) walks only that named graph. An unknown IRI
+        yields nothing.
+
+            for subject, predicate, obj, named_graph in g.iter_quads():
+                ...
+
+        ``batch_size`` is the granularity of the walk, so it is also what the
+        *first* quad costs: peeking at a huge remote graph is much cheaper with
+        a small batch (on a 221 MB / 15.9 M-quad file, five quads cost 1.1 MB
+        of range reads at ``batch_size=1`` versus 44 MB at the default), while
+        a full walk is fastest at the default. Quads are identical either way.
+        """
+        for name in self._dump_targets(graph):
+            cursor, done = 0, False
+            while not done:
+                triples, cursor, done = self._g.dump_batch(name, cursor, batch_size)
+                for s, p, o in triples:
+                    yield (s, p, o, name)
+
+    def to_nquads(
+        self,
+        dest: Any,
+        *,
+        graph: Union[str, "_DefaultGraph", None] = None,
+        batch_size: int = _BATCH,
+    ) -> int:
+        """Serialize the graph as N-Quads to ``dest``; return the quad count.
+
+        ``dest`` is a path (written UTF-8) or any open stream, text or binary —
+        including ``io.StringIO``, ``sys.stdout``, and ``gzip.open(...)``.
+        Streams the graph through :meth:`iter_quads`, so a file far larger than
+        RAM serializes in bounded memory. N-Quads is the lossless interchange
+        format every RDF toolchain reads, which makes handing a ``.rete`` to
+        rdflib, Oxigraph, or Jena a three-liner:
+
+            g.to_nquads("out.nq")
+            store = pyoxigraph.Store()
+            store.bulk_load(path="out.nq", format=pyoxigraph.RdfFormat.N_QUADS)
+        """
+        stream, close = _open_text_sink(dest)
+        count = 0
+        try:
+            # Join lines in fixed-size runs: one write call per few thousand
+            # quads instead of one per quad, without letting the formatted text
+            # in flight outgrow the quads that produced it.
+            lines: List[str] = []
+            for s, p, o, g in self.iter_quads(graph, batch_size=batch_size):
+                lines.append(f"{s} {p} {o} .\n" if g is None else f"{s} {p} {o} {g} .\n")
+                count += 1
+                if len(lines) >= _NQ_WRITE_LINES:
+                    stream.write("".join(lines))
+                    lines.clear()
+            if lines:
+                stream.write("".join(lines))
+        finally:
+            close()
+        return count
+
+    def _dump_targets(self, graph: Union[str, "_DefaultGraph", None]) -> List[Optional[str]]:
+        """The graphs one dump covers, as engine tokens (``None`` = default)."""
+        if isinstance(graph, _DefaultGraph):
+            return [None]
+        if graph is None:
+            return [None] + list(self._g.graph_names())
+        # Accept a bare IRI as well as the `<iri>` token the engine stores.
+        return [graph if graph.startswith(("<", "_:")) else f"<{graph}>"]
 
     # -- validation --------------------------------------------------------
 
