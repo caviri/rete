@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rete file explorer — browse a graph like an archive</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">▤</span>
+    <div>
+      <h1>rete file explorer</h1>
+      <p>an archive browser for <code>.rete</code> graphs — folders, files, and extract</p>
+    </div>
+  </div>
+  <div class="opener">
+    <input id="url" type="text" placeholder="https://data.graphplaza.com/…/x.rete" spellcheck="false">
+    <button id="url-open">Open URL</button>
+    <label class="filebtn">Open file…<input id="file" type="file" accept=".rete" hidden></label>
+  </div>
+</header>
+
+<section id="empty" class="empty">
+  <div id="drop" class="dropzone">
+    <p class="dz-big">Drop a <code>.rete</code> here</p>
+    <p class="dz-small">or pick one below — the remote ones are never downloaded, only range-read</p>
+  </div>
+  <div id="catalog" class="catalog"></div>
+  <div class="explain">
+    <h3>What this is</h3>
+    <p>
+      A <code>.rete</code> file is a whole RDF graph in one immutable, range-queryable file.
+      This page treats it the way an archive tool treats a <code>.zip</code>: it opens the
+      table of contents, lets you walk into folders, and extracts what you select as real
+      files — CSV, JSON, N-Triples.
+    </p>
+    <p>
+      RDF is a graph, not a tree, so there is no single honest folder hierarchy. There are
+      several, and you switch between them: <b>Types</b> (classes as folders),
+      <b>Namespace</b> (the IRI's own path), <b>Predicates</b> (one table per relation),
+      <b>Graphs</b> (named graphs as volumes), and <b>Sections</b> (the actual bytes on disk).
+    </p>
+    <p class="warn">
+      Experiment. The tree is lazy and paginated because a class can hold fifty million
+      instances; the counter in the footer shows exactly how many bytes browsing cost you.
+    </p>
+  </div>
+</section>
+
+<main id="window" class="window" hidden>
+  <div class="archivebar">
+    <span class="ab-icon">▤</span>
+    <span id="archive-name" class="ab-name"></span>
+    <span id="archive-facts" class="ab-facts"></span>
+  </div>
+
+  <div id="views" class="views"></div>
+  <div class="toolbar">
+    <p id="view-hint" class="hint"></p>
+    <div class="tools">
+      <label class="tool">name by
+        <select id="labelpred" title="which predicate supplies the display name"></select>
+      </label>
+      <div class="seg" id="layout">
+        <button data-mode="tree" class="on" title="nested tree">☰ Tree</button>
+        <button data-mode="icons" title="one folder at a time, as tiles">▦ Icons</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panes">
+    <div class="treepane">
+      <div id="crumbs" class="crumbs" hidden></div>
+      <div id="tree" class="tree"></div>
+    </div>
+    <div class="previewpane">
+      <div class="previewhead">
+        <div>
+          <h2 id="preview-title"></h2>
+          <p id="preview-sub"></p>
+        </div>
+        <div id="downloads" class="downloads"></div>
+      </div>
+      <div id="preview" class="preview"></div>
+    </div>
+  </div>
+
+  <div id="extract" class="extractbar"></div>
+</main>
+
+<footer class="statusbar">
+  <span id="status">booting…</span>
+  <span id="traffic" class="traffic"></span>
+</footer>
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>
