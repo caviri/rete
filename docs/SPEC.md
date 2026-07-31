@@ -75,6 +75,10 @@ metadata block to chase.
 
 <img src="img/file-layout.svg" alt="On-disk layout: a 1 KB HEADER pointing to DICTIONARY, INDEX, PYRAMID META, optional NAMED GRAPHS, and a FOOTER with the RETE magic.">
 
+<img src="img/rete-anatomy.svg" alt="The same layout on a real specimen, dblp.rete: 1 KiB header with the section directory, 731-byte card, front-coded dictionary (418 MB, 18%), six tiled permutation indexes with per-tile synopses (1.85 GB, 82%), pyramid summary, and the trailing RETE magic.">
+
+*The layout on a real specimen (`dblp.rete`, 179 M triples): the dictionary and the six permutation indexes carry nearly all the bytes; everything a reader needs to route a query — header, directory, card — fits in the first two range requests.*
+
 *The header is the directory: a single 1 KB read carries the offset and length of every section. The ASCII below is the precise reference.*
 
 ```
