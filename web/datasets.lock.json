@@ -17,6 +17,14 @@
       "contentHash": "32b5bd3e27fb9bae91ee21f789e4e339",
       "size": 1161874550,
       "cardUrl": "https://data.graphplaza.com/hugging-face/hugging-face.rete"
+    },
+    {
+      "key": "mirbase",
+      "url": "https://data.graphplaza.com/mirbase/mirbase.rete",
+      "formatVersion": 5,
+      "contentHash": "1fc439ffdc08c606dd3a4694cb656449",
+      "size": 41051941,
+      "cardUrl": "https://data.graphplaza.com/mirbase/mirbase.rete"
     }
   ]
 }
