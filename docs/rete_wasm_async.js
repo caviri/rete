@@ -25,19 +25,6 @@ let wasm_bindgen = (function(exports) {
             wasm.__wbg_graph_free(ptr, 0);
         }
         /**
-         * See [`card`] — the Dataset Card of the resident file.
-         * @returns {string | undefined}
-         */
-        card() {
-            const ret = wasm.graph_card(this.__wbg_ptr);
-            let v1;
-            if (ret[0] !== 0) {
-                v1 = getStringFromWasm0(ret[0], ret[1]).slice();
-                wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-            }
-            return v1;
-        }
-        /**
          * See [`file_layout`].
          * @returns {string}
          */
@@ -463,23 +450,6 @@ let wasm_bindgen = (function(exports) {
             wasm.__wbg_remotegraph_free(ptr, 0);
         }
         /**
-         * See [`card_url`] — the Dataset Card, over the resident handle's reader
-         * (so the header range it already fetched is served from the block cache).
-         * @returns {string | undefined}
-         */
-        card() {
-            const ret = wasm.remotegraph_card(this.__wbg_ptr);
-            if (ret[3]) {
-                throw takeObject(ret[2]);
-            }
-            let v1;
-            if (ret[0] !== 0) {
-                v1 = getStringFromWasm0(ret[0], ret[1]).slice();
-                wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-            }
-            return v1;
-        }
-        /**
          * The file's content hash (blake3-16, hex). The worker keys its session
          * cache by this rather than the URL, so two URLs of the same file share the
          * cache — and it's the stable key a future IndexedDB block store (L3) needs
@@ -491,44 +461,6 @@ let wasm_bindgen = (function(exports) {
             let deferred1_1;
             try {
                 const ret = wasm.remotegraph_content_hash(this.__wbg_ptr);
-                deferred1_0 = ret[0];
-                deferred1_1 = ret[1];
-                return getStringFromWasm0(ret[0], ret[1]);
-            } finally {
-                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-            }
-        }
-        /**
-         * See [`graph_names`].
-         * @returns {string}
-         */
-        graph_names() {
-            let deferred2_0;
-            let deferred2_1;
-            try {
-                const ret = wasm.remotegraph_graph_names(this.__wbg_ptr);
-                var ptr1 = ret[0];
-                var len1 = ret[1];
-                if (ret[3]) {
-                    ptr1 = 0; len1 = 0;
-                    throw takeObject(ret[2]);
-                }
-                deferred2_0 = ptr1;
-                deferred2_1 = len1;
-                return getStringFromWasm0(ptr1, len1);
-            } finally {
-                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-            }
-        }
-        /**
-         * See [`info`] — read from the resident header, no extra fetch.
-         * @returns {string}
-         */
-        info() {
-            let deferred1_0;
-            let deferred1_1;
-            try {
-                const ret = wasm.remotegraph_info(this.__wbg_ptr);
                 deferred1_0 = ret[0];
                 deferred1_1 = ret[1];
                 return getStringFromWasm0(ret[0], ret[1]);
@@ -643,63 +575,6 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
-         * See [`schema_url`] — the **baked** schema pyramid over the resident
-         * handle. Deliberately never falls back to the scanning [`schema`]: that
-         * would drag the whole remote file across the wire.
-         * @returns {string}
-         */
-        schema() {
-            let deferred2_0;
-            let deferred2_1;
-            try {
-                const ret = wasm.remotegraph_schema(this.__wbg_ptr);
-                var ptr1 = ret[0];
-                var len1 = ret[1];
-                if (ret[3]) {
-                    ptr1 = 0; len1 = 0;
-                    throw takeObject(ret[2]);
-                }
-                deferred2_0 = ptr1;
-                deferred2_1 = len1;
-                return getStringFromWasm0(ptr1, len1);
-            } finally {
-                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-            }
-        }
-        /**
-         * See [`shacl_url`] — validate over the resident handle. The default graph
-         * validates lazily against the index (only the shapes' targets are
-         * fetched), so a shape over a huge remote file stays cheap.
-         * @param {string} shapes_turtle
-         * @param {string | null | undefined} graph
-         * @param {string} format
-         * @returns {string}
-         */
-        shacl(shapes_turtle, graph, format) {
-            let deferred5_0;
-            let deferred5_1;
-            try {
-                const ptr0 = passStringToWasm0(shapes_turtle, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-                const len0 = WASM_VECTOR_LEN;
-                var ptr1 = isLikeNone(graph) ? 0 : passStringToWasm0(graph, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-                var len1 = WASM_VECTOR_LEN;
-                const ptr2 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-                const len2 = WASM_VECTOR_LEN;
-                const ret = wasm.remotegraph_shacl(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
-                var ptr4 = ret[0];
-                var len4 = ret[1];
-                if (ret[3]) {
-                    ptr4 = 0; len4 = 0;
-                    throw takeObject(ret[2]);
-                }
-                deferred5_0 = ptr4;
-                deferred5_1 = len4;
-                return getStringFromWasm0(ptr4, len4);
-            } finally {
-                wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
-            }
-        }
-        /**
          * `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this
          * session opened. The worker diffs successive calls to report a single
          * query's traffic (a fully cached re-run adds ~0).
@@ -792,55 +667,6 @@ let wasm_bindgen = (function(exports) {
         return v3;
     }
     exports.build = build;
-
-    /**
-     * The embedded **Dataset Card** — the file's own self-description (title,
-     * description, license, provenance, counts, example queries) as the JSON text
-     * it was written with, or `undefined` when the file carries none. Reads the
-     * metadata section straight out of the buffer.
-     * @param {Uint8Array} bytes
-     * @returns {string | undefined}
-     */
-    function card(bytes) {
-        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.card(ptr0, len0);
-        if (ret[3]) {
-            throw takeObject(ret[2]);
-        }
-        let v2;
-        if (ret[0] !== 0) {
-            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v2;
-    }
-    exports.card = card;
-
-    /**
-     * The embedded **Dataset Card of a remote `.rete`**, in **two small range
-     * requests**: the header, then the metadata section it points at — never the
-     * dictionary, index, or pyramid. This is the index-free CARD tier: a client
-     * learns what a multi-gigabyte graph *is* for a few KB. `undefined` when the
-     * file carries no card. Worker-only (synchronous XHR).
-     * @param {string} url
-     * @returns {string | undefined}
-     */
-    function card_url(url) {
-        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.card_url(ptr0, len0);
-        if (ret[3]) {
-            throw takeObject(ret[2]);
-        }
-        let v2;
-        if (ret[0] !== 0) {
-            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v2;
-    }
-    exports.card_url = card_url;
 
     /**
      * **Index-free schema coherence (Tier-0)** over an in-memory `.rete`: read only
@@ -998,12 +824,10 @@ let wasm_bindgen = (function(exports) {
     /**
      * Parse the fixed-size header and report the byte ranges a *progressive*
      * client needs for the overview — the dictionary and the pyramid summary — plus
-     * the (large) index range it can skip, and the metadata (Dataset Card) range.
-     * JSON: `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset",
-     * "indexLen","metadataOffset","metadataLen" }`.
+     * the (large) index range it can skip. JSON:
+     * `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset","indexLen" }`.
      * The browser fetches bytes `0..HEADER_LEN`, calls this, then range-fetches only the
-     * dict + pyramid — never the index. A host with its own byte reader (Node over a
-     * local file, say) can use `metadataOffset`/`metadataLen` to read just the card.
+     * dict + pyramid — never the index.
      * @param {Uint8Array} head
      * @returns {string}
      */
@@ -1943,7 +1767,15 @@ let wasm_bindgen = (function(exports) {
             d.setInt32(__reteAD + 4, __reteAD + 8 + SIZE, true);
           }
         }
-        function __reteStr(ptr, len) { return new TextDecoder().decode(new Uint8Array(wasm.memory.buffer).slice(ptr, ptr + len)); }
+        // wasm32 pointers arrive through `i32` imports, so anything the engine
+        // allocates above 2 GiB reaches JS SIGN-EXTENDED — a negative number that
+        // makes `mem.set(b, ptr)` throw `RangeError: offset is out of bounds`. The
+        // heap really does cross 2 GiB on a big remote scan (measured at 2050 MB on
+        // wikidata-1GB), and because wasm memory never shrinks, every later read in
+        // that worker fails too. `>>> 0` restores the unsigned value; every pointer
+        // crossing this boundary goes through it.
+        function __reteP(ptr) { return ptr >>> 0; }
+        function __reteStr(ptr, len) { const p = __reteP(ptr); return new TextDecoder().decode(new Uint8Array(wasm.memory.buffer).slice(p, p + (len >>> 0))); }
         // cache:'no-store' is REQUIRED on WebKit (desktop Safari, and iOS when a user
         // forces concurrent reads): WebKit caches/coalesces concurrent same-URL Range
         // requests (this Promise.all fires many at once) and can hand back a
@@ -1956,7 +1788,8 @@ let wasm_bindgen = (function(exports) {
           const url = __reteStr(urlPtr, urlLen);
           const dv = new DataView(wasm.memory.buffer);
           const ranges = [];
-          for (let i = 0; i < n; i++) ranges.push([Number(dv.getBigUint64(offsPtr + i*8, true)), dv.getUint32(lensPtr + i*4, true)]);
+          const offsB = __reteP(offsPtr), lensB = __reteP(lensPtr);
+            for (let i = 0; i < n; i++) ranges.push([Number(dv.getBigUint64(offsB + i*8, true)), dv.getUint32(lensB + i*4, true)]);
           // Retry each range once after a short pause: this Promise.all fires a
           // BURST of concurrent fetches, and a single transient miss ("Failed to
           // fetch" on a flaky link, a 5xx blip) used to fail the whole query —
@@ -1971,7 +1804,7 @@ let wasm_bindgen = (function(exports) {
               });
           const bufs = await Promise.all(ranges.map((r) => one(r, 0)));
           const mem = new Uint8Array(wasm.memory.buffer);
-          let pos = dstPtr, total = 0;
+          let pos = __reteP(dstPtr), total = 0;
           // Each range MUST land at its fixed slot (cumulative REQUESTED length), and
           // its body MUST be exactly the requested length. A short/over response (the
           // symptom of the WebKit caching bug above) would otherwise misalign every
@@ -2007,7 +1840,7 @@ let wasm_bindgen = (function(exports) {
               } catch (e) { /* retry the whole probe */ }
             }
           }
-          new DataView(wasm.memory.buffer).setBigUint64(outPtr, BigInt(total > 0 ? total : 0), true);
+          new DataView(wasm.memory.buffer).setBigUint64(__reteP(outPtr), BigInt(total > 0 ? total : 0), true);
           return total > 0 ? 1 : 0;
         }
         function __reteSuspend(makePromise) {

@@ -70,6 +70,24 @@ function g0() {
       String(e.stderr || e.stdout || e).slice(-160),
     );
   }
+
+  // The asyncify glue must normalize every wasm pointer it dereferences: above
+  // 2 GiB an `i32` import arrives sign-extended and `mem.set` throws. The browser
+  // matrix cannot see this — its async check runs a small dataset, and the bug
+  // needs a heap past 2 GiB (~150 MB of range reads). Assert the property instead.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_async_pointer_safety.mjs`, {
+      encoding: "utf8",
+    });
+    record("G0", "async glue pointer safety (>2 GiB heaps)", /\[G0\]/.test(out), out.slice(-160));
+  } catch (e) {
+    record(
+      "G0",
+      "async glue pointer safety (>2 GiB heaps)",
+      false,
+      String(e.stderr || e.stdout || e).slice(-160),
+    );
+  }
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/check_social_previews.mjs`, {
       encoding: "utf8",
