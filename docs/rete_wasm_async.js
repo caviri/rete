@@ -25,6 +25,19 @@ let wasm_bindgen = (function(exports) {
             wasm.__wbg_graph_free(ptr, 0);
         }
         /**
+         * See [`card`] — the Dataset Card of the resident file.
+         * @returns {string | undefined}
+         */
+        card() {
+            const ret = wasm.graph_card(this.__wbg_ptr);
+            let v1;
+            if (ret[0] !== 0) {
+                v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+                wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+            }
+            return v1;
+        }
+        /**
          * See [`file_layout`].
          * @returns {string}
          */
@@ -450,6 +463,23 @@ let wasm_bindgen = (function(exports) {
             wasm.__wbg_remotegraph_free(ptr, 0);
         }
         /**
+         * See [`card_url`] — the Dataset Card, over the resident handle's reader
+         * (so the header range it already fetched is served from the block cache).
+         * @returns {string | undefined}
+         */
+        card() {
+            const ret = wasm.remotegraph_card(this.__wbg_ptr);
+            if (ret[3]) {
+                throw takeObject(ret[2]);
+            }
+            let v1;
+            if (ret[0] !== 0) {
+                v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+                wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+            }
+            return v1;
+        }
+        /**
          * The file's content hash (blake3-16, hex). The worker keys its session
          * cache by this rather than the URL, so two URLs of the same file share the
          * cache — and it's the stable key a future IndexedDB block store (L3) needs
@@ -461,6 +491,44 @@ let wasm_bindgen = (function(exports) {
             let deferred1_1;
             try {
                 const ret = wasm.remotegraph_content_hash(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * See [`graph_names`].
+         * @returns {string}
+         */
+        graph_names() {
+            let deferred2_0;
+            let deferred2_1;
+            try {
+                const ret = wasm.remotegraph_graph_names(this.__wbg_ptr);
+                var ptr1 = ret[0];
+                var len1 = ret[1];
+                if (ret[3]) {
+                    ptr1 = 0; len1 = 0;
+                    throw takeObject(ret[2]);
+                }
+                deferred2_0 = ptr1;
+                deferred2_1 = len1;
+                return getStringFromWasm0(ptr1, len1);
+            } finally {
+                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+            }
+        }
+        /**
+         * See [`info`] — read from the resident header, no extra fetch.
+         * @returns {string}
+         */
+        info() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.remotegraph_info(this.__wbg_ptr);
                 deferred1_0 = ret[0];
                 deferred1_1 = ret[1];
                 return getStringFromWasm0(ret[0], ret[1]);
@@ -575,6 +643,63 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * See [`schema_url`] — the **baked** schema pyramid over the resident
+         * handle. Deliberately never falls back to the scanning [`schema`]: that
+         * would drag the whole remote file across the wire.
+         * @returns {string}
+         */
+        schema() {
+            let deferred2_0;
+            let deferred2_1;
+            try {
+                const ret = wasm.remotegraph_schema(this.__wbg_ptr);
+                var ptr1 = ret[0];
+                var len1 = ret[1];
+                if (ret[3]) {
+                    ptr1 = 0; len1 = 0;
+                    throw takeObject(ret[2]);
+                }
+                deferred2_0 = ptr1;
+                deferred2_1 = len1;
+                return getStringFromWasm0(ptr1, len1);
+            } finally {
+                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+            }
+        }
+        /**
+         * See [`shacl_url`] — validate over the resident handle. The default graph
+         * validates lazily against the index (only the shapes' targets are
+         * fetched), so a shape over a huge remote file stays cheap.
+         * @param {string} shapes_turtle
+         * @param {string | null | undefined} graph
+         * @param {string} format
+         * @returns {string}
+         */
+        shacl(shapes_turtle, graph, format) {
+            let deferred5_0;
+            let deferred5_1;
+            try {
+                const ptr0 = passStringToWasm0(shapes_turtle, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                var ptr1 = isLikeNone(graph) ? 0 : passStringToWasm0(graph, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                var len1 = WASM_VECTOR_LEN;
+                const ptr2 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len2 = WASM_VECTOR_LEN;
+                const ret = wasm.remotegraph_shacl(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+                var ptr4 = ret[0];
+                var len4 = ret[1];
+                if (ret[3]) {
+                    ptr4 = 0; len4 = 0;
+                    throw takeObject(ret[2]);
+                }
+                deferred5_0 = ptr4;
+                deferred5_1 = len4;
+                return getStringFromWasm0(ptr4, len4);
+            } finally {
+                wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+            }
+        }
+        /**
          * `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this
          * session opened. The worker diffs successive calls to report a single
          * query's traffic (a fully cached re-run adds ~0).
@@ -667,6 +792,55 @@ let wasm_bindgen = (function(exports) {
         return v3;
     }
     exports.build = build;
+
+    /**
+     * The embedded **Dataset Card** — the file's own self-description (title,
+     * description, license, provenance, counts, example queries) as the JSON text
+     * it was written with, or `undefined` when the file carries none. Reads the
+     * metadata section straight out of the buffer.
+     * @param {Uint8Array} bytes
+     * @returns {string | undefined}
+     */
+    function card(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.card(ptr0, len0);
+        if (ret[3]) {
+            throw takeObject(ret[2]);
+        }
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
+    }
+    exports.card = card;
+
+    /**
+     * The embedded **Dataset Card of a remote `.rete`**, in **two small range
+     * requests**: the header, then the metadata section it points at — never the
+     * dictionary, index, or pyramid. This is the index-free CARD tier: a client
+     * learns what a multi-gigabyte graph *is* for a few KB. `undefined` when the
+     * file carries no card. Worker-only (synchronous XHR).
+     * @param {string} url
+     * @returns {string | undefined}
+     */
+    function card_url(url) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.card_url(ptr0, len0);
+        if (ret[3]) {
+            throw takeObject(ret[2]);
+        }
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
+    }
+    exports.card_url = card_url;
 
     /**
      * **Index-free schema coherence (Tier-0)** over an in-memory `.rete`: read only
@@ -824,10 +998,12 @@ let wasm_bindgen = (function(exports) {
     /**
      * Parse the fixed-size header and report the byte ranges a *progressive*
      * client needs for the overview — the dictionary and the pyramid summary — plus
-     * the (large) index range it can skip. JSON:
-     * `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset","indexLen" }`.
+     * the (large) index range it can skip, and the metadata (Dataset Card) range.
+     * JSON: `{ "dictOffset","dictLen","pyramidOffset","pyramidLen","indexOffset",
+     * "indexLen","metadataOffset","metadataLen" }`.
      * The browser fetches bytes `0..HEADER_LEN`, calls this, then range-fetches only the
-     * dict + pyramid — never the index.
+     * dict + pyramid — never the index. A host with its own byte reader (Node over a
+     * local file, say) can use `metadataOffset`/`metadataLen` to read just the card.
      * @param {Uint8Array} head
      * @returns {string}
      */
