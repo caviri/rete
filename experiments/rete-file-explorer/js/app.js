@@ -7,6 +7,7 @@
 import {
   VIEWS, VIEW_BY_ID, makeContext, openFile, extract, candidateLabelPredicates,
   readSelfDescription, parseHeader, humanBytes, humanCount, localName, parseTerm,
+  seedQuery, runSparql, resultToFile, searchGraph,
 } from "./rete-fs.js";
 import { isTauri, makeTauriWorkerShim, pickReteFile } from "./tauri-bridge.js";
 import { initTicker } from "./ticker.js";
@@ -64,6 +65,8 @@ const state = {
   opening: false,
   thumbQueue: [],
   thumbActive: 0,
+  results: null,   // search results currently replacing the tree, or null
+  lastQuery: null, // survives switching views, so a draft is never lost
 };
 
 // ------------------------------------------------------------------- engine
@@ -267,6 +270,7 @@ async function selectView(id) {
   state.view = id;
   state.expanded = new Set();
   state.path = [];
+  state.results = null; // a view change is a fresh start, not a filtered one
   paintViewTabs();
   await renderPane();
 }
@@ -278,6 +282,20 @@ async function renderPane() {
   // finish harmlessly against detached nodes.
   state.thumbQueue = [];
   pane.innerHTML = "";
+
+  const view = VIEW_BY_ID.get(state.view);
+  if (view && view.custom === "sparql") {
+    $("#crumbs").hidden = true;
+    pane.className = "tree";
+    renderQueryPanel(pane);
+    return;
+  }
+  if (state.results) {
+    $("#crumbs").hidden = true;
+    pane.className = "tree";
+    renderSearchResults(pane);
+    return;
+  }
   if (state.layout === "icons") {
     $("#crumbs").hidden = false;
     paintCrumbs();
@@ -289,6 +307,137 @@ async function renderPane() {
     const host = el("div", "level");
     pane.append(host);
     await renderLevel(host, null, 0);
+  }
+}
+
+// ------------------------------------------------------------ sparql panel
+
+function renderQueryPanel(host) {
+  const wrap = el("div", "qpanel");
+
+  const ta = document.createElement("textarea");
+  ta.className = "qbox";
+  ta.spellcheck = false;
+  ta.value = state.lastQuery || seedQuery(state.ctx);
+  ta.setAttribute("aria-label", "SPARQL query");
+
+  const bar = el("div", "qbar");
+  const run = el("button", "qrun", "▶ Run");
+  const note = el("span", "qnote", "⌘/Ctrl + Enter");
+  bar.append(run, note);
+
+  wrap.append(ta, bar);
+  host.append(wrap);
+
+  const go = async () => {
+    const q = ta.value.trim();
+    if (!q) return;
+    state.lastQuery = q;
+    run.disabled = true;
+    run.textContent = "running…";
+    const started = performance.now();
+    try {
+      const result = await runSparql(state.ctx, q);
+      showQueryResult(result, Math.round(performance.now() - started));
+      setStatus("query ok");
+    } catch (err) {
+      // A SPARQL error is the normal case while writing one — show it where the
+      // results go, not as a transient status line that scrolls away.
+      $("#preview-title").textContent = "Query error";
+      $("#preview-sub").textContent = "";
+      $("#downloads").innerHTML = "";
+      $("#preview").innerHTML = "";
+      $("#preview").append(el("div", "err", err.message));
+      setStatus("query failed", true);
+    } finally {
+      run.disabled = false;
+      run.textContent = "▶ Run";
+    }
+  };
+
+  run.onclick = go;
+  ta.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); go(); }
+  });
+  ta.focus();
+}
+
+function showQueryResult(result, ms) {
+  const pane = $("#preview");
+  pane.innerHTML = "";
+  $("#downloads").innerHTML = "";
+
+  if (result.kind === "text") {
+    $("#preview-title").textContent = "Result";
+    $("#preview-sub").textContent = `${result.format} · ${ms} ms`;
+    pane.append(renderPre(result.text));
+  } else {
+    $("#preview-title").textContent = `${humanCount(result.rows.length)} row${result.rows.length === 1 ? "" : "s"}`;
+    $("#preview-sub").textContent = `${result.vars.join(", ")} · ${ms} ms`;
+    pane.append(renderTable(result));
+  }
+
+  for (const fmt of result.kind === "text" ? ["ttl"] : ["csv", "json"]) {
+    const f = resultToFile(result, fmt);
+    const b = el("button", "dl", `↓ ${f.ext.toUpperCase()}`);
+    b.onclick = () => download(`query.${f.ext}`, f.mime, f.body);
+    $("#downloads").append(b);
+  }
+}
+
+// ------------------------------------------------------------------ search
+
+function renderSearchResults(host) {
+  const { term, hits, via, labels } = state.results;
+  const head = el("div", "searchhead");
+  head.append(el("span", null, `${humanCount(hits.length)} match${hits.length === 1 ? "" : "es"} for “${term}”`));
+  const clear = el("button", "more", "clear");
+  clear.onclick = async () => {
+    state.results = null;
+    $("#search").value = "";
+    await renderPane();
+  };
+  head.append(clear);
+  host.append(head);
+
+  if (via) host.append(el("div", "note", `via ${via} index`));
+  if (!hits.length) {
+    host.append(el("div", "note", "Nothing matched. Full-text needs a file built with --text-index; otherwise only label prefixes are searchable."));
+    return;
+  }
+
+  const byIri = new Map((labels || []).map((h) => [h.subject, h.label]));
+  const level = el("div", "level");
+  host.append(level);
+  const items = hits.map((iri) => ({
+    view: state.view,
+    id: `res:${iri}`,
+    name: localName(iri),
+    label: byIri.get(iri) || null,
+    kind: "dir",
+    resource: true,
+    iri,
+    trail: [],
+  }));
+  for (const item of items) level.append(rowFor(item, 0));
+}
+
+async function doSearch(term) {
+  if (!state.ctx) return;
+  const q = term.trim();
+  if (!q) {
+    state.results = null;
+    await renderPane();
+    return;
+  }
+  setStatus(`searching “${q}”…`);
+  try {
+    const { hits, via, labels } = await searchGraph(state.ctx, q);
+    state.results = { term: q, hits, via, labels };
+    await renderPane();
+    setStatus(hits.length ? `${humanCount(hits.length)} matches` : "no matches");
+  } catch (err) {
+    setStatus(`search failed: ${err.message}`, true);
   }
 }
 
@@ -603,6 +752,16 @@ function wireHome() {
 }
 
 function wireToolbar() {
+  const search = $("#search");
+  if (search) {
+    search.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doSearch(search.value);
+      if (e.key === "Escape") { search.value = ""; doSearch(""); }
+    });
+    // A cleared <input type=search> (the ✕) should restore the tree.
+    search.addEventListener("search", () => { if (!search.value.trim()) doSearch(""); });
+  }
+
   $("#labelpred").addEventListener("change", async (e) => {
     if (!state.ctx) return;
     const pick = e.target.value;

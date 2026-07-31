@@ -750,8 +750,112 @@ const sectionsView = {
   },
 };
 
-export const VIEWS = [typesView, namespaceView, predicatesView, graphsView, sectionsView];
+// --- sparql ----------------------------------------------------------------
+
+/**
+ * Not a tree. The folder views are the point of this thing, but they can only
+ * answer questions someone anticipated — so the escape hatch is the query
+ * language itself, with the schema right there to write against. `custom` tells
+ * the UI to render its own panel instead of calling `list`.
+ */
+const sparqlView = {
+  id: "sparql",
+  label: "SPARQL",
+  icon: "⌗",
+  custom: "sparql",
+  hint: "Write a query against this file. The schema on the left is what you have to work with; results export as CSV or JSON.",
+};
+
+export const VIEWS = [typesView, namespaceView, predicatesView, graphsView, sectionsView, sparqlView];
 export const VIEW_BY_ID = new Map(VIEWS.map((v) => [v.id, v]));
+
+// ------------------------------------------------------------ query + search
+
+/** A starter query built from the file's own biggest class, so the box is never blank. */
+export function seedQuery(ctx) {
+  const top = schemaClasses(ctx)[0];
+  if (!top) {
+    return "SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o\n}\nLIMIT 50";
+  }
+  return `SELECT ?s ?p ?o WHERE {\n  ?s a <${top.iri}> .\n  ?s ?p ?o\n}\nLIMIT 50`;
+}
+
+/**
+ * Run a query and normalise every result shape into something renderable:
+ * SELECT → a table, ASK → one boolean cell, CONSTRUCT/DESCRIBE → text.
+ */
+export async function runSparql(ctx, sparql) {
+  const wantsText = /^\s*(?:#[^\n]*\n\s*)*(?:PREFIX[^\n]*\n\s*)*(CONSTRUCT|DESCRIBE)\b/i.test(sparql);
+  const raw = await ctx.engine.query(sparql, wantsText ? "ttl" : "table");
+  const env = JSON.parse(raw);
+
+  if (env.kind === "construct") {
+    return { kind: "text", text: env.text || "", format: env.format || "ttl" };
+  }
+  if (env.kind === "ask") {
+    return { kind: "table", vars: ["result"], rows: [[String(env.boolean)]], iris: [[null]] };
+  }
+  const vars = env.vars || [];
+  const rows = (env.rows || []).map((r) => vars.map((v) => parseTerm(r[v])));
+  return {
+    kind: "table",
+    vars,
+    rows: rows.map((t) => t.map((x) => (x.iri ? localName(x.value) : x.value))),
+    iris: rows.map((t) => t.map((x) => (x.iri ? x.value : null))),
+    full: rows.map((t) => t.map((x) => x.value)),
+  };
+}
+
+/** Serialise a query result for download. */
+export function resultToFile(result, format) {
+  if (result.kind === "text") {
+    return { body: result.text, mime: "text/turtle", ext: result.format || "ttl" };
+  }
+  const rows = result.full || result.rows;
+  if (format === "json") {
+    const body = JSON.stringify(
+      rows.map((r) => Object.fromEntries(r.map((v, i) => [result.vars[i], v]))), null, 2
+    );
+    return { body, mime: "application/json", ext: "json" };
+  }
+  const body = [result.vars.join(","), ...rows.map((r) => r.map(csvCell).join(","))].join("\n");
+  return { body, mime: "text/csv", ext: "csv" };
+}
+
+/**
+ * Find resources by text.
+ *
+ * Two indexes can answer this and neither is always present, so try the better
+ * one first and say which actually ran — silently returning nothing because the
+ * file has no TEXT_INDEX is indistinguishable from "no matches".
+ *
+ *   full text  — TEXT_INDEX section, word/CONTAINS, only with `--text-index`
+ *   prefix     — the pyramid's label index, matches from the start of a label
+ */
+export async function searchGraph(ctx, term, limit = 60) {
+  const q = term.trim();
+  if (!q) return { hits: [], via: null };
+
+  const words = q.split(/\s+/).filter(Boolean);
+  try {
+    const hits = await ctx.engine.text(words, limit);
+    if (hits && hits.length) {
+      const iris = hits.map((h) => h.subject);
+      return { hits: iris, via: "full text" };
+    }
+  } catch (_) {
+    // No text index, or the engine refused: fall through to the label index.
+  }
+
+  try {
+    const hits = await ctx.engine.prefix(q, limit);
+    if (hits && hits.length) {
+      return { hits: hits.map((h) => h.subject), via: "label prefix", labels: hits };
+    }
+  } catch (_) { /* no pyramid either */ }
+
+  return { hits: [], via: null };
+}
 
 // --------------------------------------------------------------- file bodies
 

@@ -77,11 +77,26 @@ export function makeTauriWorkerShim() {
         return await reply(msg, { ok: true, json });
       }
 
+      if (msg.type === "prefix") {
+        const results = await invoke("prefix_search", {
+          prefix: msg.prefix,
+          limit: msg.limit || 40,
+        });
+        return await reply(msg, { ok: true, results });
+      }
+
+      if (msg.type === "text") {
+        const results = await invoke("text_search", {
+          words: msg.words,
+          containsPrefix: msg.containsPrefix ?? null,
+          limit: msg.limit || 40,
+        });
+        return await reply(msg, { ok: true, results });
+      }
+
       if (msg.type === "stats") return await reply(msg, { ok: true });
 
-      // prefix/text search are wasm-only for now: the desktop build exposes the
-      // three commands the explorer actually calls. Fail loudly rather than
-      // pretending an empty result set is an answer.
+      // Fail loudly rather than pretending an empty result set is an answer.
       throw new Error(`command not available in the desktop build: ${msg.type}`);
     } catch (err) {
       return {

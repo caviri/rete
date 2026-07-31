@@ -210,6 +210,37 @@ button { font: inherit; cursor: pointer; }
   max-width: 230px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line);
   background: var(--panel); color: var(--ink); font-size: 11.5px; font-family: var(--mono);
 }
+.searchbox {
+  width: min(30vw, 260px); min-width: 120px; padding: 4px 9px;
+  border-radius: 999px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: 12px;
+}
+.searchbox:focus { outline: none; border-color: var(--accent); }
+
+.searchhead {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 12px 4px; font-size: 12.5px; color: var(--ink);
+}
+.searchhead .more { margin: 0; }
+
+/* ------------------------------------------------------------ sparql panel */
+.qpanel { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; height: 100%; }
+.qbox {
+  flex: 1; min-height: 180px; resize: vertical;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  padding: 10px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); tab-size: 2;
+}
+.qbox:focus { outline: none; border-color: var(--accent); }
+.qbar { display: flex; align-items: center; gap: 10px; }
+.qrun {
+  padding: 5px 14px; font-size: 12.5px; border-radius: 8px;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--bg); font-weight: 600;
+}
+.qrun:hover:not(:disabled) { filter: brightness(1.1); }
+.qrun:disabled { opacity: .6; }
+.qnote { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+
 .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .seg button {
   padding: 4px 10px; font-size: 11.5px; border: none; background: var(--panel); color: var(--muted);
