@@ -157,6 +157,20 @@ export class Graph {
         }
     }
     /**
+     * A **lazy, resumable cursor** over every quad of this graph — the
+     * streaming export path. See [`QuadCursor`]; `graph` selects one graph
+     * (`""` = the default graph), `None` streams the default graph followed by
+     * every named graph.
+     * @param {string | null} [graph]
+     * @returns {QuadCursor}
+     */
+    quads(graph) {
+        var ptr0 = isLikeNone(graph) ? 0 : passStringToWasm0(graph, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.graph_quads(this.__wbg_ptr, ptr0, len0);
+        return QuadCursor.__wrap(ret);
+    }
+    /**
      * See [`query`].
      * @param {string} query
      * @param {string} format
@@ -436,6 +450,112 @@ export class Graph {
 if (Symbol.dispose) Graph.prototype[Symbol.dispose] = Graph.prototype.free;
 
 /**
+ * A **lazy, resumable cursor** over every quad of an open `.rete` — the engine
+ * side of `for await (const [s, p, o, g] of graph.quads())` in the JS client.
+ *
+ * # Why a cursor and not a callback
+ *
+ * [`Rete::dump_each`] already streams in constant memory, but a Rust callback
+ * cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
+ * it would have to buffer every quad first, which is exactly the `Vec` that
+ * [`Rete::dump`] builds and that OOMs on a large file. This wraps
+ * [`Rete::dump_iter`] instead, so the scan can be suspended between calls and
+ * resumed in place — one triple decoded per `next()`, never a whole-graph
+ * materialization anywhere in the pipeline.
+ *
+ * # Why batched (and not one call per quad)
+ *
+ * Each wasm→JS call costs far more than decoding a triple, and every returned
+ * `String` becomes a fresh JS string. Pulling one quad per call would make the
+ * boundary the bottleneck; pulling *all* of them would reintroduce the `Vec`.
+ * So the JS wrapper asks for `DUMP_BATCH` quads at a time and yields them one
+ * by one — bounded, amortized, and lazy. Memory is O(batch), not O(graph).
+ *
+ * # Cost model
+ *
+ * The dictionary is prefetched once (a dump resolves every term anyway), and
+ * index tiles fault in as the scan advances and stay resident, so a full dump
+ * of a *remote* graph ends up fetching essentially the whole file. Peak memory
+ * is O(dictionary + index), never O(quads).
+ */
+export class QuadCursor {
+    static __wrap(ptr) {
+        const obj = Object.create(QuadCursor.prototype);
+        obj.__wbg_ptr = ptr;
+        QuadCursorFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        QuadCursorFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_quadcursor_free(ptr, 0);
+    }
+    /**
+     * Whether every selected graph has been streamed to its end.
+     * @returns {boolean}
+     */
+    done() {
+        const ret = wasm.quadcursor_done(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Up to `max` quads as a **flat** `string[]` of `[s, p, o, g, s, p, o, g, …]`
+     * N-Triples term tokens, `g` being `""` for the default graph. Flat because
+     * a nested array would allocate one JS array per quad for no gain — the
+     * caller slices it into tuples as it yields them.
+     *
+     * An empty array means the stream is finished; keep calling until you get
+     * one (that final call is what verifies no range fetch failed mid-dump).
+     * @param {number | null} [max]
+     * @returns {string[]}
+     */
+    next_batch(max) {
+        const ret = wasm.quadcursor_next_batch(this.__wbg_ptr, isLikeNone(max) ? Number.MAX_SAFE_INTEGER : (max) >>> 0);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Up to `max` quads already serialized as N-Quads lines in **one** string —
+     * the `.rete` → Oxigraph / N-Quads-file path. One string crossing per batch
+     * instead of four per quad: no per-term JS string, no re-serialization in
+     * JavaScript, and the terms are already canonical N-Triples tokens, so the
+     * lines are emitted verbatim.
+     *
+     * An empty string means the stream is finished.
+     * @param {number | null} [max]
+     * @returns {string}
+     */
+    next_nquads(max) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.quadcursor_next_nquads(this.__wbg_ptr, isLikeNone(max) ? Number.MAX_SAFE_INTEGER : (max) >>> 0);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) QuadCursor.prototype[Symbol.dispose] = QuadCursor.prototype.free;
+
+/**
  * A remote `.rete` opened **once over HTTP range** and kept resident in the
  * worker, so repeated queries on the same URL reuse (a) the block cache — any
  * 64 KiB block fetched once is served from memory by [`BlockCacheReader`] — and
@@ -575,6 +695,23 @@ export class RemoteGraph {
         } finally {
             wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
         }
+    }
+    /**
+     * See [`Graph::quads`] — the SAME lazy cursor, over the lazily range-read
+     * remote handle. It streams and stays memory-bounded exactly as the local
+     * one does, but it is not *network*-lazy: a full dump resolves every term
+     * and visits every tile, so it ends up fetching essentially the whole file
+     * (and the tiles it faults stay resident). Use it to export a remote graph,
+     * not to peek at one — for that, run a `LIMIT` query. Worker-only in the
+     * browser, like every other read here.
+     * @param {string | null} [graph]
+     * @returns {QuadCursor}
+     */
+    quads(graph) {
+        var ptr0 = isLikeNone(graph) ? 0 : passStringToWasm0(graph, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.remotegraph_quads(this.__wbg_ptr, ptr0, len0);
+        return QuadCursor.__wrap(ret);
     }
     /**
      * See [`sparql_url`] — same query, but over the resident, cached handle.
@@ -1011,6 +1148,19 @@ export function header_ranges(head) {
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
+}
+
+/**
+ * The wasm linear memory's current size in bytes — the engine's high-water
+ * mark, since wasm memory grows but never shrinks. Exposed so a host can
+ * *measure* the streaming-dump memory claim instead of trusting it: sample it
+ * before and after a full [`QuadCursor`] drain and the growth stays flat
+ * however many quads went by, where materializing them all does not.
+ * @returns {number}
+ */
+export function heap_bytes() {
+    const ret = wasm.heap_bytes();
+    return ret;
 }
 
 /**
@@ -2064,6 +2214,9 @@ const __wbindgen_enum_XmlHttpRequestResponseType = ["", "arraybuffer", "blob", "
 const GraphFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_graph_free(ptr, 1));
+const QuadCursorFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_quadcursor_free(ptr, 1));
 const RemoteGraphFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_remotegraph_free(ptr, 1));
@@ -2137,6 +2290,17 @@ function debugString(val) {
     }
     // TODO we could test for more things here, like `Set`s and `Map`s.
     return className;
+}
+
+function getArrayJsValueFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    const mem = getDataViewMemory0();
+    const result = [];
+    for (let i = ptr; i < ptr + 4 * len; i += 4) {
+        result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+    }
+    wasm.__externref_drop_slice(ptr, len);
+    return result;
 }
 
 function getArrayU8FromWasm0(ptr, len) {
