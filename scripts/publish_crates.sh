@@ -28,6 +28,12 @@ if [ "$MODE" != "--verify-auth" ]; then
   test -n "${CARGO_REGISTRY_TOKEN:-}" || fail "CARGO_REGISTRY_TOKEN is required"
 fi
 
+# crates.io REQUIRES a User-Agent and answers 403 without one. That mattered more
+# than it looks: `publish_package` only publishes when `registry_checksum`
+# reports 404 ("not on the registry yet") and treats every other status as a hard
+# exit — so a bare curl made this script 403, bail, and publish NOTHING, every
+# time. The bootstrap looked like an auth problem for months; the token was fine.
+REGISTRY_UA=${RETE_REGISTRY_UA:-"rete-release (https://github.com/caviri/rete)"}
 REGISTRY_API=${RETE_REGISTRY_API:-https://crates.io/api/v1/crates}
 REGISTRY_WEB=${RETE_REGISTRY_WEB:-https://crates.io/crates}
 POLL_SECONDS=${RETE_POLL_SECONDS:-5}
@@ -134,7 +140,7 @@ registry_checksum() {
   name=$1
   version=$2
   body="$TMP/registry-$name-$version.json"
-  status=$(curl -sS -o "$body" -w '%{http_code}' \
+  status=$(curl -sS -A "$REGISTRY_UA" -o "$body" -w '%{http_code}' \
     "$REGISTRY_API/$name/$version") || {
       echo "crates.io request failed for $name $version" >&2
       return 5
@@ -222,7 +228,7 @@ publish_package() {
 verify_registry_archives() {
   while IFS="	" read -r name expected _url _timestamp; do
     archive="$TMP/download-$name-$VERSION.crate"
-    status=$(curl -sS -L -o "$archive" -w '%{http_code}' \
+    status=$(curl -sS -A "$REGISTRY_UA" -L -o "$archive" -w '%{http_code}' \
       "$REGISTRY_API/$name/$VERSION/download") || \
       fail "could not download the registry archive for $name $VERSION"
     test "$status" = 200 || \
