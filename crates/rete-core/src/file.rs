@@ -4360,7 +4360,6 @@ mod tests {
         // A missing named graph yields nothing rather than the default graph.
         assert_eq!(rete.dump_iter(Some("http://ex/nope")).count(), 0);
 
-
         // Lazily: taking one triple must cost far fewer bytes than draining.
         let read_bytes = |take: usize| -> u64 {
             let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
