@@ -14,7 +14,7 @@
 #   docker run --rm -v "$PWD":/work -w /work rete-blender sh clients/blender/build.sh
 set -eu
 
-VERSION="${RETE_GRAPH_VERSION:-0.3.1}"
+VERSION="${RETE_GRAPH_VERSION:-0.3.2}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SOURCE="$HERE/addon"
 DIST="$HERE/dist"
