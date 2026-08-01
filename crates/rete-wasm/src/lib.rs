@@ -413,7 +413,7 @@ impl Graph {
 /// Each wasm→JS call costs far more than decoding a triple, and every returned
 /// `String` becomes a fresh JS string. Pulling one quad per call would make the
 /// boundary the bottleneck; pulling *all* of them would reintroduce the `Vec`.
-/// So the JS wrapper asks for [`DUMP_BATCH`] quads at a time and yields them one
+/// So the JS wrapper asks for `DUMP_BATCH` quads at a time and yields them one
 /// by one — bounded, amortized, and lazy. Memory is O(batch), not O(graph).
 ///
 /// # Cost model
