@@ -157,6 +157,54 @@ enum Command {
         #[arg(long)]
         no_pyramid: bool,
     },
+    /// Fold several `.rete` files into one, without going back through text.
+    ///
+    /// Consolidating a sharded dataset used to mean rebuilding from the original
+    /// source — re-running the converter and re-parsing every line. This reads
+    /// the SHARDS instead: dictionary-encoded and compressed, roughly a quarter
+    /// of the bytes, and no RDF parsing at all.
+    ///
+    /// It does NOT skip the sorting. The dictionary is HDT-style (`shared` /
+    /// subject-only / object-only), so a term that is subject-only in one shard
+    /// and object-only in another becomes shared in the merge and changes ID
+    /// section — the shards' orderings do not survive the remap, and every
+    /// permutation is rebuilt. Memory stays bounded: inputs are opened lazily and
+    /// the builder spills under `--memory-budget-mb`.
+    Merge {
+        /// Input `.rete` files.
+        #[arg(required = true, num_args = 1..)]
+        inputs: Vec<String>,
+        /// Output `.rete` file.
+        #[arg(short, long)]
+        output: String,
+        /// Resident memory budget in MiB (default 4096); the builder spills past it.
+        #[arg(long, default_value_t = 4096)]
+        memory_budget_mb: u64,
+        /// Directory for spill files (default: next to the output).
+        #[arg(long)]
+        tmp_dir: Option<String>,
+        /// Embed a Dataset Card in the merged file.
+        #[arg(long)]
+        card: bool,
+        /// Read the card's curated fields from a JSON file.
+        #[arg(long)]
+        card_file: Option<String>,
+        /// Card title.
+        #[arg(long)]
+        title: Option<String>,
+        /// Card licence.
+        #[arg(long)]
+        license: Option<String>,
+        /// Card source URL.
+        #[arg(long)]
+        source: Option<String>,
+        /// Card description.
+        #[arg(long)]
+        description: Option<String>,
+        /// Card creation date (ISO-8601).
+        #[arg(long)]
+        created: Option<String>,
+    },
     /// Print the header of a `.rete` file.
     Info {
         /// Path to the `.rete` file.
@@ -837,6 +885,33 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             sample_mb,
             memory_budget_mb,
             no_pyramid,
+        ),
+        Command::Merge {
+            inputs,
+            output,
+            memory_budget_mb,
+            tmp_dir,
+            card,
+            card_file,
+            title,
+            license,
+            source,
+            description,
+            created,
+        } => commands::merge::merge_cmd(
+            &inputs,
+            &output,
+            memory_budget_mb,
+            tmp_dir.as_deref(),
+            commands::card::CardArgs {
+                enabled: card,
+                file: card_file,
+                title,
+                license,
+                source,
+                description,
+                created,
+            },
         ),
         Command::Info { file } => commands::inspect::info(&file),
         Command::Stats { file } => commands::inspect::stats(&file),
