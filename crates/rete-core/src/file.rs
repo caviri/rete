@@ -2019,9 +2019,6 @@ impl Rete {
 
     /// Resolve every triple of a graph (`None` = default graph) back to terms.
     pub fn dump(&self, graph: Option<&str>) -> Vec<TermTriple> {
-        // A dump resolves every term: batch-fault the whole dictionary up
-        // front (coalesced range reads on a lazy remote open; no-op locally).
-        self.dict.prefetch_all();
         let index = match graph {
             None => &self.index,
             Some(g) => match self.graph_index(g) {
@@ -2047,6 +2044,11 @@ impl Rete {
     /// larger than RAM. `rete export` uses this to serialize 100M+ triple files
     /// that `dump()` (which collects every term into a `Vec<String>`) would OOM on.
     pub fn dump_each<F: FnMut(&str, &str, &str)>(&self, graph: Option<&str>, mut f: F) {
+        // A FULL dump resolves every term, so faulting the whole dictionary in
+        // coalesced range reads beats one fault per term. This belongs here and
+        // not in `dump_iter`: it is only ever amortized when the caller is
+        // guaranteed to reach the end, which is exactly what `dump_each` is.
+        self.dict.prefetch_all();
         for (s, p, o) in self.dump_iter(graph) {
             f(&s, &p, &o);
         }
@@ -2062,14 +2064,14 @@ impl Rete {
     /// a callback cannot be paused mid-scan to hand control back to JavaScript,
     /// an iterator can.
     ///
-    /// The dictionary is prefetched once up front (as in [`dump`](Self::dump)) —
-    /// a dump resolves every term, so faulting the dictionary in coalesced range
-    /// reads beats one fault per term. Peak memory is therefore
-    /// O(dictionary + faulted index tiles), *not* O(triples).
+    /// The dictionary is NOT prefetched: terms fault in as they are resolved, so
+    /// stopping after a handful of triples costs a handful of dictionary reads
+    /// rather than the whole dictionary — which on a lazy remote open of a large
+    /// file would be gigabytes before the first triple, defeating the point of a
+    /// pull API. [`dump_each`](Self::dump_each), which always runs to the end,
+    /// prefetches up front where that cost is genuinely amortized. Peak memory is
+    /// O(faulted dictionary chunks + faulted index tiles), *not* O(triples).
     pub fn dump_iter(&self, graph: Option<&str>) -> impl Iterator<Item = TermTriple> + '_ {
-        // A dump resolves every term: batch-fault the whole dictionary up
-        // front (coalesced range reads on a lazy remote open; no-op locally).
-        self.dict.prefetch_all();
         let index = match graph {
             None => Some(&self.index),
             Some(g) => self.graph_index(g),
@@ -4358,31 +4360,6 @@ mod tests {
         // A missing named graph yields nothing rather than the default graph.
         assert_eq!(rete.dump_iter(Some("http://ex/nope")).count(), 0);
 
-        // `dump_batch` is the resumable form the language clients pull through.
-        // Driven to exhaustion it must reproduce the eager dump EXACTLY — same
-        // triples, same order — for any batch size, including one so small that
-        // every call ends on a subject boundary before reaching it.
-        let drain = |max_quads: usize| {
-            let (mut out, mut cursor, mut calls) = (Vec::new(), 0u32, 0);
-            loop {
-                let (batch, next, done) = rete.dump_batch(None, cursor, max_quads);
-                out.extend(batch);
-                cursor = next;
-                calls += 1;
-                assert!(calls < 10_000, "cursor failed to advance");
-                if done {
-                    break out;
-                }
-            }
-        };
-        let eager = rete.dump(None);
-        for max in [1usize, 7, 128, 100_000] {
-            assert_eq!(drain(max), eager, "batch size {max} changed the dump");
-        }
-        // An unknown graph is an empty, already-finished dump — not an error and
-        // not the default graph leaking through.
-        let (t, _, done) = rete.dump_batch(Some("http://ex/nope"), 0, 16);
-        assert!(t.is_empty() && done);
 
         // Lazily: taking one triple must cost far fewer bytes than draining.
         let read_bytes = |take: usize| -> u64 {
@@ -4397,10 +4374,53 @@ mod tests {
         };
         let first_only = read_bytes(1);
         let everything = read_bytes(triples.len());
+        // Always true: stopping after one triple cannot cost a full scan.
+        assert!(
+            first_only < everything,
+            "dump_iter is not lazy: one triple read {first_only} B, a full scan {everything} B"
+        );
+        // The STRONG claim — under half — only holds once the payload dwarfs the
+        // fixed open cost. This fixture is ~32 KB, and with `compression` off the
+        // dictionary is essentially the whole file, so opening it at all already
+        // pays most of `everything` (21 KB of 33 KB) and the ratio says nothing
+        // about laziness. Asserting it unconditionally is how this test failed on
+        // `--no-default-features` while passing everywhere else.
+        #[cfg(feature = "compression")]
         assert!(
             first_only * 2 < everything,
             "dump_iter is not lazy: one triple read {first_only} B of the {everything} B a full scan reads"
         );
+
+        // A FRESH open: these assertions fault tiles and the dictionary in,
+        // and the laziness measurement above counts bytes on a COLD reader —
+        // sharing one `rete` makes first_only and everything both ~0, so the
+        // comparison silently stops testing anything.
+        let fresh = Rete::open(&bytes).unwrap();
+        // `dump_batch` is the resumable form the language clients pull through.
+        // Driven to exhaustion it must reproduce the eager dump EXACTLY — same
+        // triples, same order — for any batch size, including one so small that
+        // every call ends on a subject boundary before reaching it.
+        let drain = |max_quads: usize| {
+            let (mut out, mut cursor, mut calls) = (Vec::new(), 0u32, 0);
+            loop {
+                let (batch, next, done) = fresh.dump_batch(None, cursor, max_quads);
+                out.extend(batch);
+                cursor = next;
+                calls += 1;
+                assert!(calls < 10_000, "cursor failed to advance");
+                if done {
+                    break out;
+                }
+            }
+        };
+        let eager = fresh.dump(None);
+        for max in [1usize, 7, 128, 100_000] {
+            assert_eq!(drain(max), eager, "batch size {max} changed the dump");
+        }
+        // An unknown graph is an empty, already-finished dump — not an error and
+        // not the default graph leaking through.
+        let (t, _, done) = fresh.dump_batch(Some("http://ex/nope"), 0, 16);
+        assert!(t.is_empty() && done);
     }
 
     #[test]
