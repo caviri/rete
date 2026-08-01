@@ -1,0 +1,42 @@
+# Its own workspace root, like clients/python: the app owns its lockfile and its
+# release profile, and the repo's release gates (--locked, feature matrix,
+# coverage floors) stay untouched by a desktop-only change. A `[profile]` table
+# is only honoured at a workspace root, so this is also what makes the LTO/strip
+# settings below take effect.
+[workspace]
+
+[package]
+name = "rete-file-explorer"
+version = "0.3.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/caviri/rete"
+description = "Browse a .rete graph file like an archive — folders, files, and extract."
+rust-version = "1.87"
+publish = false
+
+[[bin]]
+name = "rete-file-explorer"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The engine, native: no wasm, no 4 GB heap ceiling, real threads.
+rete-core = { path = "../../../crates/rete-core", features = ["parallel"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+# Blocking HTTP(S) range reads. `tls` pulls rustls + webpki-roots (pure Rust, no
+# system OpenSSL), matching how the CLI reaches R2/S3/any CDN.
+ureq = { version = "2", default-features = false, features = ["tls"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -14,7 +14,7 @@ members = [
 # release gates (--locked checks, feature matrix, coverage floors) stay
 # untouched by binding-only changes. Future clients (R, Go) follow the same
 # pattern — clients/ consumes crates/, never the other way around.
-exclude = ["fuzz", "clients/python", "clients/r/src/rust", "clients/java/ffi"]
+exclude = ["fuzz", "clients/python", "clients/r/src/rust", "clients/java/ffi", "clients/tauri/src-tauri"]
 
 [workspace.package]
 version = "0.3.2"

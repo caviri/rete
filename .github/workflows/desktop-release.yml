@@ -1,0 +1,205 @@
+name: desktop-release
+
+# Build the Rete File Explorer desktop app and attach the installers to a
+# GitHub Release.
+#
+# macOS cannot be built anywhere but macOS: the SDK is licensed to Apple
+# hardware, and codesign/notarytool do not exist off it. So the runner *is* the
+# build environment — there is no Docker path for this target, and pretending
+# otherwise would mean shipping something Gatekeeper refuses to open.
+#
+# These builds are UNSIGNED and UNNOTARIZED. macOS will refuse them on first
+# open; see clients/tauri/README.md for the one-time bypass. Signing is a
+# credentials problem, not a code one — when certificates exist, add them as
+# secrets and Tauri picks them up with no change to this file's shape.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish under (e.g. explorer-v0.3.0)"
+        required: true
+        default: explorer-v0.3.0
+      draft:
+        description: "Publish as a draft release"
+        type: boolean
+        default: true
+  push:
+    tags:
+      # `explorer-v*` cuts an app-only build. `v*` makes the desktop app ride
+      # along with every workspace release, so a new version is never published
+      # with a stale installer beside it. This runs alongside release.yml rather
+      # than inside it — a queued macOS runner must not hold up crates.io.
+      - "explorer-v*"
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # The draft is created once, here, and the platform jobs only ever upload into
+  # it. Previously both builders raced to create it: in the happy path macOS won
+  # and Windows uploaded, but when macOS failed early Windows was left having to
+  # create the release and died with "Resource not accessible by integration" —
+  # so one broken platform reported as two, and a perfectly good Windows
+  # installer was thrown away.
+  create-release:
+    name: draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - uses: actions/github-script@v7
+        id: draft
+        with:
+          script: |
+            const tag = context.payload.inputs?.tag || context.ref.replace('refs/tags/', '');
+            const { owner, repo } = context.repo;
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({ owner, repo, tag })).data;
+              core.info(`reusing release ${release.id} for ${tag}`);
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              release = (await github.rest.repos.createRelease({
+                owner, repo, tag_name: tag,
+                name: `Rete File Explorer ${tag}`,
+                draft: true, prerelease: true,
+                body: [
+                  'Browse a `.rete` graph like an archive — folders, files, and extract.',
+                  '',
+                  '**These builds are unsigned and unnotarized.** macOS will say the app',
+                  '"cannot be opened because the developer cannot be verified", or that it',
+                  'is damaged. To run it anyway, once:',
+                  '',
+                  '```sh',
+                  'xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"',
+                  '```',
+                  '',
+                  'Or right-click the app → Open → Open. Both are one-time.',
+                  '',
+                  'The macOS `.dmg` is a universal binary — one download for both Apple',
+                  'Silicon and Intel.',
+                  '',
+                  'Windows builds (`.msi` / `-setup.exe`) are unsigned too: SmartScreen',
+                  'shows "Windows protected your PC" — **More info** → **Run anyway**.',
+                ].join('\n'),
+              })).data;
+              core.info(`created release ${release.id} for ${tag}`);
+            }
+            core.setOutput('release_id', release.id);
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # One universal binary rather than a job per architecture. The old
+          # macos-13 (Intel) job sat queued for hours every run — that image is
+          # being retired and its pool is thin — so every run stayed amber even
+          # though everything that mattered had passed. macos-14 cross-builds
+          # both arches into one .dmg that runs on Apple Silicon and Intel.
+          - platform: macos-14
+            target: universal-apple-darwin
+            label: macOS (universal)
+          # Windows is the one target Docker could plausibly cross-compile
+          # (cargo-xwin), but the NSIS/WiX bundlers want Wine and WebView2
+          # bootstrapping is fiddliest exactly there. A runner costs nothing.
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: Windows (x64)
+
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Targets are added in a separate step, run from the repo root, on purpose.
+      # rust-toolchain.toml pins 1.92.0, so the toolchain cargo actually resolves
+      # is NOT the one the action above installs targets into — the first attempt
+      # at this died with "Target x86_64-apple-darwin is not installed (installed
+      # targets: aarch64-apple-darwin, wasm32-unknown-unknown)". Running rustup
+      # here lets the toml resolve and adds them where they will be found.
+      #
+      # `universal-apple-darwin` is not itself a rustup target: it is a lipo of
+      # the two real ones, so both have to be present.
+      - name: Add the build targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.target }}" == "universal-apple-darwin" ]]; then
+            rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          else
+            rustup target add "${{ matrix.target }}"
+          fi
+          rustup show
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/tauri/src-tauri -> target
+          key: ${{ matrix.target }}
+
+      # `shell: bash` on both, so the Windows runner does not hand these to
+      # PowerShell — the script is POSIX and `cd &&` chaining is not pwsh syntax.
+      - name: Stage the frontend
+        shell: bash
+        run: bash clients/tauri/scripts/sync-frontend.sh
+
+      - name: Generate app icons
+        shell: bash
+        run: |
+          npm install -g @tauri-apps/cli@^2
+          cd clients/tauri/src-tauri
+          tauri icon icons/source.png
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: clients/tauri
+          tauriScript: tauri
+          args: --target ${{ matrix.target }}
+          # Upload into the draft the create-release job already made, rather
+          # than creating one. Notes and draft/prerelease flags live there.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+
+      # Tauri builds the .app and the .dmg in one pass with no hook between
+      # them, so the extension is embedded afterwards and the disk image is
+      # rebuilt around the modified bundle. Rebuilding the .dmg is the whole
+      # reason this is a separate step: embedding into the .app alone would
+      # leave the shipped image without it.
+      - name: Embed the Quick Look extension and repack the .dmg (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE="clients/tauri/src-tauri/target/${{ matrix.target }}/release/bundle"
+          APP="$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' | head -1)"
+          DMG="$(find "$BUNDLE/dmg" -maxdepth 1 -name '*.dmg' | head -1)"
+          if [[ -z "$APP" ]]; then echo "no .app found under $BUNDLE" >&2; exit 1; fi
+
+          bash clients/tauri/quicklook/build.sh "$APP" universal
+          # Prove it landed rather than trusting the script's exit code.
+          test -x "$APP/Contents/PlugIns/ReteQuickLook.appex/Contents/MacOS/ReteQuickLook"
+          echo "embedded:"; ls -la "$APP/Contents/PlugIns/"
+
+          if [[ -n "$DMG" ]]; then
+            echo "repacking $DMG"
+            STAGE="$(mktemp -d)"
+            cp -R "$APP" "$STAGE/"
+            ln -s /Applications "$STAGE/Applications"
+            rm -f "$DMG"
+            hdiutil create -volname "Rete File Explorer" -srcfolder "$STAGE" \
+              -ov -format UDZO "$DMG"
+            gh release upload "${{ github.event.inputs.tag || github.ref_name }}" \
+              "$DMG" --clobber
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
