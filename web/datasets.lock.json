@@ -25,6 +25,14 @@
       "contentHash": "1fc439ffdc08c606dd3a4694cb656449",
       "size": 41051941,
       "cardUrl": "https://data.graphplaza.com/mirbase/mirbase.rete"
+    },
+    {
+      "key": "switzerland-fedlex",
+      "url": "https://data.graphplaza.com/switzerland-fedlex.rete",
+      "formatVersion": 5,
+      "contentHash": "31a922b2c77ee37a210392f9238823e3",
+      "size": 1043521556,
+      "cardUrl": "https://data.graphplaza.com/switzerland-fedlex.rete"
     }
   ]
 }
