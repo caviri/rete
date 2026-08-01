@@ -38,7 +38,7 @@ REGISTRY_API=${RETE_REGISTRY_API:-https://crates.io/api/v1/crates}
 REGISTRY_WEB=${RETE_REGISTRY_WEB:-https://crates.io/crates}
 POLL_SECONDS=${RETE_POLL_SECONDS:-5}
 POLL_ATTEMPTS=${RETE_POLL_ATTEMPTS:-120}
-PACKAGES="rete-core rete-cli rete-wasm"
+PACKAGES="rete-core rete-graph rete-cli rete-wasm"
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
@@ -52,7 +52,7 @@ metadata_path, expected = sys.argv[1:]
 with open(metadata_path, encoding="utf-8") as stream:
     metadata = json.load(stream)
 
-names = ("rete-core", "rete-cli", "rete-wasm")
+names = ("rete-core", "rete-graph", "rete-cli", "rete-wasm")
 packages = {package["name"]: package for package in metadata["packages"]}
 for name in names:
     package = packages.get(name)
@@ -63,7 +63,7 @@ for name in names:
             f"{name} has version {package['version']}, expected {expected}"
         )
 
-for name in ("rete-cli", "rete-wasm"):
+for name in ("rete-graph", "rete-cli", "rete-wasm"):
     dependencies = [
         dependency
         for dependency in packages[name]["dependencies"]
