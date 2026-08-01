@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@comunica/query-sparql": "^4.0.0",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "oxigraph": "^0.5.9"
   }
 }

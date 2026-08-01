@@ -2019,9 +2019,6 @@ impl Rete {
 
     /// Resolve every triple of a graph (`None` = default graph) back to terms.
     pub fn dump(&self, graph: Option<&str>) -> Vec<TermTriple> {
-        // A dump resolves every term: batch-fault the whole dictionary up
-        // front (coalesced range reads on a lazy remote open; no-op locally).
-        self.dict.prefetch_all();
         let index = match graph {
             None => &self.index,
             Some(g) => match self.graph_index(g) {
@@ -2047,23 +2044,174 @@ impl Rete {
     /// larger than RAM. `rete export` uses this to serialize 100M+ triple files
     /// that `dump()` (which collects every term into a `Vec<String>`) would OOM on.
     pub fn dump_each<F: FnMut(&str, &str, &str)>(&self, graph: Option<&str>, mut f: F) {
+        // A FULL dump resolves every term, so faulting the whole dictionary in
+        // coalesced range reads beats one fault per term. This belongs here and
+        // not in `dump_iter`: it is only ever amortized when the caller is
+        // guaranteed to reach the end, which is exactly what `dump_each` is.
         self.dict.prefetch_all();
+        for (s, p, o) in self.dump_iter(graph) {
+            f(&s, &p, &o);
+        }
+    }
+
+    /// The **pull** twin of [`Rete::dump_each`](Self::dump_each): every triple of a
+    /// graph (`None` = default) as a lazy iterator of resolved terms.
+    ///
+    /// Same constant-memory scan — one triple decoded and resolved per `next()`,
+    /// never a `Vec` of the whole graph — but the caller drives it, so it can
+    /// stop early or be **suspended and resumed** across a foreign-function
+    /// boundary. That is what the wasm/JS client's batched quad cursor needs:
+    /// a callback cannot be paused mid-scan to hand control back to JavaScript,
+    /// an iterator can.
+    ///
+    /// The dictionary is NOT prefetched: terms fault in as they are resolved, so
+    /// stopping after a handful of triples costs a handful of dictionary reads
+    /// rather than the whole dictionary — which on a lazy remote open of a large
+    /// file would be gigabytes before the first triple, defeating the point of a
+    /// pull API. [`dump_each`](Self::dump_each), which always runs to the end,
+    /// prefetches up front where that cost is genuinely amortized. Peak memory is
+    /// O(faulted dictionary chunks + faulted index tiles), *not* O(triples).
+    pub fn dump_iter(&self, graph: Option<&str>) -> impl Iterator<Item = TermTriple> + '_ {
         let index = match graph {
-            None => &self.index,
+            None => Some(&self.index),
+            Some(g) => self.graph_index(g),
+        };
+        index
+            .into_iter()
+            .flat_map(|ix| ix.scan_iter((None, None, None)))
+            .filter_map(move |(s, p, o)| {
+                Some((
+                    self.dict.subject_term(s)?,
+                    self.dict.predicate_term(p)?,
+                    self.dict.object_term(o)?,
+                ))
+            })
+    }
+
+    /// Resolve one bounded slice of a graph's triples. Returns
+    /// `(triples, next_cursor, done)`; start with `cursor = 0` and feed the
+    /// returned cursor back until `done`.
+    ///
+    /// This is the PULL half of the dump, and it exists because [`Rete::dump_each`] is
+    /// push-based: it drives the scan itself and hands each triple to a
+    /// callback. A client that wants to pull (a Python generator, a JS async
+    /// iterator) has to hold the scan's stack between calls — which means a
+    /// thread (unavailable on Pyodide and in wasm) or a self-referential struct
+    /// holding an iterator that borrows the `Rete` stored next to it, whose
+    /// soundness rests on drop order plus an unstated promise that this crate's
+    /// lazily-faulted caches stay write-once. Neither is worth it for a dump.
+    ///
+    /// Instead the scan is made RESUMABLE: SPO tiles are ordered by subject id,
+    /// so "every triple of subject `sid`, for ascending `sid`" visits exactly the
+    /// tiles a full scan visits, in the same order, and the whole resume state
+    /// collapses to one `u32`. No thread, no `unsafe`, no borrow held across
+    /// calls — and unlike `(offset, limit)` it is O(n) overall rather than
+    /// O(n²/limit), because nothing is ever re-scanned.
+    ///
+    /// `max_quads` is the FLOOR of a batch, not a hard cut: a batch always ends
+    /// on a subject boundary, so no subject is split across two calls. Work per
+    /// call is bounded by a probe budget too — a sparse named graph whose few
+    /// subjects are spread over a huge id space returns early with `done = false`
+    /// rather than grinding through absent ids, and the caller just asks again.
+    pub fn dump_batch(
+        &self,
+        graph: Option<&str>,
+        cursor: u32,
+        max_quads: usize,
+    ) -> (Vec<TermTriple>, u32, bool) {
+        /// The first subject id at or after `sid` that any SPO tile can hold, or
+        /// `None` when `sid` is past the last tile. Tiles ascend by leading
+        /// range, so this is a binary search; it returns `sid` itself when a tile
+        /// already covers it (an ordinary "this subject has no triples" step).
+        fn next_tile_start(tiles: &[crate::index::Tile], sid: u32) -> Option<u32> {
+            let i = tiles.partition_point(|t| t.leading_range().1 < sid);
+            tiles.get(i).map(|t| t.leading_range().0.max(sid))
+        }
+
+        let index = match graph {
+            None => self.default_index(),
+            // An unknown graph IRI is an empty dump, not an error — same as
+            // `dump_each`.
             Some(g) => match self.graph_index(g) {
                 Some(i) => i,
-                None => return,
+                None => return (Vec::new(), cursor, true),
             },
         };
-        for (s, p, o) in index.scan_iter((None, None, None)) {
-            if let (Some(st), Some(pt), Some(ot)) = (
-                self.dict.subject_term(s),
-                self.dict.predicate_term(p),
-                self.dict.object_term(o),
-            ) {
-                f(&st, &pt, &ot);
+        // Tile leading ranges live in the section directory, so both the span and
+        // the gap jumps below are free on a lazy/remote open — no tile is fetched
+        // to decide where to look.
+        let tiles = index.tile_sections()[IndexPermutation::Spo.section_index()];
+        let (Some(first), Some(last)) = (
+            tiles.first().map(|t| t.leading_range().0),
+            tiles.last().map(|t| t.leading_range().1),
+        ) else {
+            return (Vec::new(), cursor, true); // empty graph
+        };
+
+        let mut sid = cursor.max(first);
+        let mut probes = max_quads.saturating_mul(4).max(1 << 16);
+        let mut ids: Vec<(u32, u32, u32)> = Vec::new();
+        let mut exhausted = false;
+        while sid <= last && probes > 0 {
+            probes -= 1;
+            let hits = index.match_pattern((Some(sid), None, None));
+            if hits.is_empty() {
+                // No triples at this id. If it also falls in a hole BETWEEN
+                // tiles, jump straight to the next tile's first id instead of
+                // stepping through the gap one absent id at a time.
+                match next_tile_start(tiles, sid) {
+                    None => {
+                        exhausted = true;
+                        break;
+                    }
+                    Some(next) if next > sid => {
+                        sid = next;
+                        continue;
+                    }
+                    Some(_) => {}
+                }
+            } else {
+                ids.extend(hits);
+            }
+            if sid == u32::MAX {
+                exhausted = true;
+                break;
+            }
+            sid += 1;
+            if ids.len() >= max_quads {
+                break;
             }
         }
+        let done = exhausted || sid > last;
+
+        // One coalesced dictionary fault for this batch, then resolve.
+        // Deliberately NOT `Dictionary::prefetch_all` (what `dump_each` uses):
+        // on a lazy open that pulls the ENTIRE dictionary — gigabytes on a big
+        // file — before the first quad, so taking five quads off the front would
+        // cost as much as a full dump. Per-batch prefetch keeps a partial walk
+        // proportional to what it actually read.
+        let dict = self.dictionary();
+        if !ids.is_empty() {
+            let mut nodes = Vec::with_capacity(ids.len() * 2);
+            let mut preds = Vec::with_capacity(ids.len());
+            for &(s, p, o) in &ids {
+                nodes.push(dict.subject_node(s));
+                nodes.push(dict.object_node(o));
+                preds.push(p);
+            }
+            dict.prefetch_terms(&nodes, &preds);
+        }
+        let triples = ids
+            .into_iter()
+            .filter_map(|(s, p, o)| {
+                Some((
+                    dict.subject_term(s)?,
+                    dict.predicate_term(p)?,
+                    dict.object_term(o)?,
+                ))
+            })
+            .collect();
+        (triples, sid, done)
     }
 
     /// All named graphs as `(iri, index)`.
@@ -4174,6 +4322,104 @@ mod tests {
             rete.dump(Some("http://ex/g1")),
             vec![("Bob".into(), "age".into(), "30".into())]
         );
+    }
+
+    /// `dump_iter` must agree with `dump` exactly — and must be *lazy*: taking
+    /// the first triple of a lazily range-read file may not drag the whole
+    /// index across the reader, or the JS client's streaming quad cursor (which
+    /// is this iterator, suspended between wasm calls) would be a materializing
+    /// dump wearing a cursor's clothes.
+    #[test]
+    fn dump_iter_matches_dump_and_stops_early() {
+        use crate::reader::{CountingReader, SliceReader};
+
+        // Enough triples over tiny tiles to force many tiles per permutation.
+        let triples: Vec<(String, String, String)> = (0..2000u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{i:04}>"),
+                    "<http://ex/p>".to_string(),
+                    format!("<http://ex/o/{i:04}>"),
+                )
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+
+        // Same triples, same order, as the eager dump.
+        let rete = Rete::open(&bytes).unwrap();
+        assert_eq!(rete.dump_iter(None).collect::<Vec<_>>(), rete.dump(None));
+        // A missing named graph yields nothing rather than the default graph.
+        assert_eq!(rete.dump_iter(Some("http://ex/nope")).count(), 0);
+
+        // Lazily: taking one triple must cost far fewer bytes than draining.
+        let read_bytes = |take: usize| -> u64 {
+            let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+            let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let before = reader.bytes_read();
+            let n = rete.dump_iter(None).take(take).count();
+            assert_eq!(n, take.min(triples.len()));
+            assert!(!rete.index_incomplete());
+            reader.bytes_read() - before
+        };
+        let first_only = read_bytes(1);
+        let everything = read_bytes(triples.len());
+        // Always true: stopping after one triple cannot cost a full scan.
+        assert!(
+            first_only < everything,
+            "dump_iter is not lazy: one triple read {first_only} B, a full scan {everything} B"
+        );
+        // The STRONG claim — under half — only holds once the payload dwarfs the
+        // fixed open cost. This fixture is ~32 KB, and with `compression` off the
+        // dictionary is essentially the whole file, so opening it at all already
+        // pays most of `everything` (21 KB of 33 KB) and the ratio says nothing
+        // about laziness. Asserting it unconditionally is how this test failed on
+        // `--no-default-features` while passing everywhere else.
+        #[cfg(feature = "compression")]
+        assert!(
+            first_only * 2 < everything,
+            "dump_iter is not lazy: one triple read {first_only} B of the {everything} B a full scan reads"
+        );
+
+        // A FRESH open: these assertions fault tiles and the dictionary in,
+        // and the laziness measurement above counts bytes on a COLD reader —
+        // sharing one `rete` makes first_only and everything both ~0, so the
+        // comparison silently stops testing anything.
+        let fresh = Rete::open(&bytes).unwrap();
+        // `dump_batch` is the resumable form the language clients pull through.
+        // Driven to exhaustion it must reproduce the eager dump EXACTLY — same
+        // triples, same order — for any batch size, including one so small that
+        // every call ends on a subject boundary before reaching it.
+        let drain = |max_quads: usize| {
+            let (mut out, mut cursor, mut calls) = (Vec::new(), 0u32, 0);
+            loop {
+                let (batch, next, done) = fresh.dump_batch(None, cursor, max_quads);
+                out.extend(batch);
+                cursor = next;
+                calls += 1;
+                assert!(calls < 10_000, "cursor failed to advance");
+                if done {
+                    break out;
+                }
+            }
+        };
+        let eager = fresh.dump(None);
+        for max in [1usize, 7, 128, 100_000] {
+            assert_eq!(drain(max), eager, "batch size {max} changed the dump");
+        }
+        // An unknown graph is an empty, already-finished dump — not an error and
+        // not the default graph leaking through.
+        let (t, _, done) = fresh.dump_batch(Some("http://ex/nope"), 0, 16);
+        assert!(t.is_empty() && done);
     }
 
     #[test]
