@@ -91,6 +91,13 @@ registered in `web/playground-src/catalog.js`:
   redirect and no token**, so rete's default synchronous-XHR reader works and it is ~3.5×
   faster than the old HF Space it replaced (now retired).
 
+Registering a dataset (or adding an example) also owes it a **link preview**: every
+catalog example gets a share page under `docs/q/` and every dataset one under `docs/d/`,
+each with Open Graph tags and a card that shows the answer that query really returns.
+Refresh with `scripts/preview/run.sh capture --dataset=<key>` then
+`scripts/preview/run.sh build`; the G0 gate fails on a missing page or card. Details in
+`scripts/preview/README.md`.
+
 Catalog knobs: each dataset has an explicit `url`, or derives `remoteBase/<key>/<key>.rete`
 via `remoteUrlFor()` when it has none. `remoteBase` = `https://data.graphplaza.com`,
 `remoteToken` = "". SQL Explore companions (parquet/duckdb/sqlite) use a separate

@@ -43,9 +43,13 @@ ensure_deps() {
 # The captured result thumbnails are committed (they are an input to the card
 # render), and Chromium writes them as full-colour PNGs — ~140 KB each for what
 # ends up as a 700px-wide panel. Quantizing them costs nothing visible and takes
-# the directory from ~10 MB to ~2 MB. Idempotent: re-quantizing an already
-# 256-colour image is a no-op in practice, and --skip-if-larger keeps the original.
-SHOTS_OPT='find /work/web/preview/shots -name "*.png" -print0 2>/dev/null | xargs -0 -r -n 32 pngquant --force --skip-if-larger --quality=60-90 --speed 1 --strip --ext .png || true'
+# the directory from ~10 MB to ~2 MB.
+#
+# Only truecolour files are touched. Byte 25 of a PNG is the IHDR colour type,
+# and 3 means "already palette-indexed": re-quantizing those is not quite a
+# no-op, so without this guard every build would rewrite a few thumbnails,
+# re-render the cards that embed them, and lose a little more quality each time.
+SHOTS_OPT='for f in /work/web/preview/shots/*.png; do [ -e "$f" ] || continue; [ "$(od -An -tu1 -j25 -N1 "$f" | tr -d " ")" = "3" ] && continue; pngquant --force --skip-if-larger --quality=60-90 --speed 1 --strip --ext .png "$f" || true; done'
 
 build_all() {
   run_in_docker "node /work/scripts/preview/inject_og.mjs"

@@ -44,7 +44,7 @@ worktrees can run concurrently without one suite reading another checkout.
 
 | Tier | What it verifies | Time |
 |---|---|---|
-| **G0 static** | `app.js` / `catalog.js` parse; every inline `<script>` of the **built** `docs/playground.html` parses (one bad char blanks the whole playground); all catalog example queries declare every prefix they use | ~5 s |
+| **G0 static** | `app.js` / `catalog.js` parse; every inline `<script>` of the **built** `docs/playground.html` parses (one bad char blanks the whole playground); all catalog example queries declare every prefix they use; every example and dataset has a share page + card image and no page's `og:image` 404s or is relative | ~5 s |
 | **G1 engine-in-node** | the **production async wasm + Asyncify driver** (`docs/rete_wasm_async.js`) answers a lazy query with 4 OPTIONALs + ORDER BY cast over a local range server — no browser, catches a broken/stale async build immediately | ~10 s |
 | **G2 browser matrix** | see below | ~4 min |
 | **G2 catalog** (optional) | every catalog query through the real playground: 73 embedded, or all 431 including live R2 | minutes to hours |
@@ -94,6 +94,9 @@ live-R2 matrix.
 1. `python scripts/build_playground.py`.
 2. `bash tests/gate/gate.sh` (or `fast` + `--only=<check>` while iterating,
    full gate before the commit).
+3. If you added or edited a catalog example or dataset, refresh its link
+   preview — `scripts/preview/run.sh capture --dataset=<key>` then
+   `scripts/preview/run.sh build`. G0 goes red on a missing share page or card.
 
 ## Known coverage gaps
 

@@ -12,10 +12,11 @@ with bounded reads before they reach for a server.
 | `crates/rete-core` | File format, dictionary, triple indexes, pyramid summary, SPARQL evaluation, reasoning, SHACL, range readers |
 | `crates/rete-cli` | The `rete` binary, command routing, JSON/text rendering, URL/range command helpers |
 | `crates/rete-wasm` | Browser-facing API compiled with `wasm-bindgen`; no native-only dependencies on the default path |
-| `crates/docgen` | Static docs renderer for `docs/*.md` to `docs/*.html` |
+| `crates/docgen` | Static docs renderer for `docs/*.md` to `docs/*.html`, including each page's social tags |
 | `crates/bench` | Dev-only Oxigraph comparison harness and benchmark JSON output |
-| `web/` | Playground template, generated WASM packages, embedded datasets |
+| `web/` | Playground template, generated WASM packages, embedded datasets, captured example answers (`web/preview/`) |
 | `scripts/` | Smoke tests, synthetic data generation, range server, docs/playground build helpers |
+| `scripts/preview/` | Social-preview pipeline: measures every catalog example, renders the card images, generates the share pages under `docs/q` and `docs/d` |
 
 The CLI is split by command group under `crates/rete-cli/src/commands/`. Core
 query behavior lives in `rete-core`; the CLI and WASM layers should mostly adapt

@@ -359,8 +359,13 @@ pre.peek .v{color:${T.accent}}
 .rail .answer .sub{font-size:17px;color:${T.muted};margin-top:2px}
 .foot{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:22px;
   padding-top:18px;border-top:1px solid ${T.lineStrong};position:relative;z-index:1}
-.foot .cta{font-size:21px;color:${T.ink}}
-.foot .cta b{color:${T.accentDark}}
+/* The call to action reads as a button. A card in a feed is an ad for one
+   click, and an unfurl linter is right that a flat sentence does not look like
+   one — so the action is a filled pill and the reassurance sits beside it. */
+.foot .cta{display:flex;align-items:center;gap:16px;min-width:0}
+.foot .cta .btn{background:${T.accent};color:${T.onAccent};font-size:21px;font-weight:600;
+  padding:11px 24px;border-radius:999px;white-space:nowrap;line-height:1.2}
+.foot .cta .why{font-size:18px;color:${T.muted};white-space:nowrap}
 .foot .url{font-family:${T.mono};font-size:17px;color:${T.muted};white-space:nowrap}
 .bullets{list-style:none;display:flex;flex-direction:column;gap:11px}
 .bullets li{font-size:22px;color:${T.ink};line-height:1.3;display:flex;gap:11px;align-items:baseline;
@@ -395,6 +400,15 @@ function titleClass(title) {
   return n <= 46 ? "s1" : n <= 78 ? "s2" : "s3";
 }
 
+/** The footer: one button-shaped action, the reassurance beside it, the domain. */
+function footHtml(action) {
+  return `<div class="foot">
+      <div class="cta"><span class="btn">${esc(action)}</span>
+        <span class="why">no server · no download · no account</span></div>
+      <div class="url">caviri.github.io/rete</div>
+    </div>`;
+}
+
 /** A documentation page's card: section chip, page title, its opening paragraph. */
 function docCard(model) {
   return `<div class="card doc">
@@ -407,10 +421,7 @@ function docCard(model) {
     <div class="body">
       <div class="left"><p class="lead">${esc(plain(model.summary, 300))}</p></div>
     </div>
-    <div class="foot">
-      <div class="cta">Cloud-native, <b>range-queryable RDF graph files</b></div>
-      <div class="url">caviri.github.io/rete</div>
-    </div>
+    ${footHtml(model.section === "Explore in the browser" ? "Open it in your browser →" : "Read the guide →")}
   </div>`;
 }
 
@@ -464,12 +475,7 @@ export function cardInner(model, { shotSrc = "" } = {}) {
     </div>
     <h1 class="title ${titleClass(model.title)}">${esc(model.title)}</h1>
     <div class="body">${left}${rail}</div>
-    <div class="foot">
-      <div class="cta">${model.kind === "dataset"
-        ? "Explore this graph in your browser — <b>no server, no download</b>"
-        : "Run this query in your browser — <b>no server, no download</b>"}</div>
-      <div class="url">caviri.github.io/rete</div>
-    </div>
+    ${footHtml(model.kind === "dataset" ? "Explore this graph →" : "Run this query →")}
   </div>`;
 }
 

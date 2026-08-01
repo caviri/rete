@@ -345,10 +345,11 @@ with bounded reads before they reach for a server.</p>
 <tr><td><code>crates/rete-core</code></td><td>File format, dictionary, triple indexes, pyramid summary, SPARQL evaluation, reasoning, SHACL, range readers</td></tr>
 <tr><td><code>crates/rete-cli</code></td><td>The <code>rete</code> binary, command routing, JSON/text rendering, URL/range command helpers</td></tr>
 <tr><td><code>crates/rete-wasm</code></td><td>Browser-facing API compiled with <code>wasm-bindgen</code>; no native-only dependencies on the default path</td></tr>
-<tr><td><code>crates/docgen</code></td><td>Static docs renderer for <code>docs/*.md</code> to <code>docs/*.html</code></td></tr>
+<tr><td><code>crates/docgen</code></td><td>Static docs renderer for <code>docs/*.md</code> to <code>docs/*.html</code>, including each page's social tags</td></tr>
 <tr><td><code>crates/bench</code></td><td>Dev-only Oxigraph comparison harness and benchmark JSON output</td></tr>
-<tr><td><code>web/</code></td><td>Playground template, generated WASM packages, embedded datasets</td></tr>
+<tr><td><code>web/</code></td><td>Playground template, generated WASM packages, embedded datasets, captured example answers (<code>web/preview/</code>)</td></tr>
 <tr><td><code>scripts/</code></td><td>Smoke tests, synthetic data generation, range server, docs/playground build helpers</td></tr>
+<tr><td><code>scripts/preview/</code></td><td>Social-preview pipeline: measures every catalog example, renders the card images, generates the share pages under <code>docs/q</code> and <code>docs/d</code></td></tr>
 </tbody></table>
 <p>The CLI is split by command group under <code>crates/rete-cli/src/commands/</code>. Core
 query behavior lives in <code>rete-core</code>; the CLI and WASM layers should mostly adapt
