@@ -12,13 +12,13 @@ assert.throws(() => normalizeCatalogScope("remote"), /embedded.*all/);
 const all = catalogCases("all");
 const embedded = catalogCases("embedded");
 
-// 637 -> 644 -> 651: this literal has to be raised by hand every time the
+// 637 -> 644 -> 651 -> 656: this literal has to be raised by hand every time the
 // catalog grows, and it silently went stale because the `browser` job was
 // SKIPPED on the PRs that grew it (#113 datacite/epfl-graph/opencitations,
 // #122 mirbase). Keeping it is deliberate — it is the tripwire that makes a
 // catalog change visible — but the number is only ever as fresh as the last
 // run of this gate.
-assert.equal(all.length, 651, "every catalog query must be in the exhaustive matrix");
+assert.equal(all.length, 656, "every catalog query must be in the exhaustive matrix");
 assert.equal(embedded.length, 69, "the deterministic tier must cover every embedded query");
 assert.equal(new Set(all.map((entry) => entry.id)).size, all.length, "case ids must be unique");
 assert.ok(all.every((entry) => entry.query.trim()), "every case must carry executable SPARQL");
@@ -26,7 +26,7 @@ assert.ok(all.every((entry) => Number.isInteger(entry.index)), "every case needs
 
 const allGroups = catalogDatasetGroups("all");
 const embeddedGroups = catalogDatasetGroups("embedded");
-assert.equal(allGroups.length, 94, "the exhaustive tier must cover every dataset");
+assert.equal(allGroups.length, 95, "the exhaustive tier must cover every dataset");
 assert.equal(embeddedGroups.length, 10, "the deterministic tier must cover every embedded dataset");
 assert.deepEqual(
   allGroups.flatMap((group) => group.cases.map((entry) => entry.id)),
