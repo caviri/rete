@@ -373,8 +373,15 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <tr><td>subquery</td><td style="text-align: right">2 / 14</td><td style="text-align: right">12</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
 <tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td><code>SERVICE</code> <strong>is</strong> implemented — these tests need a live endpoint, so they're excluded from the offline run</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
-<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>232 / 309 (75.1%)</strong></td><td style="text-align: right">33</td><td></td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>236 / 309 (76.4%)</strong></td><td style="text-align: right">29</td><td></td></tr>
 </tbody></table>
+<blockquote>
+<p>This total is <strong>measured in CI</strong>, not written by hand. The conformance job runs
+the harness against the W3C suite on every Rust change and fails if the passing
+count drops below <code>tests/conformance-baseline.json</code>. It was not always so: the
+figure here read 232 / 75.1% while the engine actually scored 236 / 76.4%, and
+nothing would have caught it moving the other way.</p>
+</blockquote>
 <h2>Coverage notes</h2>
 <p><strong>Strong areas.</strong> Negation (<code>MINUS</code> / <code>NOT EXISTS</code>), JSON results, XSD casts
 (with strict lexical validation), and projection expressions are 100%. Property
@@ -389,7 +396,11 @@ built-in function library covers strings (language-tag-preserving
 <code>LANGMATCHES</code>), the <code>MD5</code>…<code>SHA512</code> hashes, the <code>xsd:dateTime</code> accessors, and
 <code>IF</code>/<code>IN</code>/<code>sameTerm</code> — all in pure Rust, so the same coverage holds in the WASM
 client. <code>CONSTRUCT</code> answers are verified by graph isomorphism. This matches the
-24-operator cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a>.</p>
+24-operator cross-check against Oxigraph in <a href="BENCHMARK.html">BENCHMARK</a> — which
+runs in CI as of this change. It had not: the differential oracle lives in the
+<code>rete-bench</code> crate, and every CI invocation excluded that crate, so the test
+described in its own header as "a correctness gate" ran nowhere while build
+reports went on printing "differential oracle green".</p>
 <p><strong>Out of scope (counted against the total, but not engine bugs):</strong></p>
 <ul>
 <li><strong>SERVICE</strong> (7) — <code>SERVICE</code> federation is implemented (the block is sent to

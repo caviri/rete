@@ -315,6 +315,38 @@ jobs:
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh docs'
 
+  conformance:
+    name: W3C SPARQL 1.1 conformance
+    # The scorecard in docs/conformance.md was hand-committed and measured by
+    # nobody: the harness existed but no workflow ran it, so a drop from 76% to
+    # 60% would have merged green. It is a gate now — `--min-pass` makes the
+    # harness EXIT NON-ZERO on regression (without it, it always exited 0, so
+    # wiring it in would have measured the score and then ignored it).
+    needs: [changes, image]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Fetch the W3C test suite
+        # Not vendored (it is gitignored), so the suite is cloned shallowly.
+        run: git clone --depth 1 https://github.com/w3c/rdf-tests.git rdf-tests
+      - name: Score against the committed baseline
+        run: |
+          BASELINE=$(python3 -c "import json;print(json.load(open('tests/conformance-baseline.json'))['pass'])")
+          echo "baseline: $BASELINE passing"
+          docker run --rm --user root             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup             -e CARGO_TARGET_DIR=/work/target             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}"             sh -lc "git config --global --add safe.directory /work               && cargo build --release -p rete-cli               && pip install --quiet --break-system-packages rdflib               && python3 scripts/sparql_conformance.py                    --rete target/release/rete                    --suite rdf-tests/sparql/sparql11                    --min-pass $BASELINE                    --json conformance.json"
+      - name: Publish the measured score
+        if: always()
+        run: cat conformance.json 2>/dev/null || echo "no score produced"
+
   preview:
     name: playground preview artifact
     if: >-
