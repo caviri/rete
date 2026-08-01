@@ -5,6 +5,28 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-01
+
+No engine change from 0.3.1 — the same code, released again because the 0.3.1
+release run could not finish. Two workflow bugs stopped it after the packages
+were already on PyPI and npm, so those registries carry 0.3.1 while GitHub
+Releases has nothing.
+
+### Fixed
+
+- **The Blender add-on packed and then could not be moved.** The extension built
+  correctly — 13,956,498 bytes with all four wheels bundled — and the job died on
+  the next line, because `clients/blender/dist` is created by a container running
+  as root and the runner user cannot unlink from it. (#129)
+- **The browser WASM bundle copied paths that had moved.** It still named
+  `docs/rete_wasm.js` and `docs/rete_wasm_bg.wasm` at the top level; the ESM pair
+  lives in `docs/engine/`. Those are the same two paths #100 corrected in
+  `ci.yml`'s parity list — `release.yml` kept the old spelling, and since it only
+  runs on a `v*` tag, nothing exercised it in between. (#130)
+
+Both are tag-only code paths, which is what let them rot unnoticed. `release.yml`
+now has every path it copies audited.
+
 ## [0.3.1] - 2026-07-31
 
 A correctness release. The headline is a SPARQL bug that returned **wrong

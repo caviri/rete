@@ -222,7 +222,7 @@ g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 (On the older Pyodide 0.29, whose installer predates the PEP 783 wheel-tag
 spelling PyPI requires, install the byte-identical retagged wheel by URL
 instead: `%pip install
-https://data.graphplaza.com/wheels/rete_graph-0.3.1-cp39-abi3-pyodide_2025_0_wasm32.whl`.)
+https://data.graphplaza.com/wheels/rete_graph-0.3.2-cp39-abi3-pyodide_2025_0_wasm32.whl`.)
 
 Under the hood, remote reads use synchronous `XMLHttpRequest` range requests —
 allowed only in **web workers**, which is where JupyterLite and marimo run

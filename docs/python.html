@@ -265,7 +265,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.3.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.3.2</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -508,7 +508,7 @@ g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 </code></pre>
 <p>(On the older Pyodide 0.29, whose installer predates the PEP 783 wheel-tag
 spelling PyPI requires, install the byte-identical retagged wheel by URL
-instead: <code>%pip install https://data.graphplaza.com/wheels/rete_graph-0.3.1-cp39-abi3-pyodide_2025_0_wasm32.whl</code>.)</p>
+instead: <code>%pip install https://data.graphplaza.com/wheels/rete_graph-0.3.2-cp39-abi3-pyodide_2025_0_wasm32.whl</code>.)</p>
 <p>Under the hood, remote reads use synchronous <code>XMLHttpRequest</code> range requests —
 allowed only in <strong>web workers</strong>, which is where JupyterLite and marimo run
 their kernels, so it just works there. The file's host must send CORS headers
