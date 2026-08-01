@@ -296,6 +296,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
+        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
         <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="compatibility.html">Compatibility & Cypher</a></li>
         <li class="nav-h">Clients</li>
@@ -506,11 +507,12 @@ through per-group accumulators — a <code>COUNT</code> over a 9.83 B-triple fil
 2 GiB container (<a href="BENCHMARK.html">benchmark</a>). Preview a query's byte cost with
 <code>rete cost</code>, and see the exact ranges a query read with <code>rete why</code>.</p>
 <h3><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
-<p>Serve one <code>.rete</code> as a live <strong>SPARQL 1.1 Protocol endpoint — queries and
-SPARQL Update</strong>. The base file is <strong>never mutated</strong>: updates append to a
-plain-text journal next to it (<code>&lt;file&gt;.changes</code>, one <code>+</code>/<code>-</code>-prefixed N-Quads
-line per change) and the merged state answers the very next query; a restart
-replays the journal. <code>GET /snapshot.rete</code> downloads the current state as a
+<p>Serve one <code>.rete</code> — or a <a href="manifest.html">manifest</a> of segments (<code>.json</code>), whose
+visible fold becomes the served state — as a live <strong>SPARQL 1.1 Protocol
+endpoint — queries and SPARQL Update</strong>. The base file is <strong>never mutated</strong>:
+updates append to a plain-text journal next to it (<code>&lt;file&gt;.changes</code>, one
+<code>+</code>/<code>-</code>-prefixed N-Quads line per change) and the merged state answers the
+very next query; a restart replays the journal. <code>GET /snapshot.rete</code> downloads the current state as a
 fresh <code>.rete</code> — the update cycle's publishable artifact (upload the snapshot,
 delete the journal). Any rete client — including the browser playground — can
 federate against the endpoint with <code>SERVICE &lt;http://host:port/sparql&gt;</code>.</p>
@@ -741,6 +743,21 @@ OpenCitations multi-shard example.</p>
 <pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
                                           &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
+</code></pre>
+<h3><code>rete manifest &lt;init|add|status|query|seal|compact&gt;</code></h3>
+<p>Manage a <strong>writable logical graph</strong> as an ordered log of immutable <code>.rete</code>
+segments plus tombstone (deletion) segments, described by a small JSON
+manifest — grow a dataset across sessions, delete/update quads, query it all
+as <strong>one</strong> graph (joins across segments resolve, unlike <code>federate</code>'s UNION),
+and fold it back into a single <code>.rete</code>. <code>rete serve</code> accepts a manifest, and
+<code>manifest seal</code> checkpoints the server's journal into fresh segments. See
+<a href="manifest.html">Writable graphs — manifest &amp; WAL</a>.</p>
+<pre><code class="language-sh">rete manifest init   g.rete-manifest.json base.rete
+rete manifest add    g.rete-manifest.json --adds delta.rete [--dels tomb.rete]
+rete manifest query  g.rete-manifest.json "SELECT … WHERE { … }"
+rete manifest status g.rete-manifest.json --count
+rete manifest seal   g.rete-manifest.json     # journal → segments (stop serve first)
+rete manifest compact g.rete-manifest.json    # the whole log → ONE fresh .rete
 </code></pre>
 <h2>Exit codes</h2>
 <ul>

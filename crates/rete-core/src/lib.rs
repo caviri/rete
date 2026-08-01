@@ -38,6 +38,7 @@ pub mod header;
 pub mod index;
 
 pub mod ingest;
+pub mod manifest;
 #[doc(hidden)]
 pub mod meta;
 #[cfg(feature = "parallel")]

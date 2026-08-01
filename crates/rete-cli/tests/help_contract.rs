@@ -40,6 +40,7 @@ fn top_level_help_and_version_are_stable() {
         "federate",
         "sparql-url",
         "why-url",
+        "manifest",
     ];
     let mut previous = 0;
     for command in commands {

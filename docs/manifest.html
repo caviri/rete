@@ -4,22 +4,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>SHACL validation · rete docs</title>
-  <meta name="description" content="rete shacl validates a .rete file against SHACL Core shapes. It is meant for release checks and CI gates: build the graph once, run the shape file against the default graph or a named graph, and fail…" />
-  <link rel="canonical" href="https://caviri.github.io/rete/shacl.html" />
+  <title>Writable graphs — manifest & WAL · rete docs</title>
+  <meta name="description" content="A .rete file is immutable by design: sorted, delta-encoded tiles behind a content hash are what make it range-cacheable forever." />
+  <link rel="canonical" href="https://caviri.github.io/rete/manifest.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
-  <meta property="og:title" content="SHACL validation · rete docs" />
-  <meta property="og:description" content="rete shacl validates a .rete file against SHACL Core shapes. It is meant for release checks and CI gates: build the graph once, run the shape file against the default graph or a named graph, and fail…" />
-  <meta property="og:url" content="https://caviri.github.io/rete/shacl.html" />
-  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/shacl.png" />
+  <meta property="og:title" content="Writable graphs — manifest &amp; WAL · rete docs" />
+  <meta property="og:description" content="A .rete file is immutable by design: sorted, delta-encoded tiles behind a content hash are what make it range-cacheable forever." />
+  <meta property="og:url" content="https://caviri.github.io/rete/manifest.html" />
+  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/manifest.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="SHACL validation · rete docs" />
+  <meta property="og:image:alt" content="Writable graphs — manifest &amp; WAL · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="SHACL validation · rete docs" />
-  <meta name="twitter:description" content="rete shacl validates a .rete file against SHACL Core shapes. It is meant for release checks and CI gates: build the graph once, run the shape file against the default graph or a named graph, and fail…" />
-  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/shacl.png" />
+  <meta name="twitter:title" content="Writable graphs — manifest &amp; WAL · rete docs" />
+  <meta name="twitter:description" content="A .rete file is immutable by design: sorted, delta-encoded tiles behind a content hash are what make it range-cacheable forever." />
+  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/manifest.png" />
   <meta name="rete:section" content="Guides" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
@@ -293,10 +293,10 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="cli.html">CLI reference</a></li>
         <li><a href="sparql.html">SPARQL support</a></li>
         <li><a href="geosparql.html">GeoSPARQL (geometry + time)</a></li>
-        <li><a href="shacl.html" class="active">SHACL validation</a></li>
+        <li><a href="shacl.html">SHACL validation</a></li>
         <li><a href="reasoning.html">Reasoning & coherence</a></li>
         <li><a href="federation.html">Federated queries</a></li>
-        <li><a href="manifest.html">Writable graphs — manifest & WAL</a></li>
+        <li><a href="manifest.html" class="active">Writable graphs — manifest & WAL</a></li>
         <li><a href="semantic-zoom.html">Semantic zoom (schema pyramid)</a></li>
         <li><a href="compatibility.html">Compatibility & Cypher</a></li>
         <li class="nav-h">Clients</li>
@@ -336,131 +336,117 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>SHACL validation</h1>
-<p><code>rete shacl</code> validates a <code>.rete</code> file against SHACL Core shapes. It is meant for
-release checks and CI gates: build the graph once, run the shape file against the
-default graph or a named graph, and fail the job if the validation report is not
-conformant.</p>
-<pre><code class="language-sh">rete build data.ttl -o data.rete
-rete shacl data.rete --shapes shapes.ttl
-rete shacl data.rete --shapes shapes.ttl --format json
-rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/releases/2026-06&gt;'
+<h1>Writable graphs — the manifest &amp; WAL</h1>
+<p>A <code>.rete</code> file is <strong>immutable by design</strong>: sorted, delta-encoded tiles behind a
+content hash are what make it range-cacheable forever. So how do you <em>edit</em> a
+graph — grow it across sessions, delete and update quads, keep querying while
+you write — without giving that up?</p>
+<p>The answer is the same one LevelDB, RocksDB, and the lakehouse formats reached:
+<strong>never mutate data files; mutate a tiny pointer to them.</strong> A <strong>manifest</strong> is a
+small JSON document naming an <em>ordered log</em> of immutable <code>.rete</code> <strong>segments</strong>;
+the graph you see is the fold of that log. The only file that ever changes is
+the manifest itself.</p>
+<pre><code class="language-json">{
+  "rete_manifest": 1,
+  "name": "mygraph",
+  "generation": 3,
+  "log": [
+    { "adds": { "url": "base-1a2b3c4d.rete", "size": 84210, "blake3_16": "…" } },
+    { "adds": { "url": "mygraph-g2-5e6f7a8b.rete", "size": 1204, "blake3_16": "…" } },
+    { "adds": { "url": "mygraph-g3-9c0d1e2f.rete", "size": 890, "blake3_16": "…" },
+      "dels": { "url": "mygraph-g3-9c0d1e2f.tomb.rete", "size": 412, "blake3_16": "…" } }
+  ]
+}
 </code></pre>
-<p>The command exits with status <code>0</code> when the report conforms and non-zero when it
-finds at least one result. Shapes are read as Turtle. Data comes from the <code>.rete</code>
-file, so validation runs over exactly the graph you publish and query.</p>
-<h2>Validating a remote graph (lazy)</h2>
-<p>SHACL validation is <strong>node-by-node</strong>: a shape names its targets (a class, a node,
-the subjects/objects of a predicate), then checks each focus node's own property
-values. That maps onto <strong>routed range reads</strong>, so a remote <code>.rete</code> can be
-validated over HTTP <em>without downloading it</em> — each lookup faults only the tiles
-holding the target nodes and their values:</p>
-<pre><code class="language-sh">rete shacl-url https://host/data.rete --shapes shapes.ttl
-# (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
+<p>Each log entry contributes quads to <strong>add</strong> and, optionally, a <strong>tombstone</strong>
+segment — a plain <code>.rete</code> whose quads are the <em>deleted</em> quads. The visible
+graph is the ordered fold:</p>
+<pre><code class="language-text">visible = ∅
+for entry in log:   visible = (visible ∖ entry.dels) ∪ entry.adds
 </code></pre>
-<p>A <strong>targeted</strong> shape (<code>sh:targetClass</code> / <code>targetNode</code> / <code>targetSubjectsOf</code> /
-<code>targetObjectsOf</code>) fetches only its targets — the win grows with the file. The one
-exception is a <strong>target-less shape</strong> (one that implicitly targets every node) or a
-general inverse path, which must read the whole graph; <code>^predicate</code> inverse paths
-are routed (they become a single <code>(?, p, focus)</code> lookup). <code>shacl-url</code> validates the
-default graph.</p>
-<h2>A minimal shape</h2>
-<pre><code class="language-turtle">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
-@prefix ex: &lt;http://ex/&gt; .
-@prefix xsd: &lt;http://www.w3.org/2001/XMLSchema#&gt; .
-
-ex:PersonShape
-  a sh:NodeShape ;
-  sh:targetClass ex:Person ;
-  sh:property [
-    sh:path ex:email ;
-    sh:minCount 1 ;
-    sh:maxCount 1 ;
-    sh:datatype xsd:string ;
-    sh:pattern "@" ;
-    sh:message "Every person needs exactly one email string." ;
-  ] .
-</code></pre>
-<pre><code class="language-sh">rete shacl people.rete --shapes person-shapes.ttl
-</code></pre>
-<p>Text output is compact and human-oriented:</p>
-<pre><code class="language-text">conforms: false
-
-- focus: &lt;http://ex/Alice&gt;
-  severity: http://www.w3.org/ns/shacl#Violation
-  component: http://www.w3.org/ns/shacl#MinCountConstraintComponent
-  path: &lt;http://ex/email&gt;
-  shape: _:b1
-  message: Every person needs exactly one email string.
-</code></pre>
-<p>Use <code>--format json</code> for automation and <code>--format ttl</code> for a Turtle validation
-report.</p>
-<h2>Supported SHACL surface</h2>
-<p>This implementation targets the stable W3C SHACL Core 2017 Recommendation. It
-does not try to implement SHACL-SPARQL, SHACL-AF, SHACL-JS, SHACL 1.2 drafts, or
-ShEx.</p>
-<p>Supported targets:</p>
-<table><thead><tr><th>Feature</th><th>Status</th></tr></thead><tbody>
-<tr><td><code>sh:targetNode</code></td><td>yes</td></tr>
-<tr><td><code>sh:targetClass</code></td><td>yes, including <code>rdfs:subClassOf</code> closure in the data graph</td></tr>
-<tr><td><code>sh:targetSubjectsOf</code></td><td>yes</td></tr>
-<tr><td><code>sh:targetObjectsOf</code></td><td>yes</td></tr>
-<tr><td>implicit class targets (<code>rdfs:Class</code>, <code>owl:Class</code>)</td><td>yes</td></tr>
-<tr><td><code>sh:deactivated</code>, <code>sh:severity</code>, <code>sh:message</code></td><td>yes</td></tr>
-</tbody></table>
-<p>Supported property paths:</p>
-<table><thead><tr><th>Path form</th><th>Status</th></tr></thead><tbody>
-<tr><td>predicate IRI</td><td>yes</td></tr>
-<tr><td><code>sh:inversePath</code></td><td>yes</td></tr>
-<tr><td>RDF list sequence paths</td><td>yes</td></tr>
-<tr><td><code>sh:alternativePath</code></td><td>yes</td></tr>
-<tr><td><code>sh:zeroOrMorePath</code></td><td>yes</td></tr>
-<tr><td><code>sh:oneOrMorePath</code></td><td>yes</td></tr>
-<tr><td><code>sh:zeroOrOnePath</code></td><td>yes</td></tr>
-</tbody></table>
-<p>Supported constraint components:</p>
-<table><thead><tr><th>Constraint family</th><th>Components</th></tr></thead><tbody>
-<tr><td>Cardinality</td><td><code>sh:minCount</code>, <code>sh:maxCount</code></td></tr>
-<tr><td>Value type</td><td><code>sh:class</code>, <code>sh:datatype</code>, <code>sh:nodeKind</code></td></tr>
-<tr><td>Value range</td><td><code>sh:minInclusive</code>, <code>sh:maxInclusive</code>, <code>sh:minExclusive</code>, <code>sh:maxExclusive</code></td></tr>
-<tr><td>Strings and languages</td><td><code>sh:minLength</code>, <code>sh:maxLength</code>, <code>sh:pattern</code>, <code>sh:flags</code>, <code>sh:languageIn</code>, <code>sh:uniqueLang</code></td></tr>
-<tr><td>Property pairs</td><td><code>sh:equals</code>, <code>sh:disjoint</code>, <code>sh:lessThan</code>, <code>sh:lessThanOrEquals</code></td></tr>
-<tr><td>Value sets</td><td><code>sh:hasValue</code>, <code>sh:in</code></td></tr>
-<tr><td>Nested shapes</td><td><code>sh:node</code>, <code>sh:property</code></td></tr>
-<tr><td>Logical constraints</td><td><code>sh:not</code>, <code>sh:and</code>, <code>sh:or</code>, <code>sh:xone</code></td></tr>
-<tr><td>Closed shapes</td><td><code>sh:closed</code>, <code>sh:ignoredProperties</code></td></tr>
-<tr><td>Qualified values</td><td><code>sh:qualifiedValueShape</code>, <code>sh:qualifiedMinCount</code>, <code>sh:qualifiedMaxCount</code>, <code>sh:qualifiedValueShapesDisjoint</code></td></tr>
-</tbody></table>
-<h2>Current limits</h2>
+<p>Deletion, update, and re-add all follow from entry order:</p>
 <ul>
-<li>Shape files must be Turtle.</li>
-<li>SHACL-SPARQL constraints, custom functions, rules, and JavaScript extensions
-are out of scope for this command.</li>
-<li>Recursive shape cycles are reported as validation results instead of being
-treated as fatal engine errors.</li>
-<li>Rete files are immutable snapshots. If your build uses <code>--materialize</code>, SHACL
-validates the already-materialized graph; otherwise it validates asserted data
-only.</li>
+<li><strong>delete</strong> — a later entry's tombstone hides an earlier quad;</li>
+<li><strong>update</strong> — one entry that deletes the old quad and adds the new one
+(RDF has no in-place update: an update <em>is</em> delete + insert);</li>
+<li><strong>re-add</strong> — an even later <code>adds</code> wins over the older tombstone.</li>
 </ul>
-<h2>Core API</h2>
-<p>The CLI uses the reusable core API. <code>validate_shacl</code> is generic over a
-[<code>GraphView</code>] — the data graph can be an in-memory <code>DataGraph</code> (eager) or a
-<code>ReteGraph</code> that routes every lookup as a range read (lazy / remote):</p>
-<pre><code class="language-rust">use rete_core::{validate_shacl, DataGraph, ReteGraph, Rete, ShaclShapes};
+<p>Every segment is pinned by <code>{size, blake3_16}</code> — the 16-byte blake3 content
+hash each <code>.rete</code> already carries in its header (the same contract the
+playground's <code>datasets.lock.json</code> uses). A replaced or truncated segment fails
+loudly at query time, never silently returns fewer rows.</p>
+<h2>Quickstart</h2>
+<pre><code class="language-sh"># Session 1: start the log from a built base file.
+rete manifest init mygraph.rete-manifest.json base.rete
 
-let shapes = ShaclShapes::parse_turtle(&amp;std::fs::read_to_string("shapes.ttl")?)?;
+# Session 2 (independent, later, elsewhere): built its own segment — append it.
+rete manifest add mygraph.rete-manifest.json --adds session2.rete
 
-// Eager: whole graph in memory.
-let rete = Rete::open(&amp;std::fs::read("data.rete")?)?;
-let report = validate_shacl(&amp;DataGraph::from_rete(&amp;rete, None), &amp;shapes);
+# Query it all as ONE graph — joins across segments resolve.
+rete manifest query mygraph.rete-manifest.json \
+  "SELECT ?n WHERE { &lt;http://ex/a&gt; &lt;http://ex/knows&gt; ?x . ?x &lt;http://ex/name&gt; ?n }"
 
-// Lazy: validate over a range reader (e.g. an HTTP backend) — fetches only the
-// shapes' targets.
-let rete = Rete::open_ranged_lazy(reader)?;
-let report = validate_shacl(&amp;ReteGraph::new(&amp;rete), &amp;shapes);
+# Delete/update by appending a tombstone segment.
+rete manifest add mygraph.rete-manifest.json --adds new.rete --dels obsolete.rete
+
+# The log, verified against its pins (add --count for the visible quad count).
+rete manifest status mygraph.rete-manifest.json
+
+# Fold everything back into ONE fresh .rete (single entry, generation++).
+rete manifest compact mygraph.rete-manifest.json
 </code></pre>
-<p>Pass <code>Some("&lt;graph-iri&gt;")</code> to <code>DataGraph::from_rete</code> to validate one named graph
-(the lazy <code>ReteGraph</code> validates the default graph).</p>
+<p><code>manifest query</code> is <strong>not</strong> <code>rete federate</code>: federation runs the whole query
+per source and unions rows (each file keeps its own dictionary — see
+<a href="federation.html">Federated queries</a>), so a join whose patterns live in
+<em>different</em> files cannot resolve. The manifest fold re-assembles all segments
+under <strong>one dictionary</strong>, so cross-segment joins behave exactly as if the
+graph had been built as one file — which is the point: segments are <em>one</em>
+logical graph's history, not independent datasets.</p>
+<h2>Live writes: serve, journal, seal</h2>
+<p><code>rete serve</code> accepts a manifest, which closes the write loop:</p>
+<pre><code class="language-sh">rete serve mygraph.rete-manifest.json          # SPARQL 1.1 Protocol + Update
+</code></pre>
+<p>Updates append to a plain-text journal (<code>&lt;manifest&gt;.changes</code>, one <code>+</code>/<code>-</code>
+N-Quads line per change — the write-ahead log) while queries keep answering
+from memory; the segments are never touched. <strong>Sealing</strong> is the checkpoint:</p>
+<pre><code class="language-sh">rete manifest seal mygraph.rete-manifest.json  # stop the server first
+</code></pre>
+<p><code>seal</code> nets the journal per quad (the last op wins), builds the net additions
+as a fresh segment and the net deletions as a tombstone segment, appends one
+log entry, and truncates the journal. Restarting the server on the sealed
+manifest reproduces the exact same state — now durable in content-addressed
+segments instead of a replay log. Repeat forever; <code>compact</code> when the log gets
+long.</p>
+<h2>Semantics in short</h2>
+<table><thead><tr><th>operation</th><th>how</th></tr></thead><tbody>
+<tr><td>add quads</td><td>append an entry with <code>adds</code></td></tr>
+<tr><td>delete quads</td><td>append an entry with <code>dels</code> (tombstone <code>.rete</code>)</td></tr>
+<tr><td>update a quad</td><td>one entry: old quad in <code>dels</code>, new quad in <code>adds</code></td></tr>
+<tr><td>re-add after delete</td><td>later <code>adds</code> beats the older tombstone</td></tr>
+<tr><td>named graphs</td><td>preserved — segments hold quads, not just triples</td></tr>
+<tr><td>detect change</td><td><code>generation</code> counter (one small-file poll, never the data)</td></tr>
+<tr><td>verify</td><td>every segment checked against <code>{size, blake3_16}</code> before use</td></tr>
+<tr><td>consolidate</td><td><code>compact</code> → one <code>.rete</code>, deterministic (same fold ⇒ same hash)</td></tr>
+</tbody></table>
+<h2>Limitations (prototype honesty)</h2>
+<ul>
+<li><strong>The fold is materialized per open.</strong> <code>manifest query</code> and <code>serve</code> load
+every segment and re-assemble one in-memory image — O(total quads), like
+<code>rete serve</code> has always worked. Right for living datasets up to a few
+million quads; wrong for multi-GB catalogs. A lazy multi-segment view that
+keeps the base file range-read is future work; until then, <code>compact</code> is the
+bridge back to the serverless read path.</li>
+<li><strong>The per-query image skips the pyramid and text index</strong> (fast open). Use
+<code>compact</code> to get a full artifact with semantic zoom back.</li>
+<li><strong>Single writer.</strong> The journal and the manifest assume one writer at a
+time (<code>seal</code> and <code>serve</code> must not run concurrently). Multi-session use is
+append-only coordination: build segments independently, <code>add</code> them one at
+a time. Compare-and-swap manifest updates over HTTP (R2 conditional PUTs)
+are designed but not implemented.</li>
+<li><strong>Local manifests only for writing.</strong> Segments may be <code>http(s)://</code> URLs
+(they are fetched and verified), but the manifest itself is read/written as
+a local file.</li>
+</ul>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -468,7 +454,7 @@ let report = validate_shacl(&amp;ReteGraph::new(&amp;rete), &amp;shapes);
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/shacl.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer>Generated from <code>docs/manifest.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>
 (function () {

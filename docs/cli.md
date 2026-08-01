@@ -220,11 +220,12 @@ through per-group accumulators — a `COUNT` over a 9.83 B-triple file runs in a
 `rete cost`, and see the exact ranges a query read with `rete why`.
 
 ### `rete serve <file> [--bind addr] [--token t] [--journal path]`
-Serve one `.rete` as a live **SPARQL 1.1 Protocol endpoint — queries and
-SPARQL Update**. The base file is **never mutated**: updates append to a
-plain-text journal next to it (`<file>.changes`, one `+`/`-`-prefixed N-Quads
-line per change) and the merged state answers the very next query; a restart
-replays the journal. `GET /snapshot.rete` downloads the current state as a
+Serve one `.rete` — or a [manifest](manifest.md) of segments (`.json`), whose
+visible fold becomes the served state — as a live **SPARQL 1.1 Protocol
+endpoint — queries and SPARQL Update**. The base file is **never mutated**:
+updates append to a plain-text journal next to it (`<file>.changes`, one
+`+`/`-`-prefixed N-Quads line per change) and the merged state answers the
+very next query; a restart replays the journal. `GET /snapshot.rete` downloads the current state as a
 fresh `.rete` — the update cycle's publishable artifact (upload the snapshot,
 delete the journal). Any rete client — including the browser playground — can
 federate against the endpoint with `SERVICE <http://host:port/sparql>`.
@@ -509,6 +510,24 @@ OpenCitations multi-shard example.
 rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE { ?citing <http://purl.org/spar/cito/cites>
                                           <https://doi.org/10.1038/s41586-021-03819-2> } LIMIT 5'
+```
+
+### `rete manifest <init|add|status|query|seal|compact>`
+Manage a **writable logical graph** as an ordered log of immutable `.rete`
+segments plus tombstone (deletion) segments, described by a small JSON
+manifest — grow a dataset across sessions, delete/update quads, query it all
+as **one** graph (joins across segments resolve, unlike `federate`'s UNION),
+and fold it back into a single `.rete`. `rete serve` accepts a manifest, and
+`manifest seal` checkpoints the server's journal into fresh segments. See
+[Writable graphs — manifest & WAL](manifest.md).
+
+```sh
+rete manifest init   g.rete-manifest.json base.rete
+rete manifest add    g.rete-manifest.json --adds delta.rete [--dels tomb.rete]
+rete manifest query  g.rete-manifest.json "SELECT … WHERE { … }"
+rete manifest status g.rete-manifest.json --count
+rete manifest seal   g.rete-manifest.json     # journal → segments (stop serve first)
+rete manifest compact g.rete-manifest.json    # the whole log → ONE fresh .rete
 ```
 
 ## Exit codes
