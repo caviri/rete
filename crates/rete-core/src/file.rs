@@ -2052,7 +2052,7 @@ impl Rete {
         }
     }
 
-    /// The **pull** twin of [`dump_each`](Self::dump_each): every triple of a
+    /// The **pull** twin of [`Rete::dump_each`](Self::dump_each): every triple of a
     /// graph (`None` = default) as a lazy iterator of resolved terms.
     ///
     /// Same constant-memory scan — one triple decoded and resolved per `next()`,
@@ -2090,7 +2090,7 @@ impl Rete {
     /// `(triples, next_cursor, done)`; start with `cursor = 0` and feed the
     /// returned cursor back until `done`.
     ///
-    /// This is the PULL half of the dump, and it exists because [`dump_each`] is
+    /// This is the PULL half of the dump, and it exists because [`Rete::dump_each`] is
     /// push-based: it drives the scan itself and hands each triple to a
     /// callback. A client that wants to pull (a Python generator, a JS async
     /// iterator) has to hold the scan's stack between calls — which means a
@@ -4357,6 +4357,32 @@ mod tests {
         assert_eq!(rete.dump_iter(None).collect::<Vec<_>>(), rete.dump(None));
         // A missing named graph yields nothing rather than the default graph.
         assert_eq!(rete.dump_iter(Some("http://ex/nope")).count(), 0);
+
+        // `dump_batch` is the resumable form the language clients pull through.
+        // Driven to exhaustion it must reproduce the eager dump EXACTLY — same
+        // triples, same order — for any batch size, including one so small that
+        // every call ends on a subject boundary before reaching it.
+        let drain = |max_quads: usize| {
+            let (mut out, mut cursor, mut calls) = (Vec::new(), 0u32, 0);
+            loop {
+                let (batch, next, done) = rete.dump_batch(None, cursor, max_quads);
+                out.extend(batch);
+                cursor = next;
+                calls += 1;
+                assert!(calls < 10_000, "cursor failed to advance");
+                if done {
+                    break out;
+                }
+            }
+        };
+        let eager = rete.dump(None);
+        for max in [1usize, 7, 128, 100_000] {
+            assert_eq!(drain(max), eager, "batch size {max} changed the dump");
+        }
+        // An unknown graph is an empty, already-finished dump — not an error and
+        // not the default graph leaking through.
+        let (t, _, done) = rete.dump_batch(Some("http://ex/nope"), 0, 16);
+        assert!(t.is_empty() && done);
 
         // Lazily: taking one triple must cost far fewer bytes than draining.
         let read_bytes = |take: usize| -> u64 {
