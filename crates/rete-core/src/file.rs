@@ -2086,6 +2086,132 @@ impl Rete {
             })
     }
 
+    /// Resolve one bounded slice of a graph's triples. Returns
+    /// `(triples, next_cursor, done)`; start with `cursor = 0` and feed the
+    /// returned cursor back until `done`.
+    ///
+    /// This is the PULL half of the dump, and it exists because [`dump_each`] is
+    /// push-based: it drives the scan itself and hands each triple to a
+    /// callback. A client that wants to pull (a Python generator, a JS async
+    /// iterator) has to hold the scan's stack between calls — which means a
+    /// thread (unavailable on Pyodide and in wasm) or a self-referential struct
+    /// holding an iterator that borrows the `Rete` stored next to it, whose
+    /// soundness rests on drop order plus an unstated promise that this crate's
+    /// lazily-faulted caches stay write-once. Neither is worth it for a dump.
+    ///
+    /// Instead the scan is made RESUMABLE: SPO tiles are ordered by subject id,
+    /// so "every triple of subject `sid`, for ascending `sid`" visits exactly the
+    /// tiles a full scan visits, in the same order, and the whole resume state
+    /// collapses to one `u32`. No thread, no `unsafe`, no borrow held across
+    /// calls — and unlike `(offset, limit)` it is O(n) overall rather than
+    /// O(n²/limit), because nothing is ever re-scanned.
+    ///
+    /// `max_quads` is the FLOOR of a batch, not a hard cut: a batch always ends
+    /// on a subject boundary, so no subject is split across two calls. Work per
+    /// call is bounded by a probe budget too — a sparse named graph whose few
+    /// subjects are spread over a huge id space returns early with `done = false`
+    /// rather than grinding through absent ids, and the caller just asks again.
+    pub fn dump_batch(
+        &self,
+        graph: Option<&str>,
+        cursor: u32,
+        max_quads: usize,
+    ) -> (Vec<TermTriple>, u32, bool) {
+        /// The first subject id at or after `sid` that any SPO tile can hold, or
+        /// `None` when `sid` is past the last tile. Tiles ascend by leading
+        /// range, so this is a binary search; it returns `sid` itself when a tile
+        /// already covers it (an ordinary "this subject has no triples" step).
+        fn next_tile_start(tiles: &[crate::index::Tile], sid: u32) -> Option<u32> {
+            let i = tiles.partition_point(|t| t.leading_range().1 < sid);
+            tiles.get(i).map(|t| t.leading_range().0.max(sid))
+        }
+
+        let index = match graph {
+            None => self.default_index(),
+            // An unknown graph IRI is an empty dump, not an error — same as
+            // `dump_each`.
+            Some(g) => match self.graph_index(g) {
+                Some(i) => i,
+                None => return (Vec::new(), cursor, true),
+            },
+        };
+        // Tile leading ranges live in the section directory, so both the span and
+        // the gap jumps below are free on a lazy/remote open — no tile is fetched
+        // to decide where to look.
+        let tiles = index.tile_sections()[IndexPermutation::Spo.section_index()];
+        let (Some(first), Some(last)) = (
+            tiles.first().map(|t| t.leading_range().0),
+            tiles.last().map(|t| t.leading_range().1),
+        ) else {
+            return (Vec::new(), cursor, true); // empty graph
+        };
+
+        let mut sid = cursor.max(first);
+        let mut probes = max_quads.saturating_mul(4).max(1 << 16);
+        let mut ids: Vec<(u32, u32, u32)> = Vec::new();
+        let mut exhausted = false;
+        while sid <= last && probes > 0 {
+            probes -= 1;
+            let hits = index.match_pattern((Some(sid), None, None));
+            if hits.is_empty() {
+                // No triples at this id. If it also falls in a hole BETWEEN
+                // tiles, jump straight to the next tile's first id instead of
+                // stepping through the gap one absent id at a time.
+                match next_tile_start(tiles, sid) {
+                    None => {
+                        exhausted = true;
+                        break;
+                    }
+                    Some(next) if next > sid => {
+                        sid = next;
+                        continue;
+                    }
+                    Some(_) => {}
+                }
+            } else {
+                ids.extend(hits);
+            }
+            if sid == u32::MAX {
+                exhausted = true;
+                break;
+            }
+            sid += 1;
+            if ids.len() >= max_quads {
+                break;
+            }
+        }
+        let done = exhausted || sid > last;
+
+        // One coalesced dictionary fault for this batch, then resolve.
+        // Deliberately NOT `Dictionary::prefetch_all` (what `dump_each` uses):
+        // on a lazy open that pulls the ENTIRE dictionary — gigabytes on a big
+        // file — before the first quad, so taking five quads off the front would
+        // cost as much as a full dump. Per-batch prefetch keeps a partial walk
+        // proportional to what it actually read.
+        let dict = self.dictionary();
+        if !ids.is_empty() {
+            let mut nodes = Vec::with_capacity(ids.len() * 2);
+            let mut preds = Vec::with_capacity(ids.len());
+            for &(s, p, o) in &ids {
+                nodes.push(dict.subject_node(s));
+                nodes.push(dict.object_node(o));
+                preds.push(p);
+            }
+            dict.prefetch_terms(&nodes, &preds);
+        }
+        let triples = ids
+            .into_iter()
+            .filter_map(|(s, p, o)| {
+                Some((
+                    dict.subject_term(s)?,
+                    dict.predicate_term(p)?,
+                    dict.object_term(o)?,
+                ))
+            })
+            .collect();
+        (triples, sid, done)
+    }
+
     /// All named graphs as `(iri, index)`.
     pub fn named_graphs(&self) -> &[(String, GraphIndex)] {
         &self.named_graphs

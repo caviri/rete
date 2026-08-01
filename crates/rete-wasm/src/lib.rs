@@ -424,14 +424,17 @@ impl Graph {
 /// is O(dictionary + index), never O(quads).
 #[wasm_bindgen]
 pub struct QuadCursor {
-    // FIELD ORDER IS LOAD-BEARING: `iter` borrows into `*rete`, and Rust drops
-    // struct fields in declaration order, so the iterator must be dropped before
-    // the `Rc` that keeps the `Rete` alive.
-    iter: Option<Box<dyn Iterator<Item = TermTriple>>>,
     /// Graph slots not yet streamed; `None` = the default graph.
     pending: std::vec::IntoIter<Option<String>>,
-    /// The graph the live `iter` is streaming (`None` = the default graph).
-    current: Option<String>,
+    /// The graph being streamed (`None` = the default graph), and how far into
+    /// it we got. The resume state is one subject id — see `Rete::dump_batch`.
+    current: Option<Option<String>>,
+    cursor: u32,
+    /// Whether the live graph's last batch was its final one.
+    slot_done: bool,
+    /// Triples resolved by the last `dump_batch` that the caller has not taken
+    /// yet. A batch ends on a subject boundary, so this drains before the next.
+    buffered: std::vec::IntoIter<TermTriple>,
     rete: Rc<Rete>,
 }
 
@@ -443,34 +446,6 @@ pub struct QuadCursor {
 /// dictionary any dump already needs resident, and flat no matter how many
 /// billions of quads follow it.
 const DUMP_BATCH: usize = 10_000;
-
-/// Build the borrowed dump iterator and erase its lifetime so it can live in a
-/// `#[wasm_bindgen]` struct (which must be `'static`).
-///
-/// # Safety
-///
-/// The returned iterator borrows only from the `Rete` inside `rete`. That value
-/// lives in the `Rc`'s heap allocation — a stable address that is never moved —
-/// and a clone of the same `Rc` is stored in [`QuadCursor`] *after* the boxed
-/// iterator, so the allocation outlives every borrow (fields drop in
-/// declaration order). Nothing can mutate it through a `&mut` in the meantime:
-/// `Rc<Rete>` hands out only shared references, and the engine's lazily faulted
-/// state is write-once (`OnceLock` tiles, `OnceLock` group directories,
-/// dictionary chunks), so a concurrent query on the same handle can only *fill*
-/// cells the iterator has not read — it can never reallocate or evict bytes the
-/// iterator points at.
-fn dump_iter_static(
-    rete: &Rc<Rete>,
-    graph: Option<&str>,
-) -> Box<dyn Iterator<Item = TermTriple> + 'static> {
-    let it: Box<dyn Iterator<Item = TermTriple> + '_> = Box::new(rete.dump_iter(graph));
-    unsafe {
-        std::mem::transmute::<
-            Box<dyn Iterator<Item = TermTriple> + '_>,
-            Box<dyn Iterator<Item = TermTriple> + 'static>,
-        >(it)
-    }
-}
 
 impl QuadCursor {
     /// `graph`: `None` = the default graph followed by every named graph;
@@ -489,9 +464,11 @@ impl QuadCursor {
         // `finish()` reports only what happened while streaming).
         rete.reset_load_failures();
         QuadCursor {
-            iter: None,
             pending: slots.into_iter(),
             current: None,
+            cursor: 0,
+            slot_done: false,
+            buffered: Vec::new().into_iter(),
             rete,
         }
     }
@@ -499,42 +476,52 @@ impl QuadCursor {
     /// Pull at most `max` quads, handing each to `sink` as
     /// `(s, p, o, graph)` where `graph` is `None` for the default graph.
     /// Returns how many were emitted; fewer than `max` means the stream ended.
+    ///
+    /// The scan is resumable rather than held open: each refill calls
+    /// `Rete::dump_batch`, whose entire resume state is one subject id. That is
+    /// what lets this struct be `'static` — required by `#[wasm_bindgen]` —
+    /// without a self-referential iterator borrowing the `Rete` beside it.
     fn pull<F: FnMut(&str, &str, &str, Option<&str>)>(&mut self, max: usize, mut sink: F) -> usize {
-        // Split the borrows: `iter` is driven mutably while `current` is read.
-        let Self {
-            iter,
-            pending,
-            current,
-            rete,
-        } = self;
         let mut emitted = 0;
         while emitted < max {
-            let Some(active) = iter.as_mut() else {
-                match pending.next() {
-                    // Open the next graph slot in place and keep pulling.
-                    Some(slot) => {
-                        *current = slot;
-                        *iter = Some(dump_iter_static(rete, current.as_deref()));
-                        continue;
+            // 1. Hand out what the last batch already resolved.
+            if let Some((s, p, o)) = self.buffered.next() {
+                let graph = self.current.as_ref().and_then(|g| g.as_deref());
+                sink(&s, &p, &o, graph);
+                emitted += 1;
+                continue;
+            }
+            // 2. Buffer empty. Open the next graph slot if none is live…
+            let Some(slot) = self.current.clone() else {
+                match self.pending.next() {
+                    Some(next) => {
+                        self.current = Some(next);
+                        self.cursor = 0;
+                        self.slot_done = false;
                     }
                     None => break,
                 }
+                continue;
             };
-            match active.next() {
-                Some((s, p, o)) => {
-                    sink(&s, &p, &o, current.as_deref());
-                    emitted += 1;
-                }
-                // This graph is exhausted; the next loop turn opens the next.
-                None => *iter = None,
+            // 3. …or close the live one if its last batch is drained.
+            if self.slot_done {
+                self.current = None;
+                continue;
             }
+            // 4. Otherwise resume it. `dump_batch` always advances the cursor or
+            //    reports done, so this cannot spin.
+            let want = (max - emitted).max(DUMP_BATCH);
+            let (triples, next, done) = self.rete.dump_batch(slot.as_deref(), self.cursor, want);
+            self.cursor = next;
+            self.slot_done = done;
+            self.buffered = triples.into_iter();
         }
         emitted
     }
 
     /// True once every selected graph has been streamed to its end.
     fn finished(&self) -> bool {
-        self.iter.is_none() && self.pending.len() == 0
+        self.current.is_none() && self.pending.len() == 0 && self.buffered.len() == 0
     }
 
     /// Refuse to end a dump that silently lost bytes to a failed range fetch —
