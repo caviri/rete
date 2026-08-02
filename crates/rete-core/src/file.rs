@@ -4581,7 +4581,11 @@ mod tests {
         poly.extend_from_slice(&image);
 
         // byte 0 is a web page, not a .rete...
-        assert_ne!(&poly[0..4], b"RETE", "polyglot must not start with the magic");
+        assert_ne!(
+            &poly[0..4],
+            b"RETE",
+            "polyglot must not start with the magic"
+        );
         // ...but the marker in the first header window points at the embedded .rete.
         let detected = detect_polyglot_base(&poly[..crate::header::HEADER_LEN]).unwrap();
         assert_eq!(detected, base);
@@ -4597,7 +4601,10 @@ mod tests {
         want.sort();
         let mut got = lazy.query(None, None, None);
         got.sort();
-        assert_eq!(got, want, "polyglot lazy query differs from the plain .rete");
+        assert_eq!(
+            got, want,
+            "polyglot lazy query differs from the plain .rete"
+        );
         assert!(!got.is_empty(), "expected some triples");
         assert!(!lazy.index_incomplete(), "a lazy fetch failed");
 
