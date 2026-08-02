@@ -34,6 +34,24 @@ pub(crate) struct DatasetCard {
     pub named_graph_count: u64,
     pub term_count: u64,
 
+    /// Statements held in NAMED graphs, summed.
+    ///
+    /// `triple_count` is the DEFAULT graph alone, which reads as "this dataset
+    /// is empty" on a graph that keeps everything in named graphs — Fedlex
+    /// (497,905 named graphs) and CORDIS (6) both report `triples: 0` while
+    /// holding 56 M and 26 M statements respectively. This is the number a
+    /// reader actually wants next to it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub named_graph_triples: u64,
+
+    /// The largest named graphs as `(iri, statements)`, biggest first.
+    ///
+    /// Capped — a card is meant to be two small range reads, and a dataset with
+    /// half a million named graphs must not turn it into a megabyte. The cap is
+    /// the point at which the list stops being a summary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub largest_named_graphs: Vec<(String, u64)>,
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub predicates: Vec<(String, u64)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -334,6 +352,20 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
 /// card small and bounded; `truncated` flags when a list was actually cut.
 const CARD_TOP_N: usize = 100;
 
+/// How many named graphs the card names individually.
+///
+/// Fedlex has 497,905 of them; listing every one would turn a card meant to be
+/// two small range reads into megabytes. Twenty-five is enough to show the
+/// shape — which graphs dominate — while `named_graph_count` and
+/// `named_graph_triples` carry the totals.
+const CARD_TOP_GRAPHS: usize = 25;
+
+/// `skip_serializing_if` for count fields, so a default-graph-only dataset's
+/// card is byte-identical to one written before these fields existed.
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
 // Well-known IRIs (bracketed N-Triples term form, as they appear in the quads).
 const RDFS_LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
 const SKOS_PREFLABEL: &str = "<http://www.w3.org/2004/02/skos/core#prefLabel>";
@@ -419,13 +451,42 @@ pub(crate) fn derive_card(
             }
         }
     }
-    derive_card_from(
+    let mut card = derive_card_from(
         &Quads(quads),
         quads.len() as u64,
         term_count,
         named_graph_count,
         curated,
-    )
+    );
+    let (total, largest) =
+        named_graph_breakdown(quads.iter().filter_map(|(_, _, _, g)| g.as_deref()));
+    card.named_graph_triples = total;
+    card.largest_named_graphs = largest;
+    card
+}
+
+/// Total statements in named graphs, and the biggest graphs by statement count.
+///
+/// Both numbers exist because `triple_count` is the DEFAULT graph alone. On a
+/// dataset that keeps everything in named graphs the card otherwise reads
+/// `triples: 0` — true, and completely misleading, which is exactly what Fedlex
+/// (497,905 graphs, 56.3 M statements) and CORDIS (6 graphs, 26.4 M) both did.
+fn named_graph_breakdown<'a>(graphs: impl Iterator<Item = &'a str>) -> (u64, Vec<(String, u64)>) {
+    let mut per_graph: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut total: u64 = 0;
+    for g in graphs {
+        *per_graph.entry(g).or_default() += 1;
+        total += 1;
+    }
+    let mut ranked: Vec<(String, u64)> = per_graph
+        .into_iter()
+        .map(|(g, n)| (g.to_string(), n))
+        .collect();
+    // Biggest first, then by IRI so the list is deterministic when counts tie —
+    // a card that reshuffles between identical builds is not reproducible.
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ranked.truncate(CARD_TOP_GRAPHS);
+    (total, ranked)
 }
 
 /// Derive a card from a built dictionary + default-graph **id-triples** — the
@@ -676,6 +737,10 @@ fn derive_card_from(
         quad_count,
         named_graph_count,
         term_count,
+        // Filled by the caller that actually holds the graph column; this
+        // derivation only sees the default graph's triples.
+        named_graph_triples: 0,
+        largest_named_graphs: Vec::new(),
         predicates,
         classes,
         vocabularies,
@@ -962,13 +1027,49 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
     field(&mut out, "source", &card.source);
     field(&mut out, "created", &card.created);
 
-    let _ = writeln!(out, "  {:<13}: {}", "triples", card.triple_count);
+    // Say WHICH graph the triple count is, because on a dataset that keeps
+    // everything in named graphs the bare number reads as "empty".
+    let _ = writeln!(
+        out,
+        "  {:<13}: {}{}",
+        "triples",
+        card.triple_count,
+        if card.named_graph_count > 0 {
+            "  (default graph)"
+        } else {
+            ""
+        }
+    );
     if card.named_graph_count > 0 {
         let _ = writeln!(
             out,
             "  {:<13}: {} total, {} named graph(s)",
             "quads", card.quad_count, card.named_graph_count
         );
+        if card.named_graph_triples > 0 {
+            let _ = writeln!(
+                out,
+                "  {:<13}: {} across all named graphs",
+                "in graphs", card.named_graph_triples
+            );
+        }
+        // Only when a breakdown was actually derived: the streaming build path
+        // sees default-graph id-triples only, so it leaves the list empty, and
+        // printing "… and N more" against nothing would be a lie.
+        if !card.largest_named_graphs.is_empty() {
+            for (iri, n) in &card.largest_named_graphs {
+                let _ = writeln!(out, "      {n:>12}  {iri}");
+            }
+            let shown = card.largest_named_graphs.len() as u64;
+            if card.named_graph_count > shown {
+                let _ = writeln!(
+                    out,
+                    "      {:>12}  … and {} more graph(s)",
+                    "",
+                    card.named_graph_count - shown
+                );
+            }
+        }
     }
     let _ = writeln!(out, "  {:<13}: {}", "terms", card.term_count);
     let _ = writeln!(
