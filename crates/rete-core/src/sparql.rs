@@ -871,7 +871,11 @@ fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOu
         } => {
             let (vars, rows) = run_select(
                 rete,
-                &maybe_reason(rete, apply_opts(lower_select(&pattern, &dataset)?, opts), reason),
+                &maybe_reason(
+                    rete,
+                    apply_opts(lower_select(&pattern, &dataset)?, opts),
+                    reason,
+                ),
             );
             Ok(QueryOutput::Select(vars, rows))
         }
@@ -891,7 +895,11 @@ fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOu
         } => {
             // The projected variables' values are the resources to describe;
             // we return each one's outgoing triples (concise bounded description).
-            let sel = maybe_reason(rete, apply_opts(lower_select(&pattern, &dataset)?, opts), reason);
+            let sel = maybe_reason(
+                rete,
+                apply_opts(lower_select(&pattern, &dataset)?, opts),
+                reason,
+            );
             let (ctx, rows) = raw_solutions(rete, &sel);
             let mut resources = std::collections::BTreeSet::new();
             for row in &rows {
