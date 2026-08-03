@@ -15,20 +15,23 @@ The physical collection lives at the David Rumsey Map Center, Stanford.
 
 ## How the site is harvested (endpoints)
 
-The LUNA search HTML/API paths (`/luna/servlet/search*`, `/luna/servlet/as*`)
-are robots-disallowed and sit behind a reCAPTCHA wall. The **IIIF endpoints are
-the sanctioned machine lane** (robots-clean, no captcha) and expose everything:
+Three lanes, used in this order:
 
-| What | URL |
-|---|---|
-| Collection paging (10 items/page) | `/luna/servlet/iiif/collection/s/<token>/<page>` |
-| Item manifest (all 27 metadata fields) | `/luna/servlet/iiif/m/<id>/manifest` |
-| Image info | `/luna/servlet/iiif/<id>/info.json` |
-| Image tiles/derivatives (IIIF Image API level 2) | `/luna/servlet/iiif/<id>/<region>/<size>/<rot>/default.jpg` |
+| Lane | Endpoint | Role |
+|---|---|---|
+| **Catalog (primary)** | `/luna/servlet/as/search?q=&lc=RUMSEY~8~1&bs=500&os=<n>&sort=Pub_List_No_InitialSort` | 500 records/call: id, displayName, ~38 metadata labels, urlSize0-4, IIIF manifest URL. 301 sequential calls ≈ whole catalog. |
+| IIIF collection (fallback) | `/luna/servlet/iiif/collection/s/<token>/<page>` | robots-clean id enumeration, 10/page (slow: server caps per-IP connections). |
+| IIIF manifests (archival) | `/luna/servlet/iiif/m/<id>/manifest` | canonical per-item record; adds master pixel width/height. |
 
-The `<token>` is minted per search session (one call to `/luna/servlet/as/search`
-returns its `iiifCollection` URL); if that call hits the captcha, grab the token
-from a browser session and pass `--token`.
+Plus per item: `/luna/servlet/iiif/<id>/info.json` and the IIIF Image API
+(level 2) at `/luna/servlet/iiif/<id>/<region>/<size>/<rot>/default.jpg`.
+
+Notes: the LUNA search paths are robots-disallowed and occasionally answer
+with a reCAPTCHA interstitial — the harvester detects non-JSON, backs off long,
+and resumes; batches are sequential by design (parallel connections from one IP
+get refused). The IIIF `<token>` is minted per search session (the API response
+carries it as `iiifCollection`); if minting hits the captcha, pass `--token`
+from a browser session.
 
 Pre-rendered JPEG tiers + masters (URL scheme derived from each record's
 "Download 1" field, e.g. `image=/229/18059000.jp2` → path `229/18059000`):
@@ -54,10 +57,10 @@ data/davidrumsey-maps/
   README.md
   SHA256SUMS.txt
   raw/
-    enum_pages.jsonl          # per-page enumeration state (resumable)
+    catalog/os_<offset>.json.gz   # one gzipped API batch of 500 (~300MB total)
     items_index.tsv           # <id>\t<title> — all 150,017 items
     manifest_urls.txt         # one IIIF manifest URL per item
-    manifests/<xx>/<id>.json.gz   # one gzipped IIIF manifest per item (~600MB)
+    manifests/<xx>/<id>.json.gz   # OPTIONAL archival lane (~600MB)
     derived/rumsey_items.jsonl.gz # flattened metadata, one JSON/item
     assets/size{0..4}.tsv     # <relpath>\t<url> per tier
     assets/jp2_masters.tsv    # <relpath>\t<url> full-res masters
@@ -75,10 +78,12 @@ data/davidrumsey-maps/
 ## Dataset shape
 
 One JSONL record per item: `id` (LUNA id, e.g. `RUMSEY~8~1~382463~90148394`),
-`title`, `fields` (label → list of values; 27 distinct labels incl. Author(s),
-Date, Publisher, Type, City, Scale, Obj/Pub dimensions, List No, Pub List No,
-Pub Note, Image No), `width`/`height` (master pixels), `iiif_image` (Image API
-base), `thumbnail`, `detail_url`, `image_path`, `jp2_url`.
+`title`, `fields` (label → list of values; ~38 distinct labels incl. Author(s),
+Date, Publisher, Type, City, Country, Region, State/Province, World Area,
+Subject, Event, Scale, Obj/Pub dimensions, List No, Pub List No, Pub Note,
+Image No), `width`/`height` (master px, when manifests harvested), `iiif_image`
+(Image API base), `iiif_manifest`, `detail_url`, `image_path`, `jp2_url`,
+`url_size0..4`.
 Run `scripts/inspect.py` after the harvest for fill rates + distributions
 (paste its output here).
 

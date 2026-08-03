@@ -6,8 +6,11 @@
 #   bash data/davidrumsey-maps/scripts/download.sh [stage]
 #
 # Stages (default: all, in order; every stage is resume-safe — just re-run):
-#   enum       ~15MB   enumerate all item ids via IIIF collection pagination
-#   manifests  ~600MB  one gzipped IIIF manifest per item (the full metadata)
+#   catalog    ~300MB  the PRIMARY metadata lane — LUNA API batches of 500
+#                      (id + ~38 field labels + all tier URLs; 301 calls)
+#   enum       ~15MB   FALLBACK id enumeration via IIIF collection pagination
+#   manifests  ~600MB  OPTIONAL archival lane: one IIIF manifest per item
+#                      (adds master pixel width/height; robots-clean)
 #   extract    ~150MB  flatten to rumsey_items.jsonl.gz + per-tier URL TSVs
 #   thumbs     ~1.5GB  Size0 (~96px) for every map
 #   size2      ~25GB   Size2 (~768px) for every map
@@ -39,6 +42,7 @@ need_gb() { # need_gb <GB> — abort if the volume holding raw/ has less free
   fi
 }
 
+run_catalog()   { need_gb 1;  PY "$DATA/scripts/harvest_catalog.py" --bs 500 --sleep 2; }
 run_enum()      { PY "$DATA/scripts/enumerate_iiif.py" --workers 4; }
 run_manifests() { need_gb 2;  PY "$DATA/scripts/harvest_manifests.py" --workers 6; }
 run_extract()   { need_gb 1;  PY "$DATA/scripts/extract_metadata.py"; }
@@ -48,6 +52,7 @@ run_size3()     { need_gb 90; PY "$DATA/scripts/fetch_tiles.py" "$RAW/assets/siz
 run_masters()   { echo "run manually against a SUBSET of raw/assets/jp2_masters.tsv (full set is TB-scale)" >&2; exit 4; }
 
 case "$STAGE" in
+  catalog)   run_catalog ;;
   enum)      run_enum ;;
   manifests) run_manifests ;;
   extract)   run_extract ;;
@@ -55,6 +60,6 @@ case "$STAGE" in
   size2)     run_size2 ;;
   size3)     run_size3 ;;
   masters)   run_masters ;;
-  all)       run_enum; run_manifests; run_extract; run_thumbs; run_size2 ;;
-  *) echo "usage: download.sh [enum|manifests|extract|thumbs|size2|size3|masters|all]" >&2; exit 2 ;;
+  all)       run_catalog; run_extract; run_thumbs; run_size2 ;;
+  *) echo "usage: download.sh [catalog|enum|manifests|extract|thumbs|size2|size3|masters|all]" >&2; exit 2 ;;
 esac
