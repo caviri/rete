@@ -23,6 +23,11 @@ EOF
 mkdir -p /tmp/contents
 cp /io/clients/python/examples/jupyterlite-demo.ipynb /tmp/contents/rete-graph.ipynb
 cp /io/clients/python/examples/jupyterlite-build-tutorial.ipynb /tmp/contents/build-a-rete.ipynb
+# `jupyter lite build` indexes exactly what is staged here — anything dropped
+# into docs/jupyterlite/files/ afterwards is served but never listed, so it does
+# not exist as far as the file browser is concerned. That is what happened to the
+# graph-data-science notebook: present on disk, absent from api/contents/all.json.
+cp /io/clients/python/examples/graph-data-science.ipynb /tmp/contents/graph-data-science.ipynb
 rm -rf /io/docs/jupyterlite
 cd /tmp
 jupyter lite build --apps lab --no-sourcemaps --contents /tmp/contents --output-dir /io/docs/jupyterlite 2>&1 | tail -5
