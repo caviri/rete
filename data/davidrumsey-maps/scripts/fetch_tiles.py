@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
 """Parallel, resumable image-tier downloader driven by a <relpath>\t<url> TSV
-(produced by extract_metadata.py). Like skills/dataset-download/scripts/
-fetch_urls.py, but preserves the collection's directory layout — Size3/4 URLs
-all end in `srvr?mediafile=...`, so naming by URL basename would collide.
+(produced by extract_metadata.py). Uses persistent HTTP connections (one per
+worker per host) — without keep-alive every request pays a fresh TLS handshake
+and a 150k-file sweep balloons from hours to days.
 
     python fetch_tiles.py <manifest.tsv> <dest_dir> [--workers N] [--limit N]
 
 Behaviour: skips existing non-empty files, writes .part then renames, retries
-with backoff, logs misses to <dest_dir>/download_failures.txt (re-run retries
-only those). Rejects non-image payloads (HTML error/captcha pages).
+with backoff (reconnecting on stale/refused sockets), follows one redirect,
+rejects non-image payloads (HTML error/captcha pages), logs misses to
+<dest_dir>/download_failures.txt (re-run retries only those).
 Stdlib only — runs in a plain python:3.12-slim container.
 """
 from __future__ import annotations
 
+import http.client
 import sys
+import threading
 import time
-import urllib.request
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-UA = {"User-Agent": "rete-dataset-harvester/1.0 (research; contact: carlosvivarrios@gmail.com)"}
-POLITE_SLEEP = 0.05
+UA = "rete-dataset-harvester/1.0 (research; contact: carlosvivarrios@gmail.com)"
+POLITE_SLEEP = 0.02
+TL = threading.local()
 
 
 def parse_args(argv: list[str]):
@@ -39,6 +43,43 @@ def parse_args(argv: list[str]):
     return Path(pos[0]), Path(pos[1]), workers, limit
 
 
+def conn_for(host: str, fresh: bool = False) -> http.client.HTTPSConnection:
+    conns = getattr(TL, "conns", None)
+    if conns is None:
+        conns = TL.conns = {}
+    c = conns.get(host)
+    if c is None or fresh:
+        if c is not None:
+            try:
+                c.close()
+            except OSError:
+                pass
+        c = conns[host] = http.client.HTTPSConnection(host, timeout=120)
+    return c
+
+
+def get(url: str, redirects: int = 2) -> bytes:
+    """GET over a per-worker persistent connection; reconnect on stale socket."""
+    u = urllib.parse.urlsplit(url)
+    path = (u.path or "/") + (f"?{u.query}" if u.query else "")
+    for attempt in (0, 1):  # second attempt on a fresh connection
+        c = conn_for(u.netloc, fresh=attempt > 0)
+        try:
+            c.request("GET", path, headers={"User-Agent": UA, "Accept": "*/*"})
+            r = c.getresponse()
+            body = r.read()
+            if r.status in (301, 302, 303, 307, 308) and redirects > 0:
+                loc = r.getheader("Location", "")
+                return get(urllib.parse.urljoin(url, loc), redirects - 1)
+            if r.status != 200:
+                raise ValueError(f"HTTP {r.status}")
+            return body
+        except (http.client.HTTPException, ConnectionError, TimeoutError, OSError):
+            if attempt:
+                raise
+    raise RuntimeError("unreachable")
+
+
 def fetch(rel: str, url: str, root: Path, retries: int = 5) -> tuple[str, str]:
     dest = root / rel
     if dest.exists() and dest.stat().st_size > 0:
@@ -49,15 +90,10 @@ def fetch(rel: str, url: str, root: Path, retries: int = 5) -> tuple[str, str]:
     for attempt in range(retries):
         try:
             time.sleep(POLITE_SLEEP)
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=180) as resp:
-                head = resp.read(16)
-                if head.lstrip()[:1] in (b"<", b"{"):
-                    raise ValueError("non-image payload (error/captcha page?)")
-                with tmp.open("wb") as fh:
-                    fh.write(head)
-                    while chunk := resp.read(1 << 20):
-                        fh.write(chunk)
+            body = get(url)
+            if body.lstrip()[:1] in (b"<", b"{") or not body:
+                raise ValueError("non-image payload (error/captcha page?)")
+            tmp.write_bytes(body)
             tmp.replace(dest)
             return ("ok", rel)
         except Exception as e:  # noqa: BLE001 — network best-effort
@@ -82,6 +118,7 @@ def main() -> None:
     total = len(rows)
     print(f"manifest={manifest} dest={dest} files={total} workers={workers}", flush=True)
 
+    t0 = time.time()
     done = ok = skip = fail = 0
     failures: list[str] = []
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -97,7 +134,8 @@ def main() -> None:
                 fail += 1
                 failures.append(f"{status}\t{rel}")
             if done % 1000 == 0 or done == total:
-                print(f"  {done}/{total}  ok={ok} skip={skip} fail={fail}", flush=True)
+                rate = ok / max(time.time() - t0, 1)
+                print(f"  {done}/{total}  ok={ok} skip={skip} fail={fail}  {rate:.1f}/s", flush=True)
 
     print(f"\nDONE files={total} ok={ok} skip={skip} fail={fail}", flush=True)
     fpath = dest / "download_failures.txt"
