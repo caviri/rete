@@ -1107,6 +1107,41 @@ let wasm_bindgen = (function(exports) {
     exports.file_layout = file_layout;
 
     /**
+     * The **true byte length of a remote `.rete`**, in 1–2 tiny range requests —
+     * derived from the file's *own* header (the issue-#95 probe: sections are
+     * back-to-back and the file ends with the 4-byte `RETE` footer), never from
+     * the transport's numbers, which may describe a compressed representation
+     * (GitHub Pages HEADs a 71 MB file as its 58 MB gzip) or be hidden from
+     * cross-origin JS entirely. This is how a UI can say what "download the whole
+     * file" actually costs **before** committing to it.
+     * JSON: `{ "schemaVersion": 1, "fileLength": <bytes> }`. Worker-only
+     * (synchronous XHR in the sync build).
+     * @param {string} url
+     * @returns {string}
+     */
+    function file_len_url(url) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.file_len_url(ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeObject(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    exports.file_len_url = file_len_url;
+
+    /**
      * The named-graph IRIs of a dataset, as a JSON array.
      * @param {Uint8Array} bytes
      * @returns {string}

@@ -78,6 +78,11 @@
     // the offline equirectangular vectors). localStorage-backed so it persists.
     mapBasemap: (() => { try { return localStorage.getItem("mapBasemap") || "none"; } catch (e) { return "none"; } })(),
     remote: null,
+    // An OFF-CATALOG remote cached by its URL: { url, title? }. Set only by
+    // loadCachedUrl after its bytes are resident; null everywhere else. It is
+    // what lets updateHash() share the view as #url=…&load=cache and lets
+    // currentDatasetLabel() name the file itself instead of a catalog entry.
+    urlCache: null,
     // Named-graph count of the RESIDENT graph (from info() at load), for the
     // empty-default-graph explainer. null = unknown (nothing/remote loaded).
     namedGraphCount: null,
@@ -675,7 +680,10 @@ self.onmessage = function (e) {
     const v = Number(n || 0);
     if (v < 1024) return v + " B";
     if (v < 1024 * 1024) return (v / 1024).toFixed(1) + " KB";
-    return (v / 1024 / 1024).toFixed(1) + " MB";
+    // A GB tier matters where this number IS the decision — the cache-mode
+    // consent step ("Download 4.6 GB", not "4718.4 MB").
+    if (v < 1024 * 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + " MB";
+    return (v / 1024 / 1024 / 1024).toFixed(2) + " GB";
   }
 
   function b64ToBytes(b64) {
@@ -1233,6 +1241,10 @@ self.onmessage = function (e) {
     state.bytes = bytes;
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
+    // Loading anything clears the cached-by-URL identity; loadCachedUrl is the
+    // ONE caller that re-sets it (right after this returns), because only then
+    // do the resident bytes actually correspond to that URL.
+    state.urlCache = null;
     state.exploreReady = false;
     state.exploreBackend = "native"; state.exploreNativeMeta = ""; freeExploreEngines();
     state.lastResult = null; // a new graph invalidates any cached result
@@ -1343,6 +1355,7 @@ self.onmessage = function (e) {
     // switch-back. Same-URL re-entry keeps the resident engine.
     if (isPhoneView() && state.remote && state.remote.url !== url) cancelRemote();
     state.bytes = null;
+    state.urlCache = null; // lazy mode replaces a cached-by-URL identity
     if (state.graph) { state.graph.free(); state.graph = null; }
     resetFed(); // switching to a remote dataset drops federation partners
     state.remote = { url };
@@ -1550,7 +1563,12 @@ self.onmessage = function (e) {
       $("cacheBytes").textContent = formatBytes(received);
     }
   }
-  function closeCacheModal() { $("cacheModal").classList.add("hidden"); }
+  function closeCacheModal() {
+    $("cacheModal").classList.add("hidden");
+    // The URL-cache consent buttons must never leak into the next (catalog or
+    // URL) use of this shared modal.
+    const c = $("cacheConfirm"); if (c) c.classList.add("hidden");
+  }
 
   // Parse "98 MB" / "1.04 GB" / "375 KB" → megabytes, for a rough prep estimate.
   function sizeToMB(s) {
@@ -1626,6 +1644,195 @@ self.onmessage = function (e) {
     }
   }
 
+  // --- caching an OFF-CATALOG .rete by its URL -----------------------------
+  // The same download-once-persist-query-offline mode the catalog offers, for
+  // a file the catalog has never heard of. Cache identity is the NORMALIZED
+  // URL itself, namespaced so it can never collide with a catalog key (catalog
+  // keys are short slugs; this key embeds "://"): two spellings of one address
+  // dedupe through normalizeReteUrl, but two different URLs stay two entries
+  // even when they serve the same bytes — deduping those would require the
+  // bytes anyway. Existing catalog cache entries (`<key>::rete`) are untouched
+  // and keep working; nothing migrates.
+  const urlCacheKey = (url) => `url::${url}::rete`;
+
+  // Ask the FILE how big it is before any download: 1–2 tiny range reads via
+  // the worker. file_len_url derives the length from the .rete header itself
+  // (the #95 probe) because the transport's numbers may describe a compressed
+  // representation (GitHub Pages) or be hidden from cross-origin JS entirely
+  // (no Access-Control-Expose-Headers). null = the probe failed; the caller
+  // must SAY "unknown", never guess.
+  async function probeRemoteFileLength(url) {
+    try {
+      const r = await remoteCall("file_len_url", url);
+      const n = Number((JSON.parse(r.json) || {}).fileLength);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch (_e) { return null; }
+  }
+
+  // The consent step: caching downloads the WHOLE file, and unlike a catalog
+  // entry an arbitrary URL carries no size label — so the number (or an honest
+  // "unknown") goes in front of the user BEFORE the first payload byte moves,
+  // with a way out. Resolves true only on an explicit Download click.
+  function confirmCacheDownload(name, size) {
+    return new Promise((resolve) => {
+      $("cacheName").textContent = name;
+      $("cacheBar").classList.remove("indeterminate");
+      $("cacheBarFill").style.width = "";
+      $("cachePct").textContent = "";
+      $("cacheBytes").textContent = size != null ? formatBytes(size) : "size unknown";
+      $("cacheSub").textContent = size != null
+        ? `${name} is ${formatBytes(size)} (read from the file's own header). Caching downloads the whole file and keeps it in this browser (IndexedDB) — after that, queries touch the network zero times, even across reloads.`
+        : `The size of ${name} could not be determined up front (the host hides it). Caching downloads the WHOLE file, however large it turns out to be — Connect (lazy) reads only the bytes each query touches instead.`;
+      $("cacheSteps").innerHTML = "";
+      $("cacheGo").textContent = size != null ? `Download ${formatBytes(size)}` : "Download anyway";
+      $("cacheConfirm").classList.remove("hidden");
+      $("cacheModal").classList.remove("hidden");
+      const done = (go) => { $("cacheConfirm").classList.add("hidden"); resolve(go); };
+      $("cacheGo").onclick = () => done(true);
+      $("cacheCancel").onclick = () => done(false);
+    });
+  }
+
+  // The cache modal while the size probe runs (2 tiny range reads — feedback,
+  // because the first probe also spins up the query worker).
+  function openCacheMeasuring(name) {
+    $("cacheName").textContent = name;
+    $("cacheSub").textContent = "Asking the file its size — caching downloads the whole file, so the number comes first (two small range reads).";
+    $("cacheBar").classList.add("indeterminate");
+    $("cacheBarFill").style.width = "";
+    $("cachePct").textContent = "";
+    $("cacheBytes").textContent = "";
+    $("cacheSteps").innerHTML = "";
+    $("cacheConfirm").classList.add("hidden");
+    $("cacheModal").classList.remove("hidden");
+  }
+
+  // The cache modal in download-progress state for a URL (the catalog variant,
+  // openCacheModal, phrases sizes from catalog metadata instead).
+  function openUrlCacheDownload(name, size) {
+    $("cacheName").textContent = name;
+    $("cacheSub").textContent = `Downloading the whole .rete${size != null ? " (" + formatBytes(size) + ")" : ""} — kept in this browser and queried in-page once it's here.`;
+    $("cacheBar").classList.add("indeterminate");
+    $("cacheBarFill").style.width = "";
+    $("cachePct").textContent = "";
+    $("cacheBytes").textContent = "0 B";
+    $("cacheSteps").innerHTML = "";
+    $("cacheConfirm").classList.add("hidden");
+    $("cacheModal").classList.remove("hidden");
+  }
+
+  // enterCachePreparing for a URL-cached file: the size is the byte length we
+  // actually hold, not a catalog metadata string.
+  function enterCachePreparingUrl(name, byteLen) {
+    const sizeText = formatBytes(byteLen);
+    const est = Math.max(1, Math.round((byteLen / 1e6) * 0.05));
+    $("cacheName").textContent = name;
+    $("cacheBar").classList.remove("indeterminate");
+    $("cacheBarFill").style.width = "100%";
+    $("cachePct").textContent = "downloaded";
+    $("cacheBytes").textContent = sizeText;
+    $("cacheSub").textContent = `Now opening the file for in-memory queries — the schema is read straight ` +
+      `from the file's packed index (no scan); the page pauses briefly while the dictionary loads ` +
+      `(~${est}s for ${sizeText}).`;
+    $("cacheSteps").innerHTML = `<div class="cache-step done">Downloaded ${esc(sizeText)}</div>`;
+    $("cacheConfirm").classList.add("hidden");
+  }
+
+  // An off-catalog cached file must name ITSELF: the file name the URL points
+  // at, upgraded to the file's own Dataset Card title — read from the LOCAL
+  // bytes (W().card), so the upgrade costs zero network. Never a catalog
+  // entry's text: the "scholar.rete over an nkod.rete view" bug had three
+  // separate doors, and this path must not become a fourth.
+  function applyUrlCacheLabels(url, bytes) {
+    const name = remoteFileName(url);
+    let title = null, desc = null;
+    try {
+      const cj = W().card(bytes);
+      const card = cj ? JSON.parse(cj) : null;
+      if (card && typeof card.title === "string" && card.title.trim()) title = card.title.trim();
+      if (card && card.description) desc = String(card.description);
+    } catch (_e) { /* no card, or an unreadable one — the file name stands */ }
+    if (state.urlCache) state.urlCache.title = title || undefined;
+    const shown = title || name;
+    $("dsName").textContent = shown;
+    setDatasetHeader(shown,
+      desc ? firstSentence(desc)
+        : "Downloaded whole from its URL and kept in this browser — queries run in-page, zero network.",
+      null);
+    $("dsDesc").innerHTML = desc
+      ? mdLite(desc)
+      : "Cached from " + esc(url) + " — the whole file is stored in this browser (IndexedDB) and queried in memory.";
+    // Re-render the SOURCES self chip now that state names this file.
+    renderFedBar();
+  }
+
+  // Cache an off-catalog remote .rete by URL: download once (with the size
+  // shown, and consent, FIRST), persist in IndexedDB keyed by the URL, then
+  // query it in memory — reloads and future sessions answer from the cache
+  // with zero network. Mirrors loadCachedRemote's failure containment: the
+  // IDB put is one FILES+META transaction (atomic — never a half-written
+  // entry that later reads as complete), an aborted download writes nothing,
+  // and a quota/private-mode failure keeps the in-memory copy for this page.
+  // Resolves false when the user backs out of the download (nothing changed);
+  // true once the file is resident.
+  async function loadCachedUrl(url) {
+    const ck = urlCacheKey(url);
+    const name = remoteFileName(url);
+    try {
+      let bytes = remoteCache.get(ck);
+      if (!bytes) {
+        const stored = await idbGetFile(ck);
+        if (stored) {
+          bytes = stored instanceof Uint8Array ? stored : new Uint8Array(stored);
+          remoteCache.set(ck, bytes);
+        }
+      }
+      if (!bytes) {
+        openCacheMeasuring(name);
+        const size = await probeRemoteFileLength(url);
+        const go = await confirmCacheDownload(name, size);
+        // Backing out leaves the page exactly as it was — nothing loaded,
+        // nothing renamed, nothing stored.
+        if (!go) { closeCacheModal(); return false; }
+        openUrlCacheDownload(name, size);
+        setStatus("downloading " + name + " …");
+        // Some hosts omit Content-Length; the probe's number keeps the bar real.
+        bytes = await fetchWithProgress(url, (received, total) => updateCacheProgress(received, total || size || 0));
+        remoteCache.set(ck, bytes);
+        try {
+          await idbPutFile(ck, bytes, {
+            size: bytes.byteLength,
+            label: name + " — cached from URL",
+            url,
+            backend: "rete",
+          });
+        } catch (_e) { /* private mode / quota: keep the in-memory cache */ }
+      } else {
+        $("cacheModal").classList.remove("hidden");
+      }
+      // Same strict-key derivation as enterRemote: per-dataset lookups
+      // (examples, SHACL, reach) resolve to nothing for an unknown key — never
+      // to another dataset's content.
+      state.dataset = name.replace(/\.rete$/i, "") || "remote";
+      enterCachePreparingUrl(name, bytes.byteLength);
+      await tick();
+      await loadBytes(bytes, "cached", setCacheStep);
+      state.urlCache = { url };
+      applyUrlCacheLabels(url, bytes);
+      renderExamples();
+      if (examplesForDataset().length) selectExample(0);
+      updateHash();
+      setCacheStep("Ready ✓");
+      await tick();
+      closeCacheModal();
+      return true;
+    } catch (e) {
+      closeCacheModal();
+      showError("out", "Cache download failed: " + (e.message || e));
+      return false;
+    }
+  }
+
   // Load a dataset in one of three modes: bundled (embedded bytes), cache
   // (download the remote once, keep it), lazy (range-query the remote).
   function selectDatasetMode(key, mode) {
@@ -1693,6 +1900,10 @@ self.onmessage = function (e) {
       return d ? dsShortLabel(state.dataset)
         : (state.remote.title || remoteFileName(state.remote.url));
     }
+    // An off-catalog file cached by URL: its own card title (read from the
+    // local bytes) or the file name the URL points at — never a catalog
+    // entry's text, even when the derived key happens to match one.
+    if (state.urlCache) return state.urlCache.title || remoteFileName(state.urlCache.url);
     if (state.activeSource === "file") return "Local file";
     if (state.activeSource === "url") return "Custom .rete";
     const d = datasetInfo(state.dataset);
@@ -1919,6 +2130,22 @@ self.onmessage = function (e) {
     $("loadUrl").value = url;
     closeLoadModal();
     enterRemote(url, null);
+  }
+  // The URL route's OTHER mode: download the whole file once, keep it in this
+  // browser, query it offline from then on. The size check + consent happen in
+  // loadCachedUrl (the same door the #url=…&load=cache deep link goes
+  // through), so the modal only validates the address and hands off.
+  function cacheFromLoadModal() {
+    const url = normalizeReteUrl($("loadUrl").value);
+    if (!url) {
+      $("loadUrlErr").textContent = "That address can't be opened as a .rete — give an http(s) URL, " +
+        "for example https://example.org/graph.rete";
+      return;
+    }
+    $("remoteUrl").value = url;
+    $("loadUrl").value = url;
+    closeLoadModal();
+    loadCachedUrl(url);
   }
 
   async function loadFromFile(file) {
@@ -9144,6 +9371,10 @@ self.onmessage = function (e) {
       state.remote &&
       state.remote.url !== remoteUrlFor(state.dataset);
     if (offCatalog) params.set("url", state.remote.url);
+    // Cached-by-URL: the same honesty, one mode over — the link must carry the
+    // address that is actually open (with load=cache from the mapping below),
+    // not whatever catalog key the file name happened to derive.
+    else if (state.urlCache) params.set("url", state.urlCache.url);
     else params.set("dataset", state.dataset);
     if (state.liveEndpoint) params.set("endpoint", state.liveEndpoint);
     // Record HOW the dataset is loaded so a reload restores the same mode — a
@@ -9490,6 +9721,7 @@ self.onmessage = function (e) {
     });
     $("loadExamplesBtn").onclick = () => { closeLoadModal(); openSource(); };
     $("loadUrlGo").onclick = connectFromLoadModal;
+    $("loadUrlCache").onclick = cacheFromLoadModal;
     $("loadUrl").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); connectFromLoadModal(); }
     });
@@ -10227,8 +10459,18 @@ self.onmessage = function (e) {
         // without this the field sits empty and there is nothing on screen
         // saying which file answered the query, or to copy for a bug report.
         $("remoteUrl").value = clean;
+        // #url= honors the same load= the catalog deep links use: load=cache
+        // opens (or restores, zero-network, from IndexedDB) the whole-file
+        // cache of that URL — which is what makes cached mode shareable as a
+        // link. A not-yet-cached URL still shows its size and asks first; the
+        // default stays lazy.
         const base = decodeURIComponent((clean.split("?")[0].split("/").pop() || ""));
-        enterRemote(clean, base.replace(/\.rete$/i, "") || "remote");
+        // Backing out of the download (or a failed one) falls back to lazy
+        // over the same URL, so a shared load=cache link never lands on a
+        // dead console.
+        if (load !== "cache" || !(await loadCachedUrl(clean))) {
+          enterRemote(clean, base.replace(/\.rete$/i, "") || "remote");
+        }
       }
     } else if (ds && (datasetInfo(ds) || userBytes.has(ds))) {
       if (load === "lazy") enterRemote(remoteUrlFor(ds), ds);

@@ -3174,6 +3174,9 @@ th .coltype.coltype-on {
 .cache-step.done::before { content: "✓"; color: var(--accent); font-weight: 800; }
 .cache-step.active { color: var(--accent-dark); font-weight: 600; }
 .cache-step.active::before { content: "▸"; color: var(--accent-dark); }
+/* The consent row for caching by URL: [Download <size>] [Cancel], centered
+   under the size line. Hidden (global .hidden) in every other modal state. */
+.cache-confirm { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
 
 /* Inline progress for a remote range read (schema/coherence over HTTP), in a
    tab body rather than the cache modal — reuses .cache-bar / .cache-step. */
