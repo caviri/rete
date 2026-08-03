@@ -1585,8 +1585,15 @@ pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>
 pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     let header = Header::from_bytes(bytes)?;
     let slice = |off: u64, len: u64| -> Result<&[u8], FileError> {
+        // `off` and `len` come STRAIGHT FROM THE FILE HEADER, so a crafted or
+        // corrupt .rete can set them near u64::MAX and make `off + len` overflow
+        // — which panics in debug and wraps in release, BEFORE `.get()` gets the
+        // chance to reject the range. Found by the weekly fuzz run
+        // (fuzz_targets/open.rs, "attempt to add with overflow"). Saturating the
+        // sum turns both cases into the same clean Container error.
+        let end = off.saturating_add(len);
         bytes
-            .get(off as usize..(off + len) as usize)
+            .get(off as usize..end as usize)
             .ok_or(FileError::Container("section overruns buffer"))
     };
     let d = slice(header.dictionary_offset, header.dictionary_len)?;
