@@ -1268,12 +1268,20 @@ impl XhrRangeReader {
 }
 
 impl XhrRangeReader {
-    /// Probe the resource length. Some hosts reject `HEAD` (Hugging Face's
-    /// signed-redirect storage answers `405`), so use a one-byte ranged `GET`
-    /// and read the total from the `Content-Range` header (`bytes 0-0/TOTAL`),
-    /// falling back to `Content-Length` if the host doesn't send a range.
+    /// Probe the resource length. HTTP's own signals are unreliable
+    /// cross-origin — a host may advertise the size of a **compressed**
+    /// representation in `Content-Length` (GitHub Pages HEADs a 71 MB `.rete`
+    /// as its 58 MB gzip; `Content-Encoding` is not CORS-safelisted, so JS
+    /// cannot even see the lie) while range requests address the identity
+    /// bytes, and may hide `Content-Range` by omitting
+    /// `Access-Control-Expose-Headers` (GitHub Pages, Zenodo). So the probe
+    /// reads the file's OWN first KiB — the `.rete` header, whose section
+    /// directory pins the exact length (issue #95) — and only falls back to
+    /// the transport's numbers for a resource that isn't a `.rete`.
     fn open(url: &str) -> Result<Self, JsValue> {
         // Asyncify build: probe the length via the async import — no sync XHR.
+        // The JS side (`__reteDoLen` in scripts/build_playground.py) applies
+        // this same derive-from-the-header-then-validate-the-footer strategy.
         #[cfg(feature = "asyncify")]
         {
             let mut len: u64 = 0;
@@ -1291,21 +1299,9 @@ impl XhrRangeReader {
         }
         #[cfg(not(feature = "asyncify"))]
         {
-            // Prefer a HEAD: its `Content-Length` is the full file size AND is a
-            // CORS-safelisted response header, so it is readable cross-origin even when
-            // the host does NOT expose `Content-Range` (e.g. Zenodo). The ranged-GET
-            // probe below cannot see a hidden `Content-Range` and would mis-read the
-            // 1-byte partial `Content-Length` as the size ("range out of bounds"). Falls
-            // through when the host rejects HEAD (HF's signed-redirect storage 405s it).
-            if let Some(len) = Self::head_len(url) {
-                return Ok(Self {
-                    url: url.to_string(),
-                    len,
-                });
-            }
             // Hugging Face's Space gateway is intermittently flaky on the length
             // probe (a 200 with no Content-Length, a chunked response with neither
-            // header, …). A fresh ranged GET usually lands on a healthy response,
+            // header, …). A fresh attempt usually lands on a healthy response,
             // so retry a few times before surfacing the error.
             let mut last = format!("could not determine length of {url}");
             for _ in 0..4 {
@@ -1323,10 +1319,13 @@ impl XhrRangeReader {
         }
     }
 
-    /// A HEAD length probe: `Content-Length` is the full size and is CORS-safelisted
-    /// (readable cross-origin with no `access-control-expose-headers` entry needed).
-    /// Returns `None` on a non-2xx (some hosts 405 HEAD) or a missing/zero length, so
-    /// the caller can fall back to the ranged-GET probe.
+    /// A HEAD length probe: `Content-Length` is CORS-safelisted (readable
+    /// cross-origin with no `access-control-expose-headers` entry needed).
+    /// **Last-resort fallback only**: on a transparently-compressing host this
+    /// is the size of the gzip representation, not the file (issue #95), which
+    /// is exactly why [`probe_len`](Self::probe_len) prefers the file's own
+    /// header. Returns `None` on a non-2xx (some hosts 405 HEAD) or a
+    /// missing/zero length.
     #[cfg(not(feature = "asyncify"))]
     fn head_len(url: &str) -> Option<u64> {
         let xhr = web_sys::XmlHttpRequest::new().ok()?;
@@ -1343,39 +1342,113 @@ impl XhrRangeReader {
             .filter(|&n| n > 0)
     }
 
-    /// One length probe: a one-byte ranged `GET`, reading the total from
-    /// `Content-Range` (`bytes 0-0/TOTAL`), falling back to `Content-Length`.
+    /// One ranged `GET bytes=first-last`, returning `(status, total from a
+    /// visible Content-Range, body)`. The total is `None` when the header is
+    /// absent, hidden by CORS, or `bytes a-b/*`.
     #[cfg(not(feature = "asyncify"))]
-    fn probe_len(url: &str) -> Result<u64, String> {
+    fn ranged_get(url: &str, first: u64, last: u64) -> Result<(u16, Option<u64>, Vec<u8>), String> {
         let err = |m: &str| m.to_string();
         let xhr = web_sys::XmlHttpRequest::new().map_err(|_| err("xhr"))?;
         xhr.open_with_async("GET", url, false)
             .map_err(|_| err("open"))?;
         xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
-        xhr.set_request_header("Range", "bytes=0-0")
+        xhr.set_request_header("Range", &format!("bytes={first}-{last}"))
             .map_err(|_| err("range header"))?;
         xhr.send()
             .map_err(|_| format!("probe {url}: network error"))?;
         let status = xhr.status().map_err(|_| err("status"))?;
-        if status != 206 && !(200..300).contains(&status) {
-            return Err(format!("probe {url}: status {status}"));
-        }
-        // `Content-Range: bytes 0-0/12345` — the part after `/` is the total.
-        xhr.get_response_header("Content-Range")
+        // `Content-Range: bytes 0-1023/12345` — the part after `/` is the total.
+        let total = xhr
+            .get_response_header("Content-Range")
             .ok()
             .flatten()
             .and_then(|v| {
                 v.rsplit('/')
                     .next()
                     .and_then(|t| t.trim().parse::<u64>().ok())
-            })
-            .or_else(|| {
-                xhr.get_response_header("Content-Length")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.parse::<u64>().ok())
-            })
-            .ok_or_else(|| format!("could not determine length of {url}"))
+            });
+        let body = xhr
+            .response()
+            .ok()
+            .map(|r| js_sys::Uint8Array::new(&r).to_vec())
+            .unwrap_or_default();
+        Ok((status, total, body))
+    }
+
+    /// One length probe. Reads the resource's first KiB over a ranged `GET`;
+    /// if that is a `.rete` header, the length is **derived from the file
+    /// itself** (`Header::expected_file_len`: sections are back-to-back and
+    /// the file ends with the 4-byte `RETE` footer) and, unless a visible
+    /// `Content-Range` already confirms it, **validated** by reading those 4
+    /// footer bytes — one extra tiny request, only on hosts whose headers are
+    /// unusable. Non-`.rete` resources fall back to `Content-Range`, then
+    /// HEAD. A 206's `Content-Length` is never believed (it is the size of
+    /// the partial body, and taking it as the file size made every later read
+    /// "range out of bounds").
+    #[cfg(not(feature = "asyncify"))]
+    fn probe_len(url: &str) -> Result<u64, String> {
+        let (status, cr_total, body) =
+            Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1)?;
+        if status == 200 {
+            // Host ignored Range and sent the whole (decoded) body. Range
+            // reads are rejected loudly in read_at anyway; report the honest
+            // decoded length so the failure names the real problem there.
+            if !body.is_empty() {
+                return Ok(body.len() as u64);
+            }
+            return Err(format!("probe {url}: 200 with an empty body"));
+        }
+        if status != 206 {
+            return Err(format!("probe {url}: status {status}"));
+        }
+
+        // A `.rete` self-describes its length; that is the only signal a
+        // compressing/CORS-hiding host cannot skew (issue #95).
+        if let Ok(header) = rete_core::Header::from_bytes(&body) {
+            if let Some(derived) = header.expected_file_len() {
+                if cr_total == Some(derived) {
+                    return Ok(derived); // transport agrees — done, no extra request
+                }
+                // Ask the file: its last 4 bytes are the `RETE` footer. A 206
+                // with exactly those bytes proves `derived` addresses real
+                // identity bytes; anything else means the file is truncated
+                // or the host's ranges don't address the file's bytes.
+                let (ts, _, tail) = Self::ranged_get(url, derived - 4, derived - 1)?;
+                if ts == 206 && tail == rete_core::MAGIC {
+                    return Ok(derived);
+                }
+                return Err(format!(
+                    "length probe disagrees with the file: its header derives \
+                     {derived} bytes but the host{} has no RETE footer at \
+                     {}..{} (tail probe: status {ts}) — the file is truncated, \
+                     or the host serves ranges over a compressed representation",
+                    match cr_total {
+                        Some(t) => format!(" reports {t} bytes and"),
+                        None => String::from(" hides Content-Range and"),
+                    },
+                    derived - 4,
+                    derived,
+                ));
+            }
+        }
+        if body.starts_with(&[0x1f, 0x8b]) {
+            // The ranged body is a slice of a GZIP stream: the host applied
+            // `Content-Encoding` to the range response, so byte offsets do not
+            // address the file's bytes at all. No length can fix that.
+            return Err(format!(
+                "the host serves HTTP ranges over a gzip-compressed representation \
+                 of {url}; range offsets cannot address the file's bytes"
+            ));
+        }
+
+        // Not a `.rete` header: fall back to the transport's signals.
+        if let Some(total) = cr_total {
+            return Ok(total);
+        }
+        if let Some(len) = Self::head_len(url) {
+            return Ok(len);
+        }
+        Err(format!("could not determine length of {url}"))
     }
 }
 
