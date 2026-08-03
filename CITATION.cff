@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use rete, please cite it using the metadata from this file."
+title: "rete: browser-native SPARQL over static, range-addressable RDF files"
+abstract: >-
+  rete is a cloud-native, range-queryable RDF graph file format and engine. A
+  `.rete` file is a single immutable artifact that answers SPARQL by HTTP range
+  reads, so a multi-gigabyte graph is queryable from static hosting — in the
+  browser, from the CLI, or from Python, JavaScript, R, Java and Blender — with
+  no server and no database. An embedded Dataset Card makes each file
+  self-describing in two small range requests at any size.
+type: software
+authors:
+  - family-names: "Vivar Rios"
+    given-names: "Carlos"
+    orcid: "https://orcid.org/0000-0002-8076-2034"
+    email: "carlos.vivarrios@epfl.ch"
+repository-code: "https://github.com/caviri/rete"
+url: "https://caviri.github.io/rete/"
+license: Apache-2.0
+# Concept DOI: resolves to the latest archived release rather than pinning one.
+doi: "10.5281/zenodo.21546288"
+keywords:
+  - RDF
+  - SPARQL
+  - knowledge graph
+  - linked data
+  - file format
+  - range requests
+  - WebAssembly
+  - serverless
+# No `preferred-citation` yet, deliberately. The ISWC 2026 demonstration paper
+# is submitted, not published, and naming it here would have tools emit a
+# citation to something that does not exist. Cite the Zenodo archive above until
+# the paper is out; then add the conference-paper block and this file starts
+# resolving to it instead.
