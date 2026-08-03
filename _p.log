@@ -1,0 +1,8 @@
+ Container rete-volume-init-1 Starting 
+ Container rete-volume-init-1 Started 
+ Container rete-volume-init-1 Waiting 
+ Container rete-volume-init-1 Exited 
+ Container rete-dev-run-65352d8407ce Creating 
+ Container rete-dev-run-65352d8407ce Created 
+test file::tests::polyglot_offset_reads_lazily ... ok
+test result: ok. 245 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 1.05s
