@@ -130,6 +130,20 @@ pub(crate) fn merge_cmd(
     } else {
         None
     };
+    // Build conditions (kind-7 section, outside the content hash). A merged
+    // file names its shards in the card's curated `derived_from`; the build
+    // info records when/by what/under which budget the fold happened.
+    let build_info = if curated.is_some() {
+        crate::commands::buildinfo::new_build_info(crate::commands::buildinfo::BuildParams {
+            command: Some("merge".to_string()),
+            no_pyramid: true,
+            memory_budget_mb: Some(memory_budget_mb),
+            ..Default::default()
+        })
+        .to_json_bytes()
+    } else {
+        Vec::new()
+    };
 
     eprintln!("merge: {} input file(s) -> {output}", inputs.len());
     let out_path = Path::new(output).to_path_buf();
@@ -174,6 +188,7 @@ pub(crate) fn merge_cmd(
                 }
                 None => Vec::new(),
             }),
+            build_info,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;

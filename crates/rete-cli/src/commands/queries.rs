@@ -103,6 +103,22 @@ struct Template {
 const TEMPLATES: &[Template] = &[
     // --- Overview ---
     Template {
+        id: "ov-one-row",
+        title: "One statement, now",
+        dimension: "overview",
+        question: "Return exactly one statement — did this file open and answer?",
+        // The smoke test (issue #153): guaranteed one row on ANY non-empty
+        // file. A COUNT can honestly return 0 (named-graph-only files) and
+        // read as failure; one concrete row is unambiguous.
+        body: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1",
+        named_body: Some("SELECT ?g ?s ?p ?o WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 1"),
+        mixed_body: Some(
+            "SELECT ?s ?p ?o WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } } LIMIT 1",
+        ),
+        tier: Tier::Index,
+        requires: &[],
+    },
+    Template {
         id: "ov-triples",
         title: "How many statements?",
         dimension: "overview",
@@ -909,6 +925,35 @@ mod tests {
                 "{}: graph-scoped body leaked into a default-graph card",
                 eq.id
             );
+        }
+    }
+
+    /// The one-row smoke query returns EXACTLY one row in every graph scope —
+    /// the unambiguous "did this file open and answer?" probe (a COUNT returns
+    /// an honest 0 on a named-graph-only file and reads as failure).
+    #[test]
+    fn one_row_smoke_query_returns_exactly_one_row_in_every_scope() {
+        type Quads = Vec<(String, String, String, Option<String>)>;
+        let cases: Vec<(Quads, u64)> = vec![
+            (rich_quads(), 0),       // default-only
+            (named_only_quads(), 3), // named-graph-only
+        ];
+        for (quads, ng) in cases {
+            let card = derive_card(&quads, 50, ng, CardInput::default());
+            let smoke = card
+                .queries
+                .iter()
+                .find(|q| q.id == "ov-one-row")
+                .expect("ov-one-row always emits");
+            let (bytes, _) =
+                ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| Vec::new());
+            let rete = Rete::open(&bytes).unwrap();
+            match eval_query(&rete, &smoke.sparql).unwrap() {
+                QueryOutput::Select(_, rows) => {
+                    assert_eq!(rows.len(), 1, "ov-one-row must return exactly one row")
+                }
+                other => panic!("unexpected result form: {other:?}"),
+            }
         }
     }
 

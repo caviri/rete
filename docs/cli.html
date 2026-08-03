@@ -367,7 +367,10 @@ the index-free card with no compute; unlike <code>--materialize</code> it record
 <code>coherent: false</code> honestly rather than aborting (verify later with <code>rete reason --verify-card</code>, combine with <code>--materialize</code> to also bake the inferred triples).
 <code>--card</code> (and <code>--card-file</code> / <code>--title</code> / <code>--license</code> / <code>--source</code> /
 <code>--description</code> / <code>--created</code>) embeds a <a href="dataset-cards.html">Dataset Card</a> —
-data-catalog metadata plus an auto-derived profile. <code>--text-index</code> adds a
+data-catalog metadata plus an auto-derived profile; a card build also writes a
+<strong>build-info section</strong> (build timestamp, builder version, parameters, measured
+starter-query costs — kept <em>outside</em> the content hash so identical data still
+hashes identically; <code>--no-card-costs</code> skips the measurements). <code>--text-index</code> adds a
 full-text (word/CONTAINS) index over the literals for <code>rete search --contains</code>
 (see below). <code>--type-predicate &lt;IRI&gt;</code> overrides the predicate that types subjects
 with classes for the schema pyramid (default <code>rdf:type</code>, else auto-detected) —
@@ -438,13 +441,20 @@ rete search data.rete --contains glucose         # literals containing "glucose"
 rete search data.rete --contains glucose phosphate  # both words (AND)
 rete search data.rete --contains-prefix einst    # a word starting with "einst…"
 </code></pre>
-<h3><code>rete card &lt;file&gt; [--json]</code></h3>
+<h3><code>rete card &lt;file&gt; [--json] [--format jsonld|croissant]</code></h3>
 <p>Print the embedded <a href="dataset-cards.html">Dataset Card</a> — curated metadata
-(title/license/source/…) plus the derived profile (counts, top predicates and
-classes, vocabularies) and the content-hash checksum. Costs two small range
-reads (header + card), never the dictionary or index — instant on any size. <code>--json</code> emits the card
-object plus <code>schemaVersion: 1</code>. Prints <code>(no dataset card)</code> for a file built without one. <code>rete info</code> shows
-the same catalog beneath the header when a card is present.</p>
+(title/license/source/creators/publisher/…) plus the derived profile (counts, top
+predicates and classes, vocabularies), the content-hash checksum, and (when the
+file carries one) the <strong>build record</strong>: when it was built, by which <code>rete</code>, with
+which flags, and the starter queries' measured costs. Costs two small range
+reads (header + one coalesced card/build-info range), never the dictionary or
+index — instant on any size. <code>--json</code> emits the card object plus
+<code>schemaVersion: 1</code> and a <code>build</code> block. <code>--format jsonld</code> projects the card to
+JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
+<code>--format croissant</code> emits the honestly-mappable Croissant subset (no
+<code>recordSet</code>: a graph is not a table). Prints <code>(no dataset card)</code> for a file
+built without one. <code>rete info</code> shows the same catalog beneath the header when a
+card is present.</p>
 <h3><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
 <h3><code>rete export &lt;file&gt; [--format nq|ttl|jsonld]</code></h3>
@@ -697,12 +707,14 @@ rete reach g.rete --predicate '&lt;http://ex/knows&gt;' --seeds-file seeds.txt -
 <h2>Over HTTP</h2>
 <p>Both URL commands work against <code>http://</code> and <code>https://</code> hosts that honor <code>Range</code>
 requests (S3, GitHub, any CDN).</p>
-<h3><code>rete card-url &lt;url&gt; [--json]</code></h3>
-<p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and the
-metadata range, in <strong>two small range requests</strong>. The dictionary, index, and
-pyramid are never fetched: this is the index-free <strong>CARD tier</strong>, the cold-start
-self-description (counts, vocabulary, class graph, signals, starter queries) a
-client reads before it knows what to query. Reports bytes fetched + range count.</p>
+<h3><code>rete card-url &lt;url&gt; [--json] [--format jsonld|croissant]</code></h3>
+<p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and one
+coalesced metadata + build-info range, in <strong>two small range requests</strong>. The
+dictionary, index, and pyramid are never fetched: this is the index-free <strong>CARD
+tier</strong>, the cold-start self-description (counts, vocabulary, class graph,
+signals, starter queries, build record) a client reads before it knows what to
+query. Reports bytes fetched + range count. The <code>--format</code> projections match
+<code>rete card</code>.</p>
 <pre><code class="language-sh">rete card-url https://host/data.rete --json
 </code></pre>
 <h3><code>rete summary-url &lt;url&gt;</code></h3>

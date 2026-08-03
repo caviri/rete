@@ -60,6 +60,10 @@ Any of `--card`, `--card-file`, `--title`, `--license`, `--source`,
 | Field | Source | Meaning |
 |-------|--------|---------|
 | `title`, `description`, `license`, `source`, `created` | **curated** (flags / `--card-file`) | Free-text catalog metadata. Omitted fields are absent from the JSON. |
+| `version`, `doi`, `cite_as` | **curated** (`--card-file` only) | Dataset version (Croissant requires one), DOI IRI, preferred citation. |
+| `creators`, `publisher` | **curated** (`--card-file` only) | People (`{name, orcid}`) and organisation (`{name, ror}`). ORCID/ROR as **IRIs, not strings** — this project publishes both authority graphs, so "which datasets did this person build?" becomes a federated join, not a text search. |
+| `canonical_url`, `sparql_endpoint` | **curated** (`--card-file` only) | Where the authoritative copy of this file lives (`void:dataDump`) and a public endpoint (`void:sparqlEndpoint`). A `.rete` found on a disk can then say where to verify against. |
+| `source_date`, `derived_from` | **curated** (`--card-file` only) | The source data's own snapshot date (distinct from `created` and from the build timestamp), and what this file was derived from (`prov:wasDerivedFrom`) — dumps, endpoints, or the shards a `rete merge` folded in. |
 | `example_queries` | **curated** (`--card-file` only) | Sample queries a consumer can run. |
 | `triple_count` | derived | Triples in the **default graph**. |
 | `quad_count`, `named_graph_count` | derived | Total statements and number of named graphs. |
@@ -74,6 +78,7 @@ Any of `--card`, `--card-file`, `--title`, `--license`, `--source`,
 | `signals` | derived | Detected **affordances**: `label_predicate`, `base_iri`, `default_lang`, ranked `time_predicates` / `numeric_predicates`, present `link_predicates`, `geo_wkt` / `geo_latlong`, `temporal_extent`, `spatial_bbox` (CRS84 lon/lat). |
 | `queries` | derived | The auto-generated, **tiered starter-query library** (see below). |
 | `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). |
+| `top_n` | derived | The cap the profile lists were derived under — the number `truncated` was hinting at without stating. |
 | `format_version` | derived | The `.rete` format version the card was written against. |
 
 The per-predicate and per-class statistics are computed over the **default
@@ -83,6 +88,67 @@ list is **capped** and **deterministically ordered** (count-descending, ties
 broken lexically), so building the same input twice yields a **byte-identical**
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching `rete progressive`.
+
+## Build conditions: the build-info section
+
+The card answers *what the data is*; a second, adjacent record answers **how
+this particular file came to be** — the questions you ask when a file behaves
+oddly and there was previously no way to answer them from the file ("which
+`rete` even wrote this?"). Every card build also writes a **build-info
+section** (format section kind `7`, laid out immediately after the card)
+carrying:
+
+- `built_at` — when the file was written (RFC 3339 UTC; `SOURCE_DATE_EPOCH` is
+  honored for reproducible pipelines). Distinct from the curated `created` and
+  `source_date`, which describe the *data*.
+- `builder` — the binary that wrote the file (`rete-cli 0.3.2`).
+- `params` — the flags that shaped the result: `--no-pyramid`, the pyramid
+  algorithm, `--text-index`, `--materialize`/`--reason`,
+  `--memory-budget-mb`, the section codec, and the card's `top_n` cap.
+- `query_costs` — measured cost figures for every starter query (below).
+
+### Why it sits outside the content hash
+
+The card folds into the file's reproducible blake3 content hash, and **two
+builds of identical data must keep hashing identically** — that property is
+load-bearing (release parity checks, dedup, cache validators). A timestamp and
+a timing are exactly the facts that differ between two such builds. So the
+build-info section is **deliberately excluded from the hash**: `rete verify`
+does not cover it (old readers see an unknown kind-7 entry and ignore it; new
+readers skip it knowingly), stripping it from two builds of the same input
+yields byte-identical images, and its contents are advisory provenance, not
+integrity-protected data. Cardless builds carry no build-info at all and remain
+byte-identical to pre-build-info output.
+
+### The starter-query cost figures
+
+Each starter query is run once, **cold** (a fresh lazy open per query, what a
+stateless remote client pays), against the finished image. Two kinds of number
+are recorded together but labelled apart:
+
+- **`bytes` and `requests` are portable.** They are a property of the file's
+  layout and the query — the same query against the same file pulls the same
+  bytes from R2, GitHub Pages, or disk. They state the CARD/summary/index-tier
+  claims in checkable numbers instead of prose. (Counting is of *logical* range
+  reads, no block cache; a block-caching client coalesces requests and rounds
+  bytes up to blocks.)
+- **`debug_ms` is not.** It is one machine's wall clock at build time — a
+  debug reference, never a guarantee — and is stored **with its context**
+  (`engine`, `transport`, and a note saying exactly this) so it cannot be
+  quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
+  9 requests" survives being read elsewhere; "12 ms" does not.
+
+`--no-card-costs` skips the measurement. The memory-bounded external build and
+`rete merge` record timestamp/builder/params but no costs (their cards carry no
+derived starter queries to measure).
+
+### The one-row smoke query
+
+Every generated library now begins with `ov-one-row`: *return exactly one
+statement*. It is the unambiguous "did this file open and answer?" probe — the
+previous nearest thing was a `COUNT`, which on a named-graph-only file honestly
+answers `0` and reads as failure. The body is graph-scope aware like every
+other starter, so it returns exactly one row on any non-empty file.
 
 ## The three-tier exploration model
 
@@ -98,9 +164,12 @@ explicit so a client knows what is free before it runs anything:
 | 🟠 **Index** | the triple index (range-fetched tiles) | O(touched tiles) |
 
 `rete card-url <url>` reads the **Card tier** over HTTP in two small range
-requests — header + metadata — and **never touches the index**, so a remote/S3
-client gets the whole self-description (counts, vocabulary, class graph, signals,
-starter queries) without downloading the file.
+requests — the header, then **one coalesced range covering the card and the
+adjacent build-info** — and **never touches the index**, so a remote/S3 client
+gets the whole self-description (counts, vocabulary, class graph, signals,
+starter queries, build record) without downloading the file. Measured on the
+published catalog: 7,670 of 71,237,191 bytes for NKOD and 54,601 of
+1,161,874,550 bytes for Hugging Face, two range requests each.
 
 ## The starter-query library
 
@@ -179,6 +248,80 @@ new card is `GRAPH`-scoped and returns rows; for example `ov-triples` becomes:
 SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }
 ```
 
+## Interoperability: JSON at rest, RDF on demand
+
+A card lifted out of a `.rete` should already be RDF — a dataset describing
+itself in standard vocabularies. The first design decision was **JSON-LD at
+rest versus a projection**, and it was decided by measurement, not preference.
+The stored card is not valid JSON-LD as-is: its partition lists are arrays of
+2-tuples (`["<iri>", 123]`), which JSON-LD cannot lift to meaningful RDF, so an
+at-rest card needs one object per row (`{"void:property": …, "void:triples":
+…}`) plus a context. Converting the two reference cards to that *minimal
+faithful* at-rest form costs:
+
+| card | stored JSON | at-rest JSON-LD | delta |
+|---|---|---|---|
+| NKOD (named-graph catalog) | 6,649 B | 7,484 B | **+12.6%** |
+| Hugging Face Hub (53 KB, truncated profile) | 53,580 B | 61,899 B | **+15.5%** |
+
+Every reader pays the metadata section on every open, across the whole catalog
+— a permanent double-digit tax to serve occasional RDF consumers. So the card
+**stays plain JSON at rest**, and the RDF view is a **pure projection**:
+`rete card --format jsonld` (and `card-url`) reshapes bytes already fetched —
+no network, no index read — and there is no second artefact to drift, because
+the projection is derived from the stored card on every call.
+
+### The JSON-LD projection (`--format jsonld`)
+
+One document, typed both `schema:Dataset` **and** `void:Dataset` — one dataset
+described in two vocabularies, not two objects. The mapping reuses standard
+terms before inventing any:
+
+| card | projected as |
+|---|---|
+| `quad_count` | `void:triples` (the whole dataset) |
+| `predicates` | `void:propertyPartition` (`void:property` + `void:triples`) |
+| `classes` | `void:classPartition` (`void:class` + `void:entities`) |
+| `vocabularies` | `void:vocabulary` |
+| `sparql_endpoint`, `canonical_url` | `void:sparqlEndpoint`, `void:dataDump` (+ a `schema:DataDownload` distribution) |
+| `title`/`description`/`license`/`version`/`created`/`cite_as`/`doi` | `schema:name`/`description`/`license`/`version`/`dateCreated`/`citation`/`identifier` |
+| `creators`, `publisher` | `schema:Person` (ORCID as `@id`) / `schema:Organization` (ROR as `@id`) |
+| `source`, `derived_from` | `prov:wasDerivedFrom` (URLs) / `dct:source` (free text) |
+| build info | `prov:wasGeneratedBy` — a `prov:Activity` with `prov:endedAtTime` and the builder as a `schema:SoftwareApplication` agent |
+| temporal/spatial signals | `schema:temporalCoverage` / `schema:spatialCoverage` (GeoShape box) |
+| `triple_count`, `term_count`, `named_graph_count`, the content hash | a small `rete:` namespace (`https://w3id.org/rete/card#`) — what no standard covers, rather than a bent term |
+
+The projection is validated JSON-LD: it expands under `pyld` and yields the
+intended VoID/schema.org/PROV triples (58 of them on the demo card). It
+deliberately projects the interoperable core; the full profile (starter
+queries, hubs, datatype histograms, signals) stays in `--json`, where its
+private names are honest.
+
+### Croissant — the honest subset (`--format croissant`)
+
+Croissant models **tables**: `recordSet` → `field` → `dataType`. An RDF graph
+has no records, and forcing the card into a record-set shape would produce a
+document that validates and misleads. So `--format croissant` maps what
+genuinely corresponds — the descriptive header, licence, version, creators and
+publisher, provenance, and the `.rete` file itself as a `cr:FileObject`
+distribution — and **carries no `recordSet` at all**. (Where a dataset ships
+tabular Parquet companions, *those* are the honest record-set material, with
+their own Croissant documents beside the bucket.)
+
+One Croissant requirement is structurally unsatisfiable from inside the file:
+every `FileObject` must carry an `md5`/`sha256`, and **a file cannot contain
+its own whole-file sha256** (the hash would change the bytes being hashed).
+The format's own integrity hash (blake3-16 over the payload sections) is
+published as `rete:contentHash`; the sha256 — knowable only outside the file —
+can be supplied by the publisher with `--sha256 <hex>`, which makes the
+document fully validator-clean: `mlcroissant` reports **zero errors** with it,
+and exactly that one missing-property error without it.
+
+```sh
+rete card data.rete --format jsonld                      # VoID + schema.org + PROV
+rete card data.rete --format croissant --sha256 $(sha256sum data.rete | cut -d' ' -f1)
+```
+
 ## Back-compatibility
 
 All enriched fields are additive with serde defaults, so a card written by an
@@ -186,6 +329,14 @@ older `rete` (plain `example_queries`, none of the new fields) still
 deserializes. Because the new fields change the card JSON, they change the
 `blake3` content hash of every **card-bearing** file — cardless builds are
 unaffected and remain byte-identical to a pre-card build.
+
+Compatibility holds in both directions, verified against real artifacts: the
+new reader parses the published NKOD and Hugging Face cards unchanged (2 range
+requests each), and a pre-build-info binary run against a new card-bearing
+file **verifies it** (the hash never covered the new section), renders its
+card (unknown JSON fields are ignored by serde), and queries it (the unknown
+kind-7 directory entry is preserved and skipped by the section-directory
+contract the header has always had).
 
 ## Reading a card
 
@@ -226,7 +377,8 @@ between the header and the dictionary:
 ```text
 [0..1024)     header              (metadata_offset = 1024, metadata_len = card bytes)
 [1024 .. 1024+L) Dataset Card JSON  (L = metadata_len; absent when no card)
-[dictionary]    front-coded terms   (shifts to offset 1024 + L)
+[.. +B]         build-info JSON     (B = build_info_len; adjacent, OUTSIDE the hash)
+[dictionary]    front-coded terms   (shifts to offset 1024 + L + B)
 [index]         permutation blocks
 [pyramid-meta]  community summary
 [named graphs]  (if any)

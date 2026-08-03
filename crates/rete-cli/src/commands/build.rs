@@ -4,8 +4,79 @@
 //! this module adds the CLI-only concerns: file/stdin IO, format detection by
 //! extension, `--materialize`, and the Dataset Card flags.
 
+use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
 use rete_core::ingest;
+
+/// Attach the **build-info** section (kind 7, outside the content hash) to a
+/// finished card-carrying image: timestamp, builder version, the parameters in
+/// force, and — when `measure_costs` — each starter query's measured cost
+/// (bytes / range requests / rows / reference ms), run cold against this very
+/// image. Cardless builds skip this entirely, staying byte-identical to
+/// pre-build-info output.
+#[allow(clippy::too_many_arguments)]
+fn attach_build_record(
+    bytes: Vec<u8>,
+    command: &str,
+    format: Option<&str>,
+    no_pyramid: bool,
+    text_index: bool,
+    materialize: bool,
+    reason: bool,
+    pyramid_algo: rete_core::PyramidAlgo,
+    measure_costs: bool,
+) -> anyhow::Result<Vec<u8>> {
+    let header = rete_core::Header::from_bytes(&bytes)?;
+    let mut info = buildinfo::new_build_info(buildinfo::BuildParams {
+        command: Some(command.to_string()),
+        format: format.map(str::to_string),
+        no_pyramid,
+        text_index,
+        materialize,
+        reason,
+        pyramid_algo: if no_pyramid {
+            None
+        } else {
+            Some(
+                match pyramid_algo {
+                    rete_core::PyramidAlgo::Types => "types",
+                    _ => "louvain",
+                }
+                .to_string(),
+            )
+        },
+        memory_budget_mb: None,
+        codec: Some(buildinfo::codec_name(header.dict_codec).to_string()),
+        card_top_n: Some(card::CARD_TOP_N as u32),
+    });
+    let bytes = if measure_costs {
+        let queries = card::load_card(&bytes)?
+            .map(|c| c.queries)
+            .unwrap_or_default();
+        if queries.is_empty() {
+            bytes
+        } else {
+            let image = std::sync::Arc::new(bytes);
+            let costs = buildinfo::measure_query_costs(image.clone(), &queries);
+            eprintln!(
+                "measured {} starter quer{} against the built file",
+                costs.queries.len(),
+                if costs.queries.len() == 1 { "y" } else { "ies" }
+            );
+            info.query_costs = Some(costs);
+            std::sync::Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone())
+        }
+    } else {
+        bytes
+    };
+    let blob = info.to_json_bytes();
+    let out = rete_core::attach_build_info(&bytes, &blob)?;
+    eprintln!(
+        "embedded build info ({} bytes, outside the content hash)",
+        blob.len()
+    );
+    Ok(out)
+}
 
 /// Read an input source: a file path, or `-` for stdin.
 fn read_input(path: &str) -> anyhow::Result<String> {
@@ -135,6 +206,7 @@ pub(crate) fn build(
     text_index: bool,
     type_predicate: Option<&str>,
     card_args: CardArgs,
+    no_card_costs: bool,
 ) -> anyhow::Result<()> {
     // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
     // reasoning is requested, assemble by STREAMING the inputs twice instead of
@@ -155,6 +227,7 @@ pub(crate) fn build(
         } else {
             None
         };
+        let card_requested = curated.is_some();
         let inputs_fmt: Vec<(&str, &'static str)> = inputs
             .iter()
             .map(|i| (i.as_str(), input_format(i, format)))
@@ -193,6 +266,21 @@ pub(crate) fn build(
             },
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let bytes = if card_requested {
+            attach_build_record(
+                bytes,
+                "build",
+                format,
+                no_pyramid,
+                text_index,
+                false,
+                false,
+                pyramid_algo,
+                !no_card_costs,
+            )?
+        } else {
+            bytes
+        };
         std::fs::write(output, &bytes)?;
         print_build_summary(output, &stats, bytes.len());
         return Ok(());
@@ -247,6 +335,7 @@ pub(crate) fn build(
     } else {
         None
     };
+    let card_requested = curated.is_some();
     let (bytes, stats) = ingest::assemble_dataset_with_opts_algo(
         quads,
         !no_pyramid,
@@ -271,6 +360,21 @@ pub(crate) fn build(
             None => Vec::new(),
         },
     );
+    let bytes = if card_requested {
+        attach_build_record(
+            bytes,
+            "build",
+            format,
+            no_pyramid,
+            text_index,
+            materialize,
+            reason,
+            pyramid_algo,
+            !no_card_costs,
+        )?
+    } else {
+        bytes
+    };
     std::fs::write(output, &bytes)?;
     print_build_summary(output, &stats, bytes.len());
     Ok(())
@@ -335,6 +439,21 @@ pub(crate) fn build_external_cmd(
     } else {
         None
     };
+    // Build conditions for the external build: the parameters are all known up
+    // front (there are no starter queries to measure — the external card has no
+    // derived profile), so the section is written natively during the stream.
+    let build_info = if curated.is_some() {
+        buildinfo::new_build_info(buildinfo::BuildParams {
+            command: Some("build --memory-budget-mb".to_string()),
+            format: format.map(str::to_string),
+            no_pyramid: true,
+            memory_budget_mb: Some(memory_budget_mb),
+            ..Default::default()
+        })
+        .to_json_bytes()
+    } else {
+        Vec::new()
+    };
     let out_path = std::path::Path::new(output).to_path_buf();
     let stats = rete_core::extbuild::build_external(
         |visit| {
@@ -390,6 +509,7 @@ pub(crate) fn build_external_cmd(
                 }
                 None => Vec::new(),
             }),
+            build_info,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -454,6 +574,7 @@ pub(crate) fn repyramid(
     } else {
         None
     };
+    let card_requested = curated.is_some();
     let (out_bytes, stats) = ingest::assemble_dataset_with_opts_algo(
         quads,
         true,
@@ -475,6 +596,21 @@ pub(crate) fn repyramid(
             None => Vec::new(),
         },
     );
+    let out_bytes = if card_requested {
+        attach_build_record(
+            out_bytes,
+            "repyramid",
+            None,
+            false,
+            text_index,
+            false,
+            false,
+            pyramid_algo,
+            true,
+        )?
+    } else {
+        out_bytes
+    };
     std::fs::write(output, &out_bytes)?;
     if stats.named_graphs > 0 {
         println!(
@@ -502,6 +638,138 @@ mod tests {
     use super::*;
     use rete_core::Rete;
 
+    /// The determinism contract of issue #153: a card build carries a
+    /// build-info section (timestamp, builder, params, measured costs) and two
+    /// builds of identical data STILL produce equal content hashes — the
+    /// volatile facts sit outside the hash, and stripping them yields
+    /// byte-identical images.
+    #[test]
+    fn card_build_is_hash_deterministic_with_build_info_outside() {
+        let nt = "<http://x/a> <http://x/p> <http://x/b> .\n\
+                  <http://x/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://x/C> .\n";
+        let pid = std::process::id();
+        let inp = std::env::temp_dir().join(format!("rete_bi_in_{pid}.nt"));
+        let out1 = std::env::temp_dir().join(format!("rete_bi_out1_{pid}.rete"));
+        let out2 = std::env::temp_dir().join(format!("rete_bi_out2_{pid}.rete"));
+        std::fs::write(&inp, nt).unwrap();
+        let run = |out: &std::path::Path| {
+            build(
+                &[inp.to_str().unwrap().to_string()],
+                out.to_str().unwrap(),
+                None,
+                false,
+                false,
+                false,
+                rete_core::PyramidAlgo::Louvain,
+                false,
+                None,
+                CardArgs {
+                    enabled: true,
+                    title: Some("BI test".into()),
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
+            std::fs::read(out).unwrap()
+        };
+        let a = run(&out1);
+        let b = run(&out2);
+        std::fs::remove_file(&inp).ok();
+        std::fs::remove_file(&out1).ok();
+        std::fs::remove_file(&out2).ok();
+
+        // Both carry a parseable build-info record with the promised facts.
+        let info = buildinfo::BuildInfo::from_json_bytes(
+            &rete_core::read_build_info(&a).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert!(info.built_at.is_some(), "timestamp stamped");
+        assert!(
+            info.builder.as_deref().unwrap().starts_with("rete-cli "),
+            "builder version stamped"
+        );
+        assert_eq!(info.params.command.as_deref(), Some("build"));
+        assert_eq!(info.params.card_top_n, Some(card::CARD_TOP_N as u32));
+        let costs = info.query_costs.clone().expect("costs measured by default");
+        assert!(costs.context.engine.is_some() && costs.context.note.is_some());
+        let smoke = costs
+            .queries
+            .iter()
+            .find(|c| c.id == "ov-one-row")
+            .expect("one-row smoke query measured");
+        assert_eq!(
+            smoke.rows, 1,
+            "the smoke query answers with exactly one row"
+        );
+        assert!(smoke.bytes > 0 && smoke.requests > 0);
+
+        // Hash equality across the two builds, despite differing build-info.
+        let ha = rete_core::Header::from_bytes(&a).unwrap();
+        let hb = rete_core::Header::from_bytes(&b).unwrap();
+        assert_eq!(
+            ha.content_hash, hb.content_hash,
+            "content hash reproducible"
+        );
+        assert!(rete_core::verify(&a).unwrap() && rete_core::verify(&b).unwrap());
+
+        // Strip the (only volatile) section: the images are byte-identical.
+        assert_eq!(
+            rete_core::attach_build_info(&a, &[]).unwrap(),
+            rete_core::attach_build_info(&b, &[]).unwrap(),
+            "everything except build-info is reproducible byte-for-byte"
+        );
+
+        // The measured byte/request figures are themselves deterministic (a
+        // property of layout + query, not of the run).
+        let info_b = buildinfo::BuildInfo::from_json_bytes(
+            &rete_core::read_build_info(&b).unwrap().unwrap(),
+        )
+        .unwrap();
+        let strip_ms = |c: &buildinfo::QueryCosts| {
+            c.queries
+                .iter()
+                .map(|q| (q.id.clone(), q.bytes, q.requests, q.rows))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            strip_ms(&costs),
+            strip_ms(info_b.query_costs.as_ref().unwrap()),
+        );
+    }
+
+    /// A cardless build must stay byte-identical to pre-build-info output — no
+    /// metadata, no build-info, nothing volatile.
+    #[test]
+    fn cardless_build_gets_no_build_info() {
+        let nt = "<http://x/a> <http://x/p> <http://x/b> .\n";
+        let pid = std::process::id();
+        let inp = std::env::temp_dir().join(format!("rete_nobi_in_{pid}.nt"));
+        let out = std::env::temp_dir().join(format!("rete_nobi_out_{pid}.rete"));
+        std::fs::write(&inp, nt).unwrap();
+        build(
+            &[inp.to_str().unwrap().to_string()],
+            out.to_str().unwrap(),
+            None,
+            false,
+            false,
+            false,
+            rete_core::PyramidAlgo::Louvain,
+            false,
+            None,
+            CardArgs::default(),
+            false,
+        )
+        .unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        std::fs::remove_file(&inp).ok();
+        std::fs::remove_file(&out).ok();
+        assert!(rete_core::read_build_info(&bytes).unwrap().is_none());
+        let h = rete_core::Header::from_bytes(&bytes).unwrap();
+        assert_eq!(h.metadata_len, 0);
+        assert_eq!(h.build_info_len, 0);
+    }
+
     /// `build --materialize` runs the reasoner and bakes RDFS entailments into the
     /// file: `x a C` + `C subClassOf D` yields a queryable `x a D`.
     #[test]
@@ -525,6 +793,7 @@ mod tests {
             false,
             None,
             CardArgs::default(),
+            false,
         )
         .unwrap();
 
@@ -545,6 +814,7 @@ mod tests {
             false,
             None,
             CardArgs::default(),
+            false,
         )
         .unwrap();
         let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();

@@ -5,6 +5,44 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **The Dataset Card is now interoperable and auditable.** (#153)
+  - A new **build-info section** (kind `7`, laid out right after the card so
+    both arrive in the CARD tier's one header + one range read) records what no
+    card carried before: the build timestamp (`SOURCE_DATE_EPOCH` honored), the
+    `rete` that wrote the file, the flags in force (`--no-pyramid`, codec,
+    `--memory-budget-mb`, `--materialize`/`--reason`, the card's top-N cap), and
+    **measured starter-query costs** — bytes + range requests (portable
+    properties of layout + query) paired with a wall-clock `debug_ms` stored
+    with its context (engine, transport, one machine) as a reference, not a
+    guarantee. The section is **deliberately outside the content hash**: two
+    builds of identical data still hash identically, and stripping the section
+    yields byte-identical images. Cardless builds are unchanged, byte-for-byte.
+    `--no-card-costs` skips the measurements.
+  - **Curated identity and provenance fields** on the card (via `--card-file`):
+    `version`, `creators` (ORCID IRIs), `publisher` (ROR IRI), `canonical_url`,
+    `sparql_endpoint`, `source_date`, `derived_from`, `doi`, `cite_as` — all
+    deterministic, all inside the hash, all joinable against the published
+    ORCID/ROR graphs.
+  - **`rete card --format jsonld`** (and `card-url`) projects the card to
+    JSON-LD — VoID for the graph (`void:triples`, partitions, `void:vocabulary`,
+    `void:sparqlEndpoint`, `void:dataDump`), schema.org for the descriptive
+    header, PROV-O for origin (`prov:wasDerivedFrom`, `prov:wasGeneratedBy` with
+    the build activity), and a small `rete:` namespace for what no standard
+    covers. The card stays plain JSON at rest; the projection is derived on
+    demand, so nothing can drift. **`--format croissant`** emits the
+    honestly-mappable Croissant subset — descriptive header, licence, creators,
+    the `.rete` as a `cr:FileObject` distribution — with **no `recordSet`**
+    (Croissant models tables; an RDF graph has no records) and no fabricated
+    `sha256`.
+  - A **one-row starter query** (`ov-one-row`) in every generated library: the
+    unambiguous "did this file open and answer?" smoke test, graph-scope aware,
+    where a `COUNT` honestly answers `0` on a named-graph-only file and reads
+    as failure.
+  - The card records `top_n`, the cap its profile lists were derived under —
+    the number `truncated: true` was hinting at without stating.
+
 ## [0.3.2] - 2026-08-01
 
 No engine change from 0.3.1 — the same code, released again because the 0.3.1
