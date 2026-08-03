@@ -17,15 +17,43 @@ Stdlib only — runs in a plain python:3.12-slim container.
 from __future__ import annotations
 
 import gzip
+import http.client
 import sys
+import threading
 import time
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-MANIFEST_URL = "https://www.davidrumsey.com/luna/servlet/iiif/m/{id}/manifest"
-UA = {"User-Agent": "rete-dataset-harvester/1.0 (research; contact: carlosvivarrios@gmail.com)"}
+HOST = "www.davidrumsey.com"
+MANIFEST_PATH = "/luna/servlet/iiif/m/{id}/manifest"
+UA = "rete-dataset-harvester/1.0 (research; contact: carlosvivarrios@gmail.com)"
 POLITE_SLEEP = 0.05
+TL = threading.local()
+
+
+def get(path: str) -> bytes:
+    """GET over a per-worker persistent connection; reconnect on stale socket.
+    Keep-alive matters: per-request TLS handshakes make a 150k sweep ~20x slower."""
+    for attempt in (0, 1):
+        c = getattr(TL, "conn", None)
+        if c is None or attempt:
+            if c is not None:
+                try:
+                    c.close()
+                except OSError:
+                    pass
+            c = TL.conn = http.client.HTTPSConnection(HOST, timeout=90)
+        try:
+            c.request("GET", path, headers={"User-Agent": UA, "Accept": "application/json"})
+            r = c.getresponse()
+            body = r.read()
+            if r.status != 200:
+                raise ValueError(f"HTTP {r.status}")
+            return body
+        except (http.client.HTTPException, ConnectionError, TimeoutError, OSError):
+            if attempt:
+                raise
+    raise RuntimeError("unreachable")
 
 
 def parse_args(argv: list[str]):
@@ -58,14 +86,11 @@ def fetch(iid: str, out_root: Path, retries: int = 5) -> tuple[str, str]:
         return ("skip", iid)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".gz.part")
-    url = MANIFEST_URL.format(id=iid)
     last = ""
     for attempt in range(retries):
         try:
             time.sleep(POLITE_SLEEP)
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=90) as resp:
-                body = resp.read()
+            body = get(MANIFEST_PATH.format(id=iid))
             if not body.lstrip().startswith(b"{"):
                 raise ValueError("non-JSON response (captcha wall?)")
             with gzip.open(tmp, "wb", compresslevel=6) as fh:
