@@ -1214,24 +1214,31 @@ pub(crate) fn eval_plan_iter<'q>(
             let Some(slot) = ctx.slots.slot(var) else {
                 return Box::new(std::iter::empty());
             };
-            Box::new(
-                ctx.rete
-                    .named_graphs()
-                    .iter()
-                    .filter(move |(name, _)| visible(name))
-                    .flat_map(move |(name, gi)| {
-                        let gval = ctx.resolver.canon_term(name);
-                        eval_plan_iter(ctx, gi, named_filter, inner).filter_map(move |mut sol| {
-                            match &sol[slot] {
-                                Some(existing) if *existing != gval => None,
-                                _ => {
-                                    sol[slot] = Some(gval.clone());
-                                    Some(sol)
-                                }
-                            }
-                        })
-                    }),
-            )
+            // Iterate by index, not over a materialized slice: on a lazy
+            // ranged open the named-graph directory is walked — and each
+            // graph's index decoded — only as this iterator reaches it, so a
+            // LIMITed query stops fetching after its first few graphs. The
+            // IRI is checked against FROM NAMED before the (possibly remote)
+            // index is opened.
+            let graphs = (0..ctx.rete.named_graph_count()).filter_map(move |i| {
+                let name = ctx.rete.named_graph_name_at(i)?;
+                if !visible(name) {
+                    return None;
+                }
+                ctx.rete.named_graph_at(i)
+            });
+            Box::new(graphs.flat_map(move |(name, gi)| {
+                let gval = ctx.resolver.canon_term(name);
+                eval_plan_iter(ctx, gi, named_filter, inner).filter_map(move |mut sol| {
+                    match &sol[slot] {
+                        Some(existing) if *existing != gval => None,
+                        _ => {
+                            sol[slot] = Some(gval.clone());
+                            Some(sol)
+                        }
+                    }
+                })
+            }))
         }
     }
 }

@@ -768,3 +768,183 @@ fn lazy_bound_object_lookup_reaches_late_slices_of_a_split_group() {
         assert_eq!(got, want, "LAZY open must find o offset {i} in its slice");
     }
 }
+
+/// A dataset image with one small default graph and `n` named graphs; graph
+/// `k` holds `sizes[k]` triples. All graphs share one dictionary.
+fn dataset_with_named_graphs(sizes: &[usize]) -> Vec<u8> {
+    let node = mt_node;
+    let p = "<http://ex/p>".to_string();
+    let mut db = DictionaryBuilder::new();
+    db.observe(&node(0), &p, &node(1));
+    let mut all: Vec<(usize, u32, u32)> = Vec::new(); // (graph, s, o)
+    let mut next = 100u32;
+    for (g, &sz) in sizes.iter().enumerate() {
+        for _ in 0..sz {
+            db.observe(&node(next), &p, &node(next + 1));
+            all.push((g, next, next + 1));
+            next += 2;
+        }
+    }
+    let dict = db.build();
+    let mut def = GraphIndexBuilder::new();
+    def.push(dict.encode(&node(0), &p, &node(1)).unwrap());
+    let mut named_builders: Vec<GraphIndexBuilder> =
+        sizes.iter().map(|_| GraphIndexBuilder::new()).collect();
+    for &(g, s, o) in &all {
+        named_builders[g].push(dict.encode(&node(s), &p, &node(o)).unwrap());
+    }
+    let named: Vec<(String, _)> = named_builders
+        .into_iter()
+        .enumerate()
+        .map(|(g, b)| (format!("<http://ex/g{g:03}>"), b.build()))
+        .collect();
+    rete_core::write_dataset(&dict, &def.build(), &named, true, &[], 0)
+}
+
+/// The lazy ranged open must not touch the NAMED_GRAPHS section at all — that
+/// section used to be fetched and fully decoded up front, which on a
+/// many-graph remote file (nkod: 67 MB, ~32k graphs) defeated remote laziness.
+/// Queries must then walk/decode only what they touch, and stay CORRECT:
+/// `GRAPH ?g` totals must match the resident open exactly.
+#[test]
+fn named_graphs_are_lazy_and_graph_queries_stay_correct() {
+    // A couple of small graphs first, one much larger one after, then more
+    // small ones. The big graph makes the section dwarf the walk's 64 KiB
+    // read chunk, so a LIMITed query provably reads a PREFIX of the section
+    // and never the big payload.
+    let sizes: Vec<usize> = {
+        let mut v = vec![3usize; 8];
+        v.push(60_000); // the big graph, ninth in stored order
+        v.extend([3usize; 8]);
+        v
+    };
+    let total: usize = sizes.iter().sum();
+    let image = dataset_with_named_graphs(&sizes);
+
+    let h = Rete::open(&image).unwrap().header().clone();
+    assert!(h.named_graphs_len > 0);
+    let named = (
+        h.named_graphs_offset,
+        h.named_graphs_offset + h.named_graphs_len,
+    );
+    let named_bytes = |reader: &RecordingReader| -> u64 {
+        reader
+            .reads()
+            .iter()
+            .filter(|&&r| overlaps(r, named))
+            .map(|&(off, len)| {
+                // Count only the part of the read inside the section.
+                let end = (off + len).min(named.1);
+                end - off.max(named.0)
+            })
+            .sum()
+    };
+
+    // 1. The OPEN reads nothing of the named-graphs section.
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    assert_eq!(
+        named_bytes(&reader),
+        0,
+        "open_ranged_lazy fetched the named-graphs section eagerly"
+    );
+
+    // 2. The count is the section's leading varint — a few bytes, not a walk.
+    assert_eq!(lazy.named_graph_count(), sizes.len());
+    assert!(
+        named_bytes(&reader) <= 16,
+        "named_graph_count read {} bytes of the section",
+        named_bytes(&reader)
+    );
+
+    // 3. A LIMITed GRAPH ?g query touches a PREFIX of the section: the big
+    //    ninth graph's container is never fetched.
+    let q_limit = "SELECT ?g ?s WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 2";
+    match eval_query(&lazy, q_limit).unwrap() {
+        QueryOutput::Select(_, rows) => assert_eq!(rows.len(), 2),
+        _ => unreachable!(),
+    }
+    assert!(!lazy.index_incomplete());
+    let after_limit = named_bytes(&reader);
+    assert!(
+        after_limit < h.named_graphs_len / 2,
+        "LIMIT 2 over GRAPH ?g read {after_limit} of {} section bytes",
+        h.named_graphs_len
+    );
+
+    // 4. The full count is exact — and equals the resident open's answer.
+    let plain = Rete::open(&image).unwrap();
+    let q_count = "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }";
+    let count_of = |rete: &Rete| -> String {
+        match eval_query(rete, q_count).unwrap() {
+            QueryOutput::Select(_, rows) => rows[0].get("n").cloned().unwrap(),
+            _ => unreachable!(),
+        }
+    };
+    let want = count_of(&plain);
+    assert!(
+        want.starts_with(&format!("\"{total}\"")),
+        "resident count: {want}"
+    );
+    assert_eq!(count_of(&lazy), want);
+    assert!(!lazy.index_incomplete());
+
+    // 5. Point lookups agree with the resident open; a miss walks headers only.
+    assert_eq!(lazy.graph_names(), plain.graph_names());
+    assert_eq!(
+        lazy.graph_index("<http://ex/g008>").unwrap().triple_count(),
+        plain
+            .graph_index("<http://ex/g008>")
+            .unwrap()
+            .triple_count(),
+    );
+    assert!(lazy.graph_index("<http://ex/missing>").is_none());
+    assert!(!lazy.index_incomplete());
+}
+
+/// A mid-walk outage must surface as `index_incomplete`, never as a silently
+/// smaller answer — and recovery must retry (failures are not memoised).
+#[test]
+fn named_graph_walk_failure_is_sticky_and_retryable() {
+    let image = dataset_with_named_graphs(&[3, 3, 3, 3]);
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+
+    reader.fail_from_now();
+    let q = "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }";
+    let _ = eval_query(&lazy, q); // whatever it returns, the flag must be set
+    assert!(
+        lazy.index_incomplete(),
+        "a failed named-graph walk went unrecorded"
+    );
+
+    reader.recover();
+    lazy.reset_load_failures();
+    match eval_query(&lazy, q).unwrap() {
+        QueryOutput::Select(_, rows) => {
+            let n = rows[0].get("n").cloned().unwrap();
+            assert!(n.starts_with("\"12\""), "recovered count: {n}");
+        }
+        _ => unreachable!(),
+    }
+    assert!(!lazy.index_incomplete());
+}
+
+/// A hostile leading count varint (claiming ~2^60 graphs) must not balloon
+/// memory or panic: the section is refused, queries come back empty, and the
+/// incompleteness flag is raised.
+#[test]
+fn hostile_named_graph_count_is_refused() {
+    let image = dataset_with_named_graphs(&[2, 2]);
+    let h = Rete::open(&image).unwrap().header().clone();
+    let mut bad = image.clone();
+    let off = h.named_graphs_offset as usize;
+    // A 9-byte maximal varint where the real count was one byte.
+    for b in bad.iter_mut().skip(off).take(8) {
+        *b = 0xff;
+    }
+    bad[off + 8] = 0x01;
+    let lazy = Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(bad))).unwrap();
+    assert_eq!(lazy.named_graph_count(), 0);
+    assert!(lazy.index_incomplete());
+}

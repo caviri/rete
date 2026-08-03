@@ -55,7 +55,7 @@ pub fn info(bytes: &[u8]) -> Result<String, JsValue> {
         h.quad_count,
         h.term_count,
         h.pyramid_levels,
-        rete.graph_names().len()
+        rete.named_graph_count()
     ))
 }
 
@@ -258,7 +258,7 @@ impl Graph {
             h.quad_count,
             h.term_count,
             h.pyramid_levels,
-            self.rete.graph_names().len()
+            self.rete.named_graph_count()
         )
     }
 
@@ -761,7 +761,9 @@ impl RemoteGraph {
             h.quad_count,
             h.term_count,
             h.pyramid_levels,
-            self.rete.graph_names().len()
+            // The cheap count (the section's leading varint) — listing every
+            // IRI would walk the whole named-graphs directory over the wire.
+            self.rete.named_graph_count()
         )
     }
 
@@ -1387,8 +1389,7 @@ impl XhrRangeReader {
     /// "range out of bounds").
     #[cfg(not(feature = "asyncify"))]
     fn probe_len(url: &str) -> Result<u64, String> {
-        let (status, cr_total, body) =
-            Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1)?;
+        let (status, cr_total, body) = Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1)?;
         if status == 200 {
             // Host ignored Range and sent the whole (decoded) body. Range
             // reads are rejected loudly in read_at anyway; report the honest
