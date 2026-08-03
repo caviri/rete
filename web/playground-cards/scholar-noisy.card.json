@@ -1,0 +1,14 @@
+{
+  "title": "same world, 25% noise",
+  "description": "The same generator at --noise 0.25: rewired citations (incl. temporal violations), missing ORCIDs and ISSNs, and whitespace-mangled titles - for SHACL and data-quality demos.",
+  "license": "synthetic",
+  "example_queries": [
+    "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p",
+    "PREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?paper ?title WHERE {\n  ?paper dct:title ?title .\n  FILTER(REGEX(?title, \"^  \"))\n}",
+    "PREFIX ex: <http://ex/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT ?author ?name WHERE {\n  ?author a ex:Person ;\n    foaf:name ?name .\n  FILTER NOT EXISTS { ?author ex:orcid ?orcid }\n}",
+    "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT DISTINCT ?reached WHERE { <http://ex/paper/249> cito:cites+ ?reached }",
+    "PREFIX cito: <http://purl.org/spar/cito/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT (COUNT(*) AS ?violations) WHERE {\n  ?citing cito:cites ?cited .\n  ?citing dct:date ?d1 .\n  ?cited dct:date ?d2 .\n  FILTER(STR(?d2) > STR(?d1))\n}",
+    "PREFIX ex: <http://ex/>\nPREFIX cito: <http://purl.org/spar/cito/>\nSELECT ?from ?to (COUNT(*) AS ?n) WHERE {\n  ?a cito:cites ?b .\n  ?a ex:hasField ?from .\n  ?b ex:hasField ?to .\n  FILTER(?from != ?to)\n} GROUP BY ?from ?to ORDER BY DESC(?n) LIMIT 15",
+    "PREFIX ex: <http://ex/>\nPREFIX cito: <http://purl.org/spar/cito/>\nCONSTRUCT { ?a ex:crossFieldCite ?b } WHERE {\n  ?a cito:cites ?b .\n  ?a ex:hasField <http://ex/field/genomics> .\n  ?b ex:hasField ?other .\n  FILTER(?other != <http://ex/field/genomics>)\n}"
+  ]
+}

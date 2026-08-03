@@ -145,14 +145,50 @@ const main = async () => {
   }
 
   // ---- resident path: Rete.card() from memory --------------------------------
-  // A bundled demo file carries NO card, and the modal must say so plainly
-  // rather than showing an empty shell.
+  // Different code from the remote path: no worker, no IO — the bytes are
+  // already in wasm. Every embedded dataset now ships a card, so this asserts a
+  // real one renders rather than merely not crashing.
   const bundled = await open("#dataset=causal&load=bundled");
   await openCard(bundled);
-  const none = await bundled.evaluate(() => document.getElementById("cardBody").textContent);
-  if (!/carries no Dataset Card/i.test(none)) {
-    failures.push(`bundled file without a card did not say so: "${none.slice(0, 120)}"`);
+  const resident = await bundled.evaluate(() => ({
+    title: document.getElementById("cardModalTitle").textContent,
+    body: document.getElementById("cardBody").textContent.slice(0, 2000),
+    stats: [...document.querySelectorAll("#cardBody .card-stat b")].map((e) => e.textContent),
+    foot: document.getElementById("cardFootNote").textContent,
+  }));
+  if (/carries no Dataset Card/i.test(resident.body)) {
+    failures.push("the bundled causal dataset reports no card — embedded datasets are built with one");
   }
+  if (!/causal/i.test(resident.title)) failures.push(`resident card title looks wrong: ${resident.title}`);
+  if (!resident.stats.length) failures.push("resident card rendered no counts");
+  if (/range requests/.test(resident.foot)) failures.push("resident read was reported as a ranged remote read");
+
+  // ---- a file that genuinely has no card -------------------------------------
+  // Still a real case — `rete build` is cardless unless a card flag is passed —
+  // and the modal must say so plainly instead of showing an empty shell. The
+  // gate's worldcup fixture is built without one.
+  const bare = await readFile("/work/tests/gate/.cache/worldcup2026.rete");
+  const bareServer = createServer((req, res) => {
+    const common = { "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "Content-Range,Content-Length,Accept-Ranges", "Accept-Ranges": "bytes" };
+    const r = req.headers.range && /bytes=(\d+)-(\d*)/.exec(req.headers.range);
+    if (r) {
+      const s = Number(r[1]);
+      const e = r[2] ? Math.min(Number(r[2]), bare.length - 1) : bare.length - 1;
+      const body = bare.subarray(s, e + 1);
+      res.writeHead(206, { ...common, "Content-Range": `bytes ${s}-${e}/${bare.length}`, "Content-Length": body.length });
+      res.end(body); return;
+    }
+    res.writeHead(200, { ...common, "Content-Length": bare.length });
+    res.end(req.method === "HEAD" ? undefined : bare);
+  });
+  const barePort = await listen(bareServer);
+  const cardless = await open(`#url=${encodeURIComponent(`http://127.0.0.1:${barePort}/bare.rete`)}`);
+  await openCard(cardless);
+  const none = await cardless.evaluate(() => document.getElementById("cardBody").textContent);
+  if (!/carries no Dataset Card/i.test(none)) {
+    failures.push(`a cardless file did not say so: "${none.slice(0, 120)}"`);
+  }
+  bareServer.close();
 
   if (pageErrors.length) failures.push(`page errors: ${pageErrors.slice(0, 2).join(" | ")}`);
 

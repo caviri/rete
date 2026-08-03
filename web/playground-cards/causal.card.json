@@ -1,0 +1,15 @@
+{
+  "title": "cardiometabolic causal model (confounders, mediators, colliders, loops)",
+  "description": "A cardiometabolic causal model: ~30 typed factors (risk factors, conditions, diseases, symptoms, outcomes, treatments) wired by a transitive :causes relation, plus a protective :reduces relation. Built so the Query examples discover causal structure - confounders (forks), mediators (chains), colliders (common effects), feedback loops (?x :causes+ ?x), and exogenous root causes. The SHACL examples check data quality (three planted defects). And the Coherence tab still proves the schema defect: :Relapsed is a subclass of two owl:disjointWith classes (HealthyState, DiseaseState) so it is UNSATISFIABLE, and patient :p is typed as both states. ~170 triples.",
+  "license": "example",
+  "example_queries": [
+    "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?n)",
+    "PREFIX ex: <http://ex/>\nSELECT ?from ?to WHERE {\n  ?from ex:causes ?to .\n  ?to ex:causes* ex:MyocardialInfarction\n}",
+    "PREFIX ex: <http://ex/>\nSELECT ?from ?to WHERE {\n  ?from ex:causes ?to .\n  ex:Obesity ex:causes* ?from\n}",
+    "PREFIX ex: <http://ex/>\nSELECT DISTINCT ?factor WHERE {\n  ?factor ex:causes+ ?factor\n} ORDER BY ?factor",
+    "PREFIX ex: <http://ex/>\nSELECT ?confounder ?effectA ?effectB WHERE {\n  ?confounder ex:causes ?effectA .\n  ?confounder ex:causes ?effectB .\n  FILTER(STR(?effectA) < STR(?effectB))\n} ORDER BY ?confounder",
+    "PREFIX ex: <http://ex/>\nSELECT ?causeA ?causeB ?collider WHERE {\n  ?causeA ex:causes ?collider .\n  ?causeB ex:causes ?collider .\n  FILTER(STR(?causeA) < STR(?causeB))\n} ORDER BY ?collider",
+    "PREFIX ex: <http://ex/>\nSELECT ?from ?to WHERE {\n  ?from ex:causes ?to .\n  ex:Obesity ex:causes* ?from .\n  ?to ex:causes* ex:Diabetes\n}",
+    "PREFIX ex: <http://ex/>\nSELECT ?factor (COUNT(DISTINCT ?reached) AS ?reach) WHERE {\n  ?factor ex:causes+ ?reached\n} GROUP BY ?factor ORDER BY DESC(?reach) LIMIT 15"
+  ]
+}

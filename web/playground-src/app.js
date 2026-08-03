@@ -1362,8 +1362,29 @@ self.onmessage = function (e) {
       `pulls the header and directories). ${lib} Other tabs need a graph loaded into memory.</div>`;
   }
 
+  // Accept an address the way an address bar does. A pasted link very often
+  // arrives without a scheme ("host/path/x.rete"), and passing that straight to
+  // the reader failed with a bare "Error: open" from deep inside the range
+  // reader — a message that says nothing about the actual mistake. Assume https
+  // when no scheme is given. A scheme that IS given must be http(s): that is
+  // what keeps javascript:/data: out, and why this cannot be a prefix check.
+  // Returns null when the address cannot be used.
+  function normalizeReteUrl(raw) {
+    const s = String(raw == null ? "" : raw).trim();
+    if (!s) return null;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return /^https?:/i.test(s) ? s : null;
+    return "https://" + s.replace(/^\/+/, "");  // also covers //host/path
+  }
+
   function connectRemote() {
-    enterRemote($("remoteUrl").value.trim(), null);
+    const url = normalizeReteUrl($("remoteUrl").value);
+    if (!url) {
+      showError("out", "That address can't be opened as a .rete — give an http(s) URL, " +
+        "for example https://example.org/graph.rete");
+      return;
+    }
+    $("remoteUrl").value = url;  // show what was actually opened
+    enterRemote(url, null);
   }
 
   // Every dataset is mirrored in the bucket at playground/<key>.rete, so any of
@@ -9124,6 +9145,17 @@ self.onmessage = function (e) {
       rows.push(cardSection("Example queries", c.queries.length, body, true));
     }
 
+    // Distinct from `queries` above: those are auto-derived objects, these are
+    // the plain SPARQL strings a curator passed at build time. A card can carry
+    // either or both, so both are shown — and both are runnable.
+    if (Array.isArray(c.example_queries) && c.example_queries.length) {
+      const body = c.example_queries.map((q, i) =>
+        `<div class="card-q"><div class="card-q-head"><b>Curated example ${i + 1}</b>` +
+        `<button class="secondary card-q-use" type="button" data-eq="${i}">Use</button></div>` +
+        `<pre>${esc(String(q))}</pre></div>`).join("");
+      rows.push(cardSection("Curated example queries", c.example_queries.length, body, true));
+    }
+
     if (c.truncated) {
       rows.push(`<p class="microcopy">The builder marked this card <strong>truncated</strong> — ` +
         `its lists were capped to keep the card small enough to stay in the header's reach.</p>`);
@@ -9207,11 +9239,14 @@ self.onmessage = function (e) {
     // Delegated: the query rows are re-rendered on every tab switch.
     $("cardBody").addEventListener("click", (e) => {
       const b = e.target.closest && e.target.closest(".card-q-use");
-      if (!b || !cardObj || !Array.isArray(cardObj.queries)) return;
-      const q = cardObj.queries[Number(b.dataset.qi)];
-      if (!q || !q.sparql) return;
+      if (!b || !cardObj) return;
+      // Two shapes: `queries` holds objects, `example_queries` plain strings.
+      const sparql = b.dataset.eq !== undefined
+        ? (cardObj.example_queries || [])[Number(b.dataset.eq)]
+        : ((cardObj.queries || [])[Number(b.dataset.qi)] || {}).sparql;
+      if (!sparql) return;
       setMode("sparql");
-      setEd("q", q.sparql);
+      setEd("q", sparql);
       state.selectedExample = -1;
       $("cardModal").classList.add("hidden");
       updateHash();
@@ -9917,18 +9952,21 @@ self.onmessage = function (e) {
     // aren't in RETE_DATASETS_B64, so the old embedded-only check silently fell
     // back to the default (scholar) on every reload of a remote dataset.
     if (extUrl) {
-      // http(s) only — matching what the manual URL field accepts. The scheme
-      // check is not cosmetic: this value comes straight from the address bar,
-      // so it keeps javascript:/data: URLs from reaching the reader. Mixed
-      // content is left to the browser, which blocks http:// on the hosted page
-      // anyway but must stay allowed for a local file server.
-      const clean = extUrl.trim();
-      if (!/^https?:\/\//i.test(clean)) {
+      // Same normalization as the manual field: a scheme-less address means
+      // https, as an address bar reads it. Refusal is now reserved for an
+      // address naming a scheme that ISN'T http(s) — javascript:, data: — which
+      // is the case actually worth refusing, since this value arrives from the
+      // address bar. Mixed content is left to the browser, which blocks http://
+      // on the hosted page anyway but must stay allowed for a local file server.
+      const clean = normalizeReteUrl(extUrl);
+      if (!clean) {
         // Load the default so the page is still usable, THEN report — loading
         // writes its own status line and would otherwise bury this one.
         loadDataset(CATALOG.defaultDataset);
         dsSelected = CATALOG.defaultDataset;
-        showError("out", "#url= needs an http(s):// address to a .rete file — refused: " + clean);
+        // `clean` is null here — echo what was ASKED for, which is the part
+        // worth seeing.
+        showError("out", "#url= needs an http(s) address to a .rete file — refused: " + String(extUrl));
       } else {
         // Show the address that was opened: it is not a catalog entry, so
         // without this the field sits empty and there is nothing on screen
