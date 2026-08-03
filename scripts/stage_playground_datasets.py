@@ -68,7 +68,9 @@ def decode_v5(name: str, encoded: str) -> bytes:
     return payload
 
 
-def stage(html_path: Path, web_dir: Path) -> tuple[list[Path], list[Path]]:
+def stage(
+    html_path: Path, web_dir: Path, allow_update: bool = False
+) -> tuple[list[Path], list[Path], list[Path]]:
     embedded = read_embedded_map(html_path)
     decoded: list[tuple[str, Path, bytes]] = []
     for name, filename in DATASETS:
@@ -82,11 +84,25 @@ def stage(html_path: Path, web_dir: Path) -> tuple[list[Path], list[Path]]:
     # are never silently replaced: a mismatch means the local build inputs have
     # drifted from the tracked release artifact and should be investigated.
     existing: list[Path] = []
+    updated: list[Path] = []
     missing: list[tuple[Path, bytes]] = []
     for name, path, payload in decoded:
         if path.exists():
             if path.read_bytes() != payload:
-                raise StageError(f"existing dataset {path} does not match tracked {name!r} bytes")
+                # Drift is the normal reading of a mismatch, and refusing is
+                # right: it stops a stray local build from silently changing
+                # what ships. But REPLACING an embedded dataset on purpose —
+                # rebuilding one with a Dataset Card, say — lands here too, and
+                # without a way to say "this is deliberate" the only way through
+                # was to bypass this script entirely. --allow-update is that
+                # way: keep the local file and let the page be rebuilt around it.
+                if not allow_update:
+                    raise StageError(
+                        f"existing dataset {path} does not match tracked {name!r} bytes"
+                        " (pass --allow-update if you meant to replace it)"
+                    )
+                updated.append(path)
+                continue
             existing.append(path)
         else:
             missing.append((path, payload))
@@ -96,20 +112,27 @@ def stage(html_path: Path, web_dir: Path) -> tuple[list[Path], list[Path]]:
     for path, payload in missing:
         path.write_bytes(payload)
         staged.append(path)
-    return staged, existing
+    return staged, existing, updated
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--html", type=Path, default=DEFAULT_HTML)
     parser.add_argument("--web-dir", type=Path, default=DEFAULT_WEB_DIR)
+    parser.add_argument(
+        "--allow-update",
+        action="store_true",
+        help="keep local web/*.rete that differ from the tracked page, instead of"
+        " refusing. For DELIBERATE replacement of an embedded dataset; the page"
+        " is then rebuilt around the local bytes.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        staged, existing = stage(args.html, args.web_dir)
+        staged, existing, updated = stage(args.html, args.web_dir, args.allow_update)
     except (OSError, StageError) as error:
         print(f"stage_playground_datasets: error: {error}", file=sys.stderr)
         return 1
@@ -117,9 +140,12 @@ def main() -> int:
     print(
         "stage_playground_datasets: "
         f"staged {len(staged)}, verified {len(existing)} embedded datasets"
+        + (f", kept {len(updated)} locally-updated" if updated else "")
     )
     for path in staged:
         print(f"  staged: {path}")
+    for path in updated:
+        print(f"  kept local (--allow-update): {path}")
     return 0
 
 

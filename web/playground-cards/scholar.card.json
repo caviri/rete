@@ -1,0 +1,15 @@
+{
+  "title": "synthetic scholarly world",
+  "description": "250 papers, 137 authors, 36 venues from scripts/synth_graph.py (seed 42): power-law citations, field communities, Zipfian venues, and typed literals.",
+  "license": "synthetic",
+  "example_queries": [
+    "SELECT (COUNT(*) AS ?triples) WHERE { ?s ?p ?o }",
+    "SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p",
+    "PREFIX ex: <http://ex/>\nPREFIX foaf: <http://xmlns.com/foaf/0.1/>\nSELECT ?author ?name ?h ?institution WHERE {\n  ?author a ex:Person ;\n    foaf:name ?name ;\n    ex:hIndex ?h ;\n    ex:affiliation ?institution\n} ORDER BY DESC(?h) LIMIT 50",
+    "PREFIX ex: <http://ex/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?title ?score WHERE {\n  ?paper ex:noveltyScore ?score ;\n    dct:title ?title .\n  FILTER(?score > 2.0)\n} ORDER BY DESC(?score)",
+    "PREFIX ex: <http://ex/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?title ?score WHERE {\n  ?paper ex:noveltyScore ?score ;\n    dct:title ?title .\n  FILTER(?score > 2.0)\n} ORDER BY DESC(?score)",
+    "PREFIX cito: <http://purl.org/spar/cito/>\nSELECT DISTINCT ?reached WHERE { <http://ex/paper/245> cito:cites+ ?reached }",
+    "PREFIX cito: <http://purl.org/spar/cito/>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?title (COUNT(?citing) AS ?citations) WHERE {\n  ?citing cito:cites ?paper .\n  ?paper dct:title ?title\n} GROUP BY ?title ORDER BY DESC(?citations) LIMIT 10",
+    "PREFIX ex: <http://ex/>\nSELECT ?field (COUNT(?paper) AS ?papers) WHERE {\n  ?paper a ex:Paper ;\n    ex:hasField ?field\n} GROUP BY ?field ORDER BY DESC(?papers)"
+  ]
+}
