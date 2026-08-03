@@ -159,4 +159,63 @@ unique quads), 31,712,951 terms, types pyramid (1 level), 53.6 KB embedded card,
 **1.16 GB**. Monolithic build: ~25 min, ≤6 GiB RAM. `rete verify` green;
 spot-checked: base-model genealogy (top target: distilbert-base-uncased,
 12,052 finetunes), social joins (org members × follower counts), and
-`?w a scholar:Work` under `--entail`. Publishing (R2 + playground): pending.
+`?w a scholar:Work` under `--entail`. **SHIPPED** — remote-lazy at
+`https://data.graphplaza.com/hugging-face/hugging-face.rete`, in the playground.
+
+### hugging-face-full.rete — the lossless counterpart
+
+The graph build above deliberately leaves out the bulky non-graph payloads.
+`--full` puts **everything** in, and answers the question "how much of the
+compression was real?":
+
+```bash
+python data/hugging-face/scripts/build_nt.py --full | gzip -1 > hugging-face-full.nt.gz
+{ cat ontology.nt; gzip -dc hugging-face-full.nt.gz; } | rete build - --format nt \
+  -o hugging-face-full.rete --card --memory-budget-mb 16000 --tmp-dir _build_tmp
+```
+
+| | `hugging-face` | `hugging-face-full` | source Parquet |
+|---|---|---|---|
+| statements | 85,142,709 | **272,283,708** (254,397,090 unique) | — |
+| dictionary terms | 31,712,951 | **83,657,609** | — |
+| size | 1.16 GB | **2.71 GB** | **2.67 GB** |
+| pyramid / card | types, 53.6 KB | none, 700 B (external build) | — |
+
+**The full graph is the same size as the Parquet it fully represents (1.02×) —
+while carrying four sorted index permutations and answering queries over HTTP
+range reads.** So the earlier 2.3× "compression" was not compression at all: it
+was the 71% of Parquet bytes (file manifests, config/card JSON, `_id`) that the
+graph build omits. Like-for-like, RDF-in-`.rete` costs about what columnar
+Parquet costs, and buys indexing.
+
+What `--full` adds:
+
+- **File manifests** — 60.7M model + 36.3M space entries as `hf:file` *literals*.
+  They are literals by design: the source carries only a filename, and ~97M
+  entries share ~36M distinct values, so the dictionary dedupes them 2.7×
+  (minting a node per file would have cost ~200M extra triples for no
+  information). Reverse lookup works: 1,174,032 repos contain a `config.json`.
+- **JSON blobs kept twice** — verbatim (`hf:cardDataJson`, `hf:configJson`,
+  `hf:ggufJson`, so nothing structural is lost) *and* path-flattened into
+  queryable triples under the `card#` / `config#` / `gguf#` key namespaces.
+- **Reified inference offers** (`hf:InferenceOffer`) — provider, status, task,
+  context length, per-token pricing, measured latency and tokens/second.
+- **Per-dtype parameter counts** (`param#BF16`, `param#F32`, …), transformers
+  auto-classes, `_id`, BibTeX citations, AI summaries/keywords, paper media and
+  GitHub stars, and every post content block, reaction and commentator.
+
+Two honest caveats: RDF is a *set*, so 17.9M duplicate statements (repeated
+values inside flattened arrays) collapse — lossless for querying, but array
+multiplicity lives only in the verbatim JSON. And a few columns that merely
+repeat an account's own profile (a post author's avatar/follower count, a
+paper submitter's avatar) are represented once on the account node instead of
+per row.
+
+<!-- r2-backup -->
+## Storage — mirrored on Cloudflare R2
+
+Built artifacts for this dataset are mirrored on Cloudflare R2 (public, HTTP-range served). The local copies were **reclaimed 2026-07-30** to free disk; re-fetch from the URLs below, or rebuild via `scripts/`.
+
+| file | size | URL |
+|---|--:|---|
+| `hugging-face.rete` | 1.16 GB | https://data.graphplaza.com/hugging-face/hugging-face.rete |

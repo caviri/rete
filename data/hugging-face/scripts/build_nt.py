@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Stream the hugging-face parquets -> N-Triples (all fields), per hugging-face.ttl.
+"""Stream the hugging-face parquets -> N-Triples, per hugging-face.ttl.
+
+Two fidelities:
+  (default)  the graph layer — every scalar/edge field, but not the bulky
+             non-graph payloads (cardData/config JSON, sibling file manifests,
+             safetensors per-dtype breakdowns, BibTeX, AI summaries).
+  --full     EVERYTHING in the parquets, nothing dropped: file manifests as
+             hf:file literals (97M entries, ~36M distinct — literals dedupe far
+             better than minting a node per file), JSON blobs kept BOTH raw
+             (hf:cardDataJson/configJson/ggufJson — lossless) and path-flattened
+             into queryable triples under the hfcard:/hfcfg:/hfgguf: key
+             namespaces, reified inference-provider offers, per-dtype parameter
+             counts, and every remaining paper/post/repo column.
 
 IRI policy (scholar-aligned, see data/scholar/scholar.ttl):
   account       https://huggingface.co/{name}
@@ -34,6 +46,13 @@ SCH = "https://schema.org/"
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 XSD = "http://www.w3.org/2001/XMLSchema#"
 HFCO = "https://huggingface.co/"
+# open-ended key namespaces for --full path-flattened JSON
+NS_CARD = "https://w3id.org/rete/huggingface/card#"
+NS_CFG = "https://w3id.org/rete/huggingface/config#"
+NS_GGUF = "https://w3id.org/rete/huggingface/gguf#"
+NS_PARAM = "https://w3id.org/rete/huggingface/param#"
+
+FULL = False          # set by --full
 
 _IRI_BAD = re.compile(r'[\x00-\x20<>"{}|\\^`]')
 _LIT = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
@@ -107,6 +126,55 @@ def paper_iri(aid):
 
 def avatar_iri(u):
     return u if u.startswith("http") else "https://huggingface.co" + u
+
+
+_KEY_BAD = re.compile(r'[^A-Za-z0-9_.\-]')
+MAX_DEPTH = 8
+
+
+def key_iri(ns, path):
+    return ns + _KEY_BAD.sub("_", path)[:200]
+
+
+def json_value(v):
+    """Python value -> an N-Triples object term, or None to skip."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool):
+        return b_lit(v)
+    if isinstance(v, int):
+        return i_lit(v)
+    if isinstance(v, float):
+        return d_lit(v)
+    return s_lit(v)
+
+
+def flatten(s, ns, obj, path="", depth=0):
+    """Emit path-flattened key/value triples. Arrays repeat their parent path."""
+    if depth > MAX_DEPTH:
+        return
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            flatten(s, ns, v, f"{path}.{k}" if path else str(k), depth + 1)
+    elif isinstance(obj, list):
+        for v in obj:
+            flatten(s, ns, v, path, depth + 1)
+    elif path:
+        o = json_value(obj)
+        if o is not None:
+            emit(s, key_iri(ns, path), o)
+
+
+def emit_json_blob(s, raw, raw_prop, ns):
+    """Keep the blob verbatim (lossless) AND flatten it (queryable)."""
+    if not raw:
+        return
+    emit(s, HF + raw_prop, s_lit(raw))
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return
+    flatten(s, ns, parsed)
 
 
 def rows(path, columns, limit=0):
@@ -190,6 +258,21 @@ def orgs(limit):
         count_props(s, r, ACCOUNT_COUNTS + [("num_users", "memberCount")])
 
 
+def repo_full(s, r):
+    """--full extras shared by models / datasets / spaces."""
+    if r.get("_id"):
+        emit(s, HF + "hubId", s_lit(r["_id"]))
+    if r.get("disabled"):
+        emit(s, HF + "disabled", b_lit(True))
+    if r.get("citation"):
+        emit(s, HF + "citation", s_lit(r["citation"]))
+    emit_json_blob(s, r.get("cardData"), "cardDataJson", NS_CARD)
+    for sib in r.get("siblings") or []:
+        f = sib.get("rfilename") if isinstance(sib, dict) else sib
+        if f:
+            emit(s, HF + "file", s_lit(f))
+
+
 def repo_common(s, r, iri_fn):
     emit(s, HF + "repoId", s_lit(r["id"]))
     if r.get("author"):
@@ -213,14 +296,72 @@ def repo_common(s, r, iri_fn):
     if r.get("sha"):
         emit(s, HF + "sha", s_lit(r["sha"]))
     emit_tags(s, r.get("tags"))
+    if FULL:
+        repo_full(s, r)
+
+
+PROVIDER_FIELDS = [("providerId", "providerId"), ("status", "providerStatus"),
+                   ("task", "providerTask"), ("type", "providerType"),
+                   ("adapter", "providerAdapter"),
+                   ("adapterWeightsPath", "providerAdapterWeightsPath"),
+                   ("previousStatus", "providerPreviousStatus")]
+
+
+def model_full(s, r):
+    """--full extras specific to models."""
+    emit_json_blob(s, r.get("config"), "configJson", NS_CFG)
+    emit_json_blob(s, r.get("gguf"), "ggufJson", NS_GGUF)
+    st = r.get("safetensors") or {}
+    for dtype, n in (st.get("parameters") or {}).items():
+        if n:
+            emit(s, key_iri(NS_PARAM, dtype), i_lit(n))
+    ti = r.get("transformersInfo") or {}
+    for col, prop in (("auto_model", "autoModel"), ("pipeline_tag", "transformersPipelineTag"),
+                      ("processor", "processor"), ("custom_class", "customClass")):
+        if ti.get(col):
+            emit(s, HF + prop, s_lit(ti[col]))
+    for m in r.get("inferenceProviderMapping") or []:
+        prov = m.get("provider")
+        if not prov:
+            continue
+        offer = f"{s}/inference/{ienc(prov)}"
+        emit(s, HF + "inferenceOffer", obj_iri(offer))
+        emit(offer, RDF_TYPE, obj_iri(HF + "InferenceOffer"))
+        emit(offer, HF + "provider", s_lit(prov))
+        for col, prop in PROVIDER_FIELDS:
+            if m.get(col):
+                emit(offer, HF + prop, s_lit(m[col]))
+        feats = m.get("features") or {}
+        for col, prop in (("structuredOutput", "structuredOutput"), ("toolCalling", "toolCalling")):
+            if feats.get(col) is not None:
+                emit(offer, HF + prop, b_lit(feats[col]))
+        perf = m.get("performance") or {}
+        for col, prop in (("requestLatencyMs", "requestLatencyMs"),
+                          ("firstTokenLatencyMs", "firstTokenLatencyMs"),
+                          ("tokensPerSecond", "tokensPerSecond"),
+                          ("numGeneratedTokens", "numGeneratedTokens")):
+            if perf.get(col) is not None:
+                v = perf[col]
+                emit(offer, HF + prop, i_lit(v) if isinstance(v, int) else d_lit(v))
+        det = m.get("providerDetails") or {}
+        if det.get("context_length"):
+            emit(offer, HF + "contextLength", i_lit(det["context_length"]))
+        pricing = det.get("pricing") or {}
+        for col, prop in (("input", "pricingInput"), ("output", "pricingOutput")):
+            if pricing.get(col) is not None:
+                emit(offer, HF + prop, d_lit(pricing[col]))
+        if m.get("isModelAuthor") is not None:
+            emit(offer, HF + "isModelAuthor", b_lit(m["isModelAuthor"]))
 
 
 def models(limit):
-    for r in rows(os.path.join(HS, "models.parquet"),
-                  ["id", "author", "createdAt", "lastModified", "likes",
-                   "trendingScore", "downloads", "downloadsAllTime", "gated",
-                   "pipeline_tag", "library_name", "tags", "safetensors", "gguf",
-                   "inferenceProviderMapping"], limit):
+    cols = ["id", "author", "createdAt", "lastModified", "likes",
+            "trendingScore", "downloads", "downloadsAllTime", "gated",
+            "pipeline_tag", "library_name", "tags", "safetensors", "gguf",
+            "inferenceProviderMapping"]
+    if FULL:
+        cols += ["_id", "cardData", "config", "siblings", "transformersInfo"]
+    for r in rows(os.path.join(HS, "models.parquet"), cols, limit):
         s = model_iri(r["id"])
         emit(s, RDF_TYPE, obj_iri(HF + "Model"))
         repo_common(s, r, model_iri)
@@ -239,14 +380,18 @@ def models(limit):
             if p and p not in seen:
                 seen.add(p)
                 emit(s, HF + "inferenceProvider", s_lit(p))
+        if FULL:
+            model_full(s, r)
 
 
 def datasets(limit):
-    for r in rows(os.path.join(HS, "datasets.parquet"),
-                  ["id", "author", "createdAt", "lastModified", "likes",
-                   "trendingScore", "downloads", "downloadsAllTime", "gated",
-                   "private", "disabled", "sha", "description", "mainSize",
-                   "paperswithcode_id", "tags"], limit):
+    cols = ["id", "author", "createdAt", "lastModified", "likes",
+            "trendingScore", "downloads", "downloadsAllTime", "gated",
+            "private", "disabled", "sha", "description", "mainSize",
+            "paperswithcode_id", "tags"]
+    if FULL:
+        cols += ["_id", "cardData", "citation"]
+    for r in rows(os.path.join(HS, "datasets.parquet"), cols, limit):
         s = ds_iri(r["id"])
         emit(s, RDF_TYPE, obj_iri(HF + "DatasetRepo"))
         repo_common(s, r, ds_iri)
@@ -259,10 +404,11 @@ def datasets(limit):
 
 
 def spaces(limit):
-    for r in rows(os.path.join(HS, "spaces.parquet"),
-                  ["id", "author", "createdAt", "lastModified", "likes",
-                   "trendingScore", "private", "sha", "subdomain", "sdk",
-                   "tags"], limit):
+    cols = ["id", "author", "createdAt", "lastModified", "likes",
+            "trendingScore", "private", "sha", "subdomain", "sdk", "tags"]
+    if FULL:
+        cols += ["_id", "cardData", "siblings"]
+    for r in rows(os.path.join(HS, "spaces.parquet"), cols, limit):
         s = space_iri(r["id"])
         emit(s, RDF_TYPE, obj_iri(HF + "Space"))
         repo_common(s, r, space_iri)
@@ -273,10 +419,11 @@ def spaces(limit):
 
 
 def papers(limit):
-    for r in rows(os.path.join(HS, "arxiv_papers.parquet"),
-                  ["id", "title", "thumbnailUrl", "upvotes", "publishedAt",
-                   "authors", "summary", "projectPage", "githubRepo",
-                   "organization"], limit):
+    cols = ["id", "title", "thumbnailUrl", "upvotes", "publishedAt",
+            "authors", "summary", "projectPage", "githubRepo", "organization"]
+    if FULL:
+        cols += ["ai_summary"]
+    for r in rows(os.path.join(HS, "arxiv_papers.parquet"), cols, limit):
         aid = str(r["id"])
         if not _ARXIV.match(aid):
             continue
@@ -304,6 +451,8 @@ def papers(limit):
             emit(s, HF + "githubRepo", obj_iri(ienc(g)))
         if r.get("organization"):
             emit(s, HF + "organization", obj_iri(acc(r["organization"])))
+        if FULL and r.get("ai_summary"):
+            emit(s, HF + "aiSummary", s_lit(r["ai_summary"]))
         au = r.get("authors")
         if au:
             try:
@@ -315,9 +464,50 @@ def papers(limit):
                     emit(s, HF + "authorName", s_lit(nm.strip()))
 
 
+DAILY_FULL = [("paper_upvotes", "upvotes", i_lit), ("numComments", "commentCount", i_lit),
+              ("paper_githubStars", "githubStars", i_lit),
+              ("paper_discussionId", "discussionId", s_lit),
+              ("paper_githubRepoAddedBy", "githubRepoAddedBy", s_lit),
+              ("paper_submittedOnDailyAt", "submittedOnDailyAt", s_lit),
+              ("paper_ai_summary", "aiSummary", s_lit),
+              ("paper_ai_summary_model", "aiSummaryModel", s_lit),
+              ("paper_withdrawnAt", "withdrawnAt", s_lit),
+              ("thumbnail", "thumbnail", s_lit),
+              ("isAuthorParticipating", "authorParticipating", b_lit)]
+
+
+def daily_full(s, r):
+    for col, prop, fn in DAILY_FULL:
+        v = r.get(col)
+        if v not in (None, "", False):
+            emit(s, HF + prop, fn(int(v) if fn is i_lit else v))
+    for kw in r.get("paper_ai_keywords") or []:
+        emit(s, HF + "aiKeyword", s_lit(kw))
+    for u in (r.get("paper_mediaUrls") or []) + (r.get("mediaUrls") or []):
+        if u:
+            emit(s, HF + "mediaUrl", obj_iri(ienc(u)))
+    org = r.get("paper_organization.name")
+    if org:
+        emit(s, HF + "organization", obj_iri(acc(org)))
+    if r.get("paper_projectPage"):
+        emit(s, HF + "projectPage", obj_iri(ienc(r["paper_projectPage"])))
+    if r.get("paper_githubRepo"):
+        g = r["paper_githubRepo"]
+        emit(s, HF + "githubRepo",
+             obj_iri(ienc(g if g.startswith("http") else "https://github.com/" + g)))
+    for a in r.get("paper_authors") or []:
+        nm = (a or {}).get("name")
+        if nm:
+            emit(s, HF + "authorName", s_lit(nm))
+
+
 def daily_papers(limit):
-    for r in rows(os.path.join(HS, "daily_papers.parquet"),
-                  ["paper_id", "submittedBy", "paper_authors"], limit):
+    cols = ["paper_id", "submittedBy", "paper_authors"]
+    if FULL:
+        cols += [c for c, _, _ in DAILY_FULL] + [
+            "paper_ai_keywords", "paper_mediaUrls", "mediaUrls",
+            "paper_organization.name", "paper_projectPage", "paper_githubRepo"]
+    for r in rows(os.path.join(HS, "daily_papers.parquet"), cols, limit):
         aid = str(r.get("paper_id") or "")
         if not _ARXIV.match(aid):
             continue
@@ -329,12 +519,49 @@ def daily_papers(limit):
             u = (a or {}).get("user")
             if u and u.get("name") and not (a.get("hidden") or False):
                 emit(s, HF + "paperAuthor", obj_iri(acc(u["name"])))
+        if FULL:
+            daily_full(s, r)
+
+
+def post_full(s, r):
+    if r.get("slug"):
+        emit(s, HF + "slug", s_lit(r["slug"]))
+    if r.get("updatedAt"):
+        emit(s, SCH + "dateModified", dt_lit(r["updatedAt"]))
+    if r.get("numComments"):
+        emit(s, HF + "commentCount", i_lit(r["numComments"]))
+    lang = r.get("identifiedLanguage") or {}
+    if lang.get("language"):
+        emit(s, SCH + "inLanguage", s_lit(lang["language"]))
+    for a in r.get("attachments") or []:
+        if a.get("url"):
+            emit(s, SCH + "associatedMedia", obj_iri(ienc(a["url"])))
+    for c in r.get("content") or []:
+        for col, prop in (("value", "contentValue"), ("code", "contentCode"),
+                          ("href", "contentHref"), ("url", "contentUrl"),
+                          ("image", "contentImage"), ("label", "contentLabel")):
+            if c.get(col):
+                emit(s, HF + prop, s_lit(c[col]))
+        res = c.get("resource") or {}
+        if res.get("id"):
+            emit(s, HF + "referencesRepo", s_lit(res["id"]))
+    for rx in r.get("reactions") or []:
+        if rx.get("reaction"):
+            emit(s, HF + "reaction", s_lit(f"{rx['reaction']}:{rx.get('count', 0)}"))
+        for u in rx.get("users") or []:
+            emit(s, HF + "reactedBy", obj_iri(acc(u)))
+    for c in r.get("commentators") or []:
+        if c.get("name"):
+            emit(s, HF + "commentedBy", obj_iri(acc(c["name"])))
 
 
 def posts(limit):
-    for r in rows(os.path.join(HS, "posts.parquet"),
-                  ["url", "name", "publishedAt", "rawContent", "mentions",
-                   "totalUniqueImpressions"], limit):
+    cols = ["url", "name", "publishedAt", "rawContent", "mentions",
+            "totalUniqueImpressions"]
+    if FULL:
+        cols += ["slug", "updatedAt", "numComments", "identifiedLanguage",
+                 "attachments", "content", "reactions", "commentators"]
+    for r in rows(os.path.join(HS, "posts.parquet"), cols, limit):
         if not r.get("url"):
             continue
         s = ienc(r["url"])
@@ -350,6 +577,8 @@ def posts(limit):
         for m in r.get("mentions") or []:
             if m.get("name"):
                 emit(s, HF + "mentions", obj_iri(acc(m["name"])))
+        if FULL:
+            post_full(s, r)
 
 
 REL_PROP = {"finetune": "finetunedFrom", "quantized": "quantizedFrom",
@@ -396,10 +625,14 @@ SECTIONS = {"users": users, "orgs": orgs, "models": models, "datasets": datasets
 
 
 def main():
+    global FULL
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=sorted(SECTIONS), default=None)
     ap.add_argument("--limit", type=int, default=0, help="rows per table (sample)")
+    ap.add_argument("--full", action="store_true",
+                    help="emit EVERY parquet field (file manifests, JSON blobs, …)")
     args = ap.parse_args()
+    FULL = args.full
     todo = [args.only] if args.only else list(SECTIONS)
     for name in todo:
         before = n_emitted

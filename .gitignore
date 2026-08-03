@@ -89,3 +89,32 @@ tests/gate/node_modules/
 /clients/tauri/src-tauri/gen/
 /clients/tauri/src-tauri/icons/*
 !/clients/tauri/src-tauri/icons/source.png
+# Build output: joins /target, target-star/, target-std/, target-wasm/ and
+# /target-msrv/ — target-gate/ was simply missed (491 MB of cargo output).
+target-gate/
+
+# Scratch from interactive runs: probe scripts and per-run log/pid/err files
+# that land beside the scripts they exercise.
+_probe*.sh
+_valex*.sh
+_oaest*.sh
+# Per-run logs land wherever the command was launched from, root included.
+/_*.log
+/_*.err
+/_*.pid
+/_*.txt
+*.localbak
+scripts/_*.log
+scripts/_*.err
+scripts/_*.pid
+scripts/_*.txt
+
+# Compiled PyO3 extension: 15 MB of build output that maturin regenerates.
+clients/python/python/rete_graph/*.so
+clients/python/python/rete_graph/*.pyd
+
+# Working copies, not source. hf-space/space/ is a git CLONE of the deployed
+# Space (its app.py is byte-identical to the one tracked here); pg.html is a
+# 9 MB built playground dropped at the root while testing.
+/hf-space/space/
+/pg.html

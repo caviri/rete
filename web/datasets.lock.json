@@ -3,14 +3,6 @@
   "generatedFrom": "release-1.0.0-rc1",
   "datasets": [
     {
-      "key": "cordis",
-      "url": "https://data.graphplaza.com/cordis/cordis.rete",
-      "formatVersion": 5,
-      "contentHash": "5f028bb15d79930f2ac00dafcaae46e2",
-      "size": 791123584,
-      "cardUrl": "https://data.graphplaza.com/cordis/cordis.rete"
-    },
-    {
       "key": "ethz-research-collection",
       "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete",
       "formatVersion": 5,
@@ -27,28 +19,12 @@
       "cardUrl": "https://data.graphplaza.com/hugging-face/hugging-face.rete"
     },
     {
-      "key": "mirbase",
-      "url": "https://data.graphplaza.com/mirbase/mirbase.rete",
+      "key": "tree-city-inventory",
+      "url": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory.rete",
       "formatVersion": 5,
-      "contentHash": "1fc439ffdc08c606dd3a4694cb656449",
-      "size": 41051941,
-      "cardUrl": "https://data.graphplaza.com/mirbase/mirbase.rete"
-    },
-    {
-      "key": "switzerland-fedlex",
-      "url": "https://data.graphplaza.com/switzerland-fedlex.rete",
-      "formatVersion": 5,
-      "contentHash": "31a922b2c77ee37a210392f9238823e3",
-      "size": 1043521556,
-      "cardUrl": "https://data.graphplaza.com/switzerland-fedlex.rete"
-    },
-    {
-      "key": "wikiart",
-      "url": "https://data.graphplaza.com/wikiart.rete",
-      "formatVersion": 5,
-      "contentHash": "fc9f34dd4c6faa3007743e833fb17fb1",
-      "size": 25409575263,
-      "cardUrl": "https://data.graphplaza.com/wikiart.rete"
+      "contentHash": "079f5d5fc2e62687d589a16d47d760f3",
+      "size": 25071772,
+      "cardUrl": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory.rete"
     }
   ]
 }
