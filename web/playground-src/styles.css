@@ -988,6 +988,22 @@ h3 {
   border-left-color: var(--accent-2);
 }
 
+/* Examples read from the loaded file's own Dataset Card (family "Card"):
+   visually a sibling of the catalog examples, but clearly its own block. */
+.example-card[data-family="Card"] {
+  border-left-color: var(--muted);
+  background: var(--side);
+}
+.ex-card-sep {
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ex-card-sep .microcopy { font-weight: 400; }
+
 .example-card .example-button {
   display: flex;
   align-items: center;

@@ -316,6 +316,11 @@ __PLAYGROUND_CSS__
               <span class="switch-txt">🧠 Reason</span>
             </label>
             <button id="reasonHelp" type="button" class="help-button" title="What does Reason do?" aria-label="Explain OWL 2 QL reasoning">?</button>
+            <label class="switch-ctl" id="unionSwitch" title="Union default graph (opt-in): mount this file as if the default graph were the union of the default graph and EVERY named graph, so a pattern outside GRAPH matches data in named graphs too — the mode Virtuoso, GraphDB and Jena TDB offer. NOT standard SPARQL: the standard matches only the default graph, so on a file whose data lives in named graphs, 0 rows is the standard answer. Off by default; announced in the result line while on. A query with its own FROM keeps its FROM.">
+              <input type="checkbox" id="unionGraphs" />
+              <span class="switch" aria-hidden="true"></span>
+              <span class="switch-txt">⛁ All graphs</span>
+            </label>
             <label id="roundWrap" class="hidden">
               <span>Round</span>
               <input id="round" type="number" min="0" placeholder="auto" />

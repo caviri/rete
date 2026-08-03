@@ -1,6 +1,11 @@
 {
   "title": "Named-graphs-only gate fixture",
-  "description": "Every quad lives in a named graph and the default graph is EMPTY — the nkod.rete shape that made a correct 0 answer read as a broken page. The gate uses it to assert the empty-default-graph explainer appears here (card: triple_count 0, named_graph_count > 0) and nowhere else.",
+  "description": "Every quad lives in a named graph and the default graph is EMPTY — the nkod.rete shape that made a correct 0 answer read as a broken page. The gate uses it to assert the empty-default-graph explainer appears here (card: triple_count 0, named_graph_count > 0) and nowhere else, that this card's own example queries populate the examples panel for an off-catalog file (including the zero-row one, with the near-duplicate deduplicated), and that the ⛁ All graphs union toggle turns the standard 0 into the union answer.",
   "license": "CC0-1.0",
-  "source": "https://example.org/gate-fixture-named-graphs"
+  "source": "https://example.org/gate-fixture-named-graphs",
+  "example_queries": [
+    "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",
+    "PREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?g ?title WHERE { GRAPH ?g { ?s dct:title ?title } } LIMIT 50",
+    "PREFIX dcterms: <http://purl.org/dc/terms/>\nselect ?graph ?t where { graph ?graph { ?doc dcterms:title ?t } } limit 10"
+  ]
 }

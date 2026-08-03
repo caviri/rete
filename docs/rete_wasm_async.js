@@ -229,6 +229,40 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * As [`query`], with explicit opt-in toggles: `reason` (OWL 2 QL
+         * entailment) and `union_default` (union default graph — a pattern
+         * outside `GRAPH` matches the merge of the default graph and every named
+         * graph, the Virtuoso / GraphDB / Jena TDB mode; non-standard, so plain
+         * [`Graph::query`] never does this).
+         * @param {string} query
+         * @param {string} format
+         * @param {boolean} reason
+         * @param {boolean} union_default
+         * @returns {string}
+         */
+        query_opts(query, format, reason, union_default) {
+            let deferred4_0;
+            let deferred4_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.graph_query_opts(this.__wbg_ptr, ptr0, len0, ptr1, len1, reason, union_default);
+                var ptr3 = ret[0];
+                var len3 = ret[1];
+                if (ret[3]) {
+                    ptr3 = 0; len3 = 0;
+                    throw takeObject(ret[2]);
+                }
+                deferred4_0 = ptr3;
+                deferred4_1 = len3;
+                return getStringFromWasm0(ptr3, len3);
+            } finally {
+                wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
          * As [`query`], with OWL 2 QL entailment on (`rdfs:subClassOf` /
          * `subPropertyOf` / `domain` / `range` reasoning by query rewriting).
          * @param {string} query
@@ -738,6 +772,38 @@ let wasm_bindgen = (function(exports) {
                 const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
                 const len1 = WASM_VECTOR_LEN;
                 const ret = wasm.remotegraph_query(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+                var ptr3 = ret[0];
+                var len3 = ret[1];
+                if (ret[3]) {
+                    ptr3 = 0; len3 = 0;
+                    throw takeObject(ret[2]);
+                }
+                deferred4_0 = ptr3;
+                deferred4_1 = len3;
+                return getStringFromWasm0(ptr3, len3);
+            } finally {
+                wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * As [`query`], with explicit opt-in toggles — see [`Graph::query_opts`].
+         * With `union_default` on, a lazy remote read may fault the index tiles of
+         * every named graph the union touches (the merge is strictly opt-in).
+         * @param {string} query
+         * @param {string} format
+         * @param {boolean} reason
+         * @param {boolean} union_default
+         * @returns {string}
+         */
+        query_opts(query, format, reason, union_default) {
+            let deferred4_0;
+            let deferred4_1;
+            try {
+                const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.remotegraph_query_opts(this.__wbg_ptr, ptr0, len0, ptr1, len1, reason, union_default);
                 var ptr3 = ret[0];
                 var len3 = ret[1];
                 if (ret[3]) {
@@ -2298,12 +2364,18 @@ let wasm_bindgen = (function(exports) {
           try { return getStringFromWasm0(ret[0], ret[1]); }
           finally { wasm.__wbindgen_free(ret[0], ret[1], 1); }
         }
-        exports.reteQueryRemote = function (g, query, format, reasoned) {
+        exports.reteQueryRemote = function (g, query, format, reasoned, unionDefault) {
           return __reteSerial(function () {
             const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len0 = WASM_VECTOR_LEN;
             const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
+            // The union-default-graph toggle routes through query_opts (reason +
+            // union as i32 flags). The plain/reasoned exports stay the proven
+            // path when the toggle is off — same marshal-once, raw-driven shape.
+            if (unionDefault) {
+              return __reteCallRaw(function () { return wasm.remotegraph_query_opts(g.__wbg_ptr, ptr0, len0, ptr1, len1, reasoned ? 1 : 0, 1); }, true);
+            }
             const raw = reasoned ? wasm.remotegraph_query_reasoned : wasm.remotegraph_query;
             return __reteCallRaw(function () { return raw(g.__wbg_ptr, ptr0, len0, ptr1, len1); }, true);
           });
