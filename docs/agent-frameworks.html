@@ -491,7 +491,7 @@ WHERE { ?law a &lt;http://data.europa.eu/eli/ontology#LegalResource&gt; . }
 where <code>eli:LegalResource</code> is the largest class with exactly 40,937 instances.</p>
 <p>Want structured output instead of prose? Add <code>output_type=</code> with a Pydantic
 model — the pattern the Space's own
-<a href="https://github.com/caviri/rete/blob/main/hf-space/rete_ask.py"><code>rete_ask.py</code></a>
+<a href="https://github.com/caviri/rete/blob/main/clients/relay/rete_ask.py"><code>rete_ask.py</code></a>
 uses to return <code>{answer, sparql, table}</code>.</p>
 <h2>LangChain</h2>
 <p>Same tools, wrapped with <code>StructuredTool.from_function</code>, driven by
