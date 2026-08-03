@@ -492,8 +492,15 @@ graph: <code>INSERT DATA</code>, watch the next SELECT reflect it, download the 
 <h2 id="sharing">Sharing a query</h2>
 <p>The playground keeps its entire state in the URL <strong>fragment</strong> —
 <code>playground.html#dataset=&lt;key&gt;&amp;load=lazy&amp;mode=sparql&amp;ex=&lt;n&gt;</code> — so any view is
-reproducible from its address alone, with nothing stored server-side. A fragment
-has one limitation: it is never sent to a server, and no link preview executes
+reproducible from its address alone, with nothing stored server-side.</p>
+<p>A <code>&lt;key&gt;</code> names a dataset in the catalog. To open a <code>.rete</code> that isn't in it —
+one you published yourself — give the address instead:
+<code>playground.html#url=&lt;https://…/yours.rete&gt;&amp;mode=sparql</code>. It is read the same
+lazy way, over HTTP range requests, so the link works against a file of any size
+as long as its host sends <code>Accept-Ranges: bytes</code> and permits cross-origin reads
+(<code>Access-Control-Allow-Origin</code>, exposing <code>Content-Range</code>). Connecting by hand
+and pressing <strong>Share</strong> produces exactly this form of link.</p>
+<p>A fragment has one limitation: it is never sent to a server, and no link preview executes
 the page's JavaScript. Pasted into a chat, a feed or a search index, every deep
 link would therefore unfurl as the same anonymous "rete playground" card, with
 no hint of which graph or which question it points at.</p>
