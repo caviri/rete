@@ -108,3 +108,7 @@ scripts/_*.log
 scripts/_*.err
 scripts/_*.pid
 scripts/_*.txt
+
+# Compiled PyO3 extension: 15 MB of build output that maturin regenerates.
+clients/python/python/rete_graph/*.so
+clients/python/python/rete_graph/*.pyd
