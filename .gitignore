@@ -69,6 +69,7 @@ __pycache__/
 /rete-bin
 # Docker cargo cache (CARGO_HOME mounted into the rust image for docgen/builds)
 /.cargo-home/
+target-gate/
 target-star/
 target-std/
 target-wasm/
