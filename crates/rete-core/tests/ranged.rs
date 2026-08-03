@@ -772,6 +772,13 @@ fn lazy_bound_object_lookup_reaches_late_slices_of_a_split_group() {
 /// A dataset image with one small default graph and `n` named graphs; graph
 /// `k` holds `sizes[k]` triples. All graphs share one dictionary.
 fn dataset_with_named_graphs(sizes: &[usize]) -> Vec<u8> {
+    dataset_with_named_graphs_budget(sizes, None)
+}
+
+/// [`dataset_with_named_graphs`] with a per-graph tile budget override — a
+/// tiny budget inflates each graph's container (many tiles + directories),
+/// the cheap way to build multi-MB tile-lazy containers in a test.
+fn dataset_with_named_graphs_budget(sizes: &[usize], tile_budget: Option<usize>) -> Vec<u8> {
     let node = mt_node;
     let p = "<http://ex/p>".to_string();
     let mut db = DictionaryBuilder::new();
@@ -788,8 +795,13 @@ fn dataset_with_named_graphs(sizes: &[usize]) -> Vec<u8> {
     let dict = db.build();
     let mut def = GraphIndexBuilder::new();
     def.push(dict.encode(&node(0), &p, &node(1)).unwrap());
-    let mut named_builders: Vec<GraphIndexBuilder> =
-        sizes.iter().map(|_| GraphIndexBuilder::new()).collect();
+    let mut named_builders: Vec<GraphIndexBuilder> = sizes
+        .iter()
+        .map(|_| match tile_budget {
+            Some(b) => GraphIndexBuilder::new().with_tile_budget(b),
+            None => GraphIndexBuilder::new(),
+        })
+        .collect();
     for &(g, s, o) in &all {
         named_builders[g].push(dict.encode(&node(s), &p, &node(o)).unwrap());
     }
@@ -800,6 +812,81 @@ fn dataset_with_named_graphs(sizes: &[usize]) -> Vec<u8> {
         .collect();
     rete_core::write_dataset(&dict, &def.build(), &named, true, &[], 0)
 }
+
+/// The layout override on both fetch strategies: over a file of BIG
+/// (tile-lazy, >1 MiB) containers, a header walk must keep hopping payloads —
+/// the geometric ramp resets on every oversized container, so listing names
+/// costs O(headers), never O(section). And the exhaustive hint must not
+/// change that verdict for more than its first seeded chunk: the COUNT still
+/// answers exactly, with the big payloads arriving through the tile reads
+/// that actually need them, not through runaway walk read-ahead.
+#[test]
+fn big_containers_keep_the_walk_on_headers() {
+    // 4 graphs, each ~30k triples over a tiny tile budget → multi-MB
+    // containers (premise asserted below via the section size).
+    let image = dataset_with_named_graphs_budget(&[30_000; 4], Some(64));
+    let h = Rete::open(&image).unwrap().header().clone();
+    let named = (
+        h.named_graphs_offset,
+        h.named_graphs_offset + h.named_graphs_len,
+    );
+    assert!(
+        h.named_graphs_len / 4 > 1200 * 1024,
+        "fixture containers too small ({} B section / 4 graphs) — the tile-lazy \
+         (>1 MiB) premise does not hold",
+        h.named_graphs_len
+    );
+
+    // A names-only walk: headers, never payloads. Without the ramp reset the
+    // doubling would grow the read size while hopping — fetching the multi-MB
+    // payloads a name listing has no use for.
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    assert_eq!(lazy.graph_names().len(), 4);
+    let walked: u64 = reader
+        .reads()
+        .iter()
+        .filter(|&&r| overlaps(r, named))
+        .map(|&(_, l)| l)
+        .sum();
+    assert!(
+        walked < 1024 * 1024,
+        "listing 4 names over a {} B section read {walked} B — \
+         the walk is fetching payloads it exists to hop over",
+        h.named_graphs_len
+    );
+
+    // Exhaustive demand over the same layout: exact answer, and the section
+    // is not fetched more than once by the walk on top of the tile reads that
+    // legitimately need it (≤ 2× section + slack overall).
+    let plain = Rete::open(&image).unwrap();
+    let q = "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }";
+    let count_of = |rete: &Rete| -> String {
+        match eval_query(rete, q).unwrap() {
+            QueryOutput::Select(_, rows) => rows[0].get("n").cloned().unwrap(),
+            _ => unreachable!(),
+        }
+    };
+    let reader2 = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let lazy2 = Rete::open_ranged_lazy(reader2.clone()).unwrap();
+    assert_eq!(count_of(&lazy2), count_of(&plain));
+    assert!(!lazy2.index_incomplete());
+    let fetched: u64 = reader2
+        .reads()
+        .iter()
+        .filter(|&&r| overlaps(r, named))
+        .map(|&(_, l)| l)
+        .sum();
+    assert!(
+        fetched <= 2 * h.named_graphs_len + NAMED_WALK_CHUNK_MAX_TEST,
+        "exhaustive COUNT fetched {fetched} B of a {} B section — runaway read-ahead",
+        h.named_graphs_len
+    );
+}
+
+/// Mirror of the engine's `NAMED_WALK_CHUNK_MAX` (not public — the test only
+/// needs a slack constant of the same magnitude).
+const NAMED_WALK_CHUNK_MAX_TEST: u64 = 8 * 1024 * 1024;
 
 /// The lazy ranged open must not touch the NAMED_GRAPHS section at all — that
 /// section used to be fetched and fully decoded up front, which on a
