@@ -8980,7 +8980,246 @@ self.onmessage = function (e) {
     }[state.mode] || runQuery)();
   }
 
+  // ── Dataset Card ────────────────────────────────────────────────────────────
+  // The card travels INSIDE the .rete, in its own metadata section. Reading it
+  // never touches the dictionary, index or pyramid — on a remote graph that is
+  // two small range requests, so a 17 GB file costs the same few KB as an 8 MB
+  // one. That property is the whole point of the CARD tier, and until now the
+  // playground was the one client that never showed it.
+  let cardJsonText = "";   // raw card text, for Copy/Download (never re-serialized)
+  let cardObj = null;
+
+  // Source-aware: a resident graph answers from memory, a remote one goes
+  // through the worker (card_url does synchronous range XHR, which a document
+  // cannot do). A live SPARQL endpoint has no .rete behind it at all.
+  async function fetchCard() {
+    if (state.liveEndpoint) {
+      return { err: "A live SPARQL endpoint is not a .rete file, so it carries no Dataset Card. Load a .rete to read one." };
+    }
+    if (state.activeSource === "remote" && state.remote) {
+      const r = await remoteCall("card_url", state.remote.url);
+      return { text: r && r.json };
+    }
+    if (state.graph) return { text: state.graph.card() };
+    return { err: "No graph is loaded yet." };
+  }
+
+  const cardInt = (n) => (typeof n === "number" ? n.toLocaleString("en-US") : String(n));
+
+  // Colour the card's own bytes rather than a re-serialized copy: what the file
+  // holds is what gets shown, down to key order and spacing.
+  function cardHighlightJson(text) {
+    // Tokenize the RAW text but escape every piece as it is emitted. Escaping
+    // first would be simpler and is wrong: esc() turns " into &quot;, leaving
+    // the tokenizer nothing to match. Nothing reaches the output unescaped —
+    // the card is third-party data and may hold < or & inside a description.
+    const re = /("(?:\\.|[^"\\])*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b/g;
+    let out = "", last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      out += esc(text.slice(last, m.index));
+      const [all, str, colon, num, lit] = m;
+      if (str !== undefined) {
+        if (colon) out += `<span class="k">${esc(str)}</span><span class="p">${esc(colon)}</span>`;
+        // An IRI reads as the identifier it is, not as prose.
+        else out += `<span class="${/^"<?https?:/.test(str) ? "u" : "s"}">${esc(str)}</span>`;
+      } else if (num !== undefined) {
+        out += `<span class="n">${esc(num)}</span>`;
+      } else {
+        out += `<span class="b">${esc(lit)}</span>`;
+      }
+      last = m.index + all.length;
+    }
+    return out + esc(text.slice(last));
+  }
+
+  // [iri, count] pairs — the shape predicates/classes/datatypes/languages and
+  // the hub lists all use.
+  function cardPairTable(rows, limit) {
+    const shown = rows.slice(0, limit);
+    const body = shown.map((r) => {
+      const [a, b] = Array.isArray(r) ? r : [r, ""];
+      return `<tr><td class="iri">${esc(String(a))}</td><td class="n">${b === "" ? "" : cardInt(b)}</td></tr>`;
+    }).join("");
+    const more = rows.length > shown.length
+      ? `<tr><td class="iri"><span class="microcopy">…and ${cardInt(rows.length - shown.length)} more — see the JSON tab</span></td><td class="n"></td></tr>`
+      : "";
+    return `<table class="card-tbl">${body}${more}</table>`;
+  }
+
+  // `source` is usually a URL but the field is free text, so only link it when
+  // it really is one — and only http(s), since this string comes from the file.
+  function cardSourceHtml(s) {
+    return /^https?:\/\/\S+$/.test(s.trim())
+      ? `<a href="${esc(s.trim())}" target="_blank" rel="noopener noreferrer">${esc(s.trim())}</a>`
+      : esc(s);
+  }
+
+  function cardSection(title, count, inner, open) {
+    return `<details class="card-sec"${open ? " open" : ""}><summary>${esc(title)}` +
+      (count == null ? "" : ` <span class="microcopy">(${cardInt(count)})</span>`) +
+      `</summary>${inner}</details>`;
+  }
+
+  function renderCardView(c) {
+    const rows = [];
+    rows.push(
+      `<div class="card-lede">` +
+      (c.description ? `<p class="card-desc">${mdLite(String(c.description))}</p>` : "") +
+      (c.license ? `<p class="microcopy">Licence · ${esc(String(c.license))}</p>` : "") +
+      (c.source ? `<p class="microcopy">Source · ${cardSourceHtml(String(c.source))}</p>` : "") +
+      `</div>`,
+    );
+
+    const stat = (v, label) => (v == null ? "" :
+      `<div class="card-stat"><b>${cardInt(v)}</b><span>${label}</span></div>`);
+    // quad_count only earns a tile when it differs from triple_count — on a
+    // default-graph-only file the two are the same number twice.
+    const quads = c.quad_count != null && c.quad_count !== c.triple_count ? stat(c.quad_count, "quads") : "";
+    rows.push(
+      `<div class="card-stats">${stat(c.triple_count, "triples")}${quads}` +
+      `${stat(c.term_count, "terms")}${stat(c.named_graph_count, "named graphs")}` +
+      `${c.format_version != null ? stat(c.format_version, "format gen") : ""}</div>`,
+    );
+
+    if (Array.isArray(c.vocabularies) && c.vocabularies.length) {
+      rows.push(cardSection("Vocabularies", c.vocabularies.length,
+        `<table class="card-tbl">${c.vocabularies.map((v) =>
+          `<tr><td class="iri">${esc(String(v))}</td></tr>`).join("")}</table>`, true));
+    }
+    for (const [key, label] of [["predicates", "Predicates"], ["classes", "Classes"],
+                                ["datatypes", "Datatypes"], ["languages", "Languages"],
+                                ["top_hubs", "Top hubs (out)"], ["in_hubs", "Top hubs (in)"]]) {
+      const v = c[key];
+      if (Array.isArray(v) && v.length) rows.push(cardSection(label, v.length, cardPairTable(v, 25)));
+    }
+
+    if (Array.isArray(c.class_links) && c.class_links.length) {
+      const body = c.class_links.slice(0, 25).map((l) =>
+        `<tr><td class="iri">${esc(String(l.s_class))} → ${esc(String(l.predicate))} → ${esc(String(l.o_class))}</td>` +
+        `<td class="n">${cardInt(l.count)}</td></tr>`).join("");
+      rows.push(cardSection("Class links", c.class_links.length, `<table class="card-tbl">${body}</table>`));
+    }
+
+    if (c.signals && typeof c.signals === "object") {
+      const s = c.signals;
+      const simple = [["label_predicate", "Label predicate"], ["default_lang", "Default language"],
+                      ["base_iri", "Base IRI"]]
+        .filter(([k]) => s[k] != null)
+        .map(([k, l]) => `<tr><td>${l}</td><td class="iri">${esc(String(s[k]))}</td></tr>`).join("");
+      const lists = ["time_predicates", "numeric_predicates", "link_predicates"]
+        .filter((k) => Array.isArray(s[k]) && s[k].length)
+        .map((k) => `<tr><td>${k.replace(/_/g, " ")}</td><td class="n">${cardInt(s[k].length)}</td></tr>`).join("");
+      rows.push(cardSection("Signals", null, `<table class="card-tbl">${simple}${lists}</table>`));
+    }
+
+    // The card ships the SPARQL, so these are runnable — handing them to the
+    // editor beats making the reader retype them out of the JSON.
+    if (Array.isArray(c.queries) && c.queries.length) {
+      const body = c.queries.map((q, i) =>
+        `<div class="card-q"><div class="card-q-head"><b>${esc(String(q.title || q.id || "query"))}</b>` +
+        (q.tier ? `<span class="microcopy">${esc(String(q.tier))}</span>` : "") +
+        `<button class="secondary card-q-use" type="button" data-qi="${i}">Use</button></div>` +
+        (q.question ? `<p class="card-q-q">${esc(String(q.question))}</p>` : "") +
+        `<pre>${esc(String(q.sparql || ""))}</pre></div>`).join("");
+      rows.push(cardSection("Example queries", c.queries.length, body, true));
+    }
+
+    if (c.truncated) {
+      rows.push(`<p class="microcopy">The builder marked this card <strong>truncated</strong> — ` +
+        `its lists were capped to keep the card small enough to stay in the header's reach.</p>`);
+    }
+    return rows.join("");
+  }
+
+  function showCardTab(which) {
+    const jsonMode = which === "json";
+    $("cardTabView").classList.toggle("active", !jsonMode);
+    $("cardTabJson").classList.toggle("active", jsonMode);
+    $("cardTabView").setAttribute("aria-selected", String(!jsonMode));
+    $("cardTabJson").setAttribute("aria-selected", String(jsonMode));
+    if (!cardObj) return;
+    $("cardBody").innerHTML = jsonMode
+      ? `<pre class="card-json">${cardHighlightJson(JSON.stringify(cardObj, null, 2))}</pre>`
+      : renderCardView(cardObj);
+  }
+
+  async function openCardModal() {
+    const m = $("cardModal");
+    m.classList.remove("hidden");
+    $("cardBody").innerHTML = `<p class="microcopy">Reading the card…</p>`;
+    $("cardFootNote").textContent = "";
+    cardObj = null; cardJsonText = "";
+    let res;
+    try {
+      res = await fetchCard();
+    } catch (e) {
+      res = { err: "Could not read the card: " + ((e && e.message) || e) };
+    }
+    if (res.err) { $("cardBody").innerHTML = `<p class="microcopy">${esc(res.err)}</p>`; return; }
+    if (!res.text) {
+      // Common for the small bundled demo files, which are built without one.
+      $("cardBody").innerHTML =
+        `<p class="microcopy">This <code>.rete</code> carries no Dataset Card. ` +
+        `A card is written at build time (<code>rete build --card card.json</code>); ` +
+        `the published datasets in the catalog all have one.</p>`;
+      return;
+    }
+    cardJsonText = String(res.text);
+    try {
+      cardObj = JSON.parse(cardJsonText);
+    } catch (e) {
+      // Show the bytes rather than nothing — a card that won't parse is itself
+      // the finding, and hiding it would make that invisible.
+      $("cardBody").innerHTML = `<p class="microcopy">The card is not valid JSON (${esc(String((e && e.message) || e))}). Raw bytes:</p>` +
+        `<pre class="card-json">${esc(cardJsonText)}</pre>`;
+      return;
+    }
+    const title = cardObj.title || state.dataset || "Dataset Card";
+    $("cardModalTitle").textContent = "Dataset Card — " + title;
+    $("cardFootNote").textContent =
+      `${(cardJsonText.length / 1024).toFixed(1)} KB` +
+      (state.activeSource === "remote" ? " · read in 2 range requests" : " · read from the loaded file");
+    showCardTab("view");
+  }
+
+  function wireCard() {
+    $("cardBtn").onclick = openCardModal;
+    $("cardModalClose").onclick = () => $("cardModal").classList.add("hidden");
+    $("cardModal").addEventListener("click", (e) => {
+      if (e.target === $("cardModal")) $("cardModal").classList.add("hidden");
+    });
+    $("cardTabView").onclick = () => showCardTab("view");
+    $("cardTabJson").onclick = () => showCardTab("json");
+    $("cardCopy").onclick = async () => {
+      if (!cardJsonText) return;
+      const ok = await copyToClipboard(cardJsonText);
+      $("cardFootNote").textContent = ok ? "JSON copied ✓" : "Copy failed — select the JSON tab and copy by hand";
+    };
+    $("cardDownload").onclick = () => {
+      if (!cardJsonText) return;
+      const blob = new Blob([cardJsonText], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = ((cardObj && cardObj.title) || state.dataset || "dataset") .replace(/[^\w.-]+/g, "-").toLowerCase() + ".card.json";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    };
+    // Delegated: the query rows are re-rendered on every tab switch.
+    $("cardBody").addEventListener("click", (e) => {
+      const b = e.target.closest && e.target.closest(".card-q-use");
+      if (!b || !cardObj || !Array.isArray(cardObj.queries)) return;
+      const q = cardObj.queries[Number(b.dataset.qi)];
+      if (!q || !q.sparql) return;
+      setMode("sparql");
+      setEd("q", q.sparql);
+      state.selectedExample = -1;
+      $("cardModal").classList.add("hidden");
+      updateHash();
+    });
+  }
+
   function wireEvents() {
+    wireCard();
     $("buildBtn").onclick = () => setMode("build");
     $("run").onclick = runQuery;
 
@@ -9389,6 +9628,7 @@ self.onmessage = function (e) {
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         $("strategyModal").classList.add("hidden");
+        $("cardModal").classList.add("hidden");
         $("outputModal").classList.add("hidden");
         { const rm = $("reasonModal"); if (rm) rm.classList.add("hidden"); }
         $("cardsFieldsModal").classList.add("hidden");

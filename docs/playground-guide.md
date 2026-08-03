@@ -37,6 +37,26 @@ whose host serves ranges + CORS (see [Hosting your .rete](hosting.md)), and the
 **Build** mode (below) turns your own RDF into a queryable file without leaving
 the page.
 
+### 🏷 Card — what this graph says it is {#card}
+
+Next to the source pill, **🏷 Card** opens the [Dataset Card](dataset-cards.md)
+that travels *inside* the `.rete`: title, licence, source, counts, vocabularies,
+predicates and classes with their frequencies, the class-link skeleton, and the
+example queries the builder shipped with the file.
+
+It costs one `HEAD` and **two range requests** — the header, then the metadata
+section it points at. Never the dictionary, the index or the pyramid. That is
+the CARD tier: you learn what a 17 GB graph *is* for a few KB, before deciding
+whether to query it at all.
+
+Two views: **Rendered**, and **JSON** — the card's own bytes, syntax-coloured,
+with *Copy* and *Download*. Any example query the card carries has a **Use**
+button that loads it straight into the editor.
+
+Not every file has one. A card is written at build time
+(`rete build --card …`); the small bundled demo datasets are built without one,
+and the modal says so rather than showing an empty shell.
+
 ## Write a query
 
 The SPARQL editor comes with syntax highlighting and context autocomplete. When

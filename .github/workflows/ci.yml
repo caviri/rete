@@ -267,7 +267,7 @@ jobs:
             -e CARGO_TARGET_DIR=/work/target -e GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
             -e PLAYWRIGHT_BROWSERS_PATH=/work/tests/gate/.playwright \
             -v "$PWD:/work" -w /work/tests/gate "${{ needs.image.outputs.tag }}" \
-            sh -lc 'git config --global --add safe.directory /work; npm ci --no-audit --no-fund; npx playwright install chromium; mkdir -p .cache; cargo run -q --release -p rete-cli --manifest-path /work/Cargo.toml -- build fixtures/worldcup2026.nt -o .cache/worldcup2026.rete; if [ "$GITHUB_EVENT_NAME" = pull_request ]; then node run.mjs --local; else node run.mjs; fi'
+            sh -lc 'git config --global --add safe.directory /work; npm ci --no-audit --no-fund; npx playwright install chromium; mkdir -p .cache; cargo run -q --release -p rete-cli --manifest-path /work/Cargo.toml -- build fixtures/worldcup2026.nt -o .cache/worldcup2026.rete; cargo run -q --release -p rete-cli --manifest-path /work/Cargo.toml -- build fixtures/worldcup2026.nt --card-file fixtures/card-fixture.card.json -o .cache/card-fixture.rete; if [ "$GITHUB_EVENT_NAME" = pull_request ]; then node run.mjs --local; else node run.mjs; fi'
 
   package:
     name: package

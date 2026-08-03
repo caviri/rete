@@ -1,0 +1,16 @@
+{
+  "title": "Gate Card Fixture",
+  "description": "A fixture card, written at build time so the gate can read a real one. Holds a <script> tag and an & on purpose: card text is third-party data and must never reach the DOM as live markup.",
+  "license": "CC0-1.0",
+  "source": "https://example.org/gate-fixture",
+  "vocabularies": ["http://www.w3.org/1999/02/22-rdf-syntax-ns#", "https://schema.org/"],
+  "queries": [
+    {
+      "id": "all",
+      "title": "Everything in the fixture",
+      "question": "What is in this graph?",
+      "tier": "whole index",
+      "sparql": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10"
+    }
+  ]
+}
