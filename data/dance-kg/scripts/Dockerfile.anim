@@ -1,8 +1,0 @@
-# Containerized environment for the dance-kg motion → glTF/animation transforms.
-# NON-COMMERCIAL, HIGHLY EXPERIMENTAL — see data/dance-kg/scripts/NOTICE.md.
-# Build:  docker build -f data/dance-kg/scripts/Dockerfile.anim -t dance-anim .
-# Use:    docker run --rm -v "$PWD":/work -w /work dance-anim \
-#             python data/dance-kg/scripts/smplx_to_glb.py <take_dir> <out.glb>
-FROM python:3.11-slim
-RUN pip install --no-cache-dir numpy==2.1.3 pygltflib==1.16.3 scipy==1.14.1
-WORKDIR /work
