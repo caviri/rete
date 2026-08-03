@@ -181,6 +181,13 @@ def main():
     ap.add_argument("--relaxed", action="store_true")
     ap.add_argument("--list", action="store_true",
                     help="print per-test status (and the error for err/FAIL)")
+    ap.add_argument("--min-pass", type=int, default=None, metavar="N",
+                    help="exit non-zero if fewer than N tests pass. Without this "
+                         "the harness always exits 0, so wiring it into CI would "
+                         "measure the score and then ignore it — which is how the "
+                         "number in docs/conformance.md drifted unnoticed.")
+    ap.add_argument("--json", dest="json_out", metavar="PATH",
+                    help="also write {pass, fail, err, total, rate} to PATH")
     args = ap.parse_args()
     global RELAXED
     RELAXED = args.relaxed
@@ -242,6 +249,24 @@ def main():
     if n:
         print(f"pass rate: {100*total['pass']/n:.1f}%")
 
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps({
+            "pass": total["pass"], "fail": total["FAIL"], "err": total["err"],
+            "total": n, "rate": round(100 * total["pass"] / n, 1) if n else 0.0,
+        }, indent=2) + "\n", encoding="utf-8")
+
+    if args.min_pass is not None and total["pass"] < args.min_pass:
+        print(
+            f"\nCONFORMANCE REGRESSION: {total['pass']} passing, baseline is "
+            f"{args.min_pass}. Fix the regression, or lower the baseline "
+            f"deliberately in the same commit that explains why.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    # `main()` alone would discard the verdict and always exit 0 — the very
+    # failure mode `--min-pass` exists to remove.
+    sys.exit(main())

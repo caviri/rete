@@ -42,7 +42,13 @@ python scripts/sparql_conformance.py \
 | subquery | 2 / 14 | 12 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
 | service | 0 / 7 | 7 | `SERVICE` **is** implemented — these tests need a live endpoint, so they're excluded from the offline run |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **232 / 309 (75.1%)** | 33 | |
+| **TOTAL** | **236 / 309 (76.4%)** | 29 | |
+
+> This total is **measured in CI**, not written by hand. The conformance job runs
+> the harness against the W3C suite on every Rust change and fails if the passing
+> count drops below `tests/conformance-baseline.json`. It was not always so: the
+> figure here read 232 / 75.1% while the engine actually scored 236 / 76.4%, and
+> nothing would have caught it moving the other way.
 
 ## Coverage notes
 
@@ -59,7 +65,11 @@ built-in function library covers strings (language-tag-preserving
 `LANGMATCHES`), the `MD5`…`SHA512` hashes, the `xsd:dateTime` accessors, and
 `IF`/`IN`/`sameTerm` — all in pure Rust, so the same coverage holds in the WASM
 client. `CONSTRUCT` answers are verified by graph isomorphism. This matches the
-24-operator cross-check against Oxigraph in [BENCHMARK](BENCHMARK.html).
+24-operator cross-check against Oxigraph in [BENCHMARK](BENCHMARK.html) — which
+runs in CI as of this change. It had not: the differential oracle lives in the
+`rete-bench` crate, and every CI invocation excluded that crate, so the test
+described in its own header as "a correctness gate" ran nowhere while build
+reports went on printing "differential oracle green".
 
 **Out of scope (counted against the total, but not engine bugs):**
 

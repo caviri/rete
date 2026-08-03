@@ -15,6 +15,11 @@ quality() {
   cargo test -p rete-core --no-default-features
   cargo build -p rete-core --all-features
   cargo build -p rete-bench
+  # `--exclude rete-bench` above keeps the SLOW benchmarks out of the gate, but it
+  # was also excluding the differential oracle that lives in the same crate — a
+  # correctness gate (its own words) that consequently never ran anywhere, while
+  # build reports went on printing "differential oracle green". It costs 0.11 s.
+  cargo test -p rete-bench --test differential
   bash scripts/smoke.sh
   cargo run --release -p rete-core --example qbench -- --check
 }

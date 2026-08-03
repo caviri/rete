@@ -1,0 +1,8 @@
+{
+  "_comment": "W3C SPARQL 1.1 query-evaluation scorecard, MEASURED. The CI conformance job fails if `pass` drops below this. Raising it is free; lowering it must be deliberate and explained in the same commit. Regenerate with: python3 scripts/sparql_conformance.py --rete target/release/rete --suite rdf-tests/sparql/sparql11 --json tests/conformance-baseline.json",
+  "pass": 236,
+  "fail": 44,
+  "err": 29,
+  "total": 309,
+  "rate": 76.4
+}
