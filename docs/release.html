@@ -420,7 +420,7 @@ release tag.</p>
 <p>Two groups deliberately lag the bump, because they name a version a registry
 must already serve:</p>
 <table><thead><tr><th>what</th><th>when</th><th>why</th></tr></thead><tbody>
-<tr><td>the three PyPI floors — <code>hf-space/requirements.txt</code>, <code>clients/blender/{build.sh,Dockerfile}</code></td><td><strong>after</strong> the wheel is on PyPI, via <code>--set-published X.Y.Z</code></td><td>they <code>pip install rete-graph</code> at image-build time; bumping them early fails every image build with <code>Could not find a version that satisfies rete-graph&gt;=X.Y.Z</code></td></tr>
+<tr><td>the three PyPI floors — <code>clients/relay/requirements.txt</code>, <code>clients/blender/{build.sh,Dockerfile}</code></td><td><strong>after</strong> the wheel is on PyPI, via <code>--set-published X.Y.Z</code></td><td>they <code>pip install rete-graph</code> at image-build time; bumping them early fails every image build with <code>Could not find a version that satisfies rete-graph&gt;=X.Y.Z</code></td></tr>
 <tr><td>the Pyodide fallback URL in <code>docs/python.md</code></td><td><strong>with</strong> the bump (<code>--set</code> does it)</td><td><code>publish_pyodide_wheel.sh</code> refuses to upload a wheel whose version disagrees with the docs, so the doc has to promise it first — the URL 404s until that upload</td></tr>
 </tbody></table>
 <p><code>--check</code> keeps passing while the floors lag, because the lockstep contract

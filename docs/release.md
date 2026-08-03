@@ -103,7 +103,7 @@ must already serve:
 
 | what | when | why |
 |---|---|---|
-| the three PyPI floors — `hf-space/requirements.txt`, `clients/blender/{build.sh,Dockerfile}` | **after** the wheel is on PyPI, via `--set-published X.Y.Z` | they `pip install rete-graph` at image-build time; bumping them early fails every image build with `Could not find a version that satisfies rete-graph>=X.Y.Z` |
+| the three PyPI floors — `clients/relay/requirements.txt`, `clients/blender/{build.sh,Dockerfile}` | **after** the wheel is on PyPI, via `--set-published X.Y.Z` | they `pip install rete-graph` at image-build time; bumping them early fails every image build with `Could not find a version that satisfies rete-graph>=X.Y.Z` |
 | the Pyodide fallback URL in `docs/python.md` | **with** the bump (`--set` does it) | `publish_pyodide_wheel.sh` refuses to upload a wheel whose version disagrees with the docs, so the doc has to promise it first — the URL 404s until that upload |
 
 `--check` keeps passing while the floors lag, because the lockstep contract

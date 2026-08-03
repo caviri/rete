@@ -178,7 +178,7 @@ where `eli:LegalResource` is the largest class with exactly 40,937 instances.
 
 Want structured output instead of prose? Add `output_type=` with a Pydantic
 model — the pattern the Space's own
-[`rete_ask.py`](https://github.com/caviri/rete/blob/main/hf-space/rete_ask.py)
+[`rete_ask.py`](https://github.com/caviri/rete/blob/main/clients/relay/rete_ask.py)
 uses to return `{answer, sparql, table}`.
 
 ## LangChain

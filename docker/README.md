@@ -10,7 +10,7 @@ emulation.
 | Image | What it is | Size | Built from |
 | --- | --- | --- | --- |
 | `ghcr.io/caviri/rete-dev` | The full toolchain: Rust 1.92 + the pinned asyncify nightly, wasm-pack, the cargo release tools, node, python3 + uv, binaryen, chromium. Everything the repo builds datasets and playground artifacts with. | ~5 GB | `.devcontainer/Dockerfile` |
-| `ghcr.io/caviri/rete-relay` | The gateway: HTTP Range + CORS over a data directory, the `/api` SPARQL plane, and the `/mcp` MCP server. The same image the live Hugging Face Space runs. | ~400 MB | `hf-space/Dockerfile` |
+| `ghcr.io/caviri/rete-relay` | The gateway: HTTP Range + CORS over a data directory, the `/api` SPARQL plane, and the `/mcp` MCP server. The same image the live Hugging Face Space runs. | ~400 MB | `clients/relay/Dockerfile` |
 | `ghcr.io/caviri/rete-cli` | Just the `rete` binary on distroless. | ~30 MB | `docker/Dockerfile.cli` |
 
 Tags: `latest` (newest stable release), `1.2.3` / `1.2` (release tags —
@@ -131,7 +131,7 @@ with `docker buildx imagetools create`.
 | Event | What happens |
 | --- | --- |
 | Push a `v*` tag | All three images build and publish. The tag must match `[workspace.package] version` in `Cargo.toml` — the same check `scripts/package_release.sh` makes — or the run fails before building anything. |
-| Pull request touching `.devcontainer/Dockerfile*`, `hf-space/**`, `docker/**` or the docker workflows | `rete-relay` and `rete-cli` are built for amd64 only and thrown away. Nothing is pushed. |
+| Pull request touching `.devcontainer/Dockerfile*`, `clients/relay/**`, `docker/**` or the docker workflows | `rete-relay` and `rete-cli` are built for amd64 only and thrown away. Nothing is pushed. |
 | Manual run | Publishes `all`, or just `dev` / `relay` / `cli`. |
 | Ordinary push to `main` | Nothing. Images follow releases, not commits. |
 
