@@ -21,7 +21,7 @@ Three equivalent sources, freshest first:
 curl -s https://katospiegel-rete.hf.space/api/datasets | jq '.[].key'
 
 # In this repo: the exported catalog (regenerate: scripts/export_space_catalog.py)
-jq '.datasets[] | {key, size, license}' hf-space/catalog.json
+jq '.datasets[] | {key, size, license}' clients/relay/catalog.json
 
 # Source of truth for the playground: web/playground-src/catalog.js
 ```

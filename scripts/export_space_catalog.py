@@ -1,4 +1,4 @@
-"""Export the playground catalog to hf-space/catalog.json.
+"""Export the playground catalog to clients/relay/catalog.json.
 
 The playground's ``web/playground-src/catalog.js`` is the source of truth for
 published datasets. The HF Space (REST + MCP query planes) consumes a plain
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from check_dataset_catalog import load_catalog  # noqa: E402
 
-OUT = ROOT / "hf-space" / "catalog.json"
+OUT = ROOT / "clients/relay" / "catalog.json"
 
 
 def main() -> int:

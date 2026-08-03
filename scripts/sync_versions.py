@@ -72,9 +72,9 @@ TARGETS = [
     # The HF Space installs the engine from PyPI at image build; a stale floor
     # lets a Space rebuild silently resolve an old engine.
     (
-        "hf-space/requirements.txt",
+        "clients/relay/requirements.txt",
         re.compile(r"(?m)^rete-graph>=([0-9.]+)$"),
-        "hf-space wheel floor",
+        "clients/relay wheel floor",
     ),
 ]
 
@@ -107,7 +107,7 @@ _CORE_PIN_FILES = [
 _PYPI_RESOLVED = {
     "clients/blender/build.sh",
     "clients/blender/Dockerfile",
-    "hf-space/requirements.txt",
+    "clients/relay/requirements.txt",
 }
 
 

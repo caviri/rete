@@ -9,7 +9,7 @@ name: Publish container images
 #                               already builds everything in, so a dataset or
 #                               playground artifact can be produced from a bare
 #                               machine with one `docker run`.
-#   ghcr.io/caviri/rete-relay   the gateway from hf-space/ — HTTP Range + CORS
+#   ghcr.io/caviri/rete-relay   the gateway from clients/relay/ — HTTP Range + CORS
 #                               over /data, the `/api` SPARQL plane and the
 #                               `/mcp` MCP server. Same image the live Space
 #                               runs; the engine comes from the published
@@ -36,7 +36,7 @@ on:
   pull_request:
     paths:
       - ".devcontainer/Dockerfile*"
-      - "hf-space/**"
+      - "clients/relay/**"
       - "docker/**"
       - ".github/workflows/docker-*.yml"
   workflow_dispatch:
@@ -150,8 +150,8 @@ jobs:
     uses: ./.github/workflows/docker-image.yml
     with:
       image: rete-relay
-      context: hf-space
-      file: hf-space/Dockerfile
+      context: clients/relay
+      file: clients/relay/Dockerfile
       description: >-
         Rete relay — HTTP Range/CORS gateway over a .rete data directory, plus
         the /api SPARQL plane and the /mcp MCP server. Port 7860, data in /data.
@@ -190,7 +190,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { image: relay, context: hf-space, file: hf-space/Dockerfile }
+          - { image: relay, context: clients/relay, file: clients/relay/Dockerfile }
           - { image: cli, context: ., file: docker/Dockerfile.cli }
     steps:
       - uses: actions/checkout@v6
