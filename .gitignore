@@ -112,3 +112,9 @@ scripts/_*.txt
 # Compiled PyO3 extension: 15 MB of build output that maturin regenerates.
 clients/python/python/rete_graph/*.so
 clients/python/python/rete_graph/*.pyd
+
+# Working copies, not source. hf-space/space/ is a git CLONE of the deployed
+# Space (its app.py is byte-identical to the one tracked here); pg.html is a
+# 9 MB built playground dropped at the root while testing.
+/hf-space/space/
+/pg.html
