@@ -99,10 +99,13 @@ _probe*.sh
 _valex*.sh
 _oaest*.sh
 # Per-run logs land wherever the command was launched from, root included.
-/_*.log
-/_*.err
-/_*.pid
-/_*.txt
+# Anywhere, not just the root: seven of these had already been COMMITTED
+# (_p.log, _t.log, tests/gate/_reach*.txt) before the pattern existed.
+_*.log
+_*.err
+_*.pid
+_*.out
+tests/gate/_*.txt
 *.localbak
 scripts/_*.log
 scripts/_*.err
