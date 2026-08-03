@@ -316,6 +316,16 @@ pub(crate) struct Ctx<'a> {
     /// never a correctness input: any plan must yield the same multiset.
     /// A `Cell` so fully-consuming sub-evaluations (EXISTS) can suspend it.
     pub(crate) limit_hint: std::cell::Cell<Option<usize>>,
+    /// The dual of `limit_hint`: the consumer PROVABLY pulls the plan
+    /// iterator to exhaustion. Set only where full consumption is a fact of
+    /// the pipeline, not a guess from the pattern: a SELECT with no LIMIT, or
+    /// whose LIMIT sits behind a blocking stage (aggregation, ORDER BY), and
+    /// fully-collecting sub-evaluations (EXISTS). Deliberately NOT set for
+    /// ASK, `plan_exists`, or DISTINCT … LIMIT — those stop early even though
+    /// `limit_hint` is `None`. Purely a *fetch strategy* hint: an unrestricted
+    /// `GRAPH ?g` walk over a lazy remote file switches from incremental to
+    /// bulk section reads — results are identical either way.
+    pub(crate) exhaustive: std::cell::Cell<bool>,
 }
 
 impl<'a> Ctx<'a> {
@@ -325,6 +335,7 @@ impl<'a> Ctx<'a> {
             slots,
             resolver: Resolver::new(rete.dictionary()),
             limit_hint: std::cell::Cell::new(None),
+            exhaustive: std::cell::Cell::new(false),
         }
     }
 }

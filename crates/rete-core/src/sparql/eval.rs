@@ -430,6 +430,9 @@ pub(super) fn raw_solutions<'a>(rete: &'a Rete, sel: &Select) -> (Ctx<'a>, Vec<R
 }
 
 fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
+    // Everything below collects/aggregates the plan iterator to exhaustion
+    // (CONSTRUCT/DESCRIBE, grouped ASK) — lazy walks may fetch in bulk.
+    ctx.exhaustive.set(true);
     // The active default graph: `FROM` makes it the union of named graphs.
     let mut merged = None;
     let active = active_index(ctx.rete, &sel.from, &mut merged);
@@ -573,6 +576,15 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         ctx.limit_hint
             .set(sel.limit.map(|l| l.saturating_add(sel.offset)));
     }
+    // The inverse guarantee: the modifier pipeline drains the plan iterator
+    // COMPLETELY when there is no LIMIT, or when the LIMIT sits behind a
+    // blocking stage — aggregation consumes everything, and ORDER BY (top-k
+    // included) must see every row before the slice. NOT implied by
+    // `limit_hint == None`: DISTINCT … LIMIT streams and stops early. Lazy
+    // named-graph walks read in bulk under this flag, so it must never be a
+    // guess.
+    ctx.exhaustive
+        .set(sel.limit.is_none() || sel.group.is_some() || !sel.order.is_empty());
     let mut merged = None;
     let active = active_index(rete, &sel.from, &mut merged);
     let nf = sel.from_named.as_deref();
@@ -1090,8 +1102,12 @@ pub(crate) fn eval_plan_in(
     plan: &Plan,
 ) -> Vec<Row> {
     let saved = ctx.limit_hint.replace(None);
+    // `collect` IS full consumption — the exhaustive guarantee holds here by
+    // construction, whatever the surrounding query's shape.
+    let saved_exhaustive = ctx.exhaustive.replace(true);
     let rows = eval_plan_iter(ctx, index, named_filter, plan).collect();
     ctx.limit_hint.set(saved);
+    ctx.exhaustive.set(saved_exhaustive);
     rows
 }
 
@@ -1220,12 +1236,20 @@ pub(crate) fn eval_plan_iter<'q>(
             // LIMITed query stops fetching after its first few graphs. The
             // IRI is checked against FROM NAMED before the (possibly remote)
             // index is opened.
+            //
+            // Demand: with `?g` unrestricted (no FROM NAMED) under a consumer
+            // that provably drains the pipeline, this walk WILL visit and
+            // open every graph — declare that, and a lazy open fetches the
+            // section in bulk chunks instead of hundreds of incremental
+            // reads. Read per pull (a Cell): EXISTS sub-evaluations flip the
+            // guarantee mid-iterator.
             let graphs = (0..ctx.rete.named_graph_count()).filter_map(move |i| {
-                let name = ctx.rete.named_graph_name_at(i)?;
+                let exhaustive = named_filter.is_none() && ctx.exhaustive.get();
+                let name = ctx.rete.named_graph_name_at_demand(i, exhaustive)?;
                 if !visible(name) {
                     return None;
                 }
-                ctx.rete.named_graph_at(i)
+                ctx.rete.named_graph_at_demand(i, exhaustive)
             });
             Box::new(graphs.flat_map(move |(name, gi)| {
                 let gval = ctx.resolver.canon_term(name);

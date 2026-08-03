@@ -902,6 +902,148 @@ fn named_graphs_are_lazy_and_graph_queries_stay_correct() {
     assert!(!lazy.index_incomplete());
 }
 
+/// A fixture whose named-graphs section is big enough (hundreds of mid-size
+/// graphs, multi-MB section) that bulk reads and the 64 KiB incremental walk
+/// are unmistakably different in the read log.
+fn many_named_graphs_image() -> Vec<u8> {
+    dataset_with_named_graphs(&vec![300usize; 600])
+}
+
+/// The named-graphs section byte range, and the walk reads inside it (the
+/// leading count-varint probe, ≤16 bytes, filtered out).
+fn section_walk_reads(image: &[u8], reader: &RecordingReader) -> (u64, Vec<u64>) {
+    let h = Rete::open(image).unwrap().header().clone();
+    let named = (
+        h.named_graphs_offset,
+        h.named_graphs_offset + h.named_graphs_len,
+    );
+    let walk_reads: Vec<u64> = reader
+        .reads()
+        .iter()
+        .filter(|&&r| overlaps(r, named) && r.1 > 16)
+        .map(|&(_, len)| len)
+        .collect();
+    (h.named_graphs_len, walk_reads)
+}
+
+/// An exhaustive `GRAPH ?g` (unbound, no LIMIT — here behind an aggregate,
+/// which consumes everything) must fetch the section in BULK: the walk knows
+/// at evaluation time that every graph will be visited and opened, so it
+/// reads full-size chunks from the first request instead of paying one 64 KiB
+/// round trip per ~30 graphs (the regression this exists to fix: 262 requests
+/// / ~16.5 s vs ~8.5 s eager on the 32k-graph nkod file). Same answer as the
+/// resident open, in a handful of section reads with no per-container reads
+/// (small containers decode straight out of the bulk chunk).
+#[test]
+fn exhaustive_graph_walk_bulk_fetches_the_section() {
+    let image = many_named_graphs_image();
+    let plain = Rete::open(&image).unwrap();
+    let q = "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }";
+    let count_of = |rete: &Rete| -> String {
+        match eval_query(rete, q).unwrap() {
+            QueryOutput::Select(_, rows) => rows[0].get("n").cloned().unwrap(),
+            _ => unreachable!(),
+        }
+    };
+    let want = count_of(&plain);
+    assert!(want.starts_with("\"180000\""), "resident count: {want}");
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+    let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    assert_eq!(count_of(&lazy), want);
+    assert!(!lazy.index_incomplete());
+
+    let (section_len, walk_reads) = section_walk_reads(&image, &reader);
+    assert!(
+        section_len > 1024 * 1024,
+        "fixture section too small ({section_len} B) to discriminate bulk from incremental"
+    );
+    // Bulk from the FIRST read: the whole remainder (capped at the 8 MiB
+    // chunk ceiling) in one request, not a 64 KiB probe.
+    assert!(
+        walk_reads[0] >= section_len - 64 * 1024,
+        "exhaustive walk started with a {} B read over a {section_len} B section — \
+         the demand hint did not engage bulk fetching",
+        walk_reads[0]
+    );
+    // And a handful of section requests in total — count varint + bulk
+    // chunk(s) — never one per graph or per 64 KiB.
+    assert!(
+        walk_reads.len() <= 4,
+        "exhaustive walk over 600 graphs issued {} section reads ({:?}...) — \
+         expected the section in a few bulk chunks",
+        walk_reads.len(),
+        &walk_reads[..walk_reads.len().min(8)]
+    );
+}
+
+/// The other side of the bargain — the reason the bulk path is gated on
+/// PROVABLE exhaustive demand. Query shapes that stop early or restrict the
+/// walk must keep today's small incremental reads: `LIMIT` (bounded demand),
+/// `GRAPH <iri>` (a point lookup via the by-name walk), and `FROM NAMED`
+/// (the restriction filters graphs out before opening). Each returns
+/// identical results to the resident open, and none may issue a bulk
+/// section read.
+#[test]
+fn non_exhaustive_graph_shapes_stay_incremental() {
+    let image = many_named_graphs_image();
+    let plain = Rete::open(&image).unwrap();
+    let run = |rete: &Rete, q: &str| -> Vec<rete_core::Binding> {
+        match eval_query(rete, q).unwrap() {
+            QueryOutput::Select(_, rows) => rows,
+            _ => unreachable!(),
+        }
+    };
+
+    // (query, cap on TOTAL section bytes read, or None where the walk
+    // legitimately spans the directory). A LIMIT stops inside the first
+    // 64 KiB chunk; the point lookup stops at its (early) target; FROM NAMED
+    // must walk every header to filter by name — that full walk is correct,
+    // it just must never turn into a from-the-start bulk grab.
+    let cases: [(&str, Option<u64>); 3] = [
+        (
+            "SELECT ?g WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 3",
+            Some(256 * 1024),
+        ),
+        (
+            "SELECT (COUNT(*) AS ?n) WHERE { GRAPH <http://ex/g007> { ?s ?p ?o } }",
+            Some(256 * 1024),
+        ),
+        (
+            "SELECT (COUNT(*) AS ?n) FROM NAMED <http://ex/g010> WHERE { GRAPH ?g { ?s ?p ?o } }",
+            None,
+        ),
+    ];
+    for (q, byte_cap) in cases {
+        let reader = std::sync::Arc::new(RecordingReader::new(image.clone()));
+        let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        assert_eq!(run(&lazy, q), run(&plain, q), "lazy != resident for {q}");
+        assert!(!lazy.index_incomplete());
+
+        let (section_len, walk_reads) = section_walk_reads(&image, &reader);
+        assert!(
+            !walk_reads.is_empty(),
+            "expected the walk to touch the section for {q}"
+        );
+        // The first walk read is the discriminator: incremental starts at the
+        // 64 KiB floor; a bulk engagement would grab ~the whole section.
+        assert!(
+            walk_reads[0] <= 64 * 1024,
+            "{q}: first section read was {} B — bulk fetching engaged for a \
+             targeted/early-stopping shape (section: {section_len} B)",
+            walk_reads[0]
+        );
+        if let Some(cap) = byte_cap {
+            let total: u64 = walk_reads.iter().sum();
+            assert!(
+                total <= cap,
+                "{q}: read {total} B of a {section_len} B section — \
+                 expected an early stop under {cap} B"
+            );
+        }
+    }
+}
+
 /// A mid-walk outage must surface as `index_incomplete`, never as a silently
 /// smaller answer — and recovery must retry (failures are not memoised).
 #[test]
