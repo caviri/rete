@@ -113,11 +113,20 @@ const main = async () => {
   await browser.close();
   server.close();
 
-  if (failures.length) {
-    console.error(`FAIL url_param\n  - ${failures.join("\n  - ")}`);
-    process.exit(1);
-  }
-  console.log(`PASS url_param — #url= opened an off-catalog .rete (${res.rows} rows); javascript: refused`);
+  // The runner reads the LAST JSON object on stdout and requires
+  // verdict === "PASS" — a zero exit alone is not a pass.
+  const pass = failures.length === 0;
+  console.log(JSON.stringify({
+    verdict: pass ? "PASS" : "FAIL",
+    note: "#url= opens an off-catalog .rete; share round-trips; javascript: refused",
+    rows: res.rows,
+    fixture: fixtureUrl,
+    failures,
+  }, null, 2));
+  process.exit(pass ? 0 : 1);
 };
 
-main().catch((e) => { console.error(`FAIL url_param — ${e && e.message}`); process.exit(1); });
+main().catch((e) => {
+  console.log(JSON.stringify({ verdict: "FAIL", error: String(e && e.message).slice(0, 300) }, null, 2));
+  process.exit(1);
+});
