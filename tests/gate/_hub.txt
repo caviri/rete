@@ -1,8 +1,0 @@
-arxiu	https://data.graphplaza.com/arxiu/arxiu.rete	<http://schema.org/isPartOf>
-bcn	https://data.graphplaza.com/bcn/bcn.rete	<http://schema.org/isPartOf>
-bph	https://data.graphplaza.com/bph/bph.rete	<http://schema.org/isPartOf>
-geoadmin	https://data.graphplaza.com/geoadmin/geoadmin.rete	<http://purl.org/dc/terms/isPartOf>
-peirce	https://data.graphplaza.com/peirce/peirce.rete	<http://purl.org/dc/terms/isPartOf>
-boe	https://data.graphplaza.com/boe/boe.rete	<http://data.europa.eu/eli/ontology#amends>
-biblissima	https://data.graphplaza.com/biblissima-full/biblissima-full.rete	<https://data.biblissima.fr/prop/direct/P2>
-aifdb-open	https://data.graphplaza.com/aifdb-open/aifdb-open.rete	<https://w3id.org/rete/aif#supports>
