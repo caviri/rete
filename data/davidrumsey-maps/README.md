@@ -67,11 +67,13 @@ data/davidrumsey-maps/
     images/size0/<path>.jpg   # ~96px thumbs, all items (~1.5GB)
     images/size2/<path>.jpg   # ~768px, all items (~25GB)
   scripts/
-    download.sh               # staged orchestrator (enum→manifests→extract→thumbs→size2)
-    enumerate_iiif.py         # IIIF collection pagination → items_index.tsv
-    harvest_manifests.py      # 150k manifests, resume-safe, gzipped
-    extract_metadata.py       # manifests → JSONL + per-tier URL TSVs
-    fetch_tiles.py            # <relpath>\t<url> TSV downloader (resume/atomic)
+    download.sh               # staged orchestrator (catalog→extract→thumbs→size2)
+    harvest_catalog.py        # PRIMARY: LUNA API batches of 500 → catalog/ (~301 calls)
+    harvest_cycle.sh          # trails a running catalog harvest with extract+fetch cycles
+    enumerate_iiif.py         # FALLBACK: IIIF collection pagination → items_index.tsv
+    harvest_manifests.py      # ARCHIVAL: 150k IIIF manifests, keep-alive, gzipped
+    extract_metadata.py       # catalog (+manifest overlay) → JSONL + per-tier URL TSVs
+    fetch_tiles.py            # <relpath>\t<url> TSV downloader (keep-alive/resume/atomic)
     inspect.py                # schema/statistics profiler
 ```
 
@@ -90,14 +92,24 @@ Run `scripts/inspect.py` after the harvest for fill rates + distributions
 ## Reproduce
 
 ```bash
-bash data/davidrumsey-maps/scripts/download.sh            # all default stages
+bash data/davidrumsey-maps/scripts/download.sh            # all default stages, sequential
 bash data/davidrumsey-maps/scripts/download.sh manifests  # or one stage
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/w" -w //w python:3.12-slim \
     python data/davidrumsey-maps/scripts/inspect.py
 ```
 
+Faster wall-clock: start `download.sh catalog` and, in a second terminal,
+`bash data/davidrumsey-maps/scripts/harvest_cycle.sh` — it repeatedly
+re-extracts and sweeps the image tiers while the catalog is still landing,
+and exits when both have converged.
+
 Every stage is resume-safe (re-run to continue/retry failures). Stages refuse
-to start without enough free disk.
+to start without enough free disk. Two hard-won operational notes:
+- **Keep-alive or crawl**: per-request TLS handshakes cap ~0.5 files/s; the
+  persistent-connection fetchers sustain ~20/s at 6 workers.
+- **One connection for the API lane**: /luna/servlet refuses parallel
+  connections per IP; batch sequentially there, parallelise only against the
+  static image hosts.
 
 ## Next step
 
