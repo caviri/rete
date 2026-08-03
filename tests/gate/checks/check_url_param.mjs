@@ -101,12 +101,29 @@ const main = async () => {
     failures.push(`share link still names a catalog dataset: ${shared.slice(0, 120)}`);
   }
 
-  // 3. A non-http scheme must be refused rather than handed to the reader. This
-  //    value arrives from the address bar, so this guard is what keeps a
-  //    javascript: URL out of it.
+  // 3. A scheme-LESS address must work, read as https like an address bar reads
+  //    it. Pasted links routinely arrive that way, and refusing them produced a
+  //    bare "Error: open" from the range reader that named no cause — the
+  //    report that prompted this.
+  const noScheme = await open(`#url=${encodeURIComponent(`127.0.0.1:${port}${PATH}`)}`);
+  const normalized = await noScheme.evaluate(
+    () => (document.getElementById("remoteUrl") || {}).value || "",
+  );
+  if (normalized !== `https://127.0.0.1:${port}${PATH}`) {
+    failures.push(`scheme-less #url= was not normalized to https: "${normalized}"`);
+  }
+
+  // 4. A scheme that is NOT http(s) must still be refused rather than handed to
+  //    the reader — this value arrives from the address bar, so that guard is
+  //    what keeps a javascript: URL out of it. It must not be "fixed" by
+  //    prefixing https:// either.
   const bad = await open(`#url=${encodeURIComponent("javascript:alert(1)")}`);
-  const refusal = await bad.evaluate(() => (document.getElementById("out") || {}).textContent || "");
-  if (!/needs an http/i.test(refusal)) failures.push(`javascript: URL was not refused (#out: "${refusal.slice(0, 100)}")`);
+  const refusal = await bad.evaluate(() => ({
+    out: (document.getElementById("out") || {}).textContent || "",
+    field: (document.getElementById("remoteUrl") || {}).value || "",
+  }));
+  if (!/needs an http/i.test(refusal.out)) failures.push(`javascript: URL was not refused (#out: "${refusal.out.slice(0, 100)}")`);
+  if (/javascript:/i.test(refusal.field)) failures.push("a javascript: URL reached the remote URL field");
 
   if (pageErrors.length) failures.push(`page errors: ${pageErrors.slice(0, 2).join(" | ")}`);
 
