@@ -220,8 +220,39 @@ def emit_artists():
 
 
 # -------------------------------------------------------------------- artworks
+def artist_names_by_slug():
+    """Real artist names keyed by their URL slug, for repairing broken records.
+
+    21,641 of the 223,094 painting records (9.7%) carry `artistName` "￿" —
+    U+FFFF, a permanent non-character. It is not an encoding accident on our
+    side: it is what WikiArt's own image JSON serves for those works. Left
+    alone it makes the single most prolific "artist" in the graph a piece of
+    garbage, ahead of van Gogh.
+
+    `artistUrl` survives intact on every one of them, and artists.jsonl carries
+    the real name against that slug, so 96.4% (20,859) are recoverable by join.
+    The 13 slugs with no artist entry are not artists at all —
+    `ancient-greek-pottery`, `ancient-greek-painting` and the like — so those
+    works keep no artistNameText rather than gaining a fabricated one.
+    """
+    by_slug = {}
+    path = os.path.join(RAW, "artists.jsonl")
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            try:
+                record = json.loads(line)
+            except Exception:
+                continue
+            slug, name = record.get("url"), record.get("artistName")
+            if slug and name and "￿" not in name:
+                by_slug[slug] = name
+    return by_slug
+
+
 def emit_paintings():
     n = imgs = 0
+    repaired = dropped = 0
+    artist_name = artist_names_by_slug()
     src = os.path.join(RAW, "paintings_imagejson.jsonl")
     for line in open(src, encoding="utf-8"):
         try:
@@ -240,7 +271,18 @@ def emit_paintings():
         T(s, "slug", u)
         I(s, "contentId", p.get("contentId"))
         I(s, "artistContentId", p.get("artistContentId"))
-        T(s, "artistNameText", p.get("artistName"))
+        # Repair the U+FFFF artist names via the intact artistUrl slug; emit
+        # nothing when even that cannot be resolved, so a query never sees a
+        # non-character where a name belongs.
+        raw_name = p.get("artistName") or ""
+        if "￿" in raw_name or not raw_name.strip():
+            resolved = artist_name.get(au)
+            if resolved:
+                repaired += 1
+            else:
+                dropped += 1
+            raw_name = resolved
+        T(s, "artistNameText", raw_name)
         I(s, "completionYear", p.get("completitionYear"))     # sic upstream
         T(s, "yearText", p.get("yearAsString"))
         T(s, "style", p.get("style"))
@@ -290,6 +332,13 @@ def emit_paintings():
         if LIMIT and n >= LIMIT:
             break
     sys.stderr.write("\n")
+    # Report the repair rather than leaving it silent: a number that shifts
+    # between harvests is worth noticing.
+    if repaired or dropped:
+        sys.stderr.write(
+            f"  artistName: repaired {repaired:,} U+FFFF record(s) via artistUrl, "
+            f"{dropped:,} unresolvable (non-artist slugs) left without a name\n"
+        )
     return n, imgs
 
 

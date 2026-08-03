@@ -295,3 +295,99 @@ hf:upvoteCount a owl:DatatypeProperty ; rdfs:label "upvotes received"@en .
 hf:likeCount a owl:DatatypeProperty ; rdfs:label "likes given"@en .
 hf:memberCount a owl:DatatypeProperty ; rdfs:label "org members"@en .
 hf:impressions a owl:DatatypeProperty ; rdfs:label "post impressions"@en .
+
+#################################################################
+#  FULL-FIDELITY EXTENSION  (build_nt.py --full / hugging-face-full)
+#
+#  Terms used only by the full build, which carries EVERY column of
+#  the source parquets. Three open-ended key namespaces hold the
+#  path-flattened JSON blobs — their properties are minted from the
+#  source keys themselves, so they are not enumerated here:
+#    https://w3id.org/rete/huggingface/card#{key}    repo card metadata
+#    https://w3id.org/rete/huggingface/config#{key}  model config
+#    https://w3id.org/rete/huggingface/gguf#{key}    GGUF metadata
+#    https://w3id.org/rete/huggingface/param#{dtype} parameters per dtype
+#  Each blob is ALSO kept verbatim (hf:cardDataJson / configJson /
+#  ggufJson) so the flattening is additive and nothing is lost.
+#################################################################
+
+hf:file a owl:DatatypeProperty ;
+  rdfs:label "file"@en ;
+  rdfs:comment "A path in the repository's file manifest. A literal, not a node: the source carries only the filename, and ~97M entries share ~36M distinct values."@en .
+
+hf:cardDataJson a owl:DatatypeProperty ;
+  rdfs:label "card metadata (raw JSON)"@en ;
+  rdfs:comment "The repo card front-matter verbatim; also flattened under the card# namespace."@en .
+hf:configJson a owl:DatatypeProperty ;
+  rdfs:label "model config (raw JSON)"@en .
+hf:ggufJson a owl:DatatypeProperty ;
+  rdfs:label "GGUF metadata (raw JSON)"@en .
+
+hf:InferenceOffer a owl:Class ;
+  rdfs:label "inference offer"@en ;
+  rdfs:comment "One provider serving one model, with its status, task, pricing and measured performance."@en ;
+  rdfs:subClassOf schema:Offer .
+
+hf:inferenceOffer a owl:ObjectProperty ;
+  rdfs:label "inference offer"@en ;
+  rdfs:subPropertyOf schema:offers .
+
+hf:provider a owl:DatatypeProperty ; rdfs:label "provider"@en .
+hf:providerId a owl:DatatypeProperty ; rdfs:label "provider-side model id"@en .
+hf:providerStatus a owl:DatatypeProperty ; rdfs:label "provider status"@en .
+hf:providerTask a owl:DatatypeProperty ; rdfs:label "provider task"@en .
+hf:providerType a owl:DatatypeProperty ; rdfs:label "provider mapping type"@en .
+hf:providerAdapter a owl:DatatypeProperty ; rdfs:label "adapter kind"@en .
+hf:providerAdapterWeightsPath a owl:DatatypeProperty ; rdfs:label "adapter weights path"@en .
+hf:providerPreviousStatus a owl:DatatypeProperty ; rdfs:label "previous status"@en .
+hf:structuredOutput a owl:DatatypeProperty ; rdfs:label "supports structured output"@en .
+hf:toolCalling a owl:DatatypeProperty ; rdfs:label "supports tool calling"@en .
+hf:requestLatencyMs a owl:DatatypeProperty ; rdfs:label "request latency (ms)"@en .
+hf:firstTokenLatencyMs a owl:DatatypeProperty ; rdfs:label "first-token latency (ms)"@en .
+hf:tokensPerSecond a owl:DatatypeProperty ; rdfs:label "tokens per second"@en .
+hf:numGeneratedTokens a owl:DatatypeProperty ; rdfs:label "generated tokens (benchmark)"@en .
+hf:contextLength a owl:DatatypeProperty ; rdfs:label "context length"@en .
+hf:pricingInput a owl:DatatypeProperty ; rdfs:label "price per input token"@en .
+hf:pricingOutput a owl:DatatypeProperty ; rdfs:label "price per output token"@en .
+hf:isModelAuthor a owl:DatatypeProperty ; rdfs:label "provider is the model author"@en .
+
+hf:hubId a owl:DatatypeProperty ;
+  rdfs:label "Hub internal id"@en ;
+  rdfs:subPropertyOf dcterms:identifier .
+hf:citation a owl:DatatypeProperty ;
+  rdfs:label "citation (BibTeX)"@en ;
+  rdfs:subPropertyOf dcterms:bibliographicCitation .
+hf:disabled a owl:DatatypeProperty ; rdfs:label "disabled"@en .
+hf:private a owl:DatatypeProperty ; rdfs:label "private"@en .
+
+hf:autoModel a owl:DatatypeProperty ; rdfs:label "transformers auto-model class"@en .
+hf:transformersPipelineTag a owl:DatatypeProperty ; rdfs:label "transformers pipeline tag"@en .
+hf:processor a owl:DatatypeProperty ; rdfs:label "transformers processor"@en .
+hf:customClass a owl:DatatypeProperty ; rdfs:label "custom model class"@en .
+
+hf:aiSummary a owl:DatatypeProperty ; rdfs:label "AI-written summary"@en .
+hf:aiSummaryModel a owl:DatatypeProperty ; rdfs:label "model that wrote the summary"@en .
+hf:aiKeyword a owl:DatatypeProperty ; rdfs:label "AI-extracted keyword"@en .
+hf:mediaUrl a owl:ObjectProperty ; rdfs:label "media"@en ; rdfs:subPropertyOf schema:associatedMedia .
+hf:thumbnail a owl:DatatypeProperty ; rdfs:label "thumbnail"@en .
+hf:discussionId a owl:DatatypeProperty ; rdfs:label "discussion id"@en .
+hf:githubStars a owl:DatatypeProperty ; rdfs:label "GitHub stars"@en .
+hf:githubRepoAddedBy a owl:DatatypeProperty ; rdfs:label "GitHub repo added by"@en .
+hf:submittedOnDailyAt a owl:DatatypeProperty ; rdfs:label "submitted to Daily Papers at"@en .
+hf:withdrawnAt a owl:DatatypeProperty ; rdfs:label "withdrawn at"@en .
+hf:authorParticipating a owl:DatatypeProperty ; rdfs:label "an author joined the discussion"@en .
+hf:commentCount a owl:DatatypeProperty ; rdfs:label "comments"@en .
+
+hf:slug a owl:DatatypeProperty ; rdfs:label "post slug"@en .
+hf:contentValue a owl:DatatypeProperty ; rdfs:label "post content block (text)"@en .
+hf:contentCode a owl:DatatypeProperty ; rdfs:label "post content block (code)"@en .
+hf:contentHref a owl:DatatypeProperty ; rdfs:label "post content link"@en .
+hf:contentUrl a owl:DatatypeProperty ; rdfs:label "post content URL"@en .
+hf:contentImage a owl:DatatypeProperty ; rdfs:label "post content image"@en .
+hf:contentLabel a owl:DatatypeProperty ; rdfs:label "post content label"@en .
+hf:referencesRepo a owl:DatatypeProperty ; rdfs:label "repo referenced in a post"@en .
+hf:reaction a owl:DatatypeProperty ;
+  rdfs:label "reaction"@en ;
+  rdfs:comment "\"{emoji}:{count}\" — the reaction and how many gave it."@en .
+hf:reactedBy a owl:ObjectProperty ; rdfs:label "reacted by"@en .
+hf:commentedBy a owl:ObjectProperty ; rdfs:label "commented by"@en .

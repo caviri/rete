@@ -89,3 +89,22 @@ tests/gate/node_modules/
 /clients/tauri/src-tauri/gen/
 /clients/tauri/src-tauri/icons/*
 !/clients/tauri/src-tauri/icons/source.png
+# Build output: joins /target, target-star/, target-std/, target-wasm/ and
+# /target-msrv/ — target-gate/ was simply missed (491 MB of cargo output).
+target-gate/
+
+# Scratch from interactive runs: probe scripts and per-run log/pid/err files
+# that land beside the scripts they exercise.
+_probe*.sh
+_valex*.sh
+_oaest*.sh
+# Per-run logs land wherever the command was launched from, root included.
+/_*.log
+/_*.err
+/_*.pid
+/_*.txt
+*.localbak
+scripts/_*.log
+scripts/_*.err
+scripts/_*.pid
+scripts/_*.txt
