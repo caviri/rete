@@ -368,6 +368,21 @@ locally with zero network reads; remove it under <strong>Settings → Whole-file
 whose host serves ranges + CORS (see <a href="hosting.html">Hosting your .rete</a>), and the
 <strong>Build</strong> mode (below) turns your own RDF into a queryable file without leaving
 the page.</p>
+<h3 id="card">🏷 Card — what this graph says it is</h3>
+<p>Next to the source pill, <strong>🏷 Card</strong> opens the <a href="dataset-cards.html">Dataset Card</a>
+that travels <em>inside</em> the <code>.rete</code>: title, licence, source, counts, vocabularies,
+predicates and classes with their frequencies, the class-link skeleton, and the
+example queries the builder shipped with the file.</p>
+<p>It costs one <code>HEAD</code> and <strong>two range requests</strong> — the header, then the metadata
+section it points at. Never the dictionary, the index or the pyramid. That is
+the CARD tier: you learn what a 17 GB graph <em>is</em> for a few KB, before deciding
+whether to query it at all.</p>
+<p>Two views: <strong>Rendered</strong>, and <strong>JSON</strong> — the card's own bytes, syntax-coloured,
+with <em>Copy</em> and <em>Download</em>. Any example query the card carries has a <strong>Use</strong>
+button that loads it straight into the editor.</p>
+<p>Not every file has one. A card is written at build time
+(<code>rete build --card …</code>); the small bundled demo datasets are built without one,
+and the modal says so rather than showing an empty shell.</p>
 <h2>Write a query</h2>
 <p>The SPARQL editor comes with syntax highlighting and context autocomplete. When
 you don't know the graph's vocabulary yet:</p>

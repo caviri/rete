@@ -114,6 +114,7 @@ __PLAYGROUND_CSS__
       <span id="sourcePill" class="status-pill">bundled</span>
       <span id="meta" class="statline">loading wasm...</span>
       <button id="dsDetailsBtn" class="ds-details-btn" type="button" title="Dataset source, the selected example, and inspector details">ⓘ Details &amp; source</button>
+      <button id="cardBtn" class="ds-card-btn" type="button" title="The Dataset Card embedded in this .rete — read in two small range requests, whatever the file's size">🏷 Card</button>
     </div>
   </div>
 
@@ -722,6 +723,30 @@ __PLAYGROUND_CSS__
           </div>
         </div>
       </details>
+    </div>
+  </div>
+
+  <!-- The Dataset Card that travels INSIDE the .rete. Read straight from the
+       file's metadata section — two small range requests on a remote graph, so
+       this costs the same few KB whether the file is 8 MB or 17 GB. -->
+  <div id="cardModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cardModalTitle">
+    <div class="modal-card card-modal">
+      <div class="modal-head">
+        <h3 id="cardModalTitle">Dataset Card</h3>
+        <div class="card-tabs" role="tablist" aria-label="Card view">
+          <button id="cardTabView" class="card-tab active" type="button" role="tab" aria-selected="true">Rendered</button>
+          <button id="cardTabJson" class="card-tab" type="button" role="tab" aria-selected="false">JSON</button>
+        </div>
+        <button id="cardModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="cardBody" class="card-body"></div>
+      <div class="card-foot">
+        <span id="cardFootNote" class="microcopy"></span>
+        <span class="card-foot-actions">
+          <button id="cardCopy" class="secondary" type="button">Copy JSON</button>
+          <button id="cardDownload" class="secondary" type="button">Download</button>
+        </span>
+      </div>
     </div>
   </div>
 

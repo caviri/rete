@@ -45,6 +45,10 @@ uv run python scripts/stage_playground_datasets.py
 uv run python scripts/build_playground.py
 mkdir -p tests/gate/.cache
 cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt -o tests/gate/.cache/worldcup2026.rete
+# Same triples, but WITH a Dataset Card — the card modal check needs a file that
+# actually carries one (the bundled demo datasets do not).
+cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt \
+  --card-file tests/gate/fixtures/card-fixture.card.json -o tests/gate/.cache/card-fixture.rete
 
 python3 -P - <<'PY'
 import hashlib
