@@ -1575,6 +1575,8 @@ pub(crate) fn write_dataset_from_parts(
         schema_meta_len,
         text_index_offset: if text_len > 0 { text_offset } else { 0 },
         text_index_len: text_len,
+        build_info_offset: 0,
+        build_info_len: 0,
         extra_sections: Vec::new(),
     };
 
@@ -1682,6 +1684,117 @@ pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>
     }
     let bytes = reader.read_at(header.metadata_offset, header.metadata_len)?;
     Ok(Some(bytes))
+}
+
+/// Fetch the metadata (Dataset Card) **and** build-info sections via a
+/// [`RangeReader`] in the fewest requests: the 1 KiB header, then — because the
+/// writer lays the build-info section immediately after the metadata — **one**
+/// coalesced range covering both. A file with only one of the two costs the
+/// same two requests; a file with neither costs just the header read. This
+/// keeps "card + build conditions" within the CARD tier's 1 header + 1 range
+/// budget instead of adding a third request.
+///
+/// Returns `(metadata, build_info)`, each `None` when absent.
+#[allow(clippy::type_complexity)]
+pub fn read_card_and_build_info_ranged<R: RangeReader>(
+    reader: &R,
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    let meta = (header.metadata_offset, header.metadata_len);
+    let build = (header.build_info_offset, header.build_info_len);
+    if meta.1 > 0 && build.1 > 0 && build.0 == meta.0 + meta.1 {
+        // Adjacent (the layout this crate writes): one read spans both.
+        let both = reader.read_at(meta.0, meta.1 + build.1)?;
+        let (m, b) = both.split_at(meta.1 as usize);
+        return Ok((Some(m.to_vec()), Some(b.to_vec())));
+    }
+    let fetch = |off: u64, len: u64| -> Result<Option<Vec<u8>>, FileError> {
+        if len == 0 {
+            return Ok(None);
+        }
+        Ok(Some(reader.read_at(off, len)?))
+    };
+    Ok((fetch(meta.0, meta.1)?, fetch(build.0, build.1)?))
+}
+
+/// The build-info section of a whole file image, or `None` if absent. The
+/// payload is an opaque application-layer blob (the CLI stores build-conditions
+/// JSON there); it is **not** covered by the content hash — see
+/// [`attach_build_info`].
+pub fn read_build_info(bytes: &[u8]) -> Result<Option<Vec<u8>>, FileError> {
+    let header = Header::from_bytes(bytes)?;
+    if header.build_info_len == 0 {
+        return Ok(None);
+    }
+    let start = header.build_info_offset as usize;
+    let end = start
+        .checked_add(header.build_info_len as usize)
+        .filter(|&e| e <= bytes.len())
+        .ok_or(FileError::Container("build-info section overruns buffer"))?;
+    Ok(Some(bytes[start..end].to_vec()))
+}
+
+/// Attach (or replace) a **build-info** section in a finished file image,
+/// returning the new image. The section is spliced in immediately after the
+/// metadata section — adjacent, so [`read_card_and_build_info_ranged`] fetches
+/// card + build info in one coalesced range — and every later section's offset
+/// shifts by the length delta.
+///
+/// The content hash is **deliberately left untouched**: build info records the
+/// facts that differ between two builds of identical data (timestamp, builder,
+/// measured timings), and folding them into the hash would break the
+/// reproducible-hash property. `verify` accordingly ignores this section, on an
+/// old reader (which sees an unknown kind-7 entry) and a new one alike.
+///
+/// Passing an empty `info` removes an existing section (or returns the image
+/// unchanged when there is none).
+pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError> {
+    let mut header = Header::from_bytes(image)?;
+    // The insert point: immediately after the metadata section. The writers in
+    // this crate always place metadata (when present) at HEADER_LEN.
+    let insert = HEADER_LEN as u64 + header.metadata_len;
+    let old_len = header.build_info_len;
+    if old_len > 0 && header.build_info_offset != insert {
+        return Err(FileError::Container(
+            "existing build-info section is not adjacent to the metadata",
+        ));
+    }
+    let tail_start = (insert + old_len) as usize;
+    if tail_start > image.len() || (insert as usize) > image.len() {
+        return Err(FileError::Container("build-info splice out of bounds"));
+    }
+
+    // Shift every section that lives at or after the old tail.
+    let shift = |off: &mut u64, len: u64| {
+        if len > 0 && *off >= insert + old_len {
+            *off = *off - old_len + info.len() as u64;
+        }
+    };
+    shift(&mut header.dictionary_offset, header.dictionary_len);
+    shift(&mut header.root_dir_offset, header.root_dir_len);
+    shift(&mut header.pyramid_meta_offset, header.pyramid_meta_len);
+    shift(&mut header.named_graphs_offset, header.named_graphs_len);
+    shift(&mut header.text_index_offset, header.text_index_len);
+    for s in &mut header.extra_sections {
+        if s.length > 0 && s.offset >= insert + old_len {
+            s.offset = s.offset - old_len + info.len() as u64;
+        }
+    }
+    if info.is_empty() {
+        header.build_info_offset = 0;
+        header.build_info_len = 0;
+    } else {
+        header.build_info_offset = insert;
+        header.build_info_len = info.len() as u64;
+    }
+
+    let mut out = Vec::with_capacity(image.len() - old_len as usize + info.len());
+    out.extend_from_slice(&header.to_bytes());
+    out.extend_from_slice(&image[HEADER_LEN..insert as usize]);
+    out.extend_from_slice(info);
+    out.extend_from_slice(&image[tail_start..]);
+    Ok(out)
 }
 
 /// Recompute the content hash from a file image and check it against the header
@@ -4675,6 +4788,103 @@ mod tests {
         assert!(read_metadata_ranged(&rp).unwrap().is_none());
         assert_eq!(rp.requests(), 1, "header only for a cardless file");
         assert_eq!(rp.bytes_read(), HEADER_LEN as u64);
+    }
+
+    #[test]
+    fn build_info_attaches_outside_the_hash() {
+        let card = br#"{"title":"My Dataset"}"#;
+        let base = build_with_metadata(card);
+        let base_hash = Header::from_bytes(&base).unwrap().content_hash;
+
+        let info = br#"{"built_at":"2026-08-04T00:00:00Z","builder":"rete-cli 0.3.2"}"#;
+        let with = attach_build_info(&base, info).unwrap();
+
+        // The section reads back verbatim, adjacent to the metadata.
+        assert_eq!(read_build_info(&with).unwrap().unwrap(), info);
+        let h = Header::from_bytes(&with).unwrap();
+        assert_eq!(h.build_info_offset, HEADER_LEN as u64 + card.len() as u64);
+        assert_eq!(h.build_info_len, info.len() as u64);
+        assert_eq!(h.expected_file_len(), Some(with.len() as u64));
+
+        // OUTSIDE the hash: the content hash is unchanged and the file still
+        // verifies — two builds of identical data stay hash-equal even though
+        // their build-info differs.
+        assert_eq!(h.content_hash, base_hash);
+        assert!(verify(&with).unwrap());
+        let other = attach_build_info(&base, br#"{"built_at":"1999-01-01T00:00:00Z"}"#).unwrap();
+        assert_eq!(Header::from_bytes(&other).unwrap().content_hash, base_hash);
+
+        // The graph still opens and answers at its shifted offsets.
+        let rete = Rete::open(&with).unwrap();
+        assert_eq!(
+            rete.query(Some("Bob"), Some("knows"), Some("Carol")).len(),
+            1
+        );
+        assert_eq!(rete.metadata(), Some(card.as_slice()));
+
+        // Replacing an existing section works and removing it restores the
+        // original image byte-for-byte (the strip-equality determinism proof).
+        let replaced = attach_build_info(&with, br#"{"builder":"other"}"#).unwrap();
+        assert_eq!(
+            read_build_info(&replaced).unwrap().unwrap(),
+            br#"{"builder":"other"}"#
+        );
+        assert!(verify(&replaced).unwrap());
+        let stripped = attach_build_info(&replaced, &[]).unwrap();
+        assert_eq!(stripped, base, "stripping build-info restores the image");
+    }
+
+    #[test]
+    fn build_info_attaches_on_a_metadata_free_file() {
+        // No card: the section slots in right after the header.
+        let base = build_image();
+        let info = b"{\"builder\":\"x\"}";
+        let with = attach_build_info(&base, info).unwrap();
+        let h = Header::from_bytes(&with).unwrap();
+        assert_eq!(h.build_info_offset, HEADER_LEN as u64);
+        assert_eq!(h.metadata_len, 0);
+        assert_eq!(read_build_info(&with).unwrap().unwrap(), info);
+        assert!(verify(&with).unwrap());
+        assert_eq!(
+            h.content_hash,
+            Header::from_bytes(&base).unwrap().content_hash
+        );
+        Rete::open(&with).unwrap();
+    }
+
+    #[test]
+    fn card_and_build_info_ranged_is_one_header_plus_one_range() {
+        use crate::reader::{CountingReader, SliceReader};
+        let card = vec![0xCDu8; 384];
+        let info = vec![0xEFu8; 200];
+        let bytes = attach_build_info(&build_with_metadata(&card), &info).unwrap();
+
+        // Both sections in ONE coalesced range after the header — the CARD
+        // tier's 1 header + 1 range budget holds with build info included.
+        let r = CountingReader::new(SliceReader::new(&bytes));
+        let (m, b) = read_card_and_build_info_ranged(&r).unwrap();
+        assert_eq!(m.unwrap(), card);
+        assert_eq!(b.unwrap(), info);
+        assert_eq!(r.requests(), 2, "header + one coalesced range");
+        assert_eq!(
+            r.bytes_read(),
+            HEADER_LEN as u64 + card.len() as u64 + info.len() as u64
+        );
+
+        // Card only: same two requests, no build info.
+        let plain = build_with_metadata(&card);
+        let rp = CountingReader::new(SliceReader::new(&plain));
+        let (m, b) = read_card_and_build_info_ranged(&rp).unwrap();
+        assert_eq!(m.unwrap(), card);
+        assert!(b.is_none());
+        assert_eq!(rp.requests(), 2);
+
+        // Neither: the header read alone answers.
+        let none = build_image();
+        let rn = CountingReader::new(SliceReader::new(&none));
+        let (m, b) = read_card_and_build_info_ranged(&rn).unwrap();
+        assert!(m.is_none() && b.is_none());
+        assert_eq!(rn.requests(), 1);
     }
 
     #[test]

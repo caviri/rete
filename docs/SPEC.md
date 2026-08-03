@@ -147,7 +147,7 @@ are not readable and must be rebuilt from RDF source.
 
 | Offset | Size | Field |
 |---|---|---|
-| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index; higher ids reserved for future sections) |
+| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index, `7` build-info; higher ids reserved for future sections) |
 | +2 | 2 | section flags (reserved) |
 | +4 | 4 | reserved (zero) |
 | +8 | 8 | section offset |
@@ -171,6 +171,20 @@ range-reading client never fetches it for a query (it reads sections by their
 header offsets). A reader that doesn't understand the payload simply skips it: the
 dictionary is always located via `dictionary offset`, which already accounts for
 the section's length.
+
+The **build-info section** (kind `7`) is an optional opaque payload laid out
+**immediately after the metadata section** — adjacent, so a card reader fetches
+metadata + build-info in one coalesced range and the CARD tier stays at one
+header read plus one range read. The CLI stores build-conditions JSON there:
+build timestamp, builder version, the flags in force, and measured starter-query
+costs (see [Dataset Cards](dataset-cards.md)). Unlike every other section its
+bytes are **deliberately excluded from the content hash**: it records exactly
+the facts that differ between two builds of identical data (when, by which
+binary, how fast), and the reproducible-hash property — two builds of the same
+input hash identically — must survive them. `verify` therefore does not cover
+it, on old readers (which see an unknown kind-7 entry and ignore it) and new
+ones alike; treat its contents as advisory provenance, not integrity-protected
+data.
 
 ---
 
