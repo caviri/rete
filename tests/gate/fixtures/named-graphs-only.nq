@@ -1,0 +1,6 @@
+<http://example.test/dataset/1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/dcat#Dataset> <http://example.test/graph/1> .
+<http://example.test/dataset/1> <http://purl.org/dc/terms/title> "First catalogued dataset"@en <http://example.test/graph/1> .
+<http://example.test/dataset/2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/dcat#Dataset> <http://example.test/graph/2> .
+<http://example.test/dataset/2> <http://purl.org/dc/terms/title> "Second catalogued dataset"@en <http://example.test/graph/2> .
+<http://example.test/dataset/3> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/dcat#Dataset> <http://example.test/graph/3> .
+<http://example.test/dataset/3> <http://purl.org/dc/terms/title> "Third catalogued dataset"@en <http://example.test/graph/3> .

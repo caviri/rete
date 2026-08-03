@@ -1,0 +1,6 @@
+{
+  "title": "Named-graphs-only gate fixture",
+  "description": "Every quad lives in a named graph and the default graph is EMPTY — the nkod.rete shape that made a correct 0 answer read as a broken page. The gate uses it to assert the empty-default-graph explainer appears here (card: triple_count 0, named_graph_count > 0) and nowhere else.",
+  "license": "CC0-1.0",
+  "source": "https://example.org/gate-fixture-named-graphs"
+}
