@@ -4,11 +4,11 @@
 
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
-    eval_query_reasoned, eval_select_communities, eval_sparql, project_graph, schema_classes,
+    eval_query_with, eval_select_communities, eval_sparql, project_graph, schema_classes,
     schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
-    ByteRange, CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ReteGraph,
-    ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TermTriple, TripleProvenance,
-    ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
+    ByteRange, CountingReader, DataGraph, Header, QueryOpts, QueryOutput, RangeReader, Rete,
+    ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TermTriple,
+    TripleProvenance, ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
 };
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -295,6 +295,21 @@ impl Graph {
     /// `subPropertyOf` / `domain` / `range` reasoning by query rewriting).
     pub fn query_reasoned(&self, query: &str, format: &str) -> Result<String, JsValue> {
         query_json_reasoned(&self.rete, query, format, "")
+    }
+
+    /// As [`query`], with explicit opt-in toggles: `reason` (OWL 2 QL
+    /// entailment) and `union_default` (union default graph — a pattern
+    /// outside `GRAPH` matches the merge of the default graph and every named
+    /// graph, the Virtuoso / GraphDB / Jena TDB mode; non-standard, so plain
+    /// [`Graph::query`] never does this).
+    pub fn query_opts(
+        &self,
+        query: &str,
+        format: &str,
+        reason: bool,
+        union_default: bool,
+    ) -> Result<String, JsValue> {
+        query_json_with(&self.rete, query, format, "", reason, union_default)
     }
 
     /// See [`query_triples`].
@@ -724,6 +739,22 @@ impl RemoteGraph {
         Ok(s)
     }
 
+    /// As [`query`], with explicit opt-in toggles — see [`Graph::query_opts`].
+    /// With `union_default` on, a lazy remote read may fault the index tiles of
+    /// every named graph the union touches (the merge is strictly opt-in).
+    pub fn query_opts(
+        &self,
+        query: &str,
+        format: &str,
+        reason: bool,
+        union_default: bool,
+    ) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
+        let s = query_json_with(&self.rete, query, format, "", reason, union_default)?;
+        incomplete_guard(&self.rete, "query")?;
+        Ok(s)
+    }
+
     /// See [`prefix_search`] — over the resident, cached remote handle. Faults the
     /// pyramid (where the label index lives) on the first call, then serves the
     /// search from memory.
@@ -1085,11 +1116,28 @@ fn query_json_opt(
     extra: &str,
     reason: bool,
 ) -> Result<String, JsValue> {
-    let out = if reason {
-        eval_query_reasoned(rete, query)
-    } else {
-        eval_query(rete, query)
-    }
+    query_json_with(rete, query, format, extra, reason, false)
+}
+
+/// The full-options variant: `reason` (OWL 2 QL) and `union_default` (the
+/// opt-in union-default-graph mode — a pattern outside GRAPH matches the merge
+/// of the default graph and every named graph; see `QueryOpts`).
+fn query_json_with(
+    rete: &Rete,
+    query: &str,
+    format: &str,
+    extra: &str,
+    reason: bool,
+    union_default: bool,
+) -> Result<String, JsValue> {
+    let out = eval_query_with(
+        rete,
+        query,
+        QueryOpts {
+            reason,
+            union_default_graph: union_default,
+        },
+    )
     .map_err(err)?;
     Ok(write_query_json(&out, format, extra))
 }

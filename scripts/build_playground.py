@@ -257,12 +257,18 @@ ASYNC_ENV_JS = """
           try { return getStringFromWasm0(ret[0], ret[1]); }
           finally { wasm.__wbindgen_free(ret[0], ret[1], 1); }
         }
-        exports.reteQueryRemote = function (g, query, format, reasoned) {
+        exports.reteQueryRemote = function (g, query, format, reasoned, unionDefault) {
           return __reteSerial(function () {
             const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len0 = WASM_VECTOR_LEN;
             const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
+            // The union-default-graph toggle routes through query_opts (reason +
+            // union as i32 flags). The plain/reasoned exports stay the proven
+            // path when the toggle is off — same marshal-once, raw-driven shape.
+            if (unionDefault) {
+              return __reteCallRaw(function () { return wasm.remotegraph_query_opts(g.__wbg_ptr, ptr0, len0, ptr1, len1, reasoned ? 1 : 0, 1); }, true);
+            }
             const raw = reasoned ? wasm.remotegraph_query_reasoned : wasm.remotegraph_query;
             return __reteCallRaw(function () { return raw(g.__wbg_ptr, ptr0, len0, ptr1, len1); }, true);
           });

@@ -402,7 +402,7 @@ pub(super) fn ask_solution(rete: &Rete, sel: &Select) -> bool {
     // ASK pulls exactly one solution â€” let joins probe instead of scan.
     ctx.limit_hint.set(Some(1));
     let mut merged = None;
-    let active = active_index(rete, &sel.from, &mut merged);
+    let active = active_index(rete, sel, &mut merged);
     plan_exists(&ctx, active, sel.from_named.as_deref(), &sel.plan)
 }
 
@@ -435,7 +435,7 @@ fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     ctx.exhaustive.set(true);
     // The active default graph: `FROM` makes it the union of named graphs.
     let mut merged = None;
-    let active = active_index(ctx.rete, &sel.from, &mut merged);
+    let active = active_index(ctx.rete, sel, &mut merged);
     let nf = sel.from_named.as_deref();
 
     let mut raw = match &sel.group {
@@ -476,19 +476,39 @@ fn apply_extends_row(ctx: &Ctx, row: &mut Row, extends: &[(String, FExpr)]) {
 /// whole-graph materialization: an OOM at billion-triple scale). Only a
 /// multi-graph `FROM` still merges triples into a temporary index, which
 /// `merged` keeps alive for the borrow.
+///
+/// The opt-in union-default-graph mode ([`Select::union_default`]) applies only
+/// when the query brings no `FROM` of its own: the active default graph becomes
+/// the RDF merge of the file's default graph and every named graph. The common
+/// converted-file shape — empty default graph, exactly one named graph — stays
+/// a zero-copy borrow of that graph's index.
 fn active_index<'a>(
     rete: &'a Rete,
-    from: &[String],
+    sel: &Select,
     merged: &'a mut Option<GraphIndex>,
 ) -> &'a GraphIndex {
-    match from {
+    match &sel.from[..] {
+        [] if sel.union_default => {
+            let names = rete.graph_names();
+            if names.is_empty() {
+                return rete.default_index(); // no named graphs — union is the default graph
+            }
+            // Emptiness read off the SPO tile *directory* (already resident on
+            // a lazy open) — no tile fetch, no materialization.
+            if names.len() == 1 && rete.default_index().tile_sections()[0].is_empty() {
+                if let Some(gi) = rete.graph_index(names[0]) {
+                    return gi;
+                }
+            }
+            &*merged.insert(merge_union_default(rete))
+        }
         [] => rete.default_index(),
         [g] => match rete.graph_index(g) {
             Some(gi) => gi,
             // A missing graph contributes nothing: an empty merge.
-            None => &*merged.insert(merge_graphs(rete, from)),
+            None => &*merged.insert(merge_graphs(rete, &sel.from)),
         },
-        _ => &*merged.insert(merge_graphs(rete, from)),
+        _ => &*merged.insert(merge_graphs(rete, &sel.from)),
     }
 }
 
@@ -498,6 +518,26 @@ fn active_index<'a>(
 fn merge_graphs(rete: &Rete, graphs: &[String]) -> GraphIndex {
     let mut b = GraphIndexBuilder::new();
     for g in graphs {
+        if let Some(gi) = rete.graph_index(g) {
+            for t in gi.match_pattern((None, None, None)) {
+                b.push(t);
+            }
+        }
+    }
+    b.build()
+}
+
+/// The union default graph: the RDF merge (set union — the index build dedups)
+/// of the file's default graph and **every** named graph. Unlike `FROM`, the
+/// file's own default graph is included: turning the toggle on must never make
+/// default-graph triples vanish. On a lazily-opened file this materializes each
+/// graph's index, so it is strictly an opt-in.
+fn merge_union_default(rete: &Rete) -> GraphIndex {
+    let mut b = GraphIndexBuilder::new();
+    for t in rete.default_index().match_pattern((None, None, None)) {
+        b.push(t);
+    }
+    for g in rete.graph_names() {
         if let Some(gi) = rete.graph_index(g) {
             for t in gi.match_pattern((None, None, None)) {
                 b.push(t);
@@ -586,7 +626,7 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     ctx.exhaustive
         .set(sel.limit.is_none() || sel.group.is_some() || !sel.order.is_empty());
     let mut merged = None;
-    let active = active_index(rete, &sel.from, &mut merged);
+    let active = active_index(rete, sel, &mut merged);
     let nf = sel.from_named.as_deref();
     let source = eval_plan_iter(&ctx, active, nf, &sel.plan);
     finish_select(&ctx, active, sel, source)

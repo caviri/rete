@@ -67,6 +67,14 @@ pub struct Select {
     pub from: Vec<String>,
     /// `FROM NAMED <iri>` graphs: when `Some`, `GRAPH` may only see these.
     pub from_named: Option<Vec<String>>,
+    /// **Union default graph** (opt-in, non-standard): when set and the query
+    /// has no `FROM` of its own, the active default graph becomes the RDF merge
+    /// of the file's default graph and *every* named graph — the mode Virtuoso,
+    /// GraphDB and Jena TDB (`tdb:unionDefaultGraph`) offer. Plain SPARQL says a
+    /// pattern outside `GRAPH` matches only the real default graph, so this is
+    /// NEVER set by the parser — only by [`eval_query_with`] when the caller
+    /// asked for it. An explicit `FROM` wins (the query named its own dataset).
+    pub union_default: bool,
     /// The graph-pattern evaluation plan.
     pub plan: Plan,
     /// Monotonic counter for minting query-unique fresh variable names while
@@ -89,6 +97,7 @@ impl Default for Select {
             having: Vec::new(),
             from: Vec::new(),
             from_named: None,
+            union_default: false,
             plan: Plan::Bgp(Vec::new()),
             star_counter: 0,
         }
@@ -784,7 +793,7 @@ pub fn eval_select_communities(
 
 /// Evaluate any supported SPARQL query form (SELECT / ASK / CONSTRUCT).
 pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {
-    eval_query_opts(rete, query, false)
+    eval_query_with(rete, query, QueryOpts::default())
 }
 
 /// Like [`eval_query`], but with **OWL 2 QL entailment** on: the lowered plan is
@@ -792,11 +801,39 @@ pub fn eval_query(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> 
 /// (Stage 1a: `rdfs:subClassOf`), computed over the raw data with no
 /// materialization. Opt-in — a plain [`eval_query`] is byte-identical to before.
 pub fn eval_query_reasoned(rete: &Rete, query: &str) -> Result<QueryOutput, SparqlError> {
-    eval_query_opts(rete, query, true)
+    eval_query_with(
+        rete,
+        query,
+        QueryOpts {
+            reason: true,
+            ..QueryOpts::default()
+        },
+    )
 }
 
-fn eval_query_opts(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutput, SparqlError> {
-    let out = eval_query_inner(rete, query, reason);
+/// Evaluation options for [`eval_query_with`]. Every flag defaults to off, and
+/// off reproduces [`eval_query`] byte-for-byte — the W3C conformance suite runs
+/// with this default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QueryOpts {
+    /// OWL 2 QL entailment by query rewriting — see [`eval_query_reasoned`].
+    pub reason: bool,
+    /// Union default graph (non-standard, opt-in): a pattern outside `GRAPH`
+    /// matches the RDF merge of the default graph and every named graph, the
+    /// mode Virtuoso / GraphDB / Jena TDB offer. A query with its own `FROM`
+    /// keeps its `FROM` dataset; `GRAPH ?g` still enumerates the named graphs
+    /// exactly as before. See [`Select::union_default`].
+    pub union_default_graph: bool,
+}
+
+/// [`eval_query`] with explicit [`QueryOpts`] — the single entry point the
+/// opt-in toggles (🧠 reasoning, union default graph) funnel through.
+pub fn eval_query_with(
+    rete: &Rete,
+    query: &str,
+    opts: QueryOpts,
+) -> Result<QueryOutput, SparqlError> {
+    let out = eval_query_inner(rete, query, opts);
     // A failed non-SILENT SERVICE call is recorded out-of-band (the row
     // pipeline is infallible, like lazy tile fetches) — surface it here so a
     // partial answer is never returned as if it were complete.
@@ -816,7 +853,17 @@ fn maybe_reason(rete: &Rete, mut sel: Select, reason: bool) -> Select {
     sel
 }
 
-fn eval_query_inner(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutput, SparqlError> {
+/// Stamp the caller's union-default-graph choice onto the lowered top-level
+/// `Select` (dataset clauses are top-level-only in the SPARQL grammar, so this
+/// never needs to descend into subqueries — they evaluate against the same
+/// active index).
+fn apply_opts(mut sel: Select, opts: QueryOpts) -> Select {
+    sel.union_default = opts.union_default_graph;
+    sel
+}
+
+fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOutput, SparqlError> {
+    let reason = opts.reason;
     let parsed = parse_query(query)?;
     match parsed {
         Query::Select {
@@ -824,18 +871,22 @@ fn eval_query_inner(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutpu
         } => {
             let (vars, rows) = run_select(
                 rete,
-                &maybe_reason(rete, lower_select(&pattern, &dataset)?, reason),
+                &maybe_reason(
+                    rete,
+                    apply_opts(lower_select(&pattern, &dataset)?, opts),
+                    reason,
+                ),
             );
             Ok(QueryOutput::Select(vars, rows))
         }
         Query::Ask { pattern, .. } => {
-            let sel = maybe_reason(rete, lower_pattern(&pattern)?, reason);
+            let sel = maybe_reason(rete, apply_opts(lower_pattern(&pattern)?, opts), reason);
             Ok(QueryOutput::Ask(ask_solution(rete, &sel)))
         }
         Query::Construct {
             template, pattern, ..
         } => {
-            let sel = maybe_reason(rete, lower_pattern(&pattern)?, reason);
+            let sel = maybe_reason(rete, apply_opts(lower_pattern(&pattern)?, opts), reason);
             let (ctx, sols) = raw_solutions(rete, &sel);
             Ok(QueryOutput::Construct(instantiate(&ctx, &template, &sols)))
         }
@@ -844,7 +895,11 @@ fn eval_query_inner(rete: &Rete, query: &str, reason: bool) -> Result<QueryOutpu
         } => {
             // The projected variables' values are the resources to describe;
             // we return each one's outgoing triples (concise bounded description).
-            let sel = maybe_reason(rete, lower_select(&pattern, &dataset)?, reason);
+            let sel = maybe_reason(
+                rete,
+                apply_opts(lower_select(&pattern, &dataset)?, opts),
+                reason,
+            );
             let (ctx, rows) = raw_solutions(rete, &sel);
             let mut resources = std::collections::BTreeSet::new();
             for row in &rows {
@@ -1577,6 +1632,97 @@ mod tests {
         let (_, sn) = eval_sparql(&rete, qn).unwrap();
         let gs: Vec<&str> = sn.iter().map(|b| b["g"].as_str()).collect();
         assert_eq!(gs, vec!["<http://ex/social>"]); // profile excluded
+    }
+
+    #[test]
+    fn union_default_graph_opt_in() {
+        use crate::write_dataset;
+        // default graph: Root knows Alice. social: Alice knows Bob (twice — once
+        // duplicated in profile, to pin set-union dedup). profile: the duplicate
+        // plus Bob knows Carol.
+        let mut db = DictionaryBuilder::new();
+        let t = [
+            ("<http://ex/Root>", "<http://ex/knows>", "<http://ex/Alice>"),
+            ("<http://ex/Alice>", "<http://ex/knows>", "<http://ex/Bob>"),
+            ("<http://ex/Bob>", "<http://ex/knows>", "<http://ex/Carol>"),
+        ];
+        for (s, p, o) in t {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let enc = |i: usize| dict.encode(t[i].0, t[i].1, t[i].2).unwrap();
+        let mut def = GraphIndexBuilder::new();
+        def.push(enc(0));
+        let mut g1 = GraphIndexBuilder::new();
+        g1.push(enc(1));
+        let mut g2 = GraphIndexBuilder::new();
+        g2.push(enc(1)); // the SAME triple as social's — a set union keeps one
+        g2.push(enc(2));
+        let named = vec![
+            ("<http://ex/social>".to_string(), g1.build()),
+            ("<http://ex/profile>".to_string(), g2.build()),
+        ];
+        let bytes = write_dataset(&dict, &def.build(), &named, true, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+        let union = QueryOpts {
+            union_default_graph: true,
+            ..QueryOpts::default()
+        };
+        let rows = |out: QueryOutput| match out {
+            QueryOutput::Select(_, rows) => rows,
+            other => panic!("expected Select, got {other:?}"),
+        };
+
+        // OFF (the default): a pattern outside GRAPH sees only the real default
+        // graph — one triple. This is the standard-semantics baseline the W3C
+        // conformance suite runs on.
+        let q = "PREFIX ex: <http://ex/> SELECT ?s ?o WHERE { ?s ex:knows ?o }";
+        assert_eq!(rows(eval_query(&rete, q).unwrap()).len(), 1);
+
+        // ON: default ∪ social ∪ profile, deduplicated — 3 distinct triples,
+        // not 4 (the duplicate collapses: RDF merge is a set union). The
+        // default graph's own triple is INCLUDED (unlike a bare FROM).
+        let got = rows(eval_query_with(&rete, q, union).unwrap());
+        assert_eq!(got.len(), 3);
+        assert!(got.iter().any(|b| b["s"] == "<http://ex/Root>"));
+
+        // ON: a cross-graph join (default→social→profile) now succeeds.
+        let qj = "PREFIX ex: <http://ex/> SELECT ?z WHERE { \
+                  ex:Root ex:knows ?x . ?x ex:knows ?y . ?y ex:knows ?z }";
+        let sj = rows(eval_query_with(&rete, qj, union).unwrap());
+        assert_eq!(sj.len(), 1);
+        assert_eq!(sj[0]["z"], "<http://ex/Carol>");
+
+        // ON: GRAPH ?g still enumerates the named graphs exactly as before.
+        let qg = "PREFIX ex: <http://ex/> SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ex:knows ?o } }";
+        assert_eq!(rows(eval_query_with(&rete, qg, union).unwrap()).len(), 2);
+
+        // ON + explicit FROM: the query's own dataset clause wins — FROM social
+        // alone excludes both the default graph and profile.
+        let qf = "PREFIX ex: <http://ex/> SELECT ?s ?o FROM ex:social WHERE { ?s ex:knows ?o }";
+        let sf = rows(eval_query_with(&rete, qf, union).unwrap());
+        assert_eq!(sf.len(), 1);
+        assert_eq!(sf[0]["s"], "<http://ex/Alice>");
+
+        // ON, empty-default single-named-graph shape (the zero-copy borrow arm):
+        // build a second dataset with an empty default and ONE named graph.
+        let mut db2 = DictionaryBuilder::new();
+        db2.observe(t[1].0, t[1].1, t[1].2);
+        let dict2 = db2.build();
+        let mut only = GraphIndexBuilder::new();
+        only.push(dict2.encode(t[1].0, t[1].1, t[1].2).unwrap());
+        let named2 = vec![("<http://ex/only>".to_string(), only.build())];
+        let bytes2 = write_dataset(
+            &dict2,
+            &GraphIndexBuilder::new().build(),
+            &named2,
+            true,
+            &[],
+            0,
+        );
+        let rete2 = Rete::open(&bytes2).unwrap();
+        assert_eq!(rows(eval_query(&rete2, q).unwrap()).len(), 0); // standard: 0
+        assert_eq!(rows(eval_query_with(&rete2, q, union).unwrap()).len(), 1);
     }
 
     #[test]

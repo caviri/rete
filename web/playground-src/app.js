@@ -86,6 +86,12 @@
     // Named-graph count of the RESIDENT graph (from info() at load), for the
     // empty-default-graph explainer. null = unknown (nothing/remote loaded).
     namedGraphCount: null,
+    // Example queries read from the LOADED FILE's own Dataset Card (both card
+    // shapes: `queries` objects + `example_queries` strings), mapped onto the
+    // catalog-example shape and deduplicated against the curated catalog
+    // examples. {key, list} or null; the list supplements — never replaces —
+    // CATALOG.examples[key]. See refreshCardExamples().
+    cardExamples: null,
     // Federation: extra sources the SPARQL query also runs against. Each is
     // {id, kind:"remote"|"memory"|"endpoint", label, url?, key?, endpoint?}.
     // Empty = single-source (today's behavior). A resident Graph per in-memory
@@ -199,8 +205,10 @@
         // ASYNC: drive the RAW export (reteQueryRemote) — driving the generated
         // wrapper re-marshals/unpacks on every suspend pass and corrupts the
         // asyncify session on big files (the null-function family).
-        return (ASYNC ? wasm_bindgen.reteQueryRemote(g, m.query, m.format, !!m.reason)
-                      : Promise.resolve(m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format))).then(function (resStr) {
+        // m.union = the opt-in union-default-graph toggle → query_opts.
+        return (ASYNC ? wasm_bindgen.reteQueryRemote(g, m.query, m.format, !!m.reason, !!m.union)
+                      : Promise.resolve(m.union ? g.query_opts(m.query, m.format, !!m.reason, true)
+                                                : (m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format)))).then(function (resStr) {
           var res = JSON.parse(resStr);
           var after = JSON.parse(g.stats());
           // Per-query physical traffic is the delta (a cache hit adds ~0); carry
@@ -586,13 +594,13 @@ self.onmessage = function (e) {
     return remoteReady;
   }
 
-  function remoteSparql(url, query, fmt, reason) {
+  function remoteSparql(url, query, fmt, reason, union) {
     return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
       const id = ++remoteSeq;
       state.remoteQueryStart = Date.now();
       state.liveRemoteFetch = { requests: 0, bytes: 0, at: Date.now() };
       remotePending.set(id, { resolve, reject });
-      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table", reason: !!reason });
+      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table", reason: !!reason, union: !!union });
     }));
   }
 
@@ -1309,6 +1317,9 @@ self.onmessage = function (e) {
     // federation partners) skipped resetFed entirely — either way the self
     // chip's name and lazy/in-memory badge must describe what just loaded.
     renderFedBar();
+    // The resident graph's own Dataset Card may carry example queries — offer
+    // them in the examples panel (synchronous: the card is already in memory).
+    refreshCardExamples();
   }
 
   function loadDataset(key) {
@@ -1336,7 +1347,13 @@ self.onmessage = function (e) {
       const res = await fetch(url);
       if (!res.ok) throw new Error(res.status + " " + res.statusText);
       const buf = new Uint8Array(await res.arrayBuffer());
+      // Same off-catalog key derivation as enterRemote/loadFromFile: the
+      // strict per-dataset surfaces must describe THIS download, not whatever
+      // catalog key was open before.
+      state.dataset = remoteFileName(url).replace(/\.rete$/i, "") || "remote";
+      state.selectedExample = -1;
       loadBytes(buf, "url");
+      renderExamples();
       closeSource();
     } catch (e) {
       showError("out", "URL load failed: " + e.message);
@@ -1414,12 +1431,18 @@ self.onmessage = function (e) {
     setMode("sparql");
     // Load the dataset's first example query automatically (parity with bundled).
     if (examplesForDataset().length) selectExample(0);
-    const lib = examplesForDataset().length
+    const hasLib = examplesForDataset().length > 0;
+    const lib = hasLib
       ? "Pick an example from the library, or write your own."
       : "Write a SPARQL query (a bound subject keeps the fetch small). No example library for a custom URL.";
-    $("out").innerHTML = `<div class="note">Connected to a remote .rete, queried lazily — ` +
+    // data-no-library marks the "no examples" claim so refreshCardExamples can
+    // retract it if the file's own Dataset Card turns out to ship queries.
+    $("out").innerHTML = `<div class="note"${hasLib ? "" : ` data-no-library="1"`}>Connected to a remote .rete, queried lazily — ` +
       `each query fetches only the dictionary chunks and index tiles it touches (the first also ` +
       `pulls the header and directories). ${lib} Other tabs need a graph loaded into memory.</div>`;
+    // The file's own Dataset Card may carry example queries (the only example
+    // source an off-catalog remote has) — read it async, never blocking connect.
+    refreshCardExamples();
   }
 
   // Accept an address the way an address bar does. A pasted link very often
@@ -1451,11 +1474,29 @@ self.onmessage = function (e) {
   // own Dataset Card carries a title, upgrade to it when it arrives (the same
   // two small range reads the 🏷 Card button does, via the worker). Guarded so
   // a slow card can never relabel a dataset the user has since switched to.
+  // ONE worker card read per URL, shared by every surface that wants the card
+  // at connect time (the label upgrade + the card-examples refresh). Two
+  // concurrent card_url calls each fetch their own ranges — the block cache
+  // only helps sequential readers — and the extra physical requests showed up
+  // as a regression in the card-modal gate check's range budget.
+  const remoteCardTextCache = new Map(); // url -> Promise<string|null>
+  function remoteCardText(url) {
+    if (!remoteCardTextCache.has(url)) {
+      remoteCardTextCache.set(url, remoteCall("card_url", url)
+        .then((r) => (r && r.json) || null)
+        .catch(() => {
+          remoteCardTextCache.delete(url); // a transient failure may retry later
+          return null;
+        }));
+    }
+    return remoteCardTextCache.get(url);
+  }
+
   async function upgradeRemoteLabelFromCard(url) {
     let card = null;
     try {
-      const r = await remoteCall("card_url", url);
-      card = r && r.json ? JSON.parse(r.json) : null;
+      const text = await remoteCardText(url);
+      card = text ? JSON.parse(text) : null;
     } catch (_e) {
       return; // no card, or the worker couldn't start — the filename stands
     }
@@ -2152,15 +2193,199 @@ self.onmessage = function (e) {
     if (!file) return;
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
+      // An off-catalog key derived from the FILE, exactly as enterRemote does
+      // for a pasted URL: every strict per-dataset lookup (examples, SHACL,
+      // reach, provenance) must resolve to THIS file — before this, the key of
+      // whatever was open previously leaked its example library over a local
+      // file, and the card-example dedupe would have compared against it too.
+      state.dataset = String(file.name || "local").replace(/\.rete$/i, "") || "local";
+      state.selectedExample = -1;
       loadBytes(buf, "file");
+      renderExamples();
       setStatus(`${file.name} | ${formatBytes(buf.byteLength)} | custom file`);
     } catch (e) {
       showError("out", "File load failed: " + e.message);
     }
   }
 
+  // The examples panel is catalog-driven (CATALOG.examples[key]) — which used
+  // to mean an off-catalog file showed NO examples even when its own Dataset
+  // Card ships some. Now the loaded file's card queries supplement the curated
+  // catalog list: catalog examples first (hand-written, generally better), then
+  // whichever card queries are genuinely different, labelled as the card's.
+  // They stay listed even when they return 0 rows — a query that returns
+  // nothing is still a starting point someone can edit.
   function examplesForDataset() {
-    return CATALOG.examples[state.dataset] || [];
+    const curated = CATALOG.examples[state.dataset] || [];
+    const card = state.cardExamples;
+    if (!card || card.key !== state.dataset || !card.list.length) return curated;
+    return curated.concat(card.list);
+  }
+
+  // ── the file's own card queries as examples ────────────────────────────────
+  // "Different" is a judgement call, not a string compare: the same question is
+  // routinely written with different prefixes, whitespace, variable names and
+  // LIMITs. The fingerprint normalizes exactly those — comments stripped,
+  // PREFIX/BASE declarations folded in (prefixed names expand to full IRIs, so
+  // `hf:x` and a different label for the same namespace compare equal),
+  // variables renamed positionally, LIMIT/OFFSET numbers blanked, case and
+  // whitespace normalized outside strings/IRIs. Anything else — a different
+  // pattern, filter, aggregate or graph — keeps the query, on the principle
+  // that showing a near-duplicate beats hiding something genuinely different.
+  function sparqlFingerprint(q) {
+    const src = String(q || "");
+    // One scanner pass: strip comments, protect IRIs and string literals.
+    // tokens: {t:"code"|"iri"|"str", v}
+    const toks = [];
+    let i = 0, code = "";
+    const pushCode = () => { if (code) { toks.push({ t: "code", v: code }); code = ""; } };
+    while (i < src.length) {
+      const c = src[i];
+      if (c === "#") { // comment to EOL (never inside <…> or quotes — handled below)
+        while (i < src.length && src[i] !== "\n") i++;
+        code += " ";
+        continue;
+      }
+      if (c === "<") { // IRI ref — runs to the closing >
+        const j = src.indexOf(">", i + 1);
+        if (j > i) { pushCode(); toks.push({ t: "iri", v: src.slice(i, j + 1) }); i = j + 1; continue; }
+      }
+      if (c === '"' || c === "'") { // string literal (long or short form)
+        const long3 = src.slice(i, i + 3);
+        const delim = (long3 === '"""' || long3 === "'''") ? long3 : c;
+        let j = i + delim.length;
+        while (j < src.length) {
+          if (src[j] === "\\") { j += 2; continue; }
+          if (src.startsWith(delim, j)) break;
+          j++;
+        }
+        pushCode(); toks.push({ t: "str", v: src.slice(i, j + delim.length) });
+        i = j + delim.length; continue;
+      }
+      code += c; i++;
+    }
+    pushCode();
+    // Collect PREFIX/BASE declarations (they may be anywhere per the grammar,
+    // but in practice lead the query): a `PREFIX pfx: <iri>` is a code token
+    // ending in "PREFIX pfx:" followed by an iri token.
+    const prefixes = {};
+    for (let k = 0; k + 1 < toks.length; k++) {
+      if (toks[k].t !== "code" || toks[k + 1].t !== "iri") continue;
+      const m = /(?:^|\s)PREFIX\s+([A-Za-z][\w-]*)?:\s*$/i.exec(toks[k].v);
+      if (m) {
+        prefixes[m[1] || ""] = toks[k + 1].v.slice(1, -1);
+        toks[k].v = toks[k].v.replace(/(?:^|\s)PREFIX\s+(?:[A-Za-z][\w-]*)?:\s*$/i, " ");
+        toks[k + 1].v = ""; // the declaration itself is not part of the shape
+      } else if (/(?:^|\s)BASE\s*$/i.test(toks[k].v)) {
+        toks[k].v = toks[k].v.replace(/(?:^|\s)BASE\s*$/i, " ");
+        toks[k + 1].v = "";
+      }
+    }
+    // Rebuild: expand prefixed names, canonicalize variables, blank
+    // LIMIT/OFFSET counts, uppercase the CODE (keyword case), collapse
+    // whitespace. IRIs and string literals keep their exact bytes — uppercasing
+    // them would merge queries about genuinely different resources/values, and
+    // the rule here is: hide only what is provably the same.
+    const varMap = new Map();
+    const canonVar = (name) => {
+      if (!varMap.has(name)) varMap.set(name, "?v" + varMap.size);
+      return varMap.get(name);
+    };
+    const protectedVals = [];
+    const protect = (v) => { protectedVals.push(v); return "\u0000" + (protectedVals.length - 1) + "\u0000"; };
+    let out = "";
+    for (const tk of toks) {
+      if (tk.t === "iri" || tk.t === "str") { if (tk.v) out += protect(tk.v); continue; }
+      let s = tk.v;
+      s = s.replace(/\b([A-Za-z][\w-]*):([A-Za-z_][\w-]*)?/g, (all, pfx, local) => {
+        const base = prefixes[pfx];
+        return base === undefined ? all : protect("<" + base + (local || "") + ">");
+      });
+      s = s.replace(/[?$]([A-Za-z_]\w*)/g, (_all, name) => canonVar(name));
+      s = s.replace(/\b(LIMIT|OFFSET)\s+\d+/gi, "$1 N");
+      out += s.toUpperCase();
+    }
+    out = out.replace(/\s+/g, " ").replace(/\s*([{}()\[\];,])\s*/g, "$1").replace(/\s+\./g, ".")
+      // A dot-terminated final triple equals its undotted form: `?o . }` = `?o }`.
+      .replace(/\.\}/g, "}").trim();
+    return out.replace(/\u0000(\d+)\u0000/g, (_all, n) => protectedVals[Number(n)]);
+  }
+
+  // Map ONE card onto the examples-panel shape. Two card shapes participate:
+  // `queries` (auto-derived objects with a title/question) and `example_queries`
+  // (plain curated SPARQL strings, no title — labelled by position rather than
+  // inventing a title that misrepresents them). Deduplicated against the
+  // curated catalog examples AND within the card itself.
+  function cardQueriesToExamples(card, curated) {
+    if (!card || typeof card !== "object") return [];
+    const seen = new Set((curated || []).map((ex) => sparqlFingerprint(ex.q)));
+    const list = [];
+    const add = (label, tip, q) => {
+      const fp = sparqlFingerprint(q);
+      if (!fp || seen.has(fp)) return;
+      seen.add(fp);
+      list.push({ family: "Card", label, tip, q, fromCard: true });
+    };
+    if (Array.isArray(card.queries)) {
+      card.queries.forEach((cq, i) => {
+        if (!cq || typeof cq.sparql !== "string" || !cq.sparql.trim()) return;
+        add(String(cq.title || cq.id || "Card query " + (i + 1)),
+          (cq.question ? String(cq.question) + " " : "") + "— shipped inside this file's Dataset Card." +
+          (cq.tier ? " (" + String(cq.tier) + ")" : ""),
+          cq.sparql);
+      });
+    }
+    if (Array.isArray(card.example_queries)) {
+      card.example_queries.forEach((qs, i) => {
+        if (typeof qs !== "string" || !qs.trim()) return;
+        add("Card query " + (i + 1),
+          "Curated SPARQL shipped inside this file's Dataset Card (it carries no title).", qs);
+      });
+    }
+    return list;
+  }
+
+  // Read the LOADED file's card and surface its queries in the examples panel.
+  // Resident graphs answer synchronously from memory; a remote file costs two
+  // small cached range reads through the worker. A generation counter guards
+  // the async path: switching datasets mid-read must never attach the old
+  // file's queries to the new key.
+  let cardExamplesGen = 0;
+  function refreshCardExamples() {
+    const gen = ++cardExamplesGen;
+    state.cardExamples = null;
+    const key = state.dataset;
+    const commit = (card) => {
+      if (gen !== cardExamplesGen || state.dataset !== key || !card) return;
+      const list = cardQueriesToExamples(card, CATALOG.examples[key] || []);
+      if (!list.length) return;
+      state.cardExamples = { key, list };
+      renderExamples();
+      // The connect note may have claimed "No example library for a custom
+      // URL" before the card was read — replace that claim now it is wrong.
+      const stale = document.querySelector("#out .note[data-no-library]");
+      if (stale) {
+        stale.removeAttribute("data-no-library");
+        stale.innerHTML = `Connected to a remote .rete, queried lazily — each query fetches only the ` +
+          `dictionary chunks and index tiles it touches. This file's own Dataset Card ships ` +
+          `<b>${list.length}</b> example quer${list.length === 1 ? "y" : "ies"} — pick one from the ` +
+          `library, or write your own. Other tabs need a graph loaded into memory.`;
+      }
+    };
+    if (state.activeSource === "remote" && state.remote) {
+      remoteCardText(state.remote.url).then((text) => {
+        let card = null;
+        try { card = text ? JSON.parse(text) : null; } catch (_e) { /* not JSON — nothing to offer */ }
+        commit(card);
+      }).catch(() => { /* cardless file or worker hiccup: the panel just stays catalog-only */ });
+      return;
+    }
+    if (state.graph) {
+      try {
+        const text = state.graph.card();
+        commit(text ? JSON.parse(text) : null);
+      } catch (_e) { /* cardless or unparsable — nothing to offer */ }
+    }
   }
 
   function filteredExamples() {
@@ -2175,7 +2400,10 @@ self.onmessage = function (e) {
   }
 
   function renderFamilyFilters() {
-    const families = ["All"].concat(CATALOG.families);
+    // "Card" only exists as a family when the loaded file's card contributed
+    // examples — a filter chip for an empty family would be noise.
+    const hasCard = examplesForDataset().some((ex) => ex.fromCard);
+    const families = ["All"].concat(CATALOG.families).concat(hasCard ? ["Card"] : []);
     $("familyFilters").innerHTML = families.map((family) =>
       `<button type="button" data-family="${esc(family)}" class="${family === state.family ? "active" : ""}">${esc(family)}</button>`
     ).join("");
@@ -2267,7 +2495,18 @@ self.onmessage = function (e) {
       $("examples").innerHTML = `<p class="microcopy">No matching examples for this dataset.</p>`;
       return;
     }
-    $("examples").innerHTML = items.map(({ ex, index }) =>
+    // The file's own card queries render in the SAME list shape, but never as
+    // an undifferentiated pile: a labelled separator opens the card block, and
+    // each row carries the "Card" family. Provenance stays readable — curated
+    // catalog examples first, the file's generated/curated card queries after.
+    const firstCardAt = items.findIndex(({ ex }) => ex.fromCard);
+    const cardCount = items.filter(({ ex }) => ex.fromCard).length;
+    $("examples").innerHTML = items.map(({ ex, index }, i) =>
+      (i === firstCardAt
+        ? `<div class="ex-card-sep">🏷 From this file's Dataset Card <span class="microcopy">— ${cardCount} ` +
+          `quer${cardCount === 1 ? "y" : "ies"} the .rete carries in its own metadata, written at build time. ` +
+          `Shown when they differ from the curated library; kept even when they return 0 rows (still a starting point to edit).</span></div>`
+        : "") +
       `<article class="example-card" data-family="${esc(ex.family)}">` +
         `<div class="ex-head">` +
           `<button type="button" class="example-button ${index === state.selectedExample ? "active" : ""}" data-example="${index}">` +
@@ -2284,12 +2523,18 @@ self.onmessage = function (e) {
     });
     // Copy a share link for any example: the generated preview page when the
     // dataset has one (so the link unfurls with the question and its answer —
-    // see shareableUrl), else the short index-based deep link.
+    // see shareableUrl), else the short index-based deep link. A CARD example
+    // has neither a preview page nor a stable index (the card loads async and
+    // its position depends on dedupe against the catalog), so its link carries
+    // the query text itself — and the file's address when one is open.
     $$("#examples [data-copy]").forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
         const i = Number(btn.dataset.copy);
-        const url = hasSharePage(state.dataset)
+        const exi = examplesForDataset()[i];
+        const url = exi && exi.fromCard
+          ? cardExampleLink(exi)
+          : hasSharePage(state.dataset)
           ? sharePageUrl(`q/${state.dataset}-${i}.html`)
           : location.origin + location.pathname + "#dataset=" +
             encodeURIComponent(state.dataset) + "&ex=" + i;
@@ -2301,6 +2546,19 @@ self.onmessage = function (e) {
         });
       };
     });
+  }
+
+  // A shareable deep link for a card-carried example: the full query text (no
+  // stable index exists — see the copy handler), plus #url= when an off-catalog
+  // remote is open so the link reopens the same file.
+  function cardExampleLink(ex) {
+    const params = new URLSearchParams();
+    const offCatalog = state.activeSource === "remote" && state.remote &&
+      state.remote.url !== remoteUrlFor(state.dataset);
+    if (offCatalog) params.set("url", state.remote.url);
+    else params.set("dataset", state.dataset);
+    params.set("q", ex.q);
+    return location.origin + location.pathname + "#" + params.toString();
   }
 
   // Clear the previous query's results so a freshly-picked example doesn't show
@@ -4389,7 +4647,10 @@ self.onmessage = function (e) {
     const sameStrategy = !c ? false : c.remote ? true : c.strategy === $("strategy").value;
     const reusable = !!c && c.rowShaped && ROW_VIEWS.has(fmt) &&
       c.q === $("q").value.trim() && c.remote === !!state.remote &&
-      c.dataset === state.dataset && sameStrategy;
+      c.dataset === state.dataset && sameStrategy &&
+      // ⛁ All graphs changes the DATASET a pattern matches — a result computed
+      // under the other setting must re-run, never re-render.
+      !!c.union === unionGraphsOn();
     if (!reusable) return runQuery();
     // Remote Graph has no local bytes to expand a CONSTRUCT, so the run path
     // renders it as a table — match that when re-rendering from cache.
@@ -7136,7 +7397,7 @@ self.onmessage = function (e) {
       `<table><tbody>${rows}</tbody></table></div>`;
     $("out").innerHTML = banner + $("out").innerHTML;
     state.lastResult = { res: merged, rowShaped: true, q, strategy: "federated", remote: false, dataset: state.dataset, federated: true, fedBannerHtml: banner };
-    $("qmeta").textContent = `${summary} · cross-source join · ${dt.toFixed(0)} ms`;
+    $("qmeta").textContent = `${summary} · cross-source join · ${dt.toFixed(0)} ms${unionGraphsOn() ? " · ⛁ All graphs ignored (federated runs use standard semantics)" : ""}`;
     updateResultVisibility();
   }
 
@@ -7206,7 +7467,7 @@ self.onmessage = function (e) {
       const totalBytes = oks.reduce((a, s) => a + (s.r.bytes || 0), 0);
       state.lastResult = { res: merged, rowShaped: true, q, strategy: "federated",
         remote: false, dataset: state.dataset, federated: true, fedBannerHtml: banner };
-      $("qmeta").textContent = `${summary} · federated ${sources.length} source(s) · ${formatBytes(totalBytes)} ranged · ${dt.toFixed(0)} ms`;
+      $("qmeta").textContent = `${summary} · federated ${sources.length} source(s) · ${formatBytes(totalBytes)} ranged · ${dt.toFixed(0)} ms${unionGraphsOn() ? " · ⛁ All graphs ignored (federated runs use standard semantics)" : ""}`;
       saveHistory({ query: q, format: fmt, strategy: "federated",
         dataset: "(federated ×" + sources.length + ")", ts: Date.now(), resultSummary: summary });
     });
@@ -7438,6 +7699,33 @@ self.onmessage = function (e) {
     }
   }
 
+  // --- ⛁ All graphs: the opt-in union-default-graph toggle -------------------
+  // SPARQL says a pattern outside GRAPH matches the DEFAULT graph, and the
+  // engine keeps exactly that (the W3C conformance suite runs on it). Virtuoso,
+  // GraphDB and Jena TDB all offer a "union default graph" mode as a store-level
+  // switch; this is the same capability with the same honesty contract as the
+  // 🧠 Reason toggle: OFF BY DEFAULT, visible while on, announced on every run
+  // it changes, and never applied implicitly. It reads as "how this file is
+  // mounted" — the dataset changes, the query text never does.
+  function unionGraphsOn() {
+    const u = $("unionGraphs");
+    return !!(u && u.checked);
+  }
+
+  function announceUnionGraphs(on) {
+    const el = $("out");
+    if (!el) return;
+    el.insertAdjacentHTML("afterbegin", on
+      ? `<div class="note union-note">⛁ <b>All graphs is ON</b> — from the next run, a pattern outside ` +
+        `<code>GRAPH</code> matches the <b>union of the default graph and every named graph</b> ` +
+        `(the mode Virtuoso, GraphDB and Jena TDB offer). This is <b>not</b> standard SPARQL — the standard ` +
+        `matches only the default graph, which is why this switch is off unless you turn it on. ` +
+        `A query with its own <code>FROM</code> keeps its <code>FROM</code>; <code>GRAPH ?g</code> still works; ` +
+        `federated runs and live endpoints are unaffected.</div>`
+      : `<div class="note union-note">⛁ <b>All graphs is OFF</b> — standard SPARQL semantics again: a pattern ` +
+        `outside <code>GRAPH</code> matches only the file's default graph.</div>`);
+  }
+
   // --- "this file has no default graph" explainer ---------------------------
   // A correct-but-baffling case a real user hit twice and read as a broken
   // page: SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o } answers 0 on a file whose
@@ -7497,6 +7785,9 @@ self.onmessage = function (e) {
 
   function maybeExplainEmptyDefaultGraph(q, res) {
     if (state.liveEndpoint || fedActive()) return;
+    // With ⛁ All graphs on, patterns DO match the named graphs — the "your
+    // default graph is empty" explanation would be flatly wrong here.
+    if (unionGraphsOn()) return;
     // A query that already names a graph (GRAPH/FROM) or leaves the file
     // (SERVICE) is out of scope; over-matching this guard only SUPPRESSES the
     // note, never mis-shows it.
@@ -7514,7 +7805,8 @@ self.onmessage = function (e) {
       el.insertAdjacentHTML("beforeend",
         `<div class="note empty-default-note">Not an error — <b>this file's default graph is empty</b>: ` +
         `all of its data lives in ${n}, and a SPARQL pattern only matches the default graph unless it ` +
-        `names one. Wrap the pattern in <code>GRAPH ?g { … }</code> to query the named graphs.</div>`);
+        `names one. Wrap the pattern in <code>GRAPH ?g { … }</code> to query the named graphs — or flip ` +
+        `<b>⛁ All graphs</b> (next to Run) to query them as one union, the way Virtuoso or GraphDB would.</div>`);
     }).catch(() => { /* the explainer must never break a rendered result */ });
   }
 
@@ -7525,8 +7817,17 @@ self.onmessage = function (e) {
     // OWL 2 QL reasoning: rewrite the query to include subClassOf/subPropertyOf/
     // domain/range entailments (opt-in toggle; applies to the default strategy).
     const reason = !!($("owlReason") && $("owlReason").checked);
+    // Union default graph (⛁ All graphs): mount the file as if its default
+    // graph were the union of the default graph and every named graph. Strictly
+    // opt-in — off, the engine keeps standard SPARQL semantics untouched.
+    const union = unionGraphsOn();
     // Live-endpoint mode overrides everything: one target, updates allowed.
-    if (state.liveEndpoint) { runLiveEndpoint(q, fmt); return; }
+    if (state.liveEndpoint) {
+      if (union) {
+        $("qmeta").textContent = "⛁ All graphs applies to .rete files only — this live endpoint decides its own dataset.";
+      }
+      runLiveEndpoint(q, fmt); return;
+    }
     if (isUpdateText(q)) {
       return showError("out",
         "That's a SPARQL Update — the in-browser engine is read-only. Connect a live endpoint " +
@@ -7602,7 +7903,7 @@ self.onmessage = function (e) {
       // The syncReader dataset opt-out is applied in runQuery (it must also
       // cover the federated path); surface its note in this run's qmeta.
       if (state.readerNote) { readerNote = state.readerNote; state.readerNote = ""; }
-      const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason);
+      const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason, union);
       invokeRemote().catch((e) => {
         const msg = String((e && e.message) || e);
         // Asyncify can also trap on particular valid query shapes in desktop
@@ -7626,7 +7927,7 @@ self.onmessage = function (e) {
         const res = JSON.parse(out.json);
         // Row-shaped unless we fetched a serialization — cache it so an Output
         // switch re-renders rather than re-runs.
-        state.lastResult = { res, rowShaped: remoteFmt === "table", q, strategy: "remote", remote: true, dataset: state.dataset };
+        state.lastResult = { res, rowShaped: remoteFmt === "table", q, strategy: "remote", remote: true, dataset: state.dataset, union };
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
         const dt = performance.now() - t0;
@@ -7638,7 +7939,8 @@ self.onmessage = function (e) {
           : (r.sessionBytes != null ? ` · ${formatBytes(r.sessionBytes)} cached this session` : "");
         $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
           `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} fetched${cacheNote} · ${dt.toFixed(0)} ms` +
-          (readerNote ? ` · ${readerNote}` : "");
+          (readerNote ? ` · ${readerNote}` : "") +
+          (union ? " · ⛁ union default graph (non-standard)" : "");
         maybeExplainEmptyDefaultGraph(q, res);
         saveHistory({ query: q, format: fmt, strategy: "remote", dataset: state.dataset || "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
@@ -7708,11 +8010,20 @@ self.onmessage = function (e) {
 
     if (!state.bytes) return showError("out", "Load a graph first.");
     // Defer the (synchronous) engine call one frame so the spinner paints first.
-    setTimeout(() => runEmbeddedQuery(q, fmt, reason), 0);
+    setTimeout(() => runEmbeddedQuery(q, fmt, reason, union), 0);
   }
 
-  function runEmbeddedQuery(q, fmt, reason) {
-    const strategy = $("strategy").value;
+  function runEmbeddedQuery(q, fmt, reason, union) {
+    let strategy = $("strategy").value;
+    // The progressive summary and the community split both answer from
+    // default-graph structures — running them under the union toggle would
+    // silently answer with STANDARD semantics while the toggle claims union.
+    // Run the whole index instead, and say so in the result meta.
+    let unionStrategyNote = "";
+    if (union && strategy !== "whole") {
+      unionStrategyNote = ` | ⛁ All graphs runs on the whole index (the ${strategy} strategy answers from default-graph structures)`;
+      strategy = "whole";
+    }
     // graph / map / time / cards are renderings of SELECT bindings — ask the engine for table rows.
     const rowView = fmt === "graph" || fmt === "map" || fmt === "time" || fmt === "cards";
     const queryFmt = strategy === "progressive" || rowView ? "table" : fmt;
@@ -7742,7 +8053,8 @@ self.onmessage = function (e) {
         const roundText = $("round").value.trim();
         raw = state.graph.query_communities(q, roundText === "" ? undefined : Number(roundText));
       } else {
-        raw = reason ? state.graph.query_reasoned(q, queryFmt) : state.graph.query(q, queryFmt);
+        raw = union ? state.graph.query_opts(q, queryFmt, !!reason, true)
+                    : (reason ? state.graph.query_reasoned(q, queryFmt) : state.graph.query(q, queryFmt));
       }
       const res = JSON.parse(raw);
       const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
@@ -7750,10 +8062,11 @@ self.onmessage = function (e) {
       // the Output type re-renders this result instead of re-running the query.
       // Progressive is excluded — its summary answers re-run cheaply.
       if (queryFmt === "table" && strategy !== "progressive") {
-        state.lastResult = { res, rowShaped: true, q, strategy, remote: false, dataset: state.dataset };
+        state.lastResult = { res, rowShaped: true, q, strategy, remote: false, dataset: state.dataset, union: !!union };
       }
       const dt = performance.now() - t0;
-      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}`;
+      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}` +
+        (union ? " · ⛁ union default graph (non-standard)" : "") + unionStrategyNote;
       maybeExplainEmptyDefaultGraph(q, res);
       if (fellBack) {
         $("out").innerHTML =
@@ -9200,6 +9513,7 @@ self.onmessage = function (e) {
     push("async-reads (asyncify fetch variant)", state.remote ? !!state.asyncReadsOn : "n/a");
     push("range-cache", !!state.rangeCacheOn);
     try { push("reason (OWL QL)", !!($("owlReason") && $("owlReason").checked)); } catch (_e) { /* ignore */ }
+    try { push("union default graph (⛁ All graphs)", unionGraphsOn()); } catch (_e) { /* ignore */ }
     // How long the failing query ran, and what it had fetched by then — the live
     // progress counters survive a wasm trap that kills the worker mid-query.
     try {
@@ -9389,7 +9703,11 @@ self.onmessage = function (e) {
     // full query when it was edited or is ad-hoc.
     const exList = examplesForDataset();
     const exi = state.selectedExample;
-    if (exi != null && exi >= 0 && exList[exi] && (exList[exi].q || "").trim() === q) {
+    // A CARD example never shares by index: the card loads async and its
+    // position depends on dedupe, so #ex=N would open a different query (or
+    // none). Its full text goes in the link instead.
+    if (exi != null && exi >= 0 && exList[exi] && !exList[exi].fromCard &&
+        (exList[exi].q || "").trim() === q) {
       params.set("ex", String(exi));
     } else if (q) {
       params.set("q", q);
@@ -10049,6 +10367,9 @@ self.onmessage = function (e) {
     { const rh = $("reasonHelp"); if (rh) rh.onclick = () => $("reasonModal").classList.remove("hidden"); }
     { const rc = $("reasonModalClose"); if (rc) rc.onclick = () => $("reasonModal").classList.add("hidden"); }
     { const rm = $("reasonModal"); if (rm) rm.addEventListener("click", (e) => { if (e.target === rm) rm.classList.add("hidden"); }); }
+    // ⛁ All graphs — a semantics switch must announce itself the moment it
+    // flips, not only on the next run.
+    { const u = $("unionGraphs"); if (u) u.onchange = () => announceUnionGraphs(u.checked); }
     $("layoutCell").onchange = renderLayout;
     $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
