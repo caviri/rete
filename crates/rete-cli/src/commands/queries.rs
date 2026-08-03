@@ -8,6 +8,13 @@
 //! carries its own `PREFIX` block (the engine injects none) and is tagged with
 //! the cheapest [`Tier`] that can answer it.
 //!
+//! Bodies are **graph-scope aware** ([`GraphScope`]): a dataset whose statements
+//! live entirely in named graphs (`triple_count == 0`, `named_graph_count > 0`)
+//! gets `GRAPH ?g`-scoped bodies — a bare `{ ?s ?p ?o }` there can only ever
+//! return zero rows — and a dataset with data in **both** the default graph and
+//! named graphs gets `UNION`-scoped overview bodies so neither half is silently
+//! hidden.
+//!
 //! This is pure CLI/serde generation — no format change.
 
 use super::card::{DatasetCard, ExampleQuery, Tier};
@@ -73,7 +80,21 @@ struct Template {
     title: &'static str,
     dimension: &'static str,
     question: &'static str,
+    /// The default-graph body — used verbatim when the data lives in the
+    /// default graph, so classic (graph-free) cards are byte-identical to
+    /// before scope awareness existed.
     body: &'static str,
+    /// Body when **every** statement lives in a named graph and the default
+    /// graph is empty. On such a file the default-graph `body` can only return
+    /// zero rows, so a template without a named-scope body is **skipped**
+    /// (unless it is already `GRAPH`-native, i.e. requires [`Cap::NamedGraphs`]).
+    named_body: Option<&'static str>,
+    /// Body when **both** the default graph and named graphs hold data.
+    /// `None` falls back to `body`: sound — the profile that instantiated it
+    /// was derived from the (non-empty) default graph — but scoped to it, so
+    /// the whole-dataset templates (counts, histograms, hubs) provide a
+    /// `UNION`-scoped variant instead of silently hiding the named half.
+    mixed_body: Option<&'static str>,
     tier: Tier,
     requires: &'static [Cap],
 }
@@ -87,6 +108,10 @@ const TEMPLATES: &[Template] = &[
         dimension: "overview",
         question: "How big is this graph — how many triples?",
         body: "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }",
+        named_body: Some("SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }"),
+        mixed_body: Some(
+            "SELECT (COUNT(*) AS ?n) WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } }",
+        ),
         tier: Tier::Summary,
         requires: &[],
     },
@@ -96,6 +121,10 @@ const TEMPLATES: &[Template] = &[
         dimension: "overview",
         question: "Which predicates (relationships) appear in the data?",
         body: "SELECT DISTINCT ?p WHERE { ?s ?p ?o }",
+        named_body: Some("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }"),
+        mixed_body: Some(
+            "SELECT DISTINCT ?p WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } }",
+        ),
         tier: Tier::Summary,
         requires: &[],
     },
@@ -106,6 +135,10 @@ const TEMPLATES: &[Template] = &[
         question: "How many statements use each predicate?",
         // No ORDER BY — keeps it on the index-free summary fast path; sort client-side.
         body: "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p",
+        named_body: Some("SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?p"),
+        mixed_body: Some(
+            "SELECT ?p (COUNT(*) AS ?n) WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } } GROUP BY ?p",
+        ),
         tier: Tier::Summary,
         requires: &[],
     },
@@ -115,6 +148,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "overview",
         question: "Is the most common predicate present at all?",
         body: "ASK { ?s {{TOP_PRED}} ?o }",
+        named_body: Some("ASK { GRAPH ?g { ?s {{TOP_PRED}} ?o } }"),
+        mixed_body: None, // the profiled predicate lives in the default graph
         tier: Tier::Summary,
         requires: &[Cap::TopPred],
     },
@@ -125,6 +160,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "identity",
         question: "Give me one concrete entity of the most common type.",
         body: "SELECT ?s WHERE { ?s a {{TOP_CLASS}} } LIMIT 1",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TopClass],
     },
@@ -134,6 +171,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "labels",
         question: "What are the human-readable names of some entities?",
         body: "SELECT ?s ?label WHERE { ?s a {{TOP_CLASS}} ; {{LABEL_PRED}} ?label } LIMIT 50",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TopClass, Cap::LabelPred],
     },
@@ -144,6 +183,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "types",
         question: "How many entities of each class are there?",
         body: "SELECT ?c (COUNT(?s) AS ?n) WHERE { ?s a ?c } GROUP BY ?c ORDER BY DESC(?n) LIMIT 50",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TopClass],
     },
@@ -153,6 +194,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "types",
         question: "How many distinct entities carry a type?",
         body: "SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s a [] }",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TopClass],
     },
@@ -162,6 +205,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "types",
         question: "Which predicates describe the most common class?",
         body: "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s a {{TOP_CLASS}} ; ?p ?o } GROUP BY ?p ORDER BY DESC(?n)",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TopClass],
     },
@@ -172,6 +217,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "topology",
         question: "What is the class-to-class schema graph?",
         body: "SELECT ?sC ?p ?oC (COUNT(*) AS ?n) WHERE { ?s a ?sC ; ?p ?o OPTIONAL { ?o a ?oC } } GROUP BY ?sC ?p ?oC ORDER BY DESC(?n)",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TopClass],
     },
@@ -181,6 +228,12 @@ const TEMPLATES: &[Template] = &[
         dimension: "topology",
         question: "Which subjects make the most statements?",
         body: "SELECT ?s (COUNT(*) AS ?d) WHERE { ?s ?p ?o } GROUP BY ?s ORDER BY DESC(?d) LIMIT 25",
+        named_body: Some(
+            "SELECT ?s (COUNT(*) AS ?d) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?s ORDER BY DESC(?d) LIMIT 25",
+        ),
+        mixed_body: Some(
+            "SELECT ?s (COUNT(*) AS ?d) WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } } GROUP BY ?s ORDER BY DESC(?d) LIMIT 25",
+        ),
         tier: Tier::Index,
         requires: &[],
     },
@@ -190,6 +243,12 @@ const TEMPLATES: &[Template] = &[
         dimension: "topology",
         question: "Which resources are referenced most often?",
         body: "SELECT ?o (COUNT(*) AS ?d) WHERE { ?s ?p ?o FILTER(!isLiteral(?o)) } GROUP BY ?o ORDER BY DESC(?d) LIMIT 25",
+        named_body: Some(
+            "SELECT ?o (COUNT(*) AS ?d) WHERE { GRAPH ?g { ?s ?p ?o FILTER(!isLiteral(?o)) } } GROUP BY ?o ORDER BY DESC(?d) LIMIT 25",
+        ),
+        mixed_body: Some(
+            "SELECT ?o (COUNT(*) AS ?d) WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } FILTER(!isLiteral(?o)) } GROUP BY ?o ORDER BY DESC(?d) LIMIT 25",
+        ),
         tier: Tier::Index,
         requires: &[],
     },
@@ -199,6 +258,12 @@ const TEMPLATES: &[Template] = &[
         dimension: "topology",
         question: "Which IRIs are referenced as objects but never described?",
         body: "SELECT ?o WHERE { ?s ?p ?o FILTER(isIRI(?o)) FILTER NOT EXISTS { ?o ?p2 ?o2 } } LIMIT 100",
+        named_body: Some(
+            "SELECT ?o WHERE { GRAPH ?g { ?s ?p ?o FILTER(isIRI(?o)) } FILTER NOT EXISTS { GRAPH ?h { ?o ?p2 ?o2 } } } LIMIT 100",
+        ),
+        mixed_body: Some(
+            "SELECT ?o WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } FILTER(isIRI(?o)) FILTER NOT EXISTS { ?o ?p2 ?o2 } FILTER NOT EXISTS { GRAPH ?h { ?o ?p3 ?o3 } } } LIMIT 100",
+        ),
         tier: Tier::Index,
         requires: &[],
     },
@@ -208,6 +273,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "connectivity",
         question: "What can you reach from the busiest hub via the top predicate?",
         body: "SELECT ?y WHERE { {{HUB_IRI}} {{TOP_PRED}}+ ?y } LIMIT 100",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::HubIri, Cap::TopPred],
     },
@@ -218,6 +285,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "connectivity",
         question: "How complete is labelling on the most common class?",
         body: "SELECT (COUNT(?s) AS ?total) (COUNT(?l) AS ?have) WHERE { ?s a {{TOP_CLASS}} OPTIONAL { ?s {{LABEL_PRED}} ?l } }",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TopClass, Cap::LabelPred],
     },
@@ -228,6 +297,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "links",
         question: "Which entity-alignment predicates are used, and how often?",
         body: "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o VALUES ?p { owl:sameAs skos:exactMatch rdfs:seeAlso } } GROUP BY ?p",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::Link],
     },
@@ -237,6 +308,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "links",
         question: "Which predicates point to IRIs outside this dataset?",
         body: "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o FILTER(isIRI(?o) && !STRSTARTS(STR(?o), \"{{BASE_IRI}}\")) } GROUP BY ?p ORDER BY DESC(?n) LIMIT 50",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::BaseIri],
     },
@@ -247,6 +320,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "literals",
         question: "Which literal datatypes are used, and how often?",
         body: "SELECT ?dt (COUNT(*) AS ?n) WHERE { ?s ?p ?o FILTER(isLiteral(?o)) } GROUP BY (DATATYPE(?o) AS ?dt) ORDER BY DESC(?n)",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::HasLiterals],
     },
@@ -256,6 +331,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "literals",
         question: "Which language tags appear on literals, and how often?",
         body: "SELECT ?l (COUNT(*) AS ?n) WHERE { ?s ?p ?o FILTER(isLiteral(?o)) } GROUP BY (LANG(?o) AS ?l) ORDER BY DESC(?n)",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::HasLiterals],
     },
@@ -266,6 +343,8 @@ const TEMPLATES: &[Template] = &[
         question: "What is the min / average / max of the top numeric property?",
         // BIND the cast first — aggregating over a function expression is rejected.
         body: "SELECT (MIN(?v) AS ?lo) (AVG(?v) AS ?avg) (MAX(?v) AS ?hi) WHERE { ?s {{NUM_PRED}} ?o BIND(xsd:double(?o) AS ?v) }",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::NumPred],
     },
@@ -276,6 +355,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "time",
         question: "What is the earliest and latest value of the top time predicate?",
         body: "SELECT (MIN(?d) AS ?from) (MAX(?d) AS ?to) WHERE { ?s {{TIME_PRED}} ?d }",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TimePred],
     },
@@ -285,6 +366,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "time",
         question: "How are entities distributed by year?",
         body: "SELECT ?yr (COUNT(*) AS ?n) WHERE { ?s {{TIME_PRED}} ?d BIND(SUBSTR(STR(?d),1,4) AS ?yr) } GROUP BY ?yr ORDER BY ?yr",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::TimePred],
     },
@@ -295,6 +378,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "space",
         question: "What is the bounding box of the wgs84 coordinates? (lon/lat)",
         body: "SELECT (MIN(?lon) AS ?minLon) (MIN(?lat) AS ?minLat) (MAX(?lon) AS ?maxLon) (MAX(?lat) AS ?maxLat) WHERE { ?s wgs:long ?lon ; wgs:lat ?lat }",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::GeoLatLong],
     },
@@ -304,6 +389,8 @@ const TEMPLATES: &[Template] = &[
         dimension: "space",
         question: "Which features fall inside the dataset's bounding box? (WKT is lon/lat)",
         body: "SELECT ?s WHERE { ?s geo:hasGeometry/geo:asWKT ?w FILTER(geof:sfWithin(?w, \"{{BBOX_POLYGON}}\"^^geo:wktLiteral)) } LIMIT 100",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::GeoWkt],
     },
@@ -314,19 +401,64 @@ const TEMPLATES: &[Template] = &[
         dimension: "graphs",
         question: "Which named graphs does the dataset contain?",
         body: "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::NamedGraphs],
     },
     Template {
         id: "ng-sizes",
-        title: "How big is each graph?",
+        title: "Which graphs are biggest?",
         dimension: "graphs",
-        question: "How many triples are in each named graph?",
-        body: "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY DESC(?n)",
+        question: "Which named graphs hold the most statements?",
+        // LIMIT keeps this a starter on a file with tens of thousands of graphs.
+        body: "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY DESC(?n) LIMIT 25",
+        named_body: None,
+        mixed_body: None,
+        tier: Tier::Index,
+        requires: &[Cap::NamedGraphs],
+    },
+    Template {
+        id: "ng-sample",
+        title: "A peek inside the graphs",
+        dimension: "graphs",
+        question: "What do statements in the named graphs look like?",
+        // `?g` in the projection on purpose: each sample row says where it lives.
+        body: "SELECT ?g ?s ?p ?o WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 10",
+        named_body: None,
+        mixed_body: None,
         tier: Tier::Index,
         requires: &[Cap::NamedGraphs],
     },
 ];
+
+/// Where the dataset's statements live, decided from the card's own counts —
+/// so the emitted queries address the graph(s) that actually hold data instead
+/// of scanning a default graph the card itself records as empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GraphScope {
+    /// No named graphs — bodies are used verbatim, so classic cards are
+    /// byte-identical to pre-scope-awareness builds.
+    DefaultOnly,
+    /// Every statement lives in a named graph and the default graph is empty
+    /// (`triple_count == 0 && named_graph_count > 0`) — a bare `{ ?s ?p ?o }`
+    /// can only ever return zero rows here.
+    NamedOnly,
+    /// Both the default graph and named graphs hold statements.
+    Mixed,
+}
+
+impl GraphScope {
+    fn of(card: &DatasetCard) -> Self {
+        if card.named_graph_count == 0 {
+            GraphScope::DefaultOnly
+        } else if card.triple_count == 0 {
+            GraphScope::NamedOnly
+        } else {
+            GraphScope::Mixed
+        }
+    }
+}
 
 /// The dataset's resolved vocabulary, drawn from the card profile.
 struct Caps {
@@ -429,16 +561,41 @@ fn bbox_polygon(bbox: Option<[f64; 4]>) -> String {
 }
 
 /// Generate the tiered starter-query library for a card: emit each template whose
-/// required capabilities are all present, with placeholders substituted and the
-/// shared PREFIX block prepended.
+/// required capabilities are all present, with the body picked for where the data
+/// lives ([`GraphScope`]), placeholders substituted, and the shared PREFIX block
+/// prepended.
 pub(crate) fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
     let caps = Caps::from_card(card);
+    let scope = GraphScope::of(card);
     let mut out = Vec::new();
     for t in TEMPLATES {
         if !t.requires.iter().all(|&c| caps.available(c)) {
             continue;
         }
-        let body = caps.substitute(t.body);
+        // Pick the body for where the data lives. A scope-variant body is
+        // always Index-tier: GRAPH/UNION patterns are not summary-shaped
+        // (`summary_query_shape` recognizes only a bare default-graph
+        // pattern), and the pyramid summary covers the default graph only.
+        let (body, tier) = match scope {
+            GraphScope::DefaultOnly => (t.body, t.tier),
+            GraphScope::NamedOnly => match t.named_body {
+                Some(b) => (b, Tier::Index),
+                // GRAPH-native templates (the ng-* family) already address the
+                // named graphs; any other default-graph body would be a
+                // guaranteed-zero-rows query on a file whose default graph the
+                // card itself records as empty — skip it.
+                None if t.requires.contains(&Cap::NamedGraphs) => (t.body, t.tier),
+                None => continue,
+            },
+            GraphScope::Mixed => match t.mixed_body {
+                Some(b) => (b, Tier::Index),
+                // The default-graph body is sound here — the profile that
+                // instantiated it was derived from the (non-empty) default
+                // graph — and the ng-* family surfaces the named half.
+                None => (t.body, t.tier),
+            },
+        };
+        let body = caps.substitute(body);
         debug_assert!(
             !body.contains("{{"),
             "template {} left an unsubstituted placeholder",
@@ -450,7 +607,7 @@ pub(crate) fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
             dimension: t.dimension.to_string(),
             question: t.question.to_string(),
             sparql: format!("{PREFIXES}\n{body}"),
-            tier: t.tier,
+            tier,
             requires: t.requires.iter().map(|c| c.key().to_string()).collect(),
         });
     }
@@ -461,12 +618,51 @@ pub(crate) fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
 mod tests {
     use super::*;
     use crate::commands::card::{derive_card, CardInput};
-    use rete_core::{eval_query, ingest, summary_query_shape, Rete};
+    use rete_core::{eval_query, ingest, summary_query_shape, QueryOutput, Rete};
 
     const TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 
     fn q(s: &str, p: &str, o: &str) -> (String, String, String, Option<String>) {
         (s.into(), p.into(), o.into(), None)
+    }
+
+    /// The property that would have caught the named-graph-only card bug:
+    /// every query the card ships **returns a non-empty result** when run
+    /// against the very graph it was generated for.
+    fn assert_every_query_returns_rows(card: &DatasetCard, rete: &Rete) {
+        assert!(!card.queries.is_empty(), "card generated no queries at all");
+        for eq in &card.queries {
+            match eval_query(rete, &eq.sparql) {
+                Ok(QueryOutput::Select(_, rows)) => {
+                    assert!(!rows.is_empty(), "{}: returned zero rows", eq.id)
+                }
+                Ok(QueryOutput::Ask(b)) => assert!(b, "{}: ASK returned false", eq.id),
+                Ok(QueryOutput::Construct(ts)) => {
+                    assert!(!ts.is_empty(), "{}: constructed nothing", eq.id)
+                }
+                // `QueryOutput` is non-exhaustive; the library only emits the
+                // forms above.
+                Ok(other) => panic!("{}: unexpected result form: {other:?}", eq.id),
+                Err(e) => panic!("{}: failed to run: {e:?}", eq.id),
+            }
+        }
+    }
+
+    /// The single COUNT value of an aggregate query's one-row result.
+    fn count_value(rete: &Rete, sparql: &str, var: &str) -> u64 {
+        match eval_query(rete, sparql).unwrap() {
+            QueryOutput::Select(_, rows) => {
+                assert_eq!(rows.len(), 1, "expected one aggregate row");
+                let lit = rows[0].get(var).expect("aggregate variable bound");
+                lit.trim_start_matches('"')
+                    .split('"')
+                    .next()
+                    .unwrap()
+                    .parse()
+                    .expect("count literal parses")
+            }
+            other => panic!("expected a SELECT result, got {other:?}"),
+        }
     }
 
     /// A fixture exercising every signal so (almost) every template emits.
@@ -582,6 +778,140 @@ mod tests {
         }
     }
 
+    /// Every statement in a named graph, the default graph empty — the shape
+    /// (e.g. nkod.rete) whose cards used to ship six guaranteed-zero-rows
+    /// queries. Includes an IRI that is referenced but never described, so
+    /// `top-dangling` has rows to find.
+    fn named_only_quads() -> Vec<(String, String, String, Option<String>)> {
+        let mut v = Vec::new();
+        for gi in 0..3 {
+            let g = format!("<http://ex/graph/{gi}>");
+            for i in 0..4 {
+                let s = format!("<http://ex/item/{gi}-{i}>");
+                v.push((
+                    s.clone(),
+                    TYPE.to_string(),
+                    "<http://ex/Item>".to_string(),
+                    Some(g.clone()),
+                ));
+                v.push((
+                    s.clone(),
+                    "<http://ex/rel>".to_string(),
+                    format!("<http://ex/item/{gi}-{}>", (i + 1) % 4),
+                    Some(g.clone()),
+                ));
+                v.push((
+                    s,
+                    "<http://ex/ref>".to_string(),
+                    "<http://other/never-described>".to_string(),
+                    Some(g.clone()),
+                ));
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn named_graph_only_queries_are_scoped_and_return_rows() {
+        let quads = named_only_quads();
+        let total = quads.len() as u64;
+        let card = derive_card(&quads, 20, 3, CardInput::default());
+        // The precondition of the bug: the card itself knows the default graph
+        // is empty and the data lives in named graphs.
+        assert_eq!(card.triple_count, 0);
+        assert_eq!(card.named_graph_count, 3);
+
+        // No emitted query may scan only the (empty) default graph.
+        for eq in &card.queries {
+            assert!(
+                eq.sparql.contains("GRAPH"),
+                "{}: default-graph-only query on a named-graph-only file:\n{}",
+                eq.id,
+                eq.sparql
+            );
+            // The pyramid summary covers the default graph only, so no
+            // GRAPH-scoped query may claim the Summary tier.
+            assert_ne!(eq.tier, Tier::Summary, "{}: untruthful Summary tier", eq.id);
+        }
+
+        let (bytes, _) =
+            ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| Vec::new());
+        let rete = Rete::open(&bytes).unwrap();
+        assert_every_query_returns_rows(&card, &rete);
+
+        // The headline count now reflects the data, not the empty default graph.
+        let ov = card.queries.iter().find(|q| q.id == "ov-triples").unwrap();
+        assert_eq!(count_value(&rete, &ov.sparql, "n"), total);
+    }
+
+    #[test]
+    fn mixed_graph_queries_cover_both_sides_and_return_rows() {
+        // Data in BOTH the default graph and a named graph.
+        let mut quads = Vec::new();
+        let label = "<http://www.w3.org/2000/01/rdf-schema#label>";
+        for i in 0..4 {
+            let s = format!("<http://ex/doc/{i}>");
+            quads.push(q(&s, TYPE, "<http://ex/Doc>"));
+            quads.push(q(&s, label, &format!("\"Doc {i}\"@en")));
+            quads.push(q(
+                &s,
+                "<http://ex/rel>",
+                &format!("<http://ex/doc/{}>", (i + 1) % 4),
+            ));
+            quads.push(q(&s, "<http://ex/rel>", "<http://other/never-described>"));
+        }
+        let default_count = quads.len() as u64;
+        let g = "<http://ex/graph/annotations>".to_string();
+        for i in 0..5 {
+            quads.push((
+                format!("<http://ex/note/{i}>"),
+                "<http://ex/about>".to_string(),
+                format!("<http://ex/doc/{}>", i % 4),
+                Some(g.clone()),
+            ));
+        }
+        let total = quads.len() as u64;
+
+        let card = derive_card(&quads, 30, 1, CardInput::default());
+        assert_eq!(card.triple_count, default_count);
+        assert_eq!(card.quad_count, total);
+        assert_eq!(card.named_graph_count, 1);
+
+        let (bytes, _) =
+            ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| Vec::new());
+        let rete = Rete::open(&bytes).unwrap();
+        assert_every_query_returns_rows(&card, &rete);
+
+        // The overview count covers BOTH sides — neither half silently hidden.
+        let ov = card.queries.iter().find(|q| q.id == "ov-triples").unwrap();
+        assert_eq!(count_value(&rete, &ov.sparql, "n"), total);
+        // And the named-graph family is present alongside the profile queries.
+        let ids: Vec<&str> = card.queries.iter().map(|q| q.id.as_str()).collect();
+        for id in ["ng-list", "ng-sizes", "ng-sample", "id-sample", "lb-labels"] {
+            assert!(ids.contains(&id), "{id} missing from a mixed-graph card");
+        }
+    }
+
+    #[test]
+    fn default_graph_bodies_are_unchanged() {
+        // A graph with no named graphs must get the classic bodies verbatim —
+        // scope awareness may not perturb existing default-graph cards.
+        let quads = rich_quads();
+        let card = derive_card(&quads, 50, 0, CardInput::default());
+        let ov = card.queries.iter().find(|q| q.id == "ov-triples").unwrap();
+        assert!(ov
+            .sparql
+            .ends_with("SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"));
+        assert_eq!(ov.tier, Tier::Summary);
+        for eq in &card.queries {
+            assert!(
+                !eq.sparql.contains("GRAPH ?g") && !eq.sparql.contains("UNION"),
+                "{}: graph-scoped body leaked into a default-graph card",
+                eq.id
+            );
+        }
+    }
+
     #[test]
     fn families_are_gated_by_signal() {
         // A bare graph: no labels, no time, no geometry, no links, no named graphs.
@@ -600,6 +930,7 @@ mod tests {
             "ti-histogram",
             "lb-labels",
             "ng-list",
+            "ng-sample",
         ] {
             assert!(!ids.contains(&absent), "{absent} should be gated out");
         }

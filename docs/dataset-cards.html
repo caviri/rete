@@ -427,7 +427,9 @@ build</strong> with the dataset's own vocabulary (<code>{{TOP_CLASS}}</code> →
 class, <code>{{LABEL_PRED}}</code> → the detected label predicate, and so on) and emitted
 <strong>only when the required signal is present</strong> — no geometry query without
 geometry, no time query without a time predicate — so the shipped set is
-guaranteed to return rows. Each query carries:</p>
+guaranteed to return rows. The bodies are also <strong>scoped to where the
+statements live</strong> (see <a href="#named-graph-datasets">Named-graph datasets</a> below).
+Each query carries:</p>
 <ul>
 <li>a full <strong>PREFIX block</strong> (the engine injects none, so every query is runnable as-is);</li>
 <li>a <code>dimension</code> (overview / identity / labels / types / topology / links / literals / time / space / graphs);</li>
@@ -436,6 +438,49 @@ guaranteed to return rows. Each query carries:</p>
 </ul>
 <p>A publisher's own <code>example_queries</code> (curated, <code>--card-file</code>) are kept alongside
 the generated library, unchanged.</p>
+<h2>Named-graph datasets</h2>
+<p>Some datasets (DCAT catalogs like NKOD, provenance stores, anything built from
+N-Quads) keep <strong>every statement in named graphs</strong> — the default graph is empty,
+and the card records exactly that (<code>triple_count: 0</code>, <code>named_graph_count &gt; 0</code>).
+On such a file a default-graph starter like
+<code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code> can only ever answer <code>0</code>.</p>
+<p>The generator therefore reads the card's own counts and picks each query's
+body for <strong>where the data actually lives</strong>:</p>
+<table><thead><tr><th>Shape</th><th>Detected by</th><th>Bodies</th></tr></thead><tbody>
+<tr><td>default-graph only</td><td><code>named_graph_count == 0</code></td><td>the classic bodies, byte-identical to earlier builds</td></tr>
+<tr><td>named-graph only</td><td><code>triple_count == 0</code> and <code>named_graph_count &gt; 0</code></td><td><code>GRAPH ?g { … }</code>-scoped; a template with no meaningful graph-scoped form is dropped rather than shipped as a guaranteed-zero-rows query</td></tr>
+<tr><td>mixed (both hold data)</td><td>both counts non-zero</td><td>overview and hub queries scan <code>{ … } UNION { GRAPH ?g { … } }</code> so neither half is silently hidden; profile-driven queries keep addressing the default graph their vocabulary came from, and the <code>graphs</code> family surfaces the named side</td></tr>
+</tbody></table>
+<p>A named-graph file also gets the <code>graphs</code> dimension: which graphs exist
+(<code>ng-list</code>), which are biggest (<code>ng-sizes</code>), and a sample of quads with <code>?g</code>
+projected so each row says where it lives (<code>ng-sample</code>). Graph-scoped bodies
+need the triple index, so they are tagged <code>index</code> — the <code>summary</code> fast path
+covers the default graph only.</p>
+<h3>Fixing the card on an existing named-graph <code>.rete</code></h3>
+<p>The library is generated <strong>at build time and baked into the file</strong>, so a
+<code>.rete</code> published with an older generator keeps its default-graph-scoped
+starter queries until its publisher re-embeds a card. That does <strong>not</strong> require
+going back to the source RDF — <code>rete repyramid</code> reads every statement (default
+graph and named graphs) straight out of the existing file and re-assembles it,
+deriving a fresh card on the way:</p>
+<pre><code class="language-sh"># One command, no source RDF needed — data is carried over losslessly:
+rete repyramid catalog.rete -o catalog-fixed.rete \
+  --card --title "National Open Data Catalog" --license "CC0-1.0"
+
+rete card catalog-fixed.rete --json   # the queries are now GRAPH-scoped
+</code></pre>
+<p>The equivalent round-trip through text works too (<code>nq</code> export is lossless,
+named graphs included), and is the place to add curated fields or your own
+<code>example_queries</code> via <code>--card-file</code>:</p>
+<pre><code class="language-sh">rete export catalog.rete --format nq &gt; catalog.nq
+rete build catalog.nq -o catalog-fixed.rete --card-file card.json
+</code></pre>
+<p>Either way the <strong>file is rewritten</strong> — the card is folded into the <code>blake3</code>
+content hash, so there is deliberately no in-place patch — and the fixed file
+replaces the published one. On a named-graph-only input, every query in the
+new card is <code>GRAPH</code>-scoped and returns rows; for example <code>ov-triples</code> becomes:</p>
+<pre><code class="language-sparql">SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }
+</code></pre>
 <h2>Back-compatibility</h2>
 <p>All enriched fields are additive with serde defaults, so a card written by an
 older <code>rete</code> (plain <code>example_queries</code>, none of the new fields) still

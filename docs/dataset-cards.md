@@ -109,7 +109,9 @@ build** with the dataset's own vocabulary (`{{TOP_CLASS}}` → the most populous
 class, `{{LABEL_PRED}}` → the detected label predicate, and so on) and emitted
 **only when the required signal is present** — no geometry query without
 geometry, no time query without a time predicate — so the shipped set is
-guaranteed to return rows. Each query carries:
+guaranteed to return rows. The bodies are also **scoped to where the
+statements live** (see [Named-graph datasets](#named-graph-datasets) below).
+Each query carries:
 
 - a full **PREFIX block** (the engine injects none, so every query is runnable as-is);
 - a `dimension` (overview / identity / labels / types / topology / links / literals / time / space / graphs);
@@ -118,6 +120,64 @@ guaranteed to return rows. Each query carries:
 
 A publisher's own `example_queries` (curated, `--card-file`) are kept alongside
 the generated library, unchanged.
+
+## Named-graph datasets
+
+Some datasets (DCAT catalogs like NKOD, provenance stores, anything built from
+N-Quads) keep **every statement in named graphs** — the default graph is empty,
+and the card records exactly that (`triple_count: 0`, `named_graph_count > 0`).
+On such a file a default-graph starter like
+`SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }` can only ever answer `0`.
+
+The generator therefore reads the card's own counts and picks each query's
+body for **where the data actually lives**:
+
+| Shape | Detected by | Bodies |
+|-------|-------------|--------|
+| default-graph only | `named_graph_count == 0` | the classic bodies, byte-identical to earlier builds |
+| named-graph only | `triple_count == 0` and `named_graph_count > 0` | `GRAPH ?g { … }`-scoped; a template with no meaningful graph-scoped form is dropped rather than shipped as a guaranteed-zero-rows query |
+| mixed (both hold data) | both counts non-zero | overview and hub queries scan `{ … } UNION { GRAPH ?g { … } }` so neither half is silently hidden; profile-driven queries keep addressing the default graph their vocabulary came from, and the `graphs` family surfaces the named side |
+
+A named-graph file also gets the `graphs` dimension: which graphs exist
+(`ng-list`), which are biggest (`ng-sizes`), and a sample of quads with `?g`
+projected so each row says where it lives (`ng-sample`). Graph-scoped bodies
+need the triple index, so they are tagged `index` — the `summary` fast path
+covers the default graph only.
+
+### Fixing the card on an existing named-graph `.rete`
+
+The library is generated **at build time and baked into the file**, so a
+`.rete` published with an older generator keeps its default-graph-scoped
+starter queries until its publisher re-embeds a card. That does **not** require
+going back to the source RDF — `rete repyramid` reads every statement (default
+graph and named graphs) straight out of the existing file and re-assembles it,
+deriving a fresh card on the way:
+
+```sh
+# One command, no source RDF needed — data is carried over losslessly:
+rete repyramid catalog.rete -o catalog-fixed.rete \
+  --card --title "National Open Data Catalog" --license "CC0-1.0"
+
+rete card catalog-fixed.rete --json   # the queries are now GRAPH-scoped
+```
+
+The equivalent round-trip through text works too (`nq` export is lossless,
+named graphs included), and is the place to add curated fields or your own
+`example_queries` via `--card-file`:
+
+```sh
+rete export catalog.rete --format nq > catalog.nq
+rete build catalog.nq -o catalog-fixed.rete --card-file card.json
+```
+
+Either way the **file is rewritten** — the card is folded into the `blake3`
+content hash, so there is deliberately no in-place patch — and the fixed file
+replaces the published one. On a named-graph-only input, every query in the
+new card is `GRAPH`-scoped and returns rows; for example `ov-triples` becomes:
+
+```sparql
+SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }
+```
 
 ## Back-compatibility
 
