@@ -1770,6 +1770,25 @@ const NAMED_GRAPH_RESIDENT_MAX: u64 = 1 << 20; // 1 MiB
 /// bytes per claimed slab; entry storage only materializes when touched).
 const NAMED_SLAB: usize = 1024;
 
+/// First read of the named-graph walk, and the floor its ramp resets to. One
+/// chunk covers a few dozen small-graph records, so a `LIMIT`ed `GRAPH ?g`
+/// pays exactly one small read — the targeted-query win this size protects.
+const NAMED_WALK_CHUNK: u64 = 64 * 1024;
+
+/// Ceiling of the walk's geometric read ramp — the read size an exhaustive
+/// walk converges to (and starts at, when the demand is known exhaustive).
+///
+/// Sized from measurement, not taste. Against the nkod reference file
+/// (67.9 MB, 31,974 named graphs, 65.4 MB section) the fixed 64 KiB walk cost
+/// 262 requests / ~16.5 s in Chromium where the old eager whole-section fetch
+/// cost ~8.5 s — i.e. ~31 ms of per-request overhead on ~8 s of transfer
+/// (~7.7 MB/s). At 8 MiB per read a chunk transfers in ~1 s, putting the
+/// request overhead near 3% of total time; halving the cap to 4 MiB doubles
+/// that overhead, doubling the cap to 16 MiB buys back under 2% while doubling
+/// both the walk buffer a wasm32 session must hold resident and the worst-case
+/// over-read past the point a query stops. 8 MiB is the knee.
+const NAMED_WALK_CHUNK_MAX: u64 = 8 * 1024 * 1024;
+
 /// One named graph, walked lazily out of the NAMED_GRAPHS section.
 #[derive(Default)]
 struct NamedEntry {
@@ -1796,8 +1815,24 @@ struct NamedWalk {
     /// `[buf_off, buf_off + buf.len())`. Entry-by-entry iteration (the
     /// `GRAPH ?g` path advances one entry per call) parses ~30 small-graph
     /// headers per 64 KiB chunk instead of re-reading a chunk per entry.
+    /// [`LazyNamedGraphs::open_graph`] also serves whole small containers out
+    /// of it, so a bulk chunk's ride-along payloads are never re-fetched.
     buf: Vec<u8>,
     buf_off: u64,
+    /// Current read size of the geometric ramp (`0` = not started; treated as
+    /// [`NAMED_WALK_CHUNK`]). Doubles on every buffer refill up to
+    /// [`NAMED_WALK_CHUNK_MAX`], so a walk that keeps going converges to bulk
+    /// reads after fetching at most as many bytes as it already used (the
+    /// doubling bound: wasted read-ahead ≤ useful bytes). Reset to the floor
+    /// whenever an oversized container is parsed — see `big_seen`.
+    chunk: u64,
+    /// A container larger than [`NAMED_GRAPH_RESIDENT_MAX`] has been parsed.
+    /// Such graphs open tile-lazily (their payload bytes are NOT wanted by the
+    /// walk), so ride-along prefetch stops paying off: the ramp resets and the
+    /// exhaustive-demand hint stops seeding full-size reads. Without this, a
+    /// header walk over a file of multi-MB containers would fetch the payloads
+    /// it exists to hop over.
+    big_seen: bool,
 }
 
 /// The NAMED_GRAPHS section opened lazily over a [`RangeReader`]: nothing is
@@ -1908,18 +1943,43 @@ impl LazyNamedGraphs {
         slab.get(i % NAMED_SLAB)
     }
 
+    /// The next walk read's length, advancing the geometric ramp: at least
+    /// `need` (a long IRI's header), at most the section remainder, and
+    /// otherwise the current ramp value — which doubles per refill up to
+    /// [`NAMED_WALK_CHUNK_MAX`]. The doubling keeps a stopping walk's wasted
+    /// read-ahead bounded by the bytes it already used, while a walk that
+    /// keeps going converges to bulk reads: the runtime safety net for
+    /// exhaustive-looking queries the demand analysis could not prove.
+    fn next_read_len(w: &mut NamedWalk, pos: u64, end: u64, need: u64) -> u64 {
+        let cur = w.chunk.max(NAMED_WALK_CHUNK);
+        w.chunk = (cur * 2).min(NAMED_WALK_CHUNK_MAX);
+        cur.max(need).min(end - pos)
+    }
+
     /// Walk entry headers forward until `entries[upto].meta` is set. Reads the
     /// section in chunks and hops over container payloads, so the walk fetches
     /// O(headers) — not O(section) — where containers are large; small
     /// containers ride along in the same chunk and cost nothing extra.
-    fn ensure_meta(&self, upto: usize) -> Option<()> {
+    ///
+    /// `exhaustive` is the demand hint from the query engine: the caller has
+    /// PROVEN it will visit and open every named graph (an unrestricted
+    /// `GRAPH ?g` under a consumer that drains the pipeline), so the walk
+    /// starts at full-size reads instead of ramping up to them — the whole
+    /// section arrives in `section/8 MiB` requests instead of hundreds. The
+    /// hint is per-call, never memoised: a later targeted query on the same
+    /// handle walks small again. It also defers to the layout: once an
+    /// oversized (tile-lazy) container is seen, ride-along bytes stop being
+    /// useful and the hint no longer seeds bulk reads.
+    fn ensure_meta(&self, upto: usize, exhaustive: bool) -> Option<()> {
         let target = self.entry(upto)?;
         if target.meta.get().is_some() {
             return Some(());
         }
         let end = self.section.offset.checked_add(self.section.len)?;
-        const CHUNK: u64 = 64 * 1024;
         let mut w = self.walk.lock().unwrap();
+        if exhaustive && !w.big_seen {
+            w.chunk = NAMED_WALK_CHUNK_MAX;
+        }
         while w.next <= upto {
             let pos = w.pos;
             if pos >= end {
@@ -1932,7 +1992,7 @@ impl LazyNamedGraphs {
             let have =
                 |b: &[u8], off: u64, need: u64| pos >= off && pos + need <= off + b.len() as u64;
             if !have(&w.buf, w.buf_off, 20.min(end - pos)) {
-                let len = CHUNK.min(end - pos);
+                let len = Self::next_read_len(&mut w, pos, end, 20.min(end - pos));
                 w.buf = match self.reader.read_at(pos, len) {
                     Ok(b) => b,
                     Err(_) => {
@@ -1953,7 +2013,7 @@ impl LazyNamedGraphs {
                 return None;
             }
             if !have(&w.buf, w.buf_off, header_need.min(end - pos)) {
-                let len = header_need.max(CHUNK).min(end - pos);
+                let len = Self::next_read_len(&mut w, pos, end, header_need);
                 w.buf = match self.reader.read_at(pos, len) {
                     Ok(b) => b,
                     Err(_) => {
@@ -1979,6 +2039,14 @@ impl LazyNamedGraphs {
                     return None;
                 }
             };
+            if clen > NAMED_GRAPH_RESIDENT_MAX {
+                // This graph opens tile-lazily: the walk exists to HOP its
+                // payload, so big read-ahead here is pure over-fetch. Drop the
+                // ramp back to the floor and stop the exhaustive hint from
+                // re-seeding it (headers stay cheap on payload-heavy files).
+                w.big_seen = true;
+                w.chunk = NAMED_WALK_CHUNK;
+            }
             let range = ByteRange {
                 offset: cstart,
                 len: clen,
@@ -1993,14 +2061,16 @@ impl LazyNamedGraphs {
     }
 
     /// The `i`-th graph's IRI — a header walk, never an index decode.
-    fn name_at(&self, i: usize) -> Option<&str> {
-        self.ensure_meta(i)?;
+    /// `exhaustive`: see [`ensure_meta`](Self::ensure_meta).
+    fn name_at(&self, i: usize, exhaustive: bool) -> Option<&str> {
+        self.ensure_meta(i, exhaustive)?;
         self.entry(i)?.meta.get().map(|(iri, _)| iri.as_str())
     }
 
     /// The `i`-th graph as `(iri, index)`, opening the index on first access.
-    fn graph_at(&self, i: usize) -> Option<(&str, &GraphIndex)> {
-        self.ensure_meta(i)?;
+    /// `exhaustive`: see [`ensure_meta`](Self::ensure_meta).
+    fn graph_at(&self, i: usize, exhaustive: bool) -> Option<(&str, &GraphIndex)> {
+        self.ensure_meta(i, exhaustive)?;
         let e = self.entry(i)?;
         let (iri, range) = e.meta.get()?;
         if e.index.get().is_none() {
@@ -2010,19 +2080,34 @@ impl LazyNamedGraphs {
         Some((iri.as_str(), e.index.get()?.as_ref()))
     }
 
+    /// A small container's bytes: out of the walk buffer when the last chunk
+    /// already carried them (bulk chunks always do — that is their point),
+    /// else one targeted range read. Never called for tile-lazy containers.
+    fn container_bytes(&self, range: ByteRange) -> Option<Vec<u8>> {
+        {
+            let w = self.walk.lock().unwrap();
+            let buf_end = w.buf_off + w.buf.len() as u64;
+            if range.offset >= w.buf_off && range.offset + range.len <= buf_end {
+                let a = (range.offset - w.buf_off) as usize;
+                return Some(w.buf[a..a + range.len as usize].to_vec());
+            }
+        }
+        match self.reader.read_at(range.offset, range.len) {
+            Ok(b) => Some(b),
+            Err(_) => {
+                self.fail();
+                None
+            }
+        }
+    }
+
     /// Open one graph's index container: small ones resident (one read),
     /// large ones as a remote-lazy tile index — the same machinery as the
     /// default graph, so a selective query over a huge named graph fetches
     /// only the tile directories plus the tiles it touches.
     fn open_graph(&self, range: ByteRange) -> Option<GraphIndex> {
         if range.len <= NAMED_GRAPH_RESIDENT_MAX {
-            let bytes = match self.reader.read_at(range.offset, range.len) {
-                Ok(b) => b,
-                Err(_) => {
-                    self.fail();
-                    return None;
-                }
-            };
+            let bytes = self.container_bytes(range)?;
             match decode_index_container(&bytes, self.codec) {
                 Ok(g) => Some(g),
                 Err(_) => {
@@ -2078,17 +2163,19 @@ impl NamedGraphsSlot {
         }
     }
 
-    fn name_at(&self, i: usize) -> Option<&str> {
+    /// `exhaustive` is the walk-demand hint (resident opens ignore it): see
+    /// [`LazyNamedGraphs::ensure_meta`].
+    fn name_at(&self, i: usize, exhaustive: bool) -> Option<&str> {
         match self {
             NamedGraphsSlot::Resident(v) => v.get(i).map(|(iri, _)| iri.as_str()),
-            NamedGraphsSlot::Lazy(l) => l.name_at(i),
+            NamedGraphsSlot::Lazy(l) => l.name_at(i, exhaustive),
         }
     }
 
-    fn graph_at(&self, i: usize) -> Option<(&str, &GraphIndex)> {
+    fn graph_at(&self, i: usize, exhaustive: bool) -> Option<(&str, &GraphIndex)> {
         match self {
             NamedGraphsSlot::Resident(v) => v.get(i).map(|(iri, g)| (iri.as_str(), g)),
-            NamedGraphsSlot::Lazy(l) => l.graph_at(i),
+            NamedGraphsSlot::Lazy(l) => l.graph_at(i, exhaustive),
         }
     }
 
@@ -2098,10 +2185,11 @@ impl NamedGraphsSlot {
             NamedGraphsSlot::Lazy(l) => {
                 // Walk headers only until the IRI matches; decode just that
                 // graph's index. An absent IRI costs a full header walk — the
-                // layout has no by-name directory.
+                // layout has no by-name directory. A point lookup is targeted
+                // demand: never hint the walk exhaustive.
                 for i in 0..l.count() {
-                    if l.name_at(i)? == iri {
-                        return l.graph_at(i).map(|(_, g)| g);
+                    if l.name_at(i, false)? == iri {
+                        return l.graph_at(i, false).map(|(_, g)| g);
                     }
                 }
                 None
@@ -2714,14 +2802,33 @@ impl Rete {
     /// The `i`-th named graph's IRI (stored order). On a lazy ranged open this
     /// walks entry HEADERS up to `i` — it never decodes a graph's index.
     pub fn named_graph_name_at(&self, i: usize) -> Option<&str> {
-        self.named_graphs.name_at(i)
+        self.named_graphs.name_at(i, false)
     }
 
     /// The `i`-th named graph as `(iri, index)`. On a lazy ranged open the
     /// index is fetched and decoded on first access and memoised; check
     /// [`index_incomplete`](Self::index_incomplete) after evaluating.
     pub fn named_graph_at(&self, i: usize) -> Option<(&str, &GraphIndex)> {
-        self.named_graphs.graph_at(i)
+        self.named_graphs.graph_at(i, false)
+    }
+
+    /// [`named_graph_name_at`](Self::named_graph_name_at) under a declared
+    /// demand: `exhaustive = true` tells a lazy walk the caller will visit
+    /// every graph, so it may read the section in bulk chunks. Purely a fetch
+    /// strategy — results are identical either way. Only the SPARQL evaluator
+    /// sets it, from shapes where full consumption is provable.
+    pub(crate) fn named_graph_name_at_demand(&self, i: usize, exhaustive: bool) -> Option<&str> {
+        self.named_graphs.name_at(i, exhaustive)
+    }
+
+    /// [`named_graph_at`](Self::named_graph_at) under a declared demand: see
+    /// [`named_graph_name_at_demand`](Self::named_graph_name_at_demand).
+    pub(crate) fn named_graph_at_demand(
+        &self,
+        i: usize,
+        exhaustive: bool,
+    ) -> Option<(&str, &GraphIndex)> {
+        self.named_graphs.graph_at(i, exhaustive)
     }
 
     /// IRIs of the named graphs in this dataset (the default graph is unnamed).
@@ -2730,7 +2837,7 @@ impl Rete {
     /// is all that's needed.
     pub fn graph_names(&self) -> Vec<&str> {
         (0..self.named_graphs.count())
-            .filter_map(|i| self.named_graphs.name_at(i))
+            .filter_map(|i| self.named_graphs.name_at(i, false))
             .collect()
     }
 
@@ -3187,7 +3294,9 @@ impl Rete {
             .map(|t| (t, None))
             .collect();
         for i in 0..self.named_graphs.count() {
-            let Some(iri) = self.named_graphs.name_at(i) else {
+            // A quad dump visits every graph by construction — exhaustive
+            // demand, so a lazy walk may read the section in bulk chunks.
+            let Some(iri) = self.named_graphs.name_at(i, true) else {
                 continue;
             };
             for triple in self.query_in_graph(Some(iri), s, p, o) {
