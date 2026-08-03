@@ -91,6 +91,7 @@ ENGINE_RE = re.compile(r'(?ms)^\[workspace\.package\].*?^version = "([^"]+)"')
 CORE_PIN_RE = re.compile(r'rete-core = \{ version = "=([^"]+)"')
 _CORE_PIN_FILES = [
     "crates/bench/Cargo.toml",
+    "crates/rete-graph/Cargo.toml",
     "crates/rete-cli/Cargo.toml",
     "crates/rete-wasm/Cargo.toml",
 ]

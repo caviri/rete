@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/rete-core",
+    "crates/rete-graph",
     "crates/rete-cli",
     "crates/rete-wasm",
     "crates/docgen",

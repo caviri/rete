@@ -1,0 +1,28 @@
+[package]
+name = "rete-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Cloud-native, range-queryable RDF graph files. The Rust library under the name `rete-graph` carries on PyPI and npm — a facade over `rete-core`."
+documentation = "https://docs.rs/rete-graph"
+readme = "README.md"
+keywords = ["rdf", "sparql", "graph", "database", "knowledge-graph"]
+categories = ["database", "data-structures", "parser-implementations"]
+publish = ["crates-io"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
+
+[dependencies]
+# Pinned exactly, like every other crate in this workspace: a published facade
+# must never resolve an engine it was not built against.
+rete-core = { version = "=0.3.2", path = "../rete-core" }
+
+[features]
+default = ["compression"]
+# Forwarded verbatim so `rete-graph` can be configured exactly like `rete-core`
+# — a facade that silently dropped a feature would be worse than no facade.
+compression = ["rete-core/compression"]
+parallel = ["rete-core/parallel"]
+wasm-js = ["rete-core/wasm-js"]
