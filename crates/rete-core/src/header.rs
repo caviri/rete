@@ -339,6 +339,42 @@ impl Header {
         self.flags & FLAG_HAS_QUADS != 0
     }
 
+    /// The total file length implied by this header alone: the writer lays the
+    /// sections out back-to-back after the 1 KiB header and ends the file with
+    /// the 4-byte `RETE` footer, so the furthest `offset + length` in the
+    /// section directory plus 4 **is** the file length.
+    ///
+    /// This is the one length signal a *remote* reader can always trust: an
+    /// HTTP host may advertise the size of a compressed representation in
+    /// `Content-Length` (GitHub Pages gzips — a 71 MB file HEADs as 58 MB)
+    /// while serving ranges over the identity bytes, and may hide
+    /// `Content-Range` from cross-origin JS by omitting
+    /// `Access-Control-Expose-Headers`. The header travels *in band* — in the
+    /// first 1 KiB range read — so it cannot be skewed by transport encoding.
+    ///
+    /// `None` if any directory entry overflows `u64` (a crafted or corrupt
+    /// header must yield "unknown", never a panic or a wrapped length — the
+    /// weekly fuzz caught `verify()` on exactly this class of input).
+    pub fn expected_file_len(&self) -> Option<u64> {
+        let mut end = HEADER_LEN as u64;
+        let named = [
+            (self.metadata_offset, self.metadata_len),
+            (self.dictionary_offset, self.dictionary_len),
+            (self.root_dir_offset, self.root_dir_len),
+            (self.pyramid_meta_offset, self.pyramid_meta_len),
+            (self.named_graphs_offset, self.named_graphs_len),
+            (self.text_index_offset, self.text_index_len),
+        ];
+        let extras = self.extra_sections.iter().map(|s| (s.offset, s.length));
+        for (offset, length) in named.into_iter().chain(extras) {
+            if length == 0 {
+                continue; // absent section — its (0, 0) entry says nothing
+            }
+            end = end.max(offset.checked_add(length)?);
+        }
+        end.checked_add(MAGIC.len() as u64)
+    }
+
     /// Does the file contain RDF-star quoted triples ([`FLAG_HAS_QUOTED_TRIPLES`])?
     pub fn has_quoted_triples(&self) -> bool {
         self.flags & FLAG_HAS_QUOTED_TRIPLES != 0
@@ -497,6 +533,39 @@ mod tests {
         assert_eq!(u64_at(96), 0x33);
         assert_eq!(u64_at(104), 0x44);
         assert_eq!(b.len(), HEADER_LEN);
+    }
+
+    #[test]
+    fn expected_file_len_is_last_section_end_plus_footer() {
+        // sample(): named graphs end furthest, at 3434 + 48 = 3482.
+        assert_eq!(sample().expected_file_len(), Some(3482 + 4));
+
+        // A zero-length section's offset must not count (absent sections are
+        // written as (0, 0), and a stale offset with len 0 addresses nothing).
+        let mut h = sample();
+        h.text_index_offset = 1 << 40;
+        h.text_index_len = 0;
+        assert_eq!(h.expected_file_len(), Some(3482 + 4));
+
+        // An empty file (header + footer only) is 1028 bytes.
+        let mut e = sample();
+        e.metadata_len = 0;
+        e.dictionary_len = 0;
+        e.root_dir_len = 0;
+        e.pyramid_meta_len = 0;
+        e.named_graphs_len = 0;
+        assert_eq!(e.expected_file_len(), Some(1024 + 4));
+
+        // A crafted header whose entry overflows u64 yields None, not a panic
+        // or a wrapped (tiny) length.
+        let mut c = sample();
+        c.named_graphs_offset = u64::MAX - 8;
+        c.named_graphs_len = 64;
+        assert_eq!(c.expected_file_len(), None);
+
+        // Unknown (future) sections extend the file too.
+        let f = sample().with_section(SectionKind::Unknown(99), 1 << 20, 512);
+        assert_eq!(f.expected_file_len(), Some((1 << 20) + 512 + 4));
     }
 
     #[test]

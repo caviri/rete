@@ -272,6 +272,7 @@ const G2 = [
   ["check_copy", "clipboard: parse-error Copy-log + share button", 90000, false],
   ["check_url_param", "#url= opens an off-catalog .rete; javascript: refused", 120000, false],
   ["check_card_modal", "Dataset Card modal: rendered + coloured JSON, remote & resident", 120000, false],
+  ["check_len_probe_hostile", "host under-reports length via HEAD + hides Content-Range (#95)", 120000, false],
   ["check_clear", "Clear everything empties 4 stores + Cache API", 90000, false],
   ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000, true],
   ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000, false],

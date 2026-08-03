@@ -1229,6 +1229,110 @@ fn locate_container_section_ranged<R: RangeReader>(
     Err(FileError::Container("container section not found"))
 }
 
+/// Open one index container (six tiled permutation sections) **lazily** over a
+/// range reader: fetch each section's tile directory (and synopsis trailer,
+/// when the file has one) but no tile payloads — tiles fault in on first scan.
+/// Returns the index plus its section and tile file ranges (provenance).
+///
+/// This is the machinery `open_ranged_lazy` always used for the default
+/// graph's container at `root_dir_offset`; a named graph's container is the
+/// same format at a different offset, so the lazy named-graphs path opens a
+/// LARGE graph through this too instead of decoding it resident.
+#[allow(clippy::type_complexity)]
+fn open_index_container_lazy(
+    reader: &std::sync::Arc<dyn RangeReader + Send + Sync>,
+    container: ByteRange,
+    block_codec: u8,
+    has_synopsis: bool,
+    read_concurrency: usize,
+) -> Result<
+    (
+        GraphIndex,
+        [ByteRange; NUM_PERMS],
+        [Vec<(u32, u32, ByteRange)>; NUM_PERMS],
+    ),
+    FileError,
+> {
+    let mut index_section_ranges = [ByteRange { offset: 0, len: 0 }; NUM_PERMS];
+    let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
+    #[allow(clippy::type_complexity)]
+    let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; NUM_PERMS] = Default::default();
+    for si in 0..NUM_PERMS {
+        let section = locate_container_section_ranged(
+            reader,
+            container.offset,
+            container.len,
+            si,
+            NUM_PERMS as u64,
+        )?;
+        index_section_ranges[si] = section;
+        let dir = read_tile_directory_ranged(reader, section)?;
+        // Tile synopses (one extra small tail read per section) let a routed
+        // scan prune a tile by a bound secondary component before faulting it.
+        let syn = if has_synopsis {
+            read_tile_synopsis_ranged(reader, section, &dir)
+        } else {
+            vec![None; dir.len()]
+        };
+        directories[si] = dir
+            .iter()
+            .zip(syn)
+            .map(|(e, s)| (e.min_a, e.max_a, s))
+            .collect();
+        tile_ranges[si] = dir
+            .into_iter()
+            .map(|e| {
+                (
+                    e.min_a,
+                    e.max_a,
+                    ByteRange {
+                        offset: section.offset + e.start,
+                        len: (e.end - e.start),
+                    },
+                )
+            })
+            .collect();
+    }
+
+    // The loader fetches and decompresses one tile per call; the bulk
+    // loader serves multi-tile scans by coalescing adjacent tile ranges
+    // into single range reads (tiles are back-to-back in their section,
+    // so a full-section scan is typically one request).
+    let codec = block_codec;
+    let loader_ranges = tile_ranges.clone();
+    let loader_reader = reader.clone();
+    let loader: crate::index::TileLoader = Box::new(move |si, ti| {
+        let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
+        let bytes = loader_reader.read_at(range.offset, range.len).ok()?;
+        decompress(codec, &bytes).ok()
+    });
+    let bulk_ranges = tile_ranges.clone();
+    let bulk_reader = reader.clone();
+    let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
+        let section = bulk_ranges.get(si)?;
+        let want: Option<Vec<ByteRange>> = tis
+            .iter()
+            .map(|&ti| section.get(ti).map(|&(_, _, r)| r))
+            .collect();
+        let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
+        blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+    });
+    let mut index = GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
+    // Per-tile encoded lengths (from the directory) feed the join planner's
+    // fatness gates — free here, unavailable later without a fetch.
+    index.set_tile_lens(std::array::from_fn(|si| {
+        tile_ranges[si]
+            .iter()
+            .map(|&(_, _, r)| r.len.min(u32::MAX as u64) as u32)
+            .collect()
+    }));
+    // The reader's fan-out widens the planner's remote probe budget: a
+    // desktop/CLI reader overlapping 16 range reads probes far more cheaply
+    // than a phone's serial sync-XHR path.
+    index.set_read_concurrency(read_concurrency);
+    Ok((index, index_section_ranges, tile_ranges))
+}
+
 /// Serialize a complete `.rete` file image from a dictionary, index, and an
 /// (optionally empty) encoded pyramid-meta section. `pyramid_levels` records the
 /// number of dendrogram rounds the pyramid spans (0 if no pyramid).
@@ -1654,6 +1758,386 @@ enum TextIndexSlot {
     },
 }
 
+/// A named graph's container decodes RESIDENT (one range read, one decode) up
+/// to this size on the lazy path; a larger container opens as a remote-lazy
+/// tile index instead, so one selective `GRAPH <g>` query over a multi-GB
+/// graph faults only the tile directories plus the tiles it touches.
+const NAMED_GRAPH_RESIDENT_MAX: u64 = 1 << 20; // 1 MiB
+
+/// Entries per lazily-allocated named-graph slab. The outer table is sized by
+/// the section's leading count varint, which is UNTRUSTED — slabbing keeps a
+/// hostile count from ballooning the allocation (the outer table costs a few
+/// bytes per claimed slab; entry storage only materializes when touched).
+const NAMED_SLAB: usize = 1024;
+
+/// One named graph, walked lazily out of the NAMED_GRAPHS section.
+#[derive(Default)]
+struct NamedEntry {
+    /// `(iri, absolute byte range of the graph's index container)` — filled
+    /// when the sequential directory walk reaches this slot.
+    meta: std::sync::OnceLock<(String, ByteRange)>,
+    /// The graph's permutation index, opened on first access. Boxed: most
+    /// entries of a many-graph dataset are never touched by a given query.
+    index: std::sync::OnceLock<Box<GraphIndex>>,
+}
+
+/// Sequential position of the lazy named-graphs walk. The section has no
+/// random-access directory — each entry's offset is the previous entry's end —
+/// so entries are parsed strictly in order and memoised.
+#[derive(Default)]
+struct NamedWalk {
+    /// Next entry index to parse.
+    next: usize,
+    /// Absolute file offset of that entry's header; `0` = the leading count
+    /// varint has not been consumed yet (offset 0 is the file header, never
+    /// inside a section).
+    pos: u64,
+    /// Read buffer carried ACROSS walk calls: `buf` holds the section bytes at
+    /// `[buf_off, buf_off + buf.len())`. Entry-by-entry iteration (the
+    /// `GRAPH ?g` path advances one entry per call) parses ~30 small-graph
+    /// headers per 64 KiB chunk instead of re-reading a chunk per entry.
+    buf: Vec<u8>,
+    buf_off: u64,
+}
+
+/// The NAMED_GRAPHS section opened lazily over a [`RangeReader`]: nothing is
+/// fetched at open. The section is a count varint followed by
+/// `iri_len | iri | container_len | container` records, so the directory is
+/// walked forward on demand — header bytes only, skipping container payloads —
+/// and each touched graph's index is decoded (or opened tile-lazily) on first
+/// access. A `LIMIT`ed `GRAPH ?g` query therefore reads a prefix of the
+/// section; only a query that genuinely touches every graph (e.g. a full
+/// `COUNT` over `GRAPH ?g`) walks it all — which is exactly what the eager
+/// open used to fetch unconditionally.
+///
+/// **Failure contract** (same as lazy tiles/chunks): a failed read or a
+/// malformed record sets a sticky flag and the accessor returns `None`;
+/// nothing failed is ever memoised, so a later evaluation retries.
+struct LazyNamedGraphs {
+    reader: std::sync::Arc<dyn RangeReader + Send + Sync>,
+    /// Absolute byte range of the NAMED_GRAPHS section.
+    section: ByteRange,
+    codec: u8,
+    has_synopsis: bool,
+    read_concurrency: usize,
+    /// `(count, slab table)` — set once the leading count varint is read.
+    /// Slabs allocate on first touch; boxed slices never move, so `&` handed
+    /// out to entries stay valid for `&self`'s lifetime with no unsafe.
+    #[allow(clippy::type_complexity)]
+    dir: std::sync::OnceLock<(usize, Box<[std::sync::OnceLock<Box<[NamedEntry]>>]>)>,
+    walk: std::sync::Mutex<NamedWalk>,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl LazyNamedGraphs {
+    fn new(
+        reader: std::sync::Arc<dyn RangeReader + Send + Sync>,
+        section: ByteRange,
+        codec: u8,
+        has_synopsis: bool,
+        read_concurrency: usize,
+    ) -> Self {
+        LazyNamedGraphs {
+            reader,
+            section,
+            codec,
+            has_synopsis,
+            read_concurrency,
+            dir: std::sync::OnceLock::new(),
+            walk: std::sync::Mutex::new(NamedWalk::default()),
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Record a fetch/parse failure (checked by `index_incomplete`).
+    fn fail(&self) {
+        self.failed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The directory scaffold, reading the leading count varint on first call.
+    #[allow(clippy::type_complexity)]
+    fn directory(&self) -> Option<&(usize, Box<[std::sync::OnceLock<Box<[NamedEntry]>>]>)> {
+        if let Some(d) = self.dir.get() {
+            return Some(d);
+        }
+        let end = self.section.offset.checked_add(self.section.len)?;
+        let (n, used) = match read_uvarint_at(&self.reader, self.section.offset, end) {
+            Ok(v) => v,
+            Err(_) => {
+                self.fail();
+                return None;
+            }
+        };
+        // Each record needs at least 2 bytes of framing (two length varints),
+        // so a count beyond len/2 is malformed — refuse before sizing by it.
+        if n > self.section.len / 2 {
+            self.fail();
+            return None;
+        }
+        let n = n as usize;
+        let slabs = n.div_ceil(NAMED_SLAB);
+        let table: Box<[std::sync::OnceLock<Box<[NamedEntry]>>]> =
+            (0..slabs).map(|_| std::sync::OnceLock::new()).collect();
+        let _ = self.dir.set((n, table));
+        {
+            // Idempotent under an init race: both racers computed the same
+            // `used` from the same bytes.
+            let mut w = self.walk.lock().unwrap();
+            if w.pos == 0 {
+                w.pos = self.section.offset + used;
+            }
+        }
+        self.dir.get()
+    }
+
+    fn count(&self) -> usize {
+        self.directory().map(|(n, _)| *n).unwrap_or(0)
+    }
+
+    /// The `i`-th entry's cell (allocating its slab on first touch).
+    fn entry(&self, i: usize) -> Option<&NamedEntry> {
+        let (n, table) = self.directory()?;
+        if i >= *n {
+            return None;
+        }
+        let slab = table[i / NAMED_SLAB].get_or_init(|| {
+            let len = NAMED_SLAB.min(n - (i / NAMED_SLAB) * NAMED_SLAB);
+            (0..len).map(|_| NamedEntry::default()).collect()
+        });
+        slab.get(i % NAMED_SLAB)
+    }
+
+    /// Walk entry headers forward until `entries[upto].meta` is set. Reads the
+    /// section in chunks and hops over container payloads, so the walk fetches
+    /// O(headers) — not O(section) — where containers are large; small
+    /// containers ride along in the same chunk and cost nothing extra.
+    fn ensure_meta(&self, upto: usize) -> Option<()> {
+        let target = self.entry(upto)?;
+        if target.meta.get().is_some() {
+            return Some(());
+        }
+        let end = self.section.offset.checked_add(self.section.len)?;
+        const CHUNK: u64 = 64 * 1024;
+        let mut w = self.walk.lock().unwrap();
+        while w.next <= upto {
+            let pos = w.pos;
+            if pos >= end {
+                // The count varint promised more entries than the bytes hold.
+                self.fail();
+                return None;
+            }
+            // Make sure the whole header (two varints + the IRI, ≤ 20+iri_len
+            // bytes) is buffered; refetch a larger window when the IRI is long.
+            let have =
+                |b: &[u8], off: u64, need: u64| pos >= off && pos + need <= off + b.len() as u64;
+            if !have(&w.buf, w.buf_off, 20.min(end - pos)) {
+                let len = CHUNK.min(end - pos);
+                w.buf = match self.reader.read_at(pos, len) {
+                    Ok(b) => b,
+                    Err(_) => {
+                        self.fail();
+                        return None;
+                    }
+                };
+                w.buf_off = pos;
+            }
+            let rel = (pos - w.buf_off) as usize;
+            let Some((ilen, u1)) = read_uvarint(&w.buf[rel..]) else {
+                self.fail();
+                return None;
+            };
+            let header_need = u1 as u64 + ilen + 10; // iri_len + iri + container_len varint
+            if pos + u1 as u64 + ilen > end {
+                self.fail(); // IRI overruns the section: malformed
+                return None;
+            }
+            if !have(&w.buf, w.buf_off, header_need.min(end - pos)) {
+                let len = header_need.max(CHUNK).min(end - pos);
+                w.buf = match self.reader.read_at(pos, len) {
+                    Ok(b) => b,
+                    Err(_) => {
+                        self.fail();
+                        return None;
+                    }
+                };
+                w.buf_off = pos;
+            }
+            let rel = (pos - w.buf_off) as usize;
+            let istart = rel + u1;
+            let iend = istart + ilen as usize;
+            let iri = String::from_utf8_lossy(&w.buf[istart..iend]).into_owned();
+            let Some((clen, u2)) = read_uvarint(&w.buf[iend..]) else {
+                self.fail();
+                return None;
+            };
+            let cstart = pos + u1 as u64 + ilen + u2 as u64;
+            let cend = match cstart.checked_add(clen) {
+                Some(e) if e <= end => e,
+                _ => {
+                    self.fail(); // container overruns the section: malformed
+                    return None;
+                }
+            };
+            let range = ByteRange {
+                offset: cstart,
+                len: clen,
+            };
+            if let Some(e) = self.entry(w.next) {
+                let _ = e.meta.set((iri, range));
+            }
+            w.pos = cend;
+            w.next += 1;
+        }
+        Some(())
+    }
+
+    /// The `i`-th graph's IRI — a header walk, never an index decode.
+    fn name_at(&self, i: usize) -> Option<&str> {
+        self.ensure_meta(i)?;
+        self.entry(i)?.meta.get().map(|(iri, _)| iri.as_str())
+    }
+
+    /// The `i`-th graph as `(iri, index)`, opening the index on first access.
+    fn graph_at(&self, i: usize) -> Option<(&str, &GraphIndex)> {
+        self.ensure_meta(i)?;
+        let e = self.entry(i)?;
+        let (iri, range) = e.meta.get()?;
+        if e.index.get().is_none() {
+            let opened = self.open_graph(*range)?;
+            let _ = e.index.set(Box::new(opened));
+        }
+        Some((iri.as_str(), e.index.get()?.as_ref()))
+    }
+
+    /// Open one graph's index container: small ones resident (one read),
+    /// large ones as a remote-lazy tile index — the same machinery as the
+    /// default graph, so a selective query over a huge named graph fetches
+    /// only the tile directories plus the tiles it touches.
+    fn open_graph(&self, range: ByteRange) -> Option<GraphIndex> {
+        if range.len <= NAMED_GRAPH_RESIDENT_MAX {
+            let bytes = match self.reader.read_at(range.offset, range.len) {
+                Ok(b) => b,
+                Err(_) => {
+                    self.fail();
+                    return None;
+                }
+            };
+            match decode_index_container(&bytes, self.codec) {
+                Ok(g) => Some(g),
+                Err(_) => {
+                    self.fail();
+                    None
+                }
+            }
+        } else {
+            match open_index_container_lazy(
+                &self.reader,
+                range,
+                self.codec,
+                self.has_synopsis,
+                self.read_concurrency,
+            ) {
+                Ok((g, _, _)) => Some(g),
+                Err(_) => {
+                    self.fail();
+                    None
+                }
+            }
+        }
+    }
+
+    /// Visit every already-opened graph index (never triggers a fetch).
+    fn for_each_opened(&self, mut f: impl FnMut(&GraphIndex)) {
+        if let Some((_, table)) = self.dir.get() {
+            for slab in table.iter().filter_map(|s| s.get()) {
+                for e in slab.iter() {
+                    if let Some(g) = e.index.get() {
+                        f(g);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The NAMED_GRAPHS section, held resident (in-memory and eager ranged opens —
+/// unchanged) or walked lazily (the lazy ranged open, where fetching and
+/// decoding every graph's index up front defeated remote laziness: 67 MB
+/// fetched and ~32k indexes built before the first query on a many-graph file).
+enum NamedGraphsSlot {
+    Resident(Vec<(String, GraphIndex)>),
+    Lazy(LazyNamedGraphs),
+}
+
+impl NamedGraphsSlot {
+    fn count(&self) -> usize {
+        match self {
+            NamedGraphsSlot::Resident(v) => v.len(),
+            NamedGraphsSlot::Lazy(l) => l.count(),
+        }
+    }
+
+    fn name_at(&self, i: usize) -> Option<&str> {
+        match self {
+            NamedGraphsSlot::Resident(v) => v.get(i).map(|(iri, _)| iri.as_str()),
+            NamedGraphsSlot::Lazy(l) => l.name_at(i),
+        }
+    }
+
+    fn graph_at(&self, i: usize) -> Option<(&str, &GraphIndex)> {
+        match self {
+            NamedGraphsSlot::Resident(v) => v.get(i).map(|(iri, g)| (iri.as_str(), g)),
+            NamedGraphsSlot::Lazy(l) => l.graph_at(i),
+        }
+    }
+
+    fn find(&self, iri: &str) -> Option<&GraphIndex> {
+        match self {
+            NamedGraphsSlot::Resident(v) => v.iter().find(|(name, _)| name == iri).map(|(_, g)| g),
+            NamedGraphsSlot::Lazy(l) => {
+                // Walk headers only until the IRI matches; decode just that
+                // graph's index. An absent IRI costs a full header walk — the
+                // layout has no by-name directory.
+                for i in 0..l.count() {
+                    if l.name_at(i)? == iri {
+                        return l.graph_at(i).map(|(_, g)| g);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    fn load_incomplete(&self) -> bool {
+        match self {
+            NamedGraphsSlot::Resident(v) => v.iter().any(|(_, g)| g.load_incomplete()),
+            NamedGraphsSlot::Lazy(l) => {
+                if l.failed.load(std::sync::atomic::Ordering::Relaxed) {
+                    return true;
+                }
+                let mut bad = false;
+                l.for_each_opened(|g| bad |= g.load_incomplete());
+                bad
+            }
+        }
+    }
+
+    fn reset_load_failures(&self) {
+        match self {
+            NamedGraphsSlot::Resident(v) => {
+                for (_, g) in v {
+                    g.reset_load_failure();
+                }
+            }
+            NamedGraphsSlot::Lazy(l) => {
+                l.failed.store(false, std::sync::atomic::Ordering::Relaxed);
+                l.for_each_opened(|g| g.reset_load_failure());
+            }
+        }
+    }
+}
+
 /// A read-only, in-memory view over a `.rete` file image.
 pub struct Rete {
     header: Header,
@@ -1666,7 +2150,7 @@ pub struct Rete {
     tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS],
     pyramid: PyramidSlot,
     text_index: TextIndexSlot,
-    named_graphs: Vec<(String, GraphIndex)>,
+    named_graphs: NamedGraphsSlot,
     /// Raw bytes of the metadata section (empty if the file has none). The
     /// application layer decodes this (the CLI stores a JSON Dataset Card here).
     /// Only [`Rete::open`] populates it; [`Rete::open_ranged`] leaves it empty to
@@ -1734,14 +2218,14 @@ impl Rete {
             None
         });
 
-        let named_graphs = if header.named_graphs_len > 0 {
+        let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
             decode_named_graphs(
                 region(header.named_graphs_offset, header.named_graphs_len)?,
                 header.block_codec,
             )?
         } else {
             Vec::new()
-        };
+        });
 
         let metadata = if header.metadata_len > 0 {
             region(header.metadata_offset, header.metadata_len)?.to_vec()
@@ -1866,7 +2350,7 @@ impl Rete {
         if h.named_graphs_len > 0 {
             out.push(seg(
                 "named-graphs",
-                format!("named graphs ({})", self.named_graphs.len()),
+                format!("named graphs ({})", self.named_graphs.count()),
                 h.named_graphs_offset,
                 h.named_graphs_len,
             ));
@@ -2221,25 +2705,38 @@ impl Rete {
         (triples, sid, done)
     }
 
-    /// All named graphs as `(iri, index)`.
-    pub fn named_graphs(&self) -> &[(String, GraphIndex)] {
-        &self.named_graphs
+    /// How many named graphs this dataset has. On a lazy ranged open this
+    /// reads only the section's leading count varint — never the graphs.
+    pub fn named_graph_count(&self) -> usize {
+        self.named_graphs.count()
+    }
+
+    /// The `i`-th named graph's IRI (stored order). On a lazy ranged open this
+    /// walks entry HEADERS up to `i` — it never decodes a graph's index.
+    pub fn named_graph_name_at(&self, i: usize) -> Option<&str> {
+        self.named_graphs.name_at(i)
+    }
+
+    /// The `i`-th named graph as `(iri, index)`. On a lazy ranged open the
+    /// index is fetched and decoded on first access and memoised; check
+    /// [`index_incomplete`](Self::index_incomplete) after evaluating.
+    pub fn named_graph_at(&self, i: usize) -> Option<(&str, &GraphIndex)> {
+        self.named_graphs.graph_at(i)
     }
 
     /// IRIs of the named graphs in this dataset (the default graph is unnamed).
+    /// On a lazy ranged open this walks the whole directory (headers only) —
+    /// prefer [`named_graph_count`](Self::named_graph_count) when the number
+    /// is all that's needed.
     pub fn graph_names(&self) -> Vec<&str> {
-        self.named_graphs
-            .iter()
-            .map(|(iri, _)| iri.as_str())
+        (0..self.named_graphs.count())
+            .filter_map(|i| self.named_graphs.name_at(i))
             .collect()
     }
 
     /// The permutation index of a named graph, or `None` if absent.
     pub fn graph_index(&self, iri: &str) -> Option<&GraphIndex> {
-        self.named_graphs
-            .iter()
-            .find(|(name, _)| name == iri)
-            .map(|(_, idx)| idx)
+        self.named_graphs.find(iri)
     }
 
     /// Match a triple pattern in dictionary-ID space (subject/predicate/object
@@ -2302,12 +2799,12 @@ impl Rete {
             None
         });
 
-        let named_graphs = if header.named_graphs_len > 0 {
+        let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
             decode_named_graphs(&nb, header.block_codec)?
         } else {
             Vec::new()
-        };
+        });
 
         // The metadata section (Dataset Card) is deliberately NOT fetched here:
         // a ranged query open keeps to its small range budget. Use `Rete::open`
@@ -2401,49 +2898,20 @@ impl Rete {
             .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
         let dict = Dictionary::from_chunked_sections(dict_arr);
 
-        // Locate the six index section payloads (container framing only)
-        // and fetch just their tile directories.
-        let mut index_section_ranges = [ByteRange { offset: 0, len: 0 }; NUM_PERMS];
-        let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
-        #[allow(clippy::type_complexity)]
-        let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; NUM_PERMS] =
-            Default::default();
-        for si in 0..NUM_PERMS {
-            let section = locate_container_section_ranged(
-                reader.as_ref(),
-                header.root_dir_offset,
-                header.root_dir_len,
-                si,
-                NUM_PERMS as u64,
-            )?;
-            index_section_ranges[si] = section;
-            let dir = read_tile_directory_ranged(reader.as_ref(), section)?;
-            // Tile synopses (one extra small tail read per section) let a routed
-            // scan prune a tile by a bound secondary component before faulting it.
-            let syn = if header.has_tile_synopsis() {
-                read_tile_synopsis_ranged(reader.as_ref(), section, &dir)
-            } else {
-                vec![None; dir.len()]
-            };
-            directories[si] = dir
-                .iter()
-                .zip(syn)
-                .map(|(e, s)| (e.min_a, e.max_a, s))
-                .collect();
-            tile_ranges[si] = dir
-                .into_iter()
-                .map(|e| {
-                    (
-                        e.min_a,
-                        e.max_a,
-                        ByteRange {
-                            offset: section.offset + e.start,
-                            len: (e.end - e.start),
-                        },
-                    )
-                })
-                .collect();
-        }
+        // Locate the six index section payloads (container framing only) and
+        // fetch just their tile directories — shared with the per-named-graph
+        // lazy opener, which opens a large graph's container the same way.
+        let reader_dyn: std::sync::Arc<dyn RangeReader + Send + Sync> = reader.clone();
+        let (index, index_section_ranges, tile_ranges) = open_index_container_lazy(
+            &reader_dyn,
+            ByteRange {
+                offset: header.root_dir_offset,
+                len: header.root_dir_len,
+            },
+            header.block_codec,
+            header.has_tile_synopsis(),
+            read_concurrency,
+        )?;
 
         // The pyramid meta is large on real graphs (tens of MB) and SPARQL never
         // reads it, so defer its fetch: it faults in only if `pyramid()` is
@@ -2498,49 +2966,26 @@ impl Rete {
             TextIndexSlot::Resident(None)
         };
 
+        // Named graphs are the last eagerly-fetched section standing on this
+        // path — and on a many-graph file they dwarf everything else (67 MB
+        // fetched and ~32k graph indexes decoded before the first query, on a
+        // file whose queries then touch a handful of graphs). Defer them like
+        // the pyramid and text index: nothing is read at open; a query walks
+        // the directory and decodes only the graphs it touches.
         let named_graphs = if header.named_graphs_len > 0 {
-            let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
-            decode_named_graphs(&nb, header.block_codec)?
+            NamedGraphsSlot::Lazy(LazyNamedGraphs::new(
+                reader_dyn,
+                ByteRange {
+                    offset: header.named_graphs_offset,
+                    len: header.named_graphs_len,
+                },
+                header.block_codec,
+                header.has_tile_synopsis(),
+                read_concurrency,
+            ))
         } else {
-            Vec::new()
+            NamedGraphsSlot::Resident(Vec::new())
         };
-
-        // The loader fetches and decompresses one tile per call; the bulk
-        // loader serves multi-tile scans by coalescing adjacent tile ranges
-        // into single range reads (tiles are back-to-back in their section,
-        // so a full-section scan is typically one request).
-        let codec = header.block_codec;
-        let loader_ranges = tile_ranges.clone();
-        let loader_reader = reader.clone();
-        let loader: crate::index::TileLoader = Box::new(move |si, ti| {
-            let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
-            let bytes = loader_reader.read_at(range.offset, range.len).ok()?;
-            decompress(codec, &bytes).ok()
-        });
-        let bulk_ranges = tile_ranges.clone();
-        let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
-            let section = bulk_ranges.get(si)?;
-            let want: Option<Vec<ByteRange>> = tis
-                .iter()
-                .map(|&ti| section.get(ti).map(|&(_, _, r)| r))
-                .collect();
-            let blobs = read_coalesced(reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
-            blobs.iter().map(|b| decompress(codec, b).ok()).collect()
-        });
-        let mut index =
-            GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
-        // Per-tile encoded lengths (from the directory) feed the join planner's
-        // fatness gates — free here, unavailable later without a fetch.
-        index.set_tile_lens(std::array::from_fn(|si| {
-            tile_ranges[si]
-                .iter()
-                .map(|&(_, _, r)| r.len.min(u32::MAX as u64) as u32)
-                .collect()
-        }));
-        // The reader's fan-out widens the planner's remote probe budget: a
-        // desktop/CLI reader overlapping 16 range reads probes far more cheaply
-        // than a phone's serial sync-XHR path.
-        index.set_read_concurrency(read_concurrency);
 
         Ok(Self {
             header,
@@ -2564,7 +3009,7 @@ impl Rete {
     pub fn index_incomplete(&self) -> bool {
         self.index.load_incomplete()
             || self.dict.load_incomplete()
-            || self.named_graphs.iter().any(|(_, g)| g.load_incomplete())
+            || self.named_graphs.load_incomplete()
     }
 
     /// Forget recorded lazy-fetch failures — the start-of-evaluation reset for
@@ -2577,9 +3022,7 @@ impl Rete {
     pub fn reset_load_failures(&self) {
         self.index.reset_load_failure();
         self.dict.reset_load_failure();
-        for (_, g) in &self.named_graphs {
-            g.reset_load_failure();
-        }
+        self.named_graphs.reset_load_failures();
     }
 
     fn resolve_query_pattern(
@@ -2743,9 +3186,12 @@ impl Rete {
             .into_iter()
             .map(|t| (t, None))
             .collect();
-        for (iri, _) in &self.named_graphs {
+        for i in 0..self.named_graphs.count() {
+            let Some(iri) = self.named_graphs.name_at(i) else {
+                continue;
+            };
             for triple in self.query_in_graph(Some(iri), s, p, o) {
-                out.push((triple, Some(iri.clone())));
+                out.push((triple, Some(iri.to_string())));
             }
         }
         out
@@ -4329,6 +4775,72 @@ mod tests {
             rete.dump(Some("http://ex/g1")),
             vec![("Bob".into(), "age".into(), "30".into())]
         );
+    }
+
+    /// A named graph whose container exceeds [`NAMED_GRAPH_RESIDENT_MAX`]
+    /// opens through [`open_index_container_lazy`] — the default graph's own
+    /// machinery, at the container's offset. Drive that helper directly over a
+    /// named graph's container range (the threshold itself is too large to
+    /// cross cheaply in a unit test) and require identical matches.
+    #[test]
+    fn named_graph_container_opens_tile_lazily_like_the_root() {
+        let mut db = DictionaryBuilder::new();
+        let node = |n: u32| format!("<http://ex/n{n}>");
+        let p = "<http://ex/p>".to_string();
+        db.observe(&node(0), &p, &node(1));
+        for i in 0..500u32 {
+            db.observe(&node(1000 + i), &p, &node(2000 + i));
+        }
+        let dict = db.build();
+        let mut def = GraphIndexBuilder::new();
+        def.push(dict.encode(&node(0), &p, &node(1)).unwrap());
+        let mut g = GraphIndexBuilder::new().with_tile_budget(256); // many tiles
+        for i in 0..500u32 {
+            g.push(dict.encode(&node(1000 + i), &p, &node(2000 + i)).unwrap());
+        }
+        let named = vec![("<http://ex/g>".to_string(), g.build())];
+        let bytes = write_dataset(&dict, &def.build(), &named, true, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+        let header = rete.header();
+
+        // The single entry's container range: count varint, iri_len varint,
+        // iri, container_len varint, then the container.
+        let soff = header.named_graphs_offset as usize;
+        let send = soff + header.named_graphs_len as usize;
+        let sec = &bytes[soff..send];
+        let (n, mut pos) = read_uvarint(sec).unwrap();
+        assert_eq!(n, 1);
+        let (ilen, u1) = read_uvarint(&sec[pos..]).unwrap();
+        pos += u1 + ilen as usize;
+        let (clen, u2) = read_uvarint(&sec[pos..]).unwrap();
+        pos += u2;
+        let container = ByteRange {
+            offset: (soff + pos) as u64,
+            len: clen,
+        };
+
+        use crate::reader::SliceReader;
+        let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+        let reader: std::sync::Arc<dyn RangeReader + Send + Sync> =
+            std::sync::Arc::new(SliceReader::new(leaked));
+        let (lazy_idx, _, _) = open_index_container_lazy(
+            &reader,
+            container,
+            header.block_codec,
+            header.has_tile_synopsis(),
+            1,
+        )
+        .unwrap();
+        let mut want = rete
+            .graph_index("<http://ex/g>")
+            .unwrap()
+            .match_pattern((None, None, None));
+        let mut got = lazy_idx.match_pattern((None, None, None));
+        want.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got.len(), 500);
+        assert_eq!(got, want);
+        assert!(!lazy_idx.load_incomplete());
     }
 
     /// `dump_iter` must agree with `dump` exactly — and must be *lazy*: taking

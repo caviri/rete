@@ -141,25 +141,64 @@ ASYNC_ENV_JS = """
         }
         async function __reteDoLen(urlPtr, urlLen, outPtr) {
           const url = __reteStr(urlPtr, urlLen);
-          // The FIRST cross-origin request to a cold object can transiently come back
-          // with no readable length (CORS preflight, CDN cold-start) — which is why a
-          // fresh load fails once ("could not determine length") then works on retry.
-          // The sync reader already retries; do the same here (the asyncify path used
-          // to give up after one attempt). HEAD first: Content-Length is the full size
-          // and CORS-safelisted, so it is readable even when the host hides
-          // Content-Range (e.g. Zenodo); fall back to a bytes=0-0 GET's Content-Range
-          // for hosts that reject HEAD (HF signed storage). `!(total > 0)` also treats
-          // a NaN (e.g. Content-Range "bytes 0-0/*") as "keep trying".
+          // No HTTP length signal survives every host (issue #95): a
+          // transparently-compressing host (GitHub Pages) advertises the GZIP
+          // size in HEAD's Content-Length (58 MB for a 71 MB .rete) while range
+          // requests address the identity bytes — and Content-Encoding is not
+          // CORS-safelisted, so JS cannot even see the lie. Content-Range names
+          // the true total but is HIDDEN unless the host opts in via
+          // Access-Control-Expose-Headers (GitHub Pages does not). So read the
+          // file's OWN first KiB — the .rete header, whose section directory
+          // pins the exact length (sections are back-to-back; the file ends
+          // with the 4-byte RETE footer) — and only fall back to the
+          // transport's numbers when the resource is not a .rete. A 206's
+          // Content-Length is NEVER believed (it is the partial body's size).
+          const headerLen = (bytes) => { // max(section offset+len) + 4, or 0
+            if (!bytes || bytes.length < 1024) return 0;
+            if (bytes[0] !== 0x52 || bytes[1] !== 0x45 || bytes[2] !== 0x54 || bytes[3] !== 0x45) return 0; // "RETE"
+            const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            const n = dv.getUint16(44, true);
+            if (64 + n * 24 > 1024) return 0;
+            let end = 1024n;
+            for (let i = 0; i < n; i++) {
+              const off = dv.getBigUint64(64 + i * 24 + 8, true), len = dv.getBigUint64(64 + i * 24 + 16, true);
+              if (len > 0n && off + len > end) end = off + len;
+            }
+            const t = Number(end + 4n);
+            return Number.isSafeInteger(t) ? t : 0;
+          };
+          // The FIRST cross-origin request to a cold object can transiently come
+          // back unreadable (CORS preflight, CDN cold-start), so retry like the
+          // sync reader does.
           let total = 0;
           for (let attempt = 0; attempt < 4 && !(total > 0); attempt++) {
             if (attempt) await new Promise((r) => setTimeout(r, 150 * attempt)); // 150, 300, 450 ms
-            try { const h = await fetch(url, { method: 'HEAD' }); if (h.ok) total = Number(h.headers.get('content-length') || 0); } catch (e) { /* fall back */ }
-            if (!(total > 0)) {
-              try {
-                const r = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-                const cr = r.headers.get('content-range');
-                total = cr ? Number(cr.split('/')[1]) : Number(r.headers.get('content-length') || 0);
-              } catch (e) { /* retry the whole probe */ }
+            try {
+              const r = await fetch(url, { headers: { Range: 'bytes=0-1023' } });
+              const cr = r.status === 206 ? r.headers.get('content-range') : null;
+              const crTotal = cr ? Number(cr.split('/')[1]) : 0; // NaN on "bytes a-b/*" → not > 0
+              if (r.status === 206) {
+                const derived = headerLen(new Uint8Array(await r.arrayBuffer()));
+                if (derived > 0 && crTotal === derived) total = derived; // transport agrees — done
+                else if (derived > 0) {
+                  // Validate against the file itself: its last 4 bytes are the
+                  // RETE footer. One extra 4-byte request, only on hosts whose
+                  // headers are unusable or disagree.
+                  const t = await fetch(url, { headers: { Range: 'bytes=' + (derived - 4) + '-' + (derived - 1) } });
+                  const tb = t.status === 206 ? new Uint8Array(await t.arrayBuffer()) : new Uint8Array(0);
+                  if (tb.length === 4 && tb[0] === 0x52 && tb[1] === 0x45 && tb[2] === 0x54 && tb[3] === 0x45) total = derived;
+                  else if (crTotal > 0) total = crTotal; // truncated .rete on an honest host
+                } else if (crTotal > 0) total = crTotal; // not a .rete header — trust a visible total
+              } else if (r.status === 200) {
+                // Host ignored Range; it cannot serve range reads at all, but a
+                // positive length lets the first read fail with the clearer
+                // 'Range status 200 (host must support HTTP range)' error.
+                total = Number(r.headers.get('content-length') || 0);
+                if (r.body && r.body.cancel) r.body.cancel().catch(() => {});
+              }
+            } catch (e) { /* retry the whole probe */ }
+            if (!(total > 0)) { // last resort: HEAD's CORS-safelisted Content-Length
+              try { const h = await fetch(url, { method: 'HEAD' }); if (h.ok) total = Number(h.headers.get('content-length') || 0); } catch (e) { /* retry */ }
             }
           }
           new DataView(wasm.memory.buffer).setBigUint64(__reteP(outPtr), BigInt(total > 0 ? total : 0), true);

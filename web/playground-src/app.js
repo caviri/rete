@@ -1329,19 +1329,36 @@ self.onmessage = function (e) {
     state.exploreReady = false;
     state.exploreClass = null;
     state.exploreBackend = "native"; state.exploreNativeMeta = ""; freeExploreEngines();
-    if (datasetKey) {
+    // Resolve the key STRICTLY against the catalog. `datasetInfo()` falls back
+    // to the first catalog entry, and that fallback was exactly a reported
+    // bug: an off-catalog key (derived from a #url= filename) resolved to
+    // datasets[0], so the header claimed "hugging-face.rete — …" over an
+    // nkod.rete URL — and a null key (Connect with a pasted address) left the
+    // PREVIOUS dataset's name standing. Off-catalog remotes are named after
+    // the FILE that is actually open, then upgraded (async — the label never
+    // waits on the network) with the file's own Dataset Card title.
+    const entry = datasetKey ? CATALOG.datasets.find((d) => d.key === datasetKey) : null;
+    if (entry) {
       state.dataset = datasetKey;
       setDatasetName(datasetKey);
+    } else {
+      // Keep a key for the strict per-dataset lookups (examples, SHACL,
+      // reach, provenance — all empty for an unknown key, never another
+      // dataset's). Derived from the URL when the caller passed none, so a
+      // hand-pasted Connect stops inheriting the previous dataset's key too.
+      state.dataset = datasetKey || remoteFileName(url).replace(/\.rete$/i, "") || "remote";
+      $("dsName").textContent = remoteFileName(url);
     }
     state.selectedExample = -1;
     updateSourcePill();
     // The source pill already says "remote (lazy)" — don't repeat it here.
     setStatus("queries range-fetch only what they touch");
-    const info = datasetKey ? datasetInfo(datasetKey) : null;
+    const info = entry;
     $("dsDesc").innerHTML = info ? mdLite(info.description) : "Remote graph, queried lazily over HTTP range: " + esc(url);
-    setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
+    setDatasetHeader(info ? info.label : remoteFileName(url),
       info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.",
-      datasetKey);
+      entry ? datasetKey : null);
+    if (!entry) upgradeRemoteLabelFromCard(url);
     renderExamples();
     // Catalog-driven example panels are independent of the (lazy, unloaded)
     // bytes — refresh them here too, or the SHACL / Reach / Provenance tabs keep
@@ -1374,6 +1391,41 @@ self.onmessage = function (e) {
     if (!s) return null;
     if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return /^https?:/i.test(s) ? s : null;
     return "https://" + s.replace(/^\/+/, "");  // also covers //host/path
+  }
+
+  // The file name a remote URL actually points at ("nkod.rete") — the honest
+  // label for an off-catalog remote. Never a catalog entry's text.
+  function remoteFileName(url) {
+    try {
+      const base = decodeURIComponent(String(url).split("#")[0].split("?")[0].split("/").pop() || "");
+      return base || "Remote .rete";
+    } catch (_e) {
+      return "Remote .rete"; // a malformed %-escape must not break the label
+    }
+  }
+
+  // Off-catalog remotes: the filename label paints immediately; if the file's
+  // own Dataset Card carries a title, upgrade to it when it arrives (the same
+  // two small range reads the 🏷 Card button does, via the worker). Guarded so
+  // a slow card can never relabel a dataset the user has since switched to.
+  async function upgradeRemoteLabelFromCard(url) {
+    let card = null;
+    try {
+      const r = await remoteCall("card_url", url);
+      card = r && r.json ? JSON.parse(r.json) : null;
+    } catch (_e) {
+      return; // no card, or the worker couldn't start — the filename stands
+    }
+    if (!card || typeof card.title !== "string" || !card.title.trim()) return;
+    if (!(state.activeSource === "remote" && state.remote && state.remote.url === url)) return;
+    const title = card.title.trim();
+    $("dsName").textContent = title;
+    setDatasetHeader(title,
+      card.description
+        ? firstSentence(String(card.description))
+        : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.",
+      null);
+    if (card.description) $("dsDesc").innerHTML = mdLite(String(card.description));
   }
 
   function connectRemote() {
@@ -8960,7 +9012,10 @@ self.onmessage = function (e) {
   // Anything ad-hoc — an edited query, a live endpoint, a graph the visitor
   // built in this browser — has no such page and shares the deep link as before.
   function hasSharePage(ds) {
-    return !!datasetInfo(ds) && !userBytes.has(ds);
+    // Strict membership — `datasetInfo()` falls back to the first catalog
+    // entry, which would hand an off-catalog remote a share page for a
+    // dataset it isn't (d/<key>.html only exists for real catalog keys).
+    return CATALOG.datasets.some((d) => d.key === ds) && !userBytes.has(ds);
   }
 
   function sharePageUrl(rel) {
