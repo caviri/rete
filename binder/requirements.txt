@@ -1,0 +1,20 @@
+# Environment for mybinder.org. Without this file Binder builds a bare Python
+# image and the notebooks' own `%pip install` would have to run on every launch —
+# slower, and it fails outright if the session has no outbound PyPI access.
+#
+# rete-graph ships an abi3 manylinux wheel, so this resolves without a compiler.
+# Pinned to the released version so a Binder launch matches what the docs
+# describe; bump it with the release.
+rete-graph==0.3.2
+pandas
+networkx
+scipy
+scikit-learn
+matplotlib
+# The notebook's PageRank/Louvain cells are wrapped in try/except and skip
+# silently when this is missing — cheap enough to include so they actually run.
+scikit-network
+# torch + torch-geometric are deliberately NOT here. Their cells degrade the same
+# way, and pulling ~800 MB of wheels puts a Binder image over the size/time
+# budget for what is a demo launch. Run those locally or on Colab, which already
+# ships torch.

@@ -8,9 +8,15 @@
 
 <p align="center">
   <a href="https://caviri.github.io/rete/playground.html"><b>▶ Try it in your browser</b></a> ·
-  <a href="https://caviri.github.io/rete/explore-100mb.html">100 MB / 1 GB explorer</a> ·
+  <a href="https://caviri.github.io/rete/jslab.html">JS lab (D3)</a> ·
   <a href="https://caviri.github.io/rete/atlas.html">Historical atlas</a> ·
   <a href="https://caviri.github.io/rete/">Docs</a>
+</p>
+
+<p align="center">
+  <a href="https://caviri.github.io/rete/jupyterlite/lab/index.html?path=graph-data-science.ipynb"><img src="https://img.shields.io/badge/JupyterLite-in--browser-F37626?logo=jupyter&logoColor=white" alt="Open in JupyterLite"></a>
+  <a href="https://colab.research.google.com/github/caviri/rete/blob/main/clients/python/examples/graph-data-science.ipynb"><img src="https://img.shields.io/badge/Colab-open-F9AB00?logo=googlecolab&logoColor=white" alt="Open in Colab"></a>
+  <a href="https://mybinder.org/v2/gh/caviri/rete/main?labpath=clients%2Fpython%2Fexamples%2Fgraph-data-science.ipynb"><img src="https://img.shields.io/badge/Binder-launch-579ACA?logo=jupyter&logoColor=white" alt="Launch Binder"></a>
 </p>
 
 ---
@@ -44,8 +50,7 @@ WebAssembly, so a **browser can query the file directly with no backend**.
   federation itself [is supported](https://caviri.github.io/rete/sparql.html)).
 - **Lazy over HTTP — and on disk.** Range-read the file wherever it lives: a
   selective query faults in only the dictionary chunks and index tiles it
-  touches, so a **1 GB graph stays interactive in the browser**
-  ([try it](https://caviri.github.io/rete/explore-100mb.html)) and a **52 GB
+  touches, so a **1 GB graph stays interactive in the browser** and a **52 GB
   graph opens locally in KBs** (files past 1 GiB go through the same range
   reader).
 - **Bounded memory at any scale.** Aggregation streams through per-group
@@ -211,8 +216,8 @@ Pick a dataset, run filterable SPARQL examples, inspect progressive exactness
 metadata, validate SHACL, explore reachability, render schema summaries, and
 explain triple-pattern provenance — all offline. Two focused demos:
 
-- **[100 MB / 1 GB explorer](https://caviri.github.io/rete/explore-100mb.html)** —
-  the same Wikidata slice four ways (rete / Parquet / DuckDB / SQLite), lazy over HTTP.
+- **[JS lab](https://caviri.github.io/rete/jslab.html)** — query a `.rete` from
+  JavaScript and wire the results straight into a **D3** force graph, in one page.
 - **[Historical atlas](https://caviri.github.io/rete/atlas.html)** — GeoSPARQL +
   time over a `.rete`, with 80+ map overlays (battles, castles, treaties, …).
 
@@ -268,7 +273,8 @@ See the **[format spec](https://caviri.github.io/rete/SPEC.html)** and
 - **[Graph data 101](https://caviri.github.io/rete/intro.html)** — new to RDF/graphs? Start here.
 - **[Getting started](https://caviri.github.io/rete/getting-started.html)** · **[Architecture](https://caviri.github.io/rete/architecture.html)** · **[CLI reference](https://caviri.github.io/rete/cli.html)** · **[SPARQL support](https://caviri.github.io/rete/sparql.html)** · **[GeoSPARQL](https://caviri.github.io/rete/geosparql.html)** · **[SHACL validation](https://caviri.github.io/rete/shacl.html)**
 - **[Dataset Cards](https://caviri.github.io/rete/dataset-cards.html)** · **[Semantic zoom (schema pyramid)](https://caviri.github.io/rete/semantic-zoom.html)** · **[Reasoning & coherence](https://caviri.github.io/rete/reasoning.html)** · **[Federated queries](https://caviri.github.io/rete/federation.html)**
-- **[Interactive playground](https://caviri.github.io/rete/playground.html)** · **[100 MB / 1 GB explorer](https://caviri.github.io/rete/explore-100mb.html)** · **[Historical atlas](https://caviri.github.io/rete/atlas.html)**
+- **[Interactive playground](https://caviri.github.io/rete/playground.html)** · **[JS lab (D3)](https://caviri.github.io/rete/jslab.html)** · **[Historical atlas](https://caviri.github.io/rete/atlas.html)**
+- **Run the notebooks:** **[JupyterLite](https://caviri.github.io/rete/jupyterlite/lab/index.html?path=graph-data-science.ipynb)** (in your browser, no account) · **[Colab](https://colab.research.google.com/github/caviri/rete/blob/main/clients/python/examples/graph-data-science.ipynb)** · **[Binder](https://mybinder.org/v2/gh/caviri/rete/main?labpath=clients%2Fpython%2Fexamples%2Fgraph-data-science.ipynb)**
 - **[Format spec](https://caviri.github.io/rete/SPEC.html)** · **[Benchmarks](https://caviri.github.io/rete/BENCHMARK.html)** · **[SPARQL conformance](https://caviri.github.io/rete/conformance.html)** · **[Browser / WASM](https://caviri.github.io/rete/browser.html)**
 
 The docs render as Markdown on GitHub, or as an HTML site (`docs/*.html`,
