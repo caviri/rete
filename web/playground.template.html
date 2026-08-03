@@ -749,13 +749,17 @@ __PLAYGROUND_CSS__
         </div>
         <div class="load-route">
           <h4>Paste a URL</h4>
-          <p class="microcopy">Any hosted <code>.rete</code> — queried <strong>lazily over HTTP range</strong>, never
-            downloaded whole (the host must allow CORS and <code>Range</code>; S3, R2 and direct CDNs do).</p>
+          <p class="microcopy">Any hosted <code>.rete</code> — <strong>Connect (lazy)</strong> queries it over HTTP
+            range without downloading it; <strong>Download &amp; cache</strong> shows the file's size, then fetches
+            it whole once and keeps it in this browser, so later queries use no network at all (the host must
+            allow CORS and <code>Range</code>; S3, R2 and direct CDNs do).</p>
           <div class="url-loader">
             <input id="loadUrl" type="text" spellcheck="false" placeholder="https://…/graph.rete"
               aria-label="Address of a .rete file" />
             <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
               <button id="loadUrlGo" type="button">Connect (lazy)</button>
+              <button id="loadUrlCache" type="button" class="secondary"
+                title="Download the whole file once and keep it in this browser — its size is shown before anything downloads">Download &amp; cache</button>
               <span id="loadUrlErr" class="microcopy load-url-err" aria-live="polite"></span>
             </div>
           </div>
@@ -964,6 +968,13 @@ __PLAYGROUND_CSS__
       <div id="cacheBar" class="cache-bar indeterminate"><div id="cacheBarFill" class="cache-bar-fill"></div></div>
       <div class="cache-stat"><span id="cachePct"></span><span id="cacheBytes">0 B</span></div>
       <div id="cacheSteps" class="cache-steps" aria-live="polite"></div>
+      <!-- The consent step for caching by URL: the file's true size (read from
+           its own header, before any download) and a way out. Hidden in every
+           other use of this modal. -->
+      <div id="cacheConfirm" class="cache-confirm hidden">
+        <button id="cacheGo" type="button">Download</button>
+        <button id="cacheCancel" type="button" class="secondary">Cancel</button>
+      </div>
     </div>
   </div>
 

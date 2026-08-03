@@ -218,6 +218,25 @@ pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
     Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
 }
 
+/// The **true byte length of a remote `.rete`**, in 1–2 tiny range requests —
+/// derived from the file's *own* header (the issue-#95 probe: sections are
+/// back-to-back and the file ends with the 4-byte `RETE` footer), never from
+/// the transport's numbers, which may describe a compressed representation
+/// (GitHub Pages HEADs a 71 MB file as its 58 MB gzip) or be hidden from
+/// cross-origin JS entirely. This is how a UI can say what "download the whole
+/// file" actually costs **before** committing to it.
+/// JSON: `{ "schemaVersion": 1, "fileLength": <bytes> }`. Worker-only
+/// (synchronous XHR in the sync build).
+#[wasm_bindgen]
+pub fn file_len_url(url: &str) -> Result<String, JsValue> {
+    let reader = XhrRangeReader::open(url)?;
+    Ok(format!(
+        r#"{{"schemaVersion":{},"fileLength":{}}}"#,
+        JSON_SCHEMA_VERSION,
+        reader.len()
+    ))
+}
+
 /// A `.rete` opened **once** and kept resident, so a client (the playground's
 /// cached/in-memory mode) can run many queries on a big file without re-copying
 /// the whole buffer into wasm and re-decoding its dictionary on every call. The
