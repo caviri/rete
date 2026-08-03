@@ -96,6 +96,7 @@ __PLAYGROUND_CSS__
         <span id="dsName">…</span>
         <span class="ds-eject"><span class="ds-eject-ic" aria-hidden="true">⏏</span>Change dataset</span>
       </button>
+      <button id="loadBtn" type="button" class="secondary" title="Load a graph — drop a .rete file, paste a URL, or browse the examples">Load</button>
       <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
@@ -723,6 +724,48 @@ __PLAYGROUND_CSS__
           </div>
         </div>
       </details>
+    </div>
+  </div>
+
+  <!-- The Load pre-modal: every way IN, in one place. Before this they were
+       scattered — the dataset chip opened the catalog, drag-and-drop and the
+       URL field hid under the catalog's "Advanced" fold. Three routes: drop or
+       pick a local .rete, paste a URL (opened lazily, exactly like #url=), or
+       hand off to the catalog browser. -->
+  <div id="loadModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="loadModalTitle">
+    <div class="modal-card load-modal">
+      <div class="modal-head">
+        <h3 id="loadModalTitle">Load a graph</h3>
+        <button id="loadModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="load-routes">
+        <div class="load-route">
+          <h4>Drop a file</h4>
+          <p class="microcopy">A local <code>.rete</code> — opened in this page; it never leaves your browser.</p>
+          <label class="file-zone" id="loadDropZone">
+            <input id="loadFileInput" type="file" accept=".rete,application/octet-stream" />
+            <span>Drop a .rete here, or tap to choose a file</span>
+          </label>
+        </div>
+        <div class="load-route">
+          <h4>Paste a URL</h4>
+          <p class="microcopy">Any hosted <code>.rete</code> — queried <strong>lazily over HTTP range</strong>, never
+            downloaded whole (the host must allow CORS and <code>Range</code>; S3, R2 and direct CDNs do).</p>
+          <div class="url-loader">
+            <input id="loadUrl" type="text" spellcheck="false" placeholder="https://…/graph.rete"
+              aria-label="Address of a .rete file" />
+            <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button id="loadUrlGo" type="button">Connect (lazy)</button>
+              <span id="loadUrlErr" class="microcopy load-url-err" aria-live="polite"></span>
+            </div>
+          </div>
+        </div>
+        <div class="load-route">
+          <h4>Browse the examples</h4>
+          <p class="microcopy">The catalog: published knowledge graphs, each with a card and example queries.</p>
+          <button id="loadExamplesBtn" type="button" class="secondary">Open the dataset catalog</button>
+        </div>
+      </div>
     </div>
   </div>
 

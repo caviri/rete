@@ -78,6 +78,9 @@
     // the offline equirectangular vectors). localStorage-backed so it persists.
     mapBasemap: (() => { try { return localStorage.getItem("mapBasemap") || "none"; } catch (e) { return "none"; } })(),
     remote: null,
+    // Named-graph count of the RESIDENT graph (from info() at load), for the
+    // empty-default-graph explainer. null = unknown (nothing/remote loaded).
+    namedGraphCount: null,
     // Federation: extra sources the SPARQL query also runs against. Each is
     // {id, kind:"remote"|"memory"|"endpoint", label, url?, key?, endpoint?}.
     // Empty = single-source (today's behavior). A resident Graph per in-memory
@@ -699,8 +702,17 @@ self.onmessage = function (e) {
     $("sourcePill").textContent = sourceLabel();
   }
 
+  // STRICT catalog lookup: an unknown key resolves to undefined, never to some
+  // other dataset. This used to fall back to CATALOG.datasets[0], and that
+  // fallback was a repeat offender: every UI surface that derives a name from
+  // state.dataset (the header, the dataset chip, the SOURCES chip, …) claimed
+  // scholar was open whenever an off-catalog file was — each surface got fixed
+  // one report at a time (#95, the header, now the SOURCES chip). Several call
+  // sites (`!datasetInfo(k)`, `d ? … : key`) were already WRITTEN for strict
+  // behavior and the fallback silently defeated them. Callers must handle
+  // undefined; for a user-visible name use currentDatasetLabel().
   function datasetInfo(key) {
-    return CATALOG.datasets.find((d) => d.key === key) || CATALOG.datasets[0];
+    return CATALOG.datasets.find((d) => d.key === key);
   }
 
   // --- Code editors: delegated to the PlaygroundEditor component (editor.js).
@@ -1238,6 +1250,9 @@ self.onmessage = function (e) {
     // info() already carries the named-graph count, so we avoid a second full
     // open just to call graph_names() (a meaningful saving on a big cached file).
     const graphText = info.namedGraphs ? " | graphs " + info.namedGraphs : "";
+    // Kept for the empty-default-graph explainer: with the graph resident this
+    // count is free here, and re-deriving it later would re-open the file.
+    state.namedGraphCount = info.namedGraphs || 0;
     setStatus(`${info.quads} quads | ${info.terms} terms | ${info.pyramidLevels} pyramid levels${graphText}`);
 
     // Prefer the schema already baked into the file (read from its ~KB schema
@@ -1263,17 +1278,25 @@ self.onmessage = function (e) {
     renderProvenanceDefaults();
 
     const infoRow = datasetInfo(state.dataset);
-    const catalogSource = source === "bundled" || source === "cached";
+    // datasetInfo() is strict now — a bundled/cached load of a key that is
+    // somehow not in the catalog must fall through to the custom branch, not
+    // crash on infoRow.description.
+    const catalogSource = (source === "bundled" || source === "cached") && !!infoRow;
     $("dsDesc").innerHTML = catalogSource
       ? mdLite(infoRow.description)
       : "Custom graph loaded into the same in-browser engine.";
-    if (catalogSource && infoRow) {
+    if (catalogSource) {
       setDatasetHeader(infoRow.label, firstSentence(infoRow.description), state.dataset);
     } else {
       const cn = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom graph";
       $("dsName").textContent = cn;
       setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.", null);
     }
+    // Re-render the SOURCES chip against the NOW-current state: the resetFed()
+    // above painted it mid-transition, and the "cached" path (which keeps its
+    // federation partners) skipped resetFed entirely — either way the self
+    // chip's name and lazy/in-memory badge must describe what just loaded.
+    renderFedBar();
   }
 
   function loadDataset(key) {
@@ -1324,15 +1347,16 @@ self.onmessage = function (e) {
     resetFed(); // switching to a remote dataset drops federation partners
     state.remote = { url };
     state.activeSource = "remote";
+    state.namedGraphCount = null; // unknown until the card is read
     state.schema = null;
     clearSchemaPanels("");  // drop the previous dataset's schema/diagram immediately
     state.exploreReady = false;
     state.exploreClass = null;
     state.exploreBackend = "native"; state.exploreNativeMeta = ""; freeExploreEngines();
-    // Resolve the key STRICTLY against the catalog. `datasetInfo()` falls back
-    // to the first catalog entry, and that fallback was exactly a reported
-    // bug: an off-catalog key (derived from a #url= filename) resolved to
-    // datasets[0], so the header claimed "hugging-face.rete — …" over an
+    // Resolve the key STRICTLY against the catalog. `datasetInfo()` USED to
+    // fall back to the first catalog entry (it is strict now), and that
+    // fallback was exactly a reported bug: an off-catalog key (derived from a
+    // #url= filename) resolved to datasets[0], so the header claimed "hugging-face.rete — …" over an
     // nkod.rete URL — and a null key (Connect with a pasted address) left the
     // PREVIOUS dataset's name standing. Off-catalog remotes are named after
     // the FILE that is actually open, then upgraded (async — the label never
@@ -1359,6 +1383,12 @@ self.onmessage = function (e) {
       info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.",
       entry ? datasetKey : null);
     if (!entry) upgradeRemoteLabelFromCard(url);
+    // The SOURCES chip: resetFed() above repainted it BEFORE state.remote and
+    // state.dataset were set for this connection, so it kept claiming the
+    // previous dataset was open "in-memory" — the exact wrong pair a user
+    // report showed ("scholar.rete IN-MEMORY" over a lazy nkod.rete). Render
+    // again now that the state describes what is actually connected.
+    renderFedBar();
     renderExamples();
     // Catalog-driven example panels are independent of the (lazy, unloaded)
     // bytes — refresh them here too, or the SHACL / Reach / Provenance tabs keep
@@ -1419,6 +1449,10 @@ self.onmessage = function (e) {
     if (!card || typeof card.title !== "string" || !card.title.trim()) return;
     if (!(state.activeSource === "remote" && state.remote && state.remote.url === url)) return;
     const title = card.title.trim();
+    // Every surface naming this connection (the SOURCES chip via
+    // currentDatasetLabel) upgrades together with the chip/header below.
+    state.remote.title = title;
+    renderFedBar();
     $("dsName").textContent = title;
     setDatasetHeader(title,
       card.description
@@ -1647,6 +1681,24 @@ self.onmessage = function (e) {
     return d.label.split(/\s[—–-]\s|\s\(/)[0].trim();
   }
 
+  // The ONE honest short name for whatever is open right now — for every
+  // surface that names the current dataset from state (the SOURCES self chip,
+  // the self federation source). A catalog key gets its catalog label; an
+  // off-catalog remote gets its own card title (once read) or the file name the
+  // URL actually points at; a local/downloaded file gets the same wording the
+  // dataset chip uses. Never another catalog entry's name.
+  function currentDatasetLabel() {
+    if (state.remote) {
+      const d = datasetInfo(state.dataset);
+      return d ? dsShortLabel(state.dataset)
+        : (state.remote.title || remoteFileName(state.remote.url));
+    }
+    if (state.activeSource === "file") return "Local file";
+    if (state.activeSource === "url") return "Custom .rete";
+    const d = datasetInfo(state.dataset);
+    return d ? dsShortLabel(state.dataset) : (state.dataset || "Custom graph");
+  }
+
   // The "Datasets" browser: a sidebar list (left) + a detail/preview pane
   // (right). The selected dataset shows tags, the example kinds it supports, a
   // 3-mode source switch (bundled / cache / lazy), its metadata under "more",
@@ -1714,6 +1766,10 @@ self.onmessage = function (e) {
 
   function renderDsDetail(key) {
     const d = datasetInfo(key);
+    // Strict lookup: an off-catalog key (e.g. a #url= remote is open) has no
+    // detail pane to render — openSource() falls back before calling here, so
+    // this is belt-and-braces against a stale dsSelected.
+    if (!d) { $("dsDetail").innerHTML = ""; return; }
     const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
     const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[key]) || {};
     const remoteOnly = d.kind === "remote-lazy";
@@ -1819,7 +1875,12 @@ self.onmessage = function (e) {
   }
 
   function openSource() {
-    if (!dsSelected || !datasetInfo(dsSelected)) dsSelected = state.dataset;
+    // state.dataset itself can be an off-catalog key (a #url= / hand-pasted
+    // remote); with the strict lookup that must fall back to the default
+    // catalog entry, not render an empty detail pane.
+    if (!dsSelected || !datasetInfo(dsSelected)) {
+      dsSelected = datasetInfo(state.dataset) ? state.dataset : CATALOG.defaultDataset;
+    }
     $("dsSearch").value = "";
     $("dsSearch").oninput = renderDsSidebar;
     renderDsSidebar();
@@ -1829,6 +1890,35 @@ self.onmessage = function (e) {
 
   function closeSource() {
     $("sourceModal").classList.add("hidden");
+  }
+
+  // --- the Load pre-modal (the "Load" button beside Build) ------------------
+  // One place offering every way in: drop/pick a local .rete (reuses
+  // loadFromFile — the same path as the catalog's advanced drop zone), paste a
+  // URL (normalized + connected lazily, exactly like a #url= deep link), or
+  // hand off to the existing catalog browser (openSource — not a reimplementation).
+  function openLoadModal() {
+    const err = $("loadUrlErr"); if (err) err.textContent = "";
+    $("loadModal").classList.remove("hidden");
+    closeSource(); // never two source modals stacked
+  }
+  function closeLoadModal() {
+    const m = $("loadModal"); if (m) m.classList.add("hidden");
+  }
+  function connectFromLoadModal() {
+    const url = normalizeReteUrl($("loadUrl").value);
+    if (!url) {
+      $("loadUrlErr").textContent = "That address can't be opened as a .rete — give an http(s) URL, " +
+        "for example https://example.org/graph.rete";
+      return;
+    }
+    // Same behavior as a #url= boot / the advanced Connect: show the address
+    // that was actually opened, then enter lazy remote mode (enterRemote
+    // derives the off-catalog key from the URL itself).
+    $("remoteUrl").value = url;
+    $("loadUrl").value = url;
+    closeLoadModal();
+    enterRemote(url, null);
   }
 
   async function loadFromFile(file) {
@@ -6520,7 +6610,7 @@ self.onmessage = function (e) {
   // The current dataset is always source #0, resolved at query time to whatever
   // it actually is — a lazy remote URL or the in-memory Graph handle.
   function selfSource() {
-    const name = dsShortLabel(state.dataset) + " · this dataset";
+    const name = currentDatasetLabel() + " · this dataset";
     return state.remote
       ? { id: "self", kind: "remote", label: name, url: state.remote.url, self: true }
       : { id: "self", kind: "memory", label: name, self: true };
@@ -6911,7 +7001,7 @@ self.onmessage = function (e) {
       if (runb && runb.textContent !== "Cancel") runb.textContent = "Run on endpoint";
       return;
     }
-    const self = `<span class="fed-chip fed-self" title="The dataset selected above"><span class="fed-chip-name">${esc(dsShortLabel(state.dataset))}</span>` +
+    const self = `<span class="fed-chip fed-self" title="The dataset selected above"><span class="fed-chip-name">${esc(currentDatasetLabel())}</span>` +
       `<span class="fed-chip-kind">${state.remote ? "lazy" : "in-memory"}</span></span>`;
     const extra = state.fedSources.map((s) =>
       `<span class="fed-chip"><span class="fed-chip-name" title="${esc(s.label)}">${esc(s.label)}</span>` +
@@ -7121,6 +7211,86 @@ self.onmessage = function (e) {
     }
   }
 
+  // --- "this file has no default graph" explainer ---------------------------
+  // A correct-but-baffling case a real user hit twice and read as a broken
+  // page: SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o } answers 0 on a file whose
+  // quads ALL live in named graphs (nkod.rete: default graph empty, 2.28M quads
+  // across 31,974 graphs). SPARQL semantics make 0 the right answer — a pattern
+  // matches the DEFAULT graph unless wrapped in GRAPH — so this is information
+  // about the FILE, not an error, and it is shown only when that file fact is
+  // verifiable: the resident graph answers one first-match ASK; a remote file
+  // answers from its own Dataset Card (2 small cached range reads). No card, no
+  // claim — and the query is never rewritten or unioned on the user's behalf.
+  const emptyDefaultFactCache = new Map(); // remote url -> {empty,graphs,count} | "none"
+
+  async function emptyDefaultGraphFact() {
+    if (state.remote) {
+      const url = state.remote.url;
+      if (emptyDefaultFactCache.has(url)) {
+        const c = emptyDefaultFactCache.get(url);
+        return c === "none" ? null : c;
+      }
+      let fact = "none";
+      try {
+        const r = await remoteCall("card_url", url);
+        const card = r && r.json ? JSON.parse(r.json) : null;
+        if (card && typeof card.triple_count === "number" && typeof card.named_graph_count === "number") {
+          fact = { empty: card.triple_count === 0, graphs: card.named_graph_count > 0, count: card.named_graph_count };
+        }
+      } catch (_e) { /* cardless file or worker hiccup: show nothing rather than guess */ }
+      emptyDefaultFactCache.set(url, fact);
+      return fact === "none" ? null : fact;
+    }
+    if (state.graph && state.namedGraphCount > 0) {
+      try {
+        const a = JSON.parse(state.graph.query("ASK { ?s ?p ?o }", "table"));
+        return { empty: !!a && a.boolean === false, graphs: true, count: state.namedGraphCount };
+      } catch (_e) { return null; }
+    }
+    return null;
+  }
+
+  // "Empty-shaped": zero rows / ASK false / zero triples — plus the motivating
+  // report's shape, a COUNT aggregate whose every cell is 0 (an aggregate over
+  // zero matches renders as ONE row, not zero). Anything else is a real answer.
+  function resultIsEmptyish(res, q) {
+    if (!res || typeof res !== "object") return false;
+    if (res.kind === "ask") return res.boolean === false;
+    if (res.kind === "select") {
+      const rows = res.rows || [];
+      if (!rows.length) return true;
+      if (!/\bCOUNT\s*\(/i.test(q)) return false;
+      return rows.every((r) => Object.keys(r).every((k) =>
+        /^"?0"?(\^\^.*)?$/.test(String(r[k] == null ? "" : r[k]).trim())));
+    }
+    if (Array.isArray(res.triples)) return res.triples.length === 0;
+    if (res.format === "ttl" || res.format === "jsonld") return !(res.text || "").trim();
+    return false;
+  }
+
+  function maybeExplainEmptyDefaultGraph(q, res) {
+    if (state.liveEndpoint || fedActive()) return;
+    // A query that already names a graph (GRAPH/FROM) or leaves the file
+    // (SERVICE) is out of scope; over-matching this guard only SUPPRESSES the
+    // note, never mis-shows it.
+    if (/\b(GRAPH|FROM|SERVICE)\b/i.test(q)) return;
+    if (!resultIsEmptyish(res, q)) return;
+    const token = state.lastResult;
+    emptyDefaultGraphFact().then((fact) => {
+      if (!fact || !fact.empty || !fact.graphs) return;
+      if (state.lastResult !== token) return; // a newer result replaced this one
+      const el = $("out");
+      if (!el || el.querySelector(".empty-default-note")) return;
+      const n = typeof fact.count === "number" && fact.count > 0
+        ? `${fact.count.toLocaleString("en-US")} named graph${fact.count === 1 ? "" : "s"}`
+        : "named graphs";
+      el.insertAdjacentHTML("beforeend",
+        `<div class="note empty-default-note">Not an error — <b>this file's default graph is empty</b>: ` +
+        `all of its data lives in ${n}, and a SPARQL pattern only matches the default graph unless it ` +
+        `names one. Wrap the pattern in <code>GRAPH ?g { … }</code> to query the named graphs.</div>`);
+    }).catch(() => { /* the explainer must never break a rendered result */ });
+  }
+
   function runQuery() {
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
@@ -7167,7 +7337,6 @@ self.onmessage = function (e) {
       const t0 = performance.now();
       const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
       const ofSize = meta.size ? " of " + meta.size : "";
-      const dsName = dsShortLabel(state.dataset);
       let lastReq = 0, lastBytes = 0;
       const showProg = () => {
         const dt = (performance.now() - t0) / 1000;
@@ -7243,6 +7412,7 @@ self.onmessage = function (e) {
         $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
           `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} fetched${cacheNote} · ${dt.toFixed(0)} ms` +
           (readerNote ? ` · ${readerNote}` : "");
+        maybeExplainEmptyDefaultGraph(q, res);
         saveHistory({ query: q, format: fmt, strategy: "remote", dataset: state.dataset || "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
         cleanup();
@@ -7357,6 +7527,7 @@ self.onmessage = function (e) {
       }
       const dt = performance.now() - t0;
       $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}`;
+      maybeExplainEmptyDefaultGraph(q, res);
       if (fellBack) {
         $("out").innerHTML =
           `<div class="note">Not summary-answerable: this query returns values (titles, scores, …), ` +
@@ -9012,9 +9183,8 @@ self.onmessage = function (e) {
   // Anything ad-hoc — an edited query, a live endpoint, a graph the visitor
   // built in this browser — has no such page and shares the deep link as before.
   function hasSharePage(ds) {
-    // Strict membership — `datasetInfo()` falls back to the first catalog
-    // entry, which would hand an off-catalog remote a share page for a
-    // dataset it isn't (d/<key>.html only exists for real catalog keys).
+    // Catalog membership, minus user-built keys — d/<key>.html only exists for
+    // real catalog keys. (Predates datasetInfo() going strict; kept explicit.)
     return CATALOG.datasets.some((d) => d.key === ds) && !userBytes.has(ds);
   }
 
@@ -9311,6 +9481,25 @@ self.onmessage = function (e) {
   function wireEvents() {
     wireCard();
     $("buildBtn").onclick = () => setMode("build");
+    // The Load pre-modal: same conventions as every other modal here — × close,
+    // click on the backdrop to dismiss, Escape in the shared keydown block.
+    $("loadBtn").onclick = openLoadModal;
+    $("loadModalClose").onclick = closeLoadModal;
+    $("loadModal").addEventListener("click", (e) => {
+      if (e.target === $("loadModal")) closeLoadModal();
+    });
+    $("loadExamplesBtn").onclick = () => { closeLoadModal(); openSource(); };
+    $("loadUrlGo").onclick = connectFromLoadModal;
+    $("loadUrl").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); connectFromLoadModal(); }
+    });
+    // The picker matters on a phone, where drag-and-drop isn't usable. Reset
+    // the input so choosing the same file twice still fires change.
+    $("loadFileInput").onchange = (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (f) { closeLoadModal(); loadFromFile(f); }
+    };
     $("run").onclick = runQuery;
 
     // Phone: reclaim memory when the tab is backgrounded. iOS Safari is most
@@ -9729,6 +9918,7 @@ self.onmessage = function (e) {
         closeHistory();
         closeSettings();
         closeSource();
+        closeLoadModal();
         closeFinder();
       }
       // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.
@@ -9865,21 +10055,31 @@ self.onmessage = function (e) {
       renderHistory();
     };
 
-    const drop = $("dropZone");
-    ["dragenter", "dragover"].forEach((ev) => {
-      drop.addEventListener(ev, (e) => {
-        e.preventDefault();
-        drop.classList.add("drag");
+    // Two drop zones share one wiring: the catalog's advanced fold and the
+    // Load pre-modal — the SAME ingestion path (loadFromFile), not a second one.
+    const wireDropZone = (zone, onFile) => {
+      if (!zone) return;
+      ["dragenter", "dragover"].forEach((ev) => {
+        zone.addEventListener(ev, (e) => {
+          e.preventDefault();
+          zone.classList.add("drag");
+        });
       });
-    });
-    ["dragleave", "drop"].forEach((ev) => {
-      drop.addEventListener(ev, (e) => {
-        e.preventDefault();
-        drop.classList.remove("drag");
+      ["dragleave", "drop"].forEach((ev) => {
+        zone.addEventListener(ev, (e) => {
+          e.preventDefault();
+          zone.classList.remove("drag");
+        });
       });
-    });
-    drop.addEventListener("drop", (e) => {
-      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      zone.addEventListener("drop", (e) => {
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        onFile(file);
+      });
+    };
+    wireDropZone($("dropZone"), loadFromFile);
+    wireDropZone($("loadDropZone"), (file) => {
+      if (!file) return;
+      closeLoadModal();
       loadFromFile(file);
     });
   }

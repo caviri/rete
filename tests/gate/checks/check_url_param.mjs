@@ -84,6 +84,12 @@ const main = async () => {
     dsName: ((document.getElementById("dsName") || {}).textContent || "").trim(),
     dsTitle: ((document.getElementById("dsTitle") || {}).textContent || "").trim(),
     pill: ((document.getElementById("sourcePill") || {}).textContent || "").trim(),
+    // The SOURCES self chip — the THIRD door this bug walked through: the chip
+    // resolved an off-catalog key through the catalog fallback ("scholar.rete")
+    // and kept the kind badge it was painted with BEFORE remote mode was
+    // entered ("IN-MEMORY" for a lazy remote).
+    fedName: ((document.querySelector("#fedChips .fed-self .fed-chip-name") || {}).textContent || "").trim(),
+    fedKind: ((document.querySelector("#fedChips .fed-self .fed-chip-kind") || {}).textContent || "").trim(),
   }));
   const assertClaims = async (page, where) => {
     // The filename label paints synchronously; the card title may replace it
@@ -107,6 +113,15 @@ const main = async () => {
     }
     if (c.pill !== "remote (lazy)") {
       failures.push(`${where}: source pill says "${c.pill}", expected "remote (lazy)"`);
+    }
+    // SOURCES chip: must name the file that is open (or its card title), and
+    // its kind badge must say lazy — the reported wrong pair was
+    // "scholar.rete" + "in-memory" over a lazy off-catalog remote.
+    if (c.fedName !== FILE_LABEL && c.fedName !== CARD_TITLE) {
+      failures.push(`${where}: SOURCES chip claims "${c.fedName.slice(0, 90)}" for ${FILE_LABEL}`);
+    }
+    if (c.fedKind !== "lazy") {
+      failures.push(`${where}: SOURCES chip kind says "${c.fedKind}", expected "lazy"`);
     }
     return c;
   };
@@ -196,7 +211,7 @@ const main = async () => {
   const pass = failures.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
-    note: "#url= opens an off-catalog .rete; UI names the actual file (chip/header/pill); share round-trips; javascript: refused",
+    note: "#url= opens an off-catalog .rete; UI names the actual file (chip/header/pill/SOURCES chip + lazy badge); share round-trips; javascript: refused",
     rows: res.rows,
     claimedAfterQuery: afterQuery,
     fixture: fixtureUrl,

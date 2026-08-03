@@ -2409,6 +2409,25 @@ th .coltype.coltype-on {
   color: var(--accent-dark);
 }
 
+/* The Load pre-modal (the "Load" button beside Build): three stacked routes —
+   drop a file / paste a URL / browse the examples. Stacked at every width, so
+   it needs no phone-specific layout beyond the generic .modal rules. */
+.load-modal { width: min(560px, 100%); }
+.load-routes { display: grid; gap: 4px; }
+.load-route {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.load-route:first-child { margin-top: 0; padding-top: 2px; border-top: 0; }
+.load-route h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--accent-dark);
+}
+.load-route .file-zone { min-height: 72px; }
+.load-url-err { color: var(--bad); }
+
 /* Dataset browser (the "Datasets" modal): a wide two-pane layout — a sidebar
    list on the left, the selected dataset's details + preview on the right. */
 .ds-modal {
@@ -2800,7 +2819,7 @@ th .coltype.coltype-on {
      flexes/truncates so Build and ↗ keep their natural size beside it. */
   .top-actions { order: 4; width: 100%; flex-wrap: nowrap; gap: 8px; }
   .dataset-button { flex: 1 1 auto; min-width: 0; }
-  #buildBtn, #shareBtn { flex: 0 0 auto; }
+  #loadBtn, #buildBtn, #shareBtn { flex: 0 0 auto; }
   .dataset-button #dsName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* The eject icon stays (tap to change dataset); its "Change dataset" label and
      the Browser-API docs link are dropped to make room for Build. */
