@@ -173,8 +173,17 @@ graph: `INSERT DATA`, watch the next SELECT reflect it, download the snapshot.
 
 The playground keeps its entire state in the URL **fragment** —
 `playground.html#dataset=<key>&load=lazy&mode=sparql&ex=<n>` — so any view is
-reproducible from its address alone, with nothing stored server-side. A fragment
-has one limitation: it is never sent to a server, and no link preview executes
+reproducible from its address alone, with nothing stored server-side.
+
+A `<key>` names a dataset in the catalog. To open a `.rete` that isn't in it —
+one you published yourself — give the address instead:
+`playground.html#url=<https://…/yours.rete>&mode=sparql`. It is read the same
+lazy way, over HTTP range requests, so the link works against a file of any size
+as long as its host sends `Accept-Ranges: bytes` and permits cross-origin reads
+(`Access-Control-Allow-Origin`, exposing `Content-Range`). Connecting by hand
+and pressing **Share** produces exactly this form of link.
+
+A fragment has one limitation: it is never sent to a server, and no link preview executes
 the page's JavaScript. Pasted into a chat, a feed or a search index, every deep
 link would therefore unfurl as the same anonymous "rete playground" card, with
 no hint of which graph or which question it points at.

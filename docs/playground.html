@@ -21488,7 +21488,16 @@ self.onmessage = function (e) {
 
   function updateHash() {
     const params = new URLSearchParams();
-    params.set("dataset", state.dataset);
+    // An off-catalog remote — connected by hand or arrived at via #url= — has no
+    // catalog key to name it, and state.dataset still holds whatever was loaded
+    // before. Sharing that produced a link to a DIFFERENT dataset than the one
+    // on screen; emit the address itself so the link round-trips.
+    const offCatalog =
+      state.activeSource === "remote" &&
+      state.remote &&
+      state.remote.url !== remoteUrlFor(state.dataset);
+    if (offCatalog) params.set("url", state.remote.url);
+    else params.set("dataset", state.dataset);
     if (state.liveEndpoint) params.set("endpoint", state.liveEndpoint);
     // Record HOW the dataset is loaded so a reload restores the same mode — a
     // remote-lazy graph is not embedded, so without this the deep link couldn't
@@ -22253,11 +22262,39 @@ self.onmessage = function (e) {
     // A deep-linked live endpoint (#endpoint=…) connects immediately and takes
     // over query routing — no catalog modal over it.
     const liveEp = params.get("endpoint");
+    // #url=<https URL of a .rete> opens ANY published file, not just a catalog
+    // entry. Until this existed a deep link could only name a catalog key, so
+    // someone hosting their own .rete had no way to share a link that opens it —
+    // they had to be told to paste the address into the field by hand, and a
+    // stray character in that paste surfaced only as "Error: open" from the range
+    // reader. That is exactly how a report on an external file arrived (#95).
+    const extUrl = params.get("url");
     let bootShowCatalog = false;
     // Restore the deep-linked dataset in its load mode. Remote-lazy/cache datasets
     // aren't in RETE_DATASETS_B64, so the old embedded-only check silently fell
     // back to the default (scholar) on every reload of a remote dataset.
-    if (ds && (datasetInfo(ds) || userBytes.has(ds))) {
+    if (extUrl) {
+      // http(s) only — matching what the manual URL field accepts. The scheme
+      // check is not cosmetic: this value comes straight from the address bar,
+      // so it keeps javascript:/data: URLs from reaching the reader. Mixed
+      // content is left to the browser, which blocks http:// on the hosted page
+      // anyway but must stay allowed for a local file server.
+      const clean = extUrl.trim();
+      if (!/^https?:\/\//i.test(clean)) {
+        // Load the default so the page is still usable, THEN report — loading
+        // writes its own status line and would otherwise bury this one.
+        loadDataset(CATALOG.defaultDataset);
+        dsSelected = CATALOG.defaultDataset;
+        showError("out", "#url= needs an http(s):// address to a .rete file — refused: " + clean);
+      } else {
+        // Show the address that was opened: it is not a catalog entry, so
+        // without this the field sits empty and there is nothing on screen
+        // saying which file answered the query, or to copy for a bug report.
+        $("remoteUrl").value = clean;
+        const base = decodeURIComponent((clean.split("?")[0].split("/").pop() || ""));
+        enterRemote(clean, base.replace(/\.rete$/i, "") || "remote");
+      }
+    } else if (ds && (datasetInfo(ds) || userBytes.has(ds))) {
       if (load === "lazy") enterRemote(remoteUrlFor(ds), ds);
       else if (load === "cache") await loadCachedRemote(ds);
       else selectDataset(ds); // bundled if embedded, else lazy (the safe default)

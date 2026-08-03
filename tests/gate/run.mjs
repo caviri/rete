@@ -270,6 +270,7 @@ const G2 = [
   ["check_ios_default", "iPhone UA → auto sync routing + query runs", 120000, true],
   ["check_settings_mobile", "phone-viewport Settings (no overflow, storage, session)", 120000, false],
   ["check_copy", "clipboard: parse-error Copy-log + share button", 90000, false],
+  ["check_url_param", "#url= opens an off-catalog .rete; javascript: refused", 120000, false],
   ["check_clear", "Clear everything empties 4 stores + Cache API", 90000, false],
   ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000, true],
   ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000, false],
