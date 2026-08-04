@@ -76,6 +76,12 @@ pub struct ExternalBuildOptions {
     pub tmp_dir: Option<PathBuf>,
     /// Metadata payload (the Dataset Card), derived after counts are known.
     pub metadata: MetadataFn,
+    /// Build-conditions payload ([`crate::header::SectionKind::BuildInfo`]),
+    /// written verbatim after the metadata section and **excluded from the
+    /// content hash** — per-build facts (timestamp, builder, parameters) that
+    /// must not make two builds of identical data hash differently. Empty =
+    /// no section (byte-identical to a pre-build-info file).
+    pub build_info: Vec<u8>,
 }
 
 impl Default for ExternalBuildOptions {
@@ -84,6 +90,7 @@ impl Default for ExternalBuildOptions {
             memory_budget: 4 << 30,
             tmp_dir: None,
             metadata: Box::new(|_| Vec::new()),
+            build_info: Vec::new(),
         }
     }
 }
@@ -225,6 +232,7 @@ where
     write_final_file(
         output,
         &metadata,
+        &opts.build_info,
         &merged,
         &perm_sections,
         quad_count,
@@ -1272,6 +1280,7 @@ impl StreamingTiler {
 fn write_final_file(
     output: &Path,
     metadata: &[u8],
+    build_info: &[u8],
     dict: &MergedDict,
     perm_sections: &[SectionFile],
     quad_count: u64,
@@ -1303,7 +1312,8 @@ fn write_final_file(
     }
 
     let meta_len = metadata.len() as u64;
-    let dict_offset = HEADER_LEN as u64 + meta_len;
+    let build_len = build_info.len() as u64;
+    let dict_offset = HEADER_LEN as u64 + meta_len + build_len;
     let index_offset = dict_offset + dict_len;
 
     let mut out = BufWriter::with_capacity(1 << 20, File::create(output)?);
@@ -1316,6 +1326,12 @@ fn write_final_file(
     if meta_len > 0 {
         out.write_all(metadata)?;
         hasher.update(metadata);
+    }
+    // build-info: written adjacent to the metadata (so a card reader fetches
+    // both in one coalesced range) but NOT hashed — it records per-build facts
+    // that must not perturb the reproducible content hash.
+    if build_len > 0 {
+        out.write_all(build_info)?;
     }
 
     // dict container
@@ -1376,6 +1392,12 @@ fn write_final_file(
         schema_meta_len: 0,
         text_index_offset: 0,
         text_index_len: 0,
+        build_info_offset: if build_len > 0 {
+            HEADER_LEN as u64 + meta_len
+        } else {
+            0
+        },
+        build_info_len: build_len,
         extra_sections: Vec::new(),
     };
     let mut f = out.into_inner().map_err(|e| e.into_error())?;
@@ -1474,12 +1496,55 @@ mod tests {
                 memory_budget: budget,
                 tmp_dir: Some(dir.clone()),
                 metadata: Box::new(|_| Vec::new()),
+                build_info: Vec::new(),
             },
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         (bytes, stats)
+    }
+
+    /// A build-info payload is written as a kind-7 section, readable back, and
+    /// leaves the content hash identical to a build without one — the external
+    /// builder's version of the outside-the-hash property.
+    #[test]
+    fn external_build_info_is_outside_the_hash() {
+        let quads = test_quads(500);
+        let (plain, _) = build_ext(quads.clone(), 0);
+
+        let dir = std::env::temp_dir().join(format!("rete-extbuild-bi-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.rete");
+        let info = br#"{"built_at":"2026-08-04T00:00:00Z"}"#.to_vec();
+        build_external(
+            |visit| {
+                for q in quads.iter().cloned() {
+                    visit(q)?;
+                }
+                Ok(())
+            },
+            &out,
+            ExternalBuildOptions {
+                memory_budget: 0,
+                tmp_dir: Some(dir.clone()),
+                metadata: Box::new(|_| Vec::new()),
+                build_info: info.clone(),
+            },
+        )
+        .unwrap();
+        let with = std::fs::read(&out).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(crate::read_build_info(&with).unwrap().unwrap(), info);
+        let h_with = crate::Header::from_bytes(&with).unwrap();
+        let h_plain = crate::Header::from_bytes(&plain).unwrap();
+        assert_eq!(h_with.content_hash, h_plain.content_hash);
+        assert!(crate::verify(&with).unwrap());
+        // Stripping the section restores the plain image byte-for-byte.
+        assert_eq!(crate::attach_build_info(&with, &[]).unwrap(), plain);
+        // And the graph still opens.
+        crate::Rete::open(&with).unwrap();
     }
 
     /// The heart of the feature: a tiny budget (forcing many chunks, many sort
@@ -1592,7 +1657,7 @@ mod tests {
             count = Some(n);
             sections.push(sec);
         }
-        write_final_file(&out, &[], &merged, &sections, count.unwrap(), codec).unwrap();
+        write_final_file(&out, &[], &[], &merged, &sections, count.unwrap(), codec).unwrap();
 
         let bytes = std::fs::read(&out).unwrap();
         assert_eq!(statements as usize, quads.len());
@@ -1695,7 +1760,7 @@ mod tests {
             eprintln!("resume: {} done", perm.name());
             sections.push(s);
         }
-        write_final_file(&out, &metadata, &merged, &sections, quad_count, codec).unwrap();
+        write_final_file(&out, &metadata, &[], &merged, &sections, quad_count, codec).unwrap();
         eprintln!("resume: wrote {}", out.display());
         std::mem::forget(tmp); // keep the spill until the file is verified
     }
@@ -1720,6 +1785,7 @@ mod tests {
                 memory_budget: 0,
                 tmp_dir: Some(dir.clone()),
                 metadata: Box::new(|_| Vec::new()),
+                build_info: Vec::new(),
             },
         )
         .unwrap_err();

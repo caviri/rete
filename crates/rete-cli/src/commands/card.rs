@@ -29,6 +29,42 @@ pub(crate) struct DatasetCard {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
 
+    // --- Curated identity & provenance (issue #153). All deterministic
+    // (hand-supplied via `--card-file`), so they live INSIDE the content hash;
+    // the per-build volatile facts (timestamp, builder, timings) live in the
+    // separate unhashed build-info section instead. ---
+    /// Dataset version (e.g. a date or semver) — Croissant requires one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// The people who made the dataset. ORCID as an IRI, not a string, so a
+    /// card's creator is joinable against the published ORCID graph.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub creators: Vec<Creator>,
+    /// Publishing organisation, with its ROR IRI for the same joinability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<Publisher>,
+    /// Where the authoritative copy of THIS file lives (`void:dataDump`). A
+    /// `.rete` found on a disk can then say where to verify against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_url: Option<String>,
+    /// A public SPARQL endpoint serving this dataset (`void:sparqlEndpoint`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparql_endpoint: Option<String>,
+    /// The SOURCE data's own date (harvest/snapshot), distinct from both the
+    /// curated `created` and the build-info timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_date: Option<String>,
+    /// What this file was derived from (`prov:wasDerivedFrom`): source dumps,
+    /// upstream `.rete` shards a merge folded in, an endpoint harvested.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_from: Vec<String>,
+    /// DOI of the dataset, as an IRI (`https://doi.org/…`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doi: Option<String>,
+    /// Preferred citation text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cite_as: Option<String>,
+
     pub triple_count: u64,
     pub quad_count: u64,
     pub named_graph_count: u64,
@@ -83,8 +119,36 @@ pub(crate) struct DatasetCard {
     /// Set iff any capped list was actually truncated (the profile is partial).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
+    /// The top-N cap the profile lists were derived under — the number
+    /// `truncated: true` was hinting at without stating. 0 (omitted) on cards
+    /// whose profile was never derived (external builds, pre-existing cards).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub top_n: u32,
 
     pub format_version: u8,
+}
+
+/// serde helper: omit a `0` cap (profile-less cards).
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+/// A dataset creator: a person (or team) with an optional ORCID IRI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Creator {
+    pub name: String,
+    /// `https://orcid.org/0000-0000-0000-0000`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orcid: Option<String>,
+}
+
+/// The publishing organisation, with an optional ROR IRI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Publisher {
+    pub name: String,
+    /// `https://ror.org/…`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ror: Option<String>,
 }
 
 /// Which tier of the three-tier exploration model can answer a query cheapest:
@@ -224,7 +288,10 @@ impl Coherence {
 }
 
 /// The curated subset, as supplied by a `--card-file` JSON document (every field
-/// optional). CLI flags override whatever the file provides.
+/// optional). CLI flags override whatever the file provides. The identity/
+/// provenance fields (version, creators, publisher, canonical_url,
+/// sparql_endpoint, source_date, derived_from, doi, cite_as) have no CLI flag —
+/// they come from the card file only.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct CardInput {
     pub title: Option<String>,
@@ -232,8 +299,41 @@ pub(crate) struct CardInput {
     pub license: Option<String>,
     pub source: Option<String>,
     pub created: Option<String>,
+    pub version: Option<String>,
+    #[serde(default)]
+    pub creators: Vec<Creator>,
+    pub publisher: Option<Publisher>,
+    pub canonical_url: Option<String>,
+    pub sparql_endpoint: Option<String>,
+    pub source_date: Option<String>,
+    #[serde(default)]
+    pub derived_from: Vec<String>,
+    pub doi: Option<String>,
+    pub cite_as: Option<String>,
     #[serde(default)]
     pub example_queries: Vec<String>,
+}
+
+impl CardInput {
+    /// Move every curated field into a card (the shared step of all derivation
+    /// paths, so a new curated field is wired exactly once).
+    fn fill(self, card: &mut DatasetCard) {
+        card.title = self.title;
+        card.description = self.description;
+        card.license = self.license;
+        card.source = self.source;
+        card.created = self.created;
+        card.version = self.version;
+        card.creators = self.creators;
+        card.publisher = self.publisher;
+        card.canonical_url = self.canonical_url;
+        card.sparql_endpoint = self.sparql_endpoint;
+        card.source_date = self.source_date;
+        card.derived_from = self.derived_from;
+        card.doi = self.doi;
+        card.cite_as = self.cite_as;
+        card.example_queries = self.example_queries;
+    }
 }
 
 /// The `rete build` card flags, bundled for threading through `build()`.
@@ -297,6 +397,26 @@ pub(crate) fn card_json(card: &DatasetCard) -> serde_json::Value {
     value
 }
 
+/// [`card_json`] plus the build-info record (when the file carries one) under a
+/// `"build"` key — an envelope addition, so the card's own stored bytes stay
+/// exactly the hashed metadata section.
+pub(crate) fn card_json_with_build(
+    card: &DatasetCard,
+    build: Option<&super::buildinfo::BuildInfo>,
+) -> serde_json::Value {
+    let mut value = card_json(card);
+    if let Some(b) = build {
+        value
+            .as_object_mut()
+            .expect("DatasetCard JSON is an object")
+            .insert(
+                "build".into(),
+                serde_json::to_value(b).expect("BuildInfo serializes"),
+            );
+    }
+    value
+}
+
 /// Resolve the curated fields: load `--card-file` (if any), then let explicit
 /// flags override individual fields.
 pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
@@ -332,7 +452,7 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
 /// unbounded `class_links` (O(classes × predicates × classes)) or predicate list
 /// would bloat that fetch on a large schema (CIDOC-CRM/MMM). Capping keeps the
 /// card small and bounded; `truncated` flags when a list was actually cut.
-const CARD_TOP_N: usize = 100;
+pub(crate) const CARD_TOP_N: usize = 100;
 
 // Well-known IRIs (bracketed N-Triples term form, as they appear in the quads).
 const RDFS_LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
@@ -387,20 +507,16 @@ pub(crate) fn curated_counts_card(
     term_count: u64,
     curated: CardInput,
 ) -> DatasetCard {
-    DatasetCard {
-        title: curated.title,
-        description: curated.description,
-        license: curated.license,
-        source: curated.source,
-        created: curated.created,
-        example_queries: curated.example_queries,
+    let mut card = DatasetCard {
         triple_count: statements,
         quad_count: statements,
         named_graph_count: 0,
         term_count,
         format_version: rete_core::format::CURRENT_FORMAT_VERSION,
         ..DatasetCard::default()
-    }
+    };
+    curated.fill(&mut card);
+    card
 }
 
 pub(crate) fn derive_card(
@@ -667,11 +783,6 @@ fn derive_card_from(
     };
 
     let mut card = DatasetCard {
-        title: curated.title,
-        description: curated.description,
-        license: curated.license,
-        source: curated.source,
-        created: curated.created,
         triple_count,
         quad_count,
         named_graph_count,
@@ -679,7 +790,6 @@ fn derive_card_from(
         predicates,
         classes,
         vocabularies,
-        example_queries: curated.example_queries,
         datatypes,
         languages,
         class_links,
@@ -691,8 +801,13 @@ fn derive_card_from(
         // (or `--materialize`) ran; derive_card itself must not run the reasoner.
         coherence: Coherence::default(),
         truncated,
+        // The cap the profile lists above were derived under (deterministic:
+        // a compile-time constant of this builder, not a per-build fact).
+        top_n: CARD_TOP_N as u32,
         format_version: rete_core::CURRENT_FORMAT_VERSION,
+        ..DatasetCard::default()
     };
+    curated.fill(&mut card);
     // The tiered starter-query library, instantiated from the profile above.
     card.queries = super::queries::generate(&card);
     card
@@ -945,6 +1060,56 @@ pub(crate) fn load_card_ranged<R: rete_core::RangeReader>(
     }
 }
 
+/// Read the header, the card, **and** the build-info record in the CARD tier's
+/// budget: the 1 KiB header read plus one coalesced range covering both
+/// adjacent sections (the same adjacency contract as
+/// [`rete_core::read_card_and_build_info_ranged`], done here so the header is
+/// fetched exactly once and reused for the checksum). A build-info blob that
+/// fails to parse degrades to `None` with a warning — a newer writer's record
+/// must never make the card unreadable.
+#[allow(clippy::type_complexity)]
+pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
+    reader: &R,
+) -> anyhow::Result<(
+    Header,
+    Option<DatasetCard>,
+    Option<super::buildinfo::BuildInfo>,
+)> {
+    let head = reader.read_at(0, rete_core::HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    let meta = (header.metadata_offset, header.metadata_len);
+    let build = (header.build_info_offset, header.build_info_len);
+    let (m, b) = if meta.1 > 0 && build.1 > 0 && build.0 == meta.0 + meta.1 {
+        // Adjacent (the layout the writers produce): one read spans both.
+        let both = reader.read_at(meta.0, meta.1 + build.1)?;
+        let (m, b) = both.split_at(meta.1 as usize);
+        (Some(m.to_vec()), Some(b.to_vec()))
+    } else {
+        let fetch = |off: u64, len: u64| -> std::io::Result<Option<Vec<u8>>> {
+            if len == 0 {
+                Ok(None)
+            } else {
+                Ok(Some(reader.read_at(off, len)?))
+            }
+        };
+        (fetch(meta.0, meta.1)?, fetch(build.0, build.1)?)
+    };
+    let card = match m {
+        None => None,
+        Some(bytes) => Some(DatasetCard::from_json_bytes(&bytes)?),
+    };
+    let build = b.and_then(
+        |bytes| match super::buildinfo::BuildInfo::from_json_bytes(&bytes) {
+            Ok(b) => Some(b),
+            Err(e) => {
+                eprintln!("warning: unreadable build-info section ({e}); ignoring it");
+                None
+            }
+        },
+    );
+    Ok((header, card, build))
+}
+
 /// Render a card as a human-readable catalog. `checksum` is the file's content
 /// hash in hex (the integrity checksum surfaced by `rete verify`).
 pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
@@ -961,6 +1126,31 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
     field(&mut out, "license", &card.license);
     field(&mut out, "source", &card.source);
     field(&mut out, "created", &card.created);
+    field(&mut out, "version", &card.version);
+    field(&mut out, "source date", &card.source_date);
+    for c in &card.creators {
+        let orcid = c
+            .orcid
+            .as_deref()
+            .map(|o| format!("  ({o})"))
+            .unwrap_or_default();
+        let _ = writeln!(out, "  {:<13}: {}{orcid}", "creator", c.name);
+    }
+    if let Some(p) = &card.publisher {
+        let ror = p
+            .ror
+            .as_deref()
+            .map(|r| format!("  ({r})"))
+            .unwrap_or_default();
+        let _ = writeln!(out, "  {:<13}: {}{ror}", "publisher", p.name);
+    }
+    field(&mut out, "canonical URL", &card.canonical_url);
+    field(&mut out, "endpoint", &card.sparql_endpoint);
+    field(&mut out, "doi", &card.doi);
+    field(&mut out, "cite as", &card.cite_as);
+    for d in &card.derived_from {
+        let _ = writeln!(out, "  {:<13}: {d}", "derived from");
+    }
 
     let _ = writeln!(out, "  {:<13}: {}", "triples", card.triple_count);
     if card.named_graph_count > 0 {
@@ -1109,23 +1299,99 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
     out
 }
 
-/// `rete card <file> [--json]`: print the embedded dataset card (catalog view),
-/// or the raw JSON with `--json`. Prints `(no dataset card)` when absent.
-pub(crate) fn card_cmd(file: &str, json: bool) -> anyhow::Result<()> {
-    // The CARD tier: header + metadata range only — the same two range reads
-    // `card-url` does over HTTP, so a 50 GB local file costs KBs to describe.
-    let reader = crate::commands::range_source::LocalRangeReader::open(file)?;
-    let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
-    let header = Header::from_bytes(&head)?;
-    match load_card_ranged(&reader)? {
-        None => println!("(no dataset card)"),
-        Some(card) => {
-            if json {
-                println!("{}", serde_json::to_string_pretty(&card_json(&card))?);
+/// Output shape of `rete card` / `rete card-url`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CardFormat {
+    /// Human catalog view (default).
+    Text,
+    /// The raw card JSON envelope (`--json`).
+    Json,
+    /// JSON-LD projection: VoID + schema.org + PROV (`--format jsonld`).
+    JsonLd,
+    /// Croissant projection of the honestly-mappable subset
+    /// (`--format croissant`).
+    Croissant,
+}
+
+impl CardFormat {
+    /// Resolve the `--json` / `--format` flags (`--format` wins).
+    pub(crate) fn resolve(json: bool, format: Option<&str>) -> anyhow::Result<Self> {
+        match format {
+            None => Ok(if json {
+                CardFormat::Json
             } else {
-                println!("{}", format_card(&card, &hex16(&header.content_hash)));
+                CardFormat::Text
+            }),
+            Some("json") => Ok(CardFormat::Json),
+            Some("jsonld") => Ok(CardFormat::JsonLd),
+            Some("croissant") => Ok(CardFormat::Croissant),
+            Some(other) => anyhow::bail!("unknown card format {other:?} (json|jsonld|croissant)"),
+        }
+    }
+}
+
+/// Shared presentation for `rete card` and `rete card-url`: render one card (+
+/// optional build info) in the chosen format. `source` is the file's own
+/// path/URL, used as the dataset IRI fallback in the projections.
+pub(crate) fn print_card(
+    card: &DatasetCard,
+    build: Option<&super::buildinfo::BuildInfo>,
+    checksum: &str,
+    source: &str,
+    format: CardFormat,
+    sha256: Option<&str>,
+) -> anyhow::Result<()> {
+    match format {
+        CardFormat::Text => {
+            println!("{}", format_card(card, checksum));
+            if let Some(b) = build {
+                println!("{}", super::buildinfo::format_build_info(b));
             }
         }
+        CardFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&card_json_with_build(card, build))?
+        ),
+        CardFormat::JsonLd => println!(
+            "{}",
+            serde_json::to_string_pretty(&super::card_jsonld::to_jsonld(
+                card, build, checksum, source
+            ))?
+        ),
+        CardFormat::Croissant => println!(
+            "{}",
+            serde_json::to_string_pretty(&super::card_jsonld::to_croissant(
+                card, checksum, source, sha256
+            ))?
+        ),
+    }
+    Ok(())
+}
+
+/// `rete card <file> [--json|--format jsonld|croissant]`: print the embedded
+/// dataset card (catalog view), the raw JSON, or an RDF projection. Prints
+/// `(no dataset card)` when absent.
+pub(crate) fn card_cmd(
+    file: &str,
+    json: bool,
+    format: Option<&str>,
+    sha256: Option<&str>,
+) -> anyhow::Result<()> {
+    let format = CardFormat::resolve(json, format)?;
+    // The CARD tier: header + one coalesced metadata+build-info range — the
+    // same reads `card-url` does over HTTP, so a 50 GB local file costs KBs to
+    // describe.
+    let reader = crate::commands::range_source::LocalRangeReader::open(file)?;
+    match load_card_and_build_ranged(&reader)? {
+        (_, None, _) => println!("(no dataset card)"),
+        (header, Some(card), build) => print_card(
+            &card,
+            build.as_ref(),
+            &hex16(&header.content_hash),
+            file,
+            format,
+            sha256,
+        )?,
     }
     Ok(())
 }
@@ -1415,6 +1681,97 @@ mod tests {
         assert!(card.queries.is_empty());
         assert!(card.signals.is_empty());
         assert!(!card.truncated);
+    }
+
+    /// New curated identity/provenance fields round-trip through a card-file
+    /// JSON document and into the card, and absent ones are omitted from the
+    /// stored bytes (size discipline).
+    #[test]
+    fn curated_identity_fields_round_trip() {
+        let input: CardInput = serde_json::from_str(
+            r#"{
+                "title": "T",
+                "version": "2026-08-04",
+                "creators": [{"name":"Ada","orcid":"https://orcid.org/0000-0002-1825-0097"}],
+                "publisher": {"name":"EPFL","ror":"https://ror.org/02s376052"},
+                "canonical_url": "https://data.example.org/t.rete",
+                "sparql_endpoint": "https://example.org/sparql",
+                "source_date": "2026-07-01",
+                "derived_from": ["https://example.org/dump.nt"],
+                "doi": "https://doi.org/10.5281/zenodo.1",
+                "cite_as": "Ada (2026). T."
+            }"#,
+        )
+        .unwrap();
+        let card = curated_counts_card(5, 9, input);
+        let bytes = card.to_json_bytes();
+        let back = DatasetCard::from_json_bytes(&bytes).unwrap();
+        assert_eq!(back.version.as_deref(), Some("2026-08-04"));
+        assert_eq!(back.creators[0].name, "Ada");
+        assert_eq!(
+            back.creators[0].orcid.as_deref(),
+            Some("https://orcid.org/0000-0002-1825-0097")
+        );
+        assert_eq!(back.publisher.as_ref().unwrap().name, "EPFL");
+        assert_eq!(
+            back.canonical_url.as_deref(),
+            Some("https://data.example.org/t.rete")
+        );
+        assert_eq!(back.derived_from, vec!["https://example.org/dump.nt"]);
+        assert_eq!(
+            back.doi.as_deref(),
+            Some("https://doi.org/10.5281/zenodo.1")
+        );
+
+        // A minimal card omits every absent identity field from its bytes.
+        let plain = curated_counts_card(1, 2, CardInput::default()).to_json_bytes();
+        let text = String::from_utf8(plain).unwrap();
+        for absent in [
+            "\"creators\"",
+            "\"publisher\"",
+            "\"canonical_url\"",
+            "\"sparql_endpoint\"",
+            "\"derived_from\"",
+            "\"doi\"",
+            "\"cite_as\"",
+            "\"source_date\"",
+            "\"version\"",
+            "\"top_n\"",
+        ] {
+            assert!(
+                !text.contains(absent),
+                "{absent} must be omitted when unset"
+            );
+        }
+    }
+
+    /// Forward-compat: an OLD reader's struct (the pre-#153 field set, no
+    /// `deny_unknown_fields` — mirrored here) must still deserialize a card
+    /// written by THIS build, new fields and all.
+    #[test]
+    fn old_reader_struct_accepts_new_card_json() {
+        #[derive(serde::Deserialize)]
+        struct OldCard {
+            title: Option<String>,
+            triple_count: u64,
+            #[serde(default)]
+            predicates: Vec<(String, u64)>,
+            format_version: u8,
+        }
+        let input: CardInput = serde_json::from_str(
+            r#"{"title":"New","version":"1","creators":[{"name":"A"}],
+                "canonical_url":"https://x/y.rete","derived_from":["https://x/d.nt"]}"#,
+        )
+        .unwrap();
+        let quads = vec![q("<http://ex/a>", "<http://ex/p>", "<http://ex/b>")];
+        let card = derive_card(&quads, 3, 0, input);
+        assert_eq!(card.top_n, CARD_TOP_N as u32);
+        let bytes = card.to_json_bytes();
+        let old: OldCard = serde_json::from_slice(&bytes).expect("old struct parses new JSON");
+        assert_eq!(old.title.as_deref(), Some("New"));
+        assert_eq!(old.triple_count, 1);
+        assert_eq!(old.format_version, card.format_version);
+        assert!(!old.predicates.is_empty());
     }
 
     #[test]

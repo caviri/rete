@@ -9,37 +9,40 @@
 //! `commands::query` / `commands::inspect`.
 
 use rete_core::{
-    auto_block, eval_query, BlockCacheReader, CountingReader, Header, RangeReader, Rete,
-    SummaryView, HEADER_LEN,
+    auto_block, eval_query, BlockCacheReader, CountingReader, RangeReader, Rete, SummaryView,
 };
 
 use crate::commands::card;
 use crate::commands::range_source::RangedSourceReader;
 use crate::commands::render::print_query_output;
 
-/// Fetch just the embedded Dataset Card over HTTP — the index-free CARD tier.
-/// Reads only the 128-byte header and the metadata range (two small range
+/// Fetch just the embedded Dataset Card (and, when present, the adjacent
+/// build-info record) over HTTP — the index-free CARD tier. Reads only the 1 KiB
+/// header and one coalesced metadata+build-info range (two small range
 /// requests), never the dictionary, index, or pyramid: the cold-start
 /// self-description a newcomer needs before they know what to query.
-pub(crate) fn card_url(url: &str, json: bool) -> anyhow::Result<()> {
+pub(crate) fn card_url(
+    url: &str,
+    json: bool,
+    format: Option<&str>,
+    sha256: Option<&str>,
+) -> anyhow::Result<()> {
+    let format = card::CardFormat::resolve(json, format)?;
     let reader = CountingReader::new(RangedSourceReader::open(url)?);
     let total = reader.len();
-    match card::load_card_ranged(&reader)? {
-        None => println!("(no dataset card)"),
-        Some(dataset_card) => {
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&card::card_json(&dataset_card))?
-                );
-            } else {
-                // The content hash is carried in the header we already fetched.
-                let head = reader.read_at(0, HEADER_LEN as u64)?;
-                let checksum = Header::from_bytes(&head)
-                    .map(|h| card::hex16(&h.content_hash))
-                    .unwrap_or_default();
-                println!("{}", card::format_card(&dataset_card, &checksum));
-            }
+    match card::load_card_and_build_ranged(&reader)? {
+        (_, None, _) => println!("(no dataset card)"),
+        (header, Some(dataset_card), build) => {
+            // The content hash is carried in the header we already fetched.
+            let checksum = card::hex16(&header.content_hash);
+            card::print_card(
+                &dataset_card,
+                build.as_ref(),
+                &checksum,
+                url,
+                format,
+                sha256,
+            )?;
         }
     }
     eprintln!(

@@ -110,6 +110,12 @@ enum Command {
         /// Card creation date, e.g. `2026-06-08` (implies `--card`).
         #[arg(long)]
         created: Option<String>,
+        /// Skip measuring the starter queries' cost figures (bytes / range
+        /// requests / reference timing) into the build-info section. Card
+        /// builds measure them by default; each starter query is run once,
+        /// cold, against the finished image.
+        #[arg(long = "no-card-costs")]
+        no_card_costs: bool,
         /// **Memory-bounded external build**: assemble the file within roughly
         /// this many MiB of RAM by cutting the input into disk-spilled chunks
         /// and merging them (the budget decides the number of chunks and the
@@ -253,23 +259,43 @@ enum Command {
     },
     /// Print the embedded Dataset Card (data-catalog metadata), if the file has
     /// one — title/license/source, counts, top predicates and classes,
-    /// vocabularies, and the content-hash checksum. `--json` emits the raw card.
+    /// vocabularies, the content-hash checksum, and (when present) the build
+    /// record: when it was built, by which `rete`, with which flags, and what
+    /// the starter queries cost. `--json` emits the raw card; `--format jsonld`
+    /// projects it to JSON-LD (VoID + schema.org + PROV-O — already RDF);
+    /// `--format croissant` emits the honestly-mappable Croissant subset.
     Card {
         /// Path to the `.rete` file.
         file: String,
         /// Emit the card as JSON instead of the human catalog view.
         #[arg(long)]
         json: bool,
+        /// Output format: json | jsonld | croissant (default: human text).
+        #[arg(long, value_parser = ["json", "jsonld", "croissant"])]
+        format: Option<String>,
+        /// The file's sha256 (hex), for `--format croissant`: Croissant requires
+        /// an md5/sha256 on every FileObject and a file cannot carry its own —
+        /// supply it from outside (`sha256sum file.rete`) for a fully
+        /// validator-clean document.
+        #[arg(long)]
+        sha256: Option<String>,
     },
     /// Fetch just the embedded Dataset Card over HTTP — reads only the header and
-    /// metadata range (the index-free CARD tier), never the dictionary or index.
-    /// The cold-start self-description, fetched in two small range requests.
+    /// the metadata + build-info range (the index-free CARD tier), never the
+    /// dictionary or index. The cold-start self-description, fetched in two
+    /// small range requests.
     CardUrl {
         /// http(s):// URL of a `.rete` file (host must honor Range requests).
         url: String,
         /// Emit the card as JSON instead of the human catalog view.
         #[arg(long)]
         json: bool,
+        /// Output format: json | jsonld | croissant (default: human text).
+        #[arg(long, value_parser = ["json", "jsonld", "croissant"])]
+        format: Option<String>,
+        /// The file's sha256 (hex), for `--format croissant` (see `rete card`).
+        #[arg(long)]
+        sha256: Option<String>,
     },
     /// List the named graphs in a dataset.
     Graphs {
@@ -831,6 +857,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             source,
             description,
             created,
+            no_card_costs,
             memory_budget_mb,
             tmp_dir,
         } => {
@@ -867,6 +894,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     text_index,
                     type_predicate.as_deref(),
                     card_args,
+                    no_card_costs,
                 )
             }
         }
@@ -936,8 +964,18 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 )
             }
         }
-        Command::Card { file, json } => commands::card::card_cmd(&file, json),
-        Command::CardUrl { url, json } => commands::url::card_url(&url, json),
+        Command::Card {
+            file,
+            json,
+            format,
+            sha256,
+        } => commands::card::card_cmd(&file, json, format.as_deref(), sha256.as_deref()),
+        Command::CardUrl {
+            url,
+            json,
+            format,
+            sha256,
+        } => commands::url::card_url(&url, json, format.as_deref(), sha256.as_deref()),
         Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export { file, format } => commands::export::export(&file, &format),
         Command::Repyramid {

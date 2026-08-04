@@ -462,7 +462,7 @@ are not readable and must be rebuilt from RDF source.</p>
 </tbody></table>
 <p><strong>Section directory (bytes 64…, <code>section_count</code> entries of 24 bytes):</strong></p>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
-<tr><td>+0</td><td>2</td><td>section kind (<code>1</code> metadata, <code>2</code> dictionary, <code>3</code> index, <code>4</code> pyramid-meta, <code>5</code> named-graphs, <code>6</code> text-index; higher ids reserved for future sections)</td></tr>
+<tr><td>+0</td><td>2</td><td>section kind (<code>1</code> metadata, <code>2</code> dictionary, <code>3</code> index, <code>4</code> pyramid-meta, <code>5</code> named-graphs, <code>6</code> text-index, <code>7</code> build-info; higher ids reserved for future sections)</td></tr>
 <tr><td>+2</td><td>2</td><td>section flags (reserved)</td></tr>
 <tr><td>+4</td><td>4</td><td>reserved (zero)</td></tr>
 <tr><td>+8</td><td>8</td><td>section offset</td></tr>
@@ -486,6 +486,19 @@ range-reading client never fetches it for a query (it reads sections by their
 header offsets). A reader that doesn't understand the payload simply skips it: the
 dictionary is always located via <code>dictionary offset</code>, which already accounts for
 the section's length.</p>
+<p>The <strong>build-info section</strong> (kind <code>7</code>) is an optional opaque payload laid out
+<strong>immediately after the metadata section</strong> — adjacent, so a card reader fetches
+metadata + build-info in one coalesced range and the CARD tier stays at one
+header read plus one range read. The CLI stores build-conditions JSON there:
+build timestamp, builder version, the flags in force, and measured starter-query
+costs (see <a href="dataset-cards.html">Dataset Cards</a>). Unlike every other section its
+bytes are <strong>deliberately excluded from the content hash</strong>: it records exactly
+the facts that differ between two builds of identical data (when, by which
+binary, how fast), and the reproducible-hash property — two builds of the same
+input hash identically — must survive them. <code>verify</code> therefore does not cover
+it, on old readers (which see an unknown kind-7 entry and ignore it) and new
+ones alike; treat its contents as advisory provenance, not integrity-protected
+data.</p>
 <hr />
 <h2>5. Dictionary</h2>
 <img src="img/dictionary-roles.svg" alt="The dictionary's four front-coded sections: SHARED terms (both subject and object), SUBJECTS-only, OBJECTS-only, and PREDICATES, with role-ordered IDs.">

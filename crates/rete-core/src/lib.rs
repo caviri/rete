@@ -77,8 +77,8 @@ pub mod varint;
 /// Stable file-format, reader, and in-memory build API.
 pub mod format {
     pub use crate::file::{
-        verify, ByteRange, FileError, LayoutSegment, Rete, TermTriple, TripleProvenance,
-        CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
+        attach_build_info, read_build_info, verify, ByteRange, FileError, LayoutSegment, Rete,
+        TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
     };
     pub use crate::header::{
         Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
@@ -111,8 +111,8 @@ pub mod query {
 pub mod range {
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
-        read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged, ByteRange,
-        LayoutSegment, SummaryView,
+        read_card_and_build_info_ranged, read_metadata_ranged, read_schema_coherence_ranged,
+        read_schema_summary_ranged, ByteRange, LayoutSegment, SummaryView,
     };
     pub use crate::reader::{CountingReader, RangeReader, SliceReader};
 }
@@ -145,7 +145,8 @@ pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]
 pub use file::{
-    build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with, read_metadata_ranged,
+    attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with,
+    read_build_info, read_card_and_build_info_ranged, read_metadata_ranged,
     read_schema_coherence_ranged, read_schema_summary_ranged, schema_classes, schema_coherence,
     schema_summary, verify, write_dataset, write_dataset_with_metadata, write_file, ByteRange,
     LayoutSegment, Rete, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,

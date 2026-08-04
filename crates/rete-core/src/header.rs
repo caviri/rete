@@ -72,6 +72,13 @@ pub enum SectionKind {
     NamedGraphs,
     /// Full-text (word) index over literals — `token → subjects`.
     TextIndex,
+    /// Build-conditions record (timestamp, builder version, build parameters,
+    /// measured starter-query costs), stored as an opaque JSON blob owned by the
+    /// application layer (the CLI). **Deliberately excluded from the content
+    /// hash**: two builds of identical data must hash identically, and this
+    /// section is exactly the per-build facts (when, by which binary, how fast)
+    /// that differ between them. `verify` therefore does not cover it.
+    BuildInfo,
     /// A section kind this build doesn't know — preserved verbatim on round-trip
     /// so a newer writer's sections survive an older reader.
     Unknown(u16),
@@ -86,6 +93,7 @@ impl SectionKind {
             SectionKind::PyramidMeta => 4,
             SectionKind::NamedGraphs => 5,
             SectionKind::TextIndex => 6,
+            SectionKind::BuildInfo => 7,
             SectionKind::Unknown(k) => k,
         }
     }
@@ -98,6 +106,7 @@ impl SectionKind {
             4 => SectionKind::PyramidMeta,
             5 => SectionKind::NamedGraphs,
             6 => SectionKind::TextIndex,
+            7 => SectionKind::BuildInfo,
             other => SectionKind::Unknown(other),
         }
     }
@@ -164,6 +173,10 @@ pub struct Header {
     /// `rete build --text-index`). See [`SectionKind::TextIndex`].
     pub text_index_offset: u64,
     pub text_index_len: u64,
+    /// Build-conditions section (0 if absent). See [`SectionKind::BuildInfo`]:
+    /// an opaque per-build record that is **not** covered by the content hash.
+    pub build_info_offset: u64,
+    pub build_info_len: u64,
     /// Directory entries whose [`SectionKind`] this build doesn't recognize,
     /// preserved verbatim. Empty for a file this crate wrote.
     pub extra_sections: Vec<Section>,
@@ -226,6 +239,13 @@ impl Header {
                 SectionKind::TextIndex,
                 self.text_index_offset,
                 self.text_index_len,
+            ));
+        }
+        if self.build_info_len > 0 {
+            entries.push(entry(
+                SectionKind::BuildInfo,
+                self.build_info_offset,
+                self.build_info_len,
             ));
         }
         entries.extend(self.extra_sections.iter().copied());
@@ -292,6 +312,8 @@ impl Header {
             schema_meta_len: u32_at(46),
             text_index_offset: 0,
             text_index_len: 0,
+            build_info_offset: 0,
+            build_info_len: 0,
             extra_sections: Vec::new(),
         };
         for i in 0..section_count {
@@ -323,6 +345,10 @@ impl Header {
                 SectionKind::TextIndex => {
                     h.text_index_offset = offset;
                     h.text_index_len = length;
+                }
+                SectionKind::BuildInfo => {
+                    h.build_info_offset = offset;
+                    h.build_info_len = length;
                 }
                 SectionKind::Unknown(_) => h.extra_sections.push(Section {
                     kind,
@@ -364,6 +390,7 @@ impl Header {
             (self.pyramid_meta_offset, self.pyramid_meta_len),
             (self.named_graphs_offset, self.named_graphs_len),
             (self.text_index_offset, self.text_index_len),
+            (self.build_info_offset, self.build_info_len),
         ];
         let extras = self.extra_sections.iter().map(|s| (s.offset, s.length));
         for (offset, length) in named.into_iter().chain(extras) {
@@ -396,6 +423,7 @@ impl Header {
             SectionKind::PyramidMeta => (self.pyramid_meta_offset, self.pyramid_meta_len),
             SectionKind::NamedGraphs => (self.named_graphs_offset, self.named_graphs_len),
             SectionKind::TextIndex => (self.text_index_offset, self.text_index_len),
+            SectionKind::BuildInfo => (self.build_info_offset, self.build_info_len),
             SectionKind::Unknown(_) => {
                 return self.extra_sections.iter().find(|s| s.kind == kind).copied()
             }
@@ -437,6 +465,10 @@ impl Header {
                 self.text_index_offset = offset;
                 self.text_index_len = length;
             }
+            SectionKind::BuildInfo => {
+                self.build_info_offset = offset;
+                self.build_info_len = length;
+            }
             SectionKind::Unknown(_) => self.extra_sections.push(Section {
                 kind,
                 flags: 0,
@@ -475,6 +507,8 @@ mod tests {
             schema_meta_len: 99,
             text_index_offset: 0,
             text_index_len: 0,
+            build_info_offset: 0,
+            build_info_len: 0,
             extra_sections: Vec::new(),
         }
     }
@@ -638,6 +672,28 @@ mod tests {
         let dict = back.section(SectionKind::Dictionary).unwrap();
         assert_eq!(dict.offset, h.dictionary_offset);
         assert_eq!(h, back);
+    }
+
+    #[test]
+    fn build_info_section_round_trips_and_is_optional() {
+        // Absent (len 0): only the 5 always-present sections — a file without a
+        // build-info section is byte-identical to one built before it existed.
+        let plain = sample().to_bytes();
+        assert_eq!(u16::from_le_bytes(plain[44..46].try_into().unwrap()), 5);
+        assert_eq!(sample().section(SectionKind::BuildInfo).unwrap().length, 0);
+
+        // Present: a directory entry that round-trips and resolves as kind 7.
+        let h = sample().with_section(SectionKind::BuildInfo, 1066, 300);
+        let bytes = h.to_bytes();
+        assert_eq!(u16::from_le_bytes(bytes[44..46].try_into().unwrap()), 6);
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(h, back);
+        let s = back.section(SectionKind::BuildInfo).unwrap();
+        assert_eq!((s.offset, s.length), (1066, 300));
+        assert!(back.extra_sections.is_empty(), "BuildInfo is a known kind");
+        // And it extends the expected file length like any other section.
+        let far = sample().with_section(SectionKind::BuildInfo, 1 << 21, 128);
+        assert_eq!(far.expected_file_len(), Some((1 << 21) + 128 + 4));
     }
 
     #[test]
