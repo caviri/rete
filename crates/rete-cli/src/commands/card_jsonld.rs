@@ -134,11 +134,13 @@ pub(crate) fn to_jsonld(
         json!({
             "@vocab": "https://schema.org/",
             "void": "http://rdfs.org/ns/void#",
+            "dcat": "http://www.w3.org/ns/dcat#",
             "dct": "http://purl.org/dc/terms/",
             "prov": "http://www.w3.org/ns/prov#",
             "xsd": "http://www.w3.org/2001/XMLSchema#",
             "rete": RETE_NS,
             "void:vocabulary": { "@type": "@id" },
+            "dcat:theme": { "@type": "@id" },
             "void:sparqlEndpoint": { "@type": "@id" },
             "void:dataDump": { "@type": "@id" },
             "void:property": { "@type": "@id" },
@@ -161,6 +163,23 @@ pub(crate) fn to_jsonld(
     put(&mut d, "version", opt(&card.version));
     put(&mut d, "dateCreated", opt(&card.created));
     put(&mut d, "citation", opt(&card.cite_as));
+    // Keywords under BOTH standard terms — the same dual-vocabulary stance as
+    // the schema:Dataset + void:Dataset typing: `schema:keywords` for
+    // dataset-search harvesters, `dcat:keyword` for DCAT catalogs. One list,
+    // two agreed names; a keyword in the `extra` bag would have had neither.
+    let kw: Vec<Value> = card.keywords.iter().map(|k| json!(k)).collect();
+    put(&mut d, "keywords", Value::Array(kw.clone()));
+    put(&mut d, "dcat:keyword", Value::Array(kw));
+    // Themes are IRIs into a controlled vocabulary, typed @id in the context —
+    // exactly one standard term (`dcat:theme`), so no schema.org double.
+    put(
+        &mut d,
+        "dcat:theme",
+        Value::Array(card.theme.iter().map(|t| json!(t)).collect()),
+    );
+    // No curated language projects here: in RDF the language rides on each
+    // literal, so the card DERIVES it — `signals.default_lang` fills
+    // `schema:inLanguage` below, measured, never declared.
     if let Some(doi) = &card.doi {
         d.insert("identifier".into(), json!({ "@id": doi }));
     }
@@ -424,6 +443,16 @@ pub(crate) fn to_croissant(
         d.insert("license".into(), json!(l));
     }
     put(&mut d, "version", opt(&card.version));
+    // Keywords have a home here: Croissant's descriptive header is
+    // schema.org, and `keywords` is part of it (unlike the `extra` bag,
+    // which is omitted — and unlike `theme`, whose only term is `dcat:theme`:
+    // it stays in the JSON-LD projection rather than being bent into a
+    // schema.org shape here).
+    put(
+        &mut d,
+        "keywords",
+        Value::Array(card.keywords.iter().map(|k| json!(k)).collect()),
+    );
     // datePublished is recommended by the validator; the curated creation date
     // is the closest truthful value the card holds.
     put(&mut d, "datePublished", opt(&card.created));
@@ -593,6 +622,46 @@ mod tests {
         // FileObject is complete and the document validator-clean.
         let with = to_croissant(&card, "bb", "demo.rete", Some("ab".repeat(32).as_str()));
         assert_eq!(with["distribution"][0]["sha256"], "ab".repeat(32));
+    }
+
+    /// The curated discovery fields — fields WITH agreed meaning, unlike the
+    /// bag — project under their standard terms: keywords under BOTH
+    /// `schema:keywords` and `dcat:keyword`, themes as `@id`-typed
+    /// `dcat:theme` IRIs. Keywords carry into Croissant's schema.org header;
+    /// `theme` (whose only term is DCAT's) does not. Absent fields emit
+    /// nothing anywhere, and `schema:inLanguage` stays what it always was:
+    /// the MEASURED dominant literal tag (there is deliberately no curated
+    /// language — the data itself carries it, per-literal).
+    #[test]
+    fn discovery_fields_project_under_standard_terms_and_into_croissant() {
+        let mut card = sample_card();
+        card.keywords = vec!["catalog".into(), "open data".into()];
+        card.theme =
+            vec!["http://publications.europa.eu/resource/authority/data-theme/GOVE".into()];
+        card.signals.default_lang = Some("cs".into());
+
+        let v = to_jsonld(&card, None, "aa", "demo.rete");
+        assert_eq!(v["keywords"], json!(["catalog", "open data"]));
+        assert_eq!(v["dcat:keyword"], json!(["catalog", "open data"]));
+        assert_eq!(v["@context"]["dcat"], "http://www.w3.org/ns/dcat#");
+        assert_eq!(
+            v["dcat:theme"],
+            json!(["http://publications.europa.eu/resource/authority/data-theme/GOVE"])
+        );
+        assert_eq!(v["@context"]["dcat:theme"]["@type"], "@id");
+        assert_eq!(v["inLanguage"], "cs", "measured, never curated");
+
+        let c = to_croissant(&card, "aa", "demo.rete", None);
+        assert_eq!(c["keywords"], json!(["catalog", "open data"]));
+        assert!(c.get("dcat:theme").is_none(), "no DCAT term in Croissant");
+
+        // No fields, no keys — in either projection.
+        let plain = to_jsonld(&sample_card(), None, "aa", "demo.rete");
+        assert!(plain.get("keywords").is_none());
+        assert!(plain.get("dcat:keyword").is_none());
+        assert!(plain.get("dcat:theme").is_none());
+        let plain_cr = to_croissant(&sample_card(), "aa", "demo.rete", None);
+        assert!(plain_cr.get("keywords").is_none());
     }
 
     /// Custom fields project per key under `rete:extra/<key>` — values, not

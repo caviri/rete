@@ -53,6 +53,8 @@ file with `--card-file`. Explicit flags override whatever the file provides:
   "derived_from": ["https://example.org/dumps/citations-2021.nt"],
   "doi": "https://doi.org/10.5281/zenodo.0000000",
   "cite_as": "Lovelace, A. (2021). Citation graph 2021.",
+  "keywords": ["citations", "open science", "scholarly communication"],
+  "theme": ["http://publications.europa.eu/resource/authority/data-theme/TECH"],
   "example_queries": [
     "SELECT ?citing WHERE { ?citing <http://purl.org/spar/cito/cites> ?cited }"
   ],
@@ -80,6 +82,8 @@ Any of `--card`, `--card-file`, `--title`, `--license`, `--source`,
 | `creators`, `publisher` | **curated** (`--card-file` only) | People (`{name, orcid}`) and organisation (`{name, ror}`). ORCID/ROR as **IRIs, not strings** — this project publishes both authority graphs, so "which datasets did this person build?" becomes a federated join, not a text search. |
 | `canonical_url`, `sparql_endpoint` | **curated** (`--card-file` only) | Where the authoritative copy of this file lives (`void:dataDump`) and a public endpoint (`void:sparqlEndpoint`). A `.rete` found on a disk can then say where to verify against. |
 | `source_date`, `derived_from` | **curated** (`--card-file` only) | The source data's own snapshot date (distinct from `created` and from the build timestamp), and what this file was derived from (`prov:wasDerivedFrom`) — dumps, endpoints, or the shards a `rete merge` folded in. |
+| `keywords` | **curated** (`--card-file` only) | Free-text tags (`dcat:keyword` / `schema:keywords` in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (`dcat:keyword` is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build. |
+| `theme` | **curated** (`--card-file` only) | **IRIs into a controlled vocabulary** (`dcat:theme`), e.g. the [EU data themes](http://publications.europa.eu/resource/authority/data-theme). IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at `keywords`; the agreed concept scheme is the whole value `dcat:theme` adds. [Where to get one](#where-to-get-theme-iris). Canonicalized like `keywords`. (There is deliberately **no curated language field**: in RDF the language rides on every literal, so the card *measures* it — see the `languages` row below and [the rule](#first-class-field-or-the-bag-the-rule).) |
 | `example_queries` | **curated** (`--card-file` only) | Sample queries a consumer can run. |
 | `extra` | **curated** (`--card-file` only) | Publisher-defined **custom fields** — one bounded bag, see [Custom fields](#custom-fields-the-extra-bag). |
 | `triple_count` | derived | Triples in the **default graph**. |
@@ -105,6 +109,47 @@ list is **capped** and **deterministically ordered** (count-descending, ties
 broken lexically), so building the same input twice yields a **byte-identical**
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching `rete progressive`.
+
+### Where to get `theme` IRIs
+
+`theme` rejects free text, which is only helpful if you know where an IRI
+comes from. Pick a **published concept scheme** and copy the concept's IRI —
+every example below resolves as printed:
+
+| Vocabulary | Example IRI | Good for |
+|---|---|---|
+| **EU Data Themes** | `http://publications.europa.eu/resource/authority/data-theme/GOVE` (*Government and public sector*) | The DCAT-AP controlled list — **the default answer** for government and open-data portals. 13 themes, labelled in 27 languages. |
+| **EuroVoc** | `http://eurovoc.europa.eu/1460` (*EU financial instrument*) | EU policy and legal subject headings, when the data-theme list is too coarse. |
+| **Wikidata** | `https://www.wikidata.org/entity/Q413` (*physics*) | **Anything with no domain vocabulary.** Stable IRIs that are never reassigned, labels in hundreds of languages (282 on that one concept), and cross-links into most of the vocabularies below — so a Wikidata theme stays joinable even when a consumer speaks a different scheme. |
+| **LCSH** | `https://id.loc.gov/authorities/subjects/sh85101653` (*Physics*) | Library-style subject headings; what bibliographic consumers already index. |
+| **UNESCO Thesaurus** | `http://vocabularies.unesco.org/thesaurus/concept197` (*Environmental management*) | Education, science, culture, communication. |
+| **AGROVOC** | `http://aims.fao.org/aos/agrovoc/c_12332` (*maize*) | Agriculture, fisheries, food, environment. |
+| **MeSH** | `http://id.nlm.nih.gov/mesh/D009369` (*Neoplasms*) | Biomedical and clinical topics. |
+| **OBO Foundry** | `http://purl.obolibrary.org/obo/GO_0008150` (*biological_process*) | Life sciences. The playground catalog already carries graphs built on OBO IRIs (`chebi-full` is the complete ChEBI ontology; `chemotion` merges CHMO and RXNO), so an OBO theme is joinable against a graph you can actually query. |
+| **GeoNames** | `https://sws.geonames.org/3077311/` (*Czechia*) | When the dataset's subject is really a **place**. |
+
+**How to choose:**
+
+1. **Prefer the vocabulary your consumers already harvest.** DCAT-AP requires a
+   theme from the EU Data Themes list, so a concept from a different scheme —
+   however precise — does not satisfy a portal that checks for one. Matching
+   your audience beats picking the most exact concept. (A national open-data
+   catalog is the clean case: `…/data-theme/GOVE`, plus anything else you like
+   alongside it.)
+2. **Then the obvious domain vocabulary**, if your dataset has one (AGROVOC for
+   a crop census, MeSH for a clinical corpus).
+3. **Otherwise Wikidata**, which has a concept for essentially any topic. It is
+   the honest fallback, not a defeat.
+4. **Use several** when the dataset genuinely spans several — `theme` is a
+   **list**, and mixing schemes is fine (one EU data theme *and* a Wikidata
+   concept is a common, useful pairing). Entries are sorted and de-duplicated
+   at build time.
+
+`theme` is for concepts a scheme has agreed on; everything else you would like
+a reader to search by belongs in `keywords`, which takes free text precisely so
+you are never tempted to invent an IRI. **Never mint a theme IRI yourself** — a
+plausible-looking IRI in a scheme's namespace that resolves to nothing is worse
+than no theme at all.
 
 ### One card, three versions
 
@@ -146,6 +191,60 @@ validate against — they come from the card file only. (In Python,
 `Builder.card()` routes any keyword that is not a rete-defined field into the
 bag, and `extra={...}` merges a whole dict — the client writes the card it is
 given; the caps below are enforced by `rete build`.)
+
+### First-class field or the bag? The rule
+
+Before putting anything in `extra`, ask two questions:
+
+**1. Does a standard vocabulary already have a term for it?** If not — the
+meaning is yours, not agreed — it belongs in `extra`. The bag deliberately
+strips meaning: everything in it projects as `rete:extra/<key>`, an opaque
+value whose semantics are private to its publisher, and for genuinely
+private fields (internal identifiers, review status, pipeline tags) that
+opacity is *honest*: the values travel, the meaning stays with you.
+Conversely, storing a standard-termed fact in the bag publishes it *as
+though it meant nothing* — a consumer that speaks the standard term (a DCAT
+harvester, a dataset-search crawler) will never find it. That is strictly
+worse than either doing it properly or not at all. If the official field
+doesn't exist yet, **ask for it** (file an issue) instead of bagging it for
+good.
+
+**2. Can it be derived from the data?** If yes, it is **auto-derived, not
+curated** — a curated duplicate of a derivable fact is a second source of
+truth that can silently drift from the first, and a reader has no way to
+tell which one is right. The worked example is **language**: it looks like
+an obvious curated field (DCAT catalogs use `dct:language`) right up until
+you notice that in RDF the language already rides on every literal
+(`@lang` / `rdf:langString`). So the card *measures* it — the `languages`
+histogram and `signals.default_lang`, projected as `schema:inLanguage` —
+and there is deliberately **no curated language field** to contradict the
+measurement.
+
+`keywords` and `theme` passed both questions — `dcat:keyword` /
+`schema:keywords` and `dcat:theme` already said what they mean, and neither
+free-text tags nor controlled-vocabulary themes can be computed from the
+triples. Each promotion must also state what its field means beyond "a term
+exists": `theme` is only worth a field distinct from `keywords` because it
+is **required to be an IRI into a controlled vocabulary** — a free-text
+theme is a keyword by another name, and the build rejects it as such. A
+candidate that cannot say more than "like keywords, but mine" hasn't
+passed.
+
+The enforcement mirrors the rule: the top level rejects unknown keys, so a
+private field can never sit where official semantics are expected — and an
+official field is only ever added deliberately, at the top level, never by a
+bag key drifting into common use.
+
+One candidate remains weighed and deliberately in waiting — by this rule a
+future official field, not bag material, the day a publisher actually needs
+it: curated spatial/temporal coverage (`dct:spatial` / `dct:temporal`). It
+passes the second question only in the case its derived counterparts cannot
+reach — `spatial_bbox` / `temporal_extent` are computed wherever the data
+carries geometry or time, so a curated value earns its keep solely where
+coverage is known but *not encoded in the data*. If you need it today, the
+honest stopgap is the bag *plus the issue*: the value travels verbatim in
+`--json`, and the projection stays truthfully opaque until the field gets
+its term.
 
 ### Why one bag, not prefixed keys
 
@@ -432,6 +531,8 @@ terms before inventing any:
 | `sparql_endpoint`, `canonical_url` | `void:sparqlEndpoint`, `void:dataDump` (+ a `schema:DataDownload` distribution) |
 | `title`/`description`/`license`/`version`/`created`/`cite_as`/`doi` | `schema:name`/`description`/`license`/`version`/`dateCreated`/`citation`/`identifier` |
 | `creators`, `publisher` | `schema:Person` (ORCID as `@id`) / `schema:Organization` (ROR as `@id`) |
+| `keywords` | `schema:keywords` **and** `dcat:keyword` — one list under both standard names, the same dual-vocabulary stance as the `schema:Dataset` + `void:Dataset` typing |
+| `theme` | `dcat:theme`, `@id`-typed (the values are controlled-vocabulary IRIs) — exactly one standard term, so no schema.org double |
 | `source`, `derived_from` | `prov:wasDerivedFrom` (URLs) / `dct:source` (free text) |
 | build info | `prov:wasGeneratedBy` — a `prov:Activity` with `prov:endedAtTime` and the builder as a `schema:SoftwareApplication` agent |
 | temporal/spatial signals | `schema:temporalCoverage` / `schema:spatialCoverage` (GeoShape box) |
@@ -449,9 +550,12 @@ private names are honest.
 Croissant models **tables**: `recordSet` → `field` → `dataType`. An RDF graph
 has no records, and forcing the card into a record-set shape would produce a
 document that validates and misleads. So `--format croissant` maps what
-genuinely corresponds — the descriptive header, licence, version, creators and
-publisher, provenance, and the `.rete` file itself as a `cr:FileObject`
-distribution — and **carries no `recordSet` at all**. (Where a dataset ships
+genuinely corresponds — the descriptive header, licence, version, keywords,
+creators and publisher, provenance, and the `.rete` file itself as a
+`cr:FileObject` distribution — and **carries no `recordSet` at all**.
+(`theme` is not carried: its only term is DCAT's, and bending it into a
+schema.org shape here would be the same dishonesty as a fabricated
+`recordSet`.) (Where a dataset ships
 tabular Parquet companions, *those* are the honest record-set material, with
 their own Croissant documents beside the bucket.)
 

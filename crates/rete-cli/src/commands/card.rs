@@ -1,7 +1,8 @@
 //! Dataset Cards — an embeddable data-catalog record stored in a `.rete` file's
 //! metadata section. A card carries **curated** metadata (title, license,
-//! source, description, created, example queries, plus a bounded bag of
-//! publisher-defined custom fields under `extra`) and **auto-derived**
+//! source, description, created, keywords/theme, example queries, plus a
+//! bounded bag of publisher-defined custom fields under `extra`) and
+//! **auto-derived**
 //! statistics (counts, top predicates and classes, vocabularies), serialized as
 //! JSON. `rete-core` treats the section as an opaque blob; this module owns its
 //! schema, derivation, and rendering.
@@ -70,6 +71,32 @@ pub(crate) struct DatasetCard {
     /// Preferred citation text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cite_as: Option<String>,
+    /// Free-text keywords/tags describing the dataset. First-class rather
+    /// than an `extra` entry because keywords carry **agreed meaning**:
+    /// `dcat:keyword` and `schema:keywords` are long-standing terms (DCAT-AP
+    /// catalogs require the former; dataset-search harvesters read the
+    /// latter), and the bag's contract is precisely the *absence* of a term —
+    /// it projects as opaque values. Canonicalized by
+    /// [`normalize_string_list`] at build time: trimmed, sorted, deduplicated
+    /// — `dcat:keyword` is an unordered repeated property, so sorting loses
+    /// nothing and keeps the card's bytes (hence the reproducible content
+    /// hash) independent of authoring order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
+    /// Curated **themes** — IRIs into a controlled vocabulary
+    /// (`dcat:theme`, e.g. the EU data-theme authority). IRIs are
+    /// **required** ([`normalize_themes`]): a free-text theme is a keyword by
+    /// another name and belongs in `keywords` — the IRI into an agreed
+    /// scheme is exactly what makes `dcat:theme` worth a separate field.
+    /// Sorted/deduplicated like `keywords`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub theme: Vec<String>,
+    // There is deliberately NO curated language field next to these: in RDF
+    // the language rides on each literal (`@lang` / `rdf:langString`), so the
+    // dataset's languages are DERIVABLE — and derived below (`languages`,
+    // `signals.default_lang`). A curated duplicate would be a second source
+    // of truth that can drift from the data with no way to tell which is
+    // right. See "First-class field or the bag?" in docs/dataset-cards.md.
     /// Publisher-defined **custom fields** — one bounded, reserved bag.
     /// Anything under `extra` is by definition *not* a rete-defined field:
     /// official card fields are only ever added at the top level (which
@@ -310,8 +337,8 @@ impl Coherence {
 /// The curated subset, as supplied by a `--card-file` JSON document (every field
 /// optional). CLI flags override whatever the file provides. The identity/
 /// provenance fields (version, creators, publisher, canonical_url,
-/// sparql_endpoint, source_date, derived_from, doi, cite_as) have no CLI flag —
-/// they come from the card file only.
+/// sparql_endpoint, source_date, derived_from, doi, cite_as, keywords, theme)
+/// have no CLI flag — they come from the card file only.
 ///
 /// `deny_unknown_fields` keeps the card file's top level **reserved for
 /// rete-defined fields**: a stray key is a loud error (usually a typo, or a
@@ -337,6 +364,12 @@ pub(crate) struct CardInput {
     pub derived_from: Vec<String>,
     pub doi: Option<String>,
     pub cite_as: Option<String>,
+    /// Free-text keywords (see [`DatasetCard::keywords`]).
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    /// Controlled-vocabulary theme IRIs (see [`DatasetCard::theme`]).
+    #[serde(default)]
+    pub theme: Vec<String>,
     /// Publisher-defined custom fields (see [`DatasetCard::extra`]).
     #[serde(default)]
     pub extra: BTreeMap<String, serde_json::Value>,
@@ -362,6 +395,8 @@ impl CardInput {
         card.derived_from = self.derived_from;
         card.doi = self.doi;
         card.cite_as = self.cite_as;
+        card.keywords = self.keywords;
+        card.theme = self.theme;
         card.extra = self.extra;
         card.example_queries = self.example_queries;
     }
@@ -489,8 +524,59 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
     if args.created.is_some() {
         c.created = args.created.clone();
     }
+    c.keywords = normalize_string_list("keywords", std::mem::take(&mut c.keywords))?;
+    c.theme = normalize_themes(std::mem::take(&mut c.theme))?;
     c.extra = normalize_extra(std::mem::take(&mut c.extra))?;
     Ok(c)
+}
+
+/// Canonicalize a curated string list (`keywords`, `theme`) — the write-time
+/// gate every card-writing command funnels through (like
+/// [`normalize_extra`]).
+///
+/// Whitespace is trimmed and duplicates dropped; an entry that is empty
+/// after trimming **rejects the build loudly** (it is always an authoring
+/// slip — a stray comma in a hand-written list — and an empty `dcat:keyword`
+/// literal would be projected as agreed-upon nothing). Sorting is
+/// canonicalization, not editing: both fields project to unordered repeated
+/// RDF properties, so no information is lost — and it keeps the card's
+/// serialization (hence the reproducible content hash) independent of the
+/// order the entries were authored in.
+pub(crate) fn normalize_string_list(
+    field: &str,
+    values: Vec<String>,
+) -> anyhow::Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::with_capacity(values.len());
+    for v in values {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("card `{field}` entries must be non-empty");
+        }
+        out.push(trimmed.to_string());
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// [`normalize_string_list`] plus the `theme` requirement: every entry must
+/// be an **IRI into a controlled vocabulary**. This is what keeps `theme`
+/// from becoming a second keywords field — a free-text theme carries no more
+/// meaning than a keyword, and `keywords` already holds those; the agreed
+/// concept scheme behind the IRI is the whole value `dcat:theme` adds.
+pub(crate) fn normalize_themes(themes: Vec<String>) -> anyhow::Result<Vec<String>> {
+    let themes = normalize_string_list("theme", themes)?;
+    for t in &themes {
+        if !(t.starts_with("http://") || t.starts_with("https://")) {
+            anyhow::bail!(
+                "card `theme` entry {t:?} is not an IRI: a theme is an IRI into a \
+                 controlled vocabulary (e.g. the EU data-theme authority, \
+                 http://publications.europa.eu/resource/authority/data-theme/…); \
+                 free-text subjects belong in `keywords`"
+            );
+        }
+    }
+    Ok(themes)
 }
 
 /// Cap for every top-N list embedded in the card. The metadata section is
@@ -1302,6 +1388,12 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
     field(&mut out, "license", &card.license);
     field(&mut out, "source", &card.source);
     field(&mut out, "created", &card.created);
+    if !card.keywords.is_empty() {
+        let _ = writeln!(out, "  {:<13}: {}", "keywords", card.keywords.join(", "));
+    }
+    for t in &card.theme {
+        let _ = writeln!(out, "  {:<13}: {t}", "theme");
+    }
     field(&mut out, "version", &card.version);
     field(&mut out, "source date", &card.source_date);
     for c in &card.creators {
@@ -1883,7 +1975,9 @@ mod tests {
                 "source_date": "2026-07-01",
                 "derived_from": ["https://example.org/dump.nt"],
                 "doi": "https://doi.org/10.5281/zenodo.1",
-                "cite_as": "Ada (2026). T."
+                "cite_as": "Ada (2026). T.",
+                "keywords": ["graphs", "citations"],
+                "theme": ["http://publications.europa.eu/resource/authority/data-theme/TECH"]
             }"#,
         )
         .unwrap();
@@ -1906,6 +2000,13 @@ mod tests {
             back.doi.as_deref(),
             Some("https://doi.org/10.5281/zenodo.1")
         );
+        // Round-trip preserves what was stored (normalization is
+        // `load_curated`'s job, covered by its own test below).
+        assert_eq!(back.keywords, vec!["graphs", "citations"]);
+        assert_eq!(
+            back.theme,
+            vec!["http://publications.europa.eu/resource/authority/data-theme/TECH"]
+        );
 
         // A minimal card omits every absent identity field from its bytes.
         let plain = curated_counts_card(1, 2, CardInput::default()).to_json_bytes();
@@ -1921,6 +2022,8 @@ mod tests {
             "\"source_date\"",
             "\"version\"",
             "\"top_n\"",
+            "\"keywords\"",
+            "\"theme\"",
             "\"extra\"",
         ] {
             assert!(
@@ -1928,6 +2031,72 @@ mod tests {
                 "{absent} must be omitted when unset"
             );
         }
+    }
+
+    /// The curated discovery lists (`keywords`, `theme`) are canonicalized
+    /// at write time — trimmed, sorted, deduped — so two builds whose card
+    /// files list the same entries in different order produce byte-identical
+    /// cards; an empty entry is a loud error, never a silent drop; and a
+    /// free-text `theme` is rejected (that is what `keywords` is for — the
+    /// controlled-vocabulary IRI is `theme`'s whole point).
+    #[test]
+    fn curated_lists_are_canonicalized_and_bad_entries_rejected() {
+        assert_eq!(
+            normalize_string_list(
+                "keywords",
+                vec![" open data ".into(), "catalog".into(), "open data".into()]
+            )
+            .unwrap(),
+            vec!["catalog", "open data"],
+            "trimmed, sorted, deduplicated"
+        );
+        let err = normalize_string_list("keywords", vec!["ok".into(), "   ".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("keywords"), "names the field: {err}");
+
+        // Themes must be controlled-vocabulary IRIs.
+        normalize_themes(vec![
+            "http://publications.europa.eu/resource/authority/data-theme/GOVE".into(),
+        ])
+        .expect("an IRI theme is accepted");
+        let err = normalize_themes(vec!["government".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("keywords"),
+            "points free text at `keywords`: {err}"
+        );
+
+        // The canonical form is what serializes: reordered authoring yields
+        // byte-identical cards (the same property the `extra` bag pins for
+        // the content hash).
+        let build = |json: &str| {
+            let mut input: CardInput = serde_json::from_str(json).unwrap();
+            input.keywords =
+                normalize_string_list("keywords", std::mem::take(&mut input.keywords)).unwrap();
+            curated_counts_card(3, 5, input).to_json_bytes()
+        };
+        assert_eq!(
+            build(r#"{"keywords":["b","a"]}"#),
+            build(r#"{"keywords":["a"," b "]}"#)
+        );
+
+        // And the text catalog renders them.
+        let card = curated_counts_card(
+            3,
+            5,
+            serde_json::from_str(
+                r#"{"keywords":["catalog","open data"],
+                    "theme":["http://publications.europa.eu/resource/authority/data-theme/GOVE"]}"#,
+            )
+            .unwrap(),
+        );
+        let text = format_card(&card, "aa");
+        assert!(text.contains("keywords     : catalog, open data"));
+        assert!(text.contains(
+            "theme        : http://publications.europa.eu/resource/authority/data-theme/GOVE"
+        ));
     }
 
     /// The `extra` bag round-trips through the stored bytes, is omitted when

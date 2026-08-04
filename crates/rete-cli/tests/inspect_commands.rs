@@ -2,6 +2,111 @@ mod common;
 
 use predicates::prelude::*;
 
+/// The curated discovery fields (`keywords`, `theme`) round-trip
+/// `build --card-file` → every read surface, canonicalized
+/// (trimmed/sorted/deduped) on the way in, and projected under their
+/// standard terms — `schema:keywords` + `dcat:keyword` and `@id`-typed
+/// `dcat:theme` in JSON-LD; keywords in Croissant's schema.org header. The
+/// official-field contrast to the `extra` bag's opaque `rete:extra/<key>`
+/// treatment below.
+#[test]
+fn curated_discovery_fields_round_trip_across_formats() {
+    let fixture = common::fixture();
+    let card_json = fixture.write(
+        "kw-card.json",
+        r#"{"title":"Keyword fixture",
+            "keywords":["open data"," catalog ","open data"],
+            "theme":["http://publications.europa.eu/resource/authority/data-theme/GOVE"]}"#,
+    );
+    let out = fixture.path("kw.rete");
+    common::build(
+        &fixture.source,
+        &out,
+        &[
+            "--no-pyramid",
+            "--no-card-costs",
+            "--card-file",
+            card_json.to_str().unwrap(),
+        ],
+    );
+
+    // --json: the canonical (trimmed, sorted, deduped) lists.
+    let card = common::json(common::rete().arg("card").arg(&out).arg("--json"));
+    assert_eq!(
+        card["keywords"],
+        serde_json::json!(["catalog", "open data"])
+    );
+    assert_eq!(
+        card["theme"],
+        serde_json::json!(["http://publications.europa.eu/resource/authority/data-theme/GOVE"])
+    );
+
+    // The text catalog renders them.
+    common::rete()
+        .arg("card")
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "keywords     : catalog, open data",
+        ))
+        .stdout(predicate::str::contains(
+            "theme        : http://publications.europa.eu/resource/authority/data-theme/GOVE",
+        ));
+
+    // JSON-LD: the standard terms, not rete:-invented ones.
+    let ld = common::json(
+        common::rete()
+            .arg("card")
+            .arg(&out)
+            .args(["--format", "jsonld"]),
+    );
+    assert_eq!(ld["keywords"], serde_json::json!(["catalog", "open data"]));
+    assert_eq!(
+        ld["dcat:keyword"],
+        serde_json::json!(["catalog", "open data"])
+    );
+    assert_eq!(
+        ld["dcat:theme"],
+        serde_json::json!(["http://publications.europa.eu/resource/authority/data-theme/GOVE"])
+    );
+    assert!(ld.get("rete:extra/keywords").is_none());
+
+    // Croissant: keywords belong to its schema.org header (the bag and the
+    // DCAT-only theme do not).
+    let cr = common::json(
+        common::rete()
+            .arg("card")
+            .arg(&out)
+            .args(["--format", "croissant"]),
+    );
+    assert_eq!(cr["keywords"], serde_json::json!(["catalog", "open data"]));
+    assert!(cr.get("dcat:theme").is_none());
+
+    // A keyword that is empty after trimming fails the build loudly, and so
+    // does a free-text theme (which belongs in `keywords`).
+    let bad = fixture.write("kw-bad.json", r#"{"keywords":["ok","  "]}"#);
+    common::rete()
+        .arg("build")
+        .arg(&fixture.source)
+        .arg("-o")
+        .arg(fixture.path("kw-bad.rete"))
+        .args(["--card-file", bad.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("keywords"));
+    let bad_theme = fixture.write("theme-bad.json", r#"{"theme":["government"]}"#);
+    common::rete()
+        .arg("build")
+        .arg(&fixture.source)
+        .arg("-o")
+        .arg(fixture.path("theme-bad.rete"))
+        .args(["--card-file", bad_theme.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not an IRI"));
+}
+
 /// Custom fields (`extra`) round-trip `build --card-file` → `card --json`,
 /// and every projection applies its stated policy: the text view lists them,
 /// JSON-LD emits per-key `rete:extra/<key>` opaque values, Croissant omits

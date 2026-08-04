@@ -409,6 +409,7 @@ provenance</strong> fields the card schema defines (the same ones the CLI's
     derived_from=["https://example.org/source-dump"],
     doi="https://doi.org/10.5281/zenodo.0000000",
     cite_as="Lovelace, A. (2026). People &amp; places.",
+    keywords=["people", "places", "demo"],
 )
 </code></pre>
 <p>Field by field:</p>
@@ -428,6 +429,8 @@ provenance</strong> fields the card schema defines (the same ones the CLI's
 <tr><td><code>derived_from</code></td><td>What this file was derived from (dumps, endpoints, shards)</td></tr>
 <tr><td><code>doi</code></td><td>The dataset's DOI, as an IRI (<code>https://doi.org/…</code>)</td></tr>
 <tr><td><code>cite_as</code></td><td>Preferred citation text</td></tr>
+<tr><td><code>keywords</code></td><td>Free-text tags — projected as <code>dcat:keyword</code> / <code>schema:keywords</code></td></tr>
+<tr><td><code>theme</code></td><td>Controlled-vocabulary IRIs (e.g. EU data themes) — projected as <code>dcat:theme</code>; free text is rejected, it belongs in <code>keywords</code>. (No curated language field: the card <em>measures</em> <code>languages</code> from the literals' own tags.)</td></tr>
 </tbody></table>
 <p>The <strong>statistics</strong> — <code>triple_count</code>, <code>quad_count</code>, <code>named_graph_count</code>,
 <code>term_count</code>, plus the <code>format_version</code> — are stamped <strong>automatically</strong> at

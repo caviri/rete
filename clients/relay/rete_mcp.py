@@ -190,7 +190,8 @@ def build_rete(rdf: str, format: str = "ttl",
     """Build a real .rete file from RDF text (ontology + instances) and
     serve it at an ephemeral URL. Give it a `card` (title, description,
     license — plus, when known, the curated identity fields: version,
-    creators [{name, orcid}], publisher {name, ror}, doi, cite_as) and
+    creators [{name, orcid}], publisher {name, ror}, doi, cite_as,
+    keywords [free-text tags], theme [controlled-vocabulary IRIs]) and
     runnable `examples` ({title, question, sparql}) so the file is
     self-describing. The returned `dataset` key works immediately
     in sparql_query / validate_shacl / dataset_card — query what you just
