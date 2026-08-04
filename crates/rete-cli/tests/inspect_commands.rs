@@ -2,6 +2,102 @@ mod common;
 
 use predicates::prelude::*;
 
+/// Custom fields (`extra`) round-trip `build --card-file` → `card --json`,
+/// and every projection applies its stated policy: the text view lists them,
+/// JSON-LD emits per-key `rete:extra/<key>` opaque values, Croissant omits
+/// them.
+#[test]
+fn custom_extra_fields_round_trip_across_formats() {
+    let fixture = common::fixture();
+    let card_json = fixture.write(
+        "card.json",
+        r#"{"title":"Extra fixture","extra":{"zeta":1,"alpha":{"nested":true},"owner":"dg"}}"#,
+    );
+    let out = fixture.path("extra.rete");
+    common::build(
+        &fixture.source,
+        &out,
+        &[
+            "--no-pyramid",
+            "--no-card-costs",
+            "--card-file",
+            card_json.to_str().unwrap(),
+        ],
+    );
+
+    // --json carries the bag verbatim.
+    let card = common::json(common::rete().arg("card").arg(&out).arg("--json"));
+    assert_eq!(card["extra"]["owner"], "dg");
+    assert_eq!(card["extra"]["alpha"]["nested"], true);
+    assert_eq!(card["extra"]["zeta"], 1);
+
+    // The text catalog lists them.
+    common::rete()
+        .arg("card")
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("custom fields (3):"))
+        .stdout(predicate::str::contains("owner = \"dg\""))
+        .stdout(predicate::str::contains("zeta = 1"));
+
+    // JSON-LD: per-key opaque values — a scalar plainly, a container as an
+    // @json-typed JSON literal.
+    let ld = common::json(
+        common::rete()
+            .arg("card")
+            .arg(&out)
+            .args(["--format", "jsonld"]),
+    );
+    assert_eq!(ld["rete:extra/owner"], "dg");
+    assert_eq!(ld["rete:extra/zeta"], 1);
+    assert_eq!(ld["rete:extra/alpha"]["nested"], true);
+    assert_eq!(ld["@context"]["rete:extra/alpha"]["@type"], "@json");
+    assert!(ld.get("owner").is_none(), "no bare top-level property");
+
+    // Croissant: custom fields are omitted entirely.
+    let cr = common::json(
+        common::rete()
+            .arg("card")
+            .arg(&out)
+            .args(["--format", "croissant"]),
+    );
+    assert!(cr.get("rete:extra/owner").is_none());
+    assert!(cr.get("extra").is_none());
+}
+
+/// Overflowing the `extra` byte cap rejects the build loudly (one byte over),
+/// and a publisher key at the card file's top level is rejected with a
+/// pointer to the bag — never silently dropped.
+#[test]
+fn oversized_or_top_level_custom_fields_fail_the_build_loudly() {
+    let fixture = common::fixture();
+    // `{"pad":"…"}` serializes to 10 + n bytes; 8,183 x's = 8,193 B — one over.
+    let over = format!(r#"{{"extra":{{"pad":"{}"}}}}"#, "x".repeat(8183));
+    let card_json = fixture.write("over.json", over);
+    common::rete()
+        .arg("build")
+        .arg(&fixture.source)
+        .arg("-o")
+        .arg(fixture.path("no.rete"))
+        .args(["--card-file", card_json.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("8193 bytes"));
+
+    let stray = fixture.write("stray.json", r#"{"title":"T","my_field":1}"#);
+    common::rete()
+        .arg("build")
+        .arg(&fixture.source)
+        .arg("-o")
+        .arg(fixture.path("no2.rete"))
+        .args(["--card-file", stray.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("my_field"))
+        .stderr(predicate::str::contains("\"extra\""));
+}
+
 #[test]
 fn inspect_commands_report_the_fixture() {
     let fixture = common::fixture();

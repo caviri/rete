@@ -38,7 +38,9 @@ the index-free card with no compute; unlike `--materialize` it records
 --verify-card`, combine with `--materialize` to also bake the inferred triples).
 `--card` (and `--card-file` / `--title` / `--license` / `--source` /
 `--description` / `--created`) embeds a [Dataset Card](dataset-cards.md) —
-data-catalog metadata plus an auto-derived profile; a card build also writes a
+data-catalog metadata plus an auto-derived profile; the card file's `extra`
+object carries bounded publisher-defined custom fields (no flag — see
+[Custom fields](dataset-cards.md)); a card build also writes a
 **build-info section** (build timestamp, builder version, parameters, measured
 starter-query costs — kept *outside* the content hash so identical data still
 hashes identically; `--no-card-costs` skips the measurements). `--text-index` adds a

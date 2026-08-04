@@ -1,6 +1,7 @@
 //! Dataset Cards — an embeddable data-catalog record stored in a `.rete` file's
 //! metadata section. A card carries **curated** metadata (title, license,
-//! source, description, created, example queries) plus **auto-derived**
+//! source, description, created, example queries, plus a bounded bag of
+//! publisher-defined custom fields under `extra`) and **auto-derived**
 //! statistics (counts, top predicates and classes, vocabularies), serialized as
 //! JSON. `rete-core` treats the section as an opaque blob; this module owns its
 //! schema, derivation, and rendering.
@@ -33,7 +34,12 @@ pub(crate) struct DatasetCard {
     // (hand-supplied via `--card-file`), so they live INSIDE the content hash;
     // the per-build volatile facts (timestamp, builder, timings) live in the
     // separate unhashed build-info section instead. ---
-    /// Dataset version (e.g. a date or semver) — Croissant requires one.
+    /// The publisher's **dataset version** (e.g. a date or semver) — Croissant
+    /// requires one. One of three distinct versions a `.rete` carries, each
+    /// with its own owner, never merged: `version` (the *data*, set by the
+    /// publisher here), `format_version` (the *spec* the file conforms to,
+    /// stamped by the builder), and the builder's own identity
+    /// (`rete-cli 0.3.2`, in the build-info section).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     /// The people who made the dataset. ORCID as an IRI, not a string, so a
@@ -64,6 +70,17 @@ pub(crate) struct DatasetCard {
     /// Preferred citation text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cite_as: Option<String>,
+    /// Publisher-defined **custom fields** — one bounded, reserved bag.
+    /// Anything under `extra` is by definition *not* a rete-defined field:
+    /// official card fields are only ever added at the top level (which
+    /// [`CardInput`] keeps reserved by rejecting unknown keys), so a future
+    /// release can never collide with a publisher's key. Curated input, so
+    /// the bag folds into the content hash; [`normalize_extra`] canonicalizes
+    /// (sorts) nested object keys and enforces the `CARD_EXTRA_*` bounds at
+    /// build time. Readers accept whatever is present — the limits bite when
+    /// writing, never when reading.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, serde_json::Value>,
 
     pub triple_count: u64,
     pub quad_count: u64,
@@ -125,6 +142,9 @@ pub(crate) struct DatasetCard {
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub top_n: u32,
 
+    /// The `.rete` **spec version** the file was written against (currently
+    /// 5). The format's version — not the dataset's (the curated `version`
+    /// above) and not the builder's (`builder` in build-info).
     pub format_version: u8,
 }
 
@@ -292,7 +312,14 @@ impl Coherence {
 /// provenance fields (version, creators, publisher, canonical_url,
 /// sparql_endpoint, source_date, derived_from, doi, cite_as) have no CLI flag —
 /// they come from the card file only.
+///
+/// `deny_unknown_fields` keeps the card file's top level **reserved for
+/// rete-defined fields**: a stray key is a loud error (usually a typo, or a
+/// custom field that belongs inside `extra`), never a silent drop — and it is
+/// what makes the collision guarantee real: a publisher's field can only ever
+/// live in the bag, so a future official top-level field cannot capture one.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CardInput {
     pub title: Option<String>,
     pub description: Option<String>,
@@ -310,6 +337,9 @@ pub(crate) struct CardInput {
     pub derived_from: Vec<String>,
     pub doi: Option<String>,
     pub cite_as: Option<String>,
+    /// Publisher-defined custom fields (see [`DatasetCard::extra`]).
+    #[serde(default)]
+    pub extra: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub example_queries: Vec<String>,
 }
@@ -332,6 +362,7 @@ impl CardInput {
         card.derived_from = self.derived_from;
         card.doi = self.doi;
         card.cite_as = self.cite_as;
+        card.extra = self.extra;
         card.example_queries = self.example_queries;
     }
 }
@@ -418,14 +449,28 @@ pub(crate) fn card_json_with_build(
 }
 
 /// Resolve the curated fields: load `--card-file` (if any), then let explicit
-/// flags override individual fields.
+/// flags override individual fields. Custom fields have **no flag** — arbitrary
+/// key/values on a command line are a shell-quoting trap with no schema to
+/// validate against; they come from the card file's `extra` object only, and
+/// the bag is normalized and bounds-checked here, the single choke point every
+/// card-writing command (`build`, `merge`, `repyramid`) funnels through.
 pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
     let mut c = match &args.file {
         Some(path) => {
             let text = std::fs::read_to_string(path)
                 .map_err(|e| anyhow::anyhow!("reading --card-file {path}: {e}"))?;
-            serde_json::from_str(&text)
-                .map_err(|e| anyhow::anyhow!("parsing --card-file {path}: {e}"))?
+            serde_json::from_str(&text).map_err(|e| {
+                // The top level is reserved for rete-defined fields; point a
+                // stray key at the bag instead of leaving a bare serde error.
+                let hint = if e.to_string().contains("unknown field") {
+                    "\n  (the card file's top level is reserved for rete-defined fields; \
+                     publisher-defined fields go inside the \"extra\" object — \
+                     see docs/dataset-cards.md)"
+                } else {
+                    ""
+                };
+                anyhow::anyhow!("parsing --card-file {path}: {e}{hint}")
+            })?
         }
         None => CardInput::default(),
     };
@@ -444,6 +489,7 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
     if args.created.is_some() {
         c.created = args.created.clone();
     }
+    c.extra = normalize_extra(std::mem::take(&mut c.extra))?;
     Ok(c)
 }
 
@@ -453,6 +499,136 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
 /// would bloat that fetch on a large schema (CIDOC-CRM/MMM). Capping keeps the
 /// card small and bounded; `truncated` flags when a list was actually cut.
 pub(crate) const CARD_TOP_N: usize = 100;
+
+// --- Bounds for the publisher-defined `extra` bag, enforced by
+// [`normalize_extra`] at build time (readers never validate — a bag written
+// oversized by an external tool must not make the card unreadable). The
+// binding constraint is SERIALIZED BYTES: custom fields ride in the metadata
+// section, which every CARD-tier reader fetches on every open. ---
+
+/// Maximum serialized size (compact JSON bytes) of the whole `extra` object.
+///
+/// Sized against the published catalog: 8 KiB exceeds the smallest whole card
+/// (NKOD, 6,649 B stored) — generous for *metadata* — and the worst realistic
+/// case, the largest card (Hugging Face, 53,580 B) + a maxed bag + its ~1 KB
+/// build info ≈ 62.8 KB, still travels in the same single coalesced range
+/// (the 2-request CARD tier is about request *count*, which the bag cannot
+/// change). The one cost worth knowing: on the smallest cards a maxed bag can
+/// push the coalesced range past a conservative TCP initial window (~14.6 KB
+/// = 10 segments), i.e. one extra round trip, never an extra request.
+pub(crate) const CARD_EXTRA_MAX_BYTES: usize = 8192;
+/// Maximum number of keys in `extra`. A key costs ≥ 8 serialized bytes, so 64
+/// typical entries sit comfortably inside [`CARD_EXTRA_MAX_BYTES`]; needing
+/// more means the bag is being used as a data store — the graph itself is the
+/// place for data.
+pub(crate) const CARD_EXTRA_MAX_KEYS: usize = 64;
+/// Maximum bytes per `extra` key. Keys are identifiers, not values.
+pub(crate) const CARD_EXTRA_MAX_KEY_BYTES: usize = 128;
+/// Maximum container-nesting depth inside an `extra` value (see
+/// [`json_depth`]): an object of objects-of-scalars, no deeper. Deliberate —
+/// deep structures invite storing *records* in the card, and Parquet
+/// companions exist for records; it also hard-bounds recursion for every
+/// parser that will ever read the bag (browser wasm and iOS stacks are far
+/// smaller than a build machine's).
+pub(crate) const CARD_EXTRA_MAX_DEPTH: usize = 2;
+
+/// Canonicalize and bounds-check the `extra` bag — the write-time gate.
+///
+/// On overflow the build is **rejected loudly** rather than truncated
+/// quietly: `extra` is authored (unlike the derived lists, which are capped
+/// with `truncated` set, because they can be re-derived), so cutting it would
+/// silently ship a card that no longer says what the publisher wrote — and,
+/// since the bag folds into the content hash, "what I wrote" and "what
+/// hashed" would diverge invisibly. Only the author can decide what to trim.
+pub(crate) fn normalize_extra(
+    extra: BTreeMap<String, serde_json::Value>,
+) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
+    if extra.is_empty() {
+        return Ok(extra);
+    }
+    if extra.len() > CARD_EXTRA_MAX_KEYS {
+        anyhow::bail!(
+            "card `extra` has {} keys, over the {CARD_EXTRA_MAX_KEYS}-key cap",
+            extra.len()
+        );
+    }
+    let extra: BTreeMap<String, serde_json::Value> = extra
+        .into_iter()
+        .map(|(k, v)| (k, canonicalize_json(v)))
+        .collect();
+    for (k, v) in &extra {
+        if k.is_empty() {
+            anyhow::bail!("card `extra` keys must be non-empty");
+        }
+        if k == "@context" {
+            // Reserved TODAY so it can mean something LATER: a future release
+            // may honour an author-supplied JSON-LD mapping here (turning the
+            // bag's projection from opaque values into the author's own
+            // vocabulary). Rejecting it now keeps that door open without ever
+            // breaking a published card.
+            anyhow::bail!(
+                "card `extra` key \"@context\" is reserved for a future \
+                 author-supplied JSON-LD mapping"
+            );
+        }
+        if k.len() > CARD_EXTRA_MAX_KEY_BYTES {
+            anyhow::bail!(
+                "card `extra` key {k:?} is {} bytes, over the {CARD_EXTRA_MAX_KEY_BYTES}-byte cap",
+                k.len()
+            );
+        }
+        let depth = json_depth(v);
+        if depth > CARD_EXTRA_MAX_DEPTH {
+            anyhow::bail!(
+                "card `extra` field {k:?} nests {depth} container levels deep, \
+                 over the {CARD_EXTRA_MAX_DEPTH}-level cap"
+            );
+        }
+    }
+    let bytes = serde_json::to_vec(&extra).expect("extra serializes").len();
+    if bytes > CARD_EXTRA_MAX_BYTES {
+        anyhow::bail!(
+            "card `extra` serializes to {bytes} bytes, over the {CARD_EXTRA_MAX_BYTES}-byte cap; \
+             every reader fetches the card on every open — trim the bag, \
+             or put bulk data in the graph itself"
+        );
+    }
+    Ok(extra)
+}
+
+/// Container-nesting depth of a JSON value: scalars are 0, an array/object is
+/// 1 + its deepest child. (Recursion here is bounded by serde_json's own
+/// 128-level parse limit.)
+fn json_depth(v: &serde_json::Value) -> usize {
+    match v {
+        serde_json::Value::Array(a) => 1 + a.iter().map(json_depth).max().unwrap_or(0),
+        serde_json::Value::Object(o) => 1 + o.values().map(json_depth).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Rebuild every nested object with its keys inserted in sorted order, so the
+/// bag's bytes — which fold into the reproducible content hash — never depend
+/// on author key order. With today's serde_json (no `preserve_order`) maps are
+/// BTree-backed and this is a no-op in effect; it is insurance that a future
+/// feature unification can't quietly make map order mean insertion order.
+fn canonicalize_json(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Array(a) => {
+            serde_json::Value::Array(a.into_iter().map(canonicalize_json).collect())
+        }
+        serde_json::Value::Object(o) => {
+            let mut sorted: Vec<(String, serde_json::Value)> = o.into_iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut out = serde_json::Map::new();
+            for (k, v) in sorted {
+                out.insert(k, canonicalize_json(v));
+            }
+            serde_json::Value::Object(out)
+        }
+        scalar => scalar,
+    }
+}
 
 // Well-known IRIs (bracketed N-Triples term form, as they appear in the quads).
 const RDFS_LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
@@ -1151,6 +1327,14 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
     for d in &card.derived_from {
         let _ = writeln!(out, "  {:<13}: {d}", "derived from");
     }
+    if !card.extra.is_empty() {
+        let _ = writeln!(out, "  custom fields ({}):", card.extra.len());
+        for (k, v) in &card.extra {
+            // `Value`'s Display is compact JSON — strings keep their quotes,
+            // so a value is always unambiguous about its type.
+            let _ = writeln!(out, "      {k} = {v}");
+        }
+    }
 
     let _ = writeln!(out, "  {:<13}: {}", "triples", card.triple_count);
     if card.named_graph_count > 0 {
@@ -1737,12 +1921,200 @@ mod tests {
             "\"source_date\"",
             "\"version\"",
             "\"top_n\"",
+            "\"extra\"",
         ] {
             assert!(
                 !text.contains(absent),
                 "{absent} must be omitted when unset"
             );
         }
+    }
+
+    /// The `extra` bag round-trips through the stored bytes, is omitted when
+    /// empty, and a card written by an EXTERNAL writer (the Python client
+    /// serializes the caller's dict verbatim, counts spliced in) surfaces its
+    /// custom fields in this reader — the pass-through the client relies on.
+    #[test]
+    fn extra_round_trips_and_external_writer_cards_surface_it() {
+        let input: CardInput = serde_json::from_str(
+            r#"{"title":"T","extra":{"atlas:layer":84,"review":{"by":"dg","ok":true}}}"#,
+        )
+        .unwrap();
+        let card = curated_counts_card(5, 9, input);
+        let back = DatasetCard::from_json_bytes(&card.to_json_bytes()).unwrap();
+        assert_eq!(back.extra, card.extra);
+        assert_eq!(back.extra.get("atlas:layer"), Some(&serde_json::json!(84)));
+
+        // The exact JSON shape `clients/python` `card_bytes` writes: curated
+        // fields + the count fields + format_version, `extra` included.
+        let python_shaped = r#"{
+            "title":"From Python","extra":{"pipeline":"nightly"},
+            "triple_count":1,"quad_count":1,"named_graph_count":0,"term_count":3,
+            "format_version":5
+        }"#;
+        let card = DatasetCard::from_json_bytes(python_shaped.as_bytes()).unwrap();
+        assert_eq!(
+            card.extra.get("pipeline"),
+            Some(&serde_json::json!("nightly"))
+        );
+    }
+
+    /// The bounds bite exactly at the boundary — one byte / key / level over
+    /// is a loud error, at the limit is accepted.
+    #[test]
+    fn extra_limits_bite_exactly_at_the_boundary() {
+        use serde_json::{json, Value};
+        let bag = |v: Vec<(String, Value)>| -> BTreeMap<String, Value> { v.into_iter().collect() };
+
+        // Byte cap: `{"pad":"…"}` serializes to 10 + n bytes.
+        let pad = |n: usize| bag(vec![("pad".into(), json!("x".repeat(n)))]);
+        let at = pad(CARD_EXTRA_MAX_BYTES - 10);
+        assert_eq!(serde_json::to_vec(&at).unwrap().len(), CARD_EXTRA_MAX_BYTES);
+        normalize_extra(at).expect("exactly at the byte cap is accepted");
+        let over = pad(CARD_EXTRA_MAX_BYTES - 9);
+        assert_eq!(
+            serde_json::to_vec(&over).unwrap().len(),
+            CARD_EXTRA_MAX_BYTES + 1
+        );
+        let err = normalize_extra(over).unwrap_err().to_string();
+        assert!(
+            err.contains(&format!("{} bytes", CARD_EXTRA_MAX_BYTES + 1)),
+            "the error states the actual size: {err}"
+        );
+
+        // Key-count cap.
+        let keys = |n: usize| {
+            bag((0..n)
+                .map(|i| (format!("k{i:03}"), json!(1)))
+                .collect::<Vec<_>>())
+        };
+        normalize_extra(keys(CARD_EXTRA_MAX_KEYS)).expect("at the key cap");
+        assert!(normalize_extra(keys(CARD_EXTRA_MAX_KEYS + 1)).is_err());
+
+        // Key-length cap, and the empty key.
+        normalize_extra(bag(vec![("k".repeat(CARD_EXTRA_MAX_KEY_BYTES), json!(1))]))
+            .expect("at the key-length cap");
+        assert!(normalize_extra(bag(vec![(
+            "k".repeat(CARD_EXTRA_MAX_KEY_BYTES + 1),
+            json!(1)
+        )]))
+        .is_err());
+        assert!(normalize_extra(bag(vec![(String::new(), json!(1))])).is_err());
+
+        // Depth cap: an object of objects-of-scalars (2 levels) ok, 3 rejected
+        // — records belong in Parquet companions, not the card.
+        normalize_extra(bag(vec![("d".into(), json!({"a": {"b": 1}}))])).expect("at the depth cap");
+        assert!(normalize_extra(bag(vec![("d".into(), json!({"a": {"b": {"c": 1}}}))])).is_err());
+        assert!(normalize_extra(bag(vec![("d".into(), json!([[[1]]]))])).is_err());
+
+        // "@context" is reserved for a future author-supplied mapping.
+        let err = normalize_extra(bag(vec![("@context".into(), json!({}))]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("reserved"), "loud reservation: {err}");
+    }
+
+    /// Two builds of identical input — the `extra` bag authored in different
+    /// (semantically equal) key order — produce byte-identical images, hence
+    /// equal blake3 content hashes. The bag is curated, so it sits INSIDE the
+    /// hash; this reproducibility is what makes that placement safe.
+    #[test]
+    fn extra_fields_keep_the_content_hash_reproducible() {
+        let build = |json: &str| {
+            let mut input: CardInput = serde_json::from_str(json).unwrap();
+            // The same normalization `load_curated` applies on every path.
+            input.extra = normalize_extra(std::mem::take(&mut input.extra)).unwrap();
+            let quads = enriched_fixture();
+            let card = derive_card(&quads, 12, 0, input);
+            let (image, _) =
+                rete_core::ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| {
+                    card.to_json_bytes()
+                });
+            image
+        };
+        let a = build(r#"{"title":"T","extra":{"b":{"y":2,"x":1},"a":[1,2]}}"#);
+        let b = build(r#"{"title":"T","extra":{"a":[1,2],"b":{"x":1,"y":2}}}"#);
+        assert_eq!(a, b, "reordered-input builds are byte-identical");
+        let ha = Header::from_bytes(&a).unwrap().content_hash;
+        assert_eq!(ha, Header::from_bytes(&b).unwrap().content_hash);
+
+        // …and the bag IS hashed: dropping it changes the content hash
+        // (tamper-evident, not cosmetic).
+        let plain = build(r#"{"title":"T"}"#);
+        assert_ne!(ha, Header::from_bytes(&plain).unwrap().content_hash);
+    }
+
+    /// The CARD tier's budget survives the bag: header + ONE coalesced range
+    /// still fetches card (custom fields included) and build info — the
+    /// 2-request property `card-url` states, pinned with `extra` present.
+    #[test]
+    fn card_tier_stays_two_requests_with_extra_present() {
+        use std::sync::Mutex;
+        struct Counting {
+            data: Vec<u8>,
+            reads: Mutex<Vec<(u64, u64)>>,
+        }
+        impl rete_core::RangeReader for Counting {
+            fn len(&self) -> u64 {
+                self.data.len() as u64
+            }
+            fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+                self.reads.lock().unwrap().push((offset, len));
+                let start = offset as usize;
+                let end = start
+                    .checked_add(len as usize)
+                    .filter(|&e| e <= self.data.len())
+                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "oob"))?;
+                Ok(self.data[start..end].to_vec())
+            }
+        }
+
+        let input: CardInput = serde_json::from_str(
+            r#"{"title":"T","extra":{"atlas:layer":"84","review":{"by":"dg","status":"ok"}}}"#,
+        )
+        .unwrap();
+        let quads = enriched_fixture();
+        let card = derive_card(&quads, 12, 0, input);
+        let (image, _) =
+            rete_core::ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| {
+                card.to_json_bytes()
+            });
+        // Plus an adjacent build-info section, like every real card build.
+        let image =
+            rete_core::attach_build_info(&image, br#"{"schema":1,"builder":"test"}"#).unwrap();
+
+        let reader = Counting {
+            data: image,
+            reads: Mutex::new(Vec::new()),
+        };
+        let (_, got, build) = load_card_and_build_ranged(&reader).unwrap();
+        let got = got.expect("card present");
+        assert_eq!(got.extra.get("atlas:layer"), Some(&serde_json::json!("84")));
+        assert!(build.is_some(), "build info came out of the same range");
+
+        let reads = reader.reads.lock().unwrap();
+        assert_eq!(
+            reads.len(),
+            2,
+            "CARD tier = header + ONE coalesced range, extra included: {reads:?}"
+        );
+        assert_eq!(reads[0], (0, rete_core::HEADER_LEN as u64));
+    }
+
+    /// A stray top-level key in a card file is a LOUD error naming the key —
+    /// the enforcement that keeps the top level rete's namespace, so a future
+    /// official field can never capture (or be shadowed by) a publisher's.
+    #[test]
+    fn top_level_custom_keys_are_rejected_not_dropped() {
+        let err = serde_json::from_str::<CardInput>(r#"{"title":"T","my_field":1}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("my_field"), "names the stray key: {err}");
+
+        // The same content is accepted once the key moves into the bag.
+        let ok: CardInput =
+            serde_json::from_str(r#"{"title":"T","extra":{"my_field":1}}"#).unwrap();
+        assert_eq!(ok.extra.get("my_field"), Some(&serde_json::json!(1)));
     }
 
     /// Forward-compat: an OLD reader's struct (the pre-#153 field set, no
@@ -1760,7 +2132,8 @@ mod tests {
         }
         let input: CardInput = serde_json::from_str(
             r#"{"title":"New","version":"1","creators":[{"name":"A"}],
-                "canonical_url":"https://x/y.rete","derived_from":["https://x/d.nt"]}"#,
+                "canonical_url":"https://x/y.rete","derived_from":["https://x/d.nt"],
+                "extra":{"atlas:review":"approved"}}"#,
         )
         .unwrap();
         let quads = vec![q("<http://ex/a>", "<http://ex/p>", "<http://ex/b>")];

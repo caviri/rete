@@ -367,7 +367,9 @@ the index-free card with no compute; unlike <code>--materialize</code> it record
 <code>coherent: false</code> honestly rather than aborting (verify later with <code>rete reason --verify-card</code>, combine with <code>--materialize</code> to also bake the inferred triples).
 <code>--card</code> (and <code>--card-file</code> / <code>--title</code> / <code>--license</code> / <code>--source</code> /
 <code>--description</code> / <code>--created</code>) embeds a <a href="dataset-cards.html">Dataset Card</a> —
-data-catalog metadata plus an auto-derived profile; a card build also writes a
+data-catalog metadata plus an auto-derived profile; the card file's <code>extra</code>
+object carries bounded publisher-defined custom fields (no flag — see
+<a href="dataset-cards.html">Custom fields</a>); a card build also writes a
 <strong>build-info section</strong> (build timestamp, builder version, parameters, measured
 starter-query costs — kept <em>outside</em> the content hash so identical data still
 hashes identically; <code>--no-card-costs</code> skips the measurements). <code>--text-index</code> adds a
