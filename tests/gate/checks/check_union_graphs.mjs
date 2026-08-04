@@ -21,8 +21,13 @@
 //    the first query's final line counts the session OPEN's fetches instead of
 //    contradicting the live counter with "0 range req", and any 0-request run
 //    names the session cache it ran on, so a zero reads as the cache working;
-//  - the ⛁ switch has a ? help affordance opening #unionModal (same
-//    conventions as the Strategy/Reason modals: × close, backdrop, Escape).
+//  - the ⛁ All graphs and 🏷 Labels switches each have a ? help affordance
+//    opening their modal (same conventions as the Strategy/Reason modals:
+//    × close, backdrop, Escape);
+//  - the ⊞ Range-requests inspector carries byte offsets on EVERY row (the
+//    column used to render "—" always — offsets were dropped at the progress
+//    hook) and its Copy button puts a self-sufficient debug report (offsets +
+//    query + file) on the clipboard.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { launchBrowser } from "./_browser.mjs";
@@ -134,6 +139,9 @@ const main = async () => {
       if (!/[1-9]\d* range req/.test(off.qmeta) || !/incl\. opening the file/.test(off.qmeta)) {
         failures.push(`${label}: the first query's final line hides the session open's fetches: "${off.qmeta.slice(0, 140)}"`);
       }
+      // …and its fetch log must carry byte offsets + a copyable debug report
+      // (audited here, adjacent to the run that produced the log).
+      await auditReqLog(page, label);
     }
 
     // Flip it on: announced immediately…
@@ -173,35 +181,86 @@ const main = async () => {
     if (!/\b0 row/.test(back.qmeta)) failures.push(`${label}: toggling off did not restore standard semantics, qmeta: "${back.qmeta.slice(0, 80)}"`);
   };
 
-  // The ? help affordance beside the switch — same conventions as the
-  // Strategy/Reason modals: opens #unionModal, closes on ×, Escape, backdrop.
-  const exerciseHelp = async (page, label) => {
-    const present = await page.evaluate(() => !!document.getElementById("unionHelp") && !!document.getElementById("unionModal"));
-    if (!present) { failures.push(`${label}: no #unionHelp button / #unionModal in the page`); return; }
-    const openState = async () => page.evaluate(() => !document.getElementById("unionModal").classList.contains("hidden"));
-    await page.click("#unionHelp");
-    if (!(await openState())) { failures.push(`${label}: clicking ? did not open the All graphs modal`); return; }
-    const text = await page.evaluate(() => document.getElementById("unionModal").textContent || "");
-    for (const must of ["union of the default graph and every named graph", "Virtuoso", "standard SPARQL", "FROM", "live SPARQL endpoints", "materializes the merged index"]) {
-      if (!text.includes(must)) failures.push(`${label}: All graphs modal is missing "${must}"`);
+  // A ? help affordance beside a toolbar switch — same conventions as the
+  // Strategy/Reason modals: opens the modal, closes on ×, Escape, backdrop.
+  // Shared by ⛁ All graphs (#unionHelp/#unionModal) and 🏷 Labels
+  // (#labelsHelp/#labelsModal).
+  const exerciseHelp = async (page, label, { name, helpId, modalId, closeId, musts }) => {
+    const present = await page.evaluate(
+      ([h, m]) => !!document.getElementById(h) && !!document.getElementById(m), [helpId, modalId]);
+    if (!present) { failures.push(`${label}: no #${helpId} button / #${modalId} in the page`); return; }
+    const openState = async () => page.evaluate((m) => !document.getElementById(m).classList.contains("hidden"), modalId);
+    await page.click(`#${helpId}`);
+    if (!(await openState())) { failures.push(`${label}: clicking ? did not open the ${name} modal`); return; }
+    const text = await page.evaluate((m) => document.getElementById(m).textContent || "", modalId);
+    for (const must of musts) {
+      if (!text.includes(must)) failures.push(`${label}: ${name} modal is missing "${must}"`);
     }
-    await page.click("#unionModalClose");
-    if (await openState()) failures.push(`${label}: × did not close the All graphs modal`);
-    await page.click("#unionHelp");
+    await page.click(`#${closeId}`);
+    if (await openState()) failures.push(`${label}: × did not close the ${name} modal`);
+    await page.click(`#${helpId}`);
     await page.keyboard.press("Escape");
-    if (await openState()) failures.push(`${label}: Escape did not close the All graphs modal`);
-    await page.click("#unionHelp");
+    if (await openState()) failures.push(`${label}: Escape did not close the ${name} modal`);
+    await page.click(`#${helpId}`);
     // Same technique as check_load_modal: a click whose target IS the modal
     // element (the backdrop), not a descendant — deterministic, no hit-testing.
-    await page.evaluate(() => document.getElementById("unionModal").dispatchEvent(
-      new MouseEvent("click", { bubbles: true })));
-    if (await openState()) failures.push(`${label}: backdrop click did not close the All graphs modal`);
+    await page.evaluate((m) => document.getElementById(m).dispatchEvent(
+      new MouseEvent("click", { bubbles: true })), modalId);
+    if (await openState()) failures.push(`${label}: backdrop click did not close the ${name} modal`);
+  };
+
+  const HELP_MODALS = [
+    { name: "All graphs", helpId: "unionHelp", modalId: "unionModal", closeId: "unionModalClose",
+      musts: ["union of the default graph and every named graph", "Virtuoso", "standard SPARQL",
+              "FROM", "live SPARQL endpoints", "materializes the merged index"] },
+    { name: "Labels", helpId: "labelsHelp", modalId: "labelsModal", closeId: "labelsModalClose",
+      musts: ["editor decorations", "rdfs:label", "Label property", "range requests"] },
+  ];
+
+  // The ⊞ requests inspector after a remote run: every row must carry its byte
+  // offsets (the column used to render "—" on every row — the offsets were
+  // dropped at the progress hook), and the Copy affordance must put a
+  // self-sufficient debug report (offsets + query + file) on the clipboard.
+  const auditReqLog = async (page, label) => {
+    const btnVisible = await page.evaluate(() => {
+      const b = document.getElementById("reqLogBtn");
+      return !!b && !b.classList.contains("hidden");
+    });
+    if (!btnVisible) { failures.push(`${label}: no ⊞ requests button after a remote run`); return; }
+    await page.click("#reqLogBtn");
+    const modal = await page.evaluate(() => ({
+      open: !document.getElementById("reqModal").classList.contains("hidden"),
+      cells: Array.from(document.querySelectorAll("#reqLogBody tbody td.mono")).map((c) => c.textContent || ""),
+      copyBtn: !!document.querySelector("#reqLogBody .err-copy"),
+      report: (document.querySelector("#reqLogBody .err-tech-body") || {}).textContent || "",
+    }));
+    if (!modal.open) { failures.push(`${label}: ⊞ requests did not open the modal`); return; }
+    if (!modal.cells.length) failures.push(`${label}: request log table has no rows`);
+    const missing = modal.cells.filter((c) => !/\d+-\d+/.test(c));
+    if (missing.length) {
+      failures.push(`${label}: ${missing.length} of ${modal.cells.length} log rows carry NO byte offsets (the "—" column bug): ${JSON.stringify(modal.cells.slice(0, 3))}`);
+    }
+    if (!modal.copyBtn) failures.push(`${label}: request log has no Copy affordance`);
+    if (!/remote fetch log/.test(modal.report)) failures.push(`${label}: debug report missing its header`);
+    if (!/\d+-\d+/.test(modal.report)) failures.push(`${label}: debug report carries no byte offsets`);
+    if (!/SELECT \?s \?p \?o/i.test(modal.report)) failures.push(`${label}: debug report does not carry the query`);
+    if (!/127\.0\.0\.1/.test(modal.report)) failures.push(`${label}: debug report does not name the file`);
+    // Copy actually lands on the clipboard — the SAME shared helper (and
+    // fallback) the error box uses, so only the landing needs asserting here.
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: `http://localhost:${PGPORT}` });
+    await page.click("#reqLogBody .err-copy");
+    await page.waitForTimeout(400);
+    const clip = await page.evaluate(() => navigator.clipboard.readText().catch(() => "READ_FAILED"));
+    if (!/remote fetch log/.test(clip) || !/\d+-\d+/.test(clip)) {
+      failures.push(`${label}: clipboard does not hold the fetch log (got: "${String(clip).slice(0, 60)}")`);
+    }
+    await page.keyboard.press("Escape"); // close the modal before moving on
   };
 
   // ---- remote lazy path (the worker engine — asyncify default in Chromium) --
   const remote = await open(`#url=${encodeURIComponent(`http://127.0.0.1:${port}/union.rete`)}`);
   await exercise(remote, "remote");
-  await exerciseHelp(remote, "remote");
+  for (const spec of HELP_MODALS) await exerciseHelp(remote, "remote", spec);
   await remote.close();
 
   // ---- resident path (Graph.query_opts on the in-memory engine) -------------
@@ -224,7 +283,7 @@ const main = async () => {
   const pass = failures.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
-    note: "union default graph toggle: off by default, 0→6 rows when on (remote + resident), announced, explainer suppressed, GRAPH intact, reversible; remote transfer figures truthful (open counted, zero runs name the cache); ? help modal opens/closes",
+    note: "union default graph toggle: off by default, 0→6 rows when on (remote + resident), announced, explainer suppressed, GRAPH intact, reversible; remote transfer figures truthful (open counted, zero runs name the cache); req-log rows carry offsets + copyable report; ⛁/🏷 help modals open/close",
     failures,
   }, null, 2));
   process.exit(pass ? 0 : 1);
