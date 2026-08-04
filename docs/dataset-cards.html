@@ -407,7 +407,7 @@ file with <code>--card-file</code>. Explicit flags override whatever the file pr
 <tr><td><code>canonical_url</code>, <code>sparql_endpoint</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Where the authoritative copy of this file lives (<code>void:dataDump</code>) and a public endpoint (<code>void:sparqlEndpoint</code>). A <code>.rete</code> found on a disk can then say where to verify against.</td></tr>
 <tr><td><code>source_date</code>, <code>derived_from</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>The source data's own snapshot date (distinct from <code>created</code> and from the build timestamp), and what this file was derived from (<code>prov:wasDerivedFrom</code>) — dumps, endpoints, or the shards a <code>rete merge</code> folded in.</td></tr>
 <tr><td><code>keywords</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Free-text tags (<code>dcat:keyword</code> / <code>schema:keywords</code> in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (<code>dcat:keyword</code> is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build.</td></tr>
-<tr><td><code>theme</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td><strong>IRIs into a controlled vocabulary</strong> (<code>dcat:theme</code>), e.g. the <a href="http://publications.europa.eu/resource/authority/data-theme">EU data themes</a>. IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at <code>keywords</code>; the agreed concept scheme is the whole value <code>dcat:theme</code> adds. Canonicalized like <code>keywords</code>. (There is deliberately <strong>no curated language field</strong>: in RDF the language rides on every literal, so the card <em>measures</em> it — see the <code>languages</code> row below and <a href="#first-class-field-or-the-bag-the-rule">the rule</a>.)</td></tr>
+<tr><td><code>theme</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td><strong>IRIs into a controlled vocabulary</strong> (<code>dcat:theme</code>), e.g. the <a href="http://publications.europa.eu/resource/authority/data-theme">EU data themes</a>. IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at <code>keywords</code>; the agreed concept scheme is the whole value <code>dcat:theme</code> adds. <a href="#where-to-get-theme-iris">Where to get one</a>. Canonicalized like <code>keywords</code>. (There is deliberately <strong>no curated language field</strong>: in RDF the language rides on every literal, so the card <em>measures</em> it — see the <code>languages</code> row below and <a href="#first-class-field-or-the-bag-the-rule">the rule</a>.)</td></tr>
 <tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run.</td></tr>
 <tr><td><code>extra</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Publisher-defined <strong>custom fields</strong> — one bounded bag, see <a href="#custom-fields-the-extra-bag">Custom fields</a>.</td></tr>
 <tr><td><code>triple_count</code></td><td>derived</td><td>Triples in the <strong>default graph</strong>.</td></tr>
@@ -433,6 +433,43 @@ list is <strong>capped</strong> and <strong>deterministically ordered</strong> (
 broken lexically), so building the same input twice yields a <strong>byte-identical</strong>
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching <code>rete progressive</code>.</p>
+<h3>Where to get <code>theme</code> IRIs</h3>
+<p><code>theme</code> rejects free text, which is only helpful if you know where an IRI
+comes from. Pick a <strong>published concept scheme</strong> and copy the concept's IRI —
+every example below resolves as printed:</p>
+<table><thead><tr><th>Vocabulary</th><th>Example IRI</th><th>Good for</th></tr></thead><tbody>
+<tr><td><strong>EU Data Themes</strong></td><td><code>http://publications.europa.eu/resource/authority/data-theme/GOVE</code> (<em>Government and public sector</em>)</td><td>The DCAT-AP controlled list — <strong>the default answer</strong> for government and open-data portals. 13 themes, labelled in 27 languages.</td></tr>
+<tr><td><strong>EuroVoc</strong></td><td><code>http://eurovoc.europa.eu/1460</code> (<em>EU financial instrument</em>)</td><td>EU policy and legal subject headings, when the data-theme list is too coarse.</td></tr>
+<tr><td><strong>Wikidata</strong></td><td><code>https://www.wikidata.org/entity/Q413</code> (<em>physics</em>)</td><td><strong>Anything with no domain vocabulary.</strong> Stable IRIs that are never reassigned, labels in hundreds of languages (282 on that one concept), and cross-links into most of the vocabularies below — so a Wikidata theme stays joinable even when a consumer speaks a different scheme.</td></tr>
+<tr><td><strong>LCSH</strong></td><td><code>https://id.loc.gov/authorities/subjects/sh85101653</code> (<em>Physics</em>)</td><td>Library-style subject headings; what bibliographic consumers already index.</td></tr>
+<tr><td><strong>UNESCO Thesaurus</strong></td><td><code>http://vocabularies.unesco.org/thesaurus/concept197</code> (<em>Environmental management</em>)</td><td>Education, science, culture, communication.</td></tr>
+<tr><td><strong>AGROVOC</strong></td><td><code>http://aims.fao.org/aos/agrovoc/c_12332</code> (<em>maize</em>)</td><td>Agriculture, fisheries, food, environment.</td></tr>
+<tr><td><strong>MeSH</strong></td><td><code>http://id.nlm.nih.gov/mesh/D009369</code> (<em>Neoplasms</em>)</td><td>Biomedical and clinical topics.</td></tr>
+<tr><td><strong>OBO Foundry</strong></td><td><code>http://purl.obolibrary.org/obo/GO_0008150</code> (<em>biological_process</em>)</td><td>Life sciences. The playground catalog already carries graphs built on OBO IRIs (<code>chebi-full</code> is the complete ChEBI ontology; <code>chemotion</code> merges CHMO and RXNO), so an OBO theme is joinable against a graph you can actually query.</td></tr>
+<tr><td><strong>GeoNames</strong></td><td><code>https://sws.geonames.org/3077311/</code> (<em>Czechia</em>)</td><td>When the dataset's subject is really a <strong>place</strong>.</td></tr>
+</tbody></table>
+<p><strong>How to choose:</strong></p>
+<ol>
+<li><strong>Prefer the vocabulary your consumers already harvest.</strong> DCAT-AP requires a
+theme from the EU Data Themes list, so a concept from a different scheme —
+however precise — does not satisfy a portal that checks for one. Matching
+your audience beats picking the most exact concept. (A national open-data
+catalog is the clean case: <code>…/data-theme/GOVE</code>, plus anything else you like
+alongside it.)</li>
+<li><strong>Then the obvious domain vocabulary</strong>, if your dataset has one (AGROVOC for
+a crop census, MeSH for a clinical corpus).</li>
+<li><strong>Otherwise Wikidata</strong>, which has a concept for essentially any topic. It is
+the honest fallback, not a defeat.</li>
+<li><strong>Use several</strong> when the dataset genuinely spans several — <code>theme</code> is a
+<strong>list</strong>, and mixing schemes is fine (one EU data theme <em>and</em> a Wikidata
+concept is a common, useful pairing). Entries are sorted and de-duplicated
+at build time.</li>
+</ol>
+<p><code>theme</code> is for concepts a scheme has agreed on; everything else you would like
+a reader to search by belongs in <code>keywords</code>, which takes free text precisely so
+you are never tempted to invent an IRI. <strong>Never mint a theme IRI yourself</strong> — a
+plausible-looking IRI in a scheme's namespace that resolves to nothing is worse
+than no theme at all.</p>
 <h3>One card, three versions</h3>
 <p>A <code>.rete</code> file carries three different versions, each with its own owner. They
 answer different questions and are never merged:</p>

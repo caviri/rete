@@ -83,7 +83,7 @@ Any of `--card`, `--card-file`, `--title`, `--license`, `--source`,
 | `canonical_url`, `sparql_endpoint` | **curated** (`--card-file` only) | Where the authoritative copy of this file lives (`void:dataDump`) and a public endpoint (`void:sparqlEndpoint`). A `.rete` found on a disk can then say where to verify against. |
 | `source_date`, `derived_from` | **curated** (`--card-file` only) | The source data's own snapshot date (distinct from `created` and from the build timestamp), and what this file was derived from (`prov:wasDerivedFrom`) — dumps, endpoints, or the shards a `rete merge` folded in. |
 | `keywords` | **curated** (`--card-file` only) | Free-text tags (`dcat:keyword` / `schema:keywords` in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (`dcat:keyword` is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build. |
-| `theme` | **curated** (`--card-file` only) | **IRIs into a controlled vocabulary** (`dcat:theme`), e.g. the [EU data themes](http://publications.europa.eu/resource/authority/data-theme). IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at `keywords`; the agreed concept scheme is the whole value `dcat:theme` adds. Canonicalized like `keywords`. (There is deliberately **no curated language field**: in RDF the language rides on every literal, so the card *measures* it — see the `languages` row below and [the rule](#first-class-field-or-the-bag-the-rule).) |
+| `theme` | **curated** (`--card-file` only) | **IRIs into a controlled vocabulary** (`dcat:theme`), e.g. the [EU data themes](http://publications.europa.eu/resource/authority/data-theme). IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at `keywords`; the agreed concept scheme is the whole value `dcat:theme` adds. [Where to get one](#where-to-get-theme-iris). Canonicalized like `keywords`. (There is deliberately **no curated language field**: in RDF the language rides on every literal, so the card *measures* it — see the `languages` row below and [the rule](#first-class-field-or-the-bag-the-rule).) |
 | `example_queries` | **curated** (`--card-file` only) | Sample queries a consumer can run. |
 | `extra` | **curated** (`--card-file` only) | Publisher-defined **custom fields** — one bounded bag, see [Custom fields](#custom-fields-the-extra-bag). |
 | `triple_count` | derived | Triples in the **default graph**. |
@@ -109,6 +109,47 @@ list is **capped** and **deterministically ordered** (count-descending, ties
 broken lexically), so building the same input twice yields a **byte-identical**
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching `rete progressive`.
+
+### Where to get `theme` IRIs
+
+`theme` rejects free text, which is only helpful if you know where an IRI
+comes from. Pick a **published concept scheme** and copy the concept's IRI —
+every example below resolves as printed:
+
+| Vocabulary | Example IRI | Good for |
+|---|---|---|
+| **EU Data Themes** | `http://publications.europa.eu/resource/authority/data-theme/GOVE` (*Government and public sector*) | The DCAT-AP controlled list — **the default answer** for government and open-data portals. 13 themes, labelled in 27 languages. |
+| **EuroVoc** | `http://eurovoc.europa.eu/1460` (*EU financial instrument*) | EU policy and legal subject headings, when the data-theme list is too coarse. |
+| **Wikidata** | `https://www.wikidata.org/entity/Q413` (*physics*) | **Anything with no domain vocabulary.** Stable IRIs that are never reassigned, labels in hundreds of languages (282 on that one concept), and cross-links into most of the vocabularies below — so a Wikidata theme stays joinable even when a consumer speaks a different scheme. |
+| **LCSH** | `https://id.loc.gov/authorities/subjects/sh85101653` (*Physics*) | Library-style subject headings; what bibliographic consumers already index. |
+| **UNESCO Thesaurus** | `http://vocabularies.unesco.org/thesaurus/concept197` (*Environmental management*) | Education, science, culture, communication. |
+| **AGROVOC** | `http://aims.fao.org/aos/agrovoc/c_12332` (*maize*) | Agriculture, fisheries, food, environment. |
+| **MeSH** | `http://id.nlm.nih.gov/mesh/D009369` (*Neoplasms*) | Biomedical and clinical topics. |
+| **OBO Foundry** | `http://purl.obolibrary.org/obo/GO_0008150` (*biological_process*) | Life sciences. The playground catalog already carries graphs built on OBO IRIs (`chebi-full` is the complete ChEBI ontology; `chemotion` merges CHMO and RXNO), so an OBO theme is joinable against a graph you can actually query. |
+| **GeoNames** | `https://sws.geonames.org/3077311/` (*Czechia*) | When the dataset's subject is really a **place**. |
+
+**How to choose:**
+
+1. **Prefer the vocabulary your consumers already harvest.** DCAT-AP requires a
+   theme from the EU Data Themes list, so a concept from a different scheme —
+   however precise — does not satisfy a portal that checks for one. Matching
+   your audience beats picking the most exact concept. (A national open-data
+   catalog is the clean case: `…/data-theme/GOVE`, plus anything else you like
+   alongside it.)
+2. **Then the obvious domain vocabulary**, if your dataset has one (AGROVOC for
+   a crop census, MeSH for a clinical corpus).
+3. **Otherwise Wikidata**, which has a concept for essentially any topic. It is
+   the honest fallback, not a defeat.
+4. **Use several** when the dataset genuinely spans several — `theme` is a
+   **list**, and mixing schemes is fine (one EU data theme *and* a Wikidata
+   concept is a common, useful pairing). Entries are sorted and de-duplicated
+   at build time.
+
+`theme` is for concepts a scheme has agreed on; everything else you would like
+a reader to search by belongs in `keywords`, which takes free text precisely so
+you are never tempted to invent an IRI. **Never mint a theme IRI yourself** — a
+plausible-looking IRI in a scheme's namespace that resolves to nothing is worse
+than no theme at all.
 
 ### One card, three versions
 
