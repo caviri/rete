@@ -321,6 +321,7 @@ __PLAYGROUND_CSS__
               <span class="switch" aria-hidden="true"></span>
               <span class="switch-txt">⛁ All graphs</span>
             </label>
+            <button id="unionHelp" type="button" class="help-button" title="What does All graphs do?" aria-label="Explain the All graphs union mode">?</button>
             <label id="roundWrap" class="hidden">
               <span>Round</span>
               <input id="round" type="number" min="0" placeholder="auto" />
@@ -889,6 +890,57 @@ __PLAYGROUND_CSS__
           The OWL 2 QL / DL-Lite<sub>R</sub> profile — a documented subset, not full OWL DL.
           For a one-shot logical-coherence check (disjointness, functional-property and
           <code>sameAs</code> clashes), see <code>rete reason</code> in the CLI.
+        </dd>
+      </dl>
+    </div>
+  </div>
+
+  <div id="unionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="unionModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="unionModalTitle">⛁ All graphs (union default graph)</h3>
+        <button id="unionModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy" style="margin:0 0 10px">
+        With <b>All graphs</b> on, this file is mounted as if its default graph were the
+        <b>union of the default graph and every named graph</b> — a pattern outside
+        <code>GRAPH</code> then matches data wherever it lives. The query text never
+        changes; the dataset it runs against does. Off by default; announced in the
+        result line on every run it changes.
+      </p>
+      <dl class="strategy-list">
+        <dt>Why it exists</dt>
+        <dd>
+          Many converted files keep <em>all</em> their data in named graphs, so the
+          standard answer to <code>SELECT … WHERE { ?s ?p ?o }</code> is 0 rows —
+          correct, but a dead end. This toggle is the <strong>union default graph</strong>
+          mode Virtuoso, GraphDB and Jena TDB offer as a store-level switch: query every
+          graph as one merged graph without rewriting anything.
+        </dd>
+        <dt>Not standard SPARQL</dt>
+        <dd>
+          The SPARQL standard says a pattern outside <code>GRAPH</code> matches
+          <em>only</em> the default graph. This mode deliberately departs from that —
+          which is exactly why it is opt-in, visible while on, and every result it
+          changes is stamped <em>"⛁ union default graph (non-standard)"</em>.
+        </dd>
+        <dt>What it does not affect</dt>
+        <dd>
+          A query with its own <code>FROM</code> keeps its <code>FROM</code> dataset.
+          <code>GRAPH ?g { … }</code> still enumerates and filters named graphs exactly
+          as before. Federated (multi-source) runs and live SPARQL endpoints are
+          untouched — they keep standard semantics and the result line says so.
+        </dd>
+        <dt>What it costs</dt>
+        <dd>
+          The engine <strong>materializes the merged index</strong> for the run. On a
+          remote file with many named graphs the first union run can fetch a large share
+          of the file — the merge must visit every graph (nkod.rete, 31,974 graphs:
+          ~64&nbsp;MB of a 68&nbsp;MB file). Later union runs re-merge from this
+          session's cache: seconds of compute with <em>0 new bytes</em>, which the
+          status line reports. A file with no named graphs is unaffected, and the common
+          converted shape — empty default graph, exactly one named graph — stays a
+          zero-copy borrow.
         </dd>
       </dl>
     </div>

@@ -15,7 +15,14 @@
 //  - the empty-default-graph explainer NEVER shows while the toggle is on
 //    (with union semantics that message would be wrong);
 //  - GRAPH ?g still enumerates named graphs with the toggle on;
-//  - turning it off restores the standard 0.
+//  - turning it off restores the standard 0;
+//  - TRANSFER FIGURES stay truthful on the remote path (reported: "the bytes
+//    fetched log doesn't get updated which makes it looks like an error"):
+//    the first query's final line counts the session OPEN's fetches instead of
+//    contradicting the live counter with "0 range req", and any 0-request run
+//    names the session cache it ran on, so a zero reads as the cache working;
+//  - the ⛁ switch has a ? help affordance opening #unionModal (same
+//    conventions as the Strategy/Reason modals: × close, backdrop, Escape).
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { launchBrowser } from "./_browser.mjs";
@@ -93,7 +100,19 @@ const main = async () => {
     }));
   };
 
+  // Remote transfer figures must never contradict themselves: a "0 range req"
+  // line is honest only when it names the session cache the run answered from
+  // (otherwise a run that visibly fetched — or merged for seconds — reads as a
+  // fetch that never happened, the reported "looks like an error").
+  const auditTransfer = (label, qmeta) => {
+    if (!/range req/.test(qmeta)) { failures.push(`${label}: remote result meta has no transfer figures: "${qmeta.slice(0, 100)}"`); return; }
+    if (/\b0 range req/.test(qmeta) && !/session's cache \(/.test(qmeta)) {
+      failures.push(`${label}: a 0-request run does not name the session cache it ran on: "${qmeta.slice(0, 140)}"`);
+    }
+  };
+
   const exercise = async (page, label) => {
+    const isRemote = label === "remote";
     // Off by default — a semantics switch must never arrive flipped.
     const def = await page.evaluate(() => {
       const u = document.getElementById("unionGraphs");
@@ -107,6 +126,15 @@ const main = async () => {
     if (off.error) failures.push(`${label}: baseline query errored: ${off.outText}`);
     if (!/\b0 row/.test(off.qmeta)) failures.push(`${label}: expected the standard 0 rows with the toggle off, qmeta: "${off.qmeta.slice(0, 80)}"`);
     if (/union default graph/i.test(off.qmeta)) failures.push(`${label}: the OFF run claims union semantics`);
+    if (isRemote) {
+      // FIRST query of a fresh worker session: opening the file fetched real
+      // ranges (the live counter showed them), so the final line must count
+      // them too — it used to say "0 range req … served from cache" here.
+      auditTransfer(`${label} (baseline)`, off.qmeta);
+      if (!/[1-9]\d* range req/.test(off.qmeta) || !/incl\. opening the file/.test(off.qmeta)) {
+        failures.push(`${label}: the first query's final line hides the session open's fetches: "${off.qmeta.slice(0, 140)}"`);
+      }
+    }
 
     // Flip it on: announced immediately…
     await page.check("#unionGraphs");
@@ -121,6 +149,19 @@ const main = async () => {
     if (!/\b6 row/.test(on.qmeta)) failures.push(`${label}: expected 6 union rows, qmeta: "${on.qmeta.slice(0, 100)}"`);
     if (!/union default graph/i.test(on.qmeta)) failures.push(`${label}: the union run does not announce itself in the result meta`);
     if (on.explainer) failures.push(`${label}: the empty-default-graph explainer showed WHILE union was on`);
+    if (isRemote) auditTransfer(`${label} (union)`, on.qmeta);
+
+    // A SECOND union run answers entirely from the warm session (the tiny
+    // fixture is fully cached by now): the transfer figures must say so
+    // rather than sit at a bare unexplained zero.
+    if (isRemote) {
+      const warm = await run(page, PLAIN_Q, { settleMs: 300 });
+      if (!/\b6 row/.test(warm.qmeta)) failures.push(`${label}: warm union re-run lost the union rows, qmeta: "${warm.qmeta.slice(0, 100)}"`);
+      auditTransfer(`${label} (warm union)`, warm.qmeta);
+      if (!/0 new bytes/.test(warm.qmeta) || !/session's cache \(/.test(warm.qmeta)) {
+        failures.push(`${label}: warm union re-run does not explain its zero transfer: "${warm.qmeta.slice(0, 140)}"`);
+      }
+    }
 
     // GRAPH ?g must still see the named graphs with the toggle on.
     const g = await run(page, GRAPH_Q, { settleMs: 300 });
@@ -132,9 +173,35 @@ const main = async () => {
     if (!/\b0 row/.test(back.qmeta)) failures.push(`${label}: toggling off did not restore standard semantics, qmeta: "${back.qmeta.slice(0, 80)}"`);
   };
 
+  // The ? help affordance beside the switch — same conventions as the
+  // Strategy/Reason modals: opens #unionModal, closes on ×, Escape, backdrop.
+  const exerciseHelp = async (page, label) => {
+    const present = await page.evaluate(() => !!document.getElementById("unionHelp") && !!document.getElementById("unionModal"));
+    if (!present) { failures.push(`${label}: no #unionHelp button / #unionModal in the page`); return; }
+    const openState = async () => page.evaluate(() => !document.getElementById("unionModal").classList.contains("hidden"));
+    await page.click("#unionHelp");
+    if (!(await openState())) { failures.push(`${label}: clicking ? did not open the All graphs modal`); return; }
+    const text = await page.evaluate(() => document.getElementById("unionModal").textContent || "");
+    for (const must of ["union of the default graph and every named graph", "Virtuoso", "standard SPARQL", "FROM", "live SPARQL endpoints", "materializes the merged index"]) {
+      if (!text.includes(must)) failures.push(`${label}: All graphs modal is missing "${must}"`);
+    }
+    await page.click("#unionModalClose");
+    if (await openState()) failures.push(`${label}: × did not close the All graphs modal`);
+    await page.click("#unionHelp");
+    await page.keyboard.press("Escape");
+    if (await openState()) failures.push(`${label}: Escape did not close the All graphs modal`);
+    await page.click("#unionHelp");
+    // Same technique as check_load_modal: a click whose target IS the modal
+    // element (the backdrop), not a descendant — deterministic, no hit-testing.
+    await page.evaluate(() => document.getElementById("unionModal").dispatchEvent(
+      new MouseEvent("click", { bubbles: true })));
+    if (await openState()) failures.push(`${label}: backdrop click did not close the All graphs modal`);
+  };
+
   // ---- remote lazy path (the worker engine — asyncify default in Chromium) --
   const remote = await open(`#url=${encodeURIComponent(`http://127.0.0.1:${port}/union.rete`)}`);
   await exercise(remote, "remote");
+  await exerciseHelp(remote, "remote");
   await remote.close();
 
   // ---- resident path (Graph.query_opts on the in-memory engine) -------------
@@ -157,7 +224,7 @@ const main = async () => {
   const pass = failures.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
-    note: "union default graph toggle: off by default, 0→6 rows when on (remote + resident), announced, explainer suppressed, GRAPH intact, reversible",
+    note: "union default graph toggle: off by default, 0→6 rows when on (remote + resident), announced, explainer suppressed, GRAPH intact, reversible; remote transfer figures truthful (open counted, zero runs name the cache); ? help modal opens/closes",
     failures,
   }, null, 2));
   process.exit(pass ? 0 : 1);

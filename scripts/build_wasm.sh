@@ -54,6 +54,11 @@ cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt 
 # empty-default-graph explainer check reads the remote path's fact from it.
 cargo run -q --release -p rete-cli -- build tests/gate/fixtures/named-graphs-only.nq \
   --card-file tests/gate/fixtures/named-graphs-only.card.json -o tests/gate/.cache/named-graphs-only.rete
+# The same quads WITHOUT a card: the cardless remote path, where the
+# empty-default-graph explainer must fall back to asking the file itself
+# (two first-match ASKs) instead of staying silent.
+cargo run -q --release -p rete-cli -- build tests/gate/fixtures/named-graphs-only.nq \
+  -o tests/gate/.cache/named-graphs-only-nocard.rete
 
 python3 -P - <<'PY'
 import hashlib

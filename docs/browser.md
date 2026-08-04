@@ -154,7 +154,8 @@ re-fetches almost nothing. Two layers:
   playground's worker holds one `RemoteGraph` per URL, so exploring a remote
   dataset — refining a filter, paging entity tables, re-running — reuses
   everything already fetched: a fully cached re-run fetches **0 bytes**, and the
-  result line shows *"served from cache, 0 new bytes."* (The free `sparql_url`
+  result line shows *"0 new bytes, all served from this session's cache"* with
+  the cache's size. (The free `sparql_url`
   opens a fresh file each call, so it gets only the within-query block cache —
   use `RemoteGraph` for cross-query reuse.)
 
