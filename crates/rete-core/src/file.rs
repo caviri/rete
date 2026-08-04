@@ -4878,6 +4878,15 @@ mod tests {
         assert_eq!(m.unwrap(), card);
         assert!(b.is_none());
         assert_eq!(rp.requests(), 2);
+        // Stated as the comparison every client depends on: carrying a build
+        // record costs a reader NOTHING in requests. Any client that shows the
+        // build record — the CLI, the browser card modal — can therefore do it
+        // in the card's own budget, and does not need a second call.
+        assert_eq!(
+            r.requests(),
+            rp.requests(),
+            "build info must not cost an extra request",
+        );
 
         // Neither: the header read alone answers.
         let none = build_image();

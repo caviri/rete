@@ -22,6 +22,8 @@ pub mod bgp;
 #[doc(hidden)]
 pub mod block_cache;
 #[doc(hidden)]
+pub mod card_input;
+#[doc(hidden)]
 pub mod dict;
 #[doc(hidden)]
 pub mod dictionary;
@@ -88,6 +90,19 @@ pub mod format {
         assemble_dataset, assemble_dataset_with, assemble_dataset_with_opts,
         assemble_dataset_with_opts_algo, parse, parse_quads, parse_rdfxml, parse_statements,
         parse_turtle, BuildStats, IngestError, RawQuad, RawTriple,
+    };
+}
+
+/// Stable **curated Dataset Card** API — the write-time rules a card document
+/// must satisfy, shared so that every writer (the CLI's `--card-file`, the
+/// browser builder, any third-party tool) accepts and rejects the same
+/// documents with the same words.
+pub mod card {
+    pub use crate::card_input::{
+        canonicalize_json, compose_curated_card, json_depth, normalize_extra,
+        normalize_string_list, normalize_themes, validate_curated_card, CARD_EXTRA_MAX_BYTES,
+        CARD_EXTRA_MAX_DEPTH, CARD_EXTRA_MAX_KEYS, CARD_EXTRA_MAX_KEY_BYTES, CURATED_CARD_FIELDS,
+        UNKNOWN_FIELD_HINT,
     };
 }
 

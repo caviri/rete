@@ -615,37 +615,55 @@ __PLAYGROUND_CSS__
             <header class="builder-step-head">
               <span class="builder-step-no">3</span>
               <h2>Dataset card</h2>
-              <span class="builder-card-sync" id="cardCodeMsg">in sync</span>
+              <span class="builder-card-sync" id="cardCodeMsg">no card — the file will carry none</span>
             </header>
+            <p class="microcopy">Two different things live here. On the left, how the dataset is
+              <strong>listed in this playground</strong> (and in a downloadable manifest). On the right, the
+              <strong>Dataset Card that travels inside the <code>.rete</code></strong> — exactly the document
+              <code>rete build --card-file</code> takes, checked here by the same rules, so a card you write in
+              the browser is one the CLI would also accept. Title, licence, source and description appear in
+              both; <em>key</em>, <em>icon</em>, <em>tags</em> and <em>provenance</em> are listing-only (the card
+              schema rejects them).</p>
             <div class="builder-card-split">
               <div class="builder-grid">
                 <label class="builder-field"><span>Title</span>
                   <input id="cardTitle" type="text" placeholder="My graph" autocomplete="off" /></label>
-                <label class="builder-field"><span>Key <small>url-safe id</small></span>
+                <label class="builder-field"><span>Key <small>url-safe id · listing only</small></span>
                   <input id="cardKey" type="text" placeholder="my-graph" autocomplete="off" spellcheck="false" /></label>
-                <label class="builder-field builder-icon"><span>Icon</span>
+                <label class="builder-field builder-icon"><span>Icon <small>listing</small></span>
                   <input id="cardIcon" type="text" maxlength="4" placeholder="📊" /></label>
                 <label class="builder-field"><span>License</span>
                   <input id="cardLicense" type="text" placeholder="CC0 / CC-BY 4.0 / …" autocomplete="off" /></label>
                 <label class="builder-field"><span>Source URL</span>
                   <input id="cardSource" type="url" placeholder="https://…" autocomplete="off" spellcheck="false" /></label>
-                <label class="builder-field"><span>Tags <small>comma-separated</small></span>
+                <label class="builder-field"><span>Tags <small>comma-separated · listing only</small></span>
                   <input id="cardTags" type="text" placeholder="ontology, social, demo" autocomplete="off" /></label>
                 <label class="builder-field builder-wide"><span>Description</span>
                   <textarea id="cardDesc" rows="3" placeholder="What's in this graph, and what's interesting about it."></textarea></label>
-                <label class="builder-field builder-wide"><span>Provenance <small>how it was built (optional)</small></span>
+                <label class="builder-field builder-wide"><span>Provenance <small>listing only — the card's own is <code>derived_from</code></small></span>
                   <textarea id="cardProvenance" rows="2" placeholder="e.g. CONSTRUCTed from the X endpoint, converted to N-Triples, assembled with rete build."></textarea></label>
               </div>
               <div class="builder-card-code">
                 <div class="builder-card-code-head">
-                  <span>Card JSON</span>
-                  <small>edit either side — they sync both ways</small>
-                  <label class="file-button card-import" title="Import a card or downloaded manifest JSON">
+                  <span>Dataset Card JSON</span>
+                  <small>goes <em>inside</em> the file · <code>--card-file</code> shape</small>
+                  <button id="cardTemplate" type="button" class="secondary card-template"
+                    title="Insert a skeleton of every curated field — placeholders to replace, nothing already typed is overwritten">All fields</button>
+                  <label class="file-button card-import" title="Import a --card-file card, or a downloaded manifest">
                     Import JSON
                     <input id="cardImportFile" type="file" accept=".json,application/json" hidden />
                   </label>
                 </div>
-                <textarea id="cardCode" class="card-code" spellcheck="false" aria-label="Dataset card as JSON"></textarea>
+                <textarea id="cardCode" class="card-code" spellcheck="false" aria-label="Dataset card as JSON"
+                  placeholder='{ "title": "My graph", "license": "CC0-1.0" }'></textarea>
+                <p class="microcopy">Leave it empty for a file with no card. <code>theme</code> must be an
+                  <strong>IRI into a controlled vocabulary</strong> —
+                  <a href="dataset-cards.html#where-to-get-theme-iris" target="_blank" rel="noopener">where to get one</a>;
+                  free-text subjects go in <code>keywords</code>. Publisher-defined fields go in
+                  <code>extra</code> (max 8 KB · 64 keys · depth 2); any other top-level key is rejected.
+                  The browser writes the curated fields and the measured counts — the derived profile
+                  (predicates, classes, the starter-query library) and the build record are
+                  <a href="dataset-cards.html" target="_blank" rel="noopener">CLI-only</a>.</p>
               </div>
             </div>
           </section>

@@ -9173,42 +9173,124 @@ self.onmessage = function (e) {
     };
   }
 
-  // FORM → JSON: reflect the form into the code editor (unless the editor is the
-  // one being typed into right now).
+  // --- The Dataset Card the built file will CARRY ---------------------------
+  // Two documents live in step 3 and they are not the same thing, so they are
+  // kept apart rather than merged into one confusing object:
+  //
+  //  * the CATALOG ENTRY (key / icon / tags / provenance) — how the dataset is
+  //    listed in this playground and in a downloadable manifest. Never written
+  //    into the file; `rete build --card-file` would reject those keys.
+  //  * the DATASET CARD (`cardCode`) — exactly the `--card-file` document, and
+  //    the thing that travels inside the `.rete`.
+  //
+  // The JSON editor is the PRIMARY surface for the card, not a mirror of the
+  // form. It is the documented interchange format, so it cannot drift from what
+  // the CLI accepts; the engine validates it with the CLI's own rules; and the
+  // curated fields include lists of objects (`creators`) and a free-form bag
+  // (`extra`) that a form would either mangle or forbid. The four fields a
+  // first-time author always fills — title, licence, source, description — are
+  // ALSO on the form, and patch into the document rather than replacing it, so
+  // typing a title never eats the creators you wrote by hand.
+  const CARD_FORM_FIELDS = [["cardTitle", "title"], ["cardLicense", "license"],
+                            ["cardSource", "source"], ["cardDesc", "description"]];
+
+  // The authoritative card document. `cardCode` renders it; the form patches it.
+  function cardDoc() {
+    const code = $("cardCode");
+    if (!code) return {};
+    try {
+      const o = JSON.parse(code.value || "{}");
+      return o && typeof o === "object" && !Array.isArray(o) ? o : {};
+    } catch (e) { return null; }   // null = the editor is mid-edit and unparseable
+  }
+
+  // FORM → JSON: patch only the fields the form owns, leaving every hand-written
+  // curated field in place.
   function updateCardCode() {
     if (cardSync) return;
     const code = $("cardCode"); if (!code) return;
+    const doc = cardDoc();
+    if (doc === null) { setCardSyncMsg("invalid JSON — card not updated from the form", true); return; }
+    for (const [id, key] of CARD_FORM_FIELDS) {
+      const v = (($(id) || {}).value || "").trim();
+      if (v) doc[key] = v; else delete doc[key];
+    }
     cardSync = true;
-    code.value = JSON.stringify(cardFromForm(), null, 2);
+    code.value = Object.keys(doc).length ? JSON.stringify(doc, null, 2) : "";
     code.classList.remove("invalid");
-    setCardSyncMsg("in sync", false);
     cardSync = false;
+    validateCardCode();
   }
 
-  // JSON → FORM: parse the editor and populate the form. Invalid JSON leaves the
+  // JSON → FORM: reflect the four shared fields back. Invalid JSON leaves the
   // form untouched and flags the editor.
   function applyCardCode() {
     if (cardSync) return;
     const code = $("cardCode"); if (!code) return;
-    let obj;
-    try { obj = JSON.parse(code.value || "{}"); }
-    catch (e) { code.classList.add("invalid"); setCardSyncMsg("invalid JSON — form not updated", true); return; }
-    if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
-      code.classList.add("invalid"); setCardSyncMsg("expected a JSON object", true); return;
+    const doc = cardDoc();
+    if (doc === null) {
+      code.classList.add("invalid"); setCardSyncMsg("invalid JSON — form not updated", true); return;
     }
-    code.classList.remove("invalid");
-    setCardSyncMsg("in sync", false);
     cardSync = true;
-    const set = (id, v) => { const el = $(id); if (el && v != null) el.value = String(v); };
-    if (obj.title != null) set("cardTitle", obj.title);
-    if (obj.key != null) { set("cardKey", obj.key); const ck = $("cardKey"); if (ck) ck.dataset.auto = "0"; }
-    set("cardIcon", obj.icon);
-    set("cardLicense", obj.license);
-    set("cardSource", obj.source);
-    if (obj.tags != null) set("cardTags", Array.isArray(obj.tags) ? obj.tags.join(", ") : obj.tags);
-    if (obj.description != null) set("cardDesc", obj.description);
-    if (obj.provenance != null) set("cardProvenance", obj.provenance);
+    for (const [id, key] of CARD_FORM_FIELDS) {
+      const el = $(id); if (el) el.value = doc[key] == null ? "" : String(doc[key]);
+    }
     cardSync = false;
+    validateCardCode();
+  }
+
+  // Validate with the ENGINE, not with a re-implementation here: `validate_card`
+  // runs the same rules `rete build --card-file` runs and returns the same
+  // message, so an author cannot compose a card in the browser that the CLI
+  // would refuse. Re-stating those rules in JavaScript is precisely how the two
+  // writers would drift apart.
+  function validateCardCode() {
+    const code = $("cardCode"); if (!code) return "";
+    const text = (code.value || "").trim();
+    if (!text) {
+      code.classList.remove("invalid");
+      setCardSyncMsg("no card — the file will carry none", false);
+      return "";
+    }
+    let msg = "";
+    try { msg = W().validate_card(text); }
+    catch (e) { msg = String((e && e.message) || e); }
+    code.classList.toggle("invalid", !!msg);
+    // Shown WHOLE, not trimmed to a headline: the tail is where these messages
+    // put the fix — a free-text theme is told to use `keywords`, a stray key is
+    // told about the `extra` bag — and a truncated error is one you have to go
+    // and look up.
+    setCardSyncMsg(msg || "valid card", !!msg);
+    return msg;
+  }
+
+  // A skeleton of every curated field, for authors who have not memorized the
+  // list. Values are placeholders to replace, not defaults to keep — inserting
+  // it never overwrites what is already there.
+  function insertCardTemplate() {
+    const code = $("cardCode"); if (!code) return;
+    const doc = cardDoc() || {};
+    const skeleton = {
+      title: "My graph", description: "What's in this graph, and why it is interesting.",
+      license: "CC0-1.0", source: "https://example.org/where-the-data-came-from",
+      version: "2026-01", created: "2026-01-15", source_date: "2026-01-10",
+      creators: [{ name: "Your Name", orcid: "https://orcid.org/0000-0000-0000-0000" }],
+      publisher: { name: "Your Organisation", ror: "https://ror.org/00000000" },
+      canonical_url: "https://example.org/my-graph.rete",
+      sparql_endpoint: "https://example.org/sparql",
+      derived_from: ["https://example.org/source-dump.nt"],
+      doi: "https://doi.org/10.5281/zenodo.0000000",
+      cite_as: "Your Name (2026). My graph. https://doi.org/10.5281/zenodo.0000000",
+      keywords: ["example", "demo"],
+      theme: ["http://publications.europa.eu/resource/authority/data-theme/TECH"],
+      example_queries: ["SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 25"],
+      extra: { internal_id: "DS-2026-001" },
+    };
+    for (const k of Object.keys(skeleton)) if (doc[k] === undefined) doc[k] = skeleton[k];
+    cardSync = true;
+    code.value = JSON.stringify(doc, null, 2);
+    cardSync = false;
+    applyCardCode();
   }
 
   function setCardSyncMsg(text, bad) {
@@ -9275,24 +9357,45 @@ self.onmessage = function (e) {
   // Build the merged graph (data + optional ontology) in the chosen source
   // format. nt/nq/ttl sources are concatenated as text; jsonld/rdfxml sources
   // are each converted, then the resulting line-based forms are concatenated.
-  function buildFromSources(data, onto, fmt) {
+  function buildFromSources(data, onto, fmt, cardJson) {
     const parts = [];
     let buildFmt = fmt;
     if (data.trim()) { const c = toEngineText(data, fmt); buildFmt = c.fmt; parts.push(c.text.replace(/\s+$/, "")); }
     if (onto.trim()) { const c = toEngineText(onto, fmt); buildFmt = c.fmt; parts.push(c.text.replace(/\s+$/, "")); }
-    return W().build(parts.join("\n"), buildFmt);
+    // `build_with_card` with an empty card is byte-identical to `build`, so the
+    // live syntax-validation path can share this function without paying for a
+    // card it does not care about.
+    return W().build_with_card(parts.join("\n"), buildFmt, cardJson || "");
   }
 
-  // --- import a card / manifest JSON file into editor 3 (and step 4) ----------
-  // Accepts either a flat card object {key,title,…} or a full manifest produced
-  // by "Download manifest" (datasetMeta / datasetExtra / examples / shacl), in
-  // which case the example rows are restored too.
+  // --- import a card / manifest JSON file into step 3 (and step 4) -----------
+  // Three shapes are accepted, because all three are things an author plausibly
+  // has on disk:
+  //   * a `--card-file` DATASET CARD  → straight into the card editor;
+  //   * a downloaded MANIFEST         → the catalog-entry form + example rows;
+  //   * a legacy flat {key,title,…}   → the catalog-entry form.
   async function importCardFile(file) {
     if (!file) return;
     let obj;
     try { obj = JSON.parse(await file.text()); }
     catch (e) { setCardSyncMsg("invalid JSON file", true); return; }
     const isManifest = obj && (obj.datasetMeta || obj.datasetExtra || obj.examples || obj.shacl || obj.dataset);
+    // A card file is recognized by carrying only card fields — never `key` /
+    // `icon` / `tags`, which the card schema rejects outright.
+    const CARD_ONLY = ["creators", "publisher", "keywords", "theme", "extra", "doi", "cite_as",
+                       "canonical_url", "sparql_endpoint", "derived_from", "source_date",
+                       "version", "example_queries"];
+    const looksLikeCard = !isManifest && obj && typeof obj === "object" &&
+      obj.key === undefined && obj.icon === undefined && obj.tags === undefined &&
+      (CARD_ONLY.some((k) => obj[k] !== undefined) || obj.title !== undefined);
+    if (looksLikeCard) {
+      const code = $("cardCode");
+      if (code) { code.value = JSON.stringify(obj, null, 2); applyCardCode(); }
+      // Seed the catalog key from the title, since a card file has none.
+      const ct = $("cardTitle"), ck = $("cardKey");
+      if (ck && ct && !ck.value.trim()) ck.value = sanitizeKey(ct.value);
+      return;
+    }
     let card = obj;
     if (isManifest) {
       const key = obj.key || (obj.datasetMeta && Object.keys(obj.datasetMeta)[0]) ||
@@ -9314,9 +9417,16 @@ self.onmessage = function (e) {
         renderBuildExamples();
       }
     }
-    const code = $("cardCode");
-    if (code) { code.value = JSON.stringify(card, null, 2); applyCardCode(); }
-    setCardSyncMsg(isManifest ? "imported manifest" : "imported card", false);
+    // A manifest describes the CATALOG ENTRY, so it fills the form — and, for
+    // the four fields the card shares, the card document too.
+    const set = (id, v) => { const el = $(id); if (el && v != null) el.value = String(v); };
+    set("cardTitle", card.title); set("cardIcon", card.icon);
+    set("cardLicense", card.license); set("cardSource", card.source);
+    set("cardDesc", card.description); set("cardProvenance", card.provenance);
+    if (card.key != null) { set("cardKey", card.key); const ck = $("cardKey"); if (ck) ck.dataset.auto = "0"; }
+    if (card.tags != null) set("cardTags", Array.isArray(card.tags) ? card.tags.join(", ") : card.tags);
+    updateCardCode();
+    setCardSyncMsg("imported manifest — the catalog entry, not the file's card", false);
   }
 
   // Pull the current example-row DOM values back into state.buildEx (so a
@@ -9443,13 +9553,20 @@ self.onmessage = function (e) {
     if (!card.key) return showError("buildOut", "Give the dataset a title or a key first (step 3).");
     if (keyIsReserved(card.key)) return showError("buildOut", `The key “${esc(card.key)}” belongs to a bundled dataset — pick another in step 3.`);
 
+    // The card the FILE will carry (step 3's JSON editor) — validated by the
+    // engine before we spend time parsing RDF, so a card mistake is reported as
+    // a card mistake rather than surfacing halfway through a build.
+    const cardErr = validateCardCode();
+    if (cardErr) return showError("buildOut", "Dataset card rejected (step 3): " + cardErr);
+    const cardJson = (($("cardCode") || {}).value || "").trim();
+
     const fmt = $("buildFormat").value;
     const t0 = performance.now();
     let bytes, info;
     try {
       // Merge data + optional ontology into one graph (JSON-LD / RDF/XML are
       // converted to N-Quads / N-Triples first; nt/nq/ttl are concatenated).
-      bytes = buildFromSources(data, onto, fmt);
+      bytes = buildFromSources(data, onto, fmt, cardJson);
       info = JSON.parse(W().info(bytes));
     } catch (e) {
       state.built = null; setBuiltButtons(false); $("buildMeta").textContent = "";
@@ -9496,9 +9613,20 @@ self.onmessage = function (e) {
       metric("Size", formatBytes(bytes.length)) +
       `</div>` +
       `<p class="microcopy">Open it in the console to query it, or export it: <strong>Download .rete</strong> for the file, ` +
-      `<strong>Download manifest</strong> for the card + examples to PR into the repo or the plaza. ` +
-      `In-browser builds write uncompressed sections (the wasm engine ships no zstd encoder); ` +
-      `<code>rete build</code> on the CLI produces a smaller file from the same input.</p>`;
+      `<strong>Download manifest</strong> for the catalog entry + examples to PR into the repo or the plaza. ` +
+      (cardJson
+        ? `The file <strong>carries your Dataset Card</strong> — open it and press 🏷 Card to read it back. `
+        : `The file carries <strong>no Dataset Card</strong> (step 3 is empty). `) +
+      // Say what the browser cannot do, rather than letting the absence look
+      // like a defect in the file. The derived profile and the starter-query
+      // library are computed by `rete-cli`, which the wasm engine does not
+      // carry; the build record's cost figures come from running those queries,
+      // so there are none to measure either.
+      `In-browser builds write the <em>curated</em> card and the measured counts, but not the ` +
+      `derived profile (predicates, classes, vocabularies, the starter-query library) or the ` +
+      `build record — those come from <code>rete build --card-file</code> on the CLI, which also ` +
+      `writes compressed sections (the wasm engine ships no zstd encoder) and so produces a ` +
+      `smaller file from the same input.</p>`;
     renderBuildSaved();
     updateResultVisibility();
   }
@@ -9600,11 +9728,10 @@ self.onmessage = function (e) {
     $("buildMeta").textContent = "";
     $("buildDataMeta").textContent = "";
     $("buildOut").innerHTML = "";
-    const cc = $("cardCode"); if (cc) cc.classList.remove("invalid");
+    const cc = $("cardCode"); if (cc) { cc.value = ""; cc.classList.remove("invalid"); }
     setValidMsg("buildDataValid", "", null);
     setValidMsg("buildOntoValid", "", null);
-    setCardSyncMsg("in sync", false);
-    updateCardCode();
+    validateCardCode();
     updateResultVisibility();
   }
 
@@ -10154,19 +10281,39 @@ self.onmessage = function (e) {
   // playground was the one client that never showed it.
   let cardJsonText = "";   // raw card text, for Copy/Download (never re-serialized)
   let cardObj = null;
+  let cardBuildObj = null; // the kind-7 build record, or null when the file has none
 
   // Source-aware: a resident graph answers from memory, a remote one goes
-  // through the worker (card_url does synchronous range XHR, which a document
-  // cannot do). A live SPARQL endpoint has no .rete behind it at all.
+  // through the worker (the *_url exports do synchronous range XHR, which a
+  // document cannot do). A live SPARQL endpoint has no .rete behind it at all.
+  //
+  // Both paths ask for the card AND the build record in ONE call, because the
+  // engine returns them from one header read plus one coalesced range — the
+  // writer lays the build-info section immediately after the card so that holds.
+  // Two calls would have made the CARD tier cost an extra round trip to show a
+  // few hundred bytes of provenance, which is exactly the trade this tier exists
+  // to avoid.
+  function cardEnvelope(json) {
+    let env;
+    try { env = JSON.parse(json || "{}"); } catch (e) { return { err: "The card could not be read: " + e.message }; }
+    let build = null;
+    if (env.build) {
+      // A malformed build record must not cost the reader the card: it is
+      // advisory provenance sitting outside the content hash.
+      try { build = JSON.parse(env.build); } catch (e) { build = null; }
+    }
+    return { text: env.card || "", build };
+  }
+
   async function fetchCard() {
     if (state.liveEndpoint) {
       return { err: "A live SPARQL endpoint is not a .rete file, so it carries no Dataset Card. Load a .rete to read one." };
     }
     if (state.activeSource === "remote" && state.remote) {
-      const r = await remoteCall("card_url", state.remote.url);
-      return { text: r && r.json };
+      const r = await remoteCall("card_and_build_url", state.remote.url);
+      return cardEnvelope(r && r.json);
     }
-    if (state.graph) return { text: state.graph.card() };
+    if (state.graph) return cardEnvelope(state.graph.card_and_build());
     return { err: "No graph is loaded yet." };
   }
 
@@ -10212,12 +10359,13 @@ self.onmessage = function (e) {
     return `<table class="card-tbl">${body}${more}</table>`;
   }
 
-  // `source` is usually a URL but the field is free text, so only link it when
-  // it really is one — and only http(s), since this string comes from the file.
-  function cardSourceHtml(s) {
-    return /^https?:\/\/\S+$/.test(s.trim())
-      ? `<a href="${esc(s.trim())}" target="_blank" rel="noopener noreferrer">${esc(s.trim())}</a>`
-      : esc(s);
+  // `source`, `doi`, `canonical_url`, `derived_from` … are all free text that
+  // usually holds a URL, so only link when it really is one — and only http(s),
+  // since these strings come from the file.
+  function cardLinkHtml(s) {
+    return /^https?:\/\/\S+$/.test(String(s).trim())
+      ? `<a href="${esc(String(s).trim())}" target="_blank" rel="noopener noreferrer">${esc(String(s).trim())}</a>`
+      : esc(String(s));
   }
 
   function cardSection(title, count, inner, open) {
@@ -10226,13 +10374,101 @@ self.onmessage = function (e) {
       `</summary>${inner}</details>`;
   }
 
-  function renderCardView(c) {
+  // A labelled row in the identity/provenance table. Absent values never get a
+  // row at all — an empty cell would read as "measured, and empty".
+  function cardRow(label, valueHtml) {
+    return `<tr><td class="card-k">${esc(label)}</td><td>${valueHtml}</td></tr>`;
+  }
+
+  // Concept schemes recognizable from the IRI alone. `theme` is an IRI into a
+  // controlled vocabulary and a bare IRI is unreadable — but the label lives in
+  // the scheme, and resolving it would be a network read the CARD tier exists to
+  // avoid. So name the SCHEME (derivable from the prefix, no fetch) and show the
+  // concept's own identifier; never invent the label the scheme owns.
+  const CARD_THEME_SCHEMES = [
+    [/^https?:\/\/publications\.europa\.eu\/resource\/authority\/data-theme\//, "EU Data Themes"],
+    [/^https?:\/\/publications\.europa\.eu\/resource\/authority\//, "EU Vocabularies"],
+    [/^https?:\/\/eurovoc\.europa\.eu\//, "EuroVoc"],
+    [/^https?:\/\/(?:www\.)?wikidata\.org\/(?:entity|wiki)\//, "Wikidata"],
+    [/^https?:\/\/id\.loc\.gov\/authorities\//, "LCSH"],
+    [/^https?:\/\/vocabularies\.unesco\.org\/thesaurus\//, "UNESCO Thesaurus"],
+    [/^https?:\/\/aims\.fao\.org\/aos\/agrovoc\//, "AGROVOC"],
+    [/^https?:\/\/id\.nlm\.nih\.gov\/mesh\//, "MeSH"],
+    [/^https?:\/\/purl\.obolibrary\.org\/obo\//, "OBO Foundry"],
+    [/^https?:\/\/sws\.geonames\.org\//, "GeoNames"],
+  ];
+  function cardThemeChip(iri) {
+    const s = String(iri).trim();
+    const scheme = (CARD_THEME_SCHEMES.find(([re]) => re.test(s)) || [])[1];
+    // The concept's own id — the last non-empty path segment (or fragment).
+    let id = s;
+    try {
+      const u = new URL(s);
+      id = (u.hash && u.hash.slice(1)) ||
+        u.pathname.split("/").filter(Boolean).pop() || u.hostname;
+    } catch (e) { /* not a parseable URL — show it whole */ }
+    const label = scheme || (() => { try { return new URL(s).hostname; } catch (e) { return ""; } })();
+    return `<a class="card-chip card-chip-iri" href="${esc(s)}" target="_blank" rel="noopener noreferrer" title="${esc(s)}">` +
+      `${esc(id)}${label ? `<span>${esc(label)}</span>` : ""}</a>`;
+  }
+
+  function cardChips(values, cls) {
+    return `<div class="card-chips">${values.map((v) =>
+      `<span class="card-chip${cls ? " " + cls : ""}">${esc(String(v))}</span>`).join("")}</div>`;
+  }
+
+  // A person or organisation with its authority IRI. Rendering the ORCID/ROR as
+  // a LINK is the point of having asked for an IRI instead of a string: the
+  // identifier resolves to the authority record, and this project publishes both
+  // authority graphs, so it is also the join key.
+  function cardAgentHtml(a, idKey, idLabel) {
+    if (!a || typeof a !== "object") return esc(String(a));
+    const id = a[idKey];
+    return esc(String(a.name || "")) +
+      (id ? ` <a class="card-id" href="${esc(String(id))}" target="_blank" rel="noopener noreferrer">` +
+        `${esc(idLabel)}<span>${esc(String(id).replace(/^https?:\/\/(www\.)?/, ""))}</span></a>` : "");
+  }
+
+  // A value from the publisher-defined `extra` bag. It is shown as the JSON it
+  // is — strings raw, everything else in JSON literal form — and never
+  // linkified, thousands-separated or otherwise interpreted: rete stores these
+  // verbatim and attaches no meaning to them, so any formatting that implied a
+  // type rete had understood would be a lie the renderer told.
+  function cardExtraValueHtml(v, depth) {
+    if (v === null) return `<span class="card-x-lit">null</span>`;
+    if (typeof v === "boolean" || typeof v === "number") {
+      return `<span class="card-x-lit">${esc(JSON.stringify(v))}</span>`;
+    }
+    if (typeof v === "string") return `<span class="card-x-str">${esc(v)}</span>`;
+    if (Array.isArray(v)) {
+      // Arrays have no keys to show, so they stay in JSON form — compact, and
+      // unambiguous about where one entry ends.
+      return `<span class="card-x-lit">${esc(JSON.stringify(v))}</span>`;
+    }
+    // The bag allows depth 2: an object of objects-of-scalars. A nested object
+    // gets its own key/value table so it reads as structure, not as a blob.
+    const rows = Object.keys(v).map((k) =>
+      `<tr><td class="card-x-k">${esc(k)}</td><td>${cardExtraValueHtml(v[k], (depth || 0) + 1)}</td></tr>`).join("");
+    return `<table class="card-tbl card-x-sub">${rows}</table>`;
+  }
+
+  function renderCardView(c, build) {
     const rows = [];
+    const list = (k) => (Array.isArray(c[k]) && c[k].length ? c[k] : null);
     rows.push(
       `<div class="card-lede">` +
       (c.description ? `<p class="card-desc">${mdLite(String(c.description))}</p>` : "") +
+      // Keywords and themes say what the dataset is ABOUT — they belong with the
+      // description, not buried in a table of addresses.
+      (list("keywords") ? cardChips(c.keywords) : "") +
+      (list("theme")
+        ? `<div class="card-chips">${c.theme.map(cardThemeChip).join("")}` +
+          `<span class="microcopy card-theme-note">controlled-vocabulary IRIs — ` +
+          `the scheme is read from the IRI; the concept's label lives in the scheme ` +
+          `and is not fetched</span></div>`
+        : "") +
       (c.license ? `<p class="microcopy">Licence · ${esc(String(c.license))}</p>` : "") +
-      (c.source ? `<p class="microcopy">Source · ${cardSourceHtml(String(c.source))}</p>` : "") +
+      (c.source ? `<p class="microcopy">Source · ${cardLinkHtml(String(c.source))}</p>` : "") +
       `</div>`,
     );
 
@@ -10246,6 +10482,37 @@ self.onmessage = function (e) {
       `${stat(c.term_count, "terms")}${stat(c.named_graph_count, "named graphs")}` +
       `${c.format_version != null ? stat(c.format_version, "format gen") : ""}</div>`,
     );
+
+    // --- Identity & provenance: who made this, where the authoritative copy
+    // lives, what it came from, how to cite it. Curated, so every one of these
+    // is either present or absent — a row is never rendered empty.
+    const idRows = [
+      c.version ? cardRow("Version", esc(String(c.version))) : "",
+      c.created ? cardRow("Created", esc(String(c.created))) : "",
+      c.source_date ? cardRow("Source date", esc(String(c.source_date))) : "",
+      list("creators")
+        ? cardRow(c.creators.length > 1 ? "Creators" : "Creator",
+            c.creators.map((a) => cardAgentHtml(a, "orcid", "ORCID")).join("<br>"))
+        : "",
+      c.publisher ? cardRow("Publisher", cardAgentHtml(c.publisher, "ror", "ROR")) : "",
+      c.doi ? cardRow("DOI", cardLinkHtml(c.doi)) : "",
+      c.canonical_url ? cardRow("Canonical copy", cardLinkHtml(c.canonical_url)) : "",
+      c.sparql_endpoint ? cardRow("SPARQL endpoint", cardLinkHtml(c.sparql_endpoint)) : "",
+      list("derived_from")
+        ? cardRow("Derived from", c.derived_from.map(cardLinkHtml).join("<br>"))
+        : "",
+      // A citation is meant to be copied whole, so it gets a copy button rather
+      // than being a line you have to select by hand.
+      c.cite_as
+        ? cardRow("Cite as",
+            `<span class="card-cite"><span id="cardCiteText">${esc(String(c.cite_as))}</span>` +
+            `<button type="button" class="secondary card-cite-copy">Copy</button></span>`)
+        : "",
+    ].filter(Boolean).join("");
+    if (idRows) {
+      rows.push(cardSection("Identity & provenance", null,
+        `<table class="card-tbl card-meta">${idRows}</table>`, true));
+    }
 
     if (Array.isArray(c.vocabularies) && c.vocabularies.length) {
       rows.push(cardSection("Vocabularies", c.vocabularies.length,
@@ -10281,11 +10548,17 @@ self.onmessage = function (e) {
     // The card ships the SPARQL, so these are runnable — handing them to the
     // editor beats making the reader retype them out of the JSON.
     if (Array.isArray(c.queries) && c.queries.length) {
+      // The build record measured what each of these costs. That answer belongs
+      // WITH the query it describes — "what will this cost me" is a question you
+      // ask while reading the query, not one you go and look up in a table.
+      const costs = new Map(
+        (((build || {}).query_costs || {}).queries || []).map((q) => [q.id, q]));
       const body = c.queries.map((q, i) =>
         `<div class="card-q"><div class="card-q-head"><b>${esc(String(q.title || q.id || "query"))}</b>` +
         (q.tier ? `<span class="microcopy">${esc(String(q.tier))}</span>` : "") +
         `<button class="secondary card-q-use" type="button" data-qi="${i}">Use</button></div>` +
         (q.question ? `<p class="card-q-q">${esc(String(q.question))}</p>` : "") +
+        cardCostHtml(costs.get(q.id)) +
         `<pre>${esc(String(q.sparql || ""))}</pre></div>`).join("");
       rows.push(cardSection("Example queries", c.queries.length, body, true));
     }
@@ -10301,11 +10574,98 @@ self.onmessage = function (e) {
       rows.push(cardSection("Curated example queries", c.example_queries.length, body, true));
     }
 
+    // --- Publisher-defined fields. Rendered LAST of the card's own content and
+    // fenced off, because the bag's documented contract is that its contents
+    // have no agreed meaning: rete carries the values and does not know what
+    // they say. Presenting them beside the fields rete does understand — or
+    // formatting them as though it did — would claim otherwise.
+    if (c.extra && typeof c.extra === "object" && Object.keys(c.extra).length) {
+      const keys = Object.keys(c.extra);
+      const body =
+        `<p class="microcopy">These are the <strong>publisher's own</strong> fields. ` +
+        `rete stores and returns them verbatim and attaches <strong>no meaning</strong> to them — ` +
+        `two publishers using the same key need not mean the same thing by it, ` +
+        `and nothing here has been interpreted, resolved or converted.</p>` +
+        `<table class="card-tbl card-extra">${keys.map((k) =>
+          `<tr><td class="card-x-key">${esc(k)}</td><td>${cardExtraValueHtml(c.extra[k], 0)}</td></tr>`
+        ).join("")}</table>`;
+      rows.push(cardSection("Publisher-defined fields (extra)", keys.length, body));
+    }
+
     if (c.truncated) {
       rows.push(`<p class="microcopy">The builder marked this card <strong>truncated</strong> — ` +
         `its lists were capped to keep the card small enough to stay in the header's reach.</p>`);
     }
+
+    rows.push(renderBuildRecord(build));
     return rows.join("");
+  }
+
+  // One starter query's measured cost, shown where the query is. `bytes` and
+  // `requests` are portable — a property of the file's layout and the query, the
+  // same from disk, R2 or Pages — so they lead. `debug_ms` is one machine's
+  // wall clock at build time and is labelled as such rather than dropped: paired
+  // with the byte figure it is interpretable, alone it is not.
+  function cardCostHtml(cost) {
+    if (!cost) return "";
+    const parts = [
+      cost.bytes != null ? `${formatBytes(cost.bytes)} read` : "",
+      cost.requests != null ? `${cardInt(cost.requests)} range request${cost.requests === 1 ? "" : "s"}` : "",
+      cost.rows != null ? `${cardInt(cost.rows)} row${cost.rows === 1 ? "" : "s"}` : "",
+    ].filter(Boolean).join(" · ");
+    const ms = cost.debug_ms != null
+      ? ` <span class="card-cost-ms" title="Wall clock on the build machine — a debug reference, not a property of the file.">` +
+        `${cardInt(cost.debug_ms)} ms on the build machine</span>`
+      : "";
+    return `<p class="card-cost">${esc(parts)}${ms}</p>`;
+  }
+
+  // --- The build record (format section kind 7). Deliberately its own part of
+  // the modal, after everything the card says: the card describes the DATA, this
+  // describes one build of one file. Conflating them would let a reader take
+  // "built 3 days ago" for a fact about the dataset.
+  function renderBuildRecord(b) {
+    if (!b || typeof b !== "object" || !Object.keys(b).length) {
+      // Absence is the common case — every card written before build-info
+      // existed has none — and it must read as absence, not as a record full of
+      // blanks that look like measurements.
+      return `<div class="card-build"><h4>Build record</h4>` +
+        `<p class="microcopy">This file carries no build record. It was written before ` +
+        `<code>.rete</code> stored one, or by a writer that does not (an in-browser build ` +
+        `records no starter-query costs, because it derives no starter queries). ` +
+        `Nothing about the build is known from the file — which is different from ` +
+        `a build that measured nothing.</p></div>`;
+    }
+    const p = b.params || {};
+    const flags = [
+      p.no_pyramid ? "--no-pyramid" : "", p.text_index ? "--text-index" : "",
+      p.materialize ? "--materialize" : "", p.reason ? "--reason" : "",
+    ].filter(Boolean).join(" ");
+    const rows = [
+      b.built_at ? cardRow("Built at", esc(String(b.built_at))) : "",
+      b.builder ? cardRow("Builder", esc(String(b.builder))) : "",
+      p.command ? cardRow("Command", `<code>${esc(String(p.command))}</code>`) : "",
+      flags ? cardRow("Flags", `<code>${esc(flags)}</code>`) : "",
+      p.pyramid_algo ? cardRow("Pyramid algorithm", esc(String(p.pyramid_algo))) : "",
+      p.memory_budget_mb != null ? cardRow("Memory budget", `${cardInt(p.memory_budget_mb)} MB`) : "",
+      p.codec ? cardRow("Section codec", esc(String(p.codec))) : "",
+      p.card_top_n != null ? cardRow("Card list cap", cardInt(p.card_top_n)) : "",
+    ].filter(Boolean).join("");
+    const ctx = (b.query_costs || {}).context || {};
+    const nCosts = ((b.query_costs || {}).queries || []).length;
+    return `<div class="card-build"><h4>Build record</h4>` +
+      `<p class="microcopy">How this <em>file</em> came to be — not what the data is. ` +
+      `Stored in its own section beside the card and, unlike the card, ` +
+      `<strong>outside the content hash</strong>: two builds of identical data ` +
+      `differ here on purpose, so <code>rete verify</code> does not cover it.</p>` +
+      (rows ? `<table class="card-tbl card-meta">${rows}</table>` : "") +
+      (nCosts
+        ? `<p class="microcopy">It also measured what each of the ${cardInt(nCosts)} starter ` +
+          `queries costs — shown with the queries above. ` +
+          (ctx.transport ? `Measured over: ${esc(String(ctx.transport))}. ` : "") +
+          (ctx.note ? esc(String(ctx.note)) : "") + `</p>`
+        : "") +
+      `</div>`;
   }
 
   function showCardTab(which) {
@@ -10315,9 +10675,18 @@ self.onmessage = function (e) {
     $("cardTabView").setAttribute("aria-selected", String(!jsonMode));
     $("cardTabJson").setAttribute("aria-selected", String(jsonMode));
     if (!cardObj) return;
+    // The JSON tab stays the CARD's document — what Copy and Download hand back,
+    // and what `rete build --card-file` would take. The build record is a
+    // separate section of the file, outside the content hash; folding it in here
+    // would make the copied JSON no longer a card.
     $("cardBody").innerHTML = jsonMode
-      ? `<pre class="card-json">${cardHighlightJson(JSON.stringify(cardObj, null, 2))}</pre>`
-      : renderCardView(cardObj);
+      ? `<pre class="card-json">${cardHighlightJson(JSON.stringify(cardObj, null, 2))}</pre>` +
+        (cardBuildObj
+          ? `<p class="microcopy">The file also carries a build record, in its own section — ` +
+            `see the Rendered tab, or <code>rete card --json</code>, which shows it under ` +
+            `<code>"build"</code>.</p>`
+          : "")
+      : renderCardView(cardObj, cardBuildObj);
   }
 
   async function openCardModal() {
@@ -10325,7 +10694,7 @@ self.onmessage = function (e) {
     m.classList.remove("hidden");
     $("cardBody").innerHTML = `<p class="microcopy">Reading the card…</p>`;
     $("cardFootNote").textContent = "";
-    cardObj = null; cardJsonText = "";
+    cardObj = null; cardJsonText = ""; cardBuildObj = null;
     let res;
     try {
       res = await fetchCard();
@@ -10333,12 +10702,17 @@ self.onmessage = function (e) {
       res = { err: "Could not read the card: " + ((e && e.message) || e) };
     }
     if (res.err) { $("cardBody").innerHTML = `<p class="microcopy">${esc(res.err)}</p>`; return; }
+    cardBuildObj = res.build || null;
     if (!res.text) {
       // Common for the small bundled demo files, which are built without one.
       $("cardBody").innerHTML =
         `<p class="microcopy">This <code>.rete</code> carries no Dataset Card. ` +
         `A card is written at build time (<code>rete build --card card.json</code>); ` +
-        `the published datasets in the catalog all have one.</p>`;
+        `the published datasets in the catalog all have one.</p>` +
+        // A cardless build writes no build record either, so this is normally
+        // silent — but the two sections are independent, and if one is somehow
+        // there without the other, saying so beats hiding it.
+        (cardBuildObj ? renderBuildRecord(cardBuildObj) : "");
       return;
     }
     cardJsonText = String(res.text);
@@ -10353,9 +10727,16 @@ self.onmessage = function (e) {
     }
     const title = cardObj.title || state.dataset || "Dataset Card";
     $("cardModalTitle").textContent = "Dataset Card — " + title;
+    // Say what was actually read. "2 range requests" was the card alone; the
+    // build record rides in the SAME coalesced range, so the honest phrasing is
+    // the budget (one header + one range), not a raw request count — a
+    // block-caching client splits that range into several physical fetches.
     $("cardFootNote").textContent =
       `${(cardJsonText.length / 1024).toFixed(1)} KB` +
-      (state.activeSource === "remote" ? " · read in 2 range requests" : " · read from the loaded file");
+      (cardBuildObj ? " + build record" : "") +
+      (state.activeSource === "remote"
+        ? " · read in one header + one coalesced range"
+        : " · read from the loaded file");
     showCardTab("view");
   }
 
@@ -10382,7 +10763,16 @@ self.onmessage = function (e) {
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     };
     // Delegated: the query rows are re-rendered on every tab switch.
-    $("cardBody").addEventListener("click", (e) => {
+    $("cardBody").addEventListener("click", async (e) => {
+      // `cite_as` is a citation string — its whole purpose is to be pasted
+      // somewhere else, so it gets a one-click copy rather than a hand selection.
+      const cite = e.target.closest && e.target.closest(".card-cite-copy");
+      if (cite && cardObj && cardObj.cite_as) {
+        const ok = await copyToClipboard(String(cardObj.cite_as));
+        cite.textContent = ok ? "Copied ✓" : "Copy failed";
+        setTimeout(() => { cite.textContent = "Copy"; }, 1800);
+        return;
+      }
       const b = e.target.closest && e.target.closest(".card-q-use");
       if (!b || !cardObj) return;
       // Two shapes: `queries` holds objects, `example_queries` plain strings.
@@ -10725,14 +11115,17 @@ self.onmessage = function (e) {
     $("buildFormat").onchange = scheduleBuildValidation;
     $("addSparqlEx").onclick = () => addBuildExample("sparql");
     $("addShaclEx").onclick = () => addBuildExample("shacl");
-    // Dataset-card form ↔ JSON two-way sync: every card field mirrors into the
-    // code editor; editing the JSON (or importing a card/manifest) drives the form.
+    // Step 3's two documents: the four shared fields sync both ways with the
+    // card editor (patching it, never replacing it), the listing-only fields
+    // stay out of the card entirely.
     const ck = $("cardKey");
     if (ck) ck.dataset.auto = "1";
     ["cardTitle", "cardKey", "cardIcon", "cardLicense", "cardSource", "cardTags", "cardDesc", "cardProvenance"]
       .forEach((id) => { const el = $(id); if (el) el.oninput = onCardField; });
     const cardCode = $("cardCode");
     if (cardCode) cardCode.oninput = applyCardCode;
+    const cardTpl = $("cardTemplate");
+    if (cardTpl) cardTpl.onclick = insertCardTemplate;
     const cardImport = $("cardImportFile");
     if (cardImport) cardImport.onchange = (e) => { importCardFile(e.target.files[0]); e.target.value = ""; };
 

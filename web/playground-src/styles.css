@@ -3558,9 +3558,15 @@ td.lit { color: var(--ink); }
 }
 .card-code:focus { outline: none; border-color: var(--accent); }
 .card-code.invalid { border-color: var(--bad); background: var(--warn); }
-.builder-card-sync { margin-left: auto; font-size: 11px; color: var(--muted); }
-.builder-card-sync.invalid { color: var(--bad); font-weight: 600; }
-.builder-card-code-head .card-import { margin-left: auto; padding: 3px 9px; font-size: 11px; }
+/* The card validator's message is shown whole — the fix is usually in its tail
+   — so this wraps rather than truncating, and yields the width to do it. */
+.builder-card-sync { margin-left: auto; font-size: 11px; color: var(--muted); max-width: 55%; text-align: right; }
+.builder-card-sync.invalid { color: var(--bad); font-weight: 600; white-space: pre-wrap; }
+.builder-card-code-head .card-template { margin-left: auto; padding: 3px 9px; font-size: 11px; }
+.builder-card-code-head .card-import { padding: 3px 9px; font-size: 11px; }
+/* The card editor is the primary surface here, so it keeps the room; its
+   footnote sits under it rather than pushing it out of view. */
+.builder-card-code > .microcopy { margin: 6px 0 0; }
 
 /* Accepted-extensions hint next to the Upload button. */
 .builder-accept {
@@ -3639,6 +3645,56 @@ td.lit { color: var(--ink); }
 .card-tbl td { border-bottom: 1px solid var(--line); padding: 3px 6px; vertical-align: top; }
 .card-tbl td.n { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
 .card-tbl td.iri { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Identity & provenance: a label column narrow enough that the values line up. */
+.card-meta td.card-k { width: 150px; color: var(--muted); white-space: nowrap; }
+.card-meta td { word-break: break-word; }
+.card-meta a { word-break: break-all; }
+
+/* Keywords (free text) and themes (controlled-vocabulary IRIs) read as tags,
+   not as table rows — they answer "what is this about" at a glance. */
+.card-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 0; }
+.card-chip {
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px;
+  font-size: 12px; color: var(--muted); background: var(--side);
+}
+a.card-chip-iri { text-decoration: none; color: var(--accent-dark); }
+a.card-chip-iri:hover { border-color: var(--accent); }
+/* The scheme name, derived from the IRI prefix — never the concept's label,
+   which lives in the scheme and is not fetched. */
+.card-chip-iri span { color: var(--muted); font-size: 11px; margin-left: 6px; }
+.card-theme-note { flex: 1 1 100%; }
+
+/* An ORCID / ROR is rendered as the link it is: the identifier resolves to the
+   authority record, which is the entire reason the card asks for an IRI. */
+.card-id { font-size: 11.5px; text-decoration: none; white-space: nowrap; }
+.card-id span { color: var(--muted); margin-left: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.card-cite { display: flex; gap: 8px; align-items: flex-start; }
+.card-cite > span { flex: 1 1 auto; }
+.card-cite-copy { flex: 0 0 auto; padding: 2px 10px; font-size: 11.5px; }
+
+/* Publisher-defined `extra`: values only, in their JSON form. Deliberately
+   plain — no linkification, no number formatting — because rete attaches no
+   meaning to them and formatting would imply it had. */
+.card-extra td.card-x-key, .card-x-sub td.card-x-k {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted); width: 30%; word-break: break-all;
+}
+.card-x-str { white-space: pre-wrap; word-break: break-word; }
+.card-x-lit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--cm-num); }
+.card-x-sub { margin: 0; font-size: 12px; }
+.card-x-sub td { border-bottom: none; padding: 1px 6px 1px 0; }
+
+/* Per-query measured cost, sitting with the query it describes. */
+.card-cost { margin: 4px 0 0; font-size: 11.5px; color: var(--muted); }
+.card-cost-ms { opacity: .75; font-style: italic; }
+.card-cost-ms::before { content: " · "; font-style: normal; }
+
+/* The build record is ABOUT THE BUILD, not about the data — so it is fenced off
+   from the card's own content rather than appended as one more section. */
+.card-build { margin: 22px 0 0; border-top: 2px solid var(--line); padding-top: 12px; }
+.card-build h4 { margin: 0 0 4px; font-size: 13px; }
 
 /* Card queries are runnable: the card ships the SPARQL, so the modal can hand
    it to the editor instead of making the reader retype it. */

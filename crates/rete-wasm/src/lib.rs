@@ -86,6 +86,89 @@ pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
     Ok(bytes)
 }
 
+/// [`build`], but the file carries a **Dataset Card** written from
+/// `card_json` — the same document `rete build --card-file` takes, validated
+/// by the same rules ([`rete_core::card::validate_curated_card`]), so a card
+/// authored in the browser is one the CLI would also have accepted.
+///
+/// What the browser can and cannot put in a card, stated plainly because the
+/// difference matters to whoever reads the file afterwards:
+///
+/// - **Curated fields travel in full** — title, description, licence, source,
+///   version, creators, publisher, DOI, citation, keywords, theme, the `extra`
+///   bag, everything on [`rete_core::card::CURATED_CARD_FIELDS`].
+/// - **The four counts are measured, not asserted**: `triple_count`,
+///   `quad_count`, `named_graph_count` and `term_count` come from the build's
+///   own [`BuildStats`](rete_core::ingest::BuildStats), and any values supplied
+///   for them would be ignored (they are not curated fields, so supplying them
+///   is already an error). `format_version` is stamped by the writer.
+/// - **The derived profile is NOT written.** Predicates, classes,
+///   vocabularies, datatypes, languages, class links, hubs, signals and the
+///   tiered starter-query library are derived by `rete-cli`, which this crate
+///   does not depend on. Their absence is honest absence: the card simply does
+///   not carry those keys, exactly as a `rete merge` card does not. Rebuild
+///   with `rete build --card-file` to get them.
+/// - **No build-info section** (kind 7) is written: its cost figures come from
+///   measuring the starter queries, and there are none to measure.
+///
+/// Pass an empty string for no card — byte-identical to [`build`].
+#[wasm_bindgen]
+pub fn build_with_card(text: &str, format: &str, card_json: &str) -> Result<Vec<u8>, JsValue> {
+    let quads = rete_core::ingest::parse_statements(text, format).map_err(err)?;
+    if quads.is_empty() {
+        return Err(js_error(
+            "no statements parsed (empty input or only comments)",
+        ));
+    }
+    if card_json.trim().is_empty() {
+        let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
+        return Ok(bytes);
+    }
+    let curated = validated_card(card_json)?;
+    // The counts are only known once the dictionary and indexes exist, so the
+    // card is serialized from inside the writer rather than handed in whole.
+    let (bytes, _stats) = rete_core::ingest::assemble_dataset_with(quads, move |stats, _| {
+        let card = rete_core::card::compose_curated_card(
+            curated,
+            stats.default_triples as u64,
+            stats.statements as u64,
+            stats.named_graphs as u64,
+            stats.terms as u64,
+            rete_core::CURRENT_FORMAT_VERSION,
+        );
+        serde_json::to_vec(&card).expect("card serializes")
+    });
+    Ok(bytes)
+}
+
+/// Check a curated card document without building anything — so an editor can
+/// report the **exact** error `rete build --card-file` would report, while the
+/// author is still typing. Returns the empty string when the document is
+/// valid, otherwise the error message.
+///
+/// Deliberately not a boolean: the wording is the useful part (a free-text
+/// `theme` is told to use `keywords`; a stray top-level key is told about the
+/// `extra` bag), and duplicating that wording in JavaScript is exactly how the
+/// two writers would drift apart again.
+#[wasm_bindgen]
+pub fn validate_card(card_json: &str) -> String {
+    check_card(card_json).err().unwrap_or_default()
+}
+
+/// Parse + validate a curated card document. The message stays a `String` all
+/// the way through — wrapping it in a JS `Error` first and unwrapping it later
+/// loses the wording, which is the part worth returning.
+fn check_card(card_json: &str) -> Result<serde_json::Value, String> {
+    let doc: serde_json::Value =
+        serde_json::from_str(card_json).map_err(|e| format!("card is not JSON: {e}"))?;
+    rete_core::card::validate_curated_card(&doc)
+}
+
+/// [`check_card`] as a JS exception, for the build path.
+fn validated_card(card_json: &str) -> Result<serde_json::Value, JsValue> {
+    check_card(card_json).map_err(js_error)
+}
+
 /// Evaluate a triple pattern; `null`/`undefined` positions are wildcards.
 /// Returns a JSON array of `[subject, predicate, object]` triples.
 #[wasm_bindgen]
@@ -218,6 +301,53 @@ pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
     Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
 }
 
+/// The Dataset Card **and the build record** of a remote `.rete`, in the same
+/// budget as the card alone: one header read, then **one coalesced range**
+/// covering both sections — the writer lays the kind-7 build-info immediately
+/// after the metadata precisely so this holds
+/// ([`rete_core::range::read_card_and_build_info_ranged`], pinned by a
+/// `rete-core` test). Reading the two separately would have made the CARD tier
+/// cost three requests instead of two, which is why there is one export rather
+/// than a second `build_info_url`.
+///
+/// JSON envelope: `{"schemaVersion":1,"card":<text|null>,"build":<text|null>}`.
+/// Both are the sections' **own bytes** as text, not a re-serialization — the
+/// card a client displays is the card the file holds. Worker-only
+/// (synchronous XHR).
+#[wasm_bindgen]
+pub fn card_and_build_url(url: &str) -> Result<String, JsValue> {
+    let reader = XhrRangeReader::open(url)?;
+    let (card, build) = rete_core::read_card_and_build_info_ranged(&reader).map_err(err)?;
+    Ok(card_build_envelope(card, build))
+}
+
+/// [`card_and_build_url`] for an image already in memory — no I/O at all.
+#[wasm_bindgen]
+pub fn card_and_build(bytes: &[u8]) -> Result<String, JsValue> {
+    let (card, build) =
+        rete_core::read_card_and_build_info_ranged(&SliceReader::new(bytes)).map_err(err)?;
+    Ok(card_build_envelope(card, build))
+}
+
+/// The `{card, build}` envelope both readers return. Absent sections are
+/// `null`, never `""` or `{}`: a file built before build-info existed has no
+/// build record, and a reader must be able to tell that from one that recorded
+/// nothing.
+fn card_build_envelope(card: Option<Vec<u8>>, build: Option<Vec<u8>>) -> String {
+    let text = |b: Option<Vec<u8>>| match b {
+        Some(b) if !b.is_empty() => {
+            serde_json::Value::String(String::from_utf8_lossy(&b).into_owned())
+        }
+        _ => serde_json::Value::Null,
+    };
+    serde_json::json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
+        "card": text(card),
+        "build": text(build),
+    })
+    .to_string()
+}
+
 /// The **true byte length of a remote `.rete`**, in 1–2 tiny range requests —
 /// derived from the file's *own* header (the issue-#95 probe: sections are
 /// back-to-back and the file ends with the 4-byte `RETE` footer), never from
@@ -248,6 +378,11 @@ pub fn file_len_url(url: &str) -> Result<String, JsValue> {
 pub struct Graph {
     rete: Rc<Rete>,
     file_len: usize,
+    /// The kind-7 build record's own bytes, lifted at open time. `Rete` keeps
+    /// the metadata section but not this one (it is outside the content hash
+    /// and no query needs it), and the handle does not retain the buffer — so
+    /// it is read once here rather than made unreachable.
+    build_info: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -258,6 +393,11 @@ impl Graph {
         Ok(Graph {
             rete: Rc::new(open(bytes)?),
             file_len: bytes.len(),
+            build_info: rete_core::read_build_info(bytes)
+                .ok()
+                .flatten()
+                .filter(|b| !b.is_empty())
+                .map(|b| String::from_utf8_lossy(&b).into_owned()),
         })
     }
 
@@ -378,6 +518,21 @@ impl Graph {
         self.rete
             .metadata()
             .map(|b| String::from_utf8_lossy(b).into_owned())
+    }
+
+    /// See [`card_and_build`] — the card and the build record of the resident
+    /// file, in the same envelope the remote path returns, so one caller
+    /// handles both sources.
+    pub fn card_and_build(&self) -> String {
+        let card = self
+            .rete
+            .metadata()
+            .filter(|b| !b.is_empty())
+            .map(|b| b.to_vec());
+        card_build_envelope(
+            card,
+            self.build_info.as_ref().map(|s| s.as_bytes().to_vec()),
+        )
     }
 
     /// See [`query_communities`].
@@ -779,6 +934,15 @@ impl RemoteGraph {
     pub fn card(&self) -> Result<Option<String>, JsValue> {
         let bytes = rete_core::read_metadata_ranged(&*self.reader).map_err(err)?;
         Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
+    }
+
+    /// See [`card_and_build_url`] — card + build record over the resident
+    /// handle's reader, still one coalesced range (and served from the block
+    /// cache when the header range is already there).
+    pub fn card_and_build(&self) -> Result<String, JsValue> {
+        let (card, build) =
+            rete_core::read_card_and_build_info_ranged(&*self.reader).map_err(err)?;
+        Ok(card_build_envelope(card, build))
     }
 
     /// See [`schema_url`] — the **baked** schema pyramid over the resident

@@ -372,14 +372,32 @@ the page.</p>
 <p>Next to the source pill, <strong>🏷 Card</strong> opens the <a href="dataset-cards.html">Dataset Card</a>
 that travels <em>inside</em> the <code>.rete</code>: title, licence, source, counts, vocabularies,
 predicates and classes with their frequencies, the class-link skeleton, and the
-example queries the builder shipped with the file.</p>
-<p>It costs one <code>HEAD</code> and <strong>two range requests</strong> — the header, then the metadata
-section it points at. Never the dictionary, the index or the pyramid. That is
-the CARD tier: you learn what a 17 GB graph <em>is</em> for a few KB, before deciding
-whether to query it at all.</p>
+example queries the builder shipped with the file — plus everything the card's
+curated half carries: <strong>keywords</strong> and <strong>themes</strong> as tags beside the
+description; <strong>version</strong>, <strong>creators</strong>, <strong>publisher</strong>, <strong>DOI</strong>, <strong>canonical
+copy</strong>, <strong>SPARQL endpoint</strong>, <strong>source date</strong> and <strong>derived from</strong> in an
+<em>Identity &amp; provenance</em> table; a <strong>citation</strong> with a copy button; and the
+publisher's own <strong><code>extra</code></strong> fields, shown last and clearly marked as theirs —
+rete carries those values and attaches no meaning to them.</p>
+<p>An ORCID, ROR or DOI renders as a <strong>link to the identifier</strong>, which is why the
+card asks for an IRI instead of a string. A theme's IRI is not resolved (that
+would be a network read); the viewer names the <strong>concept scheme</strong> it can read
+from the IRI and shows the concept's identifier, rather than inventing a label.</p>
+<p>Below the card, its own clearly separated part of the modal, is the <strong>build
+record</strong>: when the file was written, by which <code>rete</code>, with which flags, and
+what each starter query was measured to cost — those cost figures shown <em>with
+the queries they describe</em>, since that is where you ask. A file that carries no
+build record says so plainly instead of showing blanks.</p>
+<p>It costs one <code>HEAD</code> and <strong>one header read plus one coalesced range</strong> — the card
+and the build record sit adjacent, so both arrive together. Never the
+dictionary, the index or the pyramid. That is the CARD tier: you learn what a
+17 GB graph <em>is</em> for a few KB, before deciding whether to query it at all.</p>
 <p>Two views: <strong>Rendered</strong>, and <strong>JSON</strong> — the card's own bytes, syntax-coloured,
-with <em>Copy</em> and <em>Download</em>. Any example query the card carries has a <strong>Use</strong>
-button that loads it straight into the editor.</p>
+with <em>Copy</em> and <em>Download</em>. The JSON tab stays the <em>card</em> (what
+<code>rete build --card-file</code> would take); the build record lives in its own file
+section, outside the content hash, and is shown in the Rendered tab. Any
+example query the card carries has a <strong>Use</strong> button that loads it straight into
+the editor.</p>
 <p>The card's queries also feed the <strong>examples panel</strong>: when a loaded file ships
 its own starter queries (auto-derived or curated), they appear alongside the
 catalog's curated examples, labelled as coming from the file's card and
@@ -505,10 +523,46 @@ dictionary/index/tile ranges behind a match.</li>
 scan to full materialization (see <a href="reasoning.html">Reasoning</a>).</li>
 <li><strong>Build</strong> — paste or upload RDF (N-Triples / N-Quads / Turtle), build a real
 <code>.rete</code> <strong>in the browser</strong>, query it immediately, save it to the browser for
-next time, or download the file. The full publish path (ontology, card,
-examples) is in <a href="media-companions.html">Media &amp; SQL companions</a> and
+next time, or download the file. Step 3 writes the
+<a href="dataset-cards.html">Dataset Card</a> the file will <em>carry</em> — see below. The full
+publish path (companions, hosting) is in
+<a href="media-companions.html">Media &amp; SQL companions</a> and
 <a href="hosting.html">Hosting your .rete</a>.</li>
 </ul>
+<h3 id="build">Writing the card in Build mode</h3>
+<p>Step 3 holds <strong>two different documents</strong>, kept apart because they are not the
+same thing:</p>
+<ul>
+<li>the <strong>catalog entry</strong> on the left — <em>key</em>, <em>icon</em>, <em>tags</em>, <em>provenance</em>: how
+the dataset is listed in this playground and in a downloadable manifest. It
+never enters the file, and the card schema rejects those keys outright.</li>
+<li>the <strong>Dataset Card</strong> on the right — exactly the document
+<code>rete build --card-file</code> takes, and the one that travels inside the <code>.rete</code>.</li>
+</ul>
+<p>The JSON editor is the <em>primary</em> surface for the card, not a mirror of the
+form. It is the documented interchange format, so it cannot drift from what
+the CLI accepts; and the curated fields include a list of objects (<code>creators</code>)
+and a free-form bag (<code>extra</code>) that a form would either mangle or forbid. Title,
+licence, source and description also appear on the form — the four a
+first-time author always fills — and <em>patch</em> the document rather than replacing
+it, so typing a title never eats the creators you wrote by hand. <strong>All fields</strong>
+inserts a skeleton of every curated field to edit.</p>
+<p>Validation is the <strong>engine's</strong>, not a re-statement in the page: the same code
+<code>rete build --card-file</code> runs checks what you type, with the same wording. A
+free-text <code>theme</code> is refused and pointed at <code>keywords</code>
+(<a href="dataset-cards.html#where-to-get-theme-iris">where theme IRIs come from</a>); a
+stray top-level key is pointed at <code>extra</code>; the bag's 8 KB / 64 keys / depth-2
+bounds are enforced. So a card you compose here is one the CLI would also
+accept.</p>
+<p>What a browser build writes, stated plainly because the difference matters to
+whoever reads the file later: <strong>the curated fields, and the four counts the
+build itself measured</strong>. It does <strong>not</strong> write the derived profile (predicates,
+classes, vocabularies, signals, the tiered starter-query library) or the build
+record — those are <code>rete-cli</code>'s, and the wasm engine does not carry them. They
+are absent from the card rather than present-and-empty, and the 🏷 Card viewer
+shows that absence for what it is. Rebuild with <code>rete build --card-file</code> to get
+them (and compressed sections, which the browser also cannot write).</p>
+<p>Leave the card editor empty and the file carries no card at all.</p>
 <h2>Federation: query several sources as one</h2>
 <p><strong>+ Add source</strong> adds a second (third, …) <code>.rete</code> — from the catalog or any
 URL — and the query runs across all of them: union merge with predicate

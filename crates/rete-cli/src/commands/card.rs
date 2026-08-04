@@ -531,52 +531,27 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
 }
 
 /// Canonicalize a curated string list (`keywords`, `theme`) — the write-time
-/// gate every card-writing command funnels through (like
-/// [`normalize_extra`]).
+/// gate every card-writing command funnels through (like [`normalize_extra`]).
 ///
-/// Whitespace is trimmed and duplicates dropped; an entry that is empty
-/// after trimming **rejects the build loudly** (it is always an authoring
-/// slip — a stray comma in a hand-written list — and an empty `dcat:keyword`
-/// literal would be projected as agreed-upon nothing). Sorting is
-/// canonicalization, not editing: both fields project to unordered repeated
-/// RDF properties, so no information is lost — and it keeps the card's
-/// serialization (hence the reproducible content hash) independent of the
-/// order the entries were authored in.
+/// The rules themselves live in [`rete_core::card::normalize_string_list`]:
+/// the browser builder writes cards too, and one implementation is the only
+/// way `rete build --card-file` and the playground can be guaranteed to reject
+/// the same documents with the same words. This is the `anyhow` face of it.
 pub(crate) fn normalize_string_list(
     field: &str,
     values: Vec<String>,
 ) -> anyhow::Result<Vec<String>> {
-    let mut out: Vec<String> = Vec::with_capacity(values.len());
-    for v in values {
-        let trimmed = v.trim();
-        if trimmed.is_empty() {
-            anyhow::bail!("card `{field}` entries must be non-empty");
-        }
-        out.push(trimmed.to_string());
-    }
-    out.sort();
-    out.dedup();
-    Ok(out)
+    rete_core::card::normalize_string_list(field, values).map_err(|e| anyhow::anyhow!(e))
 }
 
 /// [`normalize_string_list`] plus the `theme` requirement: every entry must
-/// be an **IRI into a controlled vocabulary**. This is what keeps `theme`
-/// from becoming a second keywords field — a free-text theme carries no more
+/// be an **IRI into a controlled vocabulary**. This is what keeps `theme` from
+/// becoming a second keywords field — a free-text theme carries no more
 /// meaning than a keyword, and `keywords` already holds those; the agreed
 /// concept scheme behind the IRI is the whole value `dcat:theme` adds.
+/// (Shared implementation: [`rete_core::card::normalize_themes`].)
 pub(crate) fn normalize_themes(themes: Vec<String>) -> anyhow::Result<Vec<String>> {
-    let themes = normalize_string_list("theme", themes)?;
-    for t in &themes {
-        if !(t.starts_with("http://") || t.starts_with("https://")) {
-            anyhow::bail!(
-                "card `theme` entry {t:?} is not an IRI: a theme is an IRI into a \
-                 controlled vocabulary (e.g. the EU data-theme authority, \
-                 http://publications.europa.eu/resource/authority/data-theme/…); \
-                 free-text subjects belong in `keywords`"
-            );
-        }
-    }
-    Ok(themes)
+    rete_core::card::normalize_themes(themes).map_err(|e| anyhow::anyhow!(e))
 }
 
 /// Cap for every top-N list embedded in the card. The metadata section is
@@ -586,134 +561,27 @@ pub(crate) fn normalize_themes(themes: Vec<String>) -> anyhow::Result<Vec<String
 /// card small and bounded; `truncated` flags when a list was actually cut.
 pub(crate) const CARD_TOP_N: usize = 100;
 
-// --- Bounds for the publisher-defined `extra` bag, enforced by
-// [`normalize_extra`] at build time (readers never validate — a bag written
-// oversized by an external tool must not make the card unreadable). The
-// binding constraint is SERIALIZED BYTES: custom fields ride in the metadata
-// section, which every CARD-tier reader fetches on every open. ---
-
-/// Maximum serialized size (compact JSON bytes) of the whole `extra` object.
-///
-/// Sized against the published catalog: 8 KiB exceeds the smallest whole card
-/// (NKOD, 6,649 B stored) — generous for *metadata* — and the worst realistic
-/// case, the largest card (Hugging Face, 53,580 B) + a maxed bag + its ~1 KB
-/// build info ≈ 62.8 KB, still travels in the same single coalesced range
-/// (the 2-request CARD tier is about request *count*, which the bag cannot
-/// change). The one cost worth knowing: on the smallest cards a maxed bag can
-/// push the coalesced range past a conservative TCP initial window (~14.6 KB
-/// = 10 segments), i.e. one extra round trip, never an extra request.
-pub(crate) const CARD_EXTRA_MAX_BYTES: usize = 8192;
-/// Maximum number of keys in `extra`. A key costs ≥ 8 serialized bytes, so 64
-/// typical entries sit comfortably inside [`CARD_EXTRA_MAX_BYTES`]; needing
-/// more means the bag is being used as a data store — the graph itself is the
-/// place for data.
-pub(crate) const CARD_EXTRA_MAX_KEYS: usize = 64;
-/// Maximum bytes per `extra` key. Keys are identifiers, not values.
-pub(crate) const CARD_EXTRA_MAX_KEY_BYTES: usize = 128;
-/// Maximum container-nesting depth inside an `extra` value (see
-/// [`json_depth`]): an object of objects-of-scalars, no deeper. Deliberate —
-/// deep structures invite storing *records* in the card, and Parquet
-/// companions exist for records; it also hard-bounds recursion for every
-/// parser that will ever read the bag (browser wasm and iOS stacks are far
-/// smaller than a build machine's).
-pub(crate) const CARD_EXTRA_MAX_DEPTH: usize = 2;
+// The `extra` bag's bounds are format-level facts, not CLI policy — every
+// writer has to honour them — so they live in `rete-core` beside the validator
+// that enforces them (`rete_core::card::CARD_EXTRA_*`).
 
 /// Canonicalize and bounds-check the `extra` bag — the write-time gate.
 ///
-/// On overflow the build is **rejected loudly** rather than truncated
-/// quietly: `extra` is authored (unlike the derived lists, which are capped
-/// with `truncated` set, because they can be re-derived), so cutting it would
+/// On overflow the build is **rejected loudly** rather than truncated quietly:
+/// `extra` is authored (unlike the derived lists, which are capped with
+/// `truncated` set, because they can be re-derived), so cutting it would
 /// silently ship a card that no longer says what the publisher wrote — and,
-/// since the bag folds into the content hash, "what I wrote" and "what
-/// hashed" would diverge invisibly. Only the author can decide what to trim.
+/// since the bag folds into the content hash, "what I wrote" and "what hashed"
+/// would diverge invisibly. Only the author can decide what to trim.
+/// (Shared implementation: [`rete_core::card::normalize_extra`]; the card
+/// carries the bag as a `BTreeMap` for stable serde ordering, so this converts
+/// at the boundary.)
 pub(crate) fn normalize_extra(
     extra: BTreeMap<String, serde_json::Value>,
 ) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
-    if extra.is_empty() {
-        return Ok(extra);
-    }
-    if extra.len() > CARD_EXTRA_MAX_KEYS {
-        anyhow::bail!(
-            "card `extra` has {} keys, over the {CARD_EXTRA_MAX_KEYS}-key cap",
-            extra.len()
-        );
-    }
-    let extra: BTreeMap<String, serde_json::Value> = extra
-        .into_iter()
-        .map(|(k, v)| (k, canonicalize_json(v)))
-        .collect();
-    for (k, v) in &extra {
-        if k.is_empty() {
-            anyhow::bail!("card `extra` keys must be non-empty");
-        }
-        if k == "@context" {
-            // Reserved TODAY so it can mean something LATER: a future release
-            // may honour an author-supplied JSON-LD mapping here (turning the
-            // bag's projection from opaque values into the author's own
-            // vocabulary). Rejecting it now keeps that door open without ever
-            // breaking a published card.
-            anyhow::bail!(
-                "card `extra` key \"@context\" is reserved for a future \
-                 author-supplied JSON-LD mapping"
-            );
-        }
-        if k.len() > CARD_EXTRA_MAX_KEY_BYTES {
-            anyhow::bail!(
-                "card `extra` key {k:?} is {} bytes, over the {CARD_EXTRA_MAX_KEY_BYTES}-byte cap",
-                k.len()
-            );
-        }
-        let depth = json_depth(v);
-        if depth > CARD_EXTRA_MAX_DEPTH {
-            anyhow::bail!(
-                "card `extra` field {k:?} nests {depth} container levels deep, \
-                 over the {CARD_EXTRA_MAX_DEPTH}-level cap"
-            );
-        }
-    }
-    let bytes = serde_json::to_vec(&extra).expect("extra serializes").len();
-    if bytes > CARD_EXTRA_MAX_BYTES {
-        anyhow::bail!(
-            "card `extra` serializes to {bytes} bytes, over the {CARD_EXTRA_MAX_BYTES}-byte cap; \
-             every reader fetches the card on every open — trim the bag, \
-             or put bulk data in the graph itself"
-        );
-    }
-    Ok(extra)
-}
-
-/// Container-nesting depth of a JSON value: scalars are 0, an array/object is
-/// 1 + its deepest child. (Recursion here is bounded by serde_json's own
-/// 128-level parse limit.)
-fn json_depth(v: &serde_json::Value) -> usize {
-    match v {
-        serde_json::Value::Array(a) => 1 + a.iter().map(json_depth).max().unwrap_or(0),
-        serde_json::Value::Object(o) => 1 + o.values().map(json_depth).max().unwrap_or(0),
-        _ => 0,
-    }
-}
-
-/// Rebuild every nested object with its keys inserted in sorted order, so the
-/// bag's bytes — which fold into the reproducible content hash — never depend
-/// on author key order. With today's serde_json (no `preserve_order`) maps are
-/// BTree-backed and this is a no-op in effect; it is insurance that a future
-/// feature unification can't quietly make map order mean insertion order.
-fn canonicalize_json(v: serde_json::Value) -> serde_json::Value {
-    match v {
-        serde_json::Value::Array(a) => {
-            serde_json::Value::Array(a.into_iter().map(canonicalize_json).collect())
-        }
-        serde_json::Value::Object(o) => {
-            let mut sorted: Vec<(String, serde_json::Value)> = o.into_iter().collect();
-            sorted.sort_by(|a, b| a.0.cmp(&b.0));
-            let mut out = serde_json::Map::new();
-            for (k, v) in sorted {
-                out.insert(k, canonicalize_json(v));
-            }
-            serde_json::Value::Object(out)
-        }
-        scalar => scalar,
-    }
+    let map: serde_json::Map<String, serde_json::Value> = extra.into_iter().collect();
+    let checked = rete_core::card::normalize_extra(map).map_err(|e| anyhow::anyhow!(e))?;
+    Ok(checked.into_iter().collect())
 }
 
 // Well-known IRIs (bracketed N-Triples term form, as they appear in the quads).
@@ -1675,6 +1543,9 @@ pub(crate) fn card_cmd(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The bag's bounds are the format's, enforced in `rete-core`; the tests
+    // below assert this crate honours exactly those numbers.
+    use rete_core::card::{CARD_EXTRA_MAX_BYTES, CARD_EXTRA_MAX_KEYS, CARD_EXTRA_MAX_KEY_BYTES};
 
     const TYPE: &str = RDF_TYPE;
 
@@ -2284,6 +2155,86 @@ mod tests {
         let ok: CardInput =
             serde_json::from_str(r#"{"title":"T","extra":{"my_field":1}}"#).unwrap();
         assert_eq!(ok.extra.get("my_field"), Some(&serde_json::json!(1)));
+    }
+
+    /// The browser builder validates a card document against
+    /// `rete_core::card::CURATED_CARD_FIELDS` — a list, not this struct, because
+    /// wasm has no serde derive here. A list that drifted from the struct would
+    /// let one writer accept what the other refuses, which is the whole failure
+    /// this shared module exists to prevent. So pin them to each other in BOTH
+    /// directions: every listed field must be accepted by `CardInput`, and every
+    /// field `CardInput` accepts must be listed.
+    #[test]
+    fn curated_field_list_matches_the_deny_unknown_fields_struct() {
+        for f in rete_core::card::CURATED_CARD_FIELDS {
+            // Probe membership, not types: feed the key a `null` and require that
+            // whatever serde complains about is a TYPE problem, never "unknown
+            // field" — that is the only verdict this test is about.
+            let doc = format!(r#"{{"{f}":null}}"#);
+            if let Err(e) = serde_json::from_str::<CardInput>(&doc) {
+                assert!(
+                    !e.to_string().contains("unknown field"),
+                    "CURATED_CARD_FIELDS lists `{f}`, but CardInput rejects it as unknown: {e}",
+                );
+            }
+        }
+        // The other direction: serde names the accepted set in its error, so a
+        // field the struct gained without being listed shows up here.
+        let err = serde_json::from_str::<CardInput>(r#"{"nope":1}"#)
+            .unwrap_err()
+            .to_string();
+        for name in err
+            .split("expected one of ")
+            .nth(1)
+            .expect("serde names the expected fields")
+            // serde appends " at line L column C" — not a field name.
+            .split(" at line ")
+            .next()
+            .unwrap()
+            .split(", ")
+            .map(|s| s.trim().trim_matches('`'))
+            .filter(|s| !s.is_empty())
+        {
+            assert!(
+                rete_core::card::CURATED_CARD_FIELDS.contains(&name),
+                "CardInput accepts `{name}` but CURATED_CARD_FIELDS does not list it — \
+                 the browser builder would reject a card the CLI accepts",
+            );
+        }
+    }
+
+    /// The playground's in-browser builder writes a card with no access to
+    /// this crate: curated fields validated by `rete_core::card`, plus the four
+    /// counts its build measured. Whatever it writes has to be a card THIS
+    /// reader accepts — otherwise `rete card` on a downloaded browser build
+    /// fails, and the round trip the builder promises is broken. Pin the shape
+    /// by deserializing exactly what `rete_wasm::build_with_card` composes.
+    #[test]
+    fn a_browser_written_card_deserializes_here() {
+        let curated = rete_core::card::validate_curated_card(&serde_json::json!({
+            "title": "Built in a browser",
+            "keywords": ["b", "a"],
+            "theme": ["http://publications.europa.eu/resource/authority/data-theme/GOVE"],
+            "creators": [{"name": "Ada", "orcid": "https://orcid.org/0000-0002-1825-0097"}],
+            "extra": {"internal_id": "DS-1"},
+        }))
+        .expect("valid curated document");
+        let composed = rete_core::card::compose_curated_card(curated, 3, 4, 1, 9, 5);
+        let text = serde_json::to_string(&composed).unwrap();
+
+        let card: DatasetCard = serde_json::from_str(&text).expect("CLI reads a browser card");
+        assert_eq!(card.title.as_deref(), Some("Built in a browser"));
+        assert_eq!(card.keywords, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(card.creators.len(), 1);
+        assert_eq!(card.triple_count, 3);
+        assert_eq!(card.quad_count, 4);
+        assert_eq!(card.term_count, 9);
+        assert_eq!(card.format_version, 5);
+        // The derived half is ABSENT, not zeroed — a browser build never
+        // measured it and must not look as though it had.
+        assert!(card.predicates.is_empty() && card.queries.is_empty());
+        assert!(!text.contains("\"predicates\""), "{text}");
+        assert!(!text.contains("\"top_n\""), "{text}");
     }
 
     /// Forward-compat: an OLD reader's struct (the pre-#153 field set, no

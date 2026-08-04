@@ -38,6 +38,24 @@ let wasm_bindgen = (function(exports) {
             return v1;
         }
         /**
+         * See [`card_and_build`] — the card and the build record of the resident
+         * file, in the same envelope the remote path returns, so one caller
+         * handles both sources.
+         * @returns {string}
+         */
+        card_and_build() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.graph_card_and_build(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
          * See [`file_layout`].
          * @returns {string}
          */
@@ -635,6 +653,30 @@ let wasm_bindgen = (function(exports) {
             return v1;
         }
         /**
+         * See [`card_and_build_url`] — card + build record over the resident
+         * handle's reader, still one coalesced range (and served from the block
+         * cache when the header range is already there).
+         * @returns {string}
+         */
+        card_and_build() {
+            let deferred2_0;
+            let deferred2_1;
+            try {
+                const ret = wasm.remotegraph_card_and_build(this.__wbg_ptr);
+                var ptr1 = ret[0];
+                var len1 = ret[1];
+                if (ret[3]) {
+                    ptr1 = 0; len1 = 0;
+                    throw takeObject(ret[2]);
+                }
+                deferred2_0 = ptr1;
+                deferred2_1 = len1;
+                return getStringFromWasm0(ptr1, len1);
+            } finally {
+                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+            }
+        }
+        /**
          * The file's content hash (blake3-16, hex). The worker keys its session
          * cache by this rather than the URL, so two URLs of the same file share the
          * cache — and it's the stable key a future IndexedDB block store (L3) needs
@@ -998,6 +1040,55 @@ let wasm_bindgen = (function(exports) {
     exports.build = build;
 
     /**
+     * [`build`], but the file carries a **Dataset Card** written from
+     * `card_json` — the same document `rete build --card-file` takes, validated
+     * by the same rules ([`rete_core::card::validate_curated_card`]), so a card
+     * authored in the browser is one the CLI would also have accepted.
+     *
+     * What the browser can and cannot put in a card, stated plainly because the
+     * difference matters to whoever reads the file afterwards:
+     *
+     * - **Curated fields travel in full** — title, description, licence, source,
+     *   version, creators, publisher, DOI, citation, keywords, theme, the `extra`
+     *   bag, everything on [`rete_core::card::CURATED_CARD_FIELDS`].
+     * - **The four counts are measured, not asserted**: `triple_count`,
+     *   `quad_count`, `named_graph_count` and `term_count` come from the build's
+     *   own [`BuildStats`](rete_core::ingest::BuildStats), and any values supplied
+     *   for them would be ignored (they are not curated fields, so supplying them
+     *   is already an error). `format_version` is stamped by the writer.
+     * - **The derived profile is NOT written.** Predicates, classes,
+     *   vocabularies, datatypes, languages, class links, hubs, signals and the
+     *   tiered starter-query library are derived by `rete-cli`, which this crate
+     *   does not depend on. Their absence is honest absence: the card simply does
+     *   not carry those keys, exactly as a `rete merge` card does not. Rebuild
+     *   with `rete build --card-file` to get them.
+     * - **No build-info section** (kind 7) is written: its cost figures come from
+     *   measuring the starter queries, and there are none to measure.
+     *
+     * Pass an empty string for no card — byte-identical to [`build`].
+     * @param {string} text
+     * @param {string} format
+     * @param {string} card_json
+     * @returns {Uint8Array}
+     */
+    function build_with_card(text, format, card_json) {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.build_with_card(ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[3]) {
+            throw takeObject(ret[2]);
+        }
+        var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v4;
+    }
+    exports.build_with_card = build_with_card;
+
+    /**
      * The embedded **Dataset Card** — the file's own self-description (title,
      * description, license, provenance, counts, example queries) as the JSON text
      * it was written with, or `undefined` when the file carries none. Reads the
@@ -1020,6 +1111,72 @@ let wasm_bindgen = (function(exports) {
         return v2;
     }
     exports.card = card;
+
+    /**
+     * [`card_and_build_url`] for an image already in memory — no I/O at all.
+     * @param {Uint8Array} bytes
+     * @returns {string}
+     */
+    function card_and_build(bytes) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.card_and_build(ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeObject(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    exports.card_and_build = card_and_build;
+
+    /**
+     * The Dataset Card **and the build record** of a remote `.rete`, in the same
+     * budget as the card alone: one header read, then **one coalesced range**
+     * covering both sections — the writer lays the kind-7 build-info immediately
+     * after the metadata precisely so this holds
+     * ([`rete_core::range::read_card_and_build_info_ranged`], pinned by a
+     * `rete-core` test). Reading the two separately would have made the CARD tier
+     * cost three requests instead of two, which is why there is one export rather
+     * than a second `build_info_url`.
+     *
+     * JSON envelope: `{"schemaVersion":1,"card":<text|null>,"build":<text|null>}`.
+     * Both are the sections' **own bytes** as text, not a re-serialization — the
+     * card a client displays is the card the file holds. Worker-only
+     * (synchronous XHR).
+     * @param {string} url
+     * @returns {string}
+     */
+    function card_and_build_url(url) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.card_and_build_url(ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeObject(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    exports.card_and_build_url = card_and_build_url;
 
     /**
      * The embedded **Dataset Card of a remote `.rete`**, in **two small range
@@ -2067,6 +2224,35 @@ let wasm_bindgen = (function(exports) {
         }
     }
     exports.text_search = text_search;
+
+    /**
+     * Check a curated card document without building anything — so an editor can
+     * report the **exact** error `rete build --card-file` would report, while the
+     * author is still typing. Returns the empty string when the document is
+     * valid, otherwise the error message.
+     *
+     * Deliberately not a boolean: the wording is the useful part (a free-text
+     * `theme` is told to use `keywords`; a stray top-level key is told about the
+     * `extra` bag), and duplicating that wording in JavaScript is exactly how the
+     * two writers would drift apart again.
+     * @param {string} card_json
+     * @returns {string}
+     */
+    function validate_card(card_json) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.validate_card(ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    exports.validate_card = validate_card;
 
     /**
      * Explain why each triple-pattern match is present in the `.rete` file.

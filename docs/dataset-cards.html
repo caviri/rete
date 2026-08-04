@@ -855,6 +855,44 @@ contract the header has always had).</p>
 
 rete card data.rete --json     # the embedded JSON, pretty-printed
 </code></pre>
+<h3>In the browser</h3>
+<p>The <a href="playground.html">playground</a>'s <strong>🏷 Card</strong> button renders the same card,
+and the build record with it. Both come from <strong>one</strong> engine call — the header
+plus the single coalesced range that covers the card and the adjacent
+build-info section — so showing the build conditions costs a reader nothing
+over showing the card alone.</p>
+<p>What the rendered view does with each field is chosen to keep the card's own
+distinctions visible:</p>
+<ul>
+<li><code>keywords</code> and <code>theme</code> sit with the description as tags, since they say what
+the dataset is <em>about</em>. A theme's IRI is <strong>not resolved</strong> — that would be a
+network read the CARD tier exists to avoid — so the viewer names the
+<strong>concept scheme</strong>, which it can read from the IRI's prefix, and shows the
+concept's own identifier. It never invents the label the scheme owns.</li>
+<li><code>creators</code>, <code>publisher</code> and <code>doi</code> render as <strong>links to the identifier</strong>. That
+is the whole reason the card asks for an ORCID/ROR/DOI as an IRI rather than
+a string: it resolves, and it joins.</li>
+<li><code>cite_as</code> gets a copy button — a citation exists to be pasted elsewhere.</li>
+<li><code>extra</code> is rendered <strong>last and fenced off</strong>, labelled as the publisher's own
+fields, with the values shown in their JSON form and nothing linkified,
+rounded or thousands-separated. Formatting them would imply rete had
+understood them, and its contract is precisely that it has not.</li>
+<li>The <strong>build record</strong> is its own part of the modal, after the card, because it
+describes one <em>build of one file</em> rather than the data. Its per-query cost
+figures are shown <strong>with the queries they describe</strong> — that is where the
+question "what will this cost me?" gets asked — with <code>bytes</code>/<code>requests</code>
+leading and <code>debug_ms</code> labelled as one machine's reference.</li>
+<li>A file with no build record <strong>says so</strong>. It is the common case (every card
+written before the section existed, and every in-browser build) and it reads
+as absence, never as zeroed measurements.</li>
+</ul>
+<p>The playground's <strong>Build</strong> mode can also <em>write</em> a card: paste the same
+<code>--card-file</code> document into step 3 and the file it builds carries it. The
+engine validates it with the rules on this page — the same code the CLI runs,
+so the browser cannot compose a card <code>rete build --card-file</code> would refuse. It
+writes the curated fields plus the four counts its own build measured; the
+derived profile and the build record are CLI-only, and the built card simply
+does not carry those keys. See <a href="playground-guide.html#build">the playground guide</a>.</p>
 <p><code>rete info</code> prints the file header and, when a card is present, appends the same
 catalog — so <code>info</code> is a one-shot overview of <em>what the file is</em> as well as <em>how
 it's laid out</em>. A file with no card just shows the header.</p>
@@ -884,9 +922,14 @@ byte-identical to a cardless build, and existing files keep verifying unchanged.
 the card</strong>, so embedding one adds nothing to query-time bytes-on-the-wire. To
 read the card remotely without downloading the file, <code>rete card-url</code> fetches
 just the header + metadata range (two ranges, index untouched).</li>
-<li><strong>Opaque to the engine.</strong> <code>rete-core</code> treats the section as raw bytes; the card
-schema lives entirely in the CLI. The metadata section is a general extension
-point — a card is just its first use.</li>
+<li><strong>Opaque to the engine.</strong> <code>rete-core</code> treats the section as raw bytes and the
+card <em>schema</em> — the derived profile, the starter-query library — lives in the
+CLI. The one exception is deliberate: the <strong>write-time rules for the curated
+half</strong> (the reserved top level, the <code>theme</code> IRI requirement, the <code>extra</code>
+bounds) live in <code>rete_core::card</code>, because the CLI is no longer the only
+writer. The playground's in-browser builder calls the same validator, so one
+implementation decides what a card file may say. The metadata section itself
+is a general extension point — a card is just its first use.</li>
 </ul>
 <p>See <a href="SPEC.html">the format specification</a> for the header layout and
 <a href="cli.html">the CLI reference</a> for every flag.</p>
