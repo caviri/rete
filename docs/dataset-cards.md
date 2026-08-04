@@ -613,6 +613,47 @@ rete card data.rete
 rete card data.rete --json     # the embedded JSON, pretty-printed
 ```
 
+### In the browser
+
+The [playground](playground.html)'s **🏷 Card** button renders the same card,
+and the build record with it. Both come from **one** engine call — the header
+plus the single coalesced range that covers the card and the adjacent
+build-info section — so showing the build conditions costs a reader nothing
+over showing the card alone.
+
+What the rendered view does with each field is chosen to keep the card's own
+distinctions visible:
+
+- `keywords` and `theme` sit with the description as tags, since they say what
+  the dataset is *about*. A theme's IRI is **not resolved** — that would be a
+  network read the CARD tier exists to avoid — so the viewer names the
+  **concept scheme**, which it can read from the IRI's prefix, and shows the
+  concept's own identifier. It never invents the label the scheme owns.
+- `creators`, `publisher` and `doi` render as **links to the identifier**. That
+  is the whole reason the card asks for an ORCID/ROR/DOI as an IRI rather than
+  a string: it resolves, and it joins.
+- `cite_as` gets a copy button — a citation exists to be pasted elsewhere.
+- `extra` is rendered **last and fenced off**, labelled as the publisher's own
+  fields, with the values shown in their JSON form and nothing linkified,
+  rounded or thousands-separated. Formatting them would imply rete had
+  understood them, and its contract is precisely that it has not.
+- The **build record** is its own part of the modal, after the card, because it
+  describes one *build of one file* rather than the data. Its per-query cost
+  figures are shown **with the queries they describe** — that is where the
+  question "what will this cost me?" gets asked — with `bytes`/`requests`
+  leading and `debug_ms` labelled as one machine's reference.
+- A file with no build record **says so**. It is the common case (every card
+  written before the section existed, and every in-browser build) and it reads
+  as absence, never as zeroed measurements.
+
+The playground's **Build** mode can also *write* a card: paste the same
+`--card-file` document into step 3 and the file it builds carries it. The
+engine validates it with the rules on this page — the same code the CLI runs,
+so the browser cannot compose a card `rete build --card-file` would refuse. It
+writes the curated fields plus the four counts its own build measured; the
+derived profile and the build record are CLI-only, and the built card simply
+does not carry those keys. See [the playground guide](playground-guide.md#build).
+
 `rete info` prints the file header and, when a card is present, appends the same
 catalog — so `info` is a one-shot overview of *what the file is* as well as *how
 it's laid out*. A file with no card just shows the header.
@@ -648,9 +689,14 @@ A few properties worth knowing:
   the card**, so embedding one adds nothing to query-time bytes-on-the-wire. To
   read the card remotely without downloading the file, `rete card-url` fetches
   just the header + metadata range (two ranges, index untouched).
-- **Opaque to the engine.** `rete-core` treats the section as raw bytes; the card
-  schema lives entirely in the CLI. The metadata section is a general extension
-  point — a card is just its first use.
+- **Opaque to the engine.** `rete-core` treats the section as raw bytes and the
+  card *schema* — the derived profile, the starter-query library — lives in the
+  CLI. The one exception is deliberate: the **write-time rules for the curated
+  half** (the reserved top level, the `theme` IRI requirement, the `extra`
+  bounds) live in `rete_core::card`, because the CLI is no longer the only
+  writer. The playground's in-browser builder calls the same validator, so one
+  implementation decides what a card file may say. The metadata section itself
+  is a general extension point — a card is just its first use.
 
 See [the format specification](SPEC.md) for the header layout and
 [the CLI reference](cli.md) for every flag.

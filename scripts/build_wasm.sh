@@ -49,6 +49,12 @@ cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt 
 # actually carries one (the bundled demo datasets do not).
 cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt \
   --card-file tests/gate/fixtures/card-fixture.card.json -o tests/gate/.cache/card-fixture.rete
+# The same triples with a card carrying EVERY curated field (keywords, theme,
+# creators/publisher with ORCID+ROR, the extra bag, …). Paired with the card
+# above — which has none of them — it is what lets the card-modal check assert
+# that a missing field renders as ABSENT rather than as an empty row.
+cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt \
+  --card-file tests/gate/fixtures/card-full.card.json -o tests/gate/.cache/card-full.rete
 # A file whose default graph is EMPTY (every quad in a named graph), with a card
 # reporting triple_count 0 / named_graph_count 3 — the nkod.rete shape. The
 # empty-default-graph explainer check reads the remote path's fact from it.

@@ -292,6 +292,7 @@ const G2 = [
   ["check_map_geo", "embedded GeoSPARQL → Tiles · local PMTiles fixture", 90000, false],
   ["check_service_success", "successful SERVICE join · local SPARQL JSON endpoint", 90000, false],
   ["check_builder", "in-browser N-Quads build → open bytes → query Alice", 90000, false],
+  ["check_builder_card", "in-browser build writes the file's Dataset Card (CLI-identical validation; derived profile + build record absent, not empty)", 150000, false],
   ["check_cache_mode", "whole-file cache persists across reload · zero second read", 120000, false],
   ["check_cache_url", "off-catalog URL cache: size-first consent · zero-network reload + deep link", 240000, false],
   ["check_optional_tabs", "Ask AI + Semantic/RAG initialize without model downloads", 90000, false],
