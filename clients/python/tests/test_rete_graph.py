@@ -205,6 +205,7 @@ def test_builder_end_to_end(tmp_path, nt_text):
             source="https://example.org/people",
             created="2026-07-16",
             example_queries=[KNOWS_Q],
+            keywords=["people", "demo"],
         )
         .text_index()
         .pyramid(algo="louvain")
@@ -220,6 +221,10 @@ def test_builder_end_to_end(tmp_path, nt_text):
     assert card["title"] == "Tiny people graph"
     assert card["license"] == "CC0-1.0"
     assert card["example_queries"] == [KNOWS_Q]
+    # `keywords` is a rete-defined field: it routes to the card's top level,
+    # never into the `extra` bag (this client writes the card verbatim).
+    assert card["keywords"] == ["people", "demo"]
+    assert "extra" not in card
     # Counts + format_version are stamped automatically at build time.
     assert card["quad_count"] == 6
     assert card["term_count"] == g.terms

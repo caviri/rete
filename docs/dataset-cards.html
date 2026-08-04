@@ -383,6 +383,8 @@ file with <code>--card-file</code>. Explicit flags override whatever the file pr
   "derived_from": ["https://example.org/dumps/citations-2021.nt"],
   "doi": "https://doi.org/10.5281/zenodo.0000000",
   "cite_as": "Lovelace, A. (2021). Citation graph 2021.",
+  "keywords": ["citations", "open science", "scholarly communication"],
+  "theme": ["http://publications.europa.eu/resource/authority/data-theme/TECH"],
   "example_queries": [
     "SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt; ?cited }"
   ],
@@ -404,6 +406,8 @@ file with <code>--card-file</code>. Explicit flags override whatever the file pr
 <tr><td><code>creators</code>, <code>publisher</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>People (<code>{name, orcid}</code>) and organisation (<code>{name, ror}</code>). ORCID/ROR as <strong>IRIs, not strings</strong> — this project publishes both authority graphs, so "which datasets did this person build?" becomes a federated join, not a text search.</td></tr>
 <tr><td><code>canonical_url</code>, <code>sparql_endpoint</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Where the authoritative copy of this file lives (<code>void:dataDump</code>) and a public endpoint (<code>void:sparqlEndpoint</code>). A <code>.rete</code> found on a disk can then say where to verify against.</td></tr>
 <tr><td><code>source_date</code>, <code>derived_from</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>The source data's own snapshot date (distinct from <code>created</code> and from the build timestamp), and what this file was derived from (<code>prov:wasDerivedFrom</code>) — dumps, endpoints, or the shards a <code>rete merge</code> folded in.</td></tr>
+<tr><td><code>keywords</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Free-text tags (<code>dcat:keyword</code> / <code>schema:keywords</code> in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (<code>dcat:keyword</code> is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build.</td></tr>
+<tr><td><code>theme</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td><strong>IRIs into a controlled vocabulary</strong> (<code>dcat:theme</code>), e.g. the <a href="http://publications.europa.eu/resource/authority/data-theme">EU data themes</a>. IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at <code>keywords</code>; the agreed concept scheme is the whole value <code>dcat:theme</code> adds. Canonicalized like <code>keywords</code>. (There is deliberately <strong>no curated language field</strong>: in RDF the language rides on every literal, so the card <em>measures</em> it — see the <code>languages</code> row below and <a href="#first-class-field-or-the-bag-the-rule">the rule</a>.)</td></tr>
 <tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run.</td></tr>
 <tr><td><code>extra</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Publisher-defined <strong>custom fields</strong> — one bounded bag, see <a href="#custom-fields-the-extra-bag">Custom fields</a>.</td></tr>
 <tr><td><code>triple_count</code></td><td>derived</td><td>Triples in the <strong>default graph</strong>.</td></tr>
@@ -461,6 +465,53 @@ validate against — they come from the card file only. (In Python,
 <code>Builder.card()</code> routes any keyword that is not a rete-defined field into the
 bag, and <code>extra={...}</code> merges a whole dict — the client writes the card it is
 given; the caps below are enforced by <code>rete build</code>.)</p>
+<h3>First-class field or the bag? The rule</h3>
+<p>Before putting anything in <code>extra</code>, ask two questions:</p>
+<p><strong>1. Does a standard vocabulary already have a term for it?</strong> If not — the
+meaning is yours, not agreed — it belongs in <code>extra</code>. The bag deliberately
+strips meaning: everything in it projects as <code>rete:extra/&lt;key&gt;</code>, an opaque
+value whose semantics are private to its publisher, and for genuinely
+private fields (internal identifiers, review status, pipeline tags) that
+opacity is <em>honest</em>: the values travel, the meaning stays with you.
+Conversely, storing a standard-termed fact in the bag publishes it <em>as
+though it meant nothing</em> — a consumer that speaks the standard term (a DCAT
+harvester, a dataset-search crawler) will never find it. That is strictly
+worse than either doing it properly or not at all. If the official field
+doesn't exist yet, <strong>ask for it</strong> (file an issue) instead of bagging it for
+good.</p>
+<p><strong>2. Can it be derived from the data?</strong> If yes, it is <strong>auto-derived, not
+curated</strong> — a curated duplicate of a derivable fact is a second source of
+truth that can silently drift from the first, and a reader has no way to
+tell which one is right. The worked example is <strong>language</strong>: it looks like
+an obvious curated field (DCAT catalogs use <code>dct:language</code>) right up until
+you notice that in RDF the language already rides on every literal
+(<code>@lang</code> / <code>rdf:langString</code>). So the card <em>measures</em> it — the <code>languages</code>
+histogram and <code>signals.default_lang</code>, projected as <code>schema:inLanguage</code> —
+and there is deliberately <strong>no curated language field</strong> to contradict the
+measurement.</p>
+<p><code>keywords</code> and <code>theme</code> passed both questions — <code>dcat:keyword</code> /
+<code>schema:keywords</code> and <code>dcat:theme</code> already said what they mean, and neither
+free-text tags nor controlled-vocabulary themes can be computed from the
+triples. Each promotion must also state what its field means beyond "a term
+exists": <code>theme</code> is only worth a field distinct from <code>keywords</code> because it
+is <strong>required to be an IRI into a controlled vocabulary</strong> — a free-text
+theme is a keyword by another name, and the build rejects it as such. A
+candidate that cannot say more than "like keywords, but mine" hasn't
+passed.</p>
+<p>The enforcement mirrors the rule: the top level rejects unknown keys, so a
+private field can never sit where official semantics are expected — and an
+official field is only ever added deliberately, at the top level, never by a
+bag key drifting into common use.</p>
+<p>One candidate remains weighed and deliberately in waiting — by this rule a
+future official field, not bag material, the day a publisher actually needs
+it: curated spatial/temporal coverage (<code>dct:spatial</code> / <code>dct:temporal</code>). It
+passes the second question only in the case its derived counterparts cannot
+reach — <code>spatial_bbox</code> / <code>temporal_extent</code> are computed wherever the data
+carries geometry or time, so a curated value earns its keep solely where
+coverage is known but <em>not encoded in the data</em>. If you need it today, the
+honest stopgap is the bag <em>plus the issue</em>: the value travels verbatim in
+<code>--json</code>, and the projection stays truthfully opaque until the field gets
+its term.</p>
 <h3>Why one bag, not prefixed keys</h3>
 <p>The failure mode worth designing against is a <strong>future collision</strong>: rete adds
 an official card field, and some published card already uses that name for
@@ -698,6 +749,8 @@ terms before inventing any:</p>
 <tr><td><code>sparql_endpoint</code>, <code>canonical_url</code></td><td><code>void:sparqlEndpoint</code>, <code>void:dataDump</code> (+ a <code>schema:DataDownload</code> distribution)</td></tr>
 <tr><td><code>title</code>/<code>description</code>/<code>license</code>/<code>version</code>/<code>created</code>/<code>cite_as</code>/<code>doi</code></td><td><code>schema:name</code>/<code>description</code>/<code>license</code>/<code>version</code>/<code>dateCreated</code>/<code>citation</code>/<code>identifier</code></td></tr>
 <tr><td><code>creators</code>, <code>publisher</code></td><td><code>schema:Person</code> (ORCID as <code>@id</code>) / <code>schema:Organization</code> (ROR as <code>@id</code>)</td></tr>
+<tr><td><code>keywords</code></td><td><code>schema:keywords</code> <strong>and</strong> <code>dcat:keyword</code> — one list under both standard names, the same dual-vocabulary stance as the <code>schema:Dataset</code> + <code>void:Dataset</code> typing</td></tr>
+<tr><td><code>theme</code></td><td><code>dcat:theme</code>, <code>@id</code>-typed (the values are controlled-vocabulary IRIs) — exactly one standard term, so no schema.org double</td></tr>
 <tr><td><code>source</code>, <code>derived_from</code></td><td><code>prov:wasDerivedFrom</code> (URLs) / <code>dct:source</code> (free text)</td></tr>
 <tr><td>build info</td><td><code>prov:wasGeneratedBy</code> — a <code>prov:Activity</code> with <code>prov:endedAtTime</code> and the builder as a <code>schema:SoftwareApplication</code> agent</td></tr>
 <tr><td>temporal/spatial signals</td><td><code>schema:temporalCoverage</code> / <code>schema:spatialCoverage</code> (GeoShape box)</td></tr>
@@ -713,9 +766,12 @@ private names are honest.</p>
 <p>Croissant models <strong>tables</strong>: <code>recordSet</code> → <code>field</code> → <code>dataType</code>. An RDF graph
 has no records, and forcing the card into a record-set shape would produce a
 document that validates and misleads. So <code>--format croissant</code> maps what
-genuinely corresponds — the descriptive header, licence, version, creators and
-publisher, provenance, and the <code>.rete</code> file itself as a <code>cr:FileObject</code>
-distribution — and <strong>carries no <code>recordSet</code> at all</strong>. (Where a dataset ships
+genuinely corresponds — the descriptive header, licence, version, keywords,
+creators and publisher, provenance, and the <code>.rete</code> file itself as a
+<code>cr:FileObject</code> distribution — and <strong>carries no <code>recordSet</code> at all</strong>.
+(<code>theme</code> is not carried: its only term is DCAT's, and bending it into a
+schema.org shape here would be the same dishonesty as a fabricated
+<code>recordSet</code>.) (Where a dataset ships
 tabular Parquet companions, <em>those</em> are the honest record-set material, with
 their own Croissant documents beside the bucket.)</p>
 <p>One Croissant requirement is structurally unsatisfiable from inside the file:

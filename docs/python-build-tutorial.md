@@ -88,6 +88,7 @@ builder.card(
     derived_from=["https://example.org/source-dump"],
     doi="https://doi.org/10.5281/zenodo.0000000",
     cite_as="Lovelace, A. (2026). People & places.",
+    keywords=["people", "places", "demo"],
 )
 ```
 
@@ -110,6 +111,8 @@ Field by field:
 | `derived_from` | What this file was derived from (dumps, endpoints, shards) |
 | `doi` | The dataset's DOI, as an IRI (`https://doi.org/…`) |
 | `cite_as` | Preferred citation text |
+| `keywords` | Free-text tags — projected as `dcat:keyword` / `schema:keywords` |
+| `theme` | Controlled-vocabulary IRIs (e.g. EU data themes) — projected as `dcat:theme`; free text is rejected, it belongs in `keywords`. (No curated language field: the card *measures* `languages` from the literals' own tags.) |
 
 The **statistics** — `triple_count`, `quad_count`, `named_graph_count`,
 `term_count`, plus the `format_version` — are stamped **automatically** at

@@ -712,6 +712,8 @@ class Builder:
             "derived_from",
             "doi",
             "cite_as",
+            "keywords",
+            "theme",
         }
     )
 
@@ -730,7 +732,9 @@ class Builder:
 
         Keywords naming a rete-defined field (``version``, ``creators``,
         ``publisher``, ``canonical_url``, ``sparql_endpoint``, ``source_date``,
-        ``derived_from``, ``doi``, ``cite_as``) set that field. **Any other
+        ``derived_from``, ``doi``, ``cite_as``, ``keywords`` [free-text tags →
+        ``dcat:keyword``/``schema:keywords``], ``theme`` [controlled-vocabulary
+        IRIs → ``dcat:theme``]) set that field. **Any other
         keyword is a publisher-defined custom field** and lands in the card's
         ``extra`` bag — pass ``extra={...}`` to merge a whole dict (structured
         values included). The bag is bounded (8 KB serialized, ≤64 keys,
