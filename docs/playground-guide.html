@@ -531,6 +531,38 @@ lazy way, over HTTP range requests, so the link works against a file of any size
 as long as its host sends <code>Accept-Ranges: bytes</code> and permits cross-origin reads
 (<code>Access-Control-Allow-Origin</code>, exposing <code>Content-Range</code>). Connecting by hand
 and pressing <strong>Share</strong> produces exactly this form of link.</p>
+<h3 id="sharing-view-state">What the link carries</h3>
+<p>Naming the graph and the query is not enough on its own. Several toolbar
+controls change <strong>what the query returns</strong>, and a link that dropped them would
+hand someone the same text under different semantics — the reader would see
+different results and have no way to tell. So the fragment also carries them,
+and only when they differ from the default (a plain view's link is exactly as
+short as it always was):</p>
+<table><thead><tr><th>Parameter</th><th>Control</th><th>Values</th><th>Effect</th></tr></thead><tbody>
+<tr><td><code>union</code></td><td>⛁ <strong>All graphs</strong></td><td><code>1</code> / <code>0</code> (default off)</td><td><em>answer</em> — mounts the file as if the default graph were the union of the default graph and every named graph</td></tr>
+<tr><td><code>reason</code></td><td>🧠 <strong>Reason</strong></td><td><code>1</code> / <code>0</code> (default off)</td><td><em>answer</em> — OWL 2 QL entailment, so subclass/subproperty instances also match</td></tr>
+<tr><td><code>strategy</code></td><td><strong>Strategy</strong></td><td><code>whole</code> (default) · <code>progressive</code> · <code>community</code></td><td><em>answer</em> — <code>progressive</code> answers from the pyramid summary and is <strong>approximate by contract</strong></td></tr>
+<tr><td><code>round</code></td><td><strong>Round</strong></td><td>an integer</td><td><em>answer</em> — which dendrogram round the <code>community</code> strategy answers from</td></tr>
+<tr><td><code>fed</code></td><td><strong>SOURCES</strong></td><td>comma-separated catalog keys, e.g. <code>fed=nomisma,mimotext</code></td><td><em>answer</em> — extra datasets the query also runs against</td></tr>
+<tr><td><code>view</code></td><td><strong>Output</strong></td><td><code>table</code> (default) · <code>cards</code> · <code>graph</code> · <code>map</code> · <code>tiles</code> · <code>time</code> · <code>ttl</code> · <code>jsonld</code></td><td><em>presentation</em> — how the same rows are drawn</td></tr>
+<tr><td><code>labels</code></td><td>🏷 <strong>Labels</strong></td><td><code>1</code> (default on) / <code>0</code></td><td><em>presentation</em> — the human-label chips beside IRIs in the editor</td></tr>
+</tbody></table>
+<p>The first five change the <strong>answer</strong>; the last two change only how it is
+<strong>drawn</strong>. That distinction is the design: a presentation parameter that fails
+to apply costs you a nicer rendering, an answer parameter that fails to apply
+makes the link lie. The address bar re-stamps itself as you flip these, so
+copying it by hand gives the same link <strong>Share</strong> does.</p>
+<p>Federation is carried <strong>only as catalog keys</strong>. A key is a public entry in the
+shipped catalog, so it is short and the address is re-derived on the other side —
+nothing private can ride along. A source you added by <em>pasting an address</em> (a
+<code>.rete</code> link or a SPARQL endpoint) is deliberately left out: those are routinely
+intranet hosts, pre-release files, or URLs with a token in them, and a share
+button is not the place to forward one. When a view has such a source, <strong>Share</strong>
+says so instead of quietly handing out a narrower view:</p>
+<blockquote>
+<p>Link copied ✓ — WITHOUT the added source <em>staging</em>: a pasted address is not put
+into a shareable link, so the recipient queries without it.</p>
+</blockquote>
 <p>A fragment has one limitation: it is never sent to a server, and no link preview executes
 the page's JavaScript. Pasted into a chat, a feed or a search index, every deep
 link would therefore unfurl as the same anonymous "rete playground" card, with
@@ -550,6 +582,11 @@ all at <a href="shared.html">Shareable queries</a>.</p>
 <p>An ad-hoc query has no such page (there is nothing pre-rendered to preview), so
 editing the SPARQL — or connecting a live endpoint, or building your own graph
 in the page — goes back to sharing the deep link itself, exactly as before.</p>
+<p>So does any view carrying one of the parameters above. A preview page forwards to
+a link built from the catalog alone (dataset + load mode + tab + example index),
+which leaves it nowhere to put <code>union=1</code>; sharing it would silently drop exactly
+the setting the link exists to reproduce, so <strong>Share</strong> hands out the deep link
+instead.</p>
 <h2>Watching the bytes (and the caches)</h2>
 <p>For a remote dataset the result line reports what the query physically did —
 <code>N range requests · M KB fetched · file is X MB</code> — and <strong>⊞ requests</strong> opens the
