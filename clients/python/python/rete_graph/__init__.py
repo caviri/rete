@@ -697,6 +697,24 @@ class Builder:
 
     # -- the dataset card -----------------------------------------------------
 
+    #: The rete-defined curated card fields settable as bare keywords beyond
+    #: the named parameters of :meth:`card`. Anything else lands in the card's
+    #: bounded ``extra`` bag — the top level stays rete's namespace, so a
+    #: future official field can never collide with a custom one.
+    _CARD_FIELDS = frozenset(
+        {
+            "version",
+            "creators",
+            "publisher",
+            "canonical_url",
+            "sparql_endpoint",
+            "source_date",
+            "derived_from",
+            "doi",
+            "cite_as",
+        }
+    )
+
     def card(
         self,
         *,
@@ -710,6 +728,16 @@ class Builder:
     ) -> "Builder":
         """Set the embedded Dataset Card's curated fields (repeat calls merge).
 
+        Keywords naming a rete-defined field (``version``, ``creators``,
+        ``publisher``, ``canonical_url``, ``sparql_endpoint``, ``source_date``,
+        ``derived_from``, ``doi``, ``cite_as``) set that field. **Any other
+        keyword is a publisher-defined custom field** and lands in the card's
+        ``extra`` bag — pass ``extra={...}`` to merge a whole dict (structured
+        values included). The bag is bounded (8 KB serialized, ≤64 keys,
+        ≤128-byte keys, nesting ≤2 levels — enforced by the ``rete build``
+        CLI; this client writes the card it is given) and folds into the
+        file's content hash like every curated field.
+
         The counts (``triple_count``, ``quad_count``, ``named_graph_count``,
         ``term_count``) and ``format_version`` are filled in automatically at
         build time — read the card back with :meth:`Graph.card` or the
@@ -722,10 +750,25 @@ class Builder:
             "source": source,
             "created": created,
             "example_queries": example_queries,
-            **extra,
         }
+        bag: Dict[str, Any] = {}
+        for key, value in extra.items():
+            if value is None:
+                continue
+            if key == "extra":
+                if not isinstance(value, dict):
+                    raise ValueError("extra= must be a dict of custom fields")
+                bag.update(value)
+            elif key in self._CARD_FIELDS:
+                fields[key] = value
+            else:
+                bag[key] = value
         merged = dict(self._card or {})
         merged.update({k: v for k, v in fields.items() if v is not None})
+        if bag:
+            existing = dict(merged.get("extra") or {})
+            existing.update(bag)
+            merged["extra"] = existing
         self._card = merged
         self._invalidate()
         return self

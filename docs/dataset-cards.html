@@ -385,7 +385,12 @@ file with <code>--card-file</code>. Explicit flags override whatever the file pr
   "cite_as": "Lovelace, A. (2021). Citation graph 2021.",
   "example_queries": [
     "SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt; ?cited }"
-  ]
+  ],
+  "extra": {
+    "atlas:region": "CH",
+    "internal_id": "DS-2021-042",
+    "review": { "status": "approved", "by": "data-team" }
+  }
 }
 </code></pre>
 <pre><code class="language-sh">rete build data.nt -o data.rete --card-file card.json --title "Override title"
@@ -395,11 +400,12 @@ file with <code>--card-file</code>. Explicit flags override whatever the file pr
 <h2>What's in a card</h2>
 <table><thead><tr><th>Field</th><th>Source</th><th>Meaning</th></tr></thead><tbody>
 <tr><td><code>title</code>, <code>description</code>, <code>license</code>, <code>source</code>, <code>created</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>Free-text catalog metadata. Omitted fields are absent from the JSON.</td></tr>
-<tr><td><code>version</code>, <code>doi</code>, <code>cite_as</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Dataset version (Croissant requires one), DOI IRI, preferred citation.</td></tr>
+<tr><td><code>version</code>, <code>doi</code>, <code>cite_as</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>The publisher's <strong>dataset version</strong> (a date or semver — Croissant requires one; distinct from <code>format_version</code> and from the build-info <code>builder</code>, see <a href="#one-card-three-versions">One card, three versions</a>), DOI IRI, preferred citation.</td></tr>
 <tr><td><code>creators</code>, <code>publisher</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>People (<code>{name, orcid}</code>) and organisation (<code>{name, ror}</code>). ORCID/ROR as <strong>IRIs, not strings</strong> — this project publishes both authority graphs, so "which datasets did this person build?" becomes a federated join, not a text search.</td></tr>
 <tr><td><code>canonical_url</code>, <code>sparql_endpoint</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Where the authoritative copy of this file lives (<code>void:dataDump</code>) and a public endpoint (<code>void:sparqlEndpoint</code>). A <code>.rete</code> found on a disk can then say where to verify against.</td></tr>
 <tr><td><code>source_date</code>, <code>derived_from</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>The source data's own snapshot date (distinct from <code>created</code> and from the build timestamp), and what this file was derived from (<code>prov:wasDerivedFrom</code>) — dumps, endpoints, or the shards a <code>rete merge</code> folded in.</td></tr>
 <tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run.</td></tr>
+<tr><td><code>extra</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Publisher-defined <strong>custom fields</strong> — one bounded bag, see <a href="#custom-fields-the-extra-bag">Custom fields</a>.</td></tr>
 <tr><td><code>triple_count</code></td><td>derived</td><td>Triples in the <strong>default graph</strong>.</td></tr>
 <tr><td><code>quad_count</code>, <code>named_graph_count</code></td><td>derived</td><td>Total statements and number of named graphs.</td></tr>
 <tr><td><code>term_count</code></td><td>derived</td><td>Distinct dictionary terms.</td></tr>
@@ -414,7 +420,7 @@ file with <code>--card-file</code>. Explicit flags override whatever the file pr
 <tr><td><code>queries</code></td><td>derived</td><td>The auto-generated, <strong>tiered starter-query library</strong> (see below).</td></tr>
 <tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial).</td></tr>
 <tr><td><code>top_n</code></td><td>derived</td><td>The cap the profile lists were derived under — the number <code>truncated</code> was hinting at without stating.</td></tr>
-<tr><td><code>format_version</code></td><td>derived</td><td>The <code>.rete</code> format version the card was written against.</td></tr>
+<tr><td><code>format_version</code></td><td>derived</td><td>The <code>.rete</code> <strong>spec version</strong> the card was written against — the format's version, not the dataset's.</td></tr>
 </tbody></table>
 <p>The per-predicate and per-class statistics are computed over the <strong>default
 graph</strong> (named-graph contents are summarized only by <code>quad_count</code> /
@@ -423,6 +429,111 @@ list is <strong>capped</strong> and <strong>deterministically ordered</strong> (
 broken lexically), so building the same input twice yields a <strong>byte-identical</strong>
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching <code>rete progressive</code>.</p>
+<h3>One card, three versions</h3>
+<p>A <code>.rete</code> file carries three different versions, each with its own owner. They
+answer different questions and are never merged:</p>
+<table><thead><tr><th>field</th><th>owner</th><th>answers</th><th>example</th></tr></thead><tbody>
+<tr><td><code>version</code> (card, curated)</td><td>the <strong>publisher</strong></td><td>which release of the <em>data</em> is this?</td><td><code>2021.2</code></td></tr>
+<tr><td><code>format_version</code> (card, derived)</td><td>the <strong>spec</strong></td><td>which <code>.rete</code> format does the file conform to?</td><td><code>5</code></td></tr>
+<tr><td><code>builder</code> (build-info)</td><td>the <strong>tool</strong></td><td>which binary wrote the file?</td><td><code>rete-cli 0.3.2</code></td></tr>
+</tbody></table>
+<p><code>version</code> is yours: set it in the card file, bump it when the dataset changes.
+<code>format_version</code> is stamped by the builder and changes only when the format
+does. <code>builder</code> lives in the unhashed build-info section because it is a fact
+about one build, not about the data.</p>
+<h2>Custom fields: the <code>extra</code> bag</h2>
+<p>A publisher can put <strong>their own fields</strong> in a card — internal identifiers,
+review status, project tags, anything the official fields don't cover — under
+one reserved key, <code>extra</code>, in the <code>--card-file</code> document:</p>
+<pre><code class="language-json">{
+  "title": "Citation graph 2021",
+  "extra": {
+    "atlas:region": "CH",
+    "internal_id": "DS-2021-042",
+    "review": { "status": "approved", "by": "data-team" }
+  }
+}
+</code></pre>
+<p><code>rete card --json</code> returns the bag verbatim; the text catalog lists it under
+<code>custom fields</code>. There is deliberately <strong>no flag</strong> for them: arbitrary
+key/value pairs on a command line are a shell-quoting trap with no schema to
+validate against — they come from the card file only. (In Python,
+<code>Builder.card()</code> routes any keyword that is not a rete-defined field into the
+bag, and <code>extra={...}</code> merges a whole dict — the client writes the card it is
+given; the caps below are enforced by <code>rete build</code>.)</p>
+<h3>Why one bag, not prefixed keys</h3>
+<p>The failure mode worth designing against is a <strong>future collision</strong>: rete adds
+an official card field, and some published card already uses that name for
+something else. With prefixed top-level keys (<code>x-…</code>) custom and official
+fields share a namespace and the guarantee is a naming promise; with a nested
+bag it is <strong>structural</strong> — official fields live at the top level, publisher
+fields live inside <code>extra</code>, and the two can never meet. And it is enforced,
+not hoped: the card file's <strong>top level rejects unknown keys loudly</strong> (a stray
+key is usually a typo — or a custom field that belongs in the bag), so a
+publisher's field cannot even be written where a future official field could
+capture it. A consumer that doesn't care skips one key.</p>
+<p>One key inside the bag is reserved: <code>@context</code>, held back for a future
+author-supplied JSON-LD mapping (see the projection below). Everything else in
+<code>extra</code> is, by construction, not rete's.</p>
+<h3>What custom fields actually cost — and the limits</h3>
+<p>Custom fields never touch the header: the header is a <strong>fixed 1 KiB of
+offsets</strong>, and no card content of any size can disturb it. What they grow is
+the <strong>metadata section</strong> — and that section is fetched by every CARD-tier
+reader on <strong>every open</strong>, across the whole catalog, forever. That is the real
+constraint, and it is tighter than "don't disturb the header". So the bag is
+bounded, and the bounds are checked at build time:</p>
+<table><thead><tr><th>limit</th><th>value</th><th>why</th></tr></thead><tbody>
+<tr><td>serialized size (whole bag, compact JSON)</td><td><strong>8,192 B</strong></td><td>Exceeds the smallest whole published card (NKOD, 6,649 B) — generous for <em>metadata</em>. The worst realistic case — the largest published card (Hugging Face, 53,580 B) + a maxed bag + its ~1 KB build info ≈ 62.8 KB — still travels in the same single coalesced range.</td></tr>
+<tr><td>keys</td><td><strong>64</strong></td><td>A key costs ≥ 8 serialized bytes; needing more fields than this means the bag is being used as a data store, and the graph is the data store.</td></tr>
+<tr><td>key length</td><td><strong>128 bytes</strong></td><td>Keys are identifiers, not values.</td></tr>
+<tr><td>nesting depth</td><td><strong>2</strong></td><td>An object of objects-of-scalars, no deeper. Deep structures invite storing <em>records</em> in the card — Parquet companions exist for records.</td></tr>
+</tbody></table>
+<p>The CARD tier's <strong>request count cannot change</strong>: <code>rete card-url</code> still costs
+the 1 KiB header plus one coalesced metadata+build-info range, bag or no bag —
+pinned by test. The one cost worth knowing: on the smallest cards a maxed-out
+bag can push the coalesced range past a conservative TCP initial window
+(~14.6 KB), i.e. one extra round trip — never an extra request.</p>
+<h3>Overflow: the build fails</h3>
+<p>A bag over any limit <strong>rejects the build</strong> with the limit and the actual size
+in the error — it is never truncated. Truncation would ship a card that says
+something different from what its author wrote, with no way to know which
+fields vanished; and since the bag folds into the content hash, "what I wrote"
+and "what hashed" would diverge invisibly. The derived profile lists <em>are</em>
+capped (with <code>truncated</code> set) because they can be re-derived; curated input
+cannot — only its author knows what to cut, and at build time the fix costs a
+minute.</p>
+<h3>Deterministic, hashed, tamper-evident</h3>
+<p>The bag is curated input, so it lives <strong>inside</strong> the blake3 content hash like
+every other curated field — <code>rete verify</code> covers it, and any edit is detected.
+That placement is safe because its serialization is deterministic: keys are
+sorted at every nesting level when the card is written, so two builds of
+identical input remain <strong>byte-identical</strong> and hash equal (pinned by test),
+even when the card file's keys are authored in a different order. The
+consequence: per-build volatile facts (timestamps, CI run ids) do <strong>not</strong>
+belong in <code>extra</code> — they would make every build hash differently, and the
+unhashed build-info section already records exactly those facts.</p>
+<h3>How the projections treat custom fields</h3>
+<p>A custom field has no vocabulary term, so projecting it as ordinary RDF would
+invent semantics. The projections keep the fields without pretending to
+understand them:</p>
+<ul>
+<li><strong><code>--format jsonld</code></strong> emits each field under <code>rete:extra/&lt;key&gt;</code> (the key
+percent-encoded where needed, so the IRI is always valid): a scalar becomes
+a plain literal, an object or array becomes a JSON literal (typed <code>@json</code>,
+i.e. <code>rdf:JSON</code>) rather than a blank-node structure pretending to be
+modelled data. A consumer of the JSON-LD <strong>gets the values, not their
+meaning</strong>: <code>rete:extra/review</code> says "the publisher-defined field named
+<code>review</code> of this card" and nothing more — two publishers using the same key
+name share an IRI without sharing semantics. Nothing is dropped (diffing
+the card against its projection finds every field) and nothing is invented.
+If a card's <code>extra</code> one day carries an author-supplied <code>@context</code>, the
+projection can start honouring it — that key is reserved today so honouring
+it later breaks nothing.</li>
+<li><strong><code>--format croissant</code></strong> omits them entirely — Croissant is already the
+honestly-mappable <em>subset</em> (no <code>recordSet</code>, no partitions), for ML loaders
+that would do nothing with opaque publisher keys.</li>
+<li><strong><code>--json</code></strong> always carries the bag verbatim.</li>
+</ul>
 <h2>Build conditions: the build-info section</h2>
 <p>The card answers <em>what the data is</em>; a second, adjacent record answers <strong>how
 this particular file came to be</strong> — the questions you ask when a file behaves
@@ -591,6 +702,7 @@ terms before inventing any:</p>
 <tr><td>build info</td><td><code>prov:wasGeneratedBy</code> — a <code>prov:Activity</code> with <code>prov:endedAtTime</code> and the builder as a <code>schema:SoftwareApplication</code> agent</td></tr>
 <tr><td>temporal/spatial signals</td><td><code>schema:temporalCoverage</code> / <code>schema:spatialCoverage</code> (GeoShape box)</td></tr>
 <tr><td><code>triple_count</code>, <code>term_count</code>, <code>named_graph_count</code>, the content hash</td><td>a small <code>rete:</code> namespace (<code>https://w3id.org/rete/card#</code>) — what no standard covers, rather than a bent term</td></tr>
+<tr><td><code>extra</code> (custom fields)</td><td>per-key <code>rete:extra/&lt;key&gt;</code> — <strong>opaque values, not vocabulary</strong>: scalars as plain literals, containers as <code>rdf:JSON</code> JSON literals (see <a href="#custom-fields-the-extra-bag">Custom fields</a>)</td></tr>
 </tbody></table>
 <p>The projection is validated JSON-LD: it expands under <code>pyld</code> and yields the
 intended VoID/schema.org/PROV triples (58 of them on the demo card). It

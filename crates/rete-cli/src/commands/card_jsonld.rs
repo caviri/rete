@@ -45,6 +45,45 @@ fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
 }
 
+/// Percent-encode a custom-field key so `rete:extra/<key>` always expands to a
+/// **valid IRI**. `RETE_NS` ends in `#`, so the key lands in the fragment;
+/// RFC 3987 fragment characters (alphanumerics, `-._~!$&'()*+,;=:@/?`) pass
+/// through, everything else — spaces, quotes, `#`, `%`, non-ASCII — is
+/// percent-encoded byte-wise. Injective, so distinct keys keep distinct IRIs.
+fn fragment_safe(key: &str) -> String {
+    let mut out = String::with_capacity(key.len());
+    for b in key.bytes() {
+        let ok = b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'-' | b'.'
+                    | b'_'
+                    | b'~'
+                    | b'!'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b';'
+                    | b'='
+                    | b':'
+                    | b'@'
+                    | b'/'
+                    | b'?'
+            );
+        if ok {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// Insert `key: value` unless the value is `Null` / empty array / empty string.
 fn put(obj: &mut Map<String, Value>, key: &str, value: Value) {
     let empty = match &value {
@@ -226,6 +265,27 @@ pub(crate) fn to_jsonld(
         if card.top_n > 0 {
             d.insert("rete:partitionTopN".into(), json!(card.top_n));
         }
+    }
+    // Publisher-defined custom fields, each under `rete:extra/<key>` — kept in
+    // the projection (omitting them would make it unfaithful: a consumer
+    // diffing card against projection would find fields missing with no
+    // explanation), but as **opaque values, not vocabulary**: the IRI means
+    // "the publisher-defined field named <key>", whose semantics are private
+    // to this card's publisher. Scalars project as plain literals; container
+    // values (objects/arrays) are typed `@json` in the context so they become
+    // JSON-LD 1.1 JSON literals (`rdf:JSON`) instead of blank-node structures
+    // pretending to be modelled data. The consumer gets the values — never
+    // their meaning.
+    for (key, value) in &card.extra {
+        let term = format!("rete:extra/{}", fragment_safe(key));
+        if value.is_object() || value.is_array() {
+            d.get_mut("@context")
+                .expect("context inserted above")
+                .as_object_mut()
+                .expect("context is an object")
+                .insert(term.clone(), json!({ "@type": "@json" }));
+        }
+        d.insert(term, value.clone());
     }
 
     // --- Provenance (PROV-O). ---
@@ -417,6 +477,10 @@ pub(crate) fn to_croissant(
     // NO recordSet: an RDF graph is not a table. Tabular companions (Parquet),
     // where they exist, are the honest recordSet material — they are published
     // beside the file, not inside it, and carry their own Croissant documents.
+    // And NO custom fields (`card.extra`): Croissant is the honestly-mappable
+    // subset for ML loaders, and publisher-defined keys have no Croissant
+    // terms. They stay in `--json` (verbatim) and `--format jsonld`
+    // (`rete:extra/<key>` opaque values).
     Value::Object(d)
 }
 
@@ -529,6 +593,55 @@ mod tests {
         // FileObject is complete and the document validator-clean.
         let with = to_croissant(&card, "bb", "demo.rete", Some("ab".repeat(32).as_str()));
         assert_eq!(with["distribution"][0]["sha256"], "ab".repeat(32));
+    }
+
+    /// Custom fields project per key under `rete:extra/<key>` — values, not
+    /// vocabulary: scalars as plain literals, containers as `@json`-typed
+    /// JSON literals, keys percent-encoded so the IRI is always valid.
+    /// Croissant omits them entirely; a card without a bag emits nothing.
+    #[test]
+    fn extra_projects_per_key_as_opaque_values_and_croissant_omits_it() {
+        let mut card = sample_card();
+        card.extra = [
+            ("atlas:layer".to_string(), json!(84)),
+            ("review".to_string(), json!({"by": "dg", "ok": true})),
+            ("my field".to_string(), json!("spaced")),
+        ]
+        .into_iter()
+        .collect();
+
+        let v = to_jsonld(&card, None, "aa", "demo.rete");
+        // Scalar: a plain literal under its own rete:extra/ term (`:` is
+        // IRI-fragment-legal, so the key passes through unencoded).
+        assert_eq!(v["rete:extra/atlas:layer"], 84);
+        // Container: emitted verbatim AND typed @json in the context, so it
+        // expands to one rdf:JSON literal, not a blank-node structure.
+        assert_eq!(v["rete:extra/review"]["by"], "dg");
+        assert_eq!(v["@context"]["rete:extra/review"]["@type"], "@json");
+        assert!(
+            v["@context"].get("rete:extra/atlas:layer").is_none(),
+            "scalars need no @json typing"
+        );
+        // An IRI-hostile key is percent-encoded (space → %20), keeping the
+        // expanded IRI valid.
+        assert_eq!(v["rete:extra/my%20field"], "spaced");
+        // No bare top-level property was minted.
+        assert!(v.get("atlas:layer").is_none());
+        assert!(v.get("review").is_none());
+
+        let c = to_croissant(&card, "aa", "demo.rete", None);
+        assert!(c.get("extra").is_none(), "Croissant omits the bag");
+        assert!(c.get("rete:extra/review").is_none());
+
+        let plain = to_jsonld(&sample_card(), None, "aa", "demo.rete");
+        assert!(
+            !plain
+                .as_object()
+                .unwrap()
+                .keys()
+                .any(|k| k.starts_with("rete:extra/")),
+            "no bag, no keys"
+        );
     }
 
     #[test]

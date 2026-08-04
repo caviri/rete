@@ -34,7 +34,7 @@ binary is stale/missing.
 | `--type-predicate <FULL-IRI>` | override the typing predicate for the schema pyramid. **Use the full IRI** (`http://www.wikidata.org/prop/direct/P31`), never a prefix — a prefix yields "0 typed classes". |
 | `--card` | embed a Dataset Card (counts, top predicates/classes, vocabularies + curated fields). Always pass for a publishable dataset. |
 | `--title / --license / --source / --description / --created` | curated card fields (each implies `--card`). |
-| `--card-file <json>` | JSON of curated card fields (implies `--card`). |
+| `--card-file <json>` | JSON of curated card fields (implies `--card`). Publisher-defined custom fields go inside its `extra` object (bounded: 8 KB serialized, ≤64 keys, nesting ≤2); unknown TOP-LEVEL keys are rejected loudly — see `docs/dataset-cards.md`. |
 | `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build. PROVEN at 1.3B triples: ORCID → ONE 17.5 GB .rete @ 16 GiB budget (37 chunks, ~2.5 h). v1: .nt/.nq only (files or stdin `-` with explicit `--format` — the single input pass makes pipes valid), default graph only, no pyramid/text-index/reasoning; card = curated + counts. Spill dir via `--tmp-dir`. |
 | `--tmp-dir <dir>` | Where `--memory-budget-mb` puts its spill files (default: alongside the output). |
 | `--materialize` | bake RDFS/OWL-RL entailments into the file at build time (aborts if incoherent). |
