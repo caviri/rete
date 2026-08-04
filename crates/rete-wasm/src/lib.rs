@@ -1331,7 +1331,7 @@ impl XhrRangeReader {
             )
         };
         let out = split_range_response(ranges, dst, got, &self.url)?;
-        report_progress(total);
+        report_progress(total, ranges);
         Ok(out)
     }
 }
@@ -1599,7 +1599,7 @@ impl RangeReader for XhrRangeReader {
             // Report this fetch to an optional progress hook so a worker can stream
             // live "N requests · M bytes" updates to the UI *during* the otherwise
             // opaque synchronous query (postMessage works mid-sync-call).
-            report_progress(buf.len());
+            report_progress(buf.len(), &[(offset, len)]);
             Ok(buf)
         }
     }
@@ -1633,13 +1633,31 @@ impl RangeReader for XhrRangeReader {
     }
 }
 
-/// Notify an optional `globalThis.reteProgress(bytes)` hook of one completed
-/// range fetch (the worker forwards it to the UI). A no-op when unset.
-fn report_progress(bytes: usize) {
+/// Notify an optional `globalThis.reteProgress(bytes, spans, n)` hook of one
+/// completed fetch (the worker forwards it to the UI and keeps a per-query
+/// log). `spans` is a JS array of `"start-end"` byte-offset strings — capped at
+/// [`PROGRESS_SPAN_CAP`] entries so a huge coalesced batch doesn't build a huge
+/// array — and `n` is the TRUE span count. The offsets used to be dropped here
+/// (only the byte count was forwarded), which left the playground's
+/// "Range requests" inspector promising a `start-end` column it could never
+/// fill. A no-op when unset.
+const PROGRESS_SPAN_CAP: usize = 256;
+
+fn report_progress(bytes: usize, ranges: &[(u64, u64)]) {
     let g = js_sys::global();
     if let Ok(f) = js_sys::Reflect::get(&g, &JsValue::from_str("reteProgress")) {
         if let Ok(f) = f.dyn_into::<js_sys::Function>() {
-            let _ = f.call1(&JsValue::NULL, &JsValue::from_f64(bytes as f64));
+            let spans = js_sys::Array::new();
+            for &(offset, len) in ranges.iter().take(PROGRESS_SPAN_CAP) {
+                let end = offset + len.saturating_sub(1);
+                spans.push(&JsValue::from_str(&format!("{offset}-{end}")));
+            }
+            let _ = f.call3(
+                &JsValue::NULL,
+                &JsValue::from_f64(bytes as f64),
+                &spans.into(),
+                &JsValue::from_f64(ranges.len() as f64),
+            );
         }
     }
 }

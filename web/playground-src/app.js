@@ -174,12 +174,22 @@
   }
   function _now() { return (typeof performance !== "undefined" ? performance.now() : Date.now()); }
   self._reteLog = function (e) { e.t = (_now() - qStart) | 0; if (fetchLog.length < 6000) fetchLog.push(e); };
-  // The wasm calls reteProgress(bytes) after every physical range fetch (the
-  // multipart hook also passes metadata). We tally a running count + a per-fetch
-  // log and forward progress, so a long query shows live, not a frozen "querying…".
-  self.reteProgress = function (b, meta) {
+  // The wasm calls reteProgress(bytes, spans, n) after every physical fetch:
+  // one call per sync range read, one per Asyncify concurrent batch — spans is
+  // ["start-end", ...] byte offsets (capped at 256) and n the true span count.
+  // The JS read hooks (multipart / parallel pool) pass a full meta object
+  // instead. We tally a running count + a per-fetch log (offsets included, so
+  // the "Range requests" inspector can actually show its start-end column) and
+  // forward progress, so a long query shows live, not a frozen "querying…".
+  self.reteProgress = function (b, meta, n) {
     pReq++; pBytes += (b || 0);
-    self._reteLog(meta || { k: "range", b: (b || 0) });
+    var e;
+    if (meta && meta.k) e = meta;
+    else if (meta && typeof meta.length === "number") {
+      var cnt = n || meta.length;
+      e = { k: cnt > 1 ? "batch" : "range", n: cnt, b: (b || 0), r: Array.prototype.slice.call(meta) };
+    } else e = { k: "range", b: (b || 0) };
+    self._reteLog(e);
     self.postMessage({ type: "progress", id: pId, requests: pReq, bytes: pBytes });
   };
   self.onmessage = function (e) {
@@ -200,7 +210,26 @@
     }
     if (m.type === "query") {
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
-      Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
+      Promise.resolve(ready).then(function () {
+        // A warm session can answer with ZERO new fetches (every block already
+        // cached). Tell the page what the cache holds BEFORE the run, so a long
+        // CPU-bound evaluation (the ⛁ All graphs union merge re-merges for
+        // seconds over cached blocks) can say "0 new requests — working over
+        // N MB already fetched" instead of a dead-looking zero counter.
+        var hh = urlHash[m.url];
+        var warm = hh && sessions[hh];
+        if (warm) {
+          var w = JSON.parse(warm.stats());
+          self.postMessage({ type: "progress", id: pId, requests: 0, bytes: 0, sessionBytes: w.bytes, sessionRequests: w.requests });
+        }
+        return _session(m.url);
+      }).then(function (g) {
+        // Fetches so far (pReq/pBytes tick on every physical range) happened
+        // while OPENING the session — a fresh open's header/directory reads.
+        // stats() starts counting at open, so the after-before delta below
+        // EXCLUDES them; carry them separately or the final line contradicts
+        // the live counter (live "5 requests · 775 KB", final "0 range req").
+        var openReq = pReq, openBytes = pBytes;
         var before = JSON.parse(g.stats());
         // ASYNC: drive the RAW export (reteQueryRemote) — driving the generated
         // wrapper re-marshals/unpacks on every suspend pass and corrupts the
@@ -217,9 +246,11 @@
             fileLength: after.fileLength,
             bytes: after.bytes - before.bytes,
             requests: after.requests - before.requests,
+            openBytes: openBytes,
+            openRequests: openReq,
             sessionBytes: after.bytes,
             sessionRequests: after.requests,
-            cached: (after.requests - before.requests) === 0
+            cached: (after.requests - before.requests) + openReq === 0
           };
           self.postMessage({ type: "result", id: m.id, ok: true, json: JSON.stringify(res), log: fetchLog });
         });
@@ -361,7 +392,9 @@
       var deadline = Date.now() + 120000;
       while (true) { var c = Atomics.load(ctrl, 0); if (c >= n) break; Atomics.wait(ctrl, 0, c, 3000); if (Date.now() > deadline) return null; }
       if (Atomics.load(ctrl, 1) !== 0) return null;
-      if (self.reteProgress) self.reteProgress(total, { k: "par", n: n, b: total });
+      var pspec = [];
+      for (var s2 = 0; s2 < n; s2++) pspec.push(offs[s2] + "-" + (offs[s2] + lens[s2] - 1));
+      if (self.reteProgress) self.reteProgress(total, { k: "par", n: n, b: total, r: pspec });
       return data;
     } catch (e) { return null; }
   }
@@ -3955,7 +3988,7 @@ self.onmessage = function (e) {
   // it alongside for comparison.
   function setExploreNativeMeta(rows, ms, ent, res) {
     let bytes = 0, reqs = 0, remote = false;
-    [ent, res].forEach((r) => { if (r && r.remote) { remote = true; bytes += r.remote.bytes || 0; reqs += r.remote.requests || 0; } });
+    [ent, res].forEach((r) => { if (r && r.remote) { remote = true; bytes += (r.remote.bytes || 0) + (r.remote.openBytes || 0); reqs += (r.remote.requests || 0) + (r.remote.openRequests || 0); } });
     state.exploreNativeMeta = `rete: ${rows} rows · ${ms.toFixed(0)} ms` + (remote ? ` · ${formatBytes(bytes)} · ${reqs} req` : "");
     if (state.exploreBackend === "native") setBackendMeta(state.exploreNativeMeta);
   }
@@ -7047,25 +7080,98 @@ self.onmessage = function (e) {
     btn.textContent = `⊞ ${n} request${n === 1 ? "" : "s"}`;
   }
 
+  // One fetch-log row's human kind. "multi" is ONE HTTP request covering n
+  // ranges (RFC 7233 multipart); "par" is n parallel requests via the fetch-
+  // worker pool; "batch" is one Asyncify suspend firing n concurrent fetches;
+  // anything else is a single range read.
+  function reqLogKind(e) {
+    if (e.k === "multi") return `multipart ×${e.n}`;
+    if (e.k === "par") return `parallel ×${e.n}`;
+    if (e.k === "batch") return `concurrent ×${e.n}`;
+    return "range";
+  }
+  function reqLogTotals(log) {
+    return {
+      bytes: log.reduce((a, e) => a + (e.b || 0), 0),
+      ranges: log.reduce((a, e) => a + (e.n || 1), 0),
+      // "multi" coalesces n ranges into ONE request; every other event is one
+      // request per range. This used to count log rows, understating bursts.
+      httpReqs: log.reduce((a, e) => a + (e.k === "multi" ? 1 : (e.n || 1)), 0),
+      last: log.length ? log[log.length - 1].t : 0,
+    };
+  }
+  // Strip a URL's query string / fragment before it enters a shareable report:
+  // a signed link (R2 presign, SAS token) carries its credential exactly there.
+  function redactUrl(u) {
+    const s = String(u || "");
+    const cut = s.search(/[?#]/);
+    return cut < 0 ? { url: s, redacted: false } : { url: s.slice(0, cut), redacted: true };
+  }
+  // The paste-able debug report behind the modal's Copy button: enough on its
+  // own to diagnose a remote read — file, size, engine variant, build, load
+  // mode, the query, the totals, and the full per-fetch table WITH offsets.
+  function reqLogReport(log) {
+    const t = reqLogTotals(log);
+    const L = ["rete playground — remote fetch log"];
+    const push = (k, v) => { try { if (v !== undefined && v !== null && v !== "") L.push(k + ": " + v); } catch (_e) { /* ignore */ } };
+    push("build", window.RETE_BUILD);
+    try { L.push("time: " + new Date().toISOString()); } catch (_e) { /* ignore */ }
+    if (state.remote && state.remote.url) {
+      const r = redactUrl(state.remote.url);
+      L.push("file: " + r.url + (r.redacted ? " [query string/fragment redacted — it can carry signed tokens]" : ""));
+    }
+    try {
+      const rem = (state.lastResult && state.lastResult.res && state.lastResult.res.remote) || {};
+      if (rem.fileLength) push("file-size", formatBytes(rem.fileLength));
+    } catch (_e) { /* ignore */ }
+    L.push("dataset: " + (state.dataset || "?") + " · load: " + (state.activeSource || "?"));
+    push("engine", state.asyncReadsOn ? "asyncify (concurrent reads)" : "sync XHR (reliable reader)");
+    push("range-cache", !!state.rangeCacheOn);
+    try { push("reason (OWL QL)", !!($("owlReason") && $("owlReason").checked)); } catch (_e) { /* ignore */ }
+    try { push("union default graph (⛁ All graphs)", unionGraphsOn()); } catch (_e) { /* ignore */ }
+    const q = (state.lastResult && state.lastResult.remote && state.lastResult.q) || ($("q") && $("q").value) || "";
+    if (q.trim()) L.push("query:\n  " + q.trim().replace(/\n/g, "\n  "));
+    L.push(`totals: ${log.length} fetch event(s) · ${t.httpReqs} HTTP request(s) · ${t.ranges} byte-range(s) · ` +
+      `${formatBytes(t.bytes)} fetched · last fetch at +${t.last} ms`);
+    L.push("fetches (# · kind · bytes · at · byte ranges start-end):");
+    log.forEach((e, i) => {
+      const rs = e.r || [];
+      const extra = Math.max(0, (e.n || rs.length) - rs.length);
+      L.push(`  ${i + 1} · ${reqLogKind(e)} · ${formatBytes(e.b || 0)} · +${e.t} ms · ` +
+        (rs.length ? rs.join(", ") + (extra > 0 ? ` … (+${extra} more)` : "") : "(offsets not recorded)"));
+    });
+    push("agent", navigator.userAgent);
+    return L.join("\n");
+  }
+
   function openReqLog() {
     const log = state.lastRemoteLog || [];
-    const totalBytes = log.reduce((a, e) => a + (e.b || 0), 0);
-    const totalRanges = log.reduce((a, e) => a + (e.k === "multi" ? (e.n || 0) : 1), 0);
-    const last = log.length ? log[log.length - 1].t : 0;
+    const t = reqLogTotals(log);
     const head = `<div class="reqlog-stat">` +
-      `<span><b>${log.length}</b> HTTP request(s)</span><span><b>${totalRanges}</b> byte-range(s)</span>` +
-      `<span><b>${formatBytes(totalBytes)}</b> fetched</span><span><b>${last} ms</b> total</span></div>`;
+      `<span><b>${t.httpReqs}</b> HTTP request(s)</span><span><b>${t.ranges}</b> byte-range(s)</span>` +
+      `<span><b>${formatBytes(t.bytes)}</b> fetched</span><span><b>${t.last} ms</b> total</span></div>`;
     const rows = log.map((e, i) => {
-      const kind = e.k === "multi" ? `multipart ×${e.n}` : "range";
-      const rs = e.k === "multi" ? (e.r || []) : [];
-      const ranges = rs.length ? esc(rs.slice(0, 6).join(", ") + (rs.length > 6 ? ` … (+${rs.length - 6})` : "")) : "—";
-      return `<tr><td class="num">${i + 1}</td><td>${kind}</td><td class="num">${formatBytes(e.b || 0)}</td>` +
+      const rs = e.r || [];
+      const shown = rs.slice(0, 6);
+      const hidden = Math.max(0, (e.n || rs.length) - shown.length);
+      const ranges = shown.length ? esc(shown.join(", ") + (hidden > 0 ? ` … (+${hidden})` : "")) : "—";
+      return `<tr><td class="num">${i + 1}</td><td>${reqLogKind(e)}</td><td class="num">${formatBytes(e.b || 0)}</td>` +
         `<td class="num">${e.t} ms</td><td class="mono">${ranges}</td></tr>`;
     }).join("");
+    // The copy affordance is the SAME one the error box uses (.err-copy inside
+    // .err-tech — the shared delegated handler copies, flashes "Copied ✓", and
+    // on a blocked clipboard selects the text and says so), so the fallback
+    // behaviour is inherited, not re-invented.
+    const copyBlock = log.length
+      ? `<details class="err-tech" open><summary>🔎 Debug report — tap Copy, paste into an issue ` +
+        `<button class="err-copy" type="button">📋 Copy log</button></summary>` +
+        `<pre class="err-tech-body">${esc(reqLogReport(log))}</pre></details>`
+      : "";
     $("reqLogBody").innerHTML = head +
       `<div class="tbl"><table><thead><tr><th class="num">#</th><th>kind</th><th class="num">bytes</th>` +
       `<th class="num">at</th><th>byte ranges (start-end)</th></tr></thead>` +
-      `<tbody>${rows || `<tr><td colspan="5">No requests logged.</td></tr>`}</tbody></table></div>`;
+      `<tbody>${rows || `<tr><td colspan="5">No requests logged.</td></tr>`}</tbody></table></div>` +
+      copyBlock;
     $("reqModal").classList.remove("hidden");
   }
 
@@ -7166,8 +7272,12 @@ self.onmessage = function (e) {
     if (src.kind === "remote") {
       return remoteSparql(src.url, q, "table").then((out) => {
         const r = JSON.parse(out.json), rem = r.remote || {};
+        // openBytes/openRequests: the session open this source's first query
+        // triggered — physical traffic like any other, so the cost table counts it.
         return { kind: r.kind || kind, vars: r.vars || [], rows: r.rows || [],
-          boolean: r.boolean, triples: r.triples || [], bytes: rem.bytes || 0, requests: rem.requests || 0 };
+          boolean: r.boolean, triples: r.triples || [],
+          bytes: (rem.bytes || 0) + (rem.openBytes || 0),
+          requests: (rem.requests || 0) + (rem.openRequests || 0) };
       });
     }
     return new Promise((resolve) => {
@@ -7734,8 +7844,10 @@ self.onmessage = function (e) {
   // matches the DEFAULT graph unless wrapped in GRAPH — so this is information
   // about the FILE, not an error, and it is shown only when that file fact is
   // verifiable: the resident graph answers one first-match ASK; a remote file
-  // answers from its own Dataset Card (2 small cached range reads). No card, no
-  // claim — and the query is never rewritten or unioned on the user's behalf.
+  // answers from its own Dataset Card (2 small cached range reads), or — when
+  // the file carries no card with the counts — from two first-match ASKs on the
+  // open session, so carded and cardless files explain themselves alike. The
+  // query is never rewritten or unioned on the user's behalf.
   const emptyDefaultFactCache = new Map(); // remote url -> {empty,graphs,count} | "none"
 
   async function emptyDefaultGraphFact() {
@@ -7752,7 +7864,23 @@ self.onmessage = function (e) {
         if (card && typeof card.triple_count === "number" && typeof card.named_graph_count === "number") {
           fact = { empty: card.triple_count === 0, graphs: card.named_graph_count > 0, count: card.named_graph_count };
         }
-      } catch (_e) { /* cardless file or worker hiccup: show nothing rather than guess */ }
+      } catch (_e) { /* cardless file or worker hiccup: fall through to the ASK probes */ }
+      // No card, or a card without the counts: ask the FILE itself. Two
+      // first-match ASKs over the already-open session — the default graph's
+      // emptiness comes off its resident tile directory and the named-graph
+      // probe stops at the first quad it finds, so both stay a few small
+      // range reads. Without this, a cardless remote file showed NOTHING here,
+      // and the one case the explainer exists for (all data in named graphs)
+      // went unexplained exactly where no card can explain it.
+      if (fact === "none") {
+        try {
+          const empty = JSON.parse((await remoteSparql(url, "ASK { ?s ?p ?o }", "table")).json);
+          if (empty && empty.boolean === false) {
+            const named = JSON.parse((await remoteSparql(url, "ASK { GRAPH ?g { ?s ?p ?o } }", "table")).json);
+            if (named && named.boolean === true) fact = { empty: true, graphs: true, count: 0 };
+          }
+        } catch (_e) { /* unreachable file: show nothing rather than guess */ }
+      }
       emptyDefaultFactCache.set(url, fact);
       return fact === "none" ? null : fact;
     }
@@ -7865,10 +7993,22 @@ self.onmessage = function (e) {
       const t0 = performance.now();
       const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
       const ofSize = meta.size ? " of " + meta.size : "";
-      let lastReq = 0, lastBytes = 0;
+      let lastReq = 0, lastBytes = 0, sessionBytes = 0;
       const showProg = () => {
         const dt = (performance.now() - t0) / 1000;
         // Technical only — no dataset title (it's already named in the header/chip).
+        // A counter frozen at "0 B fetched" reads as a failure, but on a warm
+        // session it is the CACHE WORKING: every block the query touches is
+        // already resident, and the time goes to evaluation (the ⛁ All graphs
+        // union merge recomputes for seconds with zero network). Say that —
+        // report only what is known: 0 completed fetches + what the session
+        // already holds — instead of leaving a dead zero to be read as an error.
+        if (lastReq === 0 && sessionBytes > 0 && dt > 1.5) {
+          $("qmeta").textContent = `⏳ querying · 0 new request(s) — working over ` +
+            `${formatBytes(sessionBytes)} already fetched this session` +
+            `${union ? " (⛁ all graphs: merging the union)" : ""} · ${dt.toFixed(1)}s`;
+          return;
+        }
         $("qmeta").textContent = `⏳ querying · ${lastReq} request(s) · ` +
           `${formatBytes(lastBytes)}${ofSize} fetched · ${dt.toFixed(1)}s`;
       };
@@ -7885,8 +8025,13 @@ self.onmessage = function (e) {
         runBtn.onclick = runQuery;
       };
       // Just record the latest tally; the 250 ms timer paints it — so a query
-      // firing thousands of fetches doesn't thrash the DOM.
-      remoteOnProgress = (m) => { lastReq = m.requests; lastBytes = m.bytes; };
+      // firing thousands of fetches doesn't thrash the DOM. The worker also
+      // announces a warm session's cumulative bytes up front (sessionBytes), so
+      // a zero-fetch run can say what it is running on.
+      remoteOnProgress = (m) => {
+        lastReq = m.requests; lastBytes = m.bytes;
+        if (m.sessionBytes != null) sessionBytes = m.sessionBytes;
+      };
       // TTL / JSON-LD ask the worker to serialize (a CONSTRUCT carries res.text);
       // every other view wants table rows (graph/map/time derive from them).
       const remoteFmt = (fmt === "ttl" || fmt === "jsonld") ? fmt : "table";
@@ -7932,13 +8077,21 @@ self.onmessage = function (e) {
         const r = res.remote || {};
         const dt = performance.now() - t0;
         updateReqLogBtn();
-        // Show this query's PHYSICAL fetch (cache misses only) plus what the
-        // resident session has cached so far — so a re-run visibly drops to ~0.
-        const cacheNote = r.cached
-          ? " — served from cache, 0 new bytes"
+        // This run's PHYSICAL fetches: the query's cache misses PLUS the
+        // session open it may have triggered. stats() starts counting at open,
+        // so the delta alone hid the open's requests — the final line then
+        // contradicted the live counter ("5 requests · 775 KB" while running,
+        // "0 range req — served from cache" on a first-ever query). A genuinely
+        // all-cached run names the cache size, so its "0 new bytes" reads as
+        // the session cache working, not as a fetch that never happened.
+        const req = (r.requests || 0) + (r.openRequests || 0);
+        const rbytes = (r.bytes || 0) + (r.openBytes || 0);
+        const openNote = (r.openRequests || 0) > 0 ? " (incl. opening the file)" : "";
+        const cacheNote = req === 0
+          ? ` — 0 new bytes, all served from this session's cache (${formatBytes(r.sessionBytes || 0)})`
           : (r.sessionBytes != null ? ` · ${formatBytes(r.sessionBytes)} cached this session` : "");
-        $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
-          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} fetched${cacheNote} · ${dt.toFixed(0)} ms` +
+        $("qmeta").textContent = `${summary} | ${req} range req · ` +
+          `${formatBytes(rbytes)} of ${formatBytes(r.fileLength || 0)} fetched${openNote}${cacheNote} · ${dt.toFixed(0)} ms` +
           (readerNote ? ` · ${readerNote}` : "") +
           (union ? " · ⛁ union default graph (non-standard)" : "");
         maybeExplainEmptyDefaultGraph(q, res);
@@ -10367,6 +10520,15 @@ self.onmessage = function (e) {
     { const rh = $("reasonHelp"); if (rh) rh.onclick = () => $("reasonModal").classList.remove("hidden"); }
     { const rc = $("reasonModalClose"); if (rc) rc.onclick = () => $("reasonModal").classList.add("hidden"); }
     { const rm = $("reasonModal"); if (rm) rm.addEventListener("click", (e) => { if (e.target === rm) rm.classList.add("hidden"); }); }
+    // ⛁ All graphs and 🏷 Labels help — same conventions as the Reason/Strategy
+    // modals: a ? beside the control, × close, backdrop click, Escape in the
+    // shared block.
+    { const uh = $("unionHelp"); if (uh) uh.onclick = () => $("unionModal").classList.remove("hidden"); }
+    { const uc = $("unionModalClose"); if (uc) uc.onclick = () => $("unionModal").classList.add("hidden"); }
+    { const um = $("unionModal"); if (um) um.addEventListener("click", (e) => { if (e.target === um) um.classList.add("hidden"); }); }
+    { const lh = $("labelsHelp"); if (lh) lh.onclick = () => $("labelsModal").classList.remove("hidden"); }
+    { const lc = $("labelsModalClose"); if (lc) lc.onclick = () => $("labelsModal").classList.add("hidden"); }
+    { const lm = $("labelsModal"); if (lm) lm.addEventListener("click", (e) => { if (e.target === lm) lm.classList.add("hidden"); }); }
     // ⛁ All graphs — a semantics switch must announce itself the moment it
     // flips, not only on the next run.
     { const u = $("unionGraphs"); if (u) u.onchange = () => announceUnionGraphs(u.checked); }
@@ -10463,6 +10625,8 @@ self.onmessage = function (e) {
         $("cardModal").classList.add("hidden");
         $("outputModal").classList.add("hidden");
         { const rm = $("reasonModal"); if (rm) rm.classList.add("hidden"); }
+        { const um = $("unionModal"); if (um) um.classList.add("hidden"); }
+        { const lm = $("labelsModal"); if (lm) lm.classList.add("hidden"); }
         $("cardsFieldsModal").classList.add("hidden");
         $("querySettingsModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");

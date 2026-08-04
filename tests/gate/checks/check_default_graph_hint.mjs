@@ -5,10 +5,15 @@
 // default graph is verifiably empty while named graphs hold data, the result
 // panel adds one informational line pointing at GRAPH ?g { … }.
 //
-// Asserted here, both fact sources:
+// Asserted here, all three fact sources:
 //  - resident graph (built in-browser from named-graph-only N-Quads): note shown;
 //  - remote lazy file whose own Dataset Card reports triple_count 0 with
 //    named_graph_count > 0 (the gate's named-graphs-only fixture): note shown;
+//  - remote lazy file WITHOUT a card (named-graphs-only-nocard fixture): the
+//    fallback asks the file itself with two first-match ASKs — a cardless
+//    remote used to show nothing here, the one gap in the explainer's paths;
+// every note must point at BOTH escapes (GRAPH ?g and the ⛁ All graphs
+// toggle — the owner reported the note not naming the toggle);
 // and the two ways it must NOT fire:
 //  - an ordinary file (scholar) where a query legitimately counts 0 — no note;
 //  - a query that already names GRAPH on the named-graphs file — no note.
@@ -27,14 +32,16 @@ const GRAPH_Q = "SELECT ?s WHERE { GRAPH <http://example.test/graph/999> { ?s ?p
 const main = async () => {
   // Built by scripts/build_wasm.sh (like card-fixture.rete). Missing = red with
   // a note that says how to produce it, not a silent skip.
-  let remoteFixture = null;
+  let remoteFixture = null, nocardFixture = null;
   try {
     remoteFixture = await readFile("/work/tests/gate/.cache/named-graphs-only.rete");
+    nocardFixture = await readFile("/work/tests/gate/.cache/named-graphs-only-nocard.rete");
   } catch (e) {
-    console.log(JSON.stringify({ verdict: "FAIL", error: "tests/gate/.cache/named-graphs-only.rete missing — run scripts/build_wasm.sh" }));
+    console.log(JSON.stringify({ verdict: "FAIL", error: "tests/gate/.cache/named-graphs-only(.rete|-nocard.rete) missing — run scripts/build_wasm.sh" }));
     process.exit(1);
   }
   const server = createServer((req, res) => {
+    const fixture = /nocard/.test(req.url || "") ? nocardFixture : remoteFixture;
     const common = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Expose-Headers": "Content-Range,Content-Length,Accept-Ranges",
@@ -43,14 +50,14 @@ const main = async () => {
     const range = req.headers.range && /bytes=(\d+)-(\d*)/.exec(req.headers.range);
     if (range) {
       const start = Number(range[1]);
-      const end = range[2] ? Math.min(Number(range[2]), remoteFixture.length - 1) : remoteFixture.length - 1;
-      const body = remoteFixture.subarray(start, end + 1);
-      res.writeHead(206, { ...common, "Content-Type": "application/octet-stream", "Content-Range": `bytes ${start}-${end}/${remoteFixture.length}`, "Content-Length": body.length });
+      const end = range[2] ? Math.min(Number(range[2]), fixture.length - 1) : fixture.length - 1;
+      const body = fixture.subarray(start, end + 1);
+      res.writeHead(206, { ...common, "Content-Type": "application/octet-stream", "Content-Range": `bytes ${start}-${end}/${fixture.length}`, "Content-Length": body.length });
       res.end(body);
       return;
     }
-    res.writeHead(200, { ...common, "Content-Type": "application/octet-stream", "Content-Length": remoteFixture.length });
-    res.end(remoteFixture);
+    res.writeHead(200, { ...common, "Content-Type": "application/octet-stream", "Content-Length": fixture.length });
+    res.end(fixture);
   });
   const port = await listen(server);
 
@@ -117,6 +124,7 @@ const main = async () => {
     failures.push(`in-memory: no explainer over a named-graph-only file (out: "${memHit.outText}")`);
   }
   if (memHit.note && !/GRAPH \?g/.test(memHit.note)) failures.push("in-memory: explainer does not point at GRAPH ?g { … }");
+  if (memHit.note && !/All graphs/.test(memHit.note)) failures.push("in-memory: explainer does not point at the ⛁ All graphs toggle");
 
   // A query that already names GRAPH must NOT get the note, even on this file.
   const memGraphQ = await runAndProbe(mem, GRAPH_Q, { expectNote: false });
@@ -143,7 +151,23 @@ const main = async () => {
   if (remoteHit.note && !/3 named graphs/.test(remoteHit.note)) {
     failures.push(`remote: explainer does not carry the card's named-graph count: "${remoteHit.note.slice(0, 120)}"`);
   }
+  if (remoteHit.note && !/All graphs/.test(remoteHit.note)) failures.push("remote: explainer does not point at the ⛁ All graphs toggle");
   await remote.close();
+
+  // --- remote WITHOUT a card: the ASK-probe fallback -------------------------
+  // The same shape minus the Dataset Card. The explainer must still appear —
+  // the fact now comes from two first-match ASKs on the open worker session
+  // (a cardless remote used to show nothing at all here). No card also means
+  // no count, so the note says "named graphs" without a number.
+  const nocard = await open(`#url=${encodeURIComponent(`http://127.0.0.1:${port}/named-graphs-only-nocard.rete`)}`);
+  const nocardHit = await runAndProbe(nocard, COUNT_Q, { expectNote: true, timeout: 90000 });
+  if (nocardHit.error) failures.push(`nocard remote count errored: ${nocardHit.outText}`);
+  if (!/default graph is empty/i.test(nocardHit.note)) {
+    failures.push(`nocard remote: no explainer over the CARDLESS named-graphs-only fixture (out: "${nocardHit.outText}")`);
+  }
+  if (nocardHit.note && !/named graphs/i.test(nocardHit.note)) failures.push(`nocard remote: explainer lost the named-graphs wording: "${nocardHit.note.slice(0, 120)}"`);
+  if (nocardHit.note && !/All graphs/.test(nocardHit.note)) failures.push("nocard remote: explainer does not point at the ⛁ All graphs toggle");
+  await nocard.close();
 
   if (pageErrors.length) failures.push(`page errors: ${pageErrors.slice(0, 2).join(" | ")}`);
 
@@ -153,9 +177,10 @@ const main = async () => {
   const pass = failures.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
-    note: "empty-default-graph explainer: shown for named-graph-only files (resident ASK + remote card), absent for ordinary zero results and GRAPH queries",
+    note: "empty-default-graph explainer: shown for named-graph-only files (resident ASK + remote card + cardless-remote ASK fallback), points at GRAPH ?g AND ⛁ All graphs, absent for ordinary zero results and GRAPH queries",
     memNote: memHit.note.slice(0, 100),
     remoteNote: remoteHit.note.slice(0, 100),
+    nocardNote: nocardHit.note.slice(0, 100),
     failures,
   }, null, 2));
   process.exit(pass ? 0 : 1);

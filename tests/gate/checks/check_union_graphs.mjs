@@ -15,7 +15,19 @@
 //  - the empty-default-graph explainer NEVER shows while the toggle is on
 //    (with union semantics that message would be wrong);
 //  - GRAPH ?g still enumerates named graphs with the toggle on;
-//  - turning it off restores the standard 0.
+//  - turning it off restores the standard 0;
+//  - TRANSFER FIGURES stay truthful on the remote path (reported: "the bytes
+//    fetched log doesn't get updated which makes it looks like an error"):
+//    the first query's final line counts the session OPEN's fetches instead of
+//    contradicting the live counter with "0 range req", and any 0-request run
+//    names the session cache it ran on, so a zero reads as the cache working;
+//  - the ⛁ All graphs and 🏷 Labels switches each have a ? help affordance
+//    opening their modal (same conventions as the Strategy/Reason modals:
+//    × close, backdrop, Escape);
+//  - the ⊞ Range-requests inspector carries byte offsets on EVERY row (the
+//    column used to render "—" always — offsets were dropped at the progress
+//    hook) and its Copy button puts a self-sufficient debug report (offsets +
+//    query + file) on the clipboard.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { launchBrowser } from "./_browser.mjs";
@@ -93,7 +105,19 @@ const main = async () => {
     }));
   };
 
+  // Remote transfer figures must never contradict themselves: a "0 range req"
+  // line is honest only when it names the session cache the run answered from
+  // (otherwise a run that visibly fetched — or merged for seconds — reads as a
+  // fetch that never happened, the reported "looks like an error").
+  const auditTransfer = (label, qmeta) => {
+    if (!/range req/.test(qmeta)) { failures.push(`${label}: remote result meta has no transfer figures: "${qmeta.slice(0, 100)}"`); return; }
+    if (/\b0 range req/.test(qmeta) && !/session's cache \(/.test(qmeta)) {
+      failures.push(`${label}: a 0-request run does not name the session cache it ran on: "${qmeta.slice(0, 140)}"`);
+    }
+  };
+
   const exercise = async (page, label) => {
+    const isRemote = label === "remote";
     // Off by default — a semantics switch must never arrive flipped.
     const def = await page.evaluate(() => {
       const u = document.getElementById("unionGraphs");
@@ -107,6 +131,18 @@ const main = async () => {
     if (off.error) failures.push(`${label}: baseline query errored: ${off.outText}`);
     if (!/\b0 row/.test(off.qmeta)) failures.push(`${label}: expected the standard 0 rows with the toggle off, qmeta: "${off.qmeta.slice(0, 80)}"`);
     if (/union default graph/i.test(off.qmeta)) failures.push(`${label}: the OFF run claims union semantics`);
+    if (isRemote) {
+      // FIRST query of a fresh worker session: opening the file fetched real
+      // ranges (the live counter showed them), so the final line must count
+      // them too — it used to say "0 range req … served from cache" here.
+      auditTransfer(`${label} (baseline)`, off.qmeta);
+      if (!/[1-9]\d* range req/.test(off.qmeta) || !/incl\. opening the file/.test(off.qmeta)) {
+        failures.push(`${label}: the first query's final line hides the session open's fetches: "${off.qmeta.slice(0, 140)}"`);
+      }
+      // …and its fetch log must carry byte offsets + a copyable debug report
+      // (audited here, adjacent to the run that produced the log).
+      await auditReqLog(page, label);
+    }
 
     // Flip it on: announced immediately…
     await page.check("#unionGraphs");
@@ -121,6 +157,19 @@ const main = async () => {
     if (!/\b6 row/.test(on.qmeta)) failures.push(`${label}: expected 6 union rows, qmeta: "${on.qmeta.slice(0, 100)}"`);
     if (!/union default graph/i.test(on.qmeta)) failures.push(`${label}: the union run does not announce itself in the result meta`);
     if (on.explainer) failures.push(`${label}: the empty-default-graph explainer showed WHILE union was on`);
+    if (isRemote) auditTransfer(`${label} (union)`, on.qmeta);
+
+    // A SECOND union run answers entirely from the warm session (the tiny
+    // fixture is fully cached by now): the transfer figures must say so
+    // rather than sit at a bare unexplained zero.
+    if (isRemote) {
+      const warm = await run(page, PLAIN_Q, { settleMs: 300 });
+      if (!/\b6 row/.test(warm.qmeta)) failures.push(`${label}: warm union re-run lost the union rows, qmeta: "${warm.qmeta.slice(0, 100)}"`);
+      auditTransfer(`${label} (warm union)`, warm.qmeta);
+      if (!/0 new bytes/.test(warm.qmeta) || !/session's cache \(/.test(warm.qmeta)) {
+        failures.push(`${label}: warm union re-run does not explain its zero transfer: "${warm.qmeta.slice(0, 140)}"`);
+      }
+    }
 
     // GRAPH ?g must still see the named graphs with the toggle on.
     const g = await run(page, GRAPH_Q, { settleMs: 300 });
@@ -132,9 +181,86 @@ const main = async () => {
     if (!/\b0 row/.test(back.qmeta)) failures.push(`${label}: toggling off did not restore standard semantics, qmeta: "${back.qmeta.slice(0, 80)}"`);
   };
 
+  // A ? help affordance beside a toolbar switch — same conventions as the
+  // Strategy/Reason modals: opens the modal, closes on ×, Escape, backdrop.
+  // Shared by ⛁ All graphs (#unionHelp/#unionModal) and 🏷 Labels
+  // (#labelsHelp/#labelsModal).
+  const exerciseHelp = async (page, label, { name, helpId, modalId, closeId, musts }) => {
+    const present = await page.evaluate(
+      ([h, m]) => !!document.getElementById(h) && !!document.getElementById(m), [helpId, modalId]);
+    if (!present) { failures.push(`${label}: no #${helpId} button / #${modalId} in the page`); return; }
+    const openState = async () => page.evaluate((m) => !document.getElementById(m).classList.contains("hidden"), modalId);
+    await page.click(`#${helpId}`);
+    if (!(await openState())) { failures.push(`${label}: clicking ? did not open the ${name} modal`); return; }
+    const text = await page.evaluate((m) => document.getElementById(m).textContent || "", modalId);
+    for (const must of musts) {
+      if (!text.includes(must)) failures.push(`${label}: ${name} modal is missing "${must}"`);
+    }
+    await page.click(`#${closeId}`);
+    if (await openState()) failures.push(`${label}: × did not close the ${name} modal`);
+    await page.click(`#${helpId}`);
+    await page.keyboard.press("Escape");
+    if (await openState()) failures.push(`${label}: Escape did not close the ${name} modal`);
+    await page.click(`#${helpId}`);
+    // Same technique as check_load_modal: a click whose target IS the modal
+    // element (the backdrop), not a descendant — deterministic, no hit-testing.
+    await page.evaluate((m) => document.getElementById(m).dispatchEvent(
+      new MouseEvent("click", { bubbles: true })), modalId);
+    if (await openState()) failures.push(`${label}: backdrop click did not close the ${name} modal`);
+  };
+
+  const HELP_MODALS = [
+    { name: "All graphs", helpId: "unionHelp", modalId: "unionModal", closeId: "unionModalClose",
+      musts: ["union of the default graph and every named graph", "Virtuoso", "standard SPARQL",
+              "FROM", "live SPARQL endpoints", "materializes the merged index"] },
+    { name: "Labels", helpId: "labelsHelp", modalId: "labelsModal", closeId: "labelsModalClose",
+      musts: ["editor decorations", "rdfs:label", "Label property", "range requests"] },
+  ];
+
+  // The ⊞ requests inspector after a remote run: every row must carry its byte
+  // offsets (the column used to render "—" on every row — the offsets were
+  // dropped at the progress hook), and the Copy affordance must put a
+  // self-sufficient debug report (offsets + query + file) on the clipboard.
+  const auditReqLog = async (page, label) => {
+    const btnVisible = await page.evaluate(() => {
+      const b = document.getElementById("reqLogBtn");
+      return !!b && !b.classList.contains("hidden");
+    });
+    if (!btnVisible) { failures.push(`${label}: no ⊞ requests button after a remote run`); return; }
+    await page.click("#reqLogBtn");
+    const modal = await page.evaluate(() => ({
+      open: !document.getElementById("reqModal").classList.contains("hidden"),
+      cells: Array.from(document.querySelectorAll("#reqLogBody tbody td.mono")).map((c) => c.textContent || ""),
+      copyBtn: !!document.querySelector("#reqLogBody .err-copy"),
+      report: (document.querySelector("#reqLogBody .err-tech-body") || {}).textContent || "",
+    }));
+    if (!modal.open) { failures.push(`${label}: ⊞ requests did not open the modal`); return; }
+    if (!modal.cells.length) failures.push(`${label}: request log table has no rows`);
+    const missing = modal.cells.filter((c) => !/\d+-\d+/.test(c));
+    if (missing.length) {
+      failures.push(`${label}: ${missing.length} of ${modal.cells.length} log rows carry NO byte offsets (the "—" column bug): ${JSON.stringify(modal.cells.slice(0, 3))}`);
+    }
+    if (!modal.copyBtn) failures.push(`${label}: request log has no Copy affordance`);
+    if (!/remote fetch log/.test(modal.report)) failures.push(`${label}: debug report missing its header`);
+    if (!/\d+-\d+/.test(modal.report)) failures.push(`${label}: debug report carries no byte offsets`);
+    if (!/SELECT \?s \?p \?o/i.test(modal.report)) failures.push(`${label}: debug report does not carry the query`);
+    if (!/127\.0\.0\.1/.test(modal.report)) failures.push(`${label}: debug report does not name the file`);
+    // Copy actually lands on the clipboard — the SAME shared helper (and
+    // fallback) the error box uses, so only the landing needs asserting here.
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: `http://localhost:${PGPORT}` });
+    await page.click("#reqLogBody .err-copy");
+    await page.waitForTimeout(400);
+    const clip = await page.evaluate(() => navigator.clipboard.readText().catch(() => "READ_FAILED"));
+    if (!/remote fetch log/.test(clip) || !/\d+-\d+/.test(clip)) {
+      failures.push(`${label}: clipboard does not hold the fetch log (got: "${String(clip).slice(0, 60)}")`);
+    }
+    await page.keyboard.press("Escape"); // close the modal before moving on
+  };
+
   // ---- remote lazy path (the worker engine — asyncify default in Chromium) --
   const remote = await open(`#url=${encodeURIComponent(`http://127.0.0.1:${port}/union.rete`)}`);
   await exercise(remote, "remote");
+  for (const spec of HELP_MODALS) await exerciseHelp(remote, "remote", spec);
   await remote.close();
 
   // ---- resident path (Graph.query_opts on the in-memory engine) -------------
@@ -157,7 +283,7 @@ const main = async () => {
   const pass = failures.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
-    note: "union default graph toggle: off by default, 0→6 rows when on (remote + resident), announced, explainer suppressed, GRAPH intact, reversible",
+    note: "union default graph toggle: off by default, 0→6 rows when on (remote + resident), announced, explainer suppressed, GRAPH intact, reversible; remote transfer figures truthful (open counted, zero runs name the cache); req-log rows carry offsets + copyable report; ⛁/🏷 help modals open/close",
     failures,
   }, null, 2));
   process.exit(pass ? 0 : 1);

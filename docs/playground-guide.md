@@ -231,8 +231,11 @@ in the page — goes back to sharing the deep link itself, exactly as before.
 
 For a remote dataset the result line reports what the query physically did —
 `N range requests · M KB fetched · file is X MB` — and **⊞ requests** opens the
-actual byte-range log. Re-running a query reports *"served from cache, 0 new
-bytes"*: reads are cached per session and — on Chromium-family browsers —
+actual byte-range log. Re-running a query reports *"0 new bytes, all served
+from this session's cache"* (with the cache's size — so a long, purely
+CPU-bound run such as a ⛁ All graphs union merge on a warm session reads as
+the cache working, not as a stalled fetch): reads are cached per session and —
+on Chromium-family browsers —
 fetched **concurrently by default** (the engine overlaps each query's
 byte-range requests via Asyncify, no cross-origin isolation needed; see
 [Which browser?](#which-browser) for why other browsers read sequentially).

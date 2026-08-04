@@ -471,7 +471,8 @@ keeps the <code>Rete</code> resident, so the block cache <strong>and</strong> th
 playground's worker holds one <code>RemoteGraph</code> per URL, so exploring a remote
 dataset — refining a filter, paging entity tables, re-running — reuses
 everything already fetched: a fully cached re-run fetches <strong>0 bytes</strong>, and the
-result line shows <em>"served from cache, 0 new bytes."</em> (The free <code>sparql_url</code>
+result line shows <em>"0 new bytes, all served from this session's cache"</em> with
+the cache's size. (The free <code>sparql_url</code>
 opens a fresh file each call, so it gets only the within-query block cache —
 use <code>RemoteGraph</code> for cross-query reuse.)</li>
 </ul>
