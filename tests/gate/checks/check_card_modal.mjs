@@ -103,6 +103,86 @@ const main = async () => {
   if (!/a fixture card/i.test(rendered.body)) failures.push("rendered view does not show the card description");
   if (!rendered.stats.length) failures.push("rendered view shows no counts");
 
+  // ---- the description is Markdown, and ONLY Markdown ------------------------
+  // The fixture's description carries every construct the viewer supports, plus
+  // a <script>, an <img onerror=> and a javascript: link. Both halves matter:
+  // the formatting must APPEAR, and none of the markup may have become an
+  // element. Raw HTML is not a supported description format — that is the whole
+  // reason Markdown is (see docs/dataset-cards.md).
+  const desc = await remote.evaluate(() => {
+    const d = document.querySelector("#cardBody .card-desc");
+    if (!d) return null;
+    const tags = (sel) => [...d.querySelectorAll(sel)].map((e) => e.textContent.trim());
+    return {
+      // Headings are shifted under the modal's own <h3>: a card never emits h1/h2/h3.
+      h1h2h3: d.querySelectorAll("h1, h2, h3").length,
+      h4: tags("h4"), h5: tags("h5"), h6: tags("h6"),
+      uls: d.querySelectorAll("ul").length,
+      lis: tags("ul > li"),
+      nested: tags("li > ul > li"),
+      ols: d.querySelectorAll("ol").length,
+      olis: tags("ol > li"),
+      quote: tags("blockquote").join(" "),
+      hrs: d.querySelectorAll("hr").length,
+      pre: tags("pre code").join(" "),
+      strong: tags("strong"), code: tags("code"),
+      hrefs: [...d.querySelectorAll("a[href]")].map((a) => a.getAttribute("href")),
+      // Nothing from the description may have become live markup.
+      injected: d.querySelectorAll("script, img, iframe, object, embed").length,
+      inlineHandlers: [...d.querySelectorAll("*")].filter((e) =>
+        [...e.attributes].some((a) => /^on/i.test(a.name))).length,
+      // …and the raw markup must still be READABLE as text, not vanished.
+      text: d.textContent,
+      pwned: window.__cardDescPwned,
+    };
+  });
+  if (!desc) {
+    failures.push("the card description did not render a .card-desc block");
+  } else {
+    if (desc.h1h2h3) failures.push(`a card description emitted ${desc.h1h2h3} h1/h2/h3 — headings must sit under the modal's own <h3>`);
+    if (!desc.h4.some((t) => /A level-one heading/.test(t))) failures.push(`"# " did not become an <h4>: ${JSON.stringify(desc.h4)}`);
+    if (!desc.h5.some((t) => /A level-two heading/.test(t))) failures.push(`"## " did not become an <h5>: ${JSON.stringify(desc.h5)}`);
+    if (!desc.lis.includes("a bullet")) failures.push(`bullets did not become list items: ${JSON.stringify(desc.lis)}`);
+    if (!desc.nested.includes("a nested bullet")) failures.push(`an indented bullet did not nest: ${JSON.stringify(desc.nested)}`);
+    if (!desc.ols) failures.push("a numbered list did not become an <ol>");
+    if (!desc.olis.includes("first")) failures.push(`ordered items missing: ${JSON.stringify(desc.olis)}`);
+    if (!/A quoted line/.test(desc.quote)) failures.push(`"> " did not become a blockquote: "${desc.quote}"`);
+    if (!desc.hrs) failures.push('"---" did not become a rule');
+    if (!/SELECT \* WHERE/.test(desc.pre)) failures.push(`a fenced block did not become <pre><code>: "${desc.pre}"`);
+    if (!desc.strong.includes("bold")) failures.push("**bold** did not render");
+    if (!desc.code.some((c) => /rete build/.test(c))) failures.push(`\`code\` did not render: ${JSON.stringify(desc.code)}`);
+    if (!desc.hrefs.includes("https://example.org/gate-desc-link")) {
+      failures.push(`a markdown link is not a link: ${JSON.stringify(desc.hrefs)}`);
+    }
+    // --- injection: the half that must NOT have happened ---
+    if (desc.injected) failures.push(`the description created ${desc.injected} script/img/frame elements`);
+    if (desc.inlineHandlers) failures.push(`the description created ${desc.inlineHandlers} elements with an on* handler`);
+    if (desc.pwned !== undefined) failures.push("a <script> inside the description EXECUTED");
+    if (desc.hrefs.some((h) => /^javascript:/i.test(h))) failures.push(`a javascript: link survived: ${JSON.stringify(desc.hrefs)}`);
+    if (!/<script>/.test(desc.text)) failures.push("the escaped <script> is not readable as text — it was swallowed, not escaped");
+  }
+
+  // The sidebar description is a <p>: it must stay flat. A <ul>/<h4> in there
+  // would be re-parented by the HTML parser and tear the layout apart — which is
+  // why the block renderer is scoped to the modal.
+  const sidebar = await remote.evaluate(() => {
+    const p = document.getElementById("dsDesc");
+    return {
+      blocks: p.querySelectorAll("h1,h2,h3,h4,h5,h6,ul,ol,li,blockquote,hr,pre,p,div").length,
+      injected: p.querySelectorAll("script, img").length,
+      text: p.textContent,
+      tagline: (document.getElementById("dsTagline") || {}).textContent || "",
+    };
+  });
+  if (sidebar.blocks) failures.push(`#dsDesc rendered ${sidebar.blocks} block elements inside a <p>`);
+  if (sidebar.injected) failures.push("#dsDesc turned card text into live markup");
+  // Flattened, not stripped: the heading's WORDS survive, its "## " does not,
+  // and bullets read as bullets instead of as stray hyphens.
+  if (!/A level-one heading/.test(sidebar.text)) failures.push("#dsDesc dropped the heading text instead of flattening it");
+  if (/#+\s*A level-one heading/.test(sidebar.text)) failures.push(`#dsDesc shows a raw heading marker: "${sidebar.text.slice(0, 120)}"`);
+  if (!/•\s*a bullet/.test(sidebar.text)) failures.push(`#dsDesc did not flatten bullets: "${sidebar.text.slice(0, 200)}"`);
+  if (/[#*`>]/.test(sidebar.tagline)) failures.push(`the header tagline shows raw markdown: "${sidebar.tagline}"`);
+
   // The point of the CARD tier: reading the card is a couple of small ranged
   // reads, never a whole-file GET. At this fixture's size the card is most of
   // the file, so the BYTE ratio proves little here — the assertion that carries

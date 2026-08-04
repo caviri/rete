@@ -349,6 +349,10 @@ impl Coherence {
 #[serde(deny_unknown_fields)]
 pub(crate) struct CardInput {
     pub title: Option<String>,
+    /// A string, or an array of lines joined with `\n` — see
+    /// [`de_description`]. Markdown is allowed here (raw HTML is not); the
+    /// array shape exists because hand-writing `\n` escapes in JSON is awful.
+    #[serde(default, deserialize_with = "de_description")]
     pub description: Option<String>,
     pub license: Option<String>,
     pub source: Option<String>,
@@ -375,6 +379,29 @@ pub(crate) struct CardInput {
     pub extra: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub example_queries: Vec<String>,
+}
+
+/// Deserialize `description` from either a JSON string or an array of lines.
+///
+/// A description may be Markdown, and Markdown needs line breaks; in a JSON
+/// string those are `\n` escapes, which are miserable to write by hand and
+/// worse to review in a diff. An array of lines — joined with `\n` — reads as
+/// the Markdown it is. It is **input sugar only**: the card stores one string
+/// either way, so `rete card --json` output feeds straight back into
+/// `--card-file`. The shared rule lives in `rete_core::card` so the browser
+/// builder accepts exactly the same two shapes.
+fn de_description<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    match v {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(v) => rete_core::card::normalize_description(&v)
+            .map(Some)
+            .map_err(D::Error::custom),
+    }
 }
 
 impl CardInput {
@@ -523,6 +550,12 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
     }
     if args.created.is_some() {
         c.created = args.created.clone();
+    }
+    // After the override, so `--description` is bounded exactly like a
+    // `--card-file` one. (`--description "$(cat desc.md)"` is the shell-side
+    // answer to authoring a multi-line description — see docs/dataset-cards.md.)
+    if let Some(d) = &c.description {
+        rete_core::card::check_description_len(d).map_err(|e: String| anyhow::anyhow!(e))?;
     }
     c.keywords = normalize_string_list("keywords", std::mem::take(&mut c.keywords))?;
     c.theme = normalize_themes(std::mem::take(&mut c.theme))?;
@@ -1252,7 +1285,18 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
         }
     };
     field(&mut out, "title", &card.title);
-    field(&mut out, "description", &card.description);
+    // The description may be Markdown, and Markdown has line breaks. Indent the
+    // continuation lines to the value column so a multi-line description stays
+    // inside the catalog's layout instead of falling out of it at column 0.
+    if let Some(d) = &card.description {
+        for (n, line) in d.split('\n').enumerate() {
+            if n == 0 {
+                let _ = writeln!(out, "  {:<13}: {line}", "description");
+            } else {
+                let _ = writeln!(out, "  {:<13}  {line}", "");
+            }
+        }
+    }
     field(&mut out, "license", &card.license);
     field(&mut out, "source", &card.source);
     field(&mut out, "created", &card.created);
@@ -2155,6 +2199,62 @@ mod tests {
         let ok: CardInput =
             serde_json::from_str(r#"{"title":"T","extra":{"my_field":1}}"#).unwrap();
         assert_eq!(ok.extra.get("my_field"), Some(&serde_json::json!(1)));
+    }
+
+    /// A card file may write `description` as an array of lines, because a
+    /// Markdown description in a JSON string means hand-writing `\n` escapes.
+    /// Both shapes have to land as the same single string — the card stores one
+    /// string either way, so `rete card --json` feeds straight back in.
+    #[test]
+    fn description_reads_as_a_string_or_as_lines() {
+        let from_lines: CardInput = serde_json::from_value(serde_json::json!({
+            "description": ["## Contents", "", "- a", "- b"]
+        }))
+        .unwrap();
+        assert_eq!(
+            from_lines.description.as_deref(),
+            Some("## Contents\n\n- a\n- b")
+        );
+        let from_string: CardInput =
+            serde_json::from_str("{\"description\":\"## Contents\\n\\n- a\\n- b\"}").unwrap();
+        assert_eq!(from_string.description, from_lines.description);
+
+        // An absent description stays absent (the field is `default`ed).
+        let none: CardInput = serde_json::from_str(r#"{"title":"T"}"#).unwrap();
+        assert!(none.description.is_none());
+        let null: CardInput = serde_json::from_str(r#"{"description":null}"#).unwrap();
+        assert!(null.description.is_none());
+
+        // The cap is the shared one, and it is reported by serde, not silently
+        // truncated on the way in.
+        let over = "x".repeat(rete_core::card::CARD_DESCRIPTION_MAX_BYTES + 1);
+        let err = serde_json::from_str::<CardInput>(&format!(
+            "{{\"description\":{}}}",
+            serde_json::to_string(&over).unwrap()
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("over the"), "{err}");
+    }
+
+    /// `--description` overrides the card file, so the cap has to be applied to
+    /// the text that actually lands in the card — after the override, not before.
+    #[test]
+    fn the_description_flag_is_bounded_like_the_card_file() {
+        let args = CardArgs {
+            description: Some("x".repeat(rete_core::card::CARD_DESCRIPTION_MAX_BYTES + 1)),
+            ..Default::default()
+        };
+        let err = load_curated(&args).unwrap_err().to_string();
+        assert!(err.contains("`description`"), "{err}");
+        assert!(err.contains("over the"), "{err}");
+
+        let ok = load_curated(&CardArgs {
+            description: Some("A short one.".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(ok.description.as_deref(), Some("A short one."));
     }
 
     /// The browser builder validates a card document against

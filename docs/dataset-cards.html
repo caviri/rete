@@ -399,9 +399,14 @@ file with <code>--card-file</code>. Explicit flags override whatever the file pr
 </code></pre>
 <p>Any of <code>--card</code>, <code>--card-file</code>, <code>--title</code>, <code>--license</code>, <code>--source</code>,
 <code>--description</code>, or <code>--created</code> opts the build into writing a card.</p>
+<p><code>description</code> is <strong>Markdown</strong> and may run to several paragraphs with headings
+and lists — see <a href="#the-description-markdown-not-html">The description</a> for what
+is supported, why raw HTML is not, and how to write one without hand-escaping
+newlines.</p>
 <h2>What's in a card</h2>
 <table><thead><tr><th>Field</th><th>Source</th><th>Meaning</th></tr></thead><tbody>
-<tr><td><code>title</code>, <code>description</code>, <code>license</code>, <code>source</code>, <code>created</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>Free-text catalog metadata. Omitted fields are absent from the JSON.</td></tr>
+<tr><td><code>title</code>, <code>license</code>, <code>source</code>, <code>created</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>Free-text catalog metadata. Omitted fields are absent from the JSON.</td></tr>
+<tr><td><code>description</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>The dataset's abstract, read as <strong>Markdown</strong> — headings, lists, links, code. Raw HTML is escaped, never rendered. May be written as an array of lines. Capped at 8 KiB. See <a href="#the-description-markdown-not-html">The description</a>.</td></tr>
 <tr><td><code>version</code>, <code>doi</code>, <code>cite_as</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>The publisher's <strong>dataset version</strong> (a date or semver — Croissant requires one; distinct from <code>format_version</code> and from the build-info <code>builder</code>, see <a href="#one-card-three-versions">One card, three versions</a>), DOI IRI, preferred citation.</td></tr>
 <tr><td><code>creators</code>, <code>publisher</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>People (<code>{name, orcid}</code>) and organisation (<code>{name, ror}</code>). ORCID/ROR as <strong>IRIs, not strings</strong> — this project publishes both authority graphs, so "which datasets did this person build?" becomes a federated join, not a text search.</td></tr>
 <tr><td><code>canonical_url</code>, <code>sparql_endpoint</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Where the authoritative copy of this file lives (<code>void:dataDump</code>) and a public endpoint (<code>void:sparqlEndpoint</code>). A <code>.rete</code> found on a disk can then say where to verify against.</td></tr>
@@ -482,6 +487,99 @@ answer different questions and are never merged:</p>
 <code>format_version</code> is stamped by the builder and changes only when the format
 does. <code>builder</code> lives in the unhashed build-info section because it is a fact
 about one build, not about the data.</p>
+<h2>The description: Markdown, not HTML</h2>
+<p><code>description</code> is the one curated field long enough to want structure, so it is
+read as <strong>Markdown</strong>. The card viewer renders headings, lists, links and code;
+every other surface reduces the same text to one readable line.</p>
+<pre><code class="language-json">{
+  "description": [
+    "The complete Wikidata class ontology — no instances.",
+    "",
+    "## What's inside",
+    "",
+    "- **4,420,121 classes** — every `wdt:P279` subject or object",
+    "- the **5.1M-edge** subclass hierarchy",
+    "- per-class direct-instance counts",
+    "",
+    "See [the build notes](https://example.org/notes) for how it was derived."
+  ]
+}
+</code></pre>
+<h3>Supported</h3>
+<table><thead><tr><th>Construct</th><th>Written as</th></tr></thead><tbody>
+<tr><td>Headings</td><td><code># One</code> … <code>###### Six</code> — rendered <strong>shifted down</strong>, so a card never emits an <code>&lt;h1&gt;</code>; the viewer's own title owns that level</td></tr>
+<tr><td>Bulleted lists</td><td><code>- item</code>, <code>* item</code>, <code>+ item</code> — <strong>nested by indentation</strong></td></tr>
+<tr><td>Numbered lists</td><td><code>1. item</code>, <code>1) item</code> — nested the same way</td></tr>
+<tr><td>Block quotes</td><td><code>&gt; quoted</code> (every line carries the <code>&gt;</code>; a quote's body is Markdown too)</td></tr>
+<tr><td>Horizontal rules</td><td><code>---</code>, <code>***</code>, <code>___</code></td></tr>
+<tr><td>Fenced code</td><td><code>```</code> … <code>```</code></td></tr>
+<tr><td>Links</td><td><code>[text](https://example.org)</code> — <code>http(s)</code> and <code>mailto:</code> only</td></tr>
+<tr><td>Emphasis / code</td><td><code>**bold**</code>, <code>*italic*</code>, <code>`code`</code></td></tr>
+</tbody></table>
+<p>Deliberately <strong>not</strong> supported: tables (a card's tabular data belongs in the
+graph — and the viewer already draws its own tables from the derived profile),
+reference-style links, images, and footnotes. Every construct is more parser
+for less description.</p>
+<h3>Raw HTML is not supported — and that is the point</h3>
+<p>HTML in a description is <strong>escaped, not rendered</strong>: <code>&lt;b&gt;x&lt;/b&gt;</code> shows up as the
+five characters <code>&lt;b&gt;x&lt;/b&gt;</code>, and a <code>&lt;script&gt;</code> shows up as text.</p>
+<p>This is a deliberate refusal, not a missing feature. A card is <strong>third-party
+data</strong> — it arrives inside a file that someone else published, on a page that
+also holds the reader's own local files. Honouring raw HTML would mean any
+publisher could put a <code>&lt;script&gt;</code> (or an <code>onerror=</code> on an <code>&lt;img&gt;</code>) into a
+description and have it execute in every reader's browser, on every open,
+simply because the reader clicked 🏷 Card. That is not a formatting feature; it
+is remote code execution with extra steps.</p>
+<p>Markdown gives the headings, bullets and links with none of that: the renderer
+escapes every character of the source, and the only tags in the output are the
+ones <strong>it</strong> chose. <code>javascript:</code> links degrade to visible text. The playground's
+gate pins both halves — that the formatting appears, and that a description
+carrying a <code>&lt;script&gt;</code>, an <code>&lt;img onerror=&gt;</code> and a <code>javascript:</code> link creates no
+element and executes nothing.</p>
+<p>The same reasoning already governs the card's JSON view, which tokenizes the
+raw bytes and escapes every token precisely so a <code>&lt;</code> inside a description
+cannot become an element.</p>
+<h3>Writing a multi-line description</h3>
+<p>A JSON string can only carry line breaks as <code>\n</code> escapes, which is miserable to
+write by hand and worse to review. Three ways out, in the order they are worth
+reaching for:</p>
+<ol>
+<li><strong>An array of lines in <code>--card-file</code></strong> (shown above). <code>rete build</code> joins them
+with newlines. It is input sugar only — the card always stores one string, so
+<code>rete card --json</code> output feeds straight back into <code>--card-file</code>.</li>
+<li><strong>The shell, for <code>--description</code></strong>: <code>--description "$(cat description.md)"</code>
+keeps the Markdown in its own file, where an editor can help.</li>
+<li><strong>The playground's Build panel</strong>: the <em>Description</em> box is a textarea, so
+Markdown typed into it works as typed — the JSON mirror beside it inserts the
+<code>\n</code> escapes for you. The JSON editor accepts the array shape too.</li>
+</ol>
+<p>A literal <code>"description": "line one\nline two"</code> is of course still valid, and
+still what the file stores.</p>
+<h3>How long may it be?</h3>
+<p>Up to <strong>8 KiB</strong> of UTF-8 — the same budget as the <a href="#custom-fields-the-extra-bag"><code>extra</code> bag</a>,
+for the same reason: both ride in the metadata section that every CARD-tier
+reader fetches on every open. For scale, the longest description on the
+published catalog is 813 bytes; 8 KiB is roughly 1,300 words of Markdown.</p>
+<p>Over the cap, the <strong>build fails loudly</strong> rather than truncating — the text is
+authored, it folds into the content hash, and a silent cut would ship a card
+that no longer says what the publisher wrote. A description is the dataset's
+<strong>abstract</strong>, not its documentation: link the long form from <code>source</code> /
+<code>canonical_url</code>, or put it in the graph.</p>
+<p>Readers never validate any of this. A card written oversized by some other tool
+still opens — the cap is a write-time rule, like every other card rule.</p>
+<h3>Where a description is shown</h3>
+<p>Only the <strong>🏷 Card viewer</strong> renders blocks; it is a scrollable panel with room
+for them. Every other surface has room for one line, so it shows the same text
+with its block markers removed (<code>## Heading</code> becomes <code>Heading</code>, <code>- item</code>
+becomes <code>• item</code>) rather than leaking raw markers into a paragraph:</p>
+<table><thead><tr><th>Surface</th><th>Shows</th></tr></thead><tbody>
+<tr><td>🏷 Card modal</td><td>the full Markdown, rendered</td></tr>
+<tr><td>Dataset sidebar / picker blurb</td><td>one flattened stream, inline markup kept</td></tr>
+<tr><td>Dataset header tagline</td><td>the first sentence, plain text</td></tr>
+<tr><td>Plaza gallery tile and hero</td><td>flattened to plain text</td></tr>
+<tr><td><code>rete card</code> (terminal)</td><td>the source as written, indented to the value column</td></tr>
+<tr><td><code>--format jsonld</code> / <code>croissant</code></td><td>the source as written (both formats take Markdown in <code>description</code>)</td></tr>
+</tbody></table>
 <h2>Custom fields: the <code>extra</code> bag</h2>
 <p>A publisher can put <strong>their own fields</strong> in a card — internal identifiers,
 review status, project tags, anything the official fields don't cover — under

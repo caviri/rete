@@ -8,7 +8,7 @@
 // CUMULATIVE — values inside one group widen (OR), groups narrow each other
 // (AND) — and each value carries the count it would yield, computed against the
 // OTHER groups' selections so a number is never a lie about what clicking does.
-import { readReteCard, liteCardFromHeader, fmtBytes } from "./rete-card.js";
+import { readReteCard, liteCardFromHeader, fmtBytes, plainDescription } from "./rete-card.js";
 import { imageInfoFromCard } from "./procgen.js";
 import { renderFingerprint } from "./procgen-p5.js";
 import { derivedFacets, FILTERABLE } from "./facets.js";
@@ -559,7 +559,9 @@ function tile(rec) {
     <div class="body">
       <div class="title">${escapeHtml(nameOf.name)}</div>
       ${nameOf.sub ? `<div class="subtitle">${escapeHtml(nameOf.sub)}</div>` : ""}
-      <div class="blurb">${escapeHtml((card && card.description) || entry.blurb || "")}</div>
+      <!-- A description may be Markdown; a gallery blurb is one clamped line,
+           so it is reduced to prose rather than shown with its markers. -->
+      <div class="blurb">${escapeHtml(plainDescription((card && card.description) || entry.blurb || ""))}</div>
       <div class="stats">
         ${size ? `<span class="size"><b>${size}</b></span>` : ""}
         ${triples != null ? `<span><b>${fmt(triples)}</b> triples</span>` : ""}

@@ -7,6 +7,34 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **A card's `description` is Markdown, and can be as long as a README section.**
+  - The 🏷 Card viewer renders **headings, bulleted and numbered lists (nested by
+    indentation), block quotes, horizontal rules, fenced code and links** — the
+    same small renderer that already draws `text/markdown` result cells, so
+    there is one grammar and one escaping path, not two. Headings are shifted
+    **under** the modal's own heading, so a published file can never inject an
+    `<h1>` into someone else's page outline.
+  - **Raw HTML is not a description format, deliberately.** A card is
+    third-party data — it arrives inside a file someone else published — so a
+    `<script>` (or an `onerror=` on an `<img>`) in a description would be
+    remote code execution in every reader's browser, on every open. HTML is
+    escaped and shown as text; `javascript:` links degrade to text. Markdown
+    buys the formatting with none of that.
+  - Every surface that has room for **one line** — the dataset sidebar, the
+    picker blurb, the header tagline, the plaza tile and hero, the social/OG
+    text — shows the same description with its block markers removed rather
+    than leaking `## ` into a paragraph. Only the card viewer renders blocks.
+  - **Writing one**: `--card-file` now accepts `"description"` as an **array of
+    lines**, joined with newlines, so a Markdown description does not have to be
+    hand-escaped into a JSON string. It is input sugar only — the card stores
+    one string either way, so `rete card --json` still feeds straight back into
+    `--card-file`. `--description "$(cat description.md)"` and the Build panel's
+    textarea work too.
+  - `description` is now **bounded at 8 KiB**, the same budget as the `extra`
+    bag and for the same reason: both ride in the metadata section every
+    CARD-tier reader fetches on every open. Over the cap the build fails loudly
+    rather than truncating. Readers never validate, so existing files are
+    unaffected. `rete card` indents a multi-line description to its value column.
 - **The Dataset Card is now interoperable and auditable.** (#153)
   - A new **build-info section** (kind `7`, laid out right after the card so
     both arrive in the CARD tier's one header + one range read) records what no

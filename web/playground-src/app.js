@@ -1218,10 +1218,16 @@ self.onmessage = function (e) {
 
   // The dataset header band: a full title and a one-line sentence, with the
   // graph metadata pill sitting to its right.
+  //
+  // The tagline is written with textContent, so the source is reduced to plain
+  // text first: a card `description` may be block Markdown (see mdFlatten), and
+  // "## What's inside" in a one-line tagline reads as a typo, not as a heading.
   function firstSentence(text, max) {
     if (!text) return "";
-    const m = text.match(/^(.+?[.!?])(\s|$)/);
-    let s = (m ? m[1] : text).trim();
+    const flat = mdPlain(text);
+    if (!flat) return "";
+    const m = flat.match(/^(.+?[.!?])(\s|$)/);
+    let s = (m ? m[1] : flat).trim();
     const cap = max || 170;
     if (s.length > cap) s = s.slice(0, cap - 1).replace(/\s+\S*$/, "") + "…";
     return s;
@@ -1546,7 +1552,9 @@ self.onmessage = function (e) {
         ? firstSentence(String(card.description))
         : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.",
       null);
-    if (card.description) $("dsDesc").innerHTML = mdLite(String(card.description));
+    // #dsDesc is a <p>: a card description carrying blocks is flattened to
+    // inline markdown here, and read whole in the 🏷 Card modal.
+    if (card.description) $("dsDesc").innerHTML = mdLite(mdFlatten(String(card.description)));
   }
 
   function connectRemote() {
@@ -1834,7 +1842,7 @@ self.onmessage = function (e) {
         : "Downloaded whole from its URL and kept in this browser — queries run in-page, zero network.",
       null);
     $("dsDesc").innerHTML = desc
-      ? mdLite(desc)
+      ? mdLite(mdFlatten(desc))  // a <p>: blocks are flattened, the modal shows them
       : "Cached from " + esc(url) + " — the whole file is stored in this browser (IndexedDB) and queried in memory.";
     // Re-render the SOURCES self chip now that state names this file.
     renderFedBar();
@@ -1936,12 +1944,32 @@ self.onmessage = function (e) {
     };
   }
 
-  // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).
-  // Lightweight inline markdown → HTML (safe: escapes first, then adds a small
-  // set of tags). Handles links, bold, code, italic, and — importantly for the
-  // dataset descriptions — newlines, so a multi-paragraph description reads as
-  // paragraphs instead of a wall of text. Returns inline HTML (no block tags),
-  // so it's safe to drop inside a <p>/<div>.
+  // ---------------------------------------------------------------------------
+  // Markdown in a description
+  //
+  // A description is third-party data: it arrives inside a file someone else
+  // published, and nothing in it may ever become live markup. **Raw HTML is
+  // therefore not supported** — honouring a <script> (or an onerror= on an
+  // <img>) would hand any publisher script execution in every reader's browser,
+  // on a page that also holds the reader's own files. Markdown buys the
+  // headings, bullets and links with none of that. The rule and the reason are
+  // written down in docs/dataset-cards.md.
+  //
+  // Three functions, one grammar:
+  //   * mdLite         — inline only, for the <p> surfaces (below);
+  //   * markdownBlocks — headings/lists/quotes/rules/code, for the card modal
+  //                      (it already existed for text/markdown result cells);
+  //   * mdFlatten / mdPlain — the same source with its BLOCK markers removed,
+  //                      for the surfaces that can only take one line.
+  // ---------------------------------------------------------------------------
+
+  // Tiny markdown for descriptions: links, **bold**, `code`, *italic* (input
+  // escaped) and newlines, so a multi-paragraph description reads as paragraphs
+  // instead of a wall of text. Returns INLINE HTML — no block tags — and that is
+  // a contract, not an accident: its call sites (#dsDesc, .ds-desc) are <p>
+  // elements, and a <ul> or an <h4> inside a <p> gets re-parented by the HTML
+  // parser, which would tear those layouts apart. Blocks go through
+  // markdownBlocks() instead, and only where a block can live.
   function mdLite(s) {
     return esc(String(s || ""))
       .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
@@ -1950,6 +1978,49 @@ self.onmessage = function (e) {
       .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>")
       .replace(/\n{2,}/g, "<br><br>")
       .replace(/\n/g, "<br>");
+  }
+
+  // A description with its BLOCK markers removed, leaving one stream of inline
+  // markdown — for the surfaces that are <p> elements and can only take mdLite.
+  // Markers are dropped rather than shown: a leading "## " in a sidebar
+  // paragraph reads as a typo, not as a heading. The patterns are exactly
+  // markdownBlocks()'s, so the flattener and the renderer can never disagree
+  // about what a block is. On a description carrying no block markup — every
+  // card published to date — this is the identity function.
+  function mdFlatten(s) {
+    // `[ \t]`, never `\s`: these run with /m over the WHOLE text, and `\s` also
+    // matches a newline — so `^\s{0,3}#` would swallow the blank line before a
+    // heading and weld it onto the paragraph above.
+    const stripped = String(s == null ? "" : s)
+      .replace(/\r\n?/g, "\n")
+      .replace(/^[ \t]*(?:```|~~~)[^\n]*$/gm, "")
+      .replace(/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/gm, "")
+      .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+      .replace(/^[ \t]*>[ \t]?/gm, "")
+      .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/gm, "• ");
+    // A single newline is NOT a line break in Markdown — it is a soft wrap the
+    // author's editor put there — so each block is rejoined and only blank-line
+    // boundaries survive. Without this, mdLite's \n → <br> would turn a
+    // hard-wrapped description into a column of ragged short lines in a sidebar
+    // that has room for a paragraph.
+    return stripped
+      .split(/\n\s*\n/)
+      .map((block) => block.replace(/\s*\n\s*/g, " ").trim())
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  // The same reduction taken all the way to plain text — for surfaces written
+  // with textContent (the dataset header tagline), where a leftover `**` is
+  // noise rather than emphasis.
+  function mdPlain(s) {
+    return mdFlatten(s)
+      .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, "$1")
+      .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+      .replace(/`([^`\n]+)`/g, "$1")
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+      .replace(/\n+/g, " ")
+      .trim();
   }
 
   function dsShortLabel(key) {
@@ -4863,10 +4934,21 @@ self.onmessage = function (e) {
       .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
     return s.replace(/\u0000(\d+)\u0000/g, (_m, i) => tokens[Number(i)] || "");
   }
-  function markdownBlocks(value) {
+  // A list item — indent, marker (bullet captured so ordered-vs-unordered is a
+  // group test), text — and a horizontal rule.
+  const MD_ITEM = /^(\s*)(?:([-+*])|\d+[.)])\s+(.*)$/;
+  const MD_RULE = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+  // A `text/markdown` literal, and — with `headingBase` — a Dataset Card's
+  // `description`. `headingBase` shifts every heading DOWN by that many levels:
+  // a result cell owns no document outline so it keeps 0 (`#` → <h1>), while the
+  // card modal passes 3, because its own title is an <h3> and a publisher's file
+  // must never get to emit an <h1> on someone else's page. Levels saturate at 6.
+  function markdownBlocks(value, headingBase) {
+    const base = headingBase || 0;
     const lines = String(value == null ? "" : value).replace(/\r\n?/g, "\n").split("\n");
     const out = [];
-    const startsBlock = (line) => /^\s*$|^\s*```|^\s{0,3}#{1,6}\s+|^\s*>\s?|^\s*[-+*]\s+|^\s*\d+[.)]\s+/.test(line);
+    const startsBlock = (line) => /^\s*$|^\s*```|^\s{0,3}#{1,6}\s+|^\s*>\s?|^\s*[-+*]\s+|^\s*\d+[.)]\s+/.test(line) ||
+      MD_RULE.test(line);
     let i = 0;
     while (i < lines.length) {
       const line = lines[i];
@@ -4880,23 +4962,16 @@ self.onmessage = function (e) {
         out.push(`<pre><code${cls}>${esc(code.join("\n"))}</code></pre>`);
         continue;
       }
+      // A rule has to be tested before a list: "- - -" also looks like a bullet.
+      if (MD_RULE.test(line)) { out.push("<hr>"); i++; continue; }
       const heading = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
-      if (heading) { const n = heading[1].length; out.push(`<h${n}>${markdownInline(heading[2])}</h${n}>`); i++; continue; }
-      if (/^\s*[-+*]\s+/.test(line)) {
-        const items = [];
-        while (i < lines.length) {
-          const m = /^\s*[-+*]\s+(.+)$/.exec(lines[i]); if (!m) break;
-          items.push(`<li>${markdownInline(m[1])}</li>`); i++;
-        }
-        out.push(`<ul>${items.join("")}</ul>`); continue;
+      if (heading) {
+        const n = Math.min(6, heading[1].length + base);
+        out.push(`<h${n}>${markdownInline(heading[2])}</h${n}>`); i++; continue;
       }
-      if (/^\s*\d+[.)]\s+/.test(line)) {
-        const items = [];
-        while (i < lines.length) {
-          const m = /^\s*\d+[.)]\s+(.+)$/.exec(lines[i]); if (!m) break;
-          items.push(`<li>${markdownInline(m[1])}</li>`); i++;
-        }
-        out.push(`<ol>${items.join("")}</ol>`); continue;
+      if (MD_ITEM.test(line)) {
+        const list = markdownList(lines, i);
+        out.push(list.html); i = list.next; continue;
       }
       if (/^\s*>\s?/.test(line)) {
         const quote = [];
@@ -4904,13 +4979,60 @@ self.onmessage = function (e) {
           const m = /^\s*>\s?(.*)$/.exec(lines[i]); if (!m) break;
           quote.push(m[1]); i++;
         }
-        out.push(`<blockquote>${markdownInline(quote.join(" "))}</blockquote>`); continue;
+        // The quote's own body is markdown too, so a quoted list or heading
+        // reads as one — and it costs a recursive call, not a second grammar.
+        out.push(`<blockquote>${markdownBlocks(quote.join("\n"), base)}</blockquote>`); continue;
       }
       const para = [line.trim()]; i++;
       while (i < lines.length && !startsBlock(lines[i])) { para.push(lines[i].trim()); i++; }
       out.push(`<p>${markdownInline(para.join(" "))}</p>`);
     }
     return out.join("");
+  }
+  // One run of list items, nested by indentation. The run is collected first and
+  // rendered second, because nesting is a property of the run (an item's
+  // children are the deeper-indented items that follow it), not of any one line.
+  function markdownList(lines, start) {
+    const items = [];
+    let i = start;
+    while (i < lines.length) {
+      const m = MD_ITEM.exec(lines[i]);
+      if (m && !MD_RULE.test(lines[i])) {
+        items.push({ indent: m[1].replace(/\t/g, "    ").length, ordered: !m[2], text: [m[3]] });
+        i++; continue;
+      }
+      // A blank line stays inside the list as long as an item follows it.
+      if (!lines[i].trim() && MD_ITEM.test(lines[i + 1] || "")) { i++; continue; }
+      // An indented, non-item line is a wrapped bullet — it continues the item
+      // above rather than ending the list.
+      if (items.length && /^\s+\S/.test(lines[i]) && !/^\s*(?:```|>)/.test(lines[i])) {
+        items[items.length - 1].text.push(lines[i].trim()); i++; continue;
+      }
+      break;
+    }
+    return { html: markdownListHtml(items, 0, items.length, items[0].indent), next: i };
+  }
+  function markdownListHtml(items, from, to, indent) {
+    let out = "", i = from;
+    while (i < to) {
+      // One list runs while the marker KIND holds. Switching between bullets and
+      // numbers starts a SIBLING list, because <ul> and <ol> mean different
+      // things — a numbered list that followed a bulleted one used to be
+      // swallowed into it and rendered as more bullets. (Changing the bullet
+      // CHARACTER is not a switch: it is the same list to a reader.)
+      const ordered = items[i].ordered;
+      const tag = ordered ? "ol" : "ul";
+      out += `<${tag}>`;
+      while (i < to && items[i].ordered === ordered) {
+        let j = i + 1;
+        while (j < to && items[j].indent > indent) j++;
+        const sub = j > i + 1 ? markdownListHtml(items, i + 1, j, items[i + 1].indent) : "";
+        out += `<li>${markdownInline(items[i].text.join(" "))}${sub}</li>`;
+        i = j;
+      }
+      out += `</${tag}>`;
+    }
+    return out;
   }
   function markdownCell(t, raw) {
     const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
@@ -9233,11 +9355,21 @@ self.onmessage = function (e) {
     }
     cardSync = true;
     for (const [id, key] of CARD_FORM_FIELDS) {
-      const el = $(id); if (el) el.value = doc[key] == null ? "" : String(doc[key]);
+      const el = $(id); if (el) el.value = cardFieldText(doc[key]);
     }
     cardSync = false;
     validateCardCode();
   }
+
+  // `description` may be authored as an ARRAY OF LINES — the shape that makes a
+  // multi-line Markdown description writable by hand, since a JSON string can
+  // only carry line breaks as `\n` escapes (docs/dataset-cards.md). The form
+  // shows the joined text, which is exactly what the engine stores; a later form
+  // edit therefore rewrites the array as that same string, losing nothing but
+  // the authoring shape. (#cardDesc is a textarea, so typing Markdown straight
+  // into it works too — JSON.stringify puts the `\n` escapes in for you.)
+  const cardFieldText = (v) =>
+    (Array.isArray(v) ? v.join("\n") : v == null ? "" : String(v));
 
   // Validate with the ENGINE, not with a re-implementation here: `validate_card`
   // runs the same rules `rete build --card-file` runs and returns the same
@@ -10457,7 +10589,14 @@ self.onmessage = function (e) {
     const list = (k) => (Array.isArray(c[k]) && c[k].length ? c[k] : null);
     rows.push(
       `<div class="card-lede">` +
-      (c.description ? `<p class="card-desc">${mdLite(String(c.description))}</p>` : "") +
+      // The card modal is the ONE surface that renders a description as BLOCKS:
+      // it is a scrollable panel, not a one-line blurb, and it is where a
+      // publisher's headings and bullets are worth having. Headings are shifted
+      // under the modal's own <h3> (see markdownBlocks). Everywhere else the
+      // same text has to fit inside a <p>, so it goes through mdFlatten first.
+      (c.description
+        ? `<div class="card-desc markdown-body">${markdownBlocks(String(c.description), 3)}</div>`
+        : "") +
       // Keywords and themes say what the dataset is ABOUT — they belong with the
       // description, not buried in a table of addresses.
       (list("keywords") ? cardChips(c.keywords) : "") +

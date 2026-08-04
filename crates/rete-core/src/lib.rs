@@ -99,8 +99,9 @@ pub mod format {
 /// documents with the same words.
 pub mod card {
     pub use crate::card_input::{
-        canonicalize_json, compose_curated_card, json_depth, normalize_extra,
-        normalize_string_list, normalize_themes, validate_curated_card, CARD_EXTRA_MAX_BYTES,
+        canonicalize_json, check_description_len, compose_curated_card, json_depth,
+        normalize_description, normalize_extra, normalize_string_list, normalize_themes,
+        validate_curated_card, CARD_DESCRIPTION_MAX_BYTES, CARD_EXTRA_MAX_BYTES,
         CARD_EXTRA_MAX_DEPTH, CARD_EXTRA_MAX_KEYS, CARD_EXTRA_MAX_KEY_BYTES, CURATED_CARD_FIELDS,
         UNKNOWN_FIELD_HINT,
     };

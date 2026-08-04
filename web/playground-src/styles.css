@@ -1415,6 +1415,9 @@ textarea {
 .markdown-body pre { max-width: 100%; overflow: auto; margin: .5em 0; padding: .6em .7em; background: var(--side); border: 1px solid var(--line); border-radius: 6px; }
 .markdown-body pre code { padding: 0; background: none; white-space: pre-wrap; }
 .markdown-body a { color: var(--accent-dark); }
+.markdown-body hr { border: 0; border-top: 1px solid var(--line); margin: .9em 0; }
+/* A nested list sits under its parent item, not adrift below the whole list. */
+.markdown-body li > ul, .markdown-body li > ol { margin: .15em 0 .15em; }
 /* Opt-in embedded page thumbnail. A desktop-sized iframe is scaled down so the
    preview shows the site's real desktop layout, without granting parent access. */
 .page-preview-cell { width: 294px; max-width: 100%; padding: 6px 8px; white-space: normal; }
@@ -3630,7 +3633,20 @@ td.lit { color: var(--ink); }
 .card-body { overflow: auto; flex: 1 1 auto; padding: 4px 2px 14px; }
 
 .card-lede { margin: 2px 0 12px; }
-.card-lede .card-desc { margin: 4px 0 0; }
+/* The description is the one card field rendered as BLOCK markdown (headings,
+   lists, quotes, rules, fenced code — never raw HTML; see mdLite/markdownBlocks
+   in app.js). It reuses .markdown-body, which the result-table markdown cells
+   already style; these rules only re-scale it from "inside a table cell" to
+   "lede of a reading panel", and cap the headings a publisher can emit so a
+   card's own structure can never out-shout the modal's. */
+.card-lede .card-desc { margin: 4px 0 0; max-width: 82ch; line-height: 1.55; }
+.card-desc h4 { font-size: 15px; margin: 16px 0 5px; }
+.card-desc h5 { font-size: 13.5px; margin: 13px 0 4px; }
+.card-desc h6 { font-size: 12px; margin: 11px 0 3px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.card-desc p { margin: 0 0 8px; }
+.card-desc ul, .card-desc ol { margin: 6px 0 8px; }
+.card-desc li { margin: 2px 0; }
+.card-desc pre { font-size: 12px; }
 .card-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 16px; }
 .card-stat {
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; min-width: 108px;
