@@ -220,6 +220,42 @@ as long as its host sends `Accept-Ranges: bytes` and permits cross-origin reads
 (`Access-Control-Allow-Origin`, exposing `Content-Range`). Connecting by hand
 and pressing **Share** produces exactly this form of link.
 
+### What the link carries {#sharing-view-state}
+
+Naming the graph and the query is not enough on its own. Several toolbar
+controls change **what the query returns**, and a link that dropped them would
+hand someone the same text under different semantics — the reader would see
+different results and have no way to tell. So the fragment also carries them,
+and only when they differ from the default (a plain view's link is exactly as
+short as it always was):
+
+| Parameter | Control | Values | Effect |
+| --- | --- | --- | --- |
+| `union` | ⛁ **All graphs** | `1` / `0` (default off) | *answer* — mounts the file as if the default graph were the union of the default graph and every named graph |
+| `reason` | 🧠 **Reason** | `1` / `0` (default off) | *answer* — OWL 2 QL entailment, so subclass/subproperty instances also match |
+| `strategy` | **Strategy** | `whole` (default) · `progressive` · `community` | *answer* — `progressive` answers from the pyramid summary and is **approximate by contract** |
+| `round` | **Round** | an integer | *answer* — which dendrogram round the `community` strategy answers from |
+| `fed` | **SOURCES** | comma-separated catalog keys, e.g. `fed=nomisma,mimotext` | *answer* — extra datasets the query also runs against |
+| `view` | **Output** | `table` (default) · `cards` · `graph` · `map` · `tiles` · `time` · `ttl` · `jsonld` | *presentation* — how the same rows are drawn |
+| `labels` | 🏷 **Labels** | `1` (default on) / `0` | *presentation* — the human-label chips beside IRIs in the editor |
+
+The first five change the **answer**; the last two change only how it is
+**drawn**. That distinction is the design: a presentation parameter that fails
+to apply costs you a nicer rendering, an answer parameter that fails to apply
+makes the link lie. The address bar re-stamps itself as you flip these, so
+copying it by hand gives the same link **Share** does.
+
+Federation is carried **only as catalog keys**. A key is a public entry in the
+shipped catalog, so it is short and the address is re-derived on the other side —
+nothing private can ride along. A source you added by *pasting an address* (a
+`.rete` link or a SPARQL endpoint) is deliberately left out: those are routinely
+intranet hosts, pre-release files, or URLs with a token in them, and a share
+button is not the place to forward one. When a view has such a source, **Share**
+says so instead of quietly handing out a narrower view:
+
+> Link copied ✓ — WITHOUT the added source *staging*: a pasted address is not put
+> into a shareable link, so the recipient queries without it.
+
 A fragment has one limitation: it is never sent to a server, and no link preview executes
 the page's JavaScript. Pasted into a chat, a feed or a search index, every deep
 link would therefore unfurl as the same anonymous "rete playground" card, with
@@ -243,6 +279,12 @@ all at [Shareable queries](shared.html).
 An ad-hoc query has no such page (there is nothing pre-rendered to preview), so
 editing the SPARQL — or connecting a live endpoint, or building your own graph
 in the page — goes back to sharing the deep link itself, exactly as before.
+
+So does any view carrying one of the parameters above. A preview page forwards to
+a link built from the catalog alone (dataset + load mode + tab + example index),
+which leaves it nowhere to put `union=1`; sharing it would silently drop exactly
+the setting the link exists to reproduce, so **Share** hands out the deep link
+instead.
 
 ## Watching the bytes (and the caches)
 

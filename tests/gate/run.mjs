@@ -275,6 +275,7 @@ const G2 = [
   ["check_default_graph_hint", "empty-default-graph explainer (resident + carded remote); absent on ordinary files", 180000, false],
   ["check_card_examples", "the file's OWN card queries populate the examples panel (off-catalog + local + catalog supplement; deduped; zero-row kept)", 240000, false],
   ["check_union_graphs", "⛁ All graphs union toggle: off by default, 0→union when on (remote + resident), announced, explainer suppressed", 240000, false],
+  ["check_deeplink_view_state", "deep links carry the view: union/reason round-trip WITH differing results, strategy/round/fed/view/labels restored, default hash unchanged", 300000, false],
   ["check_card_modal", "Dataset Card modal: rendered + coloured JSON, remote & resident", 120000, false],
   ["check_len_probe_hostile", "host under-reports length via HEAD + hides Content-Range (#95)", 120000, false],
   ["check_clear", "Clear everything empties 4 stores + Cache API", 90000, false],

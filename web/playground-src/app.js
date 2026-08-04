@@ -2631,10 +2631,7 @@ self.onmessage = function (e) {
           state.fedSources.push({ id: "f" + (++fedSeq), kind: "endpoint", label: k.label || shortUrlLabel(k.endpoint), endpoint: k.endpoint });
           return;
         }
-        if (k === state.dataset || !datasetInfo(k)) return;
-        state.fedSources.push(isEmbedded(k)
-          ? { id: "f" + (++fedSeq), kind: "memory", label: dsShortLabel(k), key: k }
-          : { id: "f" + (++fedSeq), kind: "remote", label: dsShortLabel(k), url: remoteUrlFor(k), key: k });
+        addCatalogFedSource(k);
       });
       renderFedBar();
     }
@@ -4626,15 +4623,25 @@ self.onmessage = function (e) {
   // Refreshes the phone's sticky Run bar (set in wireEvents; null on desktop).
   let mrbUpdate = null;
 
-  function setView(view) {
-    // On a phone, a default "table" view becomes Cards — the table is the one
-    // output that fights a small screen, and Cards renders the same rows
-    // stacked. An example that declares any other view (map / graph / time / …)
-    // keeps it, and the user can always switch back to Table by hand.
+  // What a REQUESTED output type actually resolves to on this device. On a phone
+  // a default "table" becomes Cards — the table is the one output that fights a
+  // small screen, and Cards renders the same rows stacked. An example that
+  // declares any other view (map / graph / time / …) keeps it, and the user can
+  // always switch back to Table by hand.
+  //
+  // Split out of setView so updateHash() can ask "what would a fresh page land on
+  // here?" and stay silent when the answer already matches. Without that, every
+  // link shared from a phone would carry view=cards and push the phone's
+  // substitution onto a desktop reader who never asked for it.
+  function resolvedView(view) {
     if (view === "table" && window.matchMedia && window.matchMedia("(max-width: 560px)").matches) {
-      view = "cards";
+      return "cards";
     }
-    $("fmt").value = view;
+    return view;
+  }
+
+  function setView(view) {
+    $("fmt").value = resolvedView(view);
   }
 
   // Output types that are all renderings of the SAME SELECT bindings (the engine
@@ -4655,6 +4662,12 @@ self.onmessage = function (e) {
     return /\b(CONSTRUCT|DESCRIBE)\b/i.test(String(q || "").split(/\bWHERE\b/i)[0]);
   }
   function onOutputTypeChange() {
+    // Every toolbar control that the deep link now carries re-stamps the hash as
+    // it changes, exactly as picking a dataset / example / tab already did. The
+    // Share button re-stamps too, but plenty of people copy straight out of the
+    // ADDRESS BAR — and a stale address bar is the same defect as a stale share
+    // link, just with no button to blame.
+    updateHash();
     const fmt = $("fmt").value;
     // TTL / JSON-LD serialize an RDF graph — only CONSTRUCT/DESCRIBE makes one.
     // Say so up front (and don't run a query that can't serialize) when the
@@ -7185,6 +7198,19 @@ self.onmessage = function (e) {
   let fedSeq = 0;
   function fedActive() { return state.fedSources.length > 0 || shardSources().length > 0; }
 
+  // Add a CATALOG dataset as a federation partner: embedded (or already cached)
+  // → queried in memory, otherwise range-read lazily. Shared by an example's
+  // `fed:` declaration and by the #fed= deep-link restore, so a link and the
+  // example it came from produce byte-identical sources instead of two
+  // near-copies that can drift apart. Returns whether the key resolved.
+  function addCatalogFedSource(key) {
+    if (!key || key === state.dataset || !datasetInfo(key)) return false;
+    state.fedSources.push(isEmbedded(key)
+      ? { id: "f" + (++fedSeq), kind: "memory", label: dsShortLabel(key), key }
+      : { id: "f" + (++fedSeq), kind: "remote", label: dsShortLabel(key), url: remoteUrlFor(key), key });
+    return true;
+  }
+
   // A SHARDED dataset (catalog `shards: [url0, url1, …]`) is one logical graph split
   // across independent .rete files (too big to build as one). shards[0] is the primary
   // (selfSource, via the dataset's url); the rest are intrinsic federation partners,
@@ -7710,12 +7736,13 @@ self.onmessage = function (e) {
     const dup = state.fedSources.some((s) =>
       (src.url && s.url === src.url) || (src.endpoint && s.endpoint === src.endpoint) ||
       (src.key && s.key === src.key && s.kind === src.kind));
-    if (!dup) { state.fedSources.push(src); renderFedBar(); }
+    if (!dup) { state.fedSources.push(src); renderFedBar(); updateHash(); }
     closeFedPop();
   }
   function removeFedSource(id) {
     state.fedSources = state.fedSources.filter((s) => s.id !== id);
     renderFedBar();
+    updateHash();
   }
 
   // --- live-endpoint mode --------------------------------------------------
@@ -9827,6 +9854,100 @@ self.onmessage = function (e) {
     });
   }
 
+  // ---- the VIEW STATE a deep link carries ------------------------------------
+  // The link used to name only WHICH graph and WHICH query. Everything that sat
+  // in the toolbar beside them was dropped, so someone could flip ⛁ All graphs,
+  // get an answer, press Share — and the recipient opened standard SPARQL
+  // semantics and saw different results from the same link. Same class of defect
+  // as #148 (the link named a catalog dataset while an off-catalog file was
+  // open): a link that claims to reproduce a view it does not.
+  //
+  // Two classes of parameter, and they are NOT equally important:
+  //
+  //   ANSWER-AFFECTING — union, reason, strategy, round, fed. These change WHAT
+  //   THE QUERY RETURNS, so dropping one makes the link lie. `union` mounts the
+  //   file as a different dataset; `reason` answers under a different entailment
+  //   regime; `strategy=progressive` answers from the pyramid summary and is
+  //   APPROXIMATE BY CONTRACT, so a dropped strategy hands someone exact-looking
+  //   numbers computed a different way. These are never skipped for brevity, and
+  //   when one CANNOT be represented (an ad-hoc federation address — see below)
+  //   the share path SAYS SO rather than hand out a link that silently differs.
+  //
+  //   PRESENTATIONAL — view, labels. These change how the same answer is DRAWN.
+  //   Worth carrying (a map example shared as a table is a worse link) but they
+  //   cannot make a link lie about data, so they are best-effort: the phone's
+  //   table→cards substitution is allowed to override a restored `view=table`,
+  //   and failing to restore one is a cosmetic miss, not a correctness bug.
+  //
+  // FEDERATION is deliberately partial, and the split is about leakage. A
+  // catalog key (`fed=nomisma,mimotext`) is a public entry in the shipped
+  // catalog: short, and the address is re-derived on the other side, so nothing
+  // private can ride along. A source added by pasting an address — a .rete URL
+  // or a SPARQL endpoint — is the opposite: it is typically an intranet host, a
+  // pre-release file, or a URL with a token in the query string, and it reaches
+  // the chip bar through a popover the user stops looking at. `#url=` and
+  // `#endpoint=` do carry an address, but each is THE one address in a visible
+  // field the user just typed; an accumulated partner list is not that. So the
+  // hash carries catalog keys only, and shareUrl() names any source it left out.
+  //
+  // ENCODING, uniform across all of them: lowercase names in the style of the
+  // existing dataset/endpoint/load/mode/q/ex. Booleans are `=1`/`=0`, not
+  // presence-only — `labels` defaults ON so presence-only could not spell "off"
+  // without an inverted name like `nolabels`, and every reader here uses
+  // params.get(), where a presence-only flag reads back as "" and quietly tests
+  // falsy. Enumerations carry the control's own option value (strategy=progressive,
+  // view=map) so the link reads the way the UI does.
+  const VIEW_STATE_PARAMS = ["union", "reason", "strategy", "round", "fed", "view", "labels"];
+
+  // The federation partners a link CAN carry (catalog keys)…
+  function fedKeysInView() {
+    return state.fedSources.filter((s) => s.key && datasetInfo(s.key)).map((s) => s.key);
+  }
+  // …and the ones it deliberately will not. shareUrl() names these out loud.
+  function adHocFedSources() {
+    return state.fedSources.filter((s) => !(s.key && datasetInfo(s.key)));
+  }
+  // The catalog keys an example's own `fed:` contributes — its {endpoint,label}
+  // entries carry no key and fall in with the other ad-hoc sources.
+  function exampleFedKeys(ex) {
+    return (ex && Array.isArray(ex.fed) ? ex.fed : [])
+      .filter((k) => typeof k === "string" && k !== state.dataset && datasetInfo(k));
+  }
+
+  function currentViewState() {
+    const decode = $("decodeToggle");
+    const strategy = $("strategy").value || "whole";
+    return {
+      union: unionGraphsOn(),
+      reason: !!($("owlReason") && $("owlReason").checked),
+      strategy,
+      // The round only exists for the community strategy (its input is hidden
+      // otherwise), so a leftover number must not travel with any other one.
+      round: strategy === "community" && $("round") ? $("round").value.trim() : "",
+      fed: fedKeysInView(),
+      view: $("fmt").value,
+      labels: decode ? !!decode.checked : true,
+    };
+  }
+
+  // What a fresh page opening THIS VERY LINK lands on before any view-state
+  // param is applied: the plain defaults, or — when the link shares an example
+  // by index — whatever that example declares, since boot's selectExample()
+  // applies its view / strategy / reason / fed. Emitting relative to this rather
+  // than to the bare defaults is what keeps `#…&ex=3` of a map example exactly
+  // as short as it is today.
+  function viewStateBaseline(ex) {
+    return {
+      union: false,
+      reason: ex && typeof ex.reason === "boolean" ? ex.reason : false,
+      strategy: (ex && ex.strategy) || "whole",
+      round: "",
+      fed: exampleFedKeys(ex),
+      view: resolvedView((ex && ex.view) || "table"),
+      labels: true,
+    };
+  }
+
   function updateHash() {
     const params = new URLSearchParams();
     // An off-catalog remote — connected by hand or arrived at via #url= — has no
@@ -9859,13 +9980,93 @@ self.onmessage = function (e) {
     // A CARD example never shares by index: the card loads async and its
     // position depends on dedupe, so #ex=N would open a different query (or
     // none). Its full text goes in the link instead.
-    if (exi != null && exi >= 0 && exList[exi] && !exList[exi].fromCard &&
-        (exList[exi].q || "").trim() === q) {
-      params.set("ex", String(exi));
-    } else if (q) {
-      params.set("q", q);
-    }
+    const shortEx =
+      exi != null && exi >= 0 && exList[exi] && !exList[exi].fromCard &&
+      (exList[exi].q || "").trim() === q ? exi : null;
+
+    // The view state goes BEFORE the query: `q=` can be thousands of characters
+    // and chat clients truncate long links, so the few short parameters that
+    // decide what the answer even IS should not sit behind it. Each is emitted
+    // only when it differs from what this link will itself restore (the example
+    // baseline above), which is what keeps a default view's hash unchanged.
+    const cur = currentViewState();
+    const base = viewStateBaseline(shortEx != null ? exList[shortEx] : null);
+    // answer-affecting…
+    if (cur.union !== base.union) params.set("union", cur.union ? "1" : "0");
+    if (cur.reason !== base.reason) params.set("reason", cur.reason ? "1" : "0");
+    if (cur.strategy !== base.strategy) params.set("strategy", cur.strategy);
+    if (cur.round !== base.round) params.set("round", cur.round);
+    // An empty `fed=` is meaningful: it says "this view removed the partners the
+    // example declares", which silence could not express.
+    if (cur.fed.join(",") !== base.fed.join(",")) params.set("fed", cur.fed.join(","));
+    // …then presentational.
+    if (cur.view !== base.view) params.set("view", cur.view);
+    if (cur.labels !== base.labels) params.set("labels", cur.labels ? "1" : "0");
+
+    if (shortEx != null) params.set("ex", String(shortEx));
+    else if (q) params.set("q", q);
     history.replaceState(null, "", "#" + params.toString());
+  }
+
+  // Read the view state back out of a deep link.
+  //
+  // Called at the very END of boot, and the ordering is load-bearing rather than
+  // tidy: selectExample() applies the example's own view / strategy / reason /
+  // fed, so anything restored before the q/ex branch is silently overwritten;
+  // and #url= reaches remote-lazy through an awaited path whose enterRemote()
+  // calls resetFed(), so a federation restored before THAT is silently dropped.
+  // Boot awaits both, which makes this the one point where the state is settled.
+  //
+  // Nothing here dispatches a `change` event: #fmt's handler RUNS THE QUERY and
+  // #strategy's re-enters setStrategy. Values are assigned directly, exactly as
+  // setView()/setStrategy() do.
+  function applyViewState(params) {
+    const optionValues = (id) => Array.from(($(id) || { options: [] }).options).map((o) => o.value);
+    const flag = (name, dflt) => {
+      const v = params.get(name);
+      if (v == null) return dflt;
+      // Emitted as 1/0; the words are accepted too, because these links get
+      // hand-edited and `union=true` should not silently mean "off".
+      if (/^(1|true|yes|on)$/i.test(v)) return true;
+      if (/^(0|false|no|off)$/i.test(v)) return false;
+      return dflt;
+    };
+
+    // --- answer-affecting: restored unconditionally ---------------------------
+    const u = $("unionGraphs");
+    if (u && params.get("union") != null) {
+      u.checked = flag("union", u.checked);
+      // Same honesty contract as throwing the switch by hand — a non-standard
+      // dataset mounting is ANNOUNCED, not merely shown. The person opening this
+      // link did not flip it and has no reason to look at the toolbar for it.
+      if (u.checked) announceUnionGraphs(true);
+    }
+    const r = $("owlReason");
+    if (r && params.get("reason") != null) r.checked = flag("reason", r.checked);
+    const strategy = params.get("strategy");
+    if (strategy && optionValues("strategy").includes(strategy)) setStrategy(strategy);
+    const round = params.get("round");
+    // Only a plain integer: this value is parsed with Number() at run time.
+    if (round != null && $("round") && /^\d*$/.test(round)) $("round").value = round;
+    const fed = params.get("fed");
+    if (fed != null) {
+      resetFed();
+      fed.split(",").map((k) => k.trim()).filter(Boolean).forEach(addCatalogFedSource);
+      renderFedBar();
+    }
+
+    // --- presentational: best effort -----------------------------------------
+    const view = params.get("view");
+    // setView, not a raw assignment: on a phone the table→cards substitution
+    // must still win over a link that says view=table.
+    if (view && optionValues("fmt").includes(view)) setView(view);
+    if (params.get("labels") != null) {
+      const decode = $("decodeToggle");
+      if (decode) {
+        decode.checked = flag("labels", decode.checked);
+        if (window.PlaygroundEditor) window.PlaygroundEditor.setDecode("q", decode.checked);
+      }
+    }
   }
 
   function readHash() {
@@ -9900,6 +10101,12 @@ self.onmessage = function (e) {
       if (state.liveEndpoint || !hasSharePage(state.dataset)) return deep;
       const params = readHash();
       if (params.get("q")) return deep;         // an ad-hoc or edited query
+      // A generated share page forwards to a hash built from the CATALOG alone
+      // (dataset + load + mode + ex — see scripts/preview/card.mjs), so it has
+      // nowhere to put a view-state parameter. Handing one out here would drop
+      // exactly the union / reason / strategy the link exists to reproduce —
+      // the same silent-difference bug one level up. Deep link instead.
+      if (VIEW_STATE_PARAMS.some((k) => params.get(k) != null)) return deep;
       const ex = params.get("ex");
       return sharePageUrl(ex ? `q/${state.dataset}-${ex}.html` : `d/${state.dataset}.html`);
     } catch (e) {
@@ -9911,12 +10118,23 @@ self.onmessage = function (e) {
     updateHash();
     const url = shareableUrl();
     const ok = await copyToClipboard(url);
+    // Every ANSWER-AFFECTING setting rides in the hash except one that cannot:
+    // a federation source added by pasting an address (see the view-state note).
+    // Name it. A link that quietly federates over fewer sources than the view it
+    // was copied from is the exact defect this parameter set exists to prevent,
+    // so if the link cannot carry something, the person copying it has to hear so.
+    const dropped = adHocFedSources();
+    const caveat = dropped.length
+      ? ` — WITHOUT ${dropped.length === 1 ? "the added source" : "the " + dropped.length + " added sources"} ` +
+        `${dropped.map((s) => s.label).join(", ")}: a pasted address is not put into a shareable link, ` +
+        `so the recipient queries ${dropped.length === 1 ? "without it" : "without them"}.`
+      : "";
     const b = $("shareBtn");
     if (ok) {
       if (b) { const o = b.title; b.title = "Copied ✓"; setTimeout(() => { b.title = o || "Copy link to this view"; }, 1500); }
-      $("qmeta").textContent = "Link copied ✓";
+      $("qmeta").textContent = "Link copied ✓" + caveat;
     } else {
-      $("qmeta").textContent = "Share URL: " + url;
+      $("qmeta").textContent = "Share URL: " + url + caveat;
     }
   }
 
@@ -10238,7 +10456,15 @@ self.onmessage = function (e) {
         flash("Selected — long-press → Copy");
       });
     });
-    $("strategy").onchange = () => setStrategy($("strategy").value);
+    // The controls the deep link carries all re-stamp the hash on change (see the
+    // note in onOutputTypeChange): the address bar has to describe the view a
+    // person is looking at, not the one they opened.
+    $("strategy").onchange = () => { setStrategy($("strategy").value); updateHash(); };
+    // `oninput`, not `onchange`: a free-text field only fires change on blur, and
+    // someone who types a round and copies the address bar without leaving the
+    // field would otherwise copy a link that names a different round.
+    { const rd = $("round"); if (rd) rd.oninput = updateHash; }
+    { const or = $("owlReason"); if (or) or.onchange = updateHash; }
     // Switching the Output type re-renders the last result in the new view
     // (no re-run) when it can; otherwise it runs the query.
     $("fmt").onchange = onOutputTypeChange;
@@ -10531,7 +10757,7 @@ self.onmessage = function (e) {
     { const lm = $("labelsModal"); if (lm) lm.addEventListener("click", (e) => { if (e.target === lm) lm.classList.add("hidden"); }); }
     // ⛁ All graphs — a semantics switch must announce itself the moment it
     // flips, not only on the next run.
-    { const u = $("unionGraphs"); if (u) u.onchange = () => announceUnionGraphs(u.checked); }
+    { const u = $("unionGraphs"); if (u) u.onchange = () => { announceUnionGraphs(u.checked); updateHash(); }; }
     $("layoutCell").onchange = renderLayout;
     $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
@@ -10855,7 +11081,7 @@ self.onmessage = function (e) {
     // decode to match on first mount.
     const decodeBtn = $("decodeToggle");
     if (decodeBtn && window.PlaygroundEditor) {
-      decodeBtn.onchange = () => window.PlaygroundEditor.setDecode("q", decodeBtn.checked);
+      decodeBtn.onchange = () => { window.PlaygroundEditor.setDecode("q", decodeBtn.checked); updateHash(); };
       if (decodeBtn.checked) window.PlaygroundEditor.setDecode("q", true);
     }
     // Find-a-term modal: a button opens it; the input is debounced (a remote
@@ -10983,7 +11209,15 @@ self.onmessage = function (e) {
       renderExamples();
     }
     setMode(params.get("mode") || "sparql");
+    // The toolbar state comes LAST — see applyViewState(): the dataset branch
+    // above and selectExample() both write these controls, and the link's values
+    // have to win over them.
+    applyViewState(params);
     if (liveEp) connectLiveEndpoint(liveEp);
+    // Boot's own loadDataset/selectExample/setMode each rewrote the hash while
+    // the view was still half-restored. Re-stamp it from the settled state so a
+    // Share pressed straight after opening a link hands back the same link.
+    updateHash();
     updateResultVisibility();
     // Open the catalog last, over a fully-rendered console (see the no-deep-link branch).
     if (bootShowCatalog && !liveEp) openSource();
