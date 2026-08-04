@@ -441,7 +441,7 @@ rete search data.rete --contains glucose         # literals containing "glucose"
 rete search data.rete --contains glucose phosphate  # both words (AND)
 rete search data.rete --contains-prefix einst    # a word starting with "einst…"
 </code></pre>
-<h3><code>rete card &lt;file&gt; [--json] [--format jsonld|croissant]</code></h3>
+<h3><code>rete card &lt;file&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
 <p>Print the embedded <a href="dataset-cards.html">Dataset Card</a> — curated metadata
 (title/license/source/creators/publisher/…) plus the derived profile (counts, top
 predicates and classes, vocabularies), the content-hash checksum, and (when the
@@ -452,7 +452,10 @@ index — instant on any size. <code>--json</code> emits the card object plus
 <code>schemaVersion: 1</code> and a <code>build</code> block. <code>--format jsonld</code> projects the card to
 JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
 <code>--format croissant</code> emits the honestly-mappable Croissant subset (no
-<code>recordSet</code>: a graph is not a table). Prints <code>(no dataset card)</code> for a file
+<code>recordSet</code>: a graph is not a table). <code>--sha256</code> supplies the whole-file
+sha256 the Croissant projection's <code>FileObject</code> requires — a file cannot carry
+its own, so compute it outside (<code>sha256sum file.rete</code>); with it the document
+is validator-clean. Prints <code>(no dataset card)</code> for a file
 built without one. <code>rete info</code> shows the same catalog beneath the header when a
 card is present.</p>
 <h3><code>rete graphs &lt;file&gt;</code></h3>
@@ -508,6 +511,12 @@ includes ontology-entailed solutions (<code>rdfs:subClassOf</code> / <code>subPr
 data with no materialization — off by default, so a plain query is unchanged. Same
 flag on <code>rete sparql-url</code> reasons over a remote file, fetching only what the
 rewritten query touches. See <a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</p>
+<p>There is <strong>no union-default-graph flag</strong> here: the opt-in ⛁ All graphs mode —
+a pattern outside <code>GRAPH</code> matching the merge of the default graph and every
+named graph, for files whose data lives entirely in named graphs — exists
+today in the playground and the wasm <code>query_opts</code> API only, not on the CLI and
+not in <code>rete serve</code>. On the CLI, scope the query with <code>GRAPH ?g { … }</code>
+instead. See <a href="sparql.html#union-default-graph">Union default graph</a>.</p>
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
@@ -707,14 +716,14 @@ rete reach g.rete --predicate '&lt;http://ex/knows&gt;' --seeds-file seeds.txt -
 <h2>Over HTTP</h2>
 <p>Both URL commands work against <code>http://</code> and <code>https://</code> hosts that honor <code>Range</code>
 requests (S3, GitHub, any CDN).</p>
-<h3><code>rete card-url &lt;url&gt; [--json] [--format jsonld|croissant]</code></h3>
+<h3><code>rete card-url &lt;url&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
 <p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and one
 coalesced metadata + build-info range, in <strong>two small range requests</strong>. The
 dictionary, index, and pyramid are never fetched: this is the index-free <strong>CARD
 tier</strong>, the cold-start self-description (counts, vocabulary, class graph,
 signals, starter queries, build record) a client reads before it knows what to
-query. Reports bytes fetched + range count. The <code>--format</code> projections match
-<code>rete card</code>.</p>
+query. Reports bytes fetched + range count. The <code>--format</code> projections (and
+<code>--sha256</code> for Croissant) match <code>rete card</code>.</p>
 <pre><code class="language-sh">rete card-url https://host/data.rete --json
 </code></pre>
 <h3><code>rete summary-url &lt;url&gt;</code></h3>

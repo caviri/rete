@@ -26,7 +26,7 @@ touches are fetched; fetched pieces are cached on disk).
 Recommended workflow:
 1. `list_datasets` — see what graphs exist and what each is about.
 2. `dataset_card(dataset)` — the graph's own metadata: description, license,
-   provenance, counts.
+   provenance, identity (creators/publisher/DOI, when curated), counts.
 3. `dataset_schema(dataset)` — classes with instance counts and
    subject-class/predicate/object-class relations. Use the IRIs EXACTLY as
    returned (never invent namespaces; `a`/rdf:type shortcuts require the
@@ -70,8 +70,10 @@ def list_datasets() -> List[Dict[str, Any]]:
 @mcp.tool
 def dataset_card(dataset: str) -> Dict[str, Any]:
     """The Dataset Card embedded in the .rete file itself: title, description,
-    license, provenance, creation date, counts, and often example queries.
-    Lazy — reading it fetches only the card's byte range."""
+    license, provenance and — when the publisher curated them — identity
+    fields (version, creators as ORCID IRIs, publisher as a ROR IRI, DOI,
+    citation), plus counts and often example queries. Lazy — reading it
+    fetches only the card's byte range."""
     card = svc.dataset_card(dataset)
     return card or {"note": f"dataset {dataset!r} carries no embedded card"}
 
@@ -187,8 +189,10 @@ def build_rete(rdf: str, format: str = "ttl",
                include_base64: bool = False) -> Dict[str, Any]:
     """Build a real .rete file from RDF text (ontology + instances) and
     serve it at an ephemeral URL. Give it a `card` (title, description,
-    license) and runnable `examples` ({title, question, sparql}) so the
-    file is self-describing. The returned `dataset` key works immediately
+    license — plus, when known, the curated identity fields: version,
+    creators [{name, orcid}], publisher {name, ror}, doi, cite_as) and
+    runnable `examples` ({title, question, sparql}) so the file is
+    self-describing. The returned `dataset` key works immediately
     in sparql_query / validate_shacl / dataset_card — query what you just
     built, in this same conversation. Ephemeral until the next Space
     restart: set include_base64=true to hand the user the file itself."""

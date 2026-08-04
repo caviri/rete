@@ -72,6 +72,25 @@ builder.card(
 )
 ```
 
+Beyond the named keyword arguments, `card()` passes **any extra field**
+straight into the card JSON — which is how you set the curated **identity and
+provenance** fields the card schema defines (the same ones the CLI's
+`--card-file` takes):
+
+```python
+builder.card(
+    version="1.0.0",                             # Croissant requires one
+    creators=[{"name": "Ada Lovelace",
+               "orcid": "https://orcid.org/0000-0002-1825-0097"}],
+    publisher={"name": "EPFL", "ror": "https://ror.org/02s376052"},
+    canonical_url="https://data.example.org/people.rete",
+    source_date="2026-07-01",                    # the SOURCE's own snapshot date
+    derived_from=["https://example.org/source-dump"],
+    doi="https://doi.org/10.5281/zenodo.0000000",
+    cite_as="Lovelace, A. (2026). People & places.",
+)
+```
+
 Field by field:
 
 | Field | Meaning |
@@ -82,6 +101,15 @@ Field by field:
 | `source` | Provenance: the upstream dump/API this was built from |
 | `created` | Snapshot date (ISO 8601 string) |
 | `example_queries` | Runnable SPARQL strings for a newcomer's first click |
+| `version` | Dataset version (semver or a date) |
+| `creators` | People: `{name, orcid}` — the ORCID as an **IRI**, joinable against the published ORCID graph |
+| `publisher` | Organisation: `{name, ror}` — the ROR as an **IRI** |
+| `canonical_url` | Where the authoritative copy of this file lives |
+| `sparql_endpoint` | A public endpoint serving this dataset |
+| `source_date` | The source data's own snapshot date (distinct from `created`) |
+| `derived_from` | What this file was derived from (dumps, endpoints, shards) |
+| `doi` | The dataset's DOI, as an IRI (`https://doi.org/…`) |
+| `cite_as` | Preferred citation text |
 
 The **statistics** — `triple_count`, `quad_count`, `named_graph_count`,
 `term_count`, plus the `format_version` — are stamped **automatically** at
@@ -106,11 +134,23 @@ After opening the built file (even remotely), `g.examples()` lists every
 embedded query, and each entry's `["sparql"]` runs as-is — the dataset ships
 its own documentation *and* its own first queries.
 
-One honest limit: the CLI's `rete build` additionally derives an **enriched
+One honest limit: the Python builder **writes the card you supply — it cannot
+derive one**. The CLI's `rete build` additionally derives an **enriched
 profile** (top predicates and classes, vocabularies, hubs, datatype/language
-histograms, a tiered starter-query library, an optional coherence verdict).
-The Python builder embeds the curated fields + counts only — if you want the
-full auto-profile, rebuild the exported data with the CLI.
+histograms, a tiered starter-query library, an optional coherence verdict) and
+writes the adjacent **build-info record** (timestamp, builder, parameters,
+measured starter-query costs); the JSON-LD and Croissant **projections**
+(`rete card --format jsonld|croissant`) are also CLI-only. The Python builder
+embeds the curated fields + counts only — if you want the full auto-profile
+and build record, rebuild the exported data with the CLI.
+
+One shape to watch: every example query in this tutorial matches the
+**default graph**. If your sources are N-Quads (or rdflib `Dataset`s with
+named graphs), a bare pattern like `{ ?s <urn:knows> ?o }` correctly returns
+nothing for statements living in named graphs — scope it with
+`GRAPH ?g { … }`, or use a surface that offers the opt-in
+[union default graph](sparql.md#union-default-graph) mode (the playground's
+⛁ All graphs toggle; not standard SPARQL, and not available in this client).
 
 ## 3. The pyramid
 

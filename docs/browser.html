@@ -399,8 +399,8 @@ Binding failures throw JavaScript <code>Error</code> objects rather than strings
 <tr><td><code>schema_url(url)</code></td><td><strong>worker-only</strong>: the Schema view (<code>classes</code>/<code>relations</code>) from a remote file's schema pyramid, plus <code>remote:{…}</code></td></tr>
 <tr><td><code>shacl_url(url, shapes, format?)</code></td><td><strong>worker-only</strong>: lazy SHACL — validates the remote default graph, range-reading only each shape's targets, plus <code>remote:{…}</code></td></tr>
 <tr><td><code>shacl_construct_url(url, shapes, construct)</code></td><td><strong>worker-only</strong>: SHACL over just the subgraph a CONSTRUCT selects (only its tiles fetched), plus <code>remote:{…}</code></td></tr>
-<tr><td><code>new Graph(bytes)</code> → <code>.query</code>, <code>.query_triples</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.why_triples</code>, <code>.schema</code>, <code>.reach</code>, <code>.shacl</code>, <code>.reason</code>, <code>.query_communities</code>, <code>.pyramid_tree</code>, <code>.file_layout</code>, <code>.info</code>, <code>.graph_names</code></td><td>a file opened <strong>once</strong> and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions</td></tr>
-<tr><td><code>new RemoteGraph(url)</code> → <code>.query(query, format)</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.stats()</code>, <code>.content_hash()</code></td><td><strong>worker-only</strong>: a remote URL opened <strong>once</strong> and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see <a href="#caching-remote-reads">Caching remote reads</a>)</td></tr>
+<tr><td><code>new Graph(bytes)</code> → <code>.query</code>, <code>.query_reasoned</code>, <code>.query_opts</code>, <code>.query_triples</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.why_triples</code>, <code>.schema</code>, <code>.reach</code>, <code>.shacl</code>, <code>.reason</code>, <code>.query_communities</code>, <code>.pyramid_tree</code>, <code>.file_layout</code>, <code>.info</code>, <code>.graph_names</code></td><td>a file opened <strong>once</strong> and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions</td></tr>
+<tr><td><code>new RemoteGraph(url)</code> → <code>.query(query, format)</code>, <code>.query_reasoned</code>, <code>.query_opts</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.stats()</code>, <code>.content_hash()</code></td><td><strong>worker-only</strong>: a remote URL opened <strong>once</strong> and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see <a href="#caching-remote-reads">Caching remote reads</a>)</td></tr>
 <tr><td><code>reason(bytes, graph?)</code></td><td>OWL RL / RDFS coherence over an in-memory graph: <code>{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }</code></td></tr>
 <tr><td><code>check_schema(bytes)</code></td><td>index-free Tier-0 schema coherence: <code>{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], readsIndex:false }</code></td></tr>
 <tr><td><code>check_schema_url(url)</code></td><td><strong>worker-only</strong>: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus <code>remote:{…}</code></td></tr>
@@ -416,6 +416,16 @@ single JSON envelope with a <code>kind</code> field:</p>
 when <code>format</code> is <code>"ttl"</code>/<code>"jsonld"</code>, else
 <code>{ "schemaVersion":1, "kind":"construct", "triples":[[s,p,o],…] }</code>.</li>
 </ul>
+<p><code>Graph.query_reasoned(query, format)</code> is <code>query</code> with OWL 2 QL entailment on
+(see <a href="reasoning.html">Reasoning</a>); <code>Graph.query_opts(query, format, reason, union)</code> — and the same two methods on <code>RemoteGraph</code> — makes both opt-in
+evaluation toggles explicit: <code>reason</code> is the entailment switch, <code>union</code> the
+non-standard <a href="sparql.html#union-default-graph">union default graph</a> mode, where
+a pattern outside <code>GRAPH</code> matches the merge of the default graph and every
+named graph. Both default to off, and plain <code>query</code> never applies either. One
+cost to know: on a <code>RemoteGraph</code>, a union query over a many-graph file may
+fault the index tiles of <strong>every</strong> named graph the merge touches (the
+empty-default + single-named-graph shape stays a zero-copy borrow), so the
+merge is strictly per-query opt-in.</p>
 <p><code>communities</code> recomputes the Louvain community decomposition (optionally at a
 given dendrogram <code>round</code>) and returns per-community member and triple counts —
 the data behind the playground's "split by community" view.</p>
