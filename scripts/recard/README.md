@@ -289,3 +289,11 @@ Two secondary findings worth knowing before planning the work:
   check `rete export` round-trips are documented against; it does not compare
   non-graph sections (text index, PMTiles), which a re-card does not carry over
   unless the corresponding flag is passed.
+* **A headline count can go DOWN, and that is a fix, not a loss.** An old card
+  counted the raw pre-dedup input multiset; a re-card counts what the file
+  actually stores. `lombardi` is the clean example: its published card says
+  70,719 statements, its own header says 70,545, and both files export exactly
+  70,545 N-Quads. The re-carded card says 70,545 — the card and the header now
+  agree. Expect this wherever the source RDF carried duplicate statements, and
+  read it against the data proof (identical N-Quads), not against the old
+  number.
