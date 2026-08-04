@@ -27,7 +27,13 @@ inside Docker, so the paths you pass are **container** paths (the repo is `/work
 
 ```sh
 docker compose build dev                       # once
-docker compose run --rm dev cargo build --release -p rete-cli
+
+# The scripts run /work/target/release/rete — the repo-wide convention. Build it
+# THERE, not into the shared /target Compose volume (which `docker compose run
+# --rm dev cargo build` would use, and which other sessions also write to):
+docker run --rm -v "$PWD:/work" -w /work -e CARGO_TARGET_DIR=/work/target \
+  rete-dev:latest cargo build --release -p rete-cli
+# …or point the scripts elsewhere:  export RETE_BIN=/work/dev/target/release/rete
 
 # 1. what is actually broken?  (2 range requests per file, ~6 KB each)
 bash scripts/recard/survey.sh

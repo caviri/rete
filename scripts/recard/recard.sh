@@ -56,7 +56,7 @@ if [ "${RECARD_INNER:-}" != "1" ]; then
   mounts=(-v "$repo:/work")
   if [ -n "${RECARD_MOUNT:-}" ]; then
     IFS=';' read -r -a extra <<<"$RECARD_MOUNT"
-    for m in "${extra[@]}"; do [ -n "$m" ] && mounts+=(-v "$m"); done
+    for m in "${extra[@]}"; do if [ -n "$m" ]; then mounts+=(-v "$m"); fi; done
   fi
   exec docker run --rm "${mounts[@]}" -w /work \
     -e RECARD_INNER=1 -e RETE_BIN -e TZ=UTC \
