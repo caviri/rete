@@ -75,8 +75,8 @@ Binding failures throw JavaScript `Error` objects rather than strings.
 | `schema_url(url)` | **worker-only**: the Schema view (`classes`/`relations`) from a remote file's schema pyramid, plus `remote:{…}` |
 | `shacl_url(url, shapes, format?)` | **worker-only**: lazy SHACL — validates the remote default graph, range-reading only each shape's targets, plus `remote:{…}` |
 | `shacl_construct_url(url, shapes, construct)` | **worker-only**: SHACL over just the subgraph a CONSTRUCT selects (only its tiles fetched), plus `remote:{…}` |
-| `new Graph(bytes)` → `.query`, `.query_triples`, `.prefix_search`, `.text_search`, `.why_triples`, `.schema`, `.reach`, `.shacl`, `.reason`, `.query_communities`, `.pyramid_tree`, `.file_layout`, `.info`, `.graph_names` | a file opened **once** and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions |
-| `new RemoteGraph(url)` → `.query(query, format)`, `.prefix_search`, `.text_search`, `.stats()`, `.content_hash()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
+| `new Graph(bytes)` → `.query`, `.query_reasoned`, `.query_opts`, `.query_triples`, `.prefix_search`, `.text_search`, `.why_triples`, `.schema`, `.reach`, `.shacl`, `.reason`, `.query_communities`, `.pyramid_tree`, `.file_layout`, `.info`, `.graph_names` | a file opened **once** and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions |
+| `new RemoteGraph(url)` → `.query(query, format)`, `.query_reasoned`, `.query_opts`, `.prefix_search`, `.text_search`, `.stats()`, `.content_hash()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
 | `reason(bytes, graph?)` | OWL RL / RDFS coherence over an in-memory graph: `{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }` |
 | `check_schema(bytes)` | index-free Tier-0 schema coherence: `{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], readsIndex:false }` |
 | `check_schema_url(url)` | **worker-only**: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus `remote:{…}` |
@@ -91,6 +91,18 @@ single JSON envelope with a `kind` field:
 - CONSTRUCT/DESCRIBE → `{ "schemaVersion":1, "kind":"construct", "format":"ttl"|"jsonld", "text":"…" }`
   when `format` is `"ttl"`/`"jsonld"`, else
   `{ "schemaVersion":1, "kind":"construct", "triples":[[s,p,o],…] }`.
+
+`Graph.query_reasoned(query, format)` is `query` with OWL 2 QL entailment on
+(see [Reasoning](reasoning.md)); `Graph.query_opts(query, format, reason,
+union)` — and the same two methods on `RemoteGraph` — makes both opt-in
+evaluation toggles explicit: `reason` is the entailment switch, `union` the
+non-standard [union default graph](sparql.md#union-default-graph) mode, where
+a pattern outside `GRAPH` matches the merge of the default graph and every
+named graph. Both default to off, and plain `query` never applies either. One
+cost to know: on a `RemoteGraph`, a union query over a many-graph file may
+fault the index tiles of **every** named graph the merge touches (the
+empty-default + single-named-graph shape stays a zero-copy borrow), so the
+merge is strictly per-query opt-in.
 
 `communities` recomputes the Louvain community decomposition (optionally at a
 given dendrogram `round`) and returns per-community member and triple counts —

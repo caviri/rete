@@ -129,7 +129,7 @@ rete search data.rete --contains glucose phosphate  # both words (AND)
 rete search data.rete --contains-prefix einst    # a word starting with "einst…"
 ```
 
-### `rete card <file> [--json] [--format jsonld|croissant]`
+### `rete card <file> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
 (title/license/source/creators/publisher/…) plus the derived profile (counts, top
 predicates and classes, vocabularies), the content-hash checksum, and (when the
@@ -140,7 +140,10 @@ index — instant on any size. `--json` emits the card object plus
 `schemaVersion: 1` and a `build` block. `--format jsonld` projects the card to
 JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
 `--format croissant` emits the honestly-mappable Croissant subset (no
-`recordSet`: a graph is not a table). Prints `(no dataset card)` for a file
+`recordSet`: a graph is not a table). `--sha256` supplies the whole-file
+sha256 the Croissant projection's `FileObject` requires — a file cannot carry
+its own, so compute it outside (`sha256sum file.rete`); with it the document
+is validator-clean. Prints `(no dataset card)` for a file
 built without one. `rete info` shows the same catalog beneath the header when a
 card is present.
 
@@ -216,6 +219,13 @@ includes ontology-entailed solutions (`rdfs:subClassOf` / `subPropertyOf` /
 data with no materialization — off by default, so a plain query is unchanged. Same
 flag on `rete sparql-url` reasons over a remote file, fetching only what the
 rewritten query touches. See [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
+
+There is **no union-default-graph flag** here: the opt-in ⛁ All graphs mode —
+a pattern outside `GRAPH` matching the merge of the default graph and every
+named graph, for files whose data lives entirely in named graphs — exists
+today in the playground and the wasm `query_opts` API only, not on the CLI and
+not in `rete serve`. On the CLI, scope the query with `GRAPH ?g { … }`
+instead. See [Union default graph](sparql.md#union-default-graph).
 
 ```sh
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
@@ -459,14 +469,14 @@ rete reach g.rete --predicate '<http://ex/knows>' --seeds-file seeds.txt --paral
 Both URL commands work against `http://` and `https://` hosts that honor `Range`
 requests (S3, GitHub, any CDN).
 
-### `rete card-url <url> [--json] [--format jsonld|croissant]`
+### `rete card-url <url> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
 Fetch only the embedded [Dataset Card](dataset-cards.md) — the header and one
 coalesced metadata + build-info range, in **two small range requests**. The
 dictionary, index, and pyramid are never fetched: this is the index-free **CARD
 tier**, the cold-start self-description (counts, vocabulary, class graph,
 signals, starter queries, build record) a client reads before it knows what to
-query. Reports bytes fetched + range count. The `--format` projections match
-`rete card`.
+query. Reports bytes fetched + range count. The `--format` projections (and
+`--sha256` for Croissant) match `rete card`.
 
 ```sh
 rete card-url https://host/data.rete --json

@@ -44,7 +44,8 @@ either — plus a full https:// URL to any published .rete:
 Recommended workflow:
 1. list_datasets — what is here, local and published.
 2. dataset_card — the graph's own self-description: what it is, its licence,
-   provenance and counts. Costs two small reads even on a 2 GB file.
+   provenance, identity (creators, publisher, DOI, citation, when curated)
+   and counts. Costs two small reads even on a 2 GB file.
 3. dataset_schema — the classes and the subject-class/predicate/object-class
    relations, with counts. USE THESE IRIs EXACTLY; never invent a namespace.
 4. example_queries — runnable SPARQL the file ships with. The fastest route to
@@ -208,8 +209,10 @@ server.registerTool(
     title: "Dataset card",
     description:
       "The Dataset Card embedded in the .rete file itself: title, description, licence, " +
-      "provenance, creation date, counts, and often example queries. Index-free — reads only " +
-      "the header and the card's byte range, so it is just as cheap on a multi-gigabyte graph.",
+      "provenance and — when the publisher curated them — identity fields (version, creators " +
+      "as ORCID IRIs, publisher as a ROR IRI, DOI, citation), plus counts and often example " +
+      "queries. Index-free — reads only the header and the card's byte range, so it is just " +
+      "as cheap on a multi-gigabyte graph.",
     inputSchema: { dataset },
     annotations: { ...READ_ONLY, openWorldHint: true },
   },

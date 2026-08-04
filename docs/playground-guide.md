@@ -53,6 +53,12 @@ Two views: **Rendered**, and **JSON** — the card's own bytes, syntax-coloured,
 with *Copy* and *Download*. Any example query the card carries has a **Use**
 button that loads it straight into the editor.
 
+The card's queries also feed the **examples panel**: when a loaded file ships
+its own starter queries (auto-derived or curated), they appear alongside the
+catalog's curated examples, labelled as coming from the file's card and
+deduplicated against them. So a `.rete` you open by URL — one that was never
+registered in the catalog — still offers its own first questions.
+
 Not every file has one. A card is written at build time
 (`rete build --card …`); the small bundled demo datasets are built without one,
 and the modal says so rather than showing an empty shell.
@@ -77,6 +83,17 @@ you don't know the graph's vocabulary yet:
   toggle on, and nothing with it off. Opt-in and lazy — over a remote dataset it
   fetches only what the rewritten query touches. See
   [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
+- **⛁ All graphs** (right beside 🧠 Reason) mounts the file so a pattern outside
+  `GRAPH` matches the **union of the default graph and every named graph** —
+  the mode Virtuoso, GraphDB and Jena TDB call the union default graph. It
+  exists for files that keep all their data in named graphs (anything built
+  from N-Quads), where `?s ?p ?o` *correctly* answers zero rows; when that
+  happens the playground points at the file's own counts and suggests the
+  toggle. Off by default because it is **not standard SPARQL**; flipping it is
+  announced, and every run under it says so in the result line. Federated runs
+  and live endpoints keep standard semantics, and on a many-graph *remote*
+  file the merge has a real byte cost — details in
+  [Union default graph](sparql.md#union-default-graph).
 - **✨ SPARQL AI** drafts a query from a plain-language request using a small
   language model that runs **locally on your GPU** (WebGPU) — nothing is sent
   to any API. It is grounded in the dataset's example queries, so its drafts

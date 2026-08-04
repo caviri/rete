@@ -380,6 +380,11 @@ whether to query it at all.</p>
 <p>Two views: <strong>Rendered</strong>, and <strong>JSON</strong> — the card's own bytes, syntax-coloured,
 with <em>Copy</em> and <em>Download</em>. Any example query the card carries has a <strong>Use</strong>
 button that loads it straight into the editor.</p>
+<p>The card's queries also feed the <strong>examples panel</strong>: when a loaded file ships
+its own starter queries (auto-derived or curated), they appear alongside the
+catalog's curated examples, labelled as coming from the file's card and
+deduplicated against them. So a <code>.rete</code> you open by URL — one that was never
+registered in the catalog — still offers its own first questions.</p>
 <p>Not every file has one. A card is written at build time
 (<code>rete build --card …</code>); the small bundled demo datasets are built without one,
 and the modal says so rather than showing an empty shell.</p>
@@ -402,6 +407,17 @@ gbif-birds, <code>?o a :Aves</code> returns real occurrences via the taxonomy wi
 toggle on, and nothing with it off. Opt-in and lazy — over a remote dataset it
 fetches only what the rewritten query touches. See
 <a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</li>
+<li><strong>⛁ All graphs</strong> (right beside 🧠 Reason) mounts the file so a pattern outside
+<code>GRAPH</code> matches the <strong>union of the default graph and every named graph</strong> —
+the mode Virtuoso, GraphDB and Jena TDB call the union default graph. It
+exists for files that keep all their data in named graphs (anything built
+from N-Quads), where <code>?s ?p ?o</code> <em>correctly</em> answers zero rows; when that
+happens the playground points at the file's own counts and suggests the
+toggle. Off by default because it is <strong>not standard SPARQL</strong>; flipping it is
+announced, and every run under it says so in the result line. Federated runs
+and live endpoints keep standard semantics, and on a many-graph <em>remote</em>
+file the merge has a real byte cost — details in
+<a href="sparql.html#union-default-graph">Union default graph</a>.</li>
 <li><strong>✨ SPARQL AI</strong> drafts a query from a plain-language request using a small
 language model that runs <strong>locally on your GPU</strong> (WebGPU) — nothing is sent
 to any API. It is grounded in the dataset's example queries, so its drafts

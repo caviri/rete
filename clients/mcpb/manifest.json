@@ -32,7 +32,7 @@
   },
   "tools": [
     { "name": "list_datasets", "description": "List reachable graphs — your local files and the published catalogue" },
-    { "name": "dataset_card", "description": "A graph's embedded self-description: what it is, licence, provenance, counts" },
+    { "name": "dataset_card", "description": "A graph's embedded self-description: what it is, licence, provenance, identity (creators, publisher, DOI), counts" },
     { "name": "dataset_schema", "description": "Classes and relations with counts, from the file's baked schema pyramid" },
     { "name": "example_queries", "description": "Runnable SPARQL the dataset ships with" },
     { "name": "sparql_query", "description": "Run SPARQL 1.1, optionally with OWL 2 QL reasoning" },

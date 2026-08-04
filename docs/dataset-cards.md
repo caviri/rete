@@ -32,9 +32,9 @@ rete build data.nt -o data.rete \
   --created 2026-06-08
 ```
 
-For the curated fields — including a list of **example queries**, which has no
-flag — supply a small JSON file with `--card-file`. Explicit flags override
-whatever the file provides:
+For the curated fields — including the **identity and provenance** fields and
+a list of **example queries**, none of which have flags — supply a small JSON
+file with `--card-file`. Explicit flags override whatever the file provides:
 
 ```json
 {
@@ -42,6 +42,17 @@ whatever the file provides:
   "license": "CC0-1.0",
   "source": "https://example.org/citations",
   "description": "Open citations sharded by year",
+  "version": "2021.2",
+  "creators": [
+    { "name": "Ada Lovelace", "orcid": "https://orcid.org/0000-0002-1825-0097" }
+  ],
+  "publisher": { "name": "EPFL", "ror": "https://ror.org/02s376052" },
+  "canonical_url": "https://data.example.org/citations-2021.rete",
+  "sparql_endpoint": "https://example.org/sparql",
+  "source_date": "2021-12-31",
+  "derived_from": ["https://example.org/dumps/citations-2021.nt"],
+  "doi": "https://doi.org/10.5281/zenodo.0000000",
+  "cite_as": "Lovelace, A. (2021). Citation graph 2021.",
   "example_queries": [
     "SELECT ?citing WHERE { ?citing <http://purl.org/spar/cito/cites> ?cited }"
   ]
@@ -188,7 +199,10 @@ Each query carries:
 - the `requires` capability keys that gated its emission.
 
 A publisher's own `example_queries` (curated, `--card-file`) are kept alongside
-the generated library, unchanged.
+the generated library, unchanged. Clients surface both: the playground merges
+a loaded file's card queries into its examples panel next to any curated
+catalog examples (deduplicated against them), so even an off-catalog `.rete`
+opened by URL offers its own starter questions.
 
 ## Named-graph datasets
 

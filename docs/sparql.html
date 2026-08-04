@@ -362,7 +362,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 <tr><td><strong>Property paths</strong></td><td><code>p+</code>, <code>p*</code>, <code>p?</code> (zero-length included for <code>*</code>/<code>?</code>), reverse <code>^p</code>, sequence <code>a/b</code>, alternative <code>a|b</code> — evaluated goal-directed from a bound endpoint</td></tr>
 <tr><td><strong>Solution modifiers</strong></td><td><code>DISTINCT</code>, <code>ORDER BY</code> (ASC/DESC), <code>LIMIT</code>, <code>OFFSET</code>, <code>VALUES</code>, <code>BIND</code></td></tr>
 <tr><td><strong>Aggregation</strong></td><td><code>GROUP BY</code>, <code>HAVING</code>, <code>COUNT</code>/<code>SUM</code>/<code>AVG</code>/<code>MIN</code>/<code>MAX</code> (incl. <code>COUNT(DISTINCT …)</code>)</td></tr>
-<tr><td><strong>Datasets</strong></td><td><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code>, <code>FROM</code> (RDF-merge default graph), <code>FROM NAMED</code> (scope which graphs <code>GRAPH</code> sees); <code>EXISTS</code> honors the active graph</td></tr>
+<tr><td><strong>Datasets</strong></td><td><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code>, <code>FROM</code> (RDF-merge default graph), <code>FROM NAMED</code> (scope which graphs <code>GRAPH</code> sees); <code>EXISTS</code> honors the active graph. Plus an <strong>opt-in, non-standard</strong> <a href="#union-default-graph">union default graph</a> mode for named-graph-heavy files.</td></tr>
 <tr><td><strong>Output</strong></td><td>SPARQL Results JSON (<code>--json</code>), with correct <code>uri</code>/<code>literal</code>/<code>bnode</code> typing, datatype, and <code>xml:lang</code>; literal values are properly unescaped</td></tr>
 <tr><td><strong>RDF-star</strong></td><td>Quoted triples <code>&lt;&lt; s p o &gt;&gt;</code> in subject/object position — ingest (N-Triples-star &amp; Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables <code>&lt;&lt; ?s :p ?o &gt;&gt;</code>) and the <code>isTRIPLE</code> / <code>TRIPLE</code> / <code>SUBJECT</code> / <code>PREDICATE</code> / <code>OBJECT</code> built-ins. See <a href="#rdf-star">below</a>.</td></tr>
 <tr><td><strong>Reasoning (OWL 2 QL)</strong></td><td>Opt-in ontology-mediated answering by <strong>query rewriting</strong> — no materialization: <code>rdfs:subClassOf</code> / <code>subPropertyOf</code> hierarchy + <code>rdfs:domain</code> / <code>range</code> type inference, computed over the raw data. <code>rete sparql … --entail</code>, or the playground <strong>🧠 Reason</strong> toggle. See <a href="#reasoning-owl-2-ql">below</a>.</td></tr>
@@ -418,6 +418,66 @@ and <code>GROUP BY</code> / <code>ORDER BY</code> / <code>LIMIT</code> / <code>D
 rows. A query is refused only when nothing in it can split (no BGP with a
 variable subject — the strategy would add nothing) or under <code>FROM</code> / <code>FROM NAMED</code>. The playground's "Split by community" strategy uses this; natively
 the per-star, per-community partials are the seam for parallel evaluation.</p>
+<h2 id="union-default-graph">Union default graph (⛁ All graphs)</h2>
+<p>Standard SPARQL scopes a pattern outside <code>GRAPH</code> to the <strong>default graph</strong>, and
+the engine keeps exactly that — the W3C conformance suite runs on it. But many
+datasets keep <strong>every statement in named graphs</strong> (anything built from N-Quads:
+DCAT catalogs, provenance stores), so on such a file
+<code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code> answers <code>0</code>. That answer is
+<em>correct</em>, and nearly every newcomer reads it as breakage — the published Czech
+national open-data catalog (2.28 M quads across 31,974 named graphs, default
+graph empty) is the case that proved it.</p>
+<p>Virtuoso, GraphDB and Jena TDB (<code>tdb:unionDefaultGraph</code>) all offer a
+store-level switch for exactly this, and rete offers the same mode, <strong>opt-in
+per query</strong>: with it on, a pattern outside <code>GRAPH</code> matches the <strong>RDF merge of
+the default graph and every named graph</strong>. Because it is not standard SPARQL,
+it is off by default and is never applied implicitly — a plain query never
+changes meaning.</p>
+<p>Semantics, precisely:</p>
+<ul>
+<li>The merge is a <strong>set union</strong>: a triple present in several graphs matches
+once. The file's own default-graph triples are <strong>included</strong> (unlike a bare
+<code>FROM</code>, which replaces the default graph).</li>
+<li>A query that brings its own <code>FROM</code> keeps its <code>FROM</code> dataset — the query
+named its dataset explicitly, and that wins.</li>
+<li><code>GRAPH &lt;iri&gt;</code> / <code>GRAPH ?g</code> and <code>FROM NAMED</code> are completely unaffected: they
+enumerate and scope the named graphs exactly as before.</li>
+</ul>
+<p>Where it exists today:</p>
+<ul>
+<li><strong>The playground</strong> — the ⛁ All graphs toggle beside 🧠 Reason. Flipping it
+is announced, and every result computed under it says so in its meta line,
+so a non-standard answer is never silently presented as a standard one. See
+<a href="playground-guide.html">the playground guide</a>.</li>
+<li><strong>The browser engine</strong> — <code>Graph.query_opts(query, format, reason, union)</code>
+and the same method on <code>RemoteGraph</code> (see
+<a href="browser.html">WASM &amp; JavaScript API</a>).</li>
+<li><strong>Rust</strong> — <code>eval_query_with(&amp;rete, query, QueryOpts { union_default_graph: true, ..QueryOpts::default() })</code> in <code>rete-core::sparql</code>.</li>
+<li><strong>Not</strong> on the CLI — <code>rete sparql</code> has no union flag — and <strong>not</strong> in
+<code>rete serve</code>'s endpoint. If you need the union semantics there, write it
+into the query with <code>GRAPH ?g { … }</code> (and <code>UNION</code> with a default-graph
+branch when both sides hold data), which works everywhere.</li>
+</ul>
+<p>Costs and limits worth knowing before flipping it on:</p>
+<ul>
+<li>The common converted-file shape — <strong>empty default graph, exactly one named
+graph</strong> — stays a zero-copy borrow of that graph's index: no copying, no
+extra bytes.</li>
+<li>Any other shape <strong>materializes the merged index</strong> for the query. On a
+lazily-opened remote file that can mean faulting the index tiles of every
+named graph the merge touches — a real cost on a many-graph file, and
+precisely why the mode is opt-in per query rather than a file-level default.</li>
+<li>The playground's progressive and community-split strategies answer from
+default-graph structures, so a union run is evaluated on the whole index
+instead (the result line says so) rather than silently answering with
+standard semantics.</li>
+<li>Federated multi-source runs and live SPARQL endpoints keep standard
+semantics — the toggle does not reach them (a live endpoint decides its own
+dataset).</li>
+<li>Under union, <code>DESCRIBE</code>'s per-resource expansion — the triples returned
+<em>about</em> each matched resource — still reads the default graph; the union
+applies to the pattern matching that selects the resources.</li>
+</ul>
 <h2>Output views &amp; query shapes</h2>
 <p>The playground renders one result several ways — Table, Graph, Map, Time,
 TTL/JSON-LD — and each view expects a particular query shape (a geometry column

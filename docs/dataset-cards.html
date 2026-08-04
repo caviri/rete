@@ -364,14 +364,25 @@ rete build data.nt -o data.rete \
   --description "Open citations sharded by year" \
   --created 2026-06-08
 </code></pre>
-<p>For the curated fields — including a list of <strong>example queries</strong>, which has no
-flag — supply a small JSON file with <code>--card-file</code>. Explicit flags override
-whatever the file provides:</p>
+<p>For the curated fields — including the <strong>identity and provenance</strong> fields and
+a list of <strong>example queries</strong>, none of which have flags — supply a small JSON
+file with <code>--card-file</code>. Explicit flags override whatever the file provides:</p>
 <pre><code class="language-json">{
   "title": "Citation graph 2021",
   "license": "CC0-1.0",
   "source": "https://example.org/citations",
   "description": "Open citations sharded by year",
+  "version": "2021.2",
+  "creators": [
+    { "name": "Ada Lovelace", "orcid": "https://orcid.org/0000-0002-1825-0097" }
+  ],
+  "publisher": { "name": "EPFL", "ror": "https://ror.org/02s376052" },
+  "canonical_url": "https://data.example.org/citations-2021.rete",
+  "sparql_endpoint": "https://example.org/sparql",
+  "source_date": "2021-12-31",
+  "derived_from": ["https://example.org/dumps/citations-2021.nt"],
+  "doi": "https://doi.org/10.5281/zenodo.0000000",
+  "cite_as": "Lovelace, A. (2021). Citation graph 2021.",
   "example_queries": [
     "SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt; ?cited }"
   ]
@@ -499,7 +510,10 @@ Each query carries:</p>
 <li>the <code>requires</code> capability keys that gated its emission.</li>
 </ul>
 <p>A publisher's own <code>example_queries</code> (curated, <code>--card-file</code>) are kept alongside
-the generated library, unchanged.</p>
+the generated library, unchanged. Clients surface both: the playground merges
+a loaded file's card queries into its examples panel next to any curated
+catalog examples (deduplicated against them), so even an off-catalog <code>.rete</code>
+opened by URL offers its own starter questions.</p>
 <h2>Named-graph datasets</h2>
 <p>Some datasets (DCAT catalogs like NKOD, provenance stores, anything built from
 N-Quads) keep <strong>every statement in named graphs</strong> — the default graph is empty,
