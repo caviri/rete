@@ -64,6 +64,12 @@ CURATED_FIELDS = [
 #
 # Everything else returning zero means the card is describing a graph the query
 # cannot see — the bug this pipeline exists for.
+#
+# This set is for reading cards that are ALREADY published. A build made by a
+# current `rete` cannot produce a zero-row entry at all: it runs every starter
+# query and drops the ones that answer nothing, these two included, recording
+# them in the build record's `dropped_queries` instead. "Legitimately empty" was
+# only ever a licence to ship a dead query because nothing had run it.
 LEGITIMATELY_EMPTY = {"top-dangling", "sp-within"}
 
 # Verdicts, worst first. `todo` is the set the batch driver runs.
@@ -157,6 +163,11 @@ def read_audit(path: str | None) -> list[dict]:
         return json.loads(text[start:]).get("findings") or []
     except ValueError:
         return []
+
+
+def _dropped(card: dict) -> list[dict]:
+    """Starter queries the build generated, ran, and refused to ship."""
+    return (card.get("build") or {}).get("dropped_queries") or []
 
 
 def classify(card: dict | None, key: str, url: str, error: str = "",
@@ -420,6 +431,14 @@ def cmd_verify(args) -> int:
     rows = {q["id"]: q.get("rows", 0) for q in measured}
     print(f"verify: ok — {len(queries)} starter queries, rows: "
           + ", ".join(f"{k}={v}" for k, v in rows.items()), file=sys.stderr)
+    # A rebuilt card can now carry FEWER queries than the generator produced:
+    # the build runs each one and drops what came back empty (or bound nothing),
+    # recording it here. That is why (2) above can pass with no zero rows at all
+    # — say so, rather than let a shorter list look like a loss.
+    for d in _dropped(new):
+        flag = " [GENERATOR DEFECT]" if d.get("contradicts_claim") else ""
+        print(f"verify: the build dropped {d.get('id')} — {d.get('why')}{flag}",
+              file=sys.stderr)
     return 0
 
 
