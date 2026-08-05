@@ -392,9 +392,22 @@ existing <code>.rete</code> — no <code>export | build</code> N-Quads round-tri
 pyramid (or a <code>--text-index</code> / a Dataset Card) to a file built before those
 existed, or to re-derive the schema pyramid under a different <code>--type-predicate</code>
 or <code>--pyramid-algo</code> (same semantics as <code>rete build</code>). The card flags match
-<code>rete build</code> (<code>--card-file</code> / <code>--title</code> / <code>--license</code> / …).</p>
+<code>rete build</code> (<code>--card-file</code> / <code>--title</code> / <code>--license</code> / …) — and take the
+curated half <strong>only</strong> from those flags, so a bare <code>--card</code> drops the
+publisher's <code>title</code>/<code>license</code>/<code>source</code>/<code>description</code>. <code>--pyramid-algo</code> likewise
+defaults to <code>louvain</code> rather than to whatever the file was built with.</p>
+<p>It loads and materializes every quad, so its RAM tracks the <strong>statement count</strong>
+(~350–700 B each), not the file size — roughly <strong>80 M statements</strong> on a 48 GB
+machine, past which the staged <code>export --format nq | build</code> route is the one
+that fits. See
+<a href="dataset-cards.html#maintaining-a-published-card">Maintaining a published card</a>.</p>
 <pre><code class="language-sh">rete repyramid old.rete -o new.rete --type-predicate http://www.wikidata.org/prop/direct/P31
 rete repyramid old.rete -o new.rete --text-index    # add full-text search to an existing file
+
+# re-card a published file, carrying its curated fields across
+rete card old.rete --json &gt; old-card.json
+python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
+rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
 </code></pre>
 <h2>Validating</h2>
 <h3><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>
