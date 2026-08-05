@@ -43,7 +43,11 @@
 //!
 //! This is pure CLI/serde generation — no format change.
 
-use super::card::{DatasetCard, ExampleQuery, Tier, GEO_ASWKT, GEO_HASGEOMETRY, O_LITERAL};
+use serde::Serialize;
+
+use super::card::{
+    DatasetCard, ExampleQuery, Tier, CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY, O_LITERAL,
+};
 use rete_core::RDF_TYPE;
 
 /// Prepended to every generated query — the engine parses with **zero** implicit
@@ -175,6 +179,20 @@ impl Cap {
     }
 }
 
+/// **The** co-occurrence witness: does the card record that some subject of
+/// `class` also carries `pred`?
+///
+/// A `class_links` row is positive evidence — the quotient counts real
+/// statements, so a row exists only because a subject classified as `class`
+/// really made a `pred` statement. Both the generator (choosing
+/// [`Cap::LabeledClass`]) and the audit ([`audit`]) ask this one question, so
+/// "does the card prove these meet?" has exactly one implementation.
+fn class_carries(card: &DatasetCard, class: &str, pred: &str) -> bool {
+    card.class_links
+        .iter()
+        .any(|l| l.s_class == class && l.predicate == pred)
+}
+
 /// Why a template's emitted query cannot come back empty. Declared per template
 /// and enforced by [`check_body`] plus the fixture tests, which run every
 /// generated query against the very graph it was generated for.
@@ -233,6 +251,18 @@ struct Template {
     /// `GRAPH`-scoped body). `Some(f)` and `f(card)` true ⇒ the query would
     /// answer nothing ⇒ it is not emitted. The generator's last gate.
     provably_empty: Option<fn(&DatasetCard) -> bool>,
+    /// Is [`Template::provably_empty`] an **equivalence** in default-graph
+    /// scope — does `false` prove the query answers, and not merely fail to
+    /// prove it empty?
+    ///
+    /// True only where the card's precompute *is* this query's result:
+    /// `top-in-hubs` is `card.in_hubs`, row for row and by construction (see
+    /// the in-degree tally in `derive_card_from`). `top-dangling` shares the
+    /// hook — no IRI object means nothing can dangle — without the converse, so
+    /// it stays honestly undecidable. Nothing in generation reads this; it is
+    /// what lets [`audit`] tell a query the card decides from one it does not,
+    /// instead of counting both as unknown.
+    hook_is_exact: bool,
 }
 
 /// The reduced form of a [`Template`], used when its full `requires` are not
@@ -265,6 +295,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::AnyGraph,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ov-triples",
@@ -281,6 +312,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Aggregate,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ov-pred-list",
@@ -297,6 +329,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::AnyGraph,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ov-pred-hist",
@@ -316,6 +349,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::AnyGraph,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ov-ask-pred",
@@ -332,6 +366,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Identity & labels ---
     Template {
@@ -347,6 +382,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "lb-labels",
@@ -402,6 +438,7 @@ const TEMPLATES: &[Template] = &[
             nonempty: NonEmpty::Witnessed,
         }),
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Types ---
     Template {
@@ -418,6 +455,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ty-entities",
@@ -432,6 +470,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Aggregate,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ty-class-shape",
@@ -449,6 +488,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Topology ---
     Template {
@@ -464,6 +504,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "top-out-hubs",
@@ -482,6 +523,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::AnyGraph,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "top-in-hubs",
@@ -508,6 +550,9 @@ const TEMPLATES: &[Template] = &[
         ),
         fallback: None,
         provably_empty: Some(|card| card.in_hubs.is_empty()),
+        // `in_hubs` is this query's own precompute, so the hook decides it in
+        // both directions once the body is default-graph scoped.
+        hook_is_exact: true,
     },
     Template {
         id: "top-dangling",
@@ -532,6 +577,7 @@ const TEMPLATES: &[Template] = &[
         ),
         fallback: None,
         provably_empty: Some(|card| card.in_hubs.is_empty()),
+        hook_is_exact: false,
     },
     Template {
         id: "top-reach",
@@ -568,6 +614,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Connectivity / completeness ---
     Template {
@@ -588,6 +635,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Aggregate,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Links ---
     Template {
@@ -607,6 +655,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "lk-external",
@@ -625,6 +674,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Literals ---
     Template {
@@ -640,6 +690,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "lt-langs",
@@ -654,6 +705,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "lt-numrange",
@@ -669,6 +721,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Aggregate,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Time ---
     Template {
@@ -684,6 +737,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Aggregate,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ti-histogram",
@@ -698,6 +752,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Space (WKT is always CRS84 lon/lat) ---
     Template {
@@ -721,6 +776,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Aggregate,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "sp-within",
@@ -758,6 +814,7 @@ const TEMPLATES: &[Template] = &[
         ),
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     // --- Named graphs ---
     Template {
@@ -773,6 +830,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ng-sizes",
@@ -788,6 +846,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
     Template {
         id: "ng-sample",
@@ -803,6 +862,7 @@ const TEMPLATES: &[Template] = &[
         nonempty: NonEmpty::Witnessed,
         fallback: None,
         provably_empty: None,
+        hook_is_exact: false,
     },
 ];
 
@@ -886,11 +946,7 @@ impl Caps {
             card.classes
                 .iter()
                 .map(|(c, _)| c)
-                .find(|c| {
-                    card.class_links
-                        .iter()
-                        .any(|l| &&l.s_class == c && &l.predicate == lp)
-                })
+                .find(|c| class_carries(card, c, lp))
                 .cloned()
         });
 
@@ -1135,6 +1191,682 @@ pub(crate) fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
         });
     }
     out
+}
+
+// ===========================================================================
+// Auditing a card that is ALREADY published
+// ===========================================================================
+//
+// [`generate`] decides what a card *should* ship. The audit answers the other
+// half of the same question — what does a card that is already on the wire
+// ship, and can it answer? — for a file whose queries were written by an older
+// revision of the table above.
+//
+// It is deliberately in this module and not beside it: the one judgement it
+// makes ("does the card prove these two pieces meet?") is
+// [`class_carries`], the same function [`Caps::from_card`] resolves
+// [`Cap::LabeledClass`] with, and the emptiness gates it applies are the
+// templates' own [`Template::provably_empty`] hooks and [`NonEmpty`] claims. A
+// second, drifting copy of "is this empty" living in a script is how the
+// original defect survived four releases.
+
+/// What a published starter query is worth on the file that carries it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Verdict {
+    /// The card **proves** at least one row comes back.
+    Answers,
+    /// The card **proves** none does. Airtight for the shapes that turn on a
+    /// term's existence (a path step missing from a complete predicate list, a
+    /// `VALUES` list disjoint from the link predicates, a default-graph body on
+    /// an empty default graph); for the class-∧-predicate shape it rests on the
+    /// quotient, whose one blind spot [`Refuted`] documents and narrows.
+    Empty,
+    /// A row comes back (an un-grouped aggregate always returns one) but it is
+    /// vacuous — the thing being counted is provably zero.
+    Vacuous,
+    /// The card cannot prove the join is non-empty, and bounds how much could
+    /// survive it. Not the same as `Empty`: reported separately, never merged.
+    Suspect,
+    /// Honestly undecidable from a card — the template says so, or the query
+    /// conjoins terms nothing in the card can relate.
+    Undecidable,
+    /// The body matches no known revision of its template, so nothing is
+    /// claimed about it.
+    Unrecognized,
+}
+
+impl Verdict {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Answers => "answers",
+            Verdict::Empty => "empty",
+            Verdict::Vacuous => "vacuous",
+            Verdict::Suspect => "suspect",
+            Verdict::Undecidable => "undecidable",
+            Verdict::Unrecognized => "unrecognized",
+        }
+    }
+}
+
+/// One published query's verdict, with the evidence behind it.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Finding {
+    pub id: String,
+    pub verdict: Verdict,
+    /// The evidence, in the words a maintainer needs to act on it.
+    pub why: String,
+    /// What a re-card would do to this query: `current` (byte-identical to what
+    /// this generator writes for this very card — nothing to fix),
+    /// `superseded` (the generator writes a different body now), or `dropped`
+    /// (it would no longer be emitted at all).
+    pub revision: &'static str,
+    /// The terms substituted into the body, each tagged with the card ranking
+    /// it was drawn from. Two terms from **different** rankings conjoined in
+    /// one body is the #172 shape — recorded for every query, so the census is
+    /// empirical rather than a re-reading of the table.
+    pub substitutions: Vec<Substitution>,
+    /// True when the body conjoins two or more independently-ranked terms.
+    pub conjoined: bool,
+}
+
+/// A substituted term and where in the card profile it came from.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Substitution {
+    pub placeholder: String,
+    pub value: String,
+    /// e.g. `classes[0]`, `predicates[3]`, `signals.label_predicate`. Empty
+    /// when the term is in no ranking the card records (a hard-coded IRI, or a
+    /// value that fell off a capped list).
+    pub origin: Vec<String>,
+}
+
+/// Bodies that **earlier revisions** of a template shipped. A published file is
+/// not re-cardable for free, so the audit has to read the query text that is
+/// actually out there; only the revisions the current bodies no longer match
+/// need an entry. Every one is a body [`check_body`] would reject today — that
+/// is why it has an entry.
+struct Legacy {
+    id: &'static str,
+    body: &'static str,
+}
+
+const LEGACY_BODIES: &[Legacy] = &[
+    // pre-#172 `top-reach`: the busiest subject and the most frequent
+    // predicate, chosen from two independent rankings and then conjoined.
+    Legacy {
+        id: "top-reach",
+        body: "SELECT ?y WHERE { {{HUB_IRI}} {{TOP_PRED}}+ ?y } LIMIT 100",
+    },
+    // pre-#172 `lk-sameas`: the VALUES list covered three of the four
+    // predicates the `signals.link_predicates` gate is detected from.
+    Legacy {
+        id: "lk-sameas",
+        body: "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o VALUES ?p { owl:sameAs skos:exactMatch rdfs:seeAlso } } GROUP BY ?p",
+    },
+];
+
+/// The effective top-N cap a card's profile lists were derived under. Cards
+/// built before the field existed omit it; they were built by this same builder
+/// family, whose cap is a compile-time constant.
+fn cap_of(card: &DatasetCard) -> usize {
+    if card.top_n > 0 {
+        card.top_n as usize
+    } else {
+        CARD_TOP_N
+    }
+}
+
+/// Is a capped profile list **complete** — did nothing fall off the end? A list
+/// shorter than the cap was never truncated, so absence from it is evidence of
+/// absence. A list *at* the cap proves nothing either way.
+fn complete<T>(card: &DatasetCard, list: &[T]) -> bool {
+    list.len() < cap_of(card)
+}
+
+/// How far the card can go towards proving that no instance of `class` carries
+/// `pred` — the negative of [`class_carries`], which a card can rarely settle
+/// outright.
+/// The refutation is exact **for singly-typed data only**, and that is the
+/// audit's one standing caveat: the quotient gives every subject exactly one
+/// class (the last `rdf:type` wins), so a subject typed both `class` and
+/// `other` is counted under `other` alone. `?s a class ; pred ?o` then matches a
+/// graph whose quotient shows no such row — `vidy` types all 39,723 of its units
+/// both `schema:ArchiveComponent` and `vidy:Unit`, the quotient files every one
+/// of them under `vidy:Unit`, and the label query the card ships returns 50 rows
+/// regardless.
+///
+/// A card cannot record multi-typing, but it does leave two tells, and
+/// [`refute_class_pred`] refuses to claim a refutation when either shows:
+///
+///  1. **The class is absent from the quotient.** A class with instances but no
+///     `class_links` row of its own is a class the quotient is not describing —
+///     shadowed, or making no statements at all — so its silence about one
+///     predicate means nothing.
+///  2. **Another class has exactly the same instance count.** Two classes over
+///     the same population is what dual typing looks like from the card (a
+///     schema.org type beside a native one — `vidy` and `arxiu` both), and the
+///     labelled half may be filed under the twin.
+///
+/// Neither is a proof of single-typing; together they are what the card can see.
+/// Running the query is what closes it.
+enum Refuted {
+    /// Every use of `pred` is accounted for in the `class_links` quotient, none
+    /// of them falls on `class`, and neither multi-typing tell shows.
+    Proved,
+    /// The quotient is truncated: at most `budget` uses of `pred` are
+    /// unaccounted for, so at most that many of the class's `instances` could
+    /// be joined. Suspicion, not proof.
+    AtMost { budget: u64, instances: u64 },
+    /// The quotient accounts for every use of `pred` and none falls on `class`,
+    /// but a multi-typing tell shows, so that silence proves nothing.
+    Shadowed { described: bool, twin: bool },
+    /// `pred` is not in the (capped) predicate list, so there is no total to
+    /// account against.
+    Unknown,
+}
+
+fn refute_class_pred(card: &DatasetCard, class: &str, pred: &str) -> Refuted {
+    let instances = card
+        .classes
+        .iter()
+        .find(|(c, _)| c == class)
+        .map(|(_, n)| *n)
+        .unwrap_or(0);
+    // Every non-`rdf:type` statement contributes exactly one `class_links` row,
+    // so the rows for a predicate sum to its total use **iff** none was
+    // truncated away — the completeness test that makes absence conclusive.
+    let accounted: u64 = card
+        .class_links
+        .iter()
+        .filter(|l| l.predicate == pred)
+        .map(|l| l.count)
+        .sum();
+    let Some((_, total)) = card.predicates.iter().find(|(p, _)| p == pred) else {
+        return Refuted::Unknown;
+    };
+    let accounted_for_all = accounted >= *total || complete(card, &card.class_links);
+    if !accounted_for_all {
+        return Refuted::AtMost {
+            budget: total - accounted,
+            instances,
+        };
+    }
+    // The two multi-typing tells (see `Refuted`). Either one and the quotient's
+    // silence about this class stops being evidence.
+    let described = card.class_links.iter().any(|l| l.s_class == class);
+    let twin = card
+        .classes
+        .iter()
+        .any(|(c, n)| c != class && *n == instances);
+    if described && !twin {
+        Refuted::Proved
+    } else {
+        Refuted::Shadowed { described, twin }
+    }
+}
+
+/// Which card rankings a substituted term appears in. Read off the card rather
+/// than declared by the template, so it also describes a body this table no
+/// longer contains.
+fn origins(card: &DatasetCard, v: &str) -> Vec<String> {
+    let mut o = Vec::new();
+    if let Some(i) = card.classes.iter().position(|(c, _)| c == v) {
+        o.push(format!("classes[{i}]"));
+    }
+    if let Some(i) = card.predicates.iter().position(|(p, _)| p == v) {
+        o.push(format!("predicates[{i}]"));
+    }
+    if let Some(i) = card.top_hubs.iter().position(|(h, _)| h == v) {
+        o.push(format!("top_hubs[{i}]"));
+    }
+    let s = &card.signals;
+    if s.label_predicate.as_deref() == Some(v) {
+        o.push("signals.label_predicate".to_string());
+    }
+    if let Some(i) = s.time_predicates.iter().position(|p| p == v) {
+        o.push(format!("signals.time_predicates[{i}]"));
+    }
+    if let Some(i) = s.numeric_predicates.iter().position(|p| p == v) {
+        o.push(format!("signals.numeric_predicates[{i}]"));
+    }
+    if s.base_iri.as_deref() == Some(v) {
+        o.push("signals.base_iri".to_string());
+    }
+    o
+}
+
+/// The bindings a published body gave a pattern's placeholders.
+type Binds = Vec<(String, String)>;
+
+/// The **distinct** placeholders a body substitutes with a term the card
+/// ranks. Distinct by name on purpose: the current `top-reach` writes
+/// `{{OBJECT_PRED}}` twice — once to pick the seed, once to walk from it — and
+/// a term conjoined with itself is the opposite of the two-maxima shape, it is
+/// how the template guarantees the seed has an edge.
+fn distinct_ranked<'a>(card: &DatasetCard, binds: &'a Binds) -> Vec<&'a str> {
+    let mut names: Vec<&str> = binds
+        .iter()
+        .filter(|(_, v)| !origins(card, v).is_empty())
+        .map(|(n, _)| n.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+fn bound<'a>(binds: &'a Binds, name: &str) -> Option<&'a str> {
+    binds
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, v)| v.as_str())
+}
+
+/// Match a published body against a template pattern, recovering the value each
+/// `{{PLACEHOLDER}}` took. Every literal segment must appear, in order, and the
+/// body must end exactly where the pattern does — a match is exact, so a
+/// mismatched revision is reported as such instead of being misread.
+fn match_pattern(pattern: &str, body: &str) -> Option<Binds> {
+    let mut binds: Binds = Vec::new();
+    let mut pat = pattern;
+    let mut rest = body;
+    loop {
+        let Some(i) = pat.find("{{") else {
+            return (pat == rest).then_some(binds);
+        };
+        let (lit, tail) = pat.split_at(i);
+        rest = rest.strip_prefix(lit)?;
+        let end = tail.find("}}")?;
+        let name = &tail[2..end];
+        pat = &tail[end + 2..];
+        // The value runs up to the pattern's next literal segment.
+        let next_lit = &pat[..pat.find("{{").unwrap_or(pat.len())];
+        let cut = if next_lit.is_empty() {
+            rest.len()
+        } else {
+            rest.find(next_lit)?
+        };
+        if cut == 0 {
+            return None; // an empty substitution is not a substitution
+        }
+        binds.push((name.to_string(), rest[..cut].to_string()));
+        rest = &rest[cut..];
+    }
+}
+
+/// The `?s a {{CLASS}} … {{PRED}}` shape — a class and a predicate conjoined on
+/// **one** subject. Recognized from the pattern text, not from the template id,
+/// so a future template that writes the same shape is audited too.
+fn class_pred_conjunction(pattern: &str) -> Option<(&str, &str)> {
+    let after = pattern.split("?s a {{").nth(1)?;
+    let class = after.split("}}").next()?;
+    let tail = after.split_once("}}")?.1;
+    for sep in ["; {{", "?s {{"] {
+        if let Some(x) = tail.split(sep).nth(1) {
+            return Some((class, x.split("}}").next()?));
+        }
+    }
+    None
+}
+
+/// The `VALUES ?p { … }` list a body pins itself to, as bracketed IRIs. The
+/// gate that admits the query counts predicates; the body only matches the ones
+/// it names, and the two can disagree.
+fn values_predicates(body: &str) -> Option<Vec<String>> {
+    let inner = body.split("VALUES ?p {").nth(1)?.split('}').next()?;
+    Some(
+        inner
+            .split_whitespace()
+            .filter_map(|t| {
+                let (p, local) = t.split_once(':')?;
+                let ns = match p {
+                    "owl" => "http://www.w3.org/2002/07/owl#",
+                    "skos" => "http://www.w3.org/2004/02/skos/core#",
+                    "rdfs" => "http://www.w3.org/2000/01/rdf-schema#",
+                    _ => return None,
+                };
+                Some(format!("<{ns}{local}>"))
+            })
+            .collect(),
+    )
+}
+
+/// The predicate IRIs a property path **must** traverse — the steps that are
+/// not optional. `geo:hasGeometry?/geo:asWKT` requires only the second; the
+/// fixed `geo:hasGeometry/geo:asWKT` the pre-#172 template wrote requires both,
+/// which is why it could not match a file that has no `geo:hasGeometry`.
+fn required_path_steps(path: &str) -> Vec<String> {
+    path.split('/')
+        .filter(|step| !step.ends_with('?') && !step.ends_with('*'))
+        .filter_map(|step| match step.trim_end_matches('+') {
+            "geo:asWKT" => Some(GEO_ASWKT.to_string()),
+            "geo:hasGeometry" => Some(GEO_HASGEOMETRY.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Audit every starter query a card already ships.
+///
+/// Two things happen per query, and they answer different questions. [`generate`]
+/// is re-run over the same profile — what a re-card would ship — which says
+/// whether the query is *stale*. The verdict says whether it *answers*, which is
+/// the thing a reader of the published file experiences today.
+pub(crate) fn audit(card: &DatasetCard) -> Vec<Finding> {
+    let caps = Caps::from_card(card);
+    let scope = GraphScope::of(card);
+    let fresh = generate(card);
+    card.queries
+        .iter()
+        .map(|q| {
+            let revision = match fresh.iter().find(|r| r.id == q.id) {
+                Some(r) if r.sparql == q.sparql => "current",
+                Some(_) => "superseded",
+                None => "dropped",
+            };
+            finding(card, &caps, scope, q, revision)
+        })
+        .collect()
+}
+
+fn finding(
+    card: &DatasetCard,
+    caps: &Caps,
+    scope: GraphScope,
+    q: &ExampleQuery,
+    revision: &'static str,
+) -> Finding {
+    let body = q
+        .sparql
+        .lines()
+        .filter(|l| !l.starts_with("PREFIX"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = body.trim();
+
+    let mk = |verdict, why: String, revision, binds: &Binds| {
+        let substitutions: Vec<Substitution> = binds
+            .iter()
+            .map(|(n, v)| Substitution {
+                placeholder: n.clone(),
+                value: v.clone(),
+                origin: origins(card, v),
+            })
+            .collect();
+        Finding {
+            id: q.id.clone(),
+            verdict,
+            why,
+            revision,
+            conjoined: distinct_ranked(card, binds).len() > 1,
+            substitutions,
+        }
+    };
+
+    let Some(t) = TEMPLATES.iter().find(|t| t.id == q.id) else {
+        return mk(
+            Verdict::Unrecognized,
+            "no template of this id is in the library any more".to_string(),
+            "retired",
+            &Vec::new(),
+        );
+    };
+
+    // Recover the substituted terms: match the body against the template's own
+    // patterns (every scope variant and the fallback), then against the bodies
+    // earlier revisions wrote. The *values* decide the verdict, so a pattern
+    // shared by two revisions is not a problem — `revision` already says which
+    // one a re-card would replace it with.
+    let patterns = [
+        Some(t.body),
+        t.named_body,
+        t.mixed_body,
+        t.fallback.as_ref().map(|f| f.body),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(
+        LEGACY_BODIES
+            .iter()
+            .filter(|l| l.id == q.id)
+            .map(|l| l.body),
+    );
+    let Some((pattern, binds)) = patterns.into_iter().find_map(|p| {
+        // Longest pattern first would be nicer, but the bodies of one template
+        // are not prefixes of each other — an exact match is unambiguous.
+        match_pattern(p, body).map(|b| (p, b))
+    }) else {
+        return mk(
+            Verdict::Unrecognized,
+            "the body matches no known revision of this template".to_string(),
+            "unknown",
+            &Vec::new(),
+        );
+    };
+
+    // --- 1. Scope. A default-graph body on a file whose default graph the card
+    //        itself records as empty cannot return a row (issue #170).
+    if !body.contains("GRAPH") && card.triple_count == 0 && card.named_graph_count > 0 {
+        return mk(
+            Verdict::Empty,
+            format!(
+                "the body scans the default graph, which the card records as empty \
+                 ({} named graph(s) hold all {} statements)",
+                card.named_graph_count, card.quad_count
+            ),
+            revision,
+            &binds,
+        );
+    }
+
+    // --- 2. The template's own last gate, unchanged — and, where the table says
+    //        the hook is an equivalence, its other direction.
+    if scope == GraphScope::DefaultOnly {
+        if let Some(hook) = t.provably_empty {
+            if hook(card) {
+                return mk(
+                    Verdict::Empty,
+                    "the card's own precompute for this query is empty (the generator \
+                     refuses to emit it today)"
+                        .to_string(),
+                    revision,
+                    &binds,
+                );
+            }
+            if t.hook_is_exact {
+                return mk(
+                    Verdict::Answers,
+                    "the card precomputes this query's own result, and it is not empty".to_string(),
+                    revision,
+                    &binds,
+                );
+            }
+        }
+    }
+
+    // --- 3. The co-occurrence rule, applied to the body that shipped.
+    if let Some((cn, pn)) = class_pred_conjunction(pattern) {
+        if let (Some(class), Some(pred)) = (bound(&binds, cn), bound(&binds, pn)) {
+            let aggregate = matches!(t.nonempty, NonEmpty::Aggregate);
+            if class_carries(card, class, pred) {
+                return mk(
+                    Verdict::Answers,
+                    format!("class_links witnesses {class} carrying {pred}"),
+                    revision,
+                    &binds,
+                );
+            }
+            return match refute_class_pred(card, class, pred) {
+                Refuted::Proved => mk(
+                    if aggregate {
+                        Verdict::Vacuous
+                    } else {
+                        Verdict::Empty
+                    },
+                    format!(
+                        "the class_links quotient accounts for every use of {pred} and \
+                         none falls on {class}{}",
+                        if aggregate {
+                            " — the aggregate returns one row whose count is 0"
+                        } else {
+                            ""
+                        }
+                    ),
+                    revision,
+                    &binds,
+                ),
+                Refuted::AtMost { budget, instances } => mk(
+                    Verdict::Suspect,
+                    format!(
+                        "no class_links row witnesses {class} carrying {pred}; the quotient \
+                         is truncated, so at most {budget} of the class's {instances} \
+                         instances could be joined"
+                    ),
+                    revision,
+                    &binds,
+                ),
+                Refuted::Shadowed { described, twin } => mk(
+                    Verdict::Suspect,
+                    format!(
+                        "the quotient accounts for every use of {pred} and none falls on \
+                         {class}, but {} — the quotient files a multi-typed subject under \
+                         one class only, so its silence is not evidence",
+                        match (described, twin) {
+                            (false, true) =>
+                                "the class has no class_links row of its own AND another class \
+                                 has exactly its instance count",
+                            (false, false) => "the class has no class_links row of its own",
+                            _ => "another class has exactly its instance count",
+                        }
+                    ),
+                    revision,
+                    &binds,
+                ),
+                Refuted::Unknown => mk(
+                    Verdict::Undecidable,
+                    format!("{pred} is not in the card's (capped) predicate list"),
+                    revision,
+                    &binds,
+                ),
+            };
+        }
+    }
+
+    // --- 4. A property path can only match if the steps it insists on exist.
+    if let Some(path) = bound(&binds, "WKT_PATH") {
+        let missing: Vec<String> = required_path_steps(path)
+            .into_iter()
+            .filter(|iri| !card.predicates.iter().any(|(p, _)| p == iri))
+            .collect();
+        if !missing.is_empty() && complete(card, &card.predicates) {
+            return mk(
+                Verdict::Empty,
+                format!(
+                    "the path {path} requires {} , which the card's complete predicate \
+                     list does not contain",
+                    missing.join(", ")
+                ),
+                revision,
+                &binds,
+            );
+        }
+    }
+
+    // --- 5. A pinned VALUES list must cover the gate that admitted the query.
+    if let Some(listed) = values_predicates(body) {
+        let present: Vec<&String> = card
+            .signals
+            .link_predicates
+            .iter()
+            .filter(|p| listed.contains(p))
+            .collect();
+        if present.is_empty() {
+            return mk(
+                Verdict::Empty,
+                format!(
+                    "the body pins VALUES ?p to {} , none of which this dataset uses \
+                     (it links with {})",
+                    listed.join(" "),
+                    card.signals.link_predicates.join(" ")
+                ),
+                revision,
+                &binds,
+            );
+        }
+    }
+
+    // --- 6. "Which predicates point OUT?" needs something outside the base IRI.
+    if q.id == "lk-external" && !caps.external_iri {
+        let why = "no IRI the card records lies outside the dataset's base IRI".to_string();
+        return if complete(card, &card.in_hubs) && complete(card, &card.classes) {
+            mk(
+                Verdict::Empty,
+                format!("{why}, and both lists are complete — the FILTER keeps nothing"),
+                revision,
+                &binds,
+            )
+        } else {
+            mk(
+                Verdict::Suspect,
+                format!("{why}, but the lists are truncated so one could have fallen off"),
+                revision,
+                &binds,
+            )
+        };
+    }
+
+    // --- 7. Two independently-ranked terms conjoined, with nothing in the card
+    //        able to relate them: the shape, without a decision.
+    let ranked = distinct_ranked(card, &binds);
+    if ranked.len() > 1 {
+        return mk(
+            Verdict::Undecidable,
+            format!(
+                "conjoins {} , drawn from different rankings — the card relates no \
+                 specific subject to a specific predicate",
+                ranked.join(" and ")
+            ),
+            revision,
+            &binds,
+        );
+    }
+
+    // --- 8. An un-grouped aggregate that joins two predicates on one subject
+    //        always returns its row; whether the row says anything is another
+    //        matter, and one no card can settle (`class_links` collapses every
+    //        untyped subject into one bucket, so rows for the two predicates
+    //        under it are not evidence that any single subject carries both).
+    if matches!(t.nonempty, NonEmpty::Aggregate)
+        && body.contains(" ; ")
+        && !body.contains("GROUP BY")
+    {
+        return mk(
+            Verdict::Undecidable,
+            "an un-grouped aggregate always returns one row, but its body conjoins two \
+             predicates the card only counted separately — the row may be vacuous"
+                .to_string(),
+            revision,
+            &binds,
+        );
+    }
+
+    // --- 9. Nothing above bit: the template's own claim stands.
+    match t.nonempty {
+        NonEmpty::Undecidable(reason) => {
+            mk(Verdict::Undecidable, reason.to_string(), revision, &binds)
+        }
+        NonEmpty::AnyGraph | NonEmpty::Aggregate | NonEmpty::Witnessed => mk(
+            Verdict::Answers,
+            match t.nonempty {
+                NonEmpty::AnyGraph => "any non-empty graph answers this",
+                NonEmpty::Aggregate => "an un-grouped aggregate always returns one row",
+                _ => "every substituted term came from a count the card records as > 0",
+            }
+            .to_string(),
+            revision,
+            &binds,
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1782,6 +2514,241 @@ mod tests {
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
+    // ---------------------------------------------------------------------
+    // The audit: reading a card that is already published.
+    // ---------------------------------------------------------------------
+
+    /// Replace one starter query's body with the one an older revision wrote —
+    /// how a fixture stands in for a file that is already on the wire.
+    fn ship_instead(card: &mut DatasetCard, id: &str, body: &str) {
+        let q = card
+            .queries
+            .iter_mut()
+            .find(|q| q.id == id)
+            .unwrap_or_else(|| panic!("{id} is not in this card"));
+        q.sparql = format!("{PREFIXES}\n{body}");
+    }
+
+    fn verdict_of(findings: &[Finding], id: &str) -> Verdict {
+        findings
+            .iter()
+            .find(|f| f.id == id)
+            .unwrap_or_else(|| panic!("{id} was not audited"))
+            .verdict
+    }
+
+    fn rows_of(rete: &Rete, sparql: &str) -> usize {
+        match eval_query(rete, sparql).unwrap() {
+            QueryOutput::Select(_, rows) => rows.len(),
+            QueryOutput::Ask(b) => usize::from(b),
+            other => panic!("unexpected result form: {other:?}"),
+        }
+    }
+
+    /// A card this generator just wrote must audit clean: nothing refuted,
+    /// nothing suspected, nothing unrecognized, and every body current. If the
+    /// audit and the generator ever disagree about a *fresh* card, one of them
+    /// is wrong — and they are supposed to share the judgement.
+    #[test]
+    fn a_freshly_generated_card_audits_clean() {
+        for (quads, ng) in [(rich_quads(), 0), (named_only_quads(), 3)] {
+            let card = derive_card(&quads, 50, ng, CardInput::default());
+            for f in audit(&card) {
+                assert_eq!(
+                    f.revision, "current",
+                    "{}: the generator would not write this body",
+                    f.id
+                );
+                assert!(
+                    matches!(f.verdict, Verdict::Answers | Verdict::Undecidable),
+                    "{}: {} — {}",
+                    f.id,
+                    f.verdict.as_str(),
+                    f.why
+                );
+                // The only queries a fresh card may leave undecided are the
+                // ones the table already says it cannot decide, plus `sp-bbox`:
+                // its un-grouped aggregate always returns its row (so
+                // `NonEmpty::Aggregate` is true about *rows*), and whether that
+                // row is bound turns on two predicates meeting on one subject,
+                // which is the one thing `class_links` cannot witness.
+                if f.verdict == Verdict::Undecidable {
+                    assert!(
+                        may_be_empty(&f.id) || f.id == "sp-bbox",
+                        "{}: undecidable but the table claims otherwise — {}",
+                        f.id,
+                        f.why
+                    );
+                }
+            }
+        }
+    }
+
+    /// The **mtg** card as published: the label query joins the most populous
+    /// class to the most-used label predicate. The audit refutes it, and the
+    /// engine agrees — the verdict is checked against the graph, not just
+    /// against the card.
+    #[test]
+    fn the_audit_refutes_a_label_query_on_an_unlabelled_top_class() {
+        let quads = mtg_shaped_quads();
+        let (mut card, rete) = card_and_graph(quads, 60, 0);
+        let top = card.classes[0].0.clone();
+        ship_instead(
+            &mut card,
+            "lb-labels",
+            &format!("SELECT ?s ?label WHERE {{ ?s a {top} ; <http://schema.org/name> ?label }} LIMIT 50"),
+        );
+        ship_instead(
+            &mut card,
+            "cmp-coverage",
+            &format!(
+                "SELECT (COUNT(?s) AS ?total) (COUNT(?l) AS ?have) WHERE {{ ?s a {top} \
+                 OPTIONAL {{ ?s <http://schema.org/name> ?l }} }}"
+            ),
+        );
+        let findings = audit(&card);
+        assert_eq!(verdict_of(&findings, "lb-labels"), Verdict::Empty);
+        // The coverage query is an un-grouped aggregate: it returns its row, and
+        // the row says `have = 0`. A different failure, reported as one.
+        assert_eq!(verdict_of(&findings, "cmp-coverage"), Verdict::Vacuous);
+        assert_eq!(rows_of(&rete, sparql_of(&card, "lb-labels").unwrap()), 0);
+        assert_eq!(rows_of(&rete, sparql_of(&card, "cmp-coverage").unwrap()), 1);
+    }
+
+    /// The **vidy** shape, and the one false positive this audit was caught
+    /// making: every unit is typed *twice* — `schema:ArchiveComponent` and a
+    /// native class — so the `class_links` quotient, which files each subject
+    /// under its last type only, shows no label row for the top class even
+    /// though the label query returns rows.
+    ///
+    /// The audit must NOT claim a refutation here. Both tells are present (the
+    /// top class has no row of its own; another class has exactly its instance
+    /// count), and a survey that called this "provably empty" would have sent
+    /// someone to re-card a file that was fine.
+    #[test]
+    fn the_audit_will_not_refute_a_dually_typed_class() {
+        let name = "<http://schema.org/name>";
+        let component = "<http://ex/ArchiveComponent>";
+        let unit = "<http://ex/Unit>";
+        let mut quads = Vec::new();
+        for i in 0..8 {
+            let s = format!("<http://ex/unit/{i}>");
+            // Both types, the native one last — so the quotient files every
+            // statement under `Unit` and says nothing about `ArchiveComponent`.
+            quads.push(q(&s, TYPE, component));
+            quads.push(q(&s, TYPE, unit));
+            quads.push(q(&s, name, &format!("\"Unit {i}\"")));
+        }
+        let (mut card, rete) = card_and_graph(quads, 30, 0);
+        assert_eq!(
+            card.classes[0].0, component,
+            "fixture: the twin ranks first"
+        );
+        assert!(
+            !card.class_links.iter().any(|l| l.s_class == component),
+            "fixture: the quotient never mentions the top class"
+        );
+        ship_instead(
+            &mut card,
+            "lb-labels",
+            &format!("SELECT ?s ?label WHERE {{ ?s a {component} ; {name} ?label }} LIMIT 50"),
+        );
+        assert_eq!(verdict_of(&audit(&card), "lb-labels"), Verdict::Suspect);
+        assert_eq!(rows_of(&rete, sparql_of(&card, "lb-labels").unwrap()), 8);
+    }
+
+    /// The **geoadmin** card as published: a fixed two-step geometry path on a
+    /// file that hangs `geo:asWKT` straight off the feature. Nothing to do with
+    /// typing — the path names a predicate the card's complete list does not
+    /// contain, so the refutation is exact.
+    #[test]
+    fn the_audit_refutes_a_path_through_a_predicate_that_is_not_there() {
+        let aswkt = "<http://www.opengis.net/ont/geosparql#asWKT>";
+        let wkt = "http://www.opengis.net/ont/geosparql#wktLiteral";
+        let mut quads = Vec::new();
+        for i in 0..5 {
+            let s = format!("<http://ex/district/{i}>");
+            quads.push(q(&s, TYPE, "<http://ex/District>"));
+            quads.push(q(&s, aswkt, &format!("\"POINT({} 4{i})\"^^<{wkt}>", i + 7)));
+        }
+        let (mut card, rete) = card_and_graph(quads, 20, 0);
+        ship_instead(
+            &mut card,
+            "sp-within",
+            "SELECT ?s WHERE { ?s geo:hasGeometry/geo:asWKT ?w FILTER(geof:sfWithin(?w, \
+             \"POLYGON((-180 -90, 180 -90, 180 90, -180 90, -180 -90))\"^^geo:wktLiteral)) } LIMIT 100",
+        );
+        assert_eq!(verdict_of(&audit(&card), "sp-within"), Verdict::Empty);
+        assert_eq!(rows_of(&rete, sparql_of(&card, "sp-within").unwrap()), 0);
+    }
+
+    /// A `VALUES` list that does not cover the gate admitting the query: the
+    /// dataset links only with `skos:closeMatch`, the shipped body names the
+    /// other three. Refutable exactly — `signals.link_predicates` is computed
+    /// from the full predicate counts, before any cap.
+    #[test]
+    fn the_audit_refutes_a_values_list_that_misses_the_only_link_predicate() {
+        let close = "<http://www.w3.org/2004/02/skos/core#closeMatch>";
+        let mut quads = vec![q("<http://ex/a>", TYPE, "<http://ex/T>")];
+        for i in 0..4 {
+            quads.push(q(
+                &format!("<http://ex/a{i}>"),
+                close,
+                &format!("<http://other/x{i}>"),
+            ));
+        }
+        let (mut card, rete) = card_and_graph(quads, 20, 0);
+        assert_eq!(card.signals.link_predicates, vec![close.to_string()]);
+        ship_instead(
+            &mut card,
+            "lk-sameas",
+            "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o VALUES ?p { owl:sameAs \
+             skos:exactMatch rdfs:seeAlso } } GROUP BY ?p",
+        );
+        assert_eq!(verdict_of(&audit(&card), "lk-sameas"), Verdict::Empty);
+        assert_eq!(rows_of(&rete, sparql_of(&card, "lk-sameas").unwrap()), 0);
+    }
+
+    /// The pre-#172 `top-reach` — a hub IRI and a top predicate, conjoined —
+    /// is recognized (so it is not reported as an unreadable body) and honestly
+    /// declared undecidable: nothing in a card ties a *subject* to a
+    /// *predicate*. On the published catalog 6 of 26 sampled files answered
+    /// nothing here, which is exactly what "undecidable" has to mean.
+    #[test]
+    fn the_audit_recognizes_the_legacy_reach_query_and_declines_to_decide() {
+        let (mut card, _) = card_and_graph(rich_quads(), 50, 0);
+        let hub = card.top_hubs[0].0.clone();
+        let pred = card.predicates[0].0.clone();
+        ship_instead(
+            &mut card,
+            "top-reach",
+            &format!("SELECT ?y WHERE {{ {hub} {pred}+ ?y }} LIMIT 100"),
+        );
+        let f = audit(&card);
+        let r = f.iter().find(|f| f.id == "top-reach").unwrap();
+        assert_eq!(r.verdict, Verdict::Undecidable);
+        assert_eq!(r.revision, "superseded");
+        assert!(r.conjoined, "two independently-ranked terms in one body");
+        assert_eq!(r.substitutions.len(), 2);
+    }
+
+    /// A body from no revision at all is reported as such rather than being
+    /// force-fitted to the nearest pattern — a wrong binding would produce a
+    /// confident wrong verdict, which is the failure mode a survey cannot have.
+    #[test]
+    fn an_unknown_body_is_not_force_fitted() {
+        let (mut card, _) = card_and_graph(rich_quads(), 50, 0);
+        ship_instead(
+            &mut card,
+            "lb-labels",
+            "SELECT ?x WHERE { ?x ?y ?z } LIMIT 3",
+        );
+        assert_eq!(
+            verdict_of(&audit(&card), "lb-labels"),
+            Verdict::Unrecognized
+        );
+    }
+
     /// Ids are unique and every capability the table names is reachable — a
     /// `Cap` no template requires is dead weight that will drift out of date.
     #[test]
@@ -1799,6 +2766,30 @@ mod tests {
                         .is_some_and(|f| f.requires.contains(&cap))),
                 "{} is required by no template",
                 cap.key()
+            );
+        }
+        for t in TEMPLATES {
+            assert!(
+                !t.hook_is_exact || t.provably_empty.is_some(),
+                "{}: hook_is_exact without a hook to be exact about",
+                t.id
+            );
+        }
+        // Every legacy body names a template that still exists (otherwise the
+        // audit could never reach it) and is genuinely different from the ones
+        // that template writes now (otherwise it is dead weight).
+        for l in LEGACY_BODIES {
+            let t = TEMPLATES
+                .iter()
+                .find(|t| t.id == l.id)
+                .unwrap_or_else(|| panic!("legacy body for unknown template {}", l.id));
+            assert!(
+                ![Some(t.body), t.named_body, t.mixed_body]
+                    .into_iter()
+                    .flatten()
+                    .any(|b| b == l.body),
+                "{}: legacy body is still a current one",
+                l.id
             );
         }
     }

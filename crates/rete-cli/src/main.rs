@@ -297,6 +297,21 @@ enum Command {
         #[arg(long)]
         sha256: Option<String>,
     },
+    /// Audit the starter queries a Dataset Card **already ships**: which of them
+    /// still answer on the file that carries them, which provably return
+    /// nothing, and which no card can decide. Reads the CARD tier only (two
+    /// range requests), so a published multi-GB file costs tens of KB to check
+    /// — the point being that you do not have to re-card a catalog to find out
+    /// which of its files greet a newcomer with zero rows.
+    CardAudit {
+        /// A `.rete` file (local path or `http(s)://` URL), or a card JSON
+        /// document from `rete card --json` / `rete card-url --json` (`-` for
+        /// stdin).
+        path: String,
+        /// Emit one JSON object with every finding instead of the text table.
+        #[arg(long)]
+        json: bool,
+    },
     /// List the named graphs in a dataset.
     Graphs {
         /// Path to the `.rete` file.
@@ -976,6 +991,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             format,
             sha256,
         } => commands::url::card_url(&url, json, format.as_deref(), sha256.as_deref()),
+        Command::CardAudit { path, json } => commands::card::card_audit_cmd(&path, json),
         Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export { file, format } => commands::export::export(&file, &format),
         Command::Repyramid {

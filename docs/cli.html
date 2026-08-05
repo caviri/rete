@@ -728,6 +728,25 @@ query. Reports bytes fetched + range count. The <code>--format</code> projection
 <code>--sha256</code> for Croissant) match <code>rete card</code>.</p>
 <pre><code class="language-sh">rete card-url https://host/data.rete --json
 </code></pre>
+<h3><code>rete card-audit &lt;path|url&gt; [--json]</code></h3>
+<p>Do the starter queries a card <strong>already ships</strong> still answer on the file that
+carries them? A published <code>.rete</code> cannot be re-carded for free, so this decides
+each query's fate from the card's own profile — the CARD tier again, so a
+multi-GB file costs tens of KB to check.</p>
+<p>Each query gets one verdict, and the two that matter are kept apart: <code>empty</code> is
+the card <em>refuting</em> a shipped query (a property path through a predicate the
+file does not have, a <code>VALUES</code> list disjoint from the dataset's link predicates,
+a class joined to a label predicate the class-link quotient accounts for and
+never pairs with it), while <code>undecidable</code> and <code>suspect</code> are the honest middle —
+run the query to settle those. <code>answers</code> is the card proving a row comes back,
+and <code>revision</code> says what a re-card would do to the body (<code>current</code>,
+<code>superseded</code>, <code>dropped</code>).</p>
+<p>The judgement is the query generator's own (<code>Cap::joint_with</code>, <code>NonEmpty</code>,
+<code>provably_empty</code>), not a second copy of it. Input is a <code>.rete</code> (local path or
+URL) or a card JSON document from <code>rete card --json</code> / <code>rete card-url --json</code>.</p>
+<pre><code class="language-sh">rete card-audit https://host/data.rete
+rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
+</code></pre>
 <h3><code>rete summary-url &lt;url&gt;</code></h3>
 <p>Fetch only the header + dictionary + pyramid summary and print the coarse graph.
 The (large) index is never fetched — the "overview first" path.</p>

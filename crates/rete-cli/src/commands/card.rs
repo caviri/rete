@@ -1592,6 +1592,100 @@ pub(crate) fn card_cmd(
     Ok(())
 }
 
+/// `rete card-audit` — do the starter queries a card **already ships** still
+/// answer on the file that carries them?
+///
+/// A published `.rete` cannot be re-carded for free (a 250 GB catalog is not a
+/// thing to rebuild on a hunch), so this reads the card — two range requests,
+/// tens of KB, whatever the file's size — and decides each query's fate from
+/// the profile the card carries. The judgement is
+/// [`crate::commands::queries::audit`], which shares its one co-occurrence test
+/// with the generator itself.
+///
+/// Input is a `.rete` file (local path or `http(s)://` URL) or a card JSON
+/// document as written by `rete card --json` / `rete card-url --json`, so a
+/// survey that already fetched the cards need not fetch them twice.
+pub(crate) fn card_audit_cmd(path: &str, json: bool) -> anyhow::Result<()> {
+    let card = read_card_for_audit(path)?;
+    let Some(card) = card else {
+        if json {
+            println!(
+                "{{\"path\":{},\"card\":false,\"findings\":[]}}",
+                quote(path)
+            );
+        } else {
+            println!("(no dataset card)");
+        }
+        return Ok(());
+    };
+    let findings = super::queries::audit(&card);
+    if json {
+        let doc = serde_json::json!({
+            "path": path,
+            "card": true,
+            "title": card.title,
+            "triples": card.triple_count,
+            "quads": card.quad_count,
+            "named_graphs": card.named_graph_count,
+            "queries": card.queries.len(),
+            "truncated": card.truncated,
+            "findings": findings,
+        });
+        println!("{}", serde_json::to_string(&doc)?);
+        return Ok(());
+    }
+    println!("{}  ({} starter queries)", path, card.queries.len());
+    for f in &findings {
+        println!(
+            "  {:<12} {:<14} {:<11} {}",
+            f.verdict.as_str(),
+            f.id,
+            f.revision,
+            f.why
+        );
+    }
+    Ok(())
+}
+
+/// JSON-quote a string for the one hand-built object above.
+fn quote(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+/// Read a card from a `.rete` (local or remote, CARD tier only) or from a card
+/// JSON document. `(no dataset card)` — what the CLI prints for a cardless
+/// file — is accepted and reported as no card, so a survey's saved output can
+/// be piped straight back in.
+fn read_card_for_audit(path: &str) -> anyhow::Result<Option<DatasetCard>> {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        let reader = rete_core::CountingReader::new(
+            crate::commands::range_source::RangedSourceReader::open(path)?,
+        );
+        let card = load_card_and_build_ranged(&reader).map(|(_, c, _)| c);
+        eprintln!(
+            "fetched {} bytes in {} range request(s)",
+            reader.bytes_read(),
+            reader.requests()
+        );
+        return card;
+    }
+    if path.ends_with(".rete") {
+        let reader = crate::commands::range_source::LocalRangeReader::open(path)?;
+        return load_card_and_build_ranged(&reader).map(|(_, c, _)| c);
+    }
+    let text = if path == "-" {
+        std::io::read_to_string(std::io::stdin())?
+    } else {
+        std::fs::read_to_string(path)?
+    };
+    let Some(start) = text.find('{') else {
+        return Ok(None);
+    };
+    Ok(Some(serde_json::from_str(&text[start..]).map_err(|e| {
+        anyhow::anyhow!("{path}: not a dataset card document: {e}")
+    })?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
