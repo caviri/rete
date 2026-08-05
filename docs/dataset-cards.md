@@ -604,7 +604,7 @@ Two consequences of the numbers being portable:
   front, so the file is rewritten end to end to make room. That rewrite streams
   in constant memory, which is what makes it viable where a re-card is not: a
   re-card needs 17–35× the file in RAM or 9–15× on staged disk. See
-  [`rete card-audit`](cli.md#rete-card-audit-pathurl---json---measure---only-ids---max-mb-n---write-costs---allow-empty).
+  `rete card-audit` in the [CLI reference](cli.md).
 
 ### The one-row smoke query
 

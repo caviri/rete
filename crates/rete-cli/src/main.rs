@@ -323,12 +323,12 @@ enum Command {
         #[arg(long)]
         measure: bool,
         /// Measure only these query ids (repeatable, or comma-separated).
-        #[arg(long, value_delimiter = ',', requires = "measure")]
+        #[arg(long, value_delimiter = ',')]
         only: Vec<String>,
         /// Abandon a query once it has asked for this many MB (0 = no cap;
         /// fractions allowed). A remote measurement is a download; this is the
         /// leash — and "costs more than N MB" is itself an answer.
-        #[arg(long, default_value_t = 0.0, requires = "measure")]
+        #[arg(long, default_value_t = 0.0)]
         max_mb: f64,
         /// Record the measurement in the file's build-info section. Implies
         /// `--measure`; local files only. Build info sits **outside** the

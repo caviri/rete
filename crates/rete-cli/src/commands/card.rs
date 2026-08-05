@@ -1612,6 +1612,11 @@ pub(crate) fn card_cmd(
 /// decided from one), and no amount of card-only reasoning closes that. A run
 /// closes it, and records what the answer cost.
 pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<()> {
+    if !opts.measure && (!opts.only.is_empty() || opts.max_mb > 0.0) {
+        // Silently ignoring them would report a static audit under a flag that
+        // says a run was bounded.
+        anyhow::bail!("--only and --max-mb bound a measurement; add --measure");
+    }
     let (card, build) = read_card_for_audit(path)?;
     let Some(card) = card else {
         if opts.measure || opts.write_costs {
