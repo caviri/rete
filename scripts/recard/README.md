@@ -253,13 +253,30 @@ log and a `summary.tsv`, and continues past failures unless `--stop-on-error`.
 |---|---|
 | `CARDLESS` | no Dataset Card at all |
 | `ZERO-ROWS` | named-graph-only, but starter queries scan the default graph — **broken today** |
+| `EMPTY-QUERY` | the scope is right and a named starter query still cannot match — **broken today** |
 | `MIXED-HIDDEN` | data in both, but no starter query looks inside a named graph |
+| `SUSPECT-QUERY` | a join the card can neither witness nor refute — run the query to settle it |
 | `DATED` | scope-correct, but no build record / profile cap / `ov-one-row` |
 | `CURRENT` | nothing to do |
 | `UNREADABLE` | the card tier itself failed (HTTP, format, parse) |
 
 `survey.sh` writes `todo.txt` with every key that is not `CURRENT`, worst first —
 that is the order `recard_batch.sh` will work them in.
+
+`EMPTY-QUERY` and `SUSPECT-QUERY` come from `rete card-audit`, which `survey.sh`
+runs on each card it has just fetched (no extra network). The verdicts are the
+query generator's own judgement — `Cap::joint_with`, `NonEmpty`,
+`provably_empty` in `crates/rete-cli/src/commands/queries.rs` — rather than a
+second copy of the emptiness rule living in a script, which is how the defect
+they look for survived four releases. The two are reported in separate columns
+and never merged: a survey that folds "provably empty" together with "cannot be
+decided" overstates its own confidence.
+
+Re-deciding is free once the cards are on disk:
+
+```sh
+bash scripts/recard/survey.sh --cards dev/recard/survey/cards --out dev/recard/decide
+```
 
 ### What the first full run found (2026-08-05, 98 catalog datasets, 0.6 MB)
 
@@ -293,6 +310,35 @@ Two secondary findings worth knowing before planning the work:
 * **`geoadmin-tiles` costs 117 MB to survey**, not 6 KB: its embedded PMTiles
   section sits ahead of the metadata, so the "coalesced metadata range" spans it.
   Worth a look at the section ordering.
+
+### What the query audit found (2026-08-05, 110 files: 96 catalog entries plus every shard, 3.7 MB excluding the `geoadmin-tiles` outlier)
+
+96 files carry starter queries. Counting **files**, not queries:
+
+| verdict | files | which queries |
+|---|---:|---|
+| `EMPTY-QUERY` | **20** | `lb-labels` ×11 (each with a vacuous `cmp-coverage`), `sp-within` ×10 |
+| `SUSPECT-QUERY` | 26 | `lb-labels`/`cmp-coverage` ×25, `lk-external` ×3 |
+| undecidable only | 49 | `top-reach` ×79, `top-dangling` ×80, `sp-bbox` ×5 |
+
+Spot-checking against the files themselves (62 query runs, 125 MB) says the
+static pass is calibrated but not tight:
+
+* 10 of the 11 refuted `lb-labels` returned 0 rows (the 11th, `causenet`, was
+  not run); all 10 `sp-within` refutations that were run returned 0.
+* 7 of 10 sampled `SUSPECT-QUERY` files returned 0 rows too — the suspect bucket
+  is mostly broken, it just cannot be proven from a card.
+* 6 of 26 sampled `top-reach` returned 0 rows. That query is undecidable by
+  construction (nothing in a card ties a *subject* to a *predicate*), so its
+  breakage is invisible to any card-only method.
+* All 3 `lk-external` suspects returned 0 — a template whose *table* audit
+  passed and whose published instances are empty anyway.
+
+`vidy` is the one false positive the first pass produced and the reason
+`Refuted` now carries two multi-typing tells: it types every unit both
+`schema:ArchiveComponent` and `vidy:Unit`, the class-link quotient files each
+subject under its last type only, and the label query returns 50 rows from a
+class the quotient never mentions.
 
 ## Known limits
 

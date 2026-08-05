@@ -484,6 +484,30 @@ query. Reports bytes fetched + range count. The `--format` projections (and
 rete card-url https://host/data.rete --json
 ```
 
+### `rete card-audit <path|url> [--json]`
+Do the starter queries a card **already ships** still answer on the file that
+carries them? A published `.rete` cannot be re-carded for free, so this decides
+each query's fate from the card's own profile — the CARD tier again, so a
+multi-GB file costs tens of KB to check.
+
+Each query gets one verdict, and the two that matter are kept apart: `empty` is
+the card *refuting* a shipped query (a property path through a predicate the
+file does not have, a `VALUES` list disjoint from the dataset's link predicates,
+a class joined to a label predicate the class-link quotient accounts for and
+never pairs with it), while `undecidable` and `suspect` are the honest middle —
+run the query to settle those. `answers` is the card proving a row comes back,
+and `revision` says what a re-card would do to the body (`current`,
+`superseded`, `dropped`).
+
+The judgement is the query generator's own (`Cap::joint_with`, `NonEmpty`,
+`provably_empty`), not a second copy of it. Input is a `.rete` (local path or
+URL) or a card JSON document from `rete card --json` / `rete card-url --json`.
+
+```sh
+rete card-audit https://host/data.rete
+rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
+```
+
 ### `rete summary-url <url>`
 Fetch only the header + dictionary + pyramid summary and print the coarse graph.
 The (large) index is never fetched — the "overview first" path.

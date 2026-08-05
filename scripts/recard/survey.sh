@@ -10,19 +10,30 @@
 # which reads to a newcomer as a broken file. (That is the bug the Czech
 # national catalogue hit with nkod.rete.)
 #
+# The second verdict that matters is EMPTY-QUERY: the scope is right, and a
+# named starter query still cannot match — because it conjoins vocabulary the
+# card never proved co-occurs (issue #172: the most frequent class joined to the
+# most frequent label predicate, a hub IRI joined to a top predicate, a fixed
+# geometry path on a file that hangs its WKT elsewhere). `rete card-audit`
+# decides that from the very card this script already fetched, so it costs no
+# extra network and shares its judgement with the query generator.
+#
 # Verdicts, worst first:
-#   CARDLESS      no Dataset Card at all — nothing describes the file
-#   ZERO-ROWS     named-graph-only, but starter queries scan the default graph
-#   MIXED-HIDDEN  data in both, but no starter query looks inside a named graph
-#   DATED         scope-correct, but no build record / profile / smoke query
-#   CURRENT       nothing to do
-#   UNREADABLE    the card tier itself failed (HTTP, format, parse)
+#   CARDLESS       no Dataset Card at all — nothing describes the file
+#   ZERO-ROWS      named-graph-only, but starter queries scan the default graph
+#   EMPTY-QUERY    a shipped starter query the card's own profile refutes
+#   MIXED-HIDDEN   data in both, but no starter query looks inside a named graph
+#   SUSPECT-QUERY  a join the card can neither witness nor refute — run it
+#   DATED          scope-correct, but no build record / profile / smoke query
+#   CURRENT        nothing to do
+#   UNREADABLE     the card tier itself failed (HTTP, format, parse)
 #
 # Usage:
 #   bash scripts/recard/survey.sh                       # the whole catalog
 #   bash scripts/recard/survey.sh --keys "nkod cordis"  # named keys only
 #   bash scripts/recard/survey.sh --url https://…/x.rete --key x
 #   bash scripts/recard/survey.sh --local /work/data    # every .rete under a dir
+#   bash scripts/recard/survey.sh --cards <out>/cards   # re-decide, ZERO network
 #
 # Writes  <out>/survey.tsv, <out>/survey.json, <out>/todo.txt (keys to fix,
 # worst first) and <out>/cards/<key>.json (each card as fetched).
@@ -50,7 +61,7 @@ RETE="${RETE_BIN:-/work/target/release/rete}"
 TOOLS=/work/scripts/recard/card_tools.py
 catalog=/work/web/playground-src/catalog.js
 out=/work/dev/recard/survey
-jobs=8; keys=""; one_url=""; one_key=""; local_dir=""; include_shards=0
+jobs=8; keys=""; one_url=""; one_key=""; local_dir=""; include_shards=0; cards_dir=""
 
 die() { echo "survey: $*" >&2; exit 1; }
 
@@ -63,6 +74,7 @@ while [ $# -gt 0 ]; do
     --url) one_url="$2"; shift 2 ;;
     --key) one_key="$2"; shift 2 ;;
     --local) local_dir="$2"; shift 2 ;;
+    --cards) cards_dir="$2"; shift 2 ;;
     --include-shards) include_shards=1; shift ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -73,7 +85,13 @@ mkdir -p "$out/cards"
 targets="$out/targets.tsv"
 : > "$targets"
 
-if [ -n "$one_url" ]; then
+if [ -n "$cards_dir" ]; then
+  # Cards already on disk from an earlier run: re-decide them without touching
+  # the network. The fetch is the expensive half and the judgement is the half
+  # that changes, so this is the loop to iterate in.
+  find "$cards_dir" -maxdepth 1 -name '*.json' ! -name '*.audit.json' -type f | sort \
+    | while read -r f; do printf '%s\t%s\n' "$(basename "$f" .json)" "$f"; done >> "$targets"
+elif [ -n "$one_url" ]; then
   printf '%s\t%s\n' "${one_key:-$(basename "$one_url" .rete)}" "$one_url" >> "$targets"
 elif [ -n "$local_dir" ]; then
   find "$local_dir" -name '*.rete' -type f | sort | while read -r f; do
@@ -117,11 +135,22 @@ echo "== surveying $total file(s), $jobs at a time — card tier only (2 range r
 probe() {
   local key="$1" url="$2"
   local card="$out/cards/$key.json" err="$out/cards/$key.err"
+  local audit="$out/cards/$key.audit.json"
+  if [ -n "$cards_dir" ]; then
+    # Already-fetched card: decide only.
+    "$RETE" card-audit "$url" --json > "$audit" 2>/dev/null || : > "$audit"
+    python3 -P "$TOOLS" classify "$url" --key "$key" --url "$url" --audit "$audit"
+    return 0
+  fi
   # `card-url` also serves local paths (same ranged reader), so --local works.
   if "$RETE" card-url "$url" --json > "$card" 2>"$err"; then
     grep -oE '^fetched [0-9]+ of [0-9]+ bytes in [0-9]+ range request' "$err" \
       | head -1 > "$out/cards/$key.bytes" || true
-    python3 -P "$TOOLS" classify "$card" --key "$key" --url "$url"
+    # Do the starter queries this card ALREADY ships still answer? Decided
+    # from the card just fetched — no further network, and no second copy of
+    # the emptiness rule (`rete card-audit` is the generator's own judgement).
+    "$RETE" card-audit "$card" --json > "$audit" 2>/dev/null || : > "$audit"
+    python3 -P "$TOOLS" classify "$card" --key "$key" --url "$url" --audit "$audit"
   else
     printf '{"key":%s,"url":%s,"status":"UNREADABLE","reason":%s,"triples":null,"quads":null,"named_graphs":null,"queries":0,"graph_scoped":0,"has_build_record":false,"title":null,"format_version":null}\n' \
       "$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$key")" \

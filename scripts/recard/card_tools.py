@@ -67,8 +67,23 @@ CURATED_FIELDS = [
 LEGITIMATELY_EMPTY = {"top-dangling", "sp-within"}
 
 # Verdicts, worst first. `todo` is the set the batch driver runs.
-STATUS_ORDER = ["CARDLESS", "ZERO-ROWS", "MIXED-HIDDEN", "DATED", "CURRENT", "UNREADABLE"]
-TODO_STATUSES = {"CARDLESS", "ZERO-ROWS", "MIXED-HIDDEN", "DATED"}
+#
+# ZERO-ROWS is the scope failure (#170): the whole card addresses the wrong half
+# of the file. EMPTY-QUERY is the narrower one (#172): the scope is right and one
+# named starter query still cannot match, because it conjoins vocabulary the card
+# never proved co-occurs. SUSPECT-QUERY is the honest middle — the card cannot
+# prove the join non-empty and cannot refute it either; those are counted apart
+# from the provable ones and never folded into them.
+STATUS_ORDER = ["CARDLESS", "ZERO-ROWS", "EMPTY-QUERY", "MIXED-HIDDEN",
+                "SUSPECT-QUERY", "DATED", "CURRENT", "UNREADABLE"]
+TODO_STATUSES = {"CARDLESS", "ZERO-ROWS", "EMPTY-QUERY", "MIXED-HIDDEN",
+                 "SUSPECT-QUERY", "DATED"}
+
+# `rete card-audit --json` verdicts, in the order they take priority when one
+# card ships several. The audit is the authority on emptiness — this file must
+# never re-derive it (a second, drifting copy of "is this empty" is how the
+# original bug survived four releases).
+AUDIT_ACTIONABLE = ["empty", "vacuous", "suspect"]
 
 
 def read_card(path: str) -> dict | None:
@@ -124,11 +139,34 @@ def _query_rows(card: dict) -> list[dict]:
     return costs.get("queries") or []
 
 
-def classify(card: dict | None, key: str, url: str, error: str = "") -> dict:
+def read_audit(path: str | None) -> list[dict]:
+    """The findings from `rete card-audit --json`, or [] when none was run."""
+    if not path:
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read().strip()
+    except OSError:
+        return []
+    if not text:
+        return []
+    start = text.find("{")
+    if start < 0:
+        return []
+    try:
+        return json.loads(text[start:]).get("findings") or []
+    except ValueError:
+        return []
+
+
+def classify(card: dict | None, key: str, url: str, error: str = "",
+             findings: list[dict] | None = None) -> dict:
     """One dataset's verdict. Reads only what the card tier already fetched."""
     row = {"key": key, "url": url, "status": "", "reason": "", "triples": None,
            "quads": None, "named_graphs": None, "queries": 0, "graph_scoped": 0,
-           "has_build_record": False, "title": None, "format_version": None}
+           "has_build_record": False, "title": None, "format_version": None,
+           "empty_queries": [], "vacuous_queries": [], "suspect_queries": [],
+           "undecidable_queries": [], "stale_queries": []}
     if error:
         row["status"] = "UNREADABLE"
         row["reason"] = error
@@ -153,6 +191,17 @@ def classify(card: dict | None, key: str, url: str, error: str = "") -> dict:
         format_version=card.get("format_version"),
     )
 
+    by = {v: [f["id"] for f in (findings or []) if f["verdict"] == v]
+          for v in ("empty", "vacuous", "suspect", "undecidable")}
+    row.update(
+        empty_queries=by["empty"],
+        vacuous_queries=by["vacuous"],
+        suspect_queries=by["suspect"],
+        undecidable_queries=by["undecidable"],
+        stale_queries=[f["id"] for f in (findings or [])
+                       if f.get("revision") != "current"],
+    )
+
     named_only = named > 0 and not triples
     if named_only and (not queries or len(scoped) < len(queries)):
         row["status"] = "ZERO-ROWS"
@@ -164,11 +213,33 @@ def classify(card: dict | None, key: str, url: str, error: str = "") -> dict:
             else "named-graph-only file with no starter queries at all"
         )
         return row
+    # The scope is right, and a named starter query still cannot match: the
+    # card's own profile refutes it. Ranked above MIXED-HIDDEN because a query
+    # that answers nothing is what a newcomer reads as a broken file.
+    if by["empty"] or by["vacuous"]:
+        row["status"] = "EMPTY-QUERY"
+        parts = []
+        if by["empty"]:
+            parts.append(f"{', '.join(by['empty'])} cannot match")
+        if by["vacuous"]:
+            parts.append(f"{', '.join(by['vacuous'])} returns a vacuous row")
+        row["reason"] = ("the card's own profile refutes a shipped starter query: "
+                         + "; ".join(parts))
+        return row
+
     if triples and named and not scoped:
         row["status"] = "MIXED-HIDDEN"
         row["reason"] = (
             f"{named} named graph(s) alongside the default graph, but no starter "
             "query looks inside them — half the file is invisible"
+        )
+        return row
+
+    if by["suspect"]:
+        row["status"] = "SUSPECT-QUERY"
+        row["reason"] = (
+            f"{', '.join(by['suspect'])}: the card can neither witness nor refute "
+            "the join — needs the query run against the file to settle"
         )
         return row
 
@@ -217,7 +288,7 @@ def cmd_classify(args) -> int:
         error = ""
     except (OSError, ValueError) as exc:
         card, error = None, str(exc)
-    row = classify(card, args.key, args.url, error)
+    row = classify(card, args.key, args.url, error, read_audit(args.audit))
     sys.stdout.write(json.dumps(row, ensure_ascii=False) + "\n")
     return 0
 
@@ -233,13 +304,17 @@ def cmd_report(args) -> int:
     rows.sort(key=lambda r: (rank.get(r["status"], 99), r["key"]))
 
     header = ["status", "key", "triples", "quads", "named_graphs", "queries",
-              "graph_scoped", "build", "reason"]
+              "graph_scoped", "build", "empty", "vacuous", "suspect",
+              "undecidable", "reason"]
     print("\t".join(header))
     for r in rows:
+        def q(field):
+            return ",".join(r.get(field) or []) or "-"
         print("\t".join(str(x) for x in [
             r["status"], r["key"], r["triples"], r["quads"], r["named_graphs"],
             r["queries"], r["graph_scoped"], "yes" if r["has_build_record"] else "no",
-            r["reason"],
+            q("empty_queries"), q("vacuous_queries"), q("suspect_queries"),
+            q("undecidable_queries"), r["reason"],
         ]))
 
     counts = {}
@@ -249,7 +324,26 @@ def cmd_report(args) -> int:
     print(f"# {len(rows)} dataset(s)", file=sys.stderr)
     for status in STATUS_ORDER:
         if status in counts:
-            print(f"#   {status:<13} {counts[status]}", file=sys.stderr)
+            print(f"#   {status:<14} {counts[status]}", file=sys.stderr)
+
+    # Per-query-id census, kept in three separate columns on purpose: a survey
+    # that folds "provably empty" together with "cannot be decided" overstates
+    # its own confidence, which is worse than admitting the gap.
+    census: dict[str, dict[str, int]] = {}
+    for r in rows:
+        for kind, field in (("empty", "empty_queries"), ("vacuous", "vacuous_queries"),
+                            ("suspect", "suspect_queries"),
+                            ("undecidable", "undecidable_queries")):
+            for qid in r.get(field) or []:
+                census.setdefault(qid, {})[kind] = census.setdefault(qid, {}).get(kind, 0) + 1
+    if census:
+        print("#", file=sys.stderr)
+        print(f"# {'query':<16}{'empty':>7}{'vacuous':>9}{'suspect':>9}{'undecidable':>13}",
+              file=sys.stderr)
+        for qid in sorted(census, key=lambda k: -sum(census[k].values())):
+            c = census[qid]
+            print(f"# {qid:<16}{c.get('empty', 0):>7}{c.get('vacuous', 0):>9}"
+                  f"{c.get('suspect', 0):>9}{c.get('undecidable', 0):>13}", file=sys.stderr)
 
     if args.todo:
         todo = [r["key"] for r in rows if r["status"] in TODO_STATUSES]
@@ -343,6 +437,7 @@ def main() -> int:
     p.add_argument("input")
     p.add_argument("--key", default="")
     p.add_argument("--url", default="")
+    p.add_argument("--audit", help="`rete card-audit --json` output for the same card")
     p.set_defaults(func=cmd_classify)
 
     p = sub.add_parser("report", help="verdict rows -> TSV table")
