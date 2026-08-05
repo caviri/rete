@@ -38,11 +38,14 @@ pub enum IngestError {
     /// The Turtle parser rejected the input.
     #[error("turtle: {0}")]
     Turtle(String),
+    /// The TriG parser rejected the input.
+    #[error("trig: {0}")]
+    TriG(String),
     /// The RDF/XML parser rejected the input.
     #[error("rdf/xml: {0}")]
     RdfXml(String),
     /// The requested format is not one this crate can parse.
-    #[error("unknown input format: {0} (expected nt, nq, ttl, or rdf/xml)")]
+    #[error("unknown input format: {0} (expected nt, nq, ttl, trig, or rdf/xml)")]
     UnknownFormat(String),
     /// The input could not be read (streaming builds surface the path here).
     #[error("io: {0}")]
@@ -157,25 +160,87 @@ pub fn parse_reader<R: std::io::BufRead>(
 /// dictionary — never materializes the whole quad multiset. The big-graph,
 /// low-RAM ingest primitive. Blank/comment lines are skipped; a parse error stops
 /// the stream and is returned.
+///
+/// Every format streams: the line-based ones a line at a time, Turtle / TriG /
+/// RDF-XML through their `oxttl`/`oxrdfxml` reader parsers, which pull from the
+/// reader incrementally. Nothing here holds the input text — so a 60 GB Turtle
+/// file is as ingestible as a 60 GB `.nt` one, which is what lets the external
+/// (memory-bounded) build accept them.
 pub fn stream_reader<R: std::io::BufRead>(
     reader: R,
     format: &str,
     f: &mut dyn FnMut(RawQuad),
 ) -> Result<(), IngestError> {
-    if format != "nt" && format != "nq" {
-        return Err(IngestError::UnknownFormat(format.to_string()));
-    }
-    for (i, line) in reader.lines().enumerate() {
-        let line = line.map_err(|e| IngestError::Io(e.to_string()))?;
-        if format == "nq" {
-            if let Some(q) = parse_nq_line(&line, i + 1)? {
-                f(q);
+    match format {
+        "nt" | "nq" => {
+            for (i, line) in reader.lines().enumerate() {
+                let line = line.map_err(|e| IngestError::Io(e.to_string()))?;
+                if format == "nq" {
+                    if let Some(q) = parse_nq_line(&line, i + 1)? {
+                        f(q);
+                    }
+                } else if let Some((s, p, o)) = parse_nt_line(&line, i + 1)? {
+                    f((s, p, o, None));
+                }
             }
-        } else if let Some((s, p, o)) = parse_nt_line(&line, i + 1)? {
-            f((s, p, o, None));
+            Ok(())
         }
+        "ttl" => {
+            for r in oxttl::TurtleParser::new()
+                .with_quoted_triples()
+                .for_reader(reader)
+            {
+                let t = r.map_err(|e| IngestError::Turtle(e.to_string()))?;
+                f((
+                    t.subject.to_string(),
+                    t.predicate.to_string(),
+                    t.object.to_string(),
+                    None,
+                ));
+            }
+            Ok(())
+        }
+        "trig" => {
+            for r in oxttl::TriGParser::new()
+                .with_quoted_triples()
+                .for_reader(reader)
+            {
+                let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
+                f((
+                    q.subject.to_string(),
+                    q.predicate.to_string(),
+                    q.object.to_string(),
+                    graph_token(&q.graph_name),
+                ));
+            }
+            Ok(())
+        }
+        "rdfxml" => {
+            for r in oxrdfxml::RdfXmlParser::new().for_reader(reader) {
+                let t = r.map_err(|e| IngestError::RdfXml(e.to_string()))?;
+                f((
+                    t.subject.to_string(),
+                    t.predicate.to_string(),
+                    t.object.to_string(),
+                    None,
+                ));
+            }
+            Ok(())
+        }
+        other => Err(IngestError::UnknownFormat(other.to_string())),
     }
-    Ok(())
+}
+
+/// The canonical graph token for a parsed quad — `None` for the default graph,
+/// otherwise the same `<iri>` / `_:b` spelling the N-Quads reader produces, so
+/// TriG and N-Quads inputs land identical dictionary keys. `GraphName`'s own
+/// `Display` renders the default graph as `DEFAULT`, which must never become a
+/// term, hence the explicit match.
+fn graph_token(g: &oxrdf::GraphName) -> Option<String> {
+    match g {
+        oxrdf::GraphName::DefaultGraph => None,
+        other => Some(other.to_string()),
+    }
 }
 
 /// Parse Turtle into canonical N-Triples-token triples via oxttl.
@@ -198,6 +263,25 @@ pub fn parse_turtle(text: &str) -> Result<Vec<RawTriple>, IngestError> {
     Ok(out)
 }
 
+/// Parse TriG into canonical quads via oxttl — Turtle plus named-graph blocks
+/// (`<g> { … }`), the shape most large RDF dumps ship in.
+pub fn parse_trig(text: &str) -> Result<Vec<RawQuad>, IngestError> {
+    let mut out = Vec::new();
+    for r in oxttl::TriGParser::new()
+        .with_quoted_triples()
+        .for_reader(text.as_bytes())
+    {
+        let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
+        out.push((
+            q.subject.to_string(),
+            q.predicate.to_string(),
+            q.object.to_string(),
+            graph_token(&q.graph_name),
+        ));
+    }
+    Ok(out)
+}
+
 /// Parse RDF/XML into canonical N-Triples-token triples via oxrdfxml. This is how
 /// most OWL ontologies ship (`.rdf`/`.owl`/`.xml` with an `rdf:RDF` root) — so rete
 /// ingests them directly, no external conversion. (OWL/XML — the non-RDF functional
@@ -215,8 +299,8 @@ pub fn parse_rdfxml(text: &str) -> Result<Vec<RawTriple>, IngestError> {
     Ok(out)
 }
 
-/// Parse one text input by format name (`"nt"`, `"nq"`, `"ttl"`, or `"rdfxml"`)
-/// into quads (triples land in the default graph).
+/// Parse one text input by format name (`"nt"`, `"nq"`, `"ttl"`, `"trig"`, or
+/// `"rdfxml"`) into quads (triples land in the default graph).
 pub fn parse_statements(text: &str, format: &str) -> Result<Vec<RawQuad>, IngestError> {
     match format {
         "nq" => parse_quads(text),
@@ -224,6 +308,7 @@ pub fn parse_statements(text: &str, format: &str) -> Result<Vec<RawQuad>, Ingest
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
             .collect()),
+        "trig" => parse_trig(text),
         "rdfxml" => Ok(parse_rdfxml(text)?
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
@@ -748,8 +833,20 @@ mod tests {
             parse_quads(nq).unwrap(),
             parse_reader(std::io::Cursor::new(nq), "nq", 0).unwrap()
         );
-        // Turtle is not streamable here.
-        assert!(parse_reader(std::io::Cursor::new(nt), "ttl", 0).is_err());
+        // Turtle and TriG stream too — that is what lets the external build take a
+        // multi-gigabyte `.ttl.gz` without expanding it to N-Triples first. Reading
+        // a structured syntax from a reader must agree with parsing its whole text.
+        let ttl = "@prefix ex: <http://ex/> .\nex:A ex:knows ex:B , ex:C .\n";
+        assert_eq!(
+            parse_statements(ttl, "ttl").unwrap(),
+            parse_reader(std::io::Cursor::new(ttl), "ttl", 0).unwrap()
+        );
+        let trig = "@prefix ex: <http://ex/> .\nex:g { ex:A ex:knows ex:B . }\n";
+        let streamed = parse_reader(std::io::Cursor::new(trig), "trig", 0).unwrap();
+        assert_eq!(parse_statements(trig, "trig").unwrap(), streamed);
+        assert_eq!(streamed[0].3.as_deref(), Some("<http://ex/g>"));
+        // An unknown format is still a hard error, not a silent guess.
+        assert!(parse_reader(std::io::Cursor::new(nt), "jsonld", 0).is_err());
     }
 
     #[test]
@@ -758,7 +855,26 @@ mod tests {
         assert_eq!(parse_statements(nt, "nt").unwrap().len(), 1);
         let ttl = "@prefix ex: <http://ex/> .\nex:A ex:knows ex:B , ex:C .";
         assert_eq!(parse_statements(ttl, "ttl").unwrap().len(), 2);
-        assert!(parse_statements(nt, "trig").is_err());
+        // N-Triples is a subset of both Turtle and TriG, so the same text parses
+        // under all three — and lands in the default graph under each.
+        assert_eq!(parse_statements(nt, "trig").unwrap().len(), 1);
+        assert!(parse_statements(nt, "trig").unwrap()[0].3.is_none());
+        assert!(parse_statements(nt, "jsonld").is_err());
+    }
+
+    /// A TriG graph block carries its graph name through as the same canonical
+    /// token N-Quads would produce — so the two syntaxes agree on dictionary keys
+    /// and a `.trig` shard federates with a `.nq` one.
+    #[test]
+    fn trig_graph_names_match_nquads() {
+        let trig = "@prefix ex: <http://ex/> .\nex:g { ex:a ex:p ex:b . }\nex:a ex:p ex:c .\n";
+        let nq = "<http://ex/a> <http://ex/p> <http://ex/b> <http://ex/g> .\n\
+                  <http://ex/a> <http://ex/p> <http://ex/c> .\n";
+        let mut from_trig = parse_statements(trig, "trig").unwrap();
+        let mut from_nq = parse_statements(nq, "nq").unwrap();
+        from_trig.sort();
+        from_nq.sort();
+        assert_eq!(from_trig, from_nq);
     }
 
     /// RDF/XML (how most OWL ontologies ship) parses to the same canonical tokens,
