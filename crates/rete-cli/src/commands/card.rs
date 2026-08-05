@@ -1807,20 +1807,32 @@ fn measure_card(
              against) — pass the local path or the http(s):// URL"
         );
     }
-    let wanted: Vec<&ExampleQuery> = card
-        .queries
+    // A mistyped id must not quietly narrow the run: the report would then
+    // describe fewer queries than the caller asked about, and say nothing.
+    let unknown: Vec<&str> = opts
+        .only
         .iter()
-        .filter(|q| opts.only.is_empty() || opts.only.iter().any(|id| id == &q.id))
+        .map(String::as_str)
+        .filter(|id| !card.queries.iter().any(|q| &q.id == id))
         .collect();
-    if wanted.is_empty() {
+    if !unknown.is_empty() {
         anyhow::bail!(
-            "no starter query matches --only (the card ships: {})",
+            "no starter query matches --only {} (the card ships: {})",
+            unknown.join(", "),
             card.queries
                 .iter()
                 .map(|q| q.id.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+    }
+    let wanted: Vec<&ExampleQuery> = card
+        .queries
+        .iter()
+        .filter(|q| opts.only.is_empty() || opts.only.iter().any(|id| id == &q.id))
+        .collect();
+    if wanted.is_empty() {
+        anyhow::bail!("this card ships no starter queries to measure");
     }
     let budget = if opts.max_mb > 0.0 {
         (opts.max_mb * (1u64 << 20) as f64) as u64
