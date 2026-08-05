@@ -303,14 +303,43 @@ enum Command {
     /// range requests), so a published multi-GB file costs tens of KB to check
     /// — the point being that you do not have to re-card a catalog to find out
     /// which of its files greet a newcomer with zero rows.
+    ///
+    /// `--measure` runs the queries instead of reasoning about them, reporting
+    /// rows, bytes and range requests per query — the figures a build records
+    /// in its `query_costs`, measured the same way, so the two are comparable.
+    /// That costs real reads (`--only`/`--max-mb` bound them), and it settles
+    /// the templates a card cannot decide at all.
     CardAudit {
         /// A `.rete` file (local path or `http(s)://` URL), or a card JSON
         /// document from `rete card --json` / `rete card-url --json` (`-` for
-        /// stdin).
+        /// stdin). `--measure` needs the file itself.
         path: String,
         /// Emit one JSON object with every finding instead of the text table.
         #[arg(long)]
         json: bool,
+        /// Run each starter query cold and report what it cost. Local path =
+        /// free but only as honest as your copy; `http(s)://` = what a reader
+        /// really pays. The output names which it was, either way.
+        #[arg(long)]
+        measure: bool,
+        /// Measure only these query ids (repeatable, or comma-separated).
+        #[arg(long, value_delimiter = ',', requires = "measure")]
+        only: Vec<String>,
+        /// Abandon a query once it has asked for this many MB (0 = no cap;
+        /// fractions allowed). A remote measurement is a download; this is the
+        /// leash — and "costs more than N MB" is itself an answer.
+        #[arg(long, default_value_t = 0.0, requires = "measure")]
+        max_mb: f64,
+        /// Record the measurement in the file's build-info section. Implies
+        /// `--measure`; local files only. Build info sits **outside** the
+        /// content hash, so the file keeps its identity — but the section is
+        /// near the front, so the file is rewritten end to end to make room.
+        #[arg(long)]
+        write_costs: bool,
+        /// Let `--write-costs` proceed even though a starter query measured
+        /// zero rows.
+        #[arg(long, requires = "write_costs")]
+        allow_empty: bool,
     },
     /// List the named graphs in a dataset.
     Graphs {
@@ -991,7 +1020,25 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             format,
             sha256,
         } => commands::url::card_url(&url, json, format.as_deref(), sha256.as_deref()),
-        Command::CardAudit { path, json } => commands::card::card_audit_cmd(&path, json),
+        Command::CardAudit {
+            path,
+            json,
+            measure,
+            only,
+            max_mb,
+            write_costs,
+            allow_empty,
+        } => commands::card::card_audit_cmd(
+            &path,
+            &commands::card::AuditOptions {
+                json,
+                measure: measure || write_costs,
+                only,
+                max_mb,
+                write_costs,
+                allow_empty,
+            },
+        ),
         Command::Graphs { file } => commands::inspect::graphs(&file),
         Command::Export { file, format } => commands::export::export(&file, &format),
         Command::Repyramid {

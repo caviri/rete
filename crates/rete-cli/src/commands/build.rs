@@ -54,8 +54,10 @@ fn drop_measured_empty_queries(
                 // Only a zero-row result can contradict a template: the
                 // non-emptiness claims are about row *count*, and
                 // `NonEmpty::Aggregate` says outright that the row's values may
-                // be unbound. So a vacuous row is news, not a broken promise.
-                let contradicts_claim = m.zero_rows && claim_of(&m.cost.id) == Claim::CannotBeEmpty;
+                // be unbound. So a vacuous row is news, not a broken promise —
+                // and inside this arm "useless but not vacuous" is exactly
+                // "measured zero rows".
+                let contradicts_claim = !m.vacuous && claim_of(&m.cost.id) == Claim::CannotBeEmpty;
                 dropped.push(buildinfo::DroppedQuery {
                     id: m.cost.id,
                     why,

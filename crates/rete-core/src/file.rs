@@ -1735,22 +1735,54 @@ pub fn read_build_info(bytes: &[u8]) -> Result<Option<Vec<u8>>, FileError> {
     Ok(Some(bytes[start..end].to_vec()))
 }
 
-/// Attach (or replace) a **build-info** section in a finished file image,
-/// returning the new image. The section is spliced in immediately after the
-/// metadata section — adjacent, so [`read_card_and_build_info_ranged`] fetches
-/// card + build info in one coalesced range — and every later section's offset
-/// shifts by the length delta.
+/// Everything needed to splice a build-info section into a finished file
+/// **without holding the file in memory**: the rewritten header, where the
+/// section goes, and where the bytes that do not move resume.
+///
+/// See [`plan_build_info`] for what the fields mean together; the layout is
+/// always `[header][metadata][build info][everything else, verbatim]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildInfoPlan {
+    /// The header bytes to write at offset 0.
+    pub header: [u8; HEADER_LEN],
+    /// Offset the new section is written at — equivalently, the length of the
+    /// unchanged `[header][metadata]` prefix.
+    pub insert: u64,
+    /// Offset in the **old** file where the bytes that do not move resume. The
+    /// span `insert..tail_start` is the old build-info section, if any, and is
+    /// the only part of the old file the new one drops.
+    pub tail_start: u64,
+    /// Length of the file this plan produces.
+    pub new_len: u64,
+}
+
+/// Plan the splice of a build-info section of `info_len` bytes into a file
+/// whose first [`HEADER_LEN`] bytes are `head` and whose total length is
+/// `file_len`.
+///
+/// The section goes immediately after the metadata section — adjacent, so
+/// [`read_card_and_build_info_ranged`] fetches card + build info in one
+/// coalesced range — and every later section's offset shifts by the length
+/// delta. That shift is the whole of the arithmetic, and it lives here so the
+/// in-memory splice ([`attach_build_info`]) and any streaming rewriter derive
+/// the same header from the same rule instead of each carrying a copy that can
+/// drift.
 ///
 /// The content hash is **deliberately left untouched**: build info records the
 /// facts that differ between two builds of identical data (timestamp, builder,
-/// measured timings), and folding them into the hash would break the
+/// measured costs), and folding them into the hash would break the
 /// reproducible-hash property. `verify` accordingly ignores this section, on an
-/// old reader (which sees an unknown kind-7 entry) and a new one alike.
+/// old reader (which sees an unknown kind-7 entry) and a new one alike — so a
+/// file that gains, loses or changes a build record **keeps its content
+/// identity**.
 ///
-/// Passing an empty `info` removes an existing section (or returns the image
-/// unchanged when there is none).
-pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError> {
-    let mut header = Header::from_bytes(image)?;
+/// `info_len` of 0 plans the removal of an existing section.
+pub fn plan_build_info(
+    head: &[u8],
+    file_len: u64,
+    info_len: u64,
+) -> Result<BuildInfoPlan, FileError> {
+    let mut header = Header::from_bytes(head)?;
     // The insert point: immediately after the metadata section. The writers in
     // this crate always place metadata (when present) at HEADER_LEN.
     let insert = HEADER_LEN as u64 + header.metadata_len;
@@ -1760,15 +1792,15 @@ pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError
             "existing build-info section is not adjacent to the metadata",
         ));
     }
-    let tail_start = (insert + old_len) as usize;
-    if tail_start > image.len() || (insert as usize) > image.len() {
+    let tail_start = insert.saturating_add(old_len);
+    if tail_start > file_len || insert > file_len {
         return Err(FileError::Container("build-info splice out of bounds"));
     }
 
     // Shift every section that lives at or after the old tail.
     let shift = |off: &mut u64, len: u64| {
-        if len > 0 && *off >= insert + old_len {
-            *off = *off - old_len + info.len() as u64;
+        if len > 0 && *off >= tail_start {
+            *off = *off - old_len + info_len;
         }
     };
     shift(&mut header.dictionary_offset, header.dictionary_len);
@@ -1777,23 +1809,39 @@ pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError
     shift(&mut header.named_graphs_offset, header.named_graphs_len);
     shift(&mut header.text_index_offset, header.text_index_len);
     for s in &mut header.extra_sections {
-        if s.length > 0 && s.offset >= insert + old_len {
-            s.offset = s.offset - old_len + info.len() as u64;
+        if s.length > 0 && s.offset >= tail_start {
+            s.offset = s.offset - old_len + info_len;
         }
     }
-    if info.is_empty() {
+    if info_len == 0 {
         header.build_info_offset = 0;
         header.build_info_len = 0;
     } else {
         header.build_info_offset = insert;
-        header.build_info_len = info.len() as u64;
+        header.build_info_len = info_len;
     }
 
-    let mut out = Vec::with_capacity(image.len() - old_len as usize + info.len());
-    out.extend_from_slice(&header.to_bytes());
-    out.extend_from_slice(&image[HEADER_LEN..insert as usize]);
+    Ok(BuildInfoPlan {
+        header: header.to_bytes(),
+        insert,
+        tail_start,
+        new_len: file_len - old_len + info_len,
+    })
+}
+
+/// Attach (or replace) a **build-info** section in a finished file image,
+/// returning the new image. Layout and hash semantics: [`plan_build_info`].
+///
+/// Passing an empty `info` removes an existing section (or returns the image
+/// unchanged when there is none).
+pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError> {
+    let plan = plan_build_info(image, image.len() as u64, info.len() as u64)?;
+    let mut out = Vec::with_capacity(plan.new_len as usize);
+    out.extend_from_slice(&plan.header);
+    out.extend_from_slice(&image[HEADER_LEN..plan.insert as usize]);
     out.extend_from_slice(info);
-    out.extend_from_slice(&image[tail_start..]);
+    out.extend_from_slice(&image[plan.tail_start as usize..]);
+    debug_assert_eq!(out.len() as u64, plan.new_len);
     Ok(out)
 }
 
@@ -4986,6 +5034,63 @@ mod tests {
             Header::from_bytes(&base).unwrap().content_hash
         );
         Rete::open(&with).unwrap();
+    }
+
+    /// The contract a **streaming** rewriter needs: a plan is enough to rebuild
+    /// the file from three spans — the header it hands back, the untouched
+    /// `[HEADER_LEN, insert)` prefix, the new section, and the untouched
+    /// `[tail_start, len)` tail — and the result is byte-identical to the
+    /// in-memory splice. That is what lets a 17 GB file gain a build record
+    /// with a 4 MiB buffer instead of 34 GB of RAM.
+    #[test]
+    fn a_plan_rebuilds_exactly_what_the_in_memory_splice_produces() {
+        let card = br#"{"title":"My Dataset"}"#;
+        let base = build_with_metadata(card);
+        let base_hash = Header::from_bytes(&base).unwrap().content_hash;
+        for start in [
+            base.clone(),
+            attach_build_info(&base, b"{\"a\":1}").unwrap(),
+        ] {
+            for info in [
+                br#"{"builder":"rete-cli 0.3.2","query_costs":{}}"#.as_slice(), // longer
+                b"{}".as_slice(),                                               // shorter
+                b"".as_slice(),                                                 // removed
+            ] {
+                let plan = plan_build_info(&start, start.len() as u64, info.len() as u64).unwrap();
+                let mut streamed = Vec::new();
+                streamed.extend_from_slice(&plan.header);
+                streamed.extend_from_slice(&start[HEADER_LEN..plan.insert as usize]);
+                streamed.extend_from_slice(info);
+                streamed.extend_from_slice(&start[plan.tail_start as usize..]);
+                assert_eq!(streamed.len() as u64, plan.new_len);
+                assert_eq!(
+                    streamed,
+                    attach_build_info(&start, info).unwrap(),
+                    "a {}-byte section streamed must equal the same section spliced",
+                    info.len()
+                );
+                // The point of the exercise: the file's identity is untouched.
+                assert!(verify(&streamed).unwrap());
+                let h = Header::from_bytes(&streamed).unwrap();
+                assert_eq!(h.content_hash, base_hash);
+                assert_eq!(h.expected_file_len(), Some(plan.new_len));
+                let rete = Rete::open(&streamed).unwrap();
+                assert_eq!(rete.metadata(), Some(card.as_slice()));
+                assert_eq!(
+                    rete.query(Some("Bob"), Some("knows"), Some("Carol")).len(),
+                    1
+                );
+            }
+        }
+    }
+
+    /// A plan is refused rather than trusted when the header's own numbers put
+    /// the section outside the file — the header is attacker-controlled input.
+    #[test]
+    fn a_plan_refuses_a_header_that_overruns_the_file() {
+        let base = build_with_metadata(br#"{"title":"x"}"#);
+        assert!(plan_build_info(&base, 8, 16).is_err());
+        assert!(plan_build_info(&base[..HEADER_LEN], base.len() as u64, 16).is_ok());
     }
 
     #[test]
