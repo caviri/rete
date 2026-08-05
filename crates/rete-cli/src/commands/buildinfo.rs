@@ -521,6 +521,12 @@ pub(crate) fn query_costs(queries: Vec<QueryCost>) -> QueryCosts {
 pub(crate) const IN_MEMORY_TRANSPORT: &str =
     "local in-memory image; cold lazy open per query; logical range reads, no block cache";
 
+/// The caveat that travels with every cost figure — stored in the file, and
+/// printed by anything that shows one. One string, so the two cannot diverge.
+pub(crate) const COST_NOTE: &str =
+    "bytes/requests are properties of file layout + query (portable); debug_ms is one machine's \
+     reference timing, not a guarantee";
+
 /// The context every set of cost figures travels with. `transport` is the one
 /// part a caller varies, and it is not optional: "1.4 MB in 76 requests" means
 /// nothing without knowing what did the requesting.
@@ -528,11 +534,7 @@ pub(crate) fn cost_context(transport: &str) -> CostContext {
     CostContext {
         engine: Some(builder_version()),
         transport: Some(transport.to_string()),
-        note: Some(
-            "bytes/requests are properties of file layout + query (portable); debug_ms is one \
-             machine's reference timing, not a guarantee"
-                .to_string(),
-        ),
+        note: Some(COST_NOTE.to_string()),
     }
 }
 

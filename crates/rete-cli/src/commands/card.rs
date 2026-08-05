@@ -1767,10 +1767,7 @@ pub(crate) struct AuditOptions {
     pub allow_empty: bool,
 }
 
-/// The caveat that travels with every cost figure this command prints, and the
-/// one it stores. Same words in both places on purpose.
-const COST_NOTE: &str = "bytes/requests are properties of file layout + query (portable); \
-                         debug_ms is one machine's reference timing, not a guarantee";
+use crate::commands::buildinfo::COST_NOTE;
 
 /// One measurement run: what it went through, and what each query cost.
 pub(crate) struct CostRun {
