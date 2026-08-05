@@ -106,13 +106,17 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
     re-measuring. The section is outside the content hash, so the file keeps
     its identity — same checksum, `rete verify` still passes, N-Quads
     byte-identical — but it sits right after the card, so the file is rewritten
-    end to end to make room. The rewrite streams in constant memory (proved on
-    a published 25 MB file: 11 s including the measurement, +2,007 bytes, same
-    `079f5d5f…` checksum, same N-Quads `sha256`), which is what makes it
-    possible where a re-card is not — a re-card needs 17–35× the file in RAM or
-    9–15× in staged N-Quads on disk. It refuses when a query measured zero rows
-    (that file needs a re-card, which rewrites it anyway and fixes the queries
-    too), when a run did not finish, and when `--only` measured a subset.
+    end to end to make room. Proved on published files: `tree-city-inventory`
+    (25 MB) in 11 s including the measurement, +2,007 bytes, same `079f5d5f…`
+    checksum, 569,694,820 bytes of sorted N-Quads identical; `switzerland-fedlex`
+    (1.04 GB) in 381 s, +32 bytes, same `b2ddf84b…` checksum. The rewrite is a
+    bounded-buffer copy — the RAM goes into *running* the queries (eager
+    evaluation: `ng-list`'s 497,905 rows alone peak at 3.2 GiB, the whole fedlex
+    run at 14.2 GiB), which is still under a `repyramid` re-card's ≈36 GiB
+    prediction for that file and needs no staged N-Quads at all. It refuses when
+    a query measured zero rows (that file needs a re-card, which rewrites it
+    anyway and fixes the queries too), when a run did not finish, and when
+    `--only` measured a subset.
   - `rete_core::plan_build_info` exposes the splice arithmetic the in-memory
     `attach_build_info` already used, so the streaming rewriter derives its
     header from the same rule rather than a second copy of it.

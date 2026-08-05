@@ -563,20 +563,31 @@ The section sits **outside** the blake3 content hash — that is why two builds 
 identical data hash equal — so the file keeps its identity: same checksum, same
 `rete verify`, byte-identical N-Quads. It sits **near the front**, though, right
 after the card, so making room for it shifts everything behind it and the file
-is rewritten end to end. The rewrite streams (4 MiB of RAM whatever the file
-weighs) and commits by rename, but it is still one full pass of I/O and — for a
-published file — a full re-upload.
+is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
+by rename, but it is still one full pass of I/O and — for a published file — a
+full re-upload.
 
 Where that is worth it: when the alternative is a re-card. A re-card rewrites
 the file too, and additionally costs 17–35× the file in RAM (`repyramid`) or
 9–15× in staged N-Quads on disk (`--mode stream`, see `scripts/recard`), which
-puts anything past ~150 M statements out of reach. Attaching costs is a 1× pass
-with no ceiling. So: if the audit says the queries are stale or broken, re-card
-— same rewrite, more value. If the queries answer and the only gap is the
-missing record, write the costs. The command enforces that split: it refuses
-when a query measured zero rows (`--allow-empty` overrides, for `top-dangling`
-on a fully-described graph), when a run did not finish, and when `--only`
-measured a subset that would be stored as if it were the whole card.
+puts anything past ~150 M statements out of reach. Attaching costs is one pass
+with no staging.
+
+**The RAM goes into the measurement, not the rewrite**, and it is not free
+either: the engine evaluates eagerly, so a starter query with a big result
+materializes it. `switzerland-fedlex` (1.04 GB, 56.3 M quads) took 381 s and
+peaked at **14.2 GiB** for `--measure --write-costs` — `ng-list` alone, which
+returns 497,905 rows, accounts for 3.2 GiB of that; the rewrite of the 1.04 GB
+file that followed is a bounded-buffer copy. Against `repyramid`'s ≈36 GiB
+prediction and the staged path's ≤19.1 GiB for the same file, it is the cheaper
+route, but budget for the queries, not for the file.
+
+So: if the audit says the queries are stale or broken, re-card — same rewrite,
+more value. If the queries answer and the only gap is the missing record, write
+the costs. The command enforces that split: it refuses when a query measured
+zero rows (`--allow-empty` overrides, for `top-dangling` on a fully-described
+graph), when a run did not finish, and when `--only` measured a subset that
+would be stored as if it were the whole card.
 
 ```sh
 rete card-audit data.rete --measure --json | jq '.findings[] | select(.observed.outcome=="empty")'

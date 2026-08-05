@@ -544,8 +544,10 @@ pub(crate) fn cost_context(transport: &str) -> CostContext {
 const REWRITE_CHUNK: usize = 4 << 20;
 
 /// Write `info` into `path`'s build-info section, **streaming** — the file is
-/// never held in memory, so a 17 GB `.rete` costs 4 MiB of RAM and one pass of
-/// I/O rather than 34 GB of `Vec`.
+/// never held in memory, so a 17 GB `.rete` costs [`REWRITE_CHUNK`] of RAM and
+/// one pass of I/O rather than 34 GB of `Vec`. (The command that calls this
+/// still has to *run* the queries first, and that is where its memory goes; the
+/// copy below is the cheap half.)
 ///
 /// Why a rewrite at all: the section sits immediately after the card, near the
 /// front of the file, so growing it shifts every byte behind it. The identity

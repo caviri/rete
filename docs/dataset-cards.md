@@ -601,9 +601,11 @@ Two consequences of the numbers being portable:
 - the measurement can be **written back** (`--write-costs`). Build info is
   outside the content hash, so the file keeps its identity — same checksum,
   same `rete verify`, byte-identical N-Quads — but the section is near the
-  front, so the file is rewritten end to end to make room. That rewrite streams
-  in constant memory, which is what makes it viable where a re-card is not: a
-  re-card needs 17–35× the file in RAM or 9–15× on staged disk. See
+  front, so the file is rewritten end to end to make room. The rewrite itself
+  is a bounded-buffer copy; the RAM goes into *running the queries* (eager
+  evaluation, so a 497,905-row starter query materializes 497,905 rows).
+  `switzerland-fedlex` measured and rewrote in 381 s at a 14.2 GiB peak,
+  against ≈36 GiB for a `repyramid` re-card of the same file. See
   `rete card-audit` in the [CLI reference](cli.md).
 
 ### The one-row smoke query
