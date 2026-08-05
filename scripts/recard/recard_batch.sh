@@ -21,18 +21,32 @@
 #
 # Options:
 #   --list FILE          keys, one per line (survey.sh writes todo.txt)
-#   --keys "a b c"       keys inline
+#   --keys "a b c"       keys inline; `key#N` names one SHARD (see below)
 #   --catalog PATH       catalog.js (default /work/web/playground-src/catalog.js)
-#   --mirror DIR        use DIR/<key>/<key>.rete or DIR/<key>.rete if it exists
+#   --mirror DIR        use DIR/<name>/<name>.rete or DIR/<name>.rete if it exists
+#   --sha256-dir DIR     DIR/<name>.sha256 anchors the data proof to those exact
+#                        bytes (recard.sh --expect-sha256); missing file = no
+#                        anchor for that one, which is reported, not silent
 #   --out-dir DIR        where rebuilt files go (default /work/dev/recard/out)
 #   --work DIR           scratch + receipts (default /work/dev/recard)
 #   --mode auto|repyramid|stream
+#   --pyramid-algo auto|louvain|types
+#                        passed through; auto (default) reproduces each source's
+#                        own pyramid rather than imposing repyramid's louvain
+#   --text-index auto|yes|no   passed through; auto keeps a source's index
 #   --stream-above-mb N  auto switches to stream above N MB (default 192)
 #   --max-mb N           skip any source larger than N MB (0 = no limit)
 #   --allow-empty "ids"  starter queries permitted to return 0 rows (see README)
 #   --jobs N             datasets in parallel (default 1 — each is RAM-hungry)
 #   --dry-run            print the plan, touch nothing
 #   --stop-on-error      abort on the first failure (default: continue)
+#
+# A key may name ONE SHARD of a sharded dataset as `key#N` (0-based, the index
+# into the catalog's `shards` array) — e.g. `deps-dev#6`. Without that a sharded
+# dataset resolves to its first shard only, which is how a survey can miss the
+# one shard that carries the broken query (deps-dev's starter queries are on
+# shard 6, `deps-dev-cargo`). The work is named after the shard's own file, not
+# the dataset key, so two shards never share a receipt, a log or an output path.
 #
 # All paths are CONTAINER paths (the repo is /work); the script re-executes
 # itself inside the rete dev image, and runs recard.sh in that same container.
@@ -58,6 +72,7 @@ here=/work/scripts/recard
 list=""; keys=""; catalog=/work/web/playground-src/catalog.js
 mirror=""; out_dir=/work/dev/recard/out; work=/work/dev/recard
 mode="auto"; stream_above_mb=192; max_mb=0; jobs=1; dry=0; stop=0; allow_empty=""
+sha_dir=""; pyramid_algo="auto"; text_index="auto"
 
 die() { echo "recard_batch: $*" >&2; exit 1; }
 
@@ -67,16 +82,19 @@ while [ $# -gt 0 ]; do
     --keys) keys="$2"; shift 2 ;;
     --catalog) catalog="$2"; shift 2 ;;
     --mirror) mirror="$2"; shift 2 ;;
+    --sha256-dir) sha_dir="$2"; shift 2 ;;
     --out-dir) out_dir="$2"; shift 2 ;;
     --work) work="$2"; shift 2 ;;
     --mode) mode="$2"; shift 2 ;;
+    --pyramid-algo) pyramid_algo="$2"; shift 2 ;;
+    --text-index) text_index="$2"; shift 2 ;;
     --stream-above-mb) stream_above_mb="$2"; shift 2 ;;
     --max-mb) max_mb="$2"; shift 2 ;;
     --allow-empty) allow_empty="$2"; shift 2 ;;
     --jobs) jobs="$2"; shift 2 ;;
     --dry-run) dry=1; shift ;;
     --stop-on-error) stop=1; shift ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -105,9 +123,10 @@ process.stdout.write(JSON.stringify(sb.window.RETE_PLAYGROUND_CATALOG));
 cat = json.loads(subprocess.run(["node", "-e", node, catalog],
                                 capture_output=True, text=True, check=True).stdout)
 base = (cat.get("remoteBase") or "").rstrip("/")
-by_key = {}
+by_key, shards_of = {}, {}
 for d in cat.get("datasets", []):
     key = d["key"]
+    shards_of[key] = d.get("shards") or []
     by_key[key] = d["shards"][0] if d.get("shards") else (
         d.get("url") or (f"{base}/{key}/{key}.rete" if base else ""))
 sizes = {}
@@ -131,11 +150,25 @@ def remote_size(url):
     return 0
 
 
-for key in keys:
+for spec in keys:
+    # `key#N` names one shard. A sharded dataset otherwise resolves to shards[0],
+    # which is exactly how a first-shard survey misses the shard that is broken.
+    key, _, shard = spec.partition("#")
     src, size = by_key.get(key, ""), sizes.get(key, 0)
+    name = key
+    if shard != "":
+        picks = shards_of.get(key) or []
+        try:
+            src = picks[int(shard)]
+        except (ValueError, IndexError):
+            print(f"{spec}\t-\t0")
+            continue
+        # The shard's own basename, so two shards never share a receipt, a log or
+        # an output path — and so the name matches the object key on the host.
+        name, size = os.path.basename(src)[: -len(".rete")], 0
     # A local mirror wins over the network whenever the file is really there.
     if mirror:
-        for cand in (f"{mirror}/{key}/{key}.rete", f"{mirror}/{key}.rete"):
+        for cand in (f"{mirror}/{name}/{name}.rete", f"{mirror}/{name}.rete"):
             if os.path.exists(cand):
                 src, size = cand, os.path.getsize(cand)
                 break
@@ -143,7 +176,7 @@ for key in keys:
         size = remote_size(src)
     # `-` for "no such key": tab is IFS whitespace, so an empty middle field
     # would silently collapse and shift the shell's `read` by one column.
-    print(f"{key}\t{src or '-'}\t{size}")
+    print(f"{name}\t{src or '-'}\t{size}")
 PY
 
 n=0; total_bytes=0; unknown=0; remote=0; remote_bytes=0
@@ -179,11 +212,22 @@ run_one() {
     echo "-- $key: skipped (larger than --max-mb)"
     return 0
   fi
+  # The data proof is only worth as much as the copy it runs against, so where a
+  # recorded sha256 exists the source has to hash to it or the run aborts.
+  local expect=""
+  if [ -n "$sha_dir" ]; then
+    if [ -f "$sha_dir/$key.sha256" ]; then
+      expect="$(cut -d' ' -f1 < "$sha_dir/$key.sha256")"
+    else
+      echo "   !! $key: no $sha_dir/$key.sha256 — running WITHOUT a byte anchor" >&2
+    fi
+  fi
   echo "-- $key: $src -> $out_dir/$key/$key.rete  (log: $log)"
   # shellcheck disable=SC2086
   if bash "$here/recard.sh" --source "$src" --out "$out_dir/$key/$key.rete" \
-       --work "$work" --mode "$mode" --stream-above-mb "$stream_above_mb" \
+       --work "$work" --mode "$mode" --stream-above-mb "$stream_above_mb"        --pyramid-algo "$pyramid_algo" --text-index "$text_index" \
        ${allow_empty:+--allow-empty "$allow_empty"} \
+       ${expect:+--expect-sha256 "$expect"} \
        > "$log" 2>&1; then
     printf '%s\tOK\t%s\n' "$key" "$(tail -1 "$log")" >> "$summary"
     echo "   OK"

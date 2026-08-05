@@ -31,8 +31,25 @@
 #   --mode auto|repyramid|stream   rebuild engine (default auto, by file size)
 #   --stream-above-mb N            auto switches to stream above N MB (default 192)
 #   --work DIR                     scratch + receipts (default /work/dev/recard)
-#   --pyramid-algo louvain|types   passed through (default louvain)
+#   --pyramid-algo auto|louvain|types
+#                                  auto (default) reproduces what the SOURCE has:
+#                                  a one-level pyramid is `types`, anything
+#                                  deeper is `louvain`. `repyramid`'s own default
+#                                  is louvain, which is the wrong answer for 17 of
+#                                  the 22 published files audited on 2026-08-05 —
+#                                  see README "Known limits".
 #   --allow-empty "id1 id2"        starter queries permitted to return 0 rows
+#   --text-index auto|yes|no       auto (default) mirrors the source: a file that
+#                                  has a full-text index keeps one, because a
+#                                  rebuild derives from the QUADS and would
+#                                  otherwise drop it silently
+#   --allow-section-loss           proceed even though the source carries a
+#                                  section the rebuild cannot reproduce
+#   --expect-sha256 HEX            abort unless the source's bytes hash to HEX —
+#                                  anchors the data proof to the PUBLISHED file
+#                                  rather than to whatever copy happened to be
+#                                  on disk. The receipt records the hash either
+#                                  way, so the proof stays checkable later.
 #   --keep                         keep intermediates (.nq, downloads)
 #   --force                        redo even if the receipt says it is done
 #   --no-verify-data               skip step 4 (NOT recommended; see README)
@@ -66,11 +83,11 @@ fi
 # --------------------------------------------------------------- inner side --
 RETE="${RETE_BIN:-/work/target/release/rete}"
 TOOLS=/work/scripts/recard/card_tools.py
-TOOL_VERSION=1
+TOOL_VERSION=2
 
 source=""; out=""; mode="auto"; stream_above_mb=192
-work="/work/dev/recard"; pyramid_algo="louvain"; allow_empty=""
-keep=0; force=0; verify_data=1
+work="/work/dev/recard"; pyramid_algo="auto"; allow_empty=""; expect_sha=""
+keep=0; force=0; verify_data=1; text_index="auto"; allow_section_loss=0
 
 die() { echo "recard: $*" >&2; exit 1; }
 say() { echo "== $*"; }
@@ -84,10 +101,13 @@ while [ $# -gt 0 ]; do
     --work) work="$2"; shift 2 ;;
     --pyramid-algo) pyramid_algo="$2"; shift 2 ;;
     --allow-empty) allow_empty="$2"; shift 2 ;;
+    --expect-sha256) expect_sha="$2"; shift 2 ;;
+    --text-index) text_index="$2"; shift 2 ;;
+    --allow-section-loss) allow_section_loss=1; shift ;;
     --keep) keep=1; shift ;;
     --force) force=1; shift ;;
     --no-verify-data) verify_data=0; shift ;;
-    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,60p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -99,6 +119,20 @@ name="$(basename "$out" .rete)"
 scratch="$work/work/$name"
 state="$work/state/$name.json"
 mkdir -p "$scratch" "$work/state" "$(dirname "$out")"
+
+# Peak memory, because the rebuild engine is chosen by a RAM prediction and the
+# README's table is the only thing that makes that prediction checkable. cgroup
+# v2 exposes the container's high-water mark; there is no `/usr/bin/time` in the
+# image. It is a CONTAINER peak (page cache from reading a large staged .nq
+# counts), so it is an upper bound on the process's VmHWM, not equal to it.
+PEAK_FILE=/sys/fs/cgroup/memory.peak
+peak_reset() { [ -w "$PEAK_FILE" ] && echo 0 > "$PEAK_FILE" 2>/dev/null; return 0; }
+peak_read() { [ -r "$PEAK_FILE" ] && cat "$PEAK_FILE" 2>/dev/null || echo ""; }
+human_bytes() {
+  [ -n "$1" ] || { printf 'unknown'; return; }
+  awk -v b="$1" 'BEGIN{ if (b>=1073741824) printf "%.2f GiB", b/1073741824;
+                        else printf "%.0f MiB", b/1048576 }'
+}
 
 # The header's blake3-16 content hash identifies a .rete exactly, and reading it
 # costs one or two range reads — never a re-hash of a multi-GB file.
@@ -114,6 +148,36 @@ content_hash_of() {
 }
 receipt_field() {
   python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2],""))' "$state" "$1"
+}
+
+# A rebuild re-derives the file from its QUADS. Anything else the source carries
+# — the full-text index, an alien section such as the PMTiles archive embedded in
+# `geoadmin-tiles` — is not in the quads and does not come back on its own. The
+# N-Quads proof cannot see that, because it compares the RDF and nothing else. So
+# the loss is detected here, before hours of work, rather than discovered by a
+# reader whose CONTAINS query got slow or whose map went blank.
+header_field() { "$RETE" info "$1" 2>/dev/null | awk -F'[ ,]+' -v k="$2" '$2 == k":" {print $3; exit}'; }
+alien_sections() {
+  # Section kinds a rebuild cannot reproduce. Kind 7 is BuildInfo, which a
+  # rebuild writes fresh — unless its payload is not JSON, in which case
+  # something else claimed the kind (see scripts/embed_tiles.py) and rebuilding
+  # destroys it.
+  python3 -P - "$1" <<'PY'
+import struct, sys
+path = sys.argv[1]
+with open(path, "rb") as fh:
+    head = fh.read(1024)
+    n = struct.unpack_from("<H", head, 44)[0]
+    for i in range(n):
+        kind, = struct.unpack_from("<H", head, 64 + i * 24)
+        off, ln = struct.unpack_from("<QQ", head, 64 + i * 24 + 8)
+        if kind == 7 and ln:
+            fh.seek(off)
+            if not fh.read(1).startswith(b"{"):
+                print(f"kind-7 section of {ln} bytes whose payload is not build-info JSON")
+        elif kind > 7 and ln:
+            print(f"unknown kind-{kind} section of {ln} bytes")
+PY
 }
 
 # ---- 0. resume, BEFORE spending any bandwidth --------------------------------
@@ -158,7 +222,17 @@ esac
 src_bytes=$(stat -c %s "$local_src")
 src_hash="$(content_hash_of "$local_src")"
 [ -n "$src_hash" ] || src_hash="(unknown:$src_bytes)"
-say "source: $local_src ($src_bytes bytes, $src_hash)"
+# The header content hash identifies the IMAGE; the file sha256 identifies the
+# BYTES. Only the second one can say "this is the object that is published" — a
+# rebuilt local copy can carry the same content hash as the published file while
+# differing in the unhashed build-info section. The data proof in step 4 is only
+# worth as much as the copy it runs against, so anchor it here and record it in
+# the receipt whether or not --expect-sha256 was passed.
+src_sha256="$(sha256sum "$local_src" | cut -d' ' -f1)"
+say "source: $local_src ($src_bytes bytes, $src_hash, sha256 $src_sha256)"
+if [ -n "$expect_sha" ] && [ "$expect_sha" != "$src_sha256" ]; then
+  die "source sha256 mismatch: expected $expect_sha, got $src_sha256 — this is NOT the file you meant to re-card"
+fi
 
 # A local source already at the recorded hash needs no work either.
 if [ "$force" != 1 ] && [ -f "$state" ] && [ -f "$out" ] \
@@ -169,6 +243,43 @@ if [ "$force" != 1 ] && [ -f "$state" ] && [ -f "$out" ] \
 fi
 
 # ---- 1..2. the old card, and its curated half --------------------------------
+# ---- 0c. what else is in this file that a rebuild would not put back? --------
+# The community algorithm is not recorded anywhere in an older file, but the
+# pyramid it produced is: `types` yields exactly ONE level, `louvain` three to
+# six. That is enough to reproduce the source's own structure instead of
+# imposing `repyramid`'s default on it.
+if [ "$pyramid_algo" = auto ]; then
+  src_levels="$(header_field "$local_src" pyramid_levels)"
+  : "${src_levels:=0}"
+  if [ "$src_levels" = 1 ]; then pyramid_algo=types; else pyramid_algo=louvain; fi
+  say "pyramid-algo auto -> $pyramid_algo (source has $src_levels level(s))"
+fi
+
+src_text_index="$(header_field "$local_src" text_index_len)"
+: "${src_text_index:=0}"
+case "$text_index" in
+  auto) if [ "$src_text_index" -gt 0 ]; then want_text_index=1; else want_text_index=0; fi ;;
+  yes|1|true) want_text_index=1 ;;
+  no|0|false) want_text_index=0 ;;
+  *) die "--text-index takes auto|yes|no" ;;
+esac
+if [ "$src_text_index" -gt 0 ]; then
+  if [ "$want_text_index" = 1 ]; then
+    say "source carries a $src_text_index-byte full-text index — rebuilding one (--text-index)"
+  else
+    say "WARNING: dropping the source's $src_text_index-byte full-text index (--text-index no)"
+  fi
+fi
+alien="$(alien_sections "$local_src")"
+if [ -n "$alien" ]; then
+  echo "recard: $local_src carries a section a rebuild cannot reproduce:" >&2
+  echo "$alien" | sed 's/^/  - /' >&2
+  if [ "$allow_section_loss" != 1 ]; then
+    die "refusing to rebuild and silently drop it (pass --allow-section-loss to accept, then re-attach it yourself)"
+  fi
+  say "proceeding anyway (--allow-section-loss) — the section will NOT be in the output"
+fi
+
 say "[1/6] read the existing card"
 "$RETE" card "$local_src" --json > "$scratch/old-card.json" 2>/dev/null \
   || echo '(no dataset card)' > "$scratch/old-card.json"
@@ -185,10 +296,14 @@ if [ "$mode" = auto ]; then
 fi
 tmp_out="$scratch/rebuilt.rete"
 rm -f "$tmp_out"
-say "[3/6] rebuild ($mode, pyramid-algo=$pyramid_algo)"
+say "[3/6] rebuild ($mode, pyramid-algo=$pyramid_algo, text-index=$want_text_index)"
+staged_bytes=""
+ti_flag=()
+[ "$want_text_index" = 1 ] && ti_flag=(--text-index)
+peak_reset
 case "$mode" in
   repyramid)
-    "$RETE" repyramid "$local_src" -o "$tmp_out" \
+    "$RETE" repyramid "$local_src" -o "$tmp_out" "${ti_flag[@]}" \
       --card-file "$scratch/curated.json" --pyramid-algo "$pyramid_algo"
     ;;
   stream)
@@ -198,26 +313,54 @@ case "$mode" in
     # twice — a pipe cannot be rewound.
     nq="$scratch/staged.nq"
     say "      export -> $nq (needs roughly 10x the .rete in free disk)"
+    # Free disk is the thing that kills a large staged build hours in, so say
+    # what is available before spending the hours, not after.
+    say "      free on the scratch filesystem: $(df -Pk "$scratch" | awk 'NR==2{printf "%.1f GiB", $4/1048576}')"
     "$RETE" export "$local_src" --format nq > "$nq"
-    say "      staged $(stat -c %s "$nq") bytes"
-    "$RETE" build "$nq" -o "$tmp_out" \
+    staged_bytes=$(stat -c %s "$nq")
+    say "      staged $staged_bytes bytes ($(human_bytes "$staged_bytes"))"
+    "$RETE" build "$nq" -o "$tmp_out" "${ti_flag[@]}" \
       --card-file "$scratch/curated.json" --pyramid-algo "$pyramid_algo"
     [ "$keep" = 1 ] || rm -f "$nq"
     ;;
   *) die "unknown --mode: $mode" ;;
 esac
+peak_rebuild="$(peak_read)"
+say "      peak container memory during the rebuild: $(human_bytes "$peak_rebuild")"
 [ -s "$tmp_out" ] || die "rebuild produced nothing"
+out_text_index="$(header_field "$tmp_out" text_index_len)"
+: "${out_text_index:=0}"
+# The pyramid is DERIVED, so the N-Quads proof says nothing about it — yet it is
+# the largest thing a re-card changes, and a wrong `--pyramid-algo` is invisible
+# without this comparison. Measured on the 2026-08-05 batch: rebuilding a
+# `types` file with `louvain` inflated `arxiu`'s pyramid 726 KB -> 45.7 MB and
+# `proteinbase`'s 138 KB -> 5.87 MB, while the right algorithm reproduced the
+# published section to within a few bytes. A large ratio is the tell.
+src_pyr="$(header_field "$local_src" pyramid_meta_len)"; : "${src_pyr:=0}"
+out_pyr="$(header_field "$tmp_out" pyramid_meta_len)"; : "${out_pyr:=0}"
+say "      pyramid: $src_pyr B -> $out_pyr B (algo $pyramid_algo)"
+if [ "$src_pyr" -gt 0 ] && [ "$out_pyr" -gt $((src_pyr * 4)) ]; then
+  other=types; [ "$pyramid_algo" = types ] && other=louvain
+  say "      WARNING: the rebuilt pyramid is ${out_pyr}B against the source's ${src_pyr}B."
+  say "               That usually means the file was built with --pyramid-algo $other."
+fi
+if [ "$want_text_index" = 1 ] && [ "$out_text_index" = 0 ]; then
+  die "the rebuild produced no full-text index although the source had $src_text_index bytes of one — $out left untouched"
+fi
+[ "$out_text_index" -gt 0 ] && say "      full-text index: $src_text_index B -> $out_text_index B"
 
 # ---- 4. the data must be unchanged -------------------------------------------
 # Fast path: both files are serialized to N-Quads and hashed as they stream, so
 # this costs no disk and constant memory. Byte-equal streams prove equal data.
 # Only if the streams differ (a reordering) do we pay for the sorted comparison.
+data_proof="skipped"; nq_sha256=""; nq_statements=""
 if [ "$verify_data" = 1 ]; then
   say "[4/6] verify the data is unchanged (N-Quads)"
   a=$("$RETE" export "$local_src" --format nq | sha256sum | cut -d' ' -f1)
   b=$("$RETE" export "$tmp_out"   --format nq | sha256sum | cut -d' ' -f1)
   if [ "$a" = "$b" ]; then
     say "      identical N-Quads streams ($a)"
+    data_proof="stream-identical"; nq_sha256="$a"
   else
     say "      streams differ in ORDER — falling back to the sorted comparison"
     "$RETE" export "$local_src" --format nq | LC_ALL=C sort -T "$scratch" > "$scratch/a.nq"
@@ -225,7 +368,10 @@ if [ "$verify_data" = 1 ]; then
     if ! cmp "$scratch/a.nq" "$scratch/b.nq"; then
       die "DATA CHANGED — refusing to replace $out (rebuilt file left at $tmp_out)"
     fi
-    say "      sorted N-Quads identical ($(wc -l < "$scratch/a.nq") statements)"
+    nq_statements="$(wc -l < "$scratch/a.nq")"
+    nq_sha256="$(sha256sum "$scratch/a.nq" | cut -d' ' -f1)"
+    say "      sorted N-Quads identical ($nq_statements statements, sorted sha256 $nq_sha256)"
+    data_proof="sorted-cmp"
     [ "$keep" = 1 ] || rm -f "$scratch/a.nq" "$scratch/b.nq"
   fi
 else
@@ -250,10 +396,16 @@ out_hash="$(content_hash_of "$out")"
 # Every value arrives as argv, never interpolated into the program text: a
 # source URL or a mode string is data, not code.
 python3 -P - "$state" "$scratch" "$source" "$src_hash" "$src_bytes" "$out" \
-    "$out_hash" "$mode" "$pyramid_algo" "$verify_data" "$TOOL_VERSION" <<'PY'
+    "$out_hash" "$mode" "$pyramid_algo" "$verify_data" "$TOOL_VERSION" \
+    "$src_sha256" "$data_proof" "$nq_sha256" "$nq_statements" \
+    "${peak_rebuild:-}" "${staged_bytes:-}" "${src_text_index:-0}" "${out_text_index:-0}" <<'PY'
 import datetime, json, os, sys
 (state, scratch, source, src_hash, src_bytes, out, out_hash, mode,
- pyramid_algo, verify_data, tool_version) = sys.argv[1:12]
+ pyramid_algo, verify_data, tool_version, src_sha256, data_proof,
+ nq_sha256, nq_statements, peak_rebuild, staged_bytes,
+ src_text_index, out_text_index) = sys.argv[1:20]
+old = json.load(open(os.path.join(scratch, "old-card.json"))) \
+    if os.path.getsize(os.path.join(scratch, "old-card.json")) > 40 else {}
 new = json.load(open(os.path.join(scratch, "new-card.json")))
 rows = {q["id"]: q.get("rows", 0)
         for q in ((new.get("build") or {}).get("query_costs") or {}).get("queries", [])}
@@ -261,14 +413,40 @@ json.dump({
     "tool_version": int(tool_version),
     "source": source,
     "source_hash": src_hash,
+    # The bytes that were actually re-carded. Together with `data_proof` this is
+    # the whole audit trail: THIS object, exported to N-Quads, equals the one the
+    # rebuilt file exports.
+    "source_sha256": src_sha256,
     "source_bytes": int(src_bytes),
     "output": out,
     "output_hash": out_hash,
     "output_bytes": os.path.getsize(out),
     "mode": mode,
     "pyramid_algo": pyramid_algo,
+    # A container high-water mark, so it is an upper bound on the process's
+    # VmHWM (it includes page cache from reading the staged .nq).
+    "rebuild_peak_bytes": int(peak_rebuild) if peak_rebuild else None,
+    "staged_nquads_bytes": int(staged_bytes) if staged_bytes else None,
+    # A rebuild derives from the quads; the text index is not in the quads. The
+    # N-Quads proof cannot see it going missing, so record both sides here.
+    "text_index_bytes_before": int(src_text_index),
+    "text_index_bytes_after": int(out_text_index),
     "data_verified": verify_data == "1",
+    "data_proof": data_proof,
+    "nquads_sha256": nq_sha256,
+    "nquads_statements": int(nq_statements) if nq_statements else None,
     "curated_fields": sorted(json.load(open(os.path.join(scratch, "curated.json")))),
+    # Old vs new, so a shorter query list can be read as the repair it is rather
+    # than as a loss, and so a shrinking count is visible without re-reading the
+    # cards. Old cards counted pre-dedup input; the header counts the file.
+    "queries_before": [q["id"] for q in (old.get("queries") or [])],
+    "queries_after": [q["id"] for q in (new.get("queries") or [])],
+    "dropped_queries": [{"id": d.get("id"), "why": d.get("why")}
+                        for d in ((new.get("build") or {}).get("dropped_queries") or [])],
+    "counts_before": {k: old.get(k) for k in
+                      ("triple_count", "quad_count", "named_graph_count")},
+    "counts_after": {k: new.get(k) for k in
+                     ("triple_count", "quad_count", "named_graph_count")},
     "starter_query_rows": rows,
     "recarded_at": datetime.datetime.now(datetime.timezone.utc)
         .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
