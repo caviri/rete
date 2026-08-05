@@ -143,6 +143,47 @@ Range traffic should never route through the Space again. The Space itself is al
 current (engine 0.3.0) for its other planes: `/api`, `/mcp`, and the per-dataset
 SPARQL 1.1 endpoints under `/sparql/…`.
 
+## Re-Carding A Published Dataset
+
+Before touching a `.rete` that is already published. Full lifecycle in
+`docs/dataset-cards.md` ("Maintaining a published card"); tooling in
+`scripts/recard/`.
+
+- **A card is written at build time.** Fixing the card generator fixes the
+  *next* build, never a published file. The card is inside the content hash, so
+  there is no in-place patch — the file is rewritten or nothing changes.
+- **Survey before you re-card.** `bash scripts/recard/survey.sh` reads the CARD
+  tier only: 0.6 MB for the whole 98-file catalog. Re-carding it blind is
+  248 GB down and 248 GB back up. Re-decide from cards already on disk with
+  `--cards <dir>` (zero network). Skip `geoadmin-tiles` — its card range is
+  117 MB, not 6 KB.
+- **Pick the path by statement count, not file size.** `repyramid` costs
+  ~350–700 B per statement (17–35× the file, so bytes mislead): ceiling
+  **~80 M statements** on a 48 GB machine. Past that, stage through text
+  (`rete export --format nq` → `rete build --card-file …`): ~2.5× the wall
+  clock, 9–15× the `.rete` in scratch disk, ceiling **~150 M**. Past *that*,
+  stop — it is engine work. Exceeding a ceiling is an OOM kill mid-rebuild, not
+  an error message.
+- **`rete build --memory-budget-mb` cannot re-card.** It errors out on named
+  graphs and writes a counts-only card with no profile and no starter queries.
+- **Carry the curated fields explicitly.** A bare `repyramid --card` silently
+  drops `title`/`license`/`source`/`description`. Use
+  `scripts/recard/card_tools.py curated` to lift them, and its `verify` to fail
+  the run if one goes missing.
+- **Never edit a publisher's prose.** `description` travels verbatim, stale
+  figures included. If it genuinely must be corrected, a human does it, and
+  proves it surgical by expecting `verify` to report *exactly one* difference.
+- **Before overwriting any `.rete`, make a dated recovery copy** (`<name>.rete`
+  → `<name>.YYYYMMDD.rete`) outside the destination directory, and **re-check
+  it exists immediately before the overwrite** — parallel sessions share this
+  tree, and a copy made an hour ago is not evidence about now. Build to a new
+  path and move it in; never write over the input.
+- **`web/datasets.lock.json` MERGES.** `check_dataset_catalog.py --write-lock`
+  adds every key it probed to the existing lock and keeps the rest, so a
+  `--all --write-lock` run silently widens the release contract from the few
+  datasets it deliberately pins to the whole catalog. Probe with `--key` when
+  writing the lock, and diff the lock before committing it.
+
 ## Commits
 
 In this repo, commit **without** the Claude `Co-Authored-By` trailer.

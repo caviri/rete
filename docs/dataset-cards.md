@@ -721,10 +721,12 @@ covers the default graph only.
 
 The library is generated **at build time and baked into the file**, so a
 `.rete` published with an older generator keeps its default-graph-scoped
-starter queries until its publisher re-embeds a card. That does **not** require
-going back to the source RDF — `rete repyramid` reads every statement (default
-graph and named graphs) straight out of the existing file and re-assembles it,
-deriving a fresh card on the way:
+starter queries until its publisher re-embeds a card. (That is the named-graph
+instance of a general problem — [Maintaining a published card](#maintaining-a-published-card)
+below is how you find every affected file and pick a path that fits its size.)
+Fixing it does **not** require going back to the source RDF — `rete repyramid`
+reads every statement (default graph and named graphs) straight out of the
+existing file and re-assembles it, deriving a fresh card on the way:
 
 ```sh
 # One command, no source RDF needed — data is carried over losslessly:
@@ -751,6 +753,208 @@ new card is `GRAPH`-scoped and returns rows; for example `ov-triples` becomes:
 ```sparql
 SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }
 ```
+
+## Maintaining a published card
+
+A card is written **once, at build time**, and never again. Everything in this
+section follows from that one fact, and most confusion about cards dissolves
+once it is internalised: **fixing the card generator today does not fix a
+published file.** It fixes the *next* build. A `.rete` already sitting in a
+bucket keeps the card its builder could write on the day it was built —
+starter queries, profile caps, missing build record and all — until somebody
+deliberately re-cards it. And because the card is inside the `blake3` content
+hash there is no in-place patch: either the file is rewritten, or nothing
+changes.
+
+So the work splits in two: **find out which files need it** (cheap, and there
+is a tool for exactly that), then **pick a command that can actually do it at
+that file's size** (not cheap, and the ceiling is real).
+
+### How a card goes stale
+
+| symptom | what a reader loses | how bad |
+|---|---|---|
+| **no build record** | `built_at`, `builder`, `params`, and the per-query `rows`/`bytes`/`requests` a client would use to budget a query before running it | invisible until someone asks |
+| **a dated profile** | a `top_n` cap that predates the field, no `ov-one-row` smoke query, derived lists missing later additions | cosmetic |
+| **starter queries that return zero rows** | the file's entire first impression | reads as a broken file |
+
+Only the third is a defect, and it has known causes — each already corrected in
+the generator, each still baked into every file built before the correction:
+default-graph bodies on a [named-graph dataset](#named-graph-datasets), and
+[a join the card never proved co-occurs](#presence-is-not-co-occurrence). A
+carded build also measures every query it generates, so a current `rete` will
+not ship one it just watched return nothing; older files had no such check.
+
+### Survey first — the survey is free, the re-card is not
+
+Re-carding is a bandwidth cost, not a CPU one: the file is rewritten, so a
+remote dataset has to come down in full and go back up in full. The published
+catalog is **248 GB across 98 files** (22 of them ≥ 1 GB), which makes
+"re-card everything" 248 GB each way. Finding out which files actually need it
+costs **0.6 MB** — the same two range requests `rete card-url` makes, per file,
+and never the index:
+
+```sh
+bash scripts/recard/survey.sh                                    # whole catalog
+bash scripts/recard/survey.sh --keys "lombardi orcid switzerland-fedlex"
+```
+
+It writes a TSV, a JSON, and a `todo.txt` of every key that is not `CURRENT`,
+worst first. The verdicts run `CARDLESS` → `ZERO-ROWS` → `EMPTY-QUERY` →
+`MIXED-HIDDEN` → `SUSPECT-QUERY` → `DATED` → `CURRENT`; the full table and the
+scripts are in [`scripts/recard/`](https://github.com/caviri/rete/tree/main/scripts/recard).
+The first full run (2026-08-05, 98 datasets) returned 14 `CARDLESS`, **one**
+`ZERO-ROWS`, 83 `DATED` and zero `CURRENT` — so the alarming case is rare and
+specific, and almost everything else is a metadata refresh rather than a fire.
+
+Two things the survey will not do for you. It re-decides for free from cards
+already on disk (`--cards <dir>`), so iterate there rather than re-fetching.
+And one file is not cheap: `geoadmin-tiles` carries an embedded PMTiles section
+*ahead* of its metadata, so its coalesced card range is 117 MB rather than
+6 KB — survey it last, or not at all.
+
+### Deciding one file: `rete card-audit`
+
+Where the survey classifies a catalog, [`rete card-audit`](cli.md) explains one
+file — one row per starter query the card already ships, decided from the same
+card bytes, using the query generator's own judgement rather than a second copy
+of it:
+
+```sh
+rete card-audit https://data.graphplaza.com/hugging-face/hugging-face.rete
+```
+
+The verdict worth acting on is `empty`: the card *refuting* a query it ships.
+`suspect` and `undecidable` are the honest middle.
+
+**The static pass has a ceiling, and it is structural.** Nothing in a card ties
+a specific subject to a specific predicate, and nothing records which objects
+are also subjects — so `top-reach` and `top-dangling` cannot be decided from a
+card at all, no matter how good the reasoning gets. In the 2026-08-05 audit
+(110 files, 96 of them carrying starter queries) that left `top-reach`
+undecided on **79** files and `top-dangling` on **80**. The way to settle one
+is to run it, which is what `rete card-audit --measure` does — reporting rows,
+bytes and range requests beside the card's verdict, never merged with it. On
+the published `lombardi.rete`, both undecidables come back `answers` (100 rows
+and 1 row); the whole 22-query audit reads 3.58 MB in 1,447 range requests,
+cold. `--write-costs` then records the run in the file's build record, so the
+next reader gets the numbers from the CARD tier instead of re-measuring.
+
+### Which rebuild path — the ceiling is statements, not bytes
+
+There are three tools, and choosing between them by file size is the mistake.
+`repyramid` materializes **every quad as owned strings** before re-assembling,
+so its RAM tracks the **statement count**: ~350–700 bytes per statement on
+ordinary graphs. As a ratio of file size that lands anywhere between **17× and
+35×**, which is why bytes are the wrong planning variable.
+
+| the file's problem | command | ceiling on a 48 GB machine |
+|---|---|---|
+| only the build record is missing; the queries answer | `rete card-audit <file> --measure --write-costs` | none from the rewrite — but the *queries* need the RAM (below) |
+| the card is stale or its queries are broken | `rete repyramid <in> -o <out> --card --card-file <curated>` | **~80 M statements** (~70–100 M; ≈ 2 GB of a typically dense `.rete`) |
+| same, but past that | `rete export <in> --format nq` → `rete build … --card-file <curated>` | **~150 M statements**, at ~2.5× the wall clock and 9–15× the `.rete` in staged text on disk |
+| past *that* | — | nothing today; it is engine work, not scripting |
+
+**The failure mode when you exceed the ceiling is an OOM kill mid-rebuild**,
+after however long the read took — not a diagnostic. Predict before you start:
+statement count × ~500 B is the working estimate for `repyramid`, × ~300 B for
+the staged path. `switzerland-fedlex` (1.04 GB, 56.3 M quads) predicted ≈36 GiB
+for `repyramid` and was never attempted there; the staged path did it under
+19.1 GiB.
+
+The staged path is bounded on the export half and only the export half:
+`rete export --format nq` streams, with a **measured peak of 2.9–3.0 MiB**
+whether it is producing 679 MB or 6.88 GB of N-Quads. What it buys with that is
+disk — the staged text runs **9–15× the `.rete`** — and the two paths land in
+the same place: on `nkod` they produce the **same content hash**, differing only
+in the four unhashed bytes that say `repyramid` rather than `build`.
+
+**`rete build --memory-budget-mb` is not the third option**, even though it is
+the genuinely bounded builder. It fails a re-card twice over, both times hard:
+
+```
+Error: external build supports the default graph only (named graph <…> found);
+use the standard build, or strip graph terms (.nq -> .nt) first
+```
+
+— which rules out exactly the named-graph population this work exists for; and
+where it does run it writes a **counts-only card**, roughly a hundred bytes of
+`triple_count` / `quad_count` / `term_count` / `named_graph_count` with no
+profile and **no starter queries**, because deriving the profile lists needs
+unbounded RAM. Ten of the largest published datasets — `crossref`, `datacite`,
+`dblp`, `deps-dev`, `epfl-graph`, `gharchive`, `gharchive-2026-06`,
+`opencitations`, `orcid`, `wikiart` — carry exactly that, and report `0 starter
+queries` in the survey. That is *why* they do. They are also the files no
+rebuild path above can reach.
+
+**Measurement RAM is in the queries, not in the file.** Attaching costs to an
+existing file rewrites it through a bounded buffer, but running the starter
+queries to get those costs does not: the engine evaluates eagerly, so a query
+with a large result materializes it. `switzerland-fedlex` took 381 s and peaked
+at **14.2 GiB** for `--measure --write-costs`, of which `ng-list` alone —
+497,905 rows — accounts for 3.2 GiB. Budget for the widest starter query, not
+for the file.
+
+### What a re-card changes — and what it must not
+
+It **re-derives the whole derived half** from the data the file already holds:
+the profile, the signals, the class-link quotient, and the starter-query
+library with every generator fix since the file was built. It **adds the build
+record**. It **carries the curated half across verbatim** — and only if you
+hand it back:
+
+```sh
+rete card old.rete --json > old-card.json
+python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
+rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
+```
+
+A bare `rete repyramid --card` **silently drops** `title`, `license`, `source`
+and `description`: the card flags take the curated half from flags or
+`--card-file` and nowhere else. `card_tools.py verify --old … --new …` exists to
+fail the run when a curated field goes missing, and the two proofs a re-card
+owes — identical N-Quads out of both files, and every new starter query
+returning rows — are what `scripts/recard/recard.sh` runs before it moves
+anything into place. (Note the `--pyramid-algo` in that command: `repyramid`
+defaults to `louvain` regardless of what the file was originally built with,
+and on an older file the build record that would have said is precisely what is
+missing.)
+
+What a re-card **must not** do is rewrite the publisher's sentences. A tool
+that edits prose cannot be trusted with the prose it leaves alone, so
+`description` travels through unchanged, stale figures included. When a
+description needs correcting, a human corrects it — and proves the edit was
+surgical by running `verify` twice: once against the original card, expecting
+**exactly one** reported difference, and once against the corrected document,
+expecting a clean pass. Two differences on the first run means something moved
+that you did not intend.
+
+**A headline count can go down, and that is the fix, not data loss.** An older
+card counted the raw pre-dedup input multiset; a re-card counts what the file
+actually stores. On `lombardi` the published card says 70,719 statements, its
+own header says 70,545, and the file exports exactly 70,545 N-Quads — the
+re-carded card says 70,545, and the card and the header agree for the first
+time. `switzerland-fedlex` moved 66,392,663 → 56,321,446 the same way. Read the
+new number against the data proof (identical N-Quads), never against the old
+one; and where the old number is real provenance — an input line count, as
+fedlex's was — keep both, in words, by hand.
+
+### Publishing the result
+
+A re-card changes the content hash, by construction and correctly: the card is
+part of what the file says about itself. So the rebuilt file is a **new object**
+to upload, `scripts/check_dataset_catalog.py` has to re-probe it, and
+`web/datasets.lock.json` has to be regenerated. That is a release action —
+`scripts/recard/*` deliberately stop at `--out-dir` and let a human decide.
+
+Attaching costs is the one exception worth knowing: the build-info section sits
+**outside** the content hash, so `rete card-audit --measure --write-costs`
+leaves the checksum, `rete verify` and the exported N-Quads untouched. The file
+is still rewritten end to end (the section sits near the front, so making room
+shifts everything behind it), but its **identity is preserved** — confirmed on
+published files, which grew by 2,007 bytes (`tree-city-inventory`), 1,952
+(`lombardi`) and 32 (`switzerland-fedlex`) while keeping their content hash,
+their `rete verify`, and their exported N-Quads byte for byte.
 
 ## Interoperability: JSON at rest, RDF on demand
 

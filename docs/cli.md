@@ -68,11 +68,25 @@ existing `.rete` — no `export | build` N-Quads round-trip. Use it to add a sch
 pyramid (or a `--text-index` / a Dataset Card) to a file built before those
 existed, or to re-derive the schema pyramid under a different `--type-predicate`
 or `--pyramid-algo` (same semantics as `rete build`). The card flags match
-`rete build` (`--card-file` / `--title` / `--license` / …).
+`rete build` (`--card-file` / `--title` / `--license` / …) — and take the
+curated half **only** from those flags, so a bare `--card` drops the
+publisher's `title`/`license`/`source`/`description`. `--pyramid-algo` likewise
+defaults to `louvain` rather than to whatever the file was built with.
+
+It loads and materializes every quad, so its RAM tracks the **statement count**
+(~350–700 B each), not the file size — roughly **80 M statements** on a 48 GB
+machine, past which the staged `export --format nq | build` route is the one
+that fits. See
+[Maintaining a published card](dataset-cards.md#maintaining-a-published-card).
 
 ```sh
 rete repyramid old.rete -o new.rete --type-predicate http://www.wikidata.org/prop/direct/P31
 rete repyramid old.rete -o new.rete --text-index    # add full-text search to an existing file
+
+# re-card a published file, carrying its curated fields across
+rete card old.rete --json > old-card.json
+python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
+rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
 ```
 
 ## Validating
