@@ -131,64 +131,48 @@ pub(crate) fn estimate(
 
     for path in inputs {
         let fmt = super::build::input_format(path, format);
-        if fmt != "nt" && fmt != "nq" {
+        if !matches!(fmt, "nt" | "nq" | "ttl" | "trig") {
             anyhow::bail!(
-                "estimate reads N-Triples/N-Quads (got {fmt} for {path}); \
+                "estimate reads N-Triples/N-Quads/Turtle/TriG (got {fmt} for {path}); \
                  pipe a converter's output with --format nt"
             );
         }
         if sample_bytes.is_some_and(|limit| read_bytes >= limit) {
             break;
         }
-        let file = std::fs::File::open(path)?;
-        let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
-        // Feed the parser WHOLE LINES: a byte-exact `take` would cut the last one in
-        // half and the parser would (rightly) reject it. Lines are accumulated into
-        // a small buffer and flushed through `stream_reader`, so memory stays at the
-        // flush size no matter how large `--sample-mb` is.
-        const FLUSH: usize = 8 << 20;
-        let mut buf = String::with_capacity(FLUSH + (1 << 16));
-        let mut line = String::new();
-        let mut done = false;
-        while !done {
-            line.clear();
-            let n = std::io::BufRead::read_line(&mut reader, &mut line)?;
-            if n == 0 {
-                done = true;
-            } else {
-                read_bytes += n as u64;
-                buf.push_str(&line);
-                if sample_bytes.is_some_and(|limit| read_bytes >= limit) {
-                    done = true;
+        // The whole input streams through one parser pass. `--sample-mb` is enforced
+        // UNDER the parser by a counting reader that reports EOF at the limit — which
+        // works for Turtle and TriG, where a statement spans lines and the earlier
+        // line-chunking trick could not. Cutting the stream mid-statement makes the
+        // parser (rightly) complain about the truncated tail, so a parse error is
+        // tolerated only when the cut is what caused it.
+        let remaining = sample_bytes.map(|limit| limit.saturating_sub(read_bytes));
+        let (reader, counter) = super::build::open_reader_counted(path, remaining)?;
+        let res = rete_core::ingest::stream_reader(reader, fmt, &mut |(s, p, o, g)| {
+            statements += 1;
+            if o.starts_with('"') {
+                literals += 1;
+            }
+            for t in [&s, &p, &o] {
+                term_bytes += t.len() as u64;
+                hll.add(t);
+                if seen_small.len() < 1_000_000 && seen_small.insert(t.clone()) {
+                    uniq_sample_bytes += t.len() as u64;
+                    uniq_sample_n += 1;
                 }
             }
-            if buf.len() >= FLUSH || (done && !buf.is_empty()) {
-                rete_core::ingest::stream_reader(
-                    std::io::Cursor::new(buf.as_bytes()),
-                    fmt,
-                    &mut |(s, p, o, g)| {
-                        statements += 1;
-                        if o.starts_with('"') {
-                            literals += 1;
-                        }
-                        for t in [&s, &p, &o] {
-                            term_bytes += t.len() as u64;
-                            hll.add(t);
-                            if seen_small.len() < 1_000_000 && seen_small.insert(t.clone()) {
-                                uniq_sample_bytes += t.len() as u64;
-                                uniq_sample_n += 1;
-                            }
-                        }
-                        if let Some(g) = g {
-                            hll.add(&g);
-                            if graphs.len() < 100_000 {
-                                graphs.insert(g);
-                            }
-                        }
-                    },
-                )
-                .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
-                buf.clear();
+            if let Some(g) = g {
+                hll.add(&g);
+                if graphs.len() < 100_000 {
+                    graphs.insert(g);
+                }
+            }
+        });
+        let truncated = remaining.is_some_and(|limit| counter.get() >= limit);
+        read_bytes += counter.get();
+        if let Err(e) = res {
+            if !truncated {
+                anyhow::bail!("{path}: {e}");
             }
         }
     }

@@ -28,9 +28,12 @@ enum Command {
     },
     /// Build a `.rete` file from one or more RDF inputs (merged into one file).
     ///
-    /// Format is by extension: `.nt`/`.nq`/`.ttl`, plus `.rdf`/`.owl`/`.rdfxml`
-    /// (RDF/XML — how most OWL ontologies ship). Use `-` to read stdin (defaults to
-    /// N-Triples). `--format` overrides detection for all inputs.
+    /// Format is by extension: `.nt`/`.nq`/`.ttl`/`.trig`, plus
+    /// `.rdf`/`.owl`/`.rdfxml` (RDF/XML — how most OWL ontologies ship). Any input
+    /// may be **gzipped** (`.ttl.gz`, `.trig.gz`, …) — compression is detected from
+    /// the bytes and decompressed while streaming, so a dump never has to be
+    /// expanded to disk first. Use `-` to read stdin (defaults to N-Triples).
+    /// `--format` overrides detection for all inputs.
     /// Example: `cat *.nt | rete build - -o out.rete`.
     Build {
         /// Input files (or `-` for stdin); multiple are merged.
@@ -39,9 +42,18 @@ enum Command {
         /// Output `.rete` file.
         #[arg(short, long)]
         output: String,
-        /// Force input format for all inputs: nt | nq | ttl | rdfxml.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "rdfxml"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml"])]
         format: Option<String>,
+        /// Fold every named graph into the **default graph**, dropping the graph
+        /// term. Dumps that put all their data inside named graphs — TriG
+        /// exports like SemOpenAlex, most Wikibase and GraphDB dumps — otherwise
+        /// answer `?s ?p ?o` with nothing and build an empty pyramid, because in
+        /// SPARQL the default graph is not the union of the named ones. It is
+        /// also what makes such an input eligible for `--memory-budget-mb`,
+        /// which writes default-graph files only.
+        #[arg(long = "collapse-graphs")]
+        collapse_graphs: bool,
         /// Materialize RDFS/OWL-RL entailments at build time: run the reasoner
         /// over the default graph (subClassOf/subPropertyOf/domain/range,
         /// inverseOf, symmetric/transitive, sameAs) and store the inferred
@@ -121,8 +133,10 @@ enum Command {
         /// and merging them (the budget decides the number of chunks and the
         /// external-sort run sizes). For graphs too large for the in-RAM build.
         /// Output is byte-identical to a standard `--no-pyramid` build.
-        /// v1 limits: N-Triples/N-Quads files only, default graph only, implies
-        /// `--no-pyramid`, and excludes `--text-index`/`--materialize`/`--reason`.
+        /// Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or not — RDF/XML
+        /// is the one syntax that must be converted first), default graph only
+        /// (see `--collapse-graphs`), implies `--no-pyramid`, and excludes
+        /// `--text-index`/`--materialize`/`--reason`.
         #[arg(long = "memory-budget-mb")]
         memory_budget_mb: Option<u64>,
         /// Directory for the external build's spill files (default: alongside
@@ -147,11 +161,11 @@ enum Command {
     /// `--sample-mb` to read only a leading slice and extrapolate, which turns a
     /// multi-hour question ("will this 110 GB conversion fit?") into a minute.
     Estimate {
-        /// Input files (N-Triples / N-Quads).
+        /// Input files (N-Triples / N-Quads / Turtle / TriG, gzipped or not).
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
-        /// Force input format for all inputs: nt | nq.
-        #[arg(long, value_parser = ["nt", "nq"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig"])]
         format: Option<String>,
         /// Read only this many MiB and extrapolate (default: read everything).
         #[arg(long)]
@@ -918,6 +932,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             inputs,
             output,
             format,
+            collapse_graphs,
             materialize,
             reason,
             no_pyramid,
@@ -954,6 +969,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     materialize,
                     reason,
                     text_index,
+                    collapse_graphs,
                     card_args,
                 )
             } else {
@@ -967,6 +983,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     rete_core::PyramidAlgo::from_cli(&pyramid_algo).unwrap_or_default(),
                     text_index,
                     type_predicate.as_deref(),
+                    collapse_graphs,
                     card_args,
                     no_card_costs,
                 )
