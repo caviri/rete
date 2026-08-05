@@ -164,8 +164,15 @@ Before touching a `.rete` that is already published. Full lifecycle in
   clock, 9–15× the `.rete` in scratch disk, ceiling **~150 M**. Past *that*,
   stop — it is engine work. Exceeding a ceiling is an OOM kill mid-rebuild, not
   an error message.
-- **`rete build --memory-budget-mb` cannot re-card.** It errors out on named
-  graphs and writes a counts-only card with no profile and no starter queries.
+- **`rete build --memory-budget-mb` cannot re-card.** It writes a counts-only
+  card with no profile and no starter queries. It still errors out on named
+  graphs — pass `--collapse-graphs` to fold them into the default graph when
+  that is what the dump means (TriG exports usually do).
+- **Feed the external build the dump as it ships.** It reads
+  N-Triples/N-Quads/Turtle/TriG, gzipped or not, straight from the compressed
+  file — so a `dump.ttl.gz` never has to be expanded to `.nt` first. That
+  expansion is not a rounding error: SemOpenAlex measures 146.8 N-Quads bytes
+  per triple, which turns an 8.5 GiB dump into ~400 GB of scratch.
 - **Carry the curated fields explicitly.** A bare `repyramid --card` silently
   drops `title`/`license`/`source`/`description`. Use
   `scripts/recard/card_tools.py curated` to lift them, and its `verify` to fail
