@@ -86,6 +86,22 @@ pub const CARD_EXTRA_MAX_BYTES: usize = 8192;
 pub const CARD_EXTRA_MAX_KEYS: usize = 64;
 /// Maximum bytes per `extra` key. Keys are identifiers, not values.
 pub const CARD_EXTRA_MAX_KEY_BYTES: usize = 128;
+/// Maximum size (UTF-8 bytes) of the curated `description`.
+///
+/// `description` is the one curated field invited to grow: it may be
+/// **Markdown** (headings, lists, links — see `docs/dataset-cards.md`), and
+/// prose with structure in it has no natural stopping point. It rides in the
+/// same metadata section as `extra`, which every CARD-tier reader fetches on
+/// every open, so it gets the same budget for the same reason —
+/// [`CARD_EXTRA_MAX_BYTES`]. Measured against the corpus: the longest
+/// description on the published catalog is miRBase's at 813 bytes, and the
+/// longest in this repo's own build scripts is ~1.1 KB, so 8 KiB is roughly
+/// ten times the widest real case and still ~1,300 words of Markdown.
+///
+/// Enforced at **write** time only, like every other card rule. Readers never
+/// validate: a card written oversized by some other tool must still open.
+pub const CARD_DESCRIPTION_MAX_BYTES: usize = CARD_EXTRA_MAX_BYTES;
+
 /// Maximum container-nesting depth inside an `extra` value (see
 /// [`json_depth`]): an object of objects-of-scalars, no deeper. Deliberate —
 /// deep structures invite storing *records* in the card, and Parquet
@@ -117,6 +133,68 @@ pub fn normalize_string_list(field: &str, values: Vec<String>) -> Result<Vec<Str
     out.sort();
     out.dedup();
     Ok(out)
+}
+
+/// Accept a `description` written either way, and bound it — the write-time
+/// gate every card-writing path funnels through.
+///
+/// **Two input shapes, one stored value.** A description is now allowed to be
+/// Markdown, and Markdown needs line breaks, which a JSON string can only carry
+/// as `\n` escapes — miserable to hand-write and worse to review. So a card
+/// *file* may also give an **array of lines**, joined with `\n`:
+///
+/// ```json
+/// "description": ["# What's inside", "", "- 4.4M classes", "- 5.1M edges"]
+/// ```
+///
+/// The array is input sugar only: the card always stores one string, so a card
+/// round-trips through `rete card --json` → `--card-file` unchanged, and no
+/// reader ever has to know the array shape existed.
+///
+/// On overflow the build is **rejected loudly**, never truncated — the same
+/// rule as `extra`, for the same reason: the text is authored, it folds into
+/// the content hash, and a silent cut would ship a card that no longer says
+/// what the publisher wrote.
+pub fn normalize_description(v: &Value) -> Result<String, String> {
+    let text = match v {
+        Value::String(s) => s.trim().to_string(),
+        Value::Array(lines) => {
+            let mut out = Vec::with_capacity(lines.len());
+            for l in lines {
+                out.push(l.as_str().ok_or_else(|| {
+                    "card `description` must be a string, or an array of strings \
+                     (one per line, joined with newlines)"
+                        .to_string()
+                })?);
+            }
+            out.join("\n").trim().to_string()
+        }
+        _ => {
+            return Err(
+                "card `description` must be a string, or an array of strings \
+                 (one per line, joined with newlines)"
+                    .to_string(),
+            )
+        }
+    };
+    check_description_len(&text)?;
+    Ok(text)
+}
+
+/// The size half of [`normalize_description`], split out so the CLI's
+/// serde-typed path — where `--description` may override whatever the file
+/// said — can apply it to the final text without re-parsing anything.
+pub fn check_description_len(text: &str) -> Result<(), String> {
+    if text.len() > CARD_DESCRIPTION_MAX_BYTES {
+        return Err(format!(
+            "card `description` is {} bytes, over the {CARD_DESCRIPTION_MAX_BYTES}-byte cap; \
+             every reader fetches the card on every open — a description is the dataset's \
+             abstract, not its documentation, so link out to the long form \
+             (`source` / `canonical_url`) or put it in the graph",
+            text.len()
+        ));
+    }
+    Ok(())
 }
 
 /// [`normalize_string_list`] plus the `theme` requirement: every entry must be
@@ -271,8 +349,11 @@ pub fn validate_curated_card(doc: &Value) -> Result<Value, String> {
             continue; // an explicit null is "unset", not a value
         }
         let normalized = match k.as_str() {
-            "title" | "description" | "license" | "source" | "created" | "version"
-            | "canonical_url" | "sparql_endpoint" | "source_date" | "doi" | "cite_as" => {
+            // The one field that may also arrive as an array of lines, and the
+            // one with a size cap — it is the field Markdown made open-ended.
+            "description" => Value::String(normalize_description(v)?),
+            "title" | "license" | "source" | "created" | "version" | "canonical_url"
+            | "sparql_endpoint" | "source_date" | "doi" | "cite_as" => {
                 Value::String(expect_string(k, v)?)
             }
             "derived_from" | "example_queries" => Value::from(expect_string_array(k, v)?),
@@ -417,6 +498,58 @@ mod tests {
         let ok = validate_curated_card(&json!({"theme": ["https://www.wikidata.org/entity/Q413"]}))
             .unwrap();
         assert_eq!(ok["theme"][0], "https://www.wikidata.org/entity/Q413");
+    }
+
+    #[test]
+    fn description_takes_a_string_or_an_array_of_lines() {
+        // The two shapes must produce the SAME stored string, because the card
+        // stores one string either way — the array is authoring sugar, not a
+        // second representation a reader would have to know about.
+        let md = "# What's inside\n\n- 4.4M classes\n- 5.1M edges";
+        let from_string = validate_curated_card(&json!({ "description": md })).unwrap();
+        let from_lines = validate_curated_card(&json!({
+            "description": ["# What's inside", "", "- 4.4M classes", "- 5.1M edges"]
+        }))
+        .unwrap();
+        assert_eq!(from_string["description"], json!(md));
+        assert_eq!(from_lines["description"], json!(md));
+
+        // A non-string entry is an authoring slip, not a value to stringify.
+        let e = validate_curated_card(&json!({"description": ["ok", 7]})).unwrap_err();
+        assert!(e.contains("array of strings"), "{e}");
+        let e = validate_curated_card(&json!({"description": 7})).unwrap_err();
+        assert!(e.contains("array of strings"), "{e}");
+    }
+
+    #[test]
+    fn description_markdown_survives_validation_untouched() {
+        // Validation must not "helpfully" rewrite prose: what the publisher
+        // wrote is what hashes, so every marker has to come out the far side.
+        let md = "## Contents\n\n1. one\n2. two\n\n> quoted\n\n`code` and [a link](https://example.org/x)";
+        let ok = validate_curated_card(&json!({ "description": md })).unwrap();
+        assert_eq!(ok["description"], json!(md));
+    }
+
+    #[test]
+    fn description_over_the_cap_is_rejected_rather_than_truncated() {
+        let at = "x".repeat(CARD_DESCRIPTION_MAX_BYTES);
+        validate_curated_card(&json!({ "description": at })).expect("exactly at the cap");
+        let over = "x".repeat(CARD_DESCRIPTION_MAX_BYTES + 1);
+        let e = validate_curated_card(&json!({ "description": over })).unwrap_err();
+        assert!(
+            e.contains(&format!("{} bytes", CARD_DESCRIPTION_MAX_BYTES + 1)),
+            "{e}"
+        );
+        // The message has to say WHY, or the only fix a publisher can imagine
+        // is "make the text shorter" rather than "link out to the long form".
+        assert!(
+            e.contains("every reader fetches the card on every open"),
+            "{e}"
+        );
+        // The array shape is bounded on the JOINED text, not per line.
+        let lines: Vec<String> = (0..200).map(|_| "y".repeat(100)).collect();
+        let e = validate_curated_card(&json!({ "description": lines })).unwrap_err();
+        assert!(e.contains("over the"), "{e}");
     }
 
     #[test]

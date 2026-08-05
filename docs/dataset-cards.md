@@ -73,11 +73,17 @@ rete build data.nt -o data.rete --card-file card.json --title "Override title"
 Any of `--card`, `--card-file`, `--title`, `--license`, `--source`,
 `--description`, or `--created` opts the build into writing a card.
 
+`description` is **Markdown** and may run to several paragraphs with headings
+and lists — see [The description](#the-description-markdown-not-html) for what
+is supported, why raw HTML is not, and how to write one without hand-escaping
+newlines.
+
 ## What's in a card
 
 | Field | Source | Meaning |
 |-------|--------|---------|
-| `title`, `description`, `license`, `source`, `created` | **curated** (flags / `--card-file`) | Free-text catalog metadata. Omitted fields are absent from the JSON. |
+| `title`, `license`, `source`, `created` | **curated** (flags / `--card-file`) | Free-text catalog metadata. Omitted fields are absent from the JSON. |
+| `description` | **curated** (flags / `--card-file`) | The dataset's abstract, read as **Markdown** — headings, lists, links, code. Raw HTML is escaped, never rendered. May be written as an array of lines. Capped at 8 KiB. See [The description](#the-description-markdown-not-html). |
 | `version`, `doi`, `cite_as` | **curated** (`--card-file` only) | The publisher's **dataset version** (a date or semver — Croissant requires one; distinct from `format_version` and from the build-info `builder`, see [One card, three versions](#one-card-three-versions)), DOI IRI, preferred citation. |
 | `creators`, `publisher` | **curated** (`--card-file` only) | People (`{name, orcid}`) and organisation (`{name, ror}`). ORCID/ROR as **IRIs, not strings** — this project publishes both authority graphs, so "which datasets did this person build?" becomes a federated join, not a text search. |
 | `canonical_url`, `sparql_endpoint` | **curated** (`--card-file` only) | Where the authoritative copy of this file lives (`void:dataDump`) and a public endpoint (`void:sparqlEndpoint`). A `.rete` found on a disk can then say where to verify against. |
@@ -166,6 +172,120 @@ answer different questions and are never merged:
 `format_version` is stamped by the builder and changes only when the format
 does. `builder` lives in the unhashed build-info section because it is a fact
 about one build, not about the data.
+
+## The description: Markdown, not HTML
+
+`description` is the one curated field long enough to want structure, so it is
+read as **Markdown**. The card viewer renders headings, lists, links and code;
+every other surface reduces the same text to one readable line.
+
+```json
+{
+  "description": [
+    "The complete Wikidata class ontology — no instances.",
+    "",
+    "## What's inside",
+    "",
+    "- **4,420,121 classes** — every `wdt:P279` subject or object",
+    "- the **5.1M-edge** subclass hierarchy",
+    "- per-class direct-instance counts",
+    "",
+    "See [the build notes](https://example.org/notes) for how it was derived."
+  ]
+}
+```
+
+### Supported
+
+| Construct | Written as |
+|---|---|
+| Headings | `# One` … `###### Six` — rendered **shifted down**, so a card never emits an `<h1>`; the viewer's own title owns that level |
+| Bulleted lists | `- item`, `* item`, `+ item` — **nested by indentation** |
+| Numbered lists | `1. item`, `1) item` — nested the same way |
+| Block quotes | `> quoted` (every line carries the `>`; a quote's body is Markdown too) |
+| Horizontal rules | `---`, `***`, `___` |
+| Fenced code | ```` ``` ```` … ```` ``` ```` |
+| Links | `[text](https://example.org)` — `http(s)` and `mailto:` only |
+| Emphasis / code | `**bold**`, `*italic*`, `` `code` `` |
+
+Deliberately **not** supported: tables (a card's tabular data belongs in the
+graph — and the viewer already draws its own tables from the derived profile),
+reference-style links, images, and footnotes. Every construct is more parser
+for less description.
+
+### Raw HTML is not supported — and that is the point
+
+HTML in a description is **escaped, not rendered**: `<b>x</b>` shows up as the
+five characters `<b>x</b>`, and a `<script>` shows up as text.
+
+This is a deliberate refusal, not a missing feature. A card is **third-party
+data** — it arrives inside a file that someone else published, on a page that
+also holds the reader's own local files. Honouring raw HTML would mean any
+publisher could put a `<script>` (or an `onerror=` on an `<img>`) into a
+description and have it execute in every reader's browser, on every open,
+simply because the reader clicked 🏷 Card. That is not a formatting feature; it
+is remote code execution with extra steps.
+
+Markdown gives the headings, bullets and links with none of that: the renderer
+escapes every character of the source, and the only tags in the output are the
+ones **it** chose. `javascript:` links degrade to visible text. The playground's
+gate pins both halves — that the formatting appears, and that a description
+carrying a `<script>`, an `<img onerror=>` and a `javascript:` link creates no
+element and executes nothing.
+
+The same reasoning already governs the card's JSON view, which tokenizes the
+raw bytes and escapes every token precisely so a `<` inside a description
+cannot become an element.
+
+### Writing a multi-line description
+
+A JSON string can only carry line breaks as `\n` escapes, which is miserable to
+write by hand and worse to review. Three ways out, in the order they are worth
+reaching for:
+
+1. **An array of lines in `--card-file`** (shown above). `rete build` joins them
+   with newlines. It is input sugar only — the card always stores one string, so
+   `rete card --json` output feeds straight back into `--card-file`.
+2. **The shell, for `--description`**: `--description "$(cat description.md)"`
+   keeps the Markdown in its own file, where an editor can help.
+3. **The playground's Build panel**: the *Description* box is a textarea, so
+   Markdown typed into it works as typed — the JSON mirror beside it inserts the
+   `\n` escapes for you. The JSON editor accepts the array shape too.
+
+A literal `"description": "line one\nline two"` is of course still valid, and
+still what the file stores.
+
+### How long may it be?
+
+Up to **8 KiB** of UTF-8 — the same budget as the [`extra` bag](#custom-fields-the-extra-bag),
+for the same reason: both ride in the metadata section that every CARD-tier
+reader fetches on every open. For scale, the longest description on the
+published catalog is 813 bytes; 8 KiB is roughly 1,300 words of Markdown.
+
+Over the cap, the **build fails loudly** rather than truncating — the text is
+authored, it folds into the content hash, and a silent cut would ship a card
+that no longer says what the publisher wrote. A description is the dataset's
+**abstract**, not its documentation: link the long form from `source` /
+`canonical_url`, or put it in the graph.
+
+Readers never validate any of this. A card written oversized by some other tool
+still opens — the cap is a write-time rule, like every other card rule.
+
+### Where a description is shown
+
+Only the **🏷 Card viewer** renders blocks; it is a scrollable panel with room
+for them. Every other surface has room for one line, so it shows the same text
+with its block markers removed (`## Heading` becomes `Heading`, `- item`
+becomes `• item`) rather than leaking raw markers into a paragraph:
+
+| Surface | Shows |
+|---|---|
+| 🏷 Card modal | the full Markdown, rendered |
+| Dataset sidebar / picker blurb | one flattened stream, inline markup kept |
+| Dataset header tagline | the first sentence, plain text |
+| Plaza gallery tile and hero | flattened to plain text |
+| `rete card` (terminal) | the source as written, indented to the value column |
+| `--format jsonld` / `croissant` | the source as written (both formats take Markdown in `description`) |
 
 ## Custom fields: the `extra` bag
 

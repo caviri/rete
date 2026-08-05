@@ -37,13 +37,29 @@ export function esc(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-/** Catalog descriptions are rich HTML; social text has to be plain. */
+/**
+ * Catalog descriptions are rich HTML; a Dataset Card's is Markdown
+ * (docs/dataset-cards.md). Social text — og:description, the JSON-LD abstract,
+ * the OG image's lead — has to be plain, so both are reduced away. Block
+ * markers are stripped before the newline collapse, since `^` only means "start
+ * of line" while the newlines are still there.
+ */
 export function plain(s, max = 0) {
   let out = String(s || "")
     .replace(/<br\s*\/?>/gi, " ")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\r\n?/g, "\n")
+    .replace(/^[ \t]*(?:```|~~~)[^\n]*$/gm, "")
+    .replace(/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/gm, "")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]*>[ \t]?/gm, "")
+    .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/gm, "• ")
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, "$1")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
     .replace(/\s+/g, " ")
     .trim();
   if (max && out.length > max) {

@@ -139,3 +139,34 @@ export function liteCardFromHeader(header, entry = {}) {
     format_version: header.version,
   };
 }
+
+/**
+ * A card `description` reduced to plain prose.
+ *
+ * A description may be Markdown — headings, bullets, links (see
+ * docs/dataset-cards.md; raw HTML is never allowed, in the card or here). The
+ * plaza shows it in a gallery blurb and a one-paragraph hero, both of which
+ * want text, not structure, so the BLOCK markers are stripped and the inline
+ * ones unwrapped. Nothing here emits HTML — every caller still escapes — so
+ * this is a readability helper, not a security boundary.
+ *
+ * On a description with no Markdown in it, this is the identity function.
+ */
+export function plainDescription(s) {
+  // `[ \t]`, never `\s`: these run with /m over the whole text, and `\s` also
+  // matches a newline — `^\s{0,3}#` would eat the blank line before a heading
+  // and weld it onto the paragraph above.
+  return String(s == null ? "" : s)
+    .replace(/\r\n?/g, "\n")
+    .replace(/^[ \t]*(?:```|~~~)[^\n]*$/gm, "")
+    .replace(/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/gm, "")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]*>[ \t]?/gm, "")
+    .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/gm, "• ")
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, "$1")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+    .replace(/\s*\n+\s*/g, " ")
+    .trim();
+}
