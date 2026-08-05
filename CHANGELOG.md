@@ -106,6 +106,27 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   - The card records `top_n`, the cap its profile lists were derived under —
     the number `truncated: true` was hinting at without stating.
 
+### Fixed
+
+- **16 playground dataset descriptions showed their own markup as text.** They
+  were written as raw HTML back when the description renderer honoured it;
+  since the renderer became escaping-only, `hugging-face` opened with a literal
+  `<a href="https://huggingface.co" target="_blank"…` in the picker, the sidebar
+  and the header tagline. All sixteen are now Markdown — `<b>`→`**`, `<i>`→`*`,
+  `<code>`→backticks, `<a href>`→`[text](url)`, `&amp;`/`&lt;`/`&nbsp;`→the
+  characters themselves — so the 137 bold spans, 17 italics, 159 code spans and
+  13 links are real elements again. Wording is untouched and the conversion is
+  inline-only: every one still renders as exactly one paragraph, so no picker
+  row or sidebar `<p>` changes shape.
+- **The social-preview reducer no longer eats angle-bracket prose.** `plain()`
+  still stripped HTML from a description, a leftover from when the catalog held
+  it, and its tag pattern also matched every angle-bracket phrase the authors
+  actually write: `<< ?a rdf:predicate ?b >>` (RDF-star), `rete <command>
+  --help`, `gbif.org/occurrence/<id>`, `deps.dev/<system>/<name>/<version>`,
+  `?node <- edge -> ?node`. Nineteen `og:description` / JSON-LD abstracts were
+  silently truncated to nonsense by it. A description is Markdown now, so the
+  HTML branch is gone and the brackets survive.
+
 ## [0.3.2] - 2026-08-01
 
 No engine change from 0.3.1 — the same code, released again because the 0.3.1
