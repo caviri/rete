@@ -50,11 +50,21 @@ CURATED_FIELDS = [
     "example_queries",
 ]
 
-# Starter queries that may legitimately return zero rows on a healthy file:
-# `top-dangling` asks for IRIs referenced but never described, and a
-# fully-described graph has none. Everything else returning zero means the card
-# is describing a graph the query cannot see — the bug this pipeline exists for.
-LEGITIMATELY_EMPTY = {"top-dangling"}
+# Starter queries that may legitimately return zero rows on a healthy file —
+# the same set the generator marks `NonEmpty::Undecidable`
+# (crates/rete-cli/src/commands/queries.rs), for the same reasons:
+#
+#   top-dangling  IRIs referenced but never described; a fully-described graph
+#                 has none, and the card does not record which objects are also
+#                 subjects.
+#   sp-within     the query box is derived from `wgs84:lat`/`long` literals,
+#                 not from the WKT geometries the body reads, and a GeoSPARQL
+#                 `wktLiteral` may carry a projected CRS — so "nothing in that
+#                 box" is an answer about the data, not a broken query.
+#
+# Everything else returning zero means the card is describing a graph the query
+# cannot see — the bug this pipeline exists for.
+LEGITIMATELY_EMPTY = {"top-dangling", "sp-within"}
 
 # Verdicts, worst first. `todo` is the set the batch driver runs.
 STATUS_ORDER = ["CARDLESS", "ZERO-ROWS", "MIXED-HIDDEN", "DATED", "CURRENT", "UNREADABLE"]

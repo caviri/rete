@@ -82,19 +82,26 @@ return exactly one row, or if a named-graph-only file still ships a
 default-graph query.
 
 That gate is not decorative. On `mtg` it caught a **live card-generator bug**:
-`lb-labels` conjoins the top class with the top label predicate independently —
+`lb-labels` conjoined the top class with the top label predicate independently —
 
 ```sparql
 SELECT ?s ?label WHERE { ?s a mtg:Ruling ; schema:name ?label } LIMIT 50
 ```
 
-— and mtg's most frequent class (`mtg:Ruling`, 821k instances) is precisely the
-one that carries no `schema:name`. 22 of the 23 starter queries answer; that one
-returns zero, on a default-graph file, in current `rete-cli`. The template needs
-a class that actually has the label predicate, not the two most frequent things
-picked separately. Until that is fixed upstream, `--allow-empty "lb-labels"`
-lets such a dataset through **explicitly**, which is the point — the default is
-to stop.
+— and mtg's most frequent class (`mtg:Ruling`) is precisely the one that carries
+no `schema:name`. 22 of the 23 starter queries answered; that one returned zero,
+on a default-graph file.
+
+**Fixed upstream.** The template now takes the most populous class a
+`class_links` row proves carries the label predicate (`LABELED_CLASS`), and
+falls back to a class-free body where the card cannot prove one. Auditing the
+rest of the library for the same shape turned up two more live zero-rows
+queries: `top-reach` (busiest hub × most frequent predicate — 0 rows on
+`hugging-face`) and `sp-within` (a fixed `geo:hasGeometry/geo:asWKT` path
+against `geoadmin`, which hangs `geo:asWKT` straight off each District — 0 rows
+on 52,959 geometries). Re-carding those three files with the fixed generator
+gives **23 / 23, 23 / 23 and 22 / 22 queries returning rows**. `--allow-empty`
+remains for the templates that are honestly undecidable from the card.
 
 ---
 
