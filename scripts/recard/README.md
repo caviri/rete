@@ -302,11 +302,28 @@ Two secondary findings worth knowing before planning the work:
   check `rete export` round-trips are documented against; it does not compare
   non-graph sections (text index, PMTiles), which a re-card does not carry over
   unless the corresponding flag is passed.
-* **Curated prose is carried verbatim, stale figures and all.** `fedlex`'s
-  description says "66,392,663 quads" — the pre-dedup number its publisher wrote
-  by hand. The re-carded derived count is the correct 56,321,446, so the file now
-  contradicts itself in words. The tool cannot fix prose and must not silently
-  edit it; whoever publishes the re-card should update the description.
+* **Curated prose is carried verbatim, stale figures and all** — and that is
+  deliberate, because a tool that rewrites a publisher's sentences cannot be
+  trusted with the ones it leaves alone. `fedlex`'s description said "66,392,663
+  quads", the pre-dedup number its publisher wrote by hand, while the re-carded
+  derived count is the correct 56,321,446. The tool carried the stale sentence
+  through unchanged and `verify` reported it as a changed curated field the
+  moment a human edited it — exactly the intended behaviour.
+
+  When `switzerland-fedlex` was published (2026-08-05) that one clause was
+  corrected **by hand**, since for this catalog we are effectively the
+  publisher. The edit keeps both numbers because both are true:
+
+  > 56,321,446 quads (66,392,663 harvested N-Quads lines, deduplicated) across
+  > 497,905 NAMED GRAPHS
+
+  Deleting 66,392,663 would have destroyed real provenance — it is the input
+  line count, not a wrong quad count. `title`, `source` and `license` went
+  across byte-identical. The way to prove such an edit is surgical is to run
+  `verify` twice: once against the original card, expecting **exactly one**
+  reported difference (the description), and once against the corrected curated
+  document, expecting a clean pass. If the first run reports two differences,
+  something moved that you did not intend.
 * **A headline count can go DOWN, and that is a fix, not a loss.** An old card
   counted the raw pre-dedup input multiset; a re-card counts what the file
   actually stores. `lombardi` is the clean example: its published card says
