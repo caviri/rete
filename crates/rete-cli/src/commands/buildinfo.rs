@@ -48,6 +48,12 @@ pub(crate) struct BuildInfo {
     /// memory-bounded/merge builds carry no starter queries to measure).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_costs: Option<QueryCosts>,
+    /// Starter queries this build generated, **ran**, and then refused to ship
+    /// because the run showed they were worthless on this very file. Empty on
+    /// a healthy build — and the only surviving record of the drop, so the
+    /// evidence outlives the terminal the build scrolled past.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_queries: Vec<DroppedQuery>,
 }
 
 /// The flags in force for this build. `command` names the CLI path taken.
@@ -135,6 +141,27 @@ pub(crate) struct QueryCost {
     pub debug_ms: u64,
 }
 
+/// A starter query the build measured and then did not ship.
+///
+/// The generator decides what a card *should* carry from the profile; the
+/// build then runs each of those queries against the finished file, so for a
+/// carded build emptiness stops being an inference and becomes an observation.
+/// An observation of "this answers nothing" is the end of the argument: the
+/// query is dropped from the card, and this row is what says so afterwards.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DroppedQuery {
+    /// The starter query's stable id (`sp-within`, …).
+    pub id: String,
+    /// What the run showed, in the words that justify the drop.
+    pub why: String,
+    /// True when the template behind `id` *claimed* the query could not come
+    /// back empty and it did anyway. That is a defect in the generator's static
+    /// rule, not a fact about the data — flagged here so it is findable in a
+    /// published file long after the build log is gone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub contradicts_claim: bool,
+}
+
 impl BuildInfo {
     pub(crate) fn to_json_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("BuildInfo serializes")
@@ -170,6 +197,7 @@ pub(crate) fn new_build_info(params: BuildParams) -> BuildInfo {
         builder: Some(builder_version()),
         params,
         query_costs: None,
+        dropped_queries: Vec::new(),
     }
 }
 
@@ -227,6 +255,69 @@ impl RangeReader for ImageReader {
     }
 }
 
+/// One starter query's measurement: what it cost, and whether it was worth
+/// anything.
+pub(crate) struct Measured {
+    pub cost: QueryCost,
+    /// `None` when the query answered with something. `Some(reason)` when the
+    /// run showed the query is worthless on this file — the reason is the text
+    /// the build prints and stores in [`DroppedQuery::why`].
+    pub useless: Option<String>,
+    /// Set with `useless` when the emptiness is a **zero-row** one. Only that
+    /// shape can contradict a template's non-emptiness claim; a vacuous row is
+    /// not a claim any template makes (`NonEmpty::Aggregate` says in so many
+    /// words that the row's values may be unbound).
+    pub zero_rows: bool,
+}
+
+/// Grade one query's result. Two things make a starter query worthless, and a
+/// build can see both:
+///
+/// * **no rows** — the failure the query library exists to prevent ("a starter
+///   query that answers nothing is worse than no starter query: the reader
+///   concludes the *file* is broken");
+/// * **rows that bind nothing** — the un-grouped aggregate over an empty
+///   solution sequence. SPARQL returns exactly one row there whatever happens,
+///   so no row count can catch it, and the row carries zero information:
+///   `sp-bbox` over a file where no subject holds both `wgs:lat` and
+///   `wgs:long` returns one row of four unbound variables. Its template says
+///   the card "cannot do better" than that — the *measurement* can.
+///
+/// A `COUNT` is not caught by either: it binds, to 0. See the module notes on
+/// `cmp-coverage` in `docs/dataset-cards.md`.
+fn grade(out: &QueryOutput) -> (u64, Option<String>, bool) {
+    match out {
+        QueryOutput::Select(_, rows) if rows.is_empty() => {
+            (0, Some("measured 0 rows on the built file".into()), true)
+        }
+        QueryOutput::Select(_, rows) if rows.iter().all(|b| b.is_empty()) => (
+            rows.len() as u64,
+            Some(format!(
+                "measured {} row(s) binding no variable at all — an aggregate over an empty \
+                 solution sequence, which is a row without an answer in it",
+                rows.len()
+            )),
+            false,
+        ),
+        QueryOutput::Select(_, rows) => (rows.len() as u64, None, false),
+        QueryOutput::Ask(false) => (0, Some("measured ASK false on the built file".into()), true),
+        QueryOutput::Ask(true) => (1, None, false),
+        QueryOutput::Construct(ts) if ts.is_empty() => (
+            0,
+            Some("constructed no triples on the built file".into()),
+            true,
+        ),
+        QueryOutput::Construct(ts) => (ts.len() as u64, None, false),
+        // `QueryOutput` is non-exhaustive; the library emits only the forms
+        // above, so anything else is a shape this build cannot vouch for.
+        other => (
+            0,
+            Some(format!("returned an unexpected result form: {other:?}")),
+            true,
+        ),
+    }
+}
+
 /// Measure every starter query **cold** against the finished image: a fresh
 /// lazy ranged open per query (what a stateless remote client pays), counting
 /// logical range reads. `bytes`/`requests` are deterministic properties of
@@ -235,32 +326,45 @@ impl RangeReader for ImageReader {
 /// The image measured here lacks the build-info section itself, but that does
 /// not skew the figures: inserting it only shifts later sections by a constant,
 /// and logical reads are section-relative, so sizes and counts are invariant.
+///
+/// The run also **grades** each answer ([`Measured::useless`]). That costs
+/// nothing extra — the query had to run to be costed — and it is the whole
+/// point: for a carded build, "does this query answer?" is measured, not
+/// reasoned about.
 pub(crate) fn measure_query_costs(
     image: std::sync::Arc<Vec<u8>>,
     queries: &[ExampleQuery],
-) -> QueryCosts {
+) -> Vec<Measured> {
     let mut out = Vec::with_capacity(queries.len());
     for q in queries {
         let reader = std::sync::Arc::new(CountingReader::new(ImageReader(image.clone())));
         let start = std::time::Instant::now();
-        let rows = match Rete::open_ranged_lazy(reader.clone()) {
+        let (rows, useless, zero_rows) = match Rete::open_ranged_lazy(reader.clone()) {
             Ok(rete) => match eval_query(&rete, &q.sparql) {
-                Ok(QueryOutput::Select(_, rows)) => rows.len() as u64,
-                Ok(QueryOutput::Ask(b)) => u64::from(b),
-                Ok(QueryOutput::Construct(ts)) => ts.len() as u64,
-                _ => 0,
+                Ok(result) => grade(&result),
+                Err(e) => (0, Some(format!("failed to run: {e}")), true),
             },
-            Err(_) => 0,
+            Err(e) => (0, Some(format!("the built file did not open: {e}")), true),
         };
         let debug_ms = start.elapsed().as_millis() as u64;
-        out.push(QueryCost {
-            id: q.id.clone(),
-            bytes: reader.bytes_read(),
-            requests: reader.requests(),
-            rows,
-            debug_ms,
+        out.push(Measured {
+            cost: QueryCost {
+                id: q.id.clone(),
+                bytes: reader.bytes_read(),
+                requests: reader.requests(),
+                rows,
+                debug_ms,
+            },
+            useless,
+            zero_rows,
         });
     }
+    out
+}
+
+/// Wrap the kept per-query figures in the context that makes them
+/// interpretable.
+pub(crate) fn query_costs(queries: Vec<QueryCost>) -> QueryCosts {
     QueryCosts {
         context: CostContext {
             engine: Some(builder_version()),
@@ -274,7 +378,7 @@ pub(crate) fn measure_query_costs(
                     .to_string(),
             ),
         },
-        queries: out,
+        queries,
     }
 }
 
@@ -335,6 +439,25 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
                 out,
                 "        {:<14} {:>9} B in {:>2} req · {:>5} row(s) · {} ms",
                 c.id, c.bytes, c.requests, c.rows, c.debug_ms
+            );
+        }
+    }
+    if !info.dropped_queries.is_empty() {
+        let _ = writeln!(
+            out,
+            "      starter queries generated, measured, and NOT shipped:"
+        );
+        for d in &info.dropped_queries {
+            let _ = writeln!(
+                out,
+                "        {:<14} {}{}",
+                d.id,
+                d.why,
+                if d.contradicts_claim {
+                    " [generator defect: its template claimed this could not happen]"
+                } else {
+                    ""
+                }
             );
         }
     }

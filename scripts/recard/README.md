@@ -76,10 +76,16 @@ inspection.
 **The new starter queries answer.** The row counts are already in the rebuilt
 file: `rete build`/`repyramid` run every starter query once against the finished
 image and record `rows` in the build-info section. `card_tools.py verify` fails
-if any query returns zero (except `top-dangling`, which is legitimately empty on
-a fully-described graph — extend with `--allow-empty`), if `ov-one-row` does not
-return exactly one row, or if a named-graph-only file still ships a
-default-graph query.
+if any query returns zero, if `ov-one-row` does not return exactly one row, or
+if a named-graph-only file still ships a default-graph query.
+
+The first of those is now belt to the build's braces: a current `rete` does not
+*ship* a query it measured at zero rows (or one that came back binding no
+variable at all) — it drops it from the card and records the id and reason in
+the build record's `dropped_queries`, which `verify` prints. So a rebuilt card
+can carry fewer queries than the generator produced, and that is the repair, not
+a loss. `--allow-empty` and the `top-dangling`/`sp-within` exemptions survive for
+reading cards that are **already published**, where nothing ever ran the query.
 
 That gate is not decorative. On `mtg` it caught a **live card-generator bug**:
 `lb-labels` conjoined the top class with the top label predicate independently —

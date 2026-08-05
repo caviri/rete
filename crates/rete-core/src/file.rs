@@ -1797,10 +1797,79 @@ pub fn attach_build_info(image: &[u8], info: &[u8]) -> Result<Vec<u8>, FileError
     Ok(out)
 }
 
-/// Recompute the content hash from a file image and check it against the header
-/// â€” detects corruption or truncation of the payload sections.
-pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
-    let header = Header::from_bytes(bytes)?;
+/// Replace the **metadata** section (the Dataset Card blob) of a finished file
+/// image, returning the new image. The section is the first one after the
+/// header, so every later section's offset shifts by the length delta.
+///
+/// Unlike [`attach_build_info`], the metadata payload **is** inside the content
+/// hash — it is part of what the file says about itself — so the hash is
+/// recomputed here. The result is byte-identical to what the writer would have
+/// produced had it been handed this payload in the first place
+/// (`write_dataset_with_metadata`): the section sits at `HEADER_LEN`, every
+/// later offset is derived from its length, and the hash folds the same parts
+/// in the same order.
+///
+/// Why splice rather than rebuild: the only caller that needs this is a build
+/// that has already assembled the file and then learned something about it by
+/// **running** its own starter queries against it. Re-deriving the whole image
+/// to correct a metadata blob would mean re-parsing the input; a splice costs
+/// one memcpy and one rehash of an image that is already resident.
+///
+/// Passing an empty payload removes the section.
+pub fn replace_metadata(image: &[u8], metadata: &[u8]) -> Result<Vec<u8>, FileError> {
+    let mut header = Header::from_bytes(image)?;
+    // The writers in this crate always place metadata (when present) at
+    // HEADER_LEN; anything else is a file this function must not reshape.
+    let insert = HEADER_LEN as u64;
+    if header.metadata_len > 0 && header.metadata_offset != insert {
+        return Err(FileError::Container(
+            "metadata section does not sit immediately after the header",
+        ));
+    }
+    let old_len = header.metadata_len;
+    let tail_start = (insert + old_len) as usize;
+    if tail_start > image.len() {
+        return Err(FileError::Container("metadata splice out of bounds"));
+    }
+    let new_len = metadata.len() as u64;
+
+    let shift = |off: &mut u64, len: u64| {
+        if len > 0 && *off >= insert + old_len {
+            *off = *off - old_len + new_len;
+        }
+    };
+    shift(&mut header.dictionary_offset, header.dictionary_len);
+    shift(&mut header.root_dir_offset, header.root_dir_len);
+    shift(&mut header.pyramid_meta_offset, header.pyramid_meta_len);
+    shift(&mut header.named_graphs_offset, header.named_graphs_len);
+    shift(&mut header.text_index_offset, header.text_index_len);
+    shift(&mut header.build_info_offset, header.build_info_len);
+    for s in &mut header.extra_sections {
+        if s.length > 0 && s.offset >= insert + old_len {
+            s.offset = s.offset - old_len + new_len;
+        }
+    }
+    header.metadata_offset = insert;
+    header.metadata_len = new_len;
+
+    let mut out = Vec::with_capacity(image.len() - old_len as usize + metadata.len());
+    out.extend_from_slice(&header.to_bytes());
+    out.extend_from_slice(metadata);
+    out.extend_from_slice(&image[tail_start..]);
+    // The payload changed, so the hash must: recompute it over the same part
+    // list `verify` will rebuild from this very header, then re-serialize the
+    // header carrying it.
+    header.content_hash = hash_of_sections(&header, &out)?;
+    out[..HEADER_LEN].copy_from_slice(&header.to_bytes());
+    Ok(out)
+}
+
+/// The content hash of a file image, folded over exactly the parts the writer
+/// hashed (see `write_dataset_from_parts`): the metadata payload when present,
+/// then dict, index, pyramid-meta, and — when present — the text index and the
+/// named graphs. [`verify`] compares this against the header; [`replace_metadata`]
+/// writes it.
+fn hash_of_sections(header: &Header, bytes: &[u8]) -> Result<[u8; 16], FileError> {
     let slice = |off: u64, len: u64| -> Result<&[u8], FileError> {
         // `off` and `len` come STRAIGHT FROM THE FILE HEADER, so a crafted or
         // corrupt .rete can set them near u64::MAX and make `off + len` overflow
@@ -1820,9 +1889,6 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     } else {
         &[]
     };
-    // Match the writer's ordering exactly (see `write_dataset_from_parts`): the
-    // metadata payload is prepended when present, then dict, index, pyramid-meta,
-    // and — when present — the text index and the named graphs.
     let mut parts: Vec<&[u8]> = Vec::with_capacity(6);
     if header.metadata_len > 0 {
         parts.push(slice(header.metadata_offset, header.metadata_len)?);
@@ -1836,7 +1902,14 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     if header.named_graphs_len > 0 {
         parts.push(slice(header.named_graphs_offset, header.named_graphs_len)?);
     }
-    Ok(content_hash(&parts) == header.content_hash)
+    Ok(content_hash(&parts))
+}
+
+/// Recompute the content hash from a file image and check it against the header
+/// â€” detects corruption or truncation of the payload sections.
+pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
+    let header = Header::from_bytes(bytes)?;
+    Ok(hash_of_sections(&header, bytes)? == header.content_hash)
 }
 
 /// Faults the pyramid meta in on first access. `None` = the fetch failed.
@@ -4718,6 +4791,69 @@ mod tests {
             build_with_metadata(&[]),
             build_image(),
             "empty-metadata output must equal the plain writer byte-for-byte"
+        );
+    }
+
+    /// The contract `replace_metadata` has to meet to be usable at the end of a
+    /// build: swapping the card must land on **exactly** the bytes the writer
+    /// would have produced with that card in the first place — shorter, longer,
+    /// and gone — so a spliced file and a rebuilt one are the same file.
+    #[test]
+    fn replace_metadata_matches_a_direct_write() {
+        let first = br#"{"title":"My Dataset","queries":[1,2,3]}"#;
+        let bytes = build_with_metadata(first);
+        for target in [
+            br#"{"title":"My Dataset","queries":[1,2]}"#.as_slice(), // shorter
+            br#"{"title":"My Dataset","queries":[1,2,3,4,5,6,7]}"#.as_slice(), // longer
+            b"".as_slice(),                                          // removed
+            first.as_slice(),                                        // unchanged
+        ] {
+            let spliced = replace_metadata(&bytes, target).unwrap();
+            assert_eq!(
+                spliced,
+                build_with_metadata(target),
+                "splicing {} bytes of metadata must equal a direct write",
+                target.len()
+            );
+            assert!(
+                verify(&spliced).unwrap(),
+                "the new hash covers the new card"
+            );
+            let rete = Rete::open(&spliced).unwrap();
+            assert_eq!(
+                rete.metadata(),
+                (!target.is_empty()).then_some(target),
+                "the new payload reads back verbatim"
+            );
+            // The data is untouched by the surgery.
+            assert_eq!(
+                rete.query(Some("Bob"), Some("knows"), Some("Carol")).len(),
+                1
+            );
+        }
+    }
+
+    /// A build-info section survives the splice, still adjacent to the card, and
+    /// still outside the content hash.
+    #[test]
+    fn replace_metadata_keeps_build_info_adjacent() {
+        let with_info =
+            attach_build_info(&build_with_metadata(br#"{"a":1}"#), br#"{"builder":"x"}"#).unwrap();
+        let spliced = replace_metadata(&with_info, br#"{"a":1,"b":2}"#).unwrap();
+        let h = Header::from_bytes(&spliced).unwrap();
+        assert_eq!(h.metadata_offset, HEADER_LEN as u64);
+        assert_eq!(h.build_info_offset, HEADER_LEN as u64 + h.metadata_len);
+        assert_eq!(
+            read_build_info(&spliced).unwrap().as_deref(),
+            Some(br#"{"builder":"x"}"#.as_slice())
+        );
+        assert!(verify(&spliced).unwrap());
+        // Same card, same content hash, whatever the build-info says.
+        assert_eq!(
+            h.content_hash,
+            Header::from_bytes(&build_with_metadata(br#"{"a":1,"b":2}"#))
+                .unwrap()
+                .content_hash
         );
     }
 

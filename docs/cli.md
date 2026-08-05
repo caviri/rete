@@ -43,7 +43,11 @@ object carries bounded publisher-defined custom fields (no flag — see
 [Custom fields](dataset-cards.md)); a card build also writes a
 **build-info section** (build timestamp, builder version, parameters, measured
 starter-query costs — kept *outside* the content hash so identical data still
-hashes identically; `--no-card-costs` skips the measurements). `--text-index` adds a
+hashes identically). That same run is what proves each starter query answers:
+one measured at zero rows (or returning a row that binds nothing) is **dropped
+from the card**, loudly and with the reason recorded — see
+[dataset-cards.md](dataset-cards.md). `--no-card-costs` skips the run, and so
+skips that check as well. `--text-index` adds a
 full-text (word/CONTAINS) index over the literals for `rete search --contains`
 (see below). `--type-predicate <IRI>` overrides the predicate that types subjects
 with classes for the schema pyramid (default `rdf:type`, else auto-detected) —

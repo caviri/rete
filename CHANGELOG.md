@@ -7,6 +7,41 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **A build no longer ships a starter query it just measured at zero rows.**
+  A carded build already runs every generated starter query against the
+  finished file to record its cost — so for those files emptiness is
+  *measured*, not inferred, and the measurement is ground truth. The build now
+  acts on it: a query that comes back with no rows (or a false `ASK`, or
+  nothing constructed) is **removed from the card before the file is written**,
+  with the id and the reason printed and kept in the build record's new
+  `dropped_queries`. It also catches the shape no row count can — an
+  un-grouped aggregate returning its guaranteed one row while binding *no
+  variable at all*, which is what `sp-bbox` does on a file where `wgs:lat` and
+  `wgs:long` never sit on the same subject, and which that template's own note
+  said the card could not do better than ship.
+  - **Dropped, not fatal.** Refusing to build is right for *authored* content
+    (an oversized `extra` bag is the publisher's text); a generated starter
+    query has no author, and failing would make a file unbuildable for a reason
+    its publisher cannot fix, at the end of a build that may have taken hours,
+    over a metadata nicety. The generator already drops rather than fails when
+    its static hook fires; measurement is a better oracle for the same question.
+  - **The static machinery from the previous entry stays and now gets
+    cross-checked.** It still acts at generation time and still carries every
+    card built without a build record. Where the two disagree — a template
+    declaring its query cannot be empty, and then it is — the build names it a
+    generator defect and flags `contradicts_claim` in the record, because a
+    static rule that says "fine" about a query measured at zero is a bug in the
+    rule. Templates that admitted they could not decide
+    (`top-dangling`, `sp-within`) set no flag.
+  - **Free, and no churn.** The run already happened; a healthy build writes
+    byte-identical bytes to one that never measured. Dropping does change the
+    content hash (the card is inside it, correctly) — so `--no-card-costs`,
+    which skips the run and therefore the check, is no longer hash-neutral on a
+    dataset that *has* a useless starter query. The build says so on stderr.
+  - A vacuous `COUNT` (`cmp-coverage`'s `total = 76990, have = 0`) binds, so no
+    rows-based gate can see it; that class is closed by derivation instead —
+    see the `{{LABELED_CLASS}}` change below.
+
 - **A generated starter query can no longer be guaranteed-empty by
   construction.** The library instantiated each `{{PLACEHOLDER}}` from its own
   ranking and then conjoined the results, so two substitutions that were each

@@ -6,7 +6,102 @@
 
 use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
+use crate::commands::queries::{claim_of, Claim};
 use rete_core::ingest;
+
+/// Run the card's starter queries against the finished image and **remove the
+/// ones the run proves worthless**, returning the (possibly re-carded) image
+/// and the rows to record.
+///
+/// The build already ran every starter query to cost it, so for a carded build
+/// emptiness is *measured*, not inferred — and a measurement beats every static
+/// rule that guessed at it from the profile. The generator's own principle is
+/// that a query answering nothing is worse than no query at all, so the honest
+/// repair is to not ship it.
+///
+/// **Why drop rather than fail.** Refusing to build is the right answer for
+/// *authored* content — an over-long `extra` bag is the publisher's text, and
+/// silently rewriting it destroys an intent only they can restore. A starter
+/// query has no author: the generator wrote it moments earlier from this
+/// dataset's own profile, and the build is the only party in a position to act.
+/// Failing would also make the file unbuildable for a reason the user cannot
+/// fix, at the very end of a build that may have taken hours, over a metadata
+/// nicety — and would push them onto `--no-card-costs`, which switches off the
+/// measurement rather than the problem. The generator already *drops* (rather
+/// than fails) when its static `provably_empty` hook fires; measurement is a
+/// better oracle for the same question and earns the same consequence. Loud is
+/// achieved without fatal: every drop is printed with its reason and recorded
+/// in the build record, so the evidence outlives the terminal.
+fn drop_measured_empty_queries(
+    bytes: Vec<u8>,
+    mut card: card::DatasetCard,
+) -> anyhow::Result<(Vec<u8>, buildinfo::QueryCosts, Vec<buildinfo::DroppedQuery>)> {
+    let image = std::sync::Arc::new(bytes);
+    let measured = buildinfo::measure_query_costs(image.clone(), &card.queries);
+    let mut bytes = std::sync::Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone());
+    eprintln!(
+        "measured {} starter quer{} against the built file",
+        measured.len(),
+        if measured.len() == 1 { "y" } else { "ies" }
+    );
+
+    let mut kept = Vec::with_capacity(measured.len());
+    let mut dropped = Vec::new();
+    for m in measured {
+        match m.useless {
+            None => kept.push(m.cost),
+            Some(why) => {
+                // Only a zero-row result can contradict a template: the
+                // non-emptiness claims are about row *count*, and
+                // `NonEmpty::Aggregate` says outright that the row's values may
+                // be unbound. So a vacuous row is news, not a broken promise.
+                let contradicts_claim = m.zero_rows && claim_of(&m.cost.id) == Claim::CannotBeEmpty;
+                dropped.push(buildinfo::DroppedQuery {
+                    id: m.cost.id,
+                    why,
+                    contradicts_claim,
+                });
+            }
+        }
+    }
+
+    if !dropped.is_empty() {
+        eprintln!(
+            "dropping {} starter quer{} the build measured as useless on this file:",
+            dropped.len(),
+            if dropped.len() == 1 { "y" } else { "ies" }
+        );
+        for d in &dropped {
+            eprintln!("  {:<14} {}", d.id, d.why);
+            if d.contradicts_claim {
+                // The static rule and the measurement disagree, and the
+                // measurement is the one that ran. A template that declares its
+                // emitted query cannot be empty and then measures zero is a bug
+                // in `queries.rs`, not a property of this dataset.
+                eprintln!(
+                    "  {:<14} ^ GENERATOR DEFECT: its template claims this query cannot come back \
+                     empty. Fix the rule in crates/rete-cli/src/commands/queries.rs.",
+                    ""
+                );
+            }
+        }
+        let dropped_ids: std::collections::BTreeSet<&str> =
+            dropped.iter().map(|d| d.id.as_str()).collect();
+        card.queries
+            .retain(|q| !dropped_ids.contains(q.id.as_str()));
+        // The card is inside the content hash, so this is a new file identity —
+        // correctly: the card is part of what the file says about itself. The
+        // splice reproduces the writer's layout exactly, so the result is
+        // byte-identical to a build that had generated this query set directly.
+        bytes = rete_core::replace_metadata(&bytes, &card.to_json_bytes())?;
+        eprintln!(
+            "re-carded with the {} starter quer{} that answer (content hash follows the card)",
+            card.queries.len(),
+            if card.queries.len() == 1 { "y" } else { "ies" }
+        );
+    }
+    Ok((bytes, buildinfo::query_costs(kept), dropped))
+}
 
 /// Attach the **build-info** section (kind 7, outside the content hash) to a
 /// finished card-carrying image: timestamp, builder version, the parameters in
@@ -14,6 +109,12 @@ use rete_core::ingest;
 /// (bytes / range requests / rows / reference ms), run cold against this very
 /// image. Cardless builds skip this entirely, staying byte-identical to
 /// pre-build-info output.
+///
+/// `measure_costs` is `--no-card-costs` inverted, and it now decides more than
+/// whether a table of numbers is recorded: the same run is what proves each
+/// starter query answers ([`drop_measured_empty_queries`]). Opting out of the
+/// measurement therefore opts out of that protection — the card keeps whatever
+/// the generator's static reasoning produced, unchecked.
 #[allow(clippy::too_many_arguments)]
 fn attach_build_record(
     bytes: Vec<u8>,
@@ -49,25 +150,21 @@ fn attach_build_record(
         codec: Some(buildinfo::codec_name(header.dict_codec).to_string()),
         card_top_n: Some(card::CARD_TOP_N as u32),
     });
-    let bytes = if measure_costs {
-        let queries = card::load_card(&bytes)?
-            .map(|c| c.queries)
-            .unwrap_or_default();
-        if queries.is_empty() {
-            bytes
-        } else {
-            let image = std::sync::Arc::new(bytes);
-            let costs = buildinfo::measure_query_costs(image.clone(), &queries);
-            eprintln!(
-                "measured {} starter quer{} against the built file",
-                costs.queries.len(),
-                if costs.queries.len() == 1 { "y" } else { "ies" }
-            );
+    if !measure_costs {
+        eprintln!(
+            "--no-card-costs: the starter queries were NOT run, so nothing checked that they \
+             answer on this file"
+        );
+    }
+    let card = card::load_card(&bytes)?.filter(|c| measure_costs && !c.queries.is_empty());
+    let bytes = match card {
+        Some(card) => {
+            let (bytes, costs, dropped) = drop_measured_empty_queries(bytes, card)?;
             info.query_costs = Some(costs);
-            std::sync::Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone())
+            info.dropped_queries = dropped;
+            bytes
         }
-    } else {
-        bytes
+        None => bytes,
     };
     let blob = info.to_json_bytes();
     let out = rete_core::attach_build_info(&bytes, &blob)?;
@@ -637,6 +734,186 @@ pub(crate) fn repyramid(
 mod tests {
     use super::*;
     use rete_core::Rete;
+
+    /// Build `nt` with a card, at a unique path, and return the file image.
+    /// `measure` is `--no-card-costs` inverted.
+    fn build_carded(tag: &str, nt: &str, measure: bool) -> Vec<u8> {
+        let pid = std::process::id();
+        let dir = std::env::temp_dir();
+        let inp = dir.join(format!("rete_{tag}_{pid}.nt"));
+        let out = dir.join(format!("rete_{tag}_{pid}.rete"));
+        std::fs::write(&inp, nt).unwrap();
+        build(
+            &[inp.to_str().unwrap().to_string()],
+            out.to_str().unwrap(),
+            None,
+            false,
+            false,
+            false,
+            rete_core::PyramidAlgo::Louvain,
+            false,
+            None,
+            CardArgs {
+                enabled: true,
+                title: Some("measured".into()),
+                ..Default::default()
+            },
+            !measure,
+        )
+        .unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        std::fs::remove_file(&inp).ok();
+        std::fs::remove_file(&out).ok();
+        bytes
+    }
+
+    fn card_of(bytes: &[u8]) -> card::DatasetCard {
+        card::load_card(bytes).unwrap().expect("card embedded")
+    }
+
+    fn build_info_of(bytes: &[u8]) -> buildinfo::BuildInfo {
+        buildinfo::BuildInfo::from_json_bytes(&rete_core::read_build_info(bytes).unwrap().unwrap())
+            .unwrap()
+    }
+
+    /// A graph in which every IRI object is also a subject, so `top-dangling`
+    /// ("referenced but never described") has nothing to find — while
+    /// `card.in_hubs` is non-empty, so the generator's static `provably_empty`
+    /// hook does **not** fire and the query is emitted.
+    const NO_DANGLING_IRI: &str = "\
+<http://x/a> <http://x/p> <http://x/b> .
+<http://x/b> <http://x/p> <http://x/a> .
+<http://x/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://x/C> .
+<http://x/b> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://x/C> .
+<http://x/C> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://x/C> .
+";
+
+    /// The point of the whole change: a build that would have emitted a query
+    /// answering zero rows **does not ship it**, because the build ran it.
+    ///
+    /// `top-dangling` is the case the static machinery cannot close — its
+    /// template declares itself `NonEmpty::Undecidable` precisely because the
+    /// card does not record which objects are also subjects. Measurement does
+    /// not need to know: it ran the query.
+    #[test]
+    fn a_starter_query_measured_at_zero_rows_is_not_shipped() {
+        let bytes = build_carded("drop_empty", NO_DANGLING_IRI, true);
+        let card = card_of(&bytes);
+        let info = build_info_of(&bytes);
+
+        assert!(
+            !card.queries.iter().any(|q| q.id == "top-dangling"),
+            "the card must not ship a query the build measured at zero rows"
+        );
+        let dropped = &info.dropped_queries;
+        assert_eq!(
+            dropped.len(),
+            1,
+            "exactly one query was useless: {dropped:?}"
+        );
+        assert_eq!(dropped[0].id, "top-dangling");
+        assert!(dropped[0].why.contains("0 rows"), "{:?}", dropped[0].why);
+        assert!(
+            !dropped[0].contradicts_claim,
+            "its template declared itself undecidable, so this is news, not a defect"
+        );
+
+        // What remains is measured, kept in step with the card, and non-empty.
+        let costs = info.query_costs.expect("costs measured");
+        let ids: Vec<&str> = costs.queries.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            card.queries
+                .iter()
+                .map(|q| q.id.as_str())
+                .collect::<Vec<_>>(),
+            "the cost table stays aligned with the queries the card ships"
+        );
+        for c in &costs.queries {
+            assert!(c.rows > 0, "{} shipped with {} rows", c.id, c.rows);
+        }
+        // The card moved, so the identity did: the file still verifies against
+        // its own (new) hash.
+        assert!(rete_core::verify(&bytes).unwrap());
+    }
+
+    /// The other half a run can see and no row count can: `sp-bbox` conjoins
+    /// `wgs:lat` and `wgs:long` on one subject while its gate tallies them
+    /// independently. When they sit on different subjects the un-grouped
+    /// aggregate still returns exactly one row — of four unbound variables. Its
+    /// template says the card "cannot do better"; the measurement can.
+    #[test]
+    fn a_starter_query_measured_as_a_row_binding_nothing_is_not_shipped() {
+        const LAT_AND_LONG_APART: &str = "\
+<http://x/a> <http://www.w3.org/2003/01/geo/wgs84_pos#lat> \"46.5\" .
+<http://x/b> <http://www.w3.org/2003/01/geo/wgs84_pos#long> \"6.6\" .
+<http://x/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://x/C> .
+<http://x/b> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://x/C> .
+";
+        let bytes = build_carded("drop_vacuous", LAT_AND_LONG_APART, true);
+        let card = card_of(&bytes);
+        let info = build_info_of(&bytes);
+
+        assert!(
+            !card.queries.iter().any(|q| q.id == "sp-bbox"),
+            "a one-row answer that binds nothing is not an answer"
+        );
+        let d = info
+            .dropped_queries
+            .iter()
+            .find(|d| d.id == "sp-bbox")
+            .expect("sp-bbox dropped");
+        assert!(d.why.contains("binding no variable"), "{}", d.why);
+        assert!(
+            !d.contradicts_claim,
+            "NonEmpty::Aggregate promises a row, not a bound one — no claim is broken"
+        );
+    }
+
+    /// **No churn.** Running the starter queries is an observation, not an
+    /// edit: on a dataset where they all answer, the file the build writes is
+    /// byte-identical to the one it writes when the measurement is skipped
+    /// entirely (`--no-card-costs`), build-info aside. Nothing about the drop
+    /// path can perturb a healthy build.
+    #[test]
+    fn measuring_does_not_touch_a_file_whose_queries_all_answer() {
+        // Plain graph: `<http://x/C>` is referenced but never described, so
+        // even `top-dangling` answers.
+        let nt = "<http://x/a> <http://x/p> <http://x/b> .\n\
+                  <http://x/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://x/C> .\n";
+        let measured = build_carded("nochurn_yes", nt, true);
+        let unmeasured = build_carded("nochurn_no", nt, false);
+
+        assert!(
+            build_info_of(&measured).dropped_queries.is_empty(),
+            "nothing to drop on this graph"
+        );
+        assert_eq!(
+            rete_core::attach_build_info(&measured, &[]).unwrap(),
+            rete_core::attach_build_info(&unmeasured, &[]).unwrap(),
+            "measuring must not change a single byte when nothing is dropped"
+        );
+        // …and it really did measure.
+        let costs = build_info_of(&measured).query_costs.expect("measured");
+        assert!(costs.queries.iter().all(|c| c.rows > 0));
+        assert!(build_info_of(&unmeasured).query_costs.is_none());
+    }
+
+    /// `--no-card-costs` skips the run, so it also skips the protection the run
+    /// provides: the same graph keeps the empty query. That is the flag's cost,
+    /// stated as a test so it cannot drift into a surprise.
+    #[test]
+    fn no_card_costs_opts_out_of_the_emptiness_check_too() {
+        let bytes = build_carded("optout", NO_DANGLING_IRI, false);
+        assert!(
+            card_of(&bytes)
+                .queries
+                .iter()
+                .any(|q| q.id == "top-dangling"),
+            "without the measurement the generator's static reasoning is all there is"
+        );
+        assert!(build_info_of(&bytes).dropped_queries.is_empty());
+    }
 
     /// The determinism contract of issue #153: a card build carries a
     /// build-info section (timestamp, builder, params, measured costs) and two

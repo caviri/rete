@@ -468,6 +468,8 @@ carrying:
   algorithm, `--text-index`, `--materialize`/`--reason`,
   `--memory-budget-mb`, the section codec, and the card's `top_n` cap.
 - `query_costs` — measured cost figures for every starter query (below).
+- `dropped_queries` — starter queries this build generated, **ran**, and then
+  refused to ship (below). Absent on a healthy build.
 
 ### Why it sits outside the content hash
 
@@ -500,9 +502,80 @@ are recorded together but labelled apart:
   quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
   9 requests" survives being read elsewhere; "12 ms" does not.
 
-`--no-card-costs` skips the measurement. The memory-bounded external build and
-`rete merge` record timestamp/builder/params but no costs (their cards carry no
-derived starter queries to measure).
+The memory-bounded external build and `rete merge` record
+timestamp/builder/params but no costs (their cards carry no derived starter
+queries to measure).
+
+### A build does not ship a query it just measured at zero rows
+
+The run above is not only a costing. It is the moment a carded build stops
+*reasoning* about whether its starter queries answer and simply **observes** it
+— and where an observation exists it is ground truth, so it wins over every
+static rule that guessed. A query whose run comes back worthless is therefore
+removed from the card before the file is written, and the fact is recorded in
+`dropped_queries` (`id`, `why`, and a `contradicts_claim` flag). Two shapes are
+caught:
+
+- **zero rows** (or a false `ASK`, or nothing constructed) — the failure the
+  query library exists to prevent: *a starter query that answers nothing is
+  worse than no starter query, because the reader concludes the file is
+  broken*;
+- **a row that binds no variable at all** — the un-grouped aggregate over an
+  empty solution sequence. SPARQL returns exactly one row there no matter what,
+  so no row count can catch it, and the row carries no information: `sp-bbox`
+  on a file where no single subject holds both `wgs:lat` and `wgs:long` returns
+  one row of four unbound variables. That template's own note says the card
+  "cannot do better" than shipping it. The measurement can.
+
+**Dropped, not fatal.** Refusing to build is the right answer for *authored*
+content — an oversized `extra` bag is the publisher's text, and quietly
+rewriting it destroys an intent only they can restore. A generated starter
+query has no author: the generator wrote it moments earlier out of this
+dataset's own profile, and the build is the only party able to act. Failing
+would make a file unbuildable for a reason its publisher cannot fix, at the end
+of a build that may have taken hours, over a metadata nicety — and would push
+them onto `--no-card-costs`, which switches off the measurement rather than the
+problem. The generator already *drops* (rather than fails) when its static
+`provably_empty` hook fires; measurement is a better oracle for the same
+question and earns the same consequence. Loudness is bought without fatality:
+every drop is printed with its reason, and the build record keeps it after the
+terminal is gone.
+
+**What this does to the hash.** The card is inside the content hash — dropping
+a query is a change to what the file says about itself, so it is a new content
+hash, correctly. Two builds of the same input still hash identically (the
+measurement is deterministic), and a build with nothing to drop is byte-identical
+to one that never measured at all.
+
+**Measurement versus the static machinery.** They are not redundant. The
+generator's `NonEmpty` claims and `provably_empty` hooks act at *generation*
+time, before any measurement exists, and they carry every card built without a
+build record (external builds, `merge`, and every file published before build
+records). Where both speak, the measurement wins. Where they *disagree* — a
+template that declares its query cannot come back empty, and then it does —
+that is a defect in the rule, not a fact about the dataset: the build says so
+in as many words and sets `contradicts_claim` on the record so it is findable
+in a published file years later. A template that admitted up front it could not
+decide (`NonEmpty::Undecidable`, e.g. `top-dangling`, `sp-within`) sets no such
+flag: a measured zero there is news, not a broken promise.
+
+**What measurement cannot catch.** A vacuous `COUNT` binds — to `0`.
+`cmp-coverage` returning `total = 76990, have = 0` is one row of two bound
+variables: useless, and invisible to any rows-based gate. That class is closed
+by *derivation*, not measurement — the query is instantiated with
+`{{LABELED_CLASS}}`, the most populous class a `class_links` row proves carries
+the label predicate, so `have > 0` holds by construction. Deciding which
+binding of a query is the payload is a per-template judgement a build cannot
+make; picking the terms so the payload cannot be zero is a judgement the
+generator can.
+
+**`--no-card-costs` opts out of this too.** The flag exists to skip running the
+starter queries on a graph where that is expensive — and the run is what proves
+they answer, so skipping it leaves the card with whatever static reasoning
+produced, unchecked. The build says so on stderr. Note the consequence for
+reproducibility: the flag used to be hash-neutral, and on a dataset that *has* a
+useless starter query it no longer is (the measured build ships a smaller card).
+On every dataset whose queries all answer, it remains hash-neutral.
 
 ### The one-row smoke query
 

@@ -866,6 +866,40 @@ const TEMPLATES: &[Template] = &[
     },
 ];
 
+/// What the template behind an emitted query claims about its emptiness — the
+/// [`NonEmpty`] declaration, read back by id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Claim {
+    /// The template asserts the emitted query cannot come back empty
+    /// ([`NonEmpty::AnyGraph`] / [`Aggregate`](NonEmpty::Aggregate) /
+    /// [`Witnessed`](NonEmpty::Witnessed)).
+    CannotBeEmpty,
+    /// The template admits the card cannot decide it
+    /// ([`NonEmpty::Undecidable`]).
+    Undecidable,
+    /// No template of this revision owns the id — a curated query, or one an
+    /// older revision wrote. It claims nothing, so nothing is contradicted.
+    Unknown,
+}
+
+/// The [`Claim`] behind a shipped query id.
+///
+/// The build measures every starter query against the finished file
+/// (`commands::buildinfo`), which makes emptiness a **measured** fact rather
+/// than a derived one — and where measurement and this claim disagree, the
+/// claim is wrong. A query the table swears cannot be empty and that then
+/// answers nothing is a defect in the table, not a fact about the dataset, and
+/// `commands::build` says so out loud and records it. `Undecidable` is the
+/// opposite: the template said in advance it could not know, so a measured zero
+/// is expected news, not a contradiction.
+pub(crate) fn claim_of(id: &str) -> Claim {
+    match TEMPLATES.iter().find(|t| t.id == id) {
+        Some(t) if matches!(t.nonempty, NonEmpty::Undecidable(_)) => Claim::Undecidable,
+        Some(_) => Claim::CannotBeEmpty,
+        None => Claim::Unknown,
+    }
+}
+
 /// Where the dataset's statements live, decided from the card's own counts —
 /// so the emitted queries address the graph(s) that actually hold data instead
 /// of scanning a default graph the card itself records as empty.
@@ -1886,10 +1920,7 @@ mod tests {
     /// cannot quietly join it: adding [`NonEmpty::Undecidable`] to one means
     /// writing down the reason, in the source, next to the body.
     fn may_be_empty(id: &str) -> bool {
-        TEMPLATES
-            .iter()
-            .find(|t| t.id == id)
-            .is_some_and(|t| matches!(t.nonempty, NonEmpty::Undecidable(_)))
+        claim_of(id) == Claim::Undecidable
     }
 
     /// The property that would have caught the named-graph-only card bug — and
