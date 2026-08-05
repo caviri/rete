@@ -111,13 +111,17 @@ the dev image):
 | `aifdb.rete` | 96.9 MB | 9,144,988 | 3.19 GiB | 34.5× | 365 B | 133 s |
 | `cordis.rete` | 801 MB | 26,363,545 | **16.07 GiB** | 21.0× | 654 B | 247 s |
 
-**Rule of thumb: `repyramid` needs ~20× the file size in RAM** (17–35× over the
-measured range; the ratio tracks statement count more than bytes, so a
-literal-heavy graph sits at the low end of the ×-column and a triple-dense one at
-the high end). On a 48 GB machine that puts the ceiling at roughly **2 GB of
-`.rete`**. 22 of the 98 published catalog files are ≥ 1 GB, and the six largest —
-`crossref` 56.1 GB, `datacite` 48.6 GB, `opencitations` 33.4 GB, `wikiart`
-23.7 GB, `orcid` 16.3 GB, `gharchive` 15.9 GB — are 8× to 28× past it.
+**The variable that predicts RAM is the statement count, not the byte size.**
+`repyramid` costs **~350–700 bytes per statement** on ordinary graphs (the
+2,138 B/statement outlier is `geoadmin`, which is a few hundred thousand huge WKT
+literals). As a byte ratio that comes out anywhere between 17× and 35× the file,
+which is why the ×-column is the wrong thing to plan with.
+
+On a 48 GB machine: roughly **70–100 M statements**, or — for a typically dense
+`.rete` — about **2 GB of file**. 22 of the 98 published catalog files are
+≥ 1 GB, and the six largest (`crossref` 56.1 GB, `datacite` 48.6 GB,
+`opencitations` 33.4 GB, `wikiart` 23.7 GB, `orcid` 16.3 GB, `gharchive`
+15.9 GB) are far past it — `crossref` alone is 3.8 G statements.
 
 ### The streaming alternative that exists today
 
@@ -140,18 +144,23 @@ rete build staged.nq -o out.rete --card-file curated.json
   content hash covers everything except the unhashed build-info section, the two
   images are equal apart from the four bytes that say `repyramid` vs `build`.
 
-| file | `repyramid` peak | `export` peak | `build .nq` peak | staged `.nq` |
-|---|---:|---:|---:|---:|
-| `nkod.rete` (71 MB) | 1.18 GiB / 65 s | 3.0 MiB / 24 s | 949 MiB / 83 s | 679 MB |
-| `cordis.rete` (801 MB) | **16.07 GiB** / 247 s | 2.9 MiB / 260 s | **7.00 GiB** / 437 s | 6.88 GB |
+| file | statements | `repyramid` peak | `export` peak | `build .nq` peak | staged `.nq` |
+|---|---:|---:|---:|---:|---:|
+| `nkod` (71 MB) | 2.28 M | 1.18 GiB / 65 s | 3.0 MiB / 24 s | 949 MiB / 83 s | 679 MB (9.5×) |
+| `cordis` (801 MB) | 26.4 M | **16.07 GiB** / 247 s | 2.9 MiB / 260 s | **7.00 GiB** / 437 s | 6.88 GB (8.6×) |
+| `switzerland-fedlex` (1.04 GB) | 56.3 M | not attempted (≈ 36 GiB predicted) | — / 22 min | ≤ 19.1 GiB / 23 min | 14.7 GB (14.1×) |
 
-So the streaming path costs **~2.3× less RAM** and **~2.8× more wall clock**,
-and buys the difference with disk. On a 48 GB machine that moves the ceiling
-from roughly **2 GB** of `.rete` to roughly **5 GB** — better, not unbounded.
+The `build .nq` figure is **~285–340 bytes per statement** against `repyramid`'s
+~350–700 — call it **2× less RAM for ~2.5× the wall clock**, paid for in disk.
+(The fedlex row is a container cgroup peak, which includes the page cache from
+reading a 14.7 GB text file, so it is an upper bound, not a VmHWM like the rows
+above it.) On a 48 GB machine that moves the ceiling to roughly **150 M
+statements** — better, not unbounded.
 
 That is what `--mode stream` runs, and what `--mode auto` picks above
-`--stream-above-mb` (default 192). The staged N-Quads is roughly **9–10× the
-`.rete`**, so budget the disk before starting a batch.
+`--stream-above-mb` (default 192). The staged N-Quads runs **9–15× the `.rete`**,
+so budget the disk before starting a batch: `crossref` would stage well over a
+terabyte, which is a second reason it is out of reach.
 
 ### What does NOT work
 
@@ -173,9 +182,9 @@ path.
 
 ### The honest boundary
 
-**The big ones need engine work.** Above roughly 2 GB `repyramid` is out, and
-above the point where dictionary + id-triples + the output image stop fitting,
-so is the staged-N-Quads path. The missing piece is small and specific: the
+**The big ones need engine work.** Past ~80 M statements `repyramid` is out, and
+past ~150 M so is the staged-N-Quads path (and its disk bill goes with it). The
+missing piece is small and specific: the
 two-pass assembler already accepts *any* re-readable quad source, and a
 lazily-opened `.rete` **is** re-readable (`dump_each` streams it). A
 `repyramid --stream` that feeds `assemble_dataset_streaming_algo` straight from
@@ -256,10 +265,14 @@ that is the order `recard_batch.sh` will work them in.
 | `CURRENT` | 0 |
 
 So the alarming case is **rare and specific**: exactly one published file,
-`switzerland-fedlex` (1.04 GB, 66.4 M quads across 497,905 named graphs, empty
+`switzerland-fedlex` (1.04 GB, 56.3 M quads across 497,905 named graphs, empty
 default graph), ships 8 starter queries of which 6 scan the default graph and
 return zero rows. Everything else with data in named graphs is either fine or
 has no card at all. The other 97 are a metadata refresh, not a fire.
+
+It has since been re-carded here (`--mode stream`): identical N-Quads
+(`sha256 29556b87…`), all four curated fields carried, and **10 starter queries,
+all `GRAPH`-scoped, all returning rows** — `ng-list` 497,905, `ov-pred-list` 426.
 
 Two secondary findings worth knowing before planning the work:
 
@@ -289,6 +302,11 @@ Two secondary findings worth knowing before planning the work:
   check `rete export` round-trips are documented against; it does not compare
   non-graph sections (text index, PMTiles), which a re-card does not carry over
   unless the corresponding flag is passed.
+* **Curated prose is carried verbatim, stale figures and all.** `fedlex`'s
+  description says "66,392,663 quads" — the pre-dedup number its publisher wrote
+  by hand. The re-carded derived count is the correct 56,321,446, so the file now
+  contradicts itself in words. The tool cannot fix prose and must not silently
+  edit it; whoever publishes the re-card should update the description.
 * **A headline count can go DOWN, and that is a fix, not a loss.** An old card
   counted the raw pre-dedup input multiset; a re-card counts what the file
   actually stores. `lombardi` is the clean example: its published card says
