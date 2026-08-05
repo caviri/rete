@@ -38,18 +38,22 @@ export function esc(s) {
 }
 
 /**
- * Catalog descriptions are rich HTML; a Dataset Card's is Markdown
+ * A description is Markdown — the catalog's and a Dataset Card's alike
  * (docs/dataset-cards.md). Social text — og:description, the JSON-LD abstract,
- * the OG image's lead — has to be plain, so both are reduced away. Block
+ * the OG image's lead — has to be plain, so the markup is reduced away. Block
  * markers are stripped before the newline collapse, since `^` only means "start
  * of line" while the newlines are still there.
+ *
+ * Nothing here strips HTML, and that is deliberate. It used to, from when the
+ * catalog held raw HTML, and the tag pattern ate every angle-bracket phrase our
+ * authors actually write: `<< ?a rdf:predicate ?b >>` (RDF-star), `rete
+ * <command> --help`, `gbif.org/occurrence/<id>`, `?node <- edge -> ?node`. That
+ * silently corrupted 19 social descriptions. Angle brackets are prose now; a
+ * description that really did carry HTML would show it as text, which is
+ * exactly what the card viewer does with it.
  */
 export function plain(s, max = 0) {
   let out = String(s || "")
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/\r\n?/g, "\n")
     .replace(/^[ \t]*(?:```|~~~)[^\n]*$/gm, "")
     .replace(/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/gm, "")
