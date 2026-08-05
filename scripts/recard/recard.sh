@@ -51,6 +51,12 @@
 #                                  on disk. The receipt records the hash either
 #                                  way, so the proof stays checkable later.
 #   --keep                         keep intermediates (.nq, downloads)
+#   --reuse-staged                 in --mode stream, reuse an existing staged
+#                                  .nq instead of re-exporting. Staging a large
+#                                  file is the long half (gbif-birds: 43.4 GiB
+#                                  in 28 minutes), and a build that dies after
+#                                  it should not cost it twice. Only meaningful
+#                                  with --keep on the run that produced it.
 #   --force                        redo even if the receipt says it is done
 #   --no-verify-data               skip step 4 (NOT recommended; see README)
 #
@@ -88,6 +94,7 @@ TOOL_VERSION=2
 source=""; out=""; mode="auto"; stream_above_mb=192
 work="/work/dev/recard"; pyramid_algo="auto"; allow_empty=""; expect_sha=""
 keep=0; force=0; verify_data=1; text_index="auto"; allow_section_loss=0
+reuse_staged=0
 
 die() { echo "recard: $*" >&2; exit 1; }
 say() { echo "== $*"; }
@@ -105,9 +112,10 @@ while [ $# -gt 0 ]; do
     --text-index) text_index="$2"; shift 2 ;;
     --allow-section-loss) allow_section_loss=1; shift ;;
     --keep) keep=1; shift ;;
+    --reuse-staged) reuse_staged=1; shift ;;
     --force) force=1; shift ;;
     --no-verify-data) verify_data=0; shift ;;
-    -h|--help) sed -n '2,60p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,68p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -312,13 +320,20 @@ case "$mode" in
     # quad multiset. The file is needed because that assembler reads its input
     # twice — a pipe cannot be rewound.
     nq="$scratch/staged.nq"
-    say "      export -> $nq (needs roughly 10x the .rete in free disk)"
-    # Free disk is the thing that kills a large staged build hours in, so say
-    # what is available before spending the hours, not after.
-    say "      free on the scratch filesystem: $(df -Pk "$scratch" | awk 'NR==2{printf "%.1f GiB", $4/1048576}')"
-    "$RETE" export "$local_src" --format nq > "$nq"
-    staged_bytes=$(stat -c %s "$nq")
-    say "      staged $staged_bytes bytes ($(human_bytes "$staged_bytes"))"
+    if [ "$reuse_staged" = 1 ] && [ -s "$nq" ]; then
+      staged_bytes=$(stat -c %s "$nq")
+      say "      reusing the staged $nq ($(human_bytes "$staged_bytes")) — --reuse-staged"
+    else
+      # The staged size runs 9-15x the .rete on ordinary graphs and far more on a
+      # dense one (gbif-birds: 1.53 GB -> 43.38 GiB, 30x), so free disk is what
+      # kills a large staged build hours in. Say what is available before
+      # spending the hours, not after.
+      say "      export -> $nq (9-15x the .rete on ordinary graphs, 30x on a dense one)"
+      say "      free on the scratch filesystem: $(df -Pk "$scratch" | awk 'NR==2{printf "%.1f GiB", $4/1048576}')"
+      "$RETE" export "$local_src" --format nq > "$nq"
+      staged_bytes=$(stat -c %s "$nq")
+      say "      staged $staged_bytes bytes ($(human_bytes "$staged_bytes"))"
+    fi
     "$RETE" build "$nq" -o "$tmp_out" "${ti_flag[@]}" \
       --card-file "$scratch/curated.json" --pyramid-algo "$pyramid_algo"
     [ "$keep" = 1 ] || rm -f "$nq"

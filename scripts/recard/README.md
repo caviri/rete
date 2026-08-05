@@ -175,6 +175,23 @@ That is what `--mode stream` runs, and what `--mode auto` picks above
 so budget the disk before starting a batch: `crossref` would stage well over a
 terabyte, which is a second reason it is out of reach.
 
+**On a dense file, 9–15× is a serious underestimate.** `gbif-birds` is 1.53 GB
+for 333.8 M statements — 4.6 bytes per statement in `.rete`, against 139.5 bytes
+per line as N-Quads. It staged to **43.38 GiB, 30× the file**, in 28 minutes.
+The ratio to plan with is not a multiple of the file: it is
+`statements × ~140 B`, and the `.rete` compression ratio is exactly what makes
+that number unpredictable from the file size. `recard.sh` prints the free space
+on the scratch filesystem before it starts staging, and `--reuse-staged` lets a
+failed build retry without paying for the export twice.
+
+**And 333.8 M statements is past the staged path's ceiling on a 47 GiB machine.**
+The build ran for 80 minutes, wrote the card, and was **OOM-killed at
+VmHWM 43.75 GiB** — ~140 bytes per statement, *below* the 285–340 B/statement
+this table quotes, and still fatal because the file is that large. So the honest
+ceiling is roughly `available RAM / 140 B` ≈ **330 M statements at 47 GiB**, and
+`gbif-birds` sits on it. Anything larger needs the `repyramid --stream` engine
+work described above, not a bigger machine.
+
 ### What does NOT work
 
 `rete build --memory-budget-mb N` is the genuinely bounded builder, but it is
