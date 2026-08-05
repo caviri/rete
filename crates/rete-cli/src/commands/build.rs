@@ -388,21 +388,26 @@ pub(crate) fn build(
     card_args: CardArgs,
     no_card_costs: bool,
 ) -> anyhow::Result<()> {
-    // Fast low-RAM path: when every input is a FILE in a streaming-parseable
-    // syntax and no reasoning is requested, assemble by STREAMING the inputs
-    // twice instead of materializing every parsed quad. Peak RAM drops from the
-    // (huge, heavily duplicated) string-quad multiset to just the dictionary +
-    // id-triples + index — the difference between a ~44 GB and a ~6 GB build on
-    // an 88 M-triple graph. Output is byte-identical to the in-memory path.
-    // `--materialize` / `--reason` need the whole quad set resident (to run the
-    // reasoner) and stdin can't be re-read, so those fall through to the
-    // in-memory path below. RDF/XML is excluded on purpose: its reader parser
-    // holds document state that makes a second pass no cheaper than the text one.
+    // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
+    // reasoning is requested, assemble by STREAMING the inputs twice instead of
+    // materializing every parsed quad. Peak RAM drops from the (huge, heavily
+    // duplicated) string-quad multiset to just the dictionary + id-triples +
+    // index — the difference between a ~44 GB and a ~6 GB build on an 88 M-triple
+    // graph. Output is byte-identical to the in-memory path. `--materialize` /
+    // `--reason` need the whole quad set resident (to run the reasoner) and stdin
+    // can't be re-read, so those fall through to the in-memory path below.
+    //
+    // **Turtle and TriG cannot take this path, even though they now stream.**
+    // The assembler parses the input TWICE — once to observe every term, once to
+    // encode — and oxttl labels anonymous blank nodes (`[ … ]`, collections) with
+    // a fresh random id on each parse. The second pass would therefore present
+    // terms the first pass never observed. The external build reads its input
+    // exactly once, so it has no such constraint and does accept them.
     let streamable = !materialize
         && !reason
         && inputs
             .iter()
-            .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq" | "ttl" | "trig"));
+            .all(|i| i != "-" && matches!(input_format(i, format), "nt" | "nq"));
     if streamable {
         let curated = if card_args.requested() {
             Some(card::load_curated(&card_args)?)
