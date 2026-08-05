@@ -225,6 +225,44 @@ fn external_build_rejects_rdfxml_with_a_clear_error() {
         .stderr(predicates::str::contains("rdfxml"));
 }
 
+/// Turtle with **anonymous blank nodes** — `[ … ]` and collections — must build.
+///
+/// This is the trap the streaming work has to stay clear of: oxttl labels an
+/// anonymous blank node with a fresh random id on every parse, so any path that
+/// parses the input more than once presents the encoder terms the observing pass
+/// never saw. The two-pass assembler does exactly that, which is why `.ttl` files
+/// keep taking the whole-text path; the external build reads once and is safe.
+/// Both must produce the graph, and the same number of statements.
+#[test]
+fn turtle_with_anonymous_blank_nodes_builds_on_both_paths() {
+    let f = fixture();
+    let ttl = concat!(
+        "@prefix ex: <http://ex/> .\n",
+        "ex:a ex:p [ ex:q \"1\" ] .\n",
+        "ex:b ex:list ( \"x\" \"y\" ) .\n",
+    );
+    let src = f.write("bn.ttl", ttl);
+    let out_plain = f.path("bn.rete");
+    let out_ext = f.path("bn-ext.rete");
+
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--no-pyramid", "-o"])
+        .arg(&out_plain)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("7 triples"));
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--memory-budget-mb", "64", "-o"])
+        .arg(&out_ext)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("7 triples"));
+}
+
 /// `estimate` reads the same inputs the build does — otherwise the "will this
 /// fit?" question cannot be asked about the dumps that need asking.
 #[test]
