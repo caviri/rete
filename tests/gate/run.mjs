@@ -105,6 +105,27 @@ function g0() {
     record("G0", "social previews (share pages + og:image)", false,
       String(e.stderr || e.stdout || e).slice(-200));
   }
+  // The Markdown emphasis rule has six call sites across five files — app.js
+  // holds three, and two of the files are generated. Nothing can import it into
+  // all of them, so assert the copies are byte-identical and that the shipped
+  // descriptions still render right: an un-flanked rule silently ate literal
+  // asterisks out of six live cards.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_md_emphasis.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record(
+      "G0",
+      "markdown emphasis rule (identical copies + flanking)",
+      ok,
+      ok ? `${verdict.copies} copies, ${verdict.spans} spans over ${verdict.strings} strings` : out.slice(-240),
+    );
+  } catch (e) {
+    record("G0", "markdown emphasis rule (identical copies + flanking)", false,
+      String(e.stderr || e.stdout || e).slice(-240));
+  }
   for (const f of ["web/playground-src/app.js", "web/playground-src/catalog.js", "web/playground-src/versions.js"]) {
     try { execSync(`node --check ${ROOT}/${f}`, { stdio: "pipe" }); record("G0", `parse ${f}`, true); }
     catch (e) { record("G0", `parse ${f}`, false, String(e.stderr || e).slice(0, 120)); }
