@@ -488,7 +488,7 @@ query. Reports bytes fetched + range count. The `--format` projections (and
 rete card-url https://host/data.rete --json
 ```
 
-### `rete card-audit <path|url> [--json]`
+### `rete card-audit <path|url> [--json] [--measure] [--only IDS] [--max-mb N] [--write-costs] [--allow-empty]`
 Do the starter queries a card **already ships** still answer on the file that
 carries them? A published `.rete` cannot be re-carded for free, so this decides
 each query's fate from the card's own profile — the CARD tier again, so a
@@ -510,6 +510,89 @@ URL) or a card JSON document from `rete card --json` / `rete card-url --json`.
 ```sh
 rete card-audit https://host/data.rete
 rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
+```
+
+#### `--measure`: run them instead of reasoning about them
+
+The static pass has a hard ceiling. Some templates are undecidable **by
+construction** — nothing in a card ties a subject to a predicate, so `top-reach`
+cannot be settled from one, and a card does not record which objects are also
+subjects, so `top-dangling` cannot either. No better card-only reasoning closes
+that; a run does, and records what the answer cost.
+
+`--measure` runs each starter query **cold** — a fresh lazy open, logical range
+reads, no block cache — and reports rows, bytes, requests and a reference
+timing. It is the same `measure_query` a `rete build` uses to fill in its
+`query_costs`, so when the file already carries a build record the command
+checks itself against it and says whether the two agree (`= build record` /
+`!= build record`). On `switzerland-fedlex.rete` — the one published file that
+has a record — all ten queries reproduce it exactly.
+
+Each row shows the card's verdict and the run's outcome side by side; they are
+never merged, because one is what a card can prove and the other is what the
+file did.
+
+```
+card says    run says   query             rows               bytes      req           ms
+answers      answers    ov-triples           1 row(s)       2800822 B     74 req      294 ms
+suspect      empty      lb-labels            0 row(s)        228126 B     68 req       12 ms
+undecidable  answers    top-dangling       100 row(s)       4468038 B    118 req      592 ms
+```
+
+**Local or remote.** Point it at a path or at an `http(s)://` URL. `bytes` and
+`requests` are the same quantity either way — no block cache is in the stack, so
+the range sequence is a function of layout and query, not of transport — but
+only the remote run actually pays for them. The output always names which it
+was, in the text header and in the JSON `measurement.transport`, because a cost
+figure without its transport is not a cost figure.
+
+**It is a download.** `--only ov-triples,lb-labels` measures a subset;
+`--max-mb 8` abandons a query once it has asked for more than that, and reports
+the abandonment with the bytes it spent — "costs more than 8 MB" is itself an
+answer. Both matter: eight of `switzerland-fedlex`'s ten starter queries read
+~1.02 GB each, so measuring that card remotely without a leash is an 8 GB
+download.
+
+#### `--write-costs`: make the measurement durable
+
+Records the run in the file's build-info section, so the next reader gets the
+figures from the CARD tier (two range requests) instead of re-measuring. Local
+files only.
+
+The section sits **outside** the blake3 content hash — that is why two builds of
+identical data hash equal — so the file keeps its identity: same checksum, same
+`rete verify`, byte-identical N-Quads. It sits **near the front**, though, right
+after the card, so making room for it shifts everything behind it and the file
+is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
+by rename, but it is still one full pass of I/O and — for a published file — a
+full re-upload.
+
+Where that is worth it: when the alternative is a re-card. A re-card rewrites
+the file too, and additionally costs 17–35× the file in RAM (`repyramid`) or
+9–15× in staged N-Quads on disk (`--mode stream`, see `scripts/recard`), which
+puts anything past ~150 M statements out of reach. Attaching costs is one pass
+with no staging.
+
+**The RAM goes into the measurement, not the rewrite**, and it is not free
+either: the engine evaluates eagerly, so a starter query with a big result
+materializes it. `switzerland-fedlex` (1.04 GB, 56.3 M quads) took 381 s and
+peaked at **14.2 GiB** for `--measure --write-costs` — `ng-list` alone, which
+returns 497,905 rows, accounts for 3.2 GiB of that; the rewrite of the 1.04 GB
+file that followed is a bounded-buffer copy. Against `repyramid`'s ≈36 GiB
+prediction and the staged path's ≤19.1 GiB for the same file, it is the cheaper
+route, but budget for the queries, not for the file.
+
+So: if the audit says the queries are stale or broken, re-card — same rewrite,
+more value. If the queries answer and the only gap is the missing record, write
+the costs. The command enforces that split: it refuses when a query measured
+zero rows (`--allow-empty` overrides, for `top-dangling` on a fully-described
+graph), when a run did not finish, and when `--only` measured a subset that
+would be stored as if it were the whole card.
+
+```sh
+rete card-audit data.rete --measure --json | jq '.findings[] | select(.observed.outcome=="empty")'
+rete card-audit https://host/data.rete --measure --only ov-triples --max-mb 8
+rete card-audit data.rete --measure --write-costs
 ```
 
 ### `rete summary-url <url>`

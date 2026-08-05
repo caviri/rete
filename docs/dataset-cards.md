@@ -577,6 +577,37 @@ reproducibility: the flag used to be hash-neutral, and on a dataset that *has* a
 useless starter query it no longer is (the measured build ships a smaller card).
 On every dataset whose queries all answer, it remains hash-neutral.
 
+### Measuring a file that already exists
+
+Almost nothing published carries this record. A survey of 110 cards found
+**one** file with a build record — every other `query_costs` is missing, so the
+field that would say "this starter query returns N rows and costs M bytes in K
+range requests" is absent exactly where a reader would want it.
+
+`rete card-audit <path|url> --measure` fills that gap without rebuilding
+anything: it runs the starter queries the card already ships and reports the
+same three numbers, through the **same** `measure_query` the build uses. That
+sharing is the point — a second measurement loop would drift, and then a
+re-measured figure could not be compared against a recorded one, which is the
+only thing anyone wants to do with it. Where a file *does* carry a record, the
+command checks itself against it and says whether they agree.
+
+Two consequences of the numbers being portable:
+
+- a **local** measurement and a **remote** one produce the same `bytes` and
+  `requests` (no block cache is in the stack, so the range sequence depends on
+  layout and query, not on transport) — only the remote one actually pays. The
+  output names which it was regardless;
+- the measurement can be **written back** (`--write-costs`). Build info is
+  outside the content hash, so the file keeps its identity — same checksum,
+  same `rete verify`, byte-identical N-Quads — but the section is near the
+  front, so the file is rewritten end to end to make room. The rewrite itself
+  is a bounded-buffer copy; the RAM goes into *running the queries* (eager
+  evaluation, so a 497,905-row starter query materializes 497,905 rows).
+  `switzerland-fedlex` measured and rewrote in 381 s at a 14.2 GiB peak,
+  against ≈36 GiB for a `repyramid` re-card of the same file. See
+  `rete card-audit` in the [CLI reference](cli.md).
+
 ### The one-row smoke query
 
 Every generated library now begins with `ov-one-row`: *return exactly one

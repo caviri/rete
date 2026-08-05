@@ -835,6 +835,34 @@ produced, unchecked. The build says so on stderr. Note the consequence for
 reproducibility: the flag used to be hash-neutral, and on a dataset that <em>has</em> a
 useless starter query it no longer is (the measured build ships a smaller card).
 On every dataset whose queries all answer, it remains hash-neutral.</p>
+<h3>Measuring a file that already exists</h3>
+<p>Almost nothing published carries this record. A survey of 110 cards found
+<strong>one</strong> file with a build record — every other <code>query_costs</code> is missing, so the
+field that would say "this starter query returns N rows and costs M bytes in K
+range requests" is absent exactly where a reader would want it.</p>
+<p><code>rete card-audit &lt;path|url&gt; --measure</code> fills that gap without rebuilding
+anything: it runs the starter queries the card already ships and reports the
+same three numbers, through the <strong>same</strong> <code>measure_query</code> the build uses. That
+sharing is the point — a second measurement loop would drift, and then a
+re-measured figure could not be compared against a recorded one, which is the
+only thing anyone wants to do with it. Where a file <em>does</em> carry a record, the
+command checks itself against it and says whether they agree.</p>
+<p>Two consequences of the numbers being portable:</p>
+<ul>
+<li>a <strong>local</strong> measurement and a <strong>remote</strong> one produce the same <code>bytes</code> and
+<code>requests</code> (no block cache is in the stack, so the range sequence depends on
+layout and query, not on transport) — only the remote one actually pays. The
+output names which it was regardless;</li>
+<li>the measurement can be <strong>written back</strong> (<code>--write-costs</code>). Build info is
+outside the content hash, so the file keeps its identity — same checksum,
+same <code>rete verify</code>, byte-identical N-Quads — but the section is near the
+front, so the file is rewritten end to end to make room. The rewrite itself
+is a bounded-buffer copy; the RAM goes into <em>running the queries</em> (eager
+evaluation, so a 497,905-row starter query materializes 497,905 rows).
+<code>switzerland-fedlex</code> measured and rewrote in 381 s at a 14.2 GiB peak,
+against ≈36 GiB for a <code>repyramid</code> re-card of the same file. See
+<code>rete card-audit</code> in the <a href="cli.html">CLI reference</a>.</li>
+</ul>
 <h3>The one-row smoke query</h3>
 <p>Every generated library now begins with <code>ov-one-row</code>: <em>return exactly one
 statement</em>. It is the unambiguous "did this file open and answer?" probe — the

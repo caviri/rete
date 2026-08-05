@@ -1605,10 +1605,24 @@ pub(crate) fn card_cmd(
 /// Input is a `.rete` file (local path or `http(s)://` URL) or a card JSON
 /// document as written by `rete card --json` / `rete card-url --json`, so a
 /// survey that already fetched the cards need not fetch them twice.
-pub(crate) fn card_audit_cmd(path: &str, json: bool) -> anyhow::Result<()> {
-    let card = read_card_for_audit(path)?;
+///
+/// `--measure` goes further and **runs** them. That is a different kind of
+/// answer: the static pass leaves whole templates undecidable by construction
+/// (nothing in a card ties a subject to a predicate, so `top-reach` cannot be
+/// decided from one), and no amount of card-only reasoning closes that. A run
+/// closes it, and records what the answer cost.
+pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<()> {
+    if !opts.measure && (!opts.only.is_empty() || opts.max_mb > 0.0) {
+        // Silently ignoring them would report a static audit under a flag that
+        // says a run was bounded.
+        anyhow::bail!("--only and --max-mb bound a measurement; add --measure");
+    }
+    let (card, build) = read_card_for_audit(path)?;
     let Some(card) = card else {
-        if json {
+        if opts.measure || opts.write_costs {
+            anyhow::bail!("{path}: no dataset card, so there are no starter queries to measure");
+        }
+        if opts.json {
             println!(
                 "{{\"path\":{},\"card\":false,\"findings\":[]}}",
                 quote(path)
@@ -1618,8 +1632,29 @@ pub(crate) fn card_audit_cmd(path: &str, json: bool) -> anyhow::Result<()> {
         }
         return Ok(());
     };
-    let findings = super::queries::audit(&card);
-    if json {
+    let mut findings = super::queries::audit(&card);
+    let run = if opts.measure || opts.write_costs {
+        Some(measure_card(
+            path,
+            &card,
+            build.as_ref(),
+            &mut findings,
+            opts,
+        )?)
+    } else {
+        None
+    };
+    if opts.write_costs {
+        let run = run.as_ref().expect("--write-costs implies a measurement");
+        let bytes = write_costs(path, &card, run, opts)?;
+        eprintln!(
+            "wrote {} query cost(s) into {path} — {} bytes, content hash unchanged",
+            run.costs.len(),
+            bytes
+        );
+    }
+
+    if opts.json {
         let doc = serde_json::json!({
             "path": path,
             "card": true,
@@ -1629,22 +1664,321 @@ pub(crate) fn card_audit_cmd(path: &str, json: bool) -> anyhow::Result<()> {
             "named_graphs": card.named_graph_count,
             "queries": card.queries.len(),
             "truncated": card.truncated,
+            "measurement": run.as_ref().map(|r| serde_json::json!({
+                "transport": r.transport,
+                "engine": crate::commands::buildinfo::builder_version(),
+                "queries_run": r.costs.len(),
+                "total_bytes": r.costs.iter().map(|c| c.bytes).sum::<u64>(),
+                "total_requests": r.costs.iter().map(|c| c.requests).sum::<u64>(),
+                "written": opts.write_costs,
+                "note": COST_NOTE,
+            })),
             "findings": findings,
         });
         println!("{}", serde_json::to_string(&doc)?);
         return Ok(());
     }
+
     println!("{}  ({} starter queries)", path, card.queries.len());
-    for f in &findings {
+    if let Some(run) = &run {
+        // The transport goes ABOVE the numbers, not in a footnote: a byte
+        // figure without the thing that fetched the bytes is not a cost.
+        println!("  measured over: {}", run.transport);
+        println!("  {COST_NOTE}");
         println!(
-            "  {:<12} {:<14} {:<11} {}",
-            f.verdict.as_str(),
-            f.id,
-            f.revision,
-            f.why
+            "  {:<12} {:<10} {:<14} {:>7}       {:>13}   {:>6}     {:>8}",
+            "card says", "run says", "query", "rows", "bytes", "req", "ms"
+        );
+    }
+    for f in &findings {
+        match &f.observed {
+            None => println!(
+                "  {:<12} {:<14} {:<11} {}",
+                f.verdict.as_str(),
+                f.id,
+                f.revision,
+                f.why
+            ),
+            Some(o) => {
+                let mut note = String::new();
+                if let Some(r) = &o.recorded {
+                    note = if r.agrees {
+                        "  = build record".to_string()
+                    } else {
+                        format!(
+                            "  != build record ({} B, {} req, {} rows)",
+                            r.bytes, r.requests, r.rows
+                        )
+                    };
+                }
+                if o.contradicts(f.verdict) {
+                    note.push_str("  <- the run disagrees with the card");
+                }
+                println!(
+                    "  {:<12} {:<10} {:<14} {:>7} row(s) {:>13} B {:>6} req {:>8} ms{note}",
+                    f.verdict.as_str(),
+                    o.outcome,
+                    f.id,
+                    o.rows,
+                    o.bytes,
+                    o.requests,
+                    o.debug_ms,
+                );
+                if let Some(e) = &o.error {
+                    println!("  {:<12} {:<10} {:<14} {e}", "", "", "");
+                }
+            }
+        }
+    }
+    if let Some(run) = &run {
+        println!(
+            "  == {} quer{} run, {} bytes in {} range request(s){}",
+            run.costs.len(),
+            if run.costs.len() == 1 { "y" } else { "ies" },
+            run.costs.iter().map(|c| c.bytes).sum::<u64>(),
+            run.costs.iter().map(|c| c.requests).sum::<u64>(),
+            match findings
+                .iter()
+                .filter_map(|f| f.observed.as_ref()?.recorded.as_ref())
+                .filter(|r| !r.agrees)
+                .count()
+            {
+                0 => String::new(),
+                n => format!("  — {n} disagree with the file's own build record"),
+            }
         );
     }
     Ok(())
+}
+
+/// What `rete card-audit` was asked to do beyond reading the card.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AuditOptions {
+    pub json: bool,
+    /// Run the queries instead of only reasoning about them.
+    pub measure: bool,
+    /// Measure only these ids — the way to spend 3 MB instead of 8 GB.
+    pub only: Vec<String>,
+    /// Give up on a query once it has asked for this many MB (0 = no cap).
+    pub max_mb: f64,
+    /// Record the measurement in the file's build-info section.
+    pub write_costs: bool,
+    /// Write even though a query measured zero rows.
+    pub allow_empty: bool,
+}
+
+use crate::commands::buildinfo::COST_NOTE;
+
+/// One measurement run: what it went through, and what each query cost.
+pub(crate) struct CostRun {
+    pub transport: String,
+    pub costs: Vec<crate::commands::buildinfo::QueryCost>,
+    /// True when only a subset of the card's queries was run (`--only`).
+    pub partial: bool,
+    /// Ids whose run did not finish — a byte budget bit, or the query failed.
+    pub failed: Vec<String>,
+}
+
+/// Run the card's starter queries against the file that carries them and hang
+/// each result on its finding.
+///
+/// The measurement itself is [`crate::commands::buildinfo::measure_query`] —
+/// the same function `rete build` uses to fill in the build record. That is
+/// deliberate and load-bearing: a re-measurement that used its own loop could
+/// not be compared against a recorded one, and comparing them is the entire
+/// point of re-measuring a published file.
+fn measure_card(
+    path: &str,
+    card: &DatasetCard,
+    build: Option<&super::buildinfo::BuildInfo>,
+    findings: &mut [crate::commands::queries::Finding],
+    opts: &AuditOptions,
+) -> anyhow::Result<CostRun> {
+    use crate::commands::buildinfo::{measure_query, BudgetReader};
+    use crate::commands::range_source::{is_url, LocalRangeReader};
+
+    let remote = is_url(path);
+    if !remote && !path.ends_with(".rete") {
+        anyhow::bail!(
+            "{path}: --measure needs the .rete file itself (a card document has no data to run \
+             against) — pass the local path or the http(s):// URL"
+        );
+    }
+    // A mistyped id must not quietly narrow the run: the report would then
+    // describe fewer queries than the caller asked about, and say nothing.
+    let unknown: Vec<&str> = opts
+        .only
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !card.queries.iter().any(|q| &q.id == id))
+        .collect();
+    if !unknown.is_empty() {
+        anyhow::bail!(
+            "no starter query matches --only {} (the card ships: {})",
+            unknown.join(", "),
+            card.queries
+                .iter()
+                .map(|q| q.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    let wanted: Vec<&ExampleQuery> = card
+        .queries
+        .iter()
+        .filter(|q| opts.only.is_empty() || opts.only.iter().any(|id| id == &q.id))
+        .collect();
+    if wanted.is_empty() {
+        anyhow::bail!("this card ships no starter queries to measure");
+    }
+    let budget = if opts.max_mb > 0.0 {
+        (opts.max_mb * (1u64 << 20) as f64) as u64
+    } else {
+        u64::MAX
+    };
+
+    // One source reader for the whole run: neither backing store caches
+    // anything (no block cache is in the stack, by design — see the transport
+    // string), so sharing it costs nothing and saves one HTTP HEAD per query.
+    // The per-query CountingReader is what makes each run cold.
+    let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> = if remote {
+        std::sync::Arc::new(crate::http::HttpRangeReader::open(path)?)
+    } else {
+        std::sync::Arc::new(LocalRangeReader::open(path)?)
+    };
+    let transport = format!(
+        "{}; cold lazy open per query; logical range reads, no block cache; reader fan-out {}",
+        if remote {
+            format!("HTTP range requests to {path}")
+        } else {
+            format!("local file {path}")
+        },
+        source.concurrency()
+    );
+
+    // The file's own build record, if it has one: the known answer this run
+    // gets to check itself against, query by query.
+    let recorded = |id: &str| -> Option<&crate::commands::buildinfo::QueryCost> {
+        build?
+            .query_costs
+            .as_ref()?
+            .queries
+            .iter()
+            .find(|c| c.id == id)
+    };
+
+    let mut costs = Vec::with_capacity(wanted.len());
+    let mut failed = Vec::new();
+    for q in &wanted {
+        let src = source.clone();
+        let m = measure_query(move || Ok(BudgetReader::new(src, budget)), q)?;
+        if m.error.is_some() {
+            failed.push(q.id.clone());
+        }
+        let outcome = match (&m.error, m.cost.rows, m.vacuous) {
+            (Some(_), _, _) => "error",
+            (None, 0, _) => "empty",
+            (None, _, true) => "vacuous",
+            _ => "answers",
+        };
+        if let Some(f) = findings.iter_mut().find(|f| f.id == q.id) {
+            f.observed = Some(crate::commands::queries::Observation {
+                outcome,
+                rows: m.cost.rows,
+                bytes: m.cost.bytes,
+                requests: m.cost.requests,
+                debug_ms: m.cost.debug_ms,
+                error: m.error.clone(),
+                recorded: recorded(&q.id).map(|r| crate::commands::queries::Recorded {
+                    bytes: r.bytes,
+                    requests: r.requests,
+                    rows: r.rows,
+                    agrees: r.bytes == m.cost.bytes
+                        && r.requests == m.cost.requests
+                        && r.rows == m.cost.rows,
+                }),
+            });
+        }
+        costs.push(m.cost);
+    }
+    Ok(CostRun {
+        transport,
+        costs,
+        partial: wanted.len() != card.queries.len(),
+        failed,
+    })
+}
+
+/// Record a measurement in the file's build-info section.
+///
+/// Two guards, both about not making a file worse:
+///
+/// * a **partial** run would store a cost list a reader reads as complete;
+/// * a query that measured **zero rows** does not need a cost, it needs a
+///   re-card. Recording "this greeting query costs 1 GB and answers nothing"
+///   into a published file, at the price of rewriting it, is work spent making
+///   the wrong thing durable. `--allow-empty` is there for the templates that
+///   are honestly empty (`top-dangling` on a fully-described graph).
+fn write_costs(
+    path: &str,
+    card: &DatasetCard,
+    run: &CostRun,
+    opts: &AuditOptions,
+) -> anyhow::Result<u64> {
+    use crate::commands::buildinfo::{
+        cost_context, write_build_info_streaming, BuildInfo, QueryCosts, BUILD_INFO_SCHEMA,
+    };
+    use crate::commands::range_source::is_url;
+
+    if is_url(path) {
+        anyhow::bail!("--write-costs needs a local file; {path} is a URL");
+    }
+    if run.partial {
+        anyhow::bail!(
+            "--write-costs refuses a partial run: --only measured {} of the card's {} starter \
+             queries, and a stored cost list reads as complete",
+            run.costs.len(),
+            card.queries.len()
+        );
+    }
+    if let Some(bad) = run.failed.first() {
+        anyhow::bail!(
+            "refusing to write: {} of the starter queries did not finish ({bad}) — a cost record \
+             is only worth storing when every figure in it is a completed run",
+            run.failed.len()
+        );
+    }
+    let empty: Vec<&str> = run
+        .costs
+        .iter()
+        .filter(|c| c.rows == 0)
+        .map(|c| c.id.as_str())
+        .collect();
+    if !empty.is_empty() && !opts.allow_empty {
+        anyhow::bail!(
+            "refusing to write: {} starter quer{} returned zero rows ({}). A file whose greeting \
+             queries answer nothing needs a re-card (scripts/recard), which rewrites it anyway \
+             and fixes the queries too — pass --allow-empty if the emptiness is expected",
+            empty.len(),
+            if empty.len() == 1 { "y" } else { "ies" },
+            empty.join(", ")
+        );
+    }
+
+    // Carry whatever build record the file already has; only the costs change.
+    // A file built before build records existed gets a record whose honest
+    // content is *just* the costs — no invented timestamp, no invented builder,
+    // because this tool did not build it.
+    let reader = crate::commands::range_source::LocalRangeReader::open(path)?;
+    let mut info = load_card_and_build_ranged(&reader)?.2.unwrap_or(BuildInfo {
+        schema: BUILD_INFO_SCHEMA,
+        ..Default::default()
+    });
+    info.query_costs = Some(QueryCosts {
+        context: cost_context(&run.transport),
+        queries: run.costs.clone(),
+    });
+    write_build_info_streaming(std::path::Path::new(path), &info.to_json_bytes())
 }
 
 /// JSON-quote a string for the one hand-built object above.
@@ -1652,26 +1986,30 @@ fn quote(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-/// Read a card from a `.rete` (local or remote, CARD tier only) or from a card
-/// JSON document. `(no dataset card)` — what the CLI prints for a cardless
-/// file — is accepted and reported as no card, so a survey's saved output can
-/// be piped straight back in.
-fn read_card_for_audit(path: &str) -> anyhow::Result<Option<DatasetCard>> {
+/// Read a card — and the build record that sits in the same coalesced range —
+/// from a `.rete` (local or remote, CARD tier only), or a card from a card JSON
+/// document. `(no dataset card)` — what the CLI prints for a cardless file — is
+/// accepted and reported as no card, so a survey's saved output can be piped
+/// straight back in. A card document carries no build record; that is what
+/// makes `--measure` need the file.
+type CardAndBuild = (Option<DatasetCard>, Option<super::buildinfo::BuildInfo>);
+
+fn read_card_for_audit(path: &str) -> anyhow::Result<CardAndBuild> {
     if path.starts_with("http://") || path.starts_with("https://") {
         let reader = rete_core::CountingReader::new(
             crate::commands::range_source::RangedSourceReader::open(path)?,
         );
-        let card = load_card_and_build_ranged(&reader).map(|(_, c, _)| c);
+        let out = load_card_and_build_ranged(&reader).map(|(_, c, b)| (c, b));
         eprintln!(
             "fetched {} bytes in {} range request(s)",
             reader.bytes_read(),
             reader.requests()
         );
-        return card;
+        return out;
     }
     if path.ends_with(".rete") {
         let reader = crate::commands::range_source::LocalRangeReader::open(path)?;
-        return load_card_and_build_ranged(&reader).map(|(_, c, _)| c);
+        return load_card_and_build_ranged(&reader).map(|(_, c, b)| (c, b));
     }
     let text = if path == "-" {
         std::io::read_to_string(std::io::stdin())?
@@ -1679,11 +2017,11 @@ fn read_card_for_audit(path: &str) -> anyhow::Result<Option<DatasetCard>> {
         std::fs::read_to_string(path)?
     };
     let Some(start) = text.find('{') else {
-        return Ok(None);
+        return Ok((None, None));
     };
-    Ok(Some(serde_json::from_str(&text[start..]).map_err(|e| {
-        anyhow::anyhow!("{path}: not a dataset card document: {e}")
-    })?))
+    let card = serde_json::from_str(&text[start..])
+        .map_err(|e| anyhow::anyhow!("{path}: not a dataset card document: {e}"))?;
+    Ok((Some(card), None))
 }
 
 #[cfg(test)]

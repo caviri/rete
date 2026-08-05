@@ -77,6 +77,49 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **`rete card-audit --measure` runs the starter queries instead of reasoning
+  about them, and can write what they cost back into the file.**
+  - The static audit has a ceiling it cannot raise: nothing in a card ties a
+    subject to a predicate, and nothing records which objects are also
+    subjects, so `top-reach` and `top-dangling` are undecidable **by
+    construction** — 79 of 96 audited files were left undecided on `top-reach`
+    alone. `--measure` opens the file cold, runs each shipped query, and
+    reports rows, bytes and range requests beside the card's verdict. The two
+    are never merged: one is what a card can prove, the other is what the file
+    did.
+  - It is the **same measurement a build records** (`measure_query`, shared
+    with `rete build`), not a second copy of it. That is what makes the figures
+    comparable: where a file already carries a build record, the command checks
+    itself against it and prints `= build record` / `!= build record`. On
+    `switzerland-fedlex.rete`, the one published file that has a record, all
+    ten queries reproduce it byte-for-byte and request-for-request.
+  - **Local or remote, and the output says which.** `bytes`/`requests` are the
+    same quantity through a file handle and through HTTP — no block cache is in
+    the stack, so the range sequence follows layout and query, not transport —
+    but only the remote run pays for them. The transport is printed above the
+    table and stored in `measurement.transport`.
+  - It is a download, so it has a leash: `--only <ids>` measures a subset and
+    `--max-mb N` abandons a query that asks for more, reporting the
+    abandonment with the bytes it spent.
+  - **`--write-costs`** records the run in the build-info section, so the next
+    reader gets the figures from the CARD tier (two range requests) instead of
+    re-measuring. The section is outside the content hash, so the file keeps
+    its identity — same checksum, `rete verify` still passes, N-Quads
+    byte-identical — but it sits right after the card, so the file is rewritten
+    end to end to make room. Proved on published files: `tree-city-inventory`
+    (25 MB) in 11 s including the measurement, +2,007 bytes, same `079f5d5f…`
+    checksum, 569,694,820 bytes of sorted N-Quads identical; `switzerland-fedlex`
+    (1.04 GB) in 381 s, +32 bytes, same `b2ddf84b…` checksum. The rewrite is a
+    bounded-buffer copy — the RAM goes into *running* the queries (eager
+    evaluation: `ng-list`'s 497,905 rows alone peak at 3.2 GiB, the whole fedlex
+    run at 14.2 GiB), which is still under a `repyramid` re-card's ≈36 GiB
+    prediction for that file and needs no staged N-Quads at all. It refuses when
+    a query measured zero rows (that file needs a re-card, which rewrites it
+    anyway and fixes the queries too), when a run did not finish, and when
+    `--only` measured a subset.
+  - `rete_core::plan_build_info` exposes the splice arithmetic the in-memory
+    `attach_build_info` already used, so the streaming rewriter derives its
+    header from the same rule rather than a second copy of it.
 - **A card's `description` is Markdown, and can be as long as a README section.**
   - The 🏷 Card viewer renders **headings, bulleted and numbered lists (nested by
     indentation), block quotes, horizontal rules, fenced code and links** — the

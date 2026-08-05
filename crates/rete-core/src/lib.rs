@@ -79,8 +79,9 @@ pub mod varint;
 /// Stable file-format, reader, and in-memory build API.
 pub mod format {
     pub use crate::file::{
-        attach_build_info, read_build_info, replace_metadata, verify, ByteRange, FileError,
-        LayoutSegment, Rete, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
+        attach_build_info, plan_build_info, read_build_info, replace_metadata, verify,
+        BuildInfoPlan, ByteRange, FileError, LayoutSegment, Rete, TermTriple, TripleProvenance,
+        CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
     };
     pub use crate::header::{
         Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
@@ -162,11 +163,11 @@ pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]
 pub use file::{
     attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with,
-    read_build_info, read_card_and_build_info_ranged, read_metadata_ranged,
+    plan_build_info, read_build_info, read_card_and_build_info_ranged, read_metadata_ranged,
     read_schema_coherence_ranged, read_schema_summary_ranged, replace_metadata, schema_classes,
     schema_coherence, schema_summary, verify, write_dataset, write_dataset_with_metadata,
-    write_file, ByteRange, LayoutSegment, Rete, SummaryView, TermTriple, TripleProvenance,
-    CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
+    write_file, BuildInfoPlan, ByteRange, LayoutSegment, Rete, SummaryView, TermTriple,
+    TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 #[doc(hidden)]
 pub use header::{

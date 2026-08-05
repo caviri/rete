@@ -1302,6 +1302,63 @@ pub(crate) struct Finding {
     pub substitutions: Vec<Substitution>,
     /// True when the body conjoins two or more independently-ranked terms.
     pub conjoined: bool,
+    /// What running the query actually did — absent unless `--measure` ran it.
+    /// Kept **beside** `verdict`, never merged into it: one is what a card can
+    /// prove about a file, the other is what the file did. Where they disagree
+    /// the observation wins, and the disagreement is the finding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed: Option<Observation>,
+}
+
+/// One starter query, actually run.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Observation {
+    /// `answers` (rows with bindings), `vacuous` (rows that bind nothing),
+    /// `empty` (no rows at all), or `error` (the run did not finish).
+    pub outcome: &'static str,
+    pub rows: u64,
+    /// Bytes the run read, cold, open included.
+    pub bytes: u64,
+    /// Range requests the run made, cold, open included.
+    pub requests: u64,
+    /// Wall clock on the measuring machine — a reference, not a property of the
+    /// file. Read it next to `bytes`/`requests`, never on its own.
+    pub debug_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// What the file's own build record says this query cost — present only
+    /// when the file carries one. That is the single case where a
+    /// re-measurement has a **known answer to check itself against**, so it is
+    /// checked, and the answer is reported rather than assumed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<Recorded>,
+}
+
+/// The figures a build wrote into the file, beside the ones just measured.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Recorded {
+    pub bytes: u64,
+    pub requests: u64,
+    pub rows: u64,
+    /// All three agree with the run. `bytes` and `requests` are properties of
+    /// layout + query, so they should — through the same transport. A
+    /// disagreement is worth knowing about: a different reader fan-out, a
+    /// different engine, or a file that is not the one the record describes.
+    pub agrees: bool,
+}
+
+impl Observation {
+    /// Does the observation contradict what the card alone concluded? Only
+    /// `Answers` and `Empty` are claims strong enough to be wrong; `Suspect`
+    /// and `Undecidable` say in so many words that they are not claims.
+    pub(crate) fn contradicts(&self, verdict: Verdict) -> bool {
+        match verdict {
+            Verdict::Answers => self.outcome != "answers",
+            Verdict::Empty => self.outcome == "answers",
+            Verdict::Vacuous => self.outcome == "answers",
+            _ => false,
+        }
+    }
 }
 
 /// A substituted term and where in the card profile it came from.
@@ -1634,6 +1691,7 @@ fn finding(
             revision,
             conjoined: distinct_ranked(card, binds).len() > 1,
             substitutions,
+            observed: None,
         }
     };
 

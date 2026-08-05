@@ -340,6 +340,32 @@ static pass is calibrated but not tight:
 * All 3 `lk-external` suspects returned 0 — a template whose *table* audit
   passed and whose published instances are empty anyway.
 
+Those spot-checks are now a command rather than a hand-rolled loop:
+
+```sh
+# what do the shipped queries really do, and what do they cost?
+rete card-audit https://data.graphplaza.com/<key>.rete --measure --max-mb 8
+rete card-audit /work/data/<key>/<key>.rete --measure --json      # free, same numbers
+```
+
+`--measure` runs each shipped query cold and prints the card's verdict beside
+the run's outcome, with rows/bytes/requests. It uses the **same** measurement
+`rete build` records, so where a file already carries a build record the command
+checks itself against it (`= build record`). Two things follow for this table:
+
+* the `undecidable` column stops being a dead end — `top-reach` and
+  `top-dangling` are undecidable from any card, and one run each settles them;
+* the byte figures are transport-independent (no block cache in the stack), so
+  measuring a **local mirror** gives the same `bytes`/`requests` a remote reader
+  would pay. With `--mirror` already the recommended path here, the whole
+  re-measurement of the catalog is free.
+
+Measured on `tree-city-inventory` (25 MB, 22 queries): `lb-labels` is `suspect`
+by card and **empty** by run — one of the 26 suspects confirmed broken — while
+`top-dangling`, `top-reach` and `sp-within` are `undecidable` by card and all
+three answer. The whole audit read 49.4 MB in 2,862 range requests, cold, every
+query.
+
 `vidy` is the one false positive the first pass produced and the reason
 `Refuted` now carries two multi-typing tells: it types every unit both
 `schema:ArchiveComponent` and `vidy:Unit`, the class-link quotient files each

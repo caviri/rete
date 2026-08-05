@@ -732,7 +732,7 @@ query. Reports bytes fetched + range count. The <code>--format</code> projection
 <code>--sha256</code> for Croissant) match <code>rete card</code>.</p>
 <pre><code class="language-sh">rete card-url https://host/data.rete --json
 </code></pre>
-<h3><code>rete card-audit &lt;path|url&gt; [--json]</code></h3>
+<h3><code>rete card-audit &lt;path|url&gt; [--json] [--measure] [--only IDS] [--max-mb N] [--write-costs] [--allow-empty]</code></h3>
 <p>Do the starter queries a card <strong>already ships</strong> still answer on the file that
 carries them? A published <code>.rete</code> cannot be re-carded for free, so this decides
 each query's fate from the card's own profile — the CARD tier again, so a
@@ -750,6 +750,73 @@ and <code>revision</code> says what a re-card would do to the body (<code>curren
 URL) or a card JSON document from <code>rete card --json</code> / <code>rete card-url --json</code>.</p>
 <pre><code class="language-sh">rete card-audit https://host/data.rete
 rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
+</code></pre>
+<h4><code>--measure</code>: run them instead of reasoning about them</h4>
+<p>The static pass has a hard ceiling. Some templates are undecidable <strong>by
+construction</strong> — nothing in a card ties a subject to a predicate, so <code>top-reach</code>
+cannot be settled from one, and a card does not record which objects are also
+subjects, so <code>top-dangling</code> cannot either. No better card-only reasoning closes
+that; a run does, and records what the answer cost.</p>
+<p><code>--measure</code> runs each starter query <strong>cold</strong> — a fresh lazy open, logical range
+reads, no block cache — and reports rows, bytes, requests and a reference
+timing. It is the same <code>measure_query</code> a <code>rete build</code> uses to fill in its
+<code>query_costs</code>, so when the file already carries a build record the command
+checks itself against it and says whether the two agree (<code>= build record</code> /
+<code>!= build record</code>). On <code>switzerland-fedlex.rete</code> — the one published file that
+has a record — all ten queries reproduce it exactly.</p>
+<p>Each row shows the card's verdict and the run's outcome side by side; they are
+never merged, because one is what a card can prove and the other is what the
+file did.</p>
+<pre><code>card says    run says   query             rows               bytes      req           ms
+answers      answers    ov-triples           1 row(s)       2800822 B     74 req      294 ms
+suspect      empty      lb-labels            0 row(s)        228126 B     68 req       12 ms
+undecidable  answers    top-dangling       100 row(s)       4468038 B    118 req      592 ms
+</code></pre>
+<p><strong>Local or remote.</strong> Point it at a path or at an <code>http(s)://</code> URL. <code>bytes</code> and
+<code>requests</code> are the same quantity either way — no block cache is in the stack, so
+the range sequence is a function of layout and query, not of transport — but
+only the remote run actually pays for them. The output always names which it
+was, in the text header and in the JSON <code>measurement.transport</code>, because a cost
+figure without its transport is not a cost figure.</p>
+<p><strong>It is a download.</strong> <code>--only ov-triples,lb-labels</code> measures a subset;
+<code>--max-mb 8</code> abandons a query once it has asked for more than that, and reports
+the abandonment with the bytes it spent — "costs more than 8 MB" is itself an
+answer. Both matter: eight of <code>switzerland-fedlex</code>'s ten starter queries read
+~1.02 GB each, so measuring that card remotely without a leash is an 8 GB
+download.</p>
+<h4><code>--write-costs</code>: make the measurement durable</h4>
+<p>Records the run in the file's build-info section, so the next reader gets the
+figures from the CARD tier (two range requests) instead of re-measuring. Local
+files only.</p>
+<p>The section sits <strong>outside</strong> the blake3 content hash — that is why two builds of
+identical data hash equal — so the file keeps its identity: same checksum, same
+<code>rete verify</code>, byte-identical N-Quads. It sits <strong>near the front</strong>, though, right
+after the card, so making room for it shifts everything behind it and the file
+is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
+by rename, but it is still one full pass of I/O and — for a published file — a
+full re-upload.</p>
+<p>Where that is worth it: when the alternative is a re-card. A re-card rewrites
+the file too, and additionally costs 17–35× the file in RAM (<code>repyramid</code>) or
+9–15× in staged N-Quads on disk (<code>--mode stream</code>, see <code>scripts/recard</code>), which
+puts anything past ~150 M statements out of reach. Attaching costs is one pass
+with no staging.</p>
+<p><strong>The RAM goes into the measurement, not the rewrite</strong>, and it is not free
+either: the engine evaluates eagerly, so a starter query with a big result
+materializes it. <code>switzerland-fedlex</code> (1.04 GB, 56.3 M quads) took 381 s and
+peaked at <strong>14.2 GiB</strong> for <code>--measure --write-costs</code> — <code>ng-list</code> alone, which
+returns 497,905 rows, accounts for 3.2 GiB of that; the rewrite of the 1.04 GB
+file that followed is a bounded-buffer copy. Against <code>repyramid</code>'s ≈36 GiB
+prediction and the staged path's ≤19.1 GiB for the same file, it is the cheaper
+route, but budget for the queries, not for the file.</p>
+<p>So: if the audit says the queries are stale or broken, re-card — same rewrite,
+more value. If the queries answer and the only gap is the missing record, write
+the costs. The command enforces that split: it refuses when a query measured
+zero rows (<code>--allow-empty</code> overrides, for <code>top-dangling</code> on a fully-described
+graph), when a run did not finish, and when <code>--only</code> measured a subset that
+would be stored as if it were the whole card.</p>
+<pre><code class="language-sh">rete card-audit data.rete --measure --json | jq '.findings[] | select(.observed.outcome=="empty")'
+rete card-audit https://host/data.rete --measure --only ov-triples --max-mb 8
+rete card-audit data.rete --measure --write-costs
 </code></pre>
 <h3><code>rete summary-url &lt;url&gt;</code></h3>
 <p>Fetch only the header + dictionary + pyramid summary and print the coarse graph.
