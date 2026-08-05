@@ -806,6 +806,35 @@ Each query carries:</p>
 <li>a <code>tier</code> tag (<code>card</code> / <code>summary</code> / <code>index</code>) — the cheapest tier that answers it;</li>
 <li>the <code>requires</code> capability keys that gated its emission.</li>
 </ul>
+<h3>Presence is not co-occurrence</h3>
+<p>"The required signal is present" is not enough on its own, and getting that
+wrong is how a starter query comes back empty. <code>{{TOP_CLASS}}</code> is the class with
+the most instances; <code>{{LABEL_PRED}}</code> is the most-used labelling predicate. Both
+are certainly <em>in</em> the graph — and instances of that class need never carry that
+predicate. On <code>mtg</code> the top class is <code>mtg:Ruling</code> (76,990 instances, no
+<code>schema:name</code>); on <code>hugging-face</code> it is <code>hf:Model</code> while <code>rdfs:label</code> appears
+only on the embedded ontology terms. Joining the two maxima produced a query
+that could not match a single statement, on plain default-graph files.</p>
+<p>So a body may conjoin substituted vocabulary <strong>only where the card proves the
+pieces meet</strong>, and <code>class_links</code> — the <code>(s_class, predicate, o_class, count)</code>
+quotient — is the proof. The capabilities that carry a witness are:</p>
+<table><thead><tr><th>key</th><th>what it resolves to</th><th>witness</th></tr></thead><tbody>
+<tr><td><code>LABELED_CLASS</code></td><td>the most populous class that carries <code>LABEL_PRED</code></td><td>a <code>class_links</code> row for that class <em>and</em> predicate</td></tr>
+<tr><td><code>OBJECT_PRED</code></td><td>the most frequent relation whose object is not a literal — one a path query can walk</td><td>a <code>class_links</code> row whose <code>o_class</code> is not <code>(literal)</code></td></tr>
+<tr><td><code>WKT_PATH</code></td><td>how this dataset hangs a geometry off a subject (<code>geo:asWKT</code>, or <code>geo:hasGeometry?/geo:asWKT</code>)</td><td>the predicates the card recorded</td></tr>
+<tr><td><code>EXTERNAL_IRI</code></td><td>that some recorded IRI lies outside the base IRI</td><td><code>classes</code> / <code>in_hubs</code></td></tr>
+</tbody></table>
+<p><code>LABELED_CLASS</code> equals <code>TOP_CLASS</code> on every dataset whose top class <em>is</em>
+labelled, so the common case is unchanged. Where the card cannot prove a
+witness — <code>class_links</code> is capped at <code>top_n</code> rows, and labels may sit on untyped
+subjects — the label query falls back to the class-free
+<code>SELECT ?s ?label WHERE { ?s &lt;label&gt; ?label }</code> rather than disappearing.</p>
+<p>Three templates are honest about not being decidable from the card, and may
+return zero rows as a fact about the data rather than a defect:
+<code>top-dangling</code> (a fully-described graph has no dangling IRI), <code>sp-within</code> (the
+box comes from <code>wgs84</code> literals, not from the WKT geometries the query reads)
+and <code>top-in-hubs</code> under <code>GRAPH</code> scope (the card profiles the default graph). The
+reason is recorded in the source beside each body.</p>
 <p>A publisher's own <code>example_queries</code> (curated, <code>--card-file</code>) are kept alongside
 the generated library, unchanged. Clients surface both: the playground merges
 a loaded file's card queries into its examples panel next to any curated

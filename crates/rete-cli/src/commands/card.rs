@@ -629,12 +629,20 @@ const SKOS_CLOSEMATCH: &str = "<http://www.w3.org/2004/02/skos/core#closeMatch>"
 const RDFS_SEEALSO: &str = "<http://www.w3.org/2000/01/rdf-schema#seeAlso>";
 const WGS_LAT: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#lat>";
 const WGS_LONG: &str = "<http://www.w3.org/2003/01/geo/wgs84_pos#long>";
-const GEO_ASWKT: &str = "<http://www.opengis.net/ont/geosparql#asWKT>";
-const GEO_HASGEOMETRY: &str = "<http://www.opengis.net/ont/geosparql#hasGeometry>";
+// `pub(crate)`: the query generator gates its geometry template on which of
+// these two the card actually recorded, so both modules must name the same IRI.
+pub(crate) const GEO_ASWKT: &str = "<http://www.opengis.net/ont/geosparql#asWKT>";
+pub(crate) const GEO_HASGEOMETRY: &str = "<http://www.opengis.net/ont/geosparql#hasGeometry>";
 // Datatype IRIs (unbracketed — as they appear after `^^` in a literal term).
 const GEO_WKTLITERAL: &str = "http://www.opengis.net/ont/geosparql#wktLiteral";
 const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
 const RDF_LANGSTRING: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+
+/// The [`ClassLink::o_class`] sentinel for a literal object (the object of that
+/// row is a literal, so it has no class and no outgoing edges). `pub(crate)`:
+/// the query generator reads it to tell an entity-to-entity relation — one a
+/// path query can walk — from a literal-valued one.
+pub(crate) const O_LITERAL: &str = "(literal)";
 
 /// Label predicates in priority order; the most frequent **present** one wins.
 const LABEL_PREDICATES: &[&str] = &[
@@ -768,7 +776,7 @@ fn derive_card_from(
         if let Some(c) = class_of.get(t) {
             c.to_string()
         } else if t.starts_with('"') {
-            "(literal)".to_string()
+            O_LITERAL.to_string()
         } else {
             "(untyped)".to_string()
         }

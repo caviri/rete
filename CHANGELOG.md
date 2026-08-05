@@ -5,6 +5,41 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A generated starter query can no longer be guaranteed-empty by
+  construction.** The library instantiated each `{{PLACEHOLDER}}` from its own
+  ranking and then conjoined the results, so two substitutions that were each
+  certainly *present* could describe parts of the graph that never meet. Three
+  templates shipped queries that could not match a statement on **published,
+  plain default-graph** files:
+  - `lb-labels` joined the most populous class to the most-used label
+    predicate. `mtg`'s top class is `mtg:Ruling`, which carries no
+    `schema:name`; `hugging-face`'s is `hf:Model`, while `rdfs:label` sits only
+    on the embedded ontology terms. Both returned **0 rows**. The class is now
+    `LABELED_CLASS` — the most populous class a `class_links` row *proves*
+    carries the predicate — with a class-free fallback when the card can prove
+    none. Where the top class is labelled (the common case) the emitted SPARQL
+    is byte-identical to before.
+  - `top-reach` walked the most frequent predicate from the busiest subject,
+    two things nothing ties together: **0 rows** on `hugging-face`. It now
+    seeds the path from a subject *of* the relation, and picks a relation whose
+    objects are proven not to be literals (a `+` over a labelling predicate
+    could never walk past one hop anyway).
+  - `sp-within` hard-coded `geo:hasGeometry/geo:asWKT` while its gate accepted
+    any one of three geometry signals. `geoadmin` hangs `geo:asWKT` straight
+    off each District and has no `geo:hasGeometry` at all: **0 rows** on 52,959
+    geometries. The path is now read from the data's actual shape.
+  - Also: `cmp-coverage` measured labelling completeness of the wrong class
+    (`76990 / 0` on mtg, now `34633 / 34633`); `lk-sameas` listed three of the
+    four alignment predicates its gate accepts; `lk-external` and `top-in-hubs`
+    are now gated on a witness that the filter/grouping keeps something.
+  - The rule is enforced rather than remembered: capabilities that meet in a
+    body must be **jointly derived**, every template declares *why* it cannot
+    return zero rows, and the three that genuinely cannot know say so with a
+    reason. Re-carding `lombardi`, `mtg` and `geoadmin` with the fixed
+    generator gives 23/23, 23/23 and 22/22 starter queries returning rows.
+
 ### Added
 
 - **A card's `description` is Markdown, and can be as long as a README section.**

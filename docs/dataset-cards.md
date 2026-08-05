@@ -549,6 +549,41 @@ Each query carries:
 - a `tier` tag (`card` / `summary` / `index`) — the cheapest tier that answers it;
 - the `requires` capability keys that gated its emission.
 
+### Presence is not co-occurrence
+
+"The required signal is present" is not enough on its own, and getting that
+wrong is how a starter query comes back empty. `{{TOP_CLASS}}` is the class with
+the most instances; `{{LABEL_PRED}}` is the most-used labelling predicate. Both
+are certainly *in* the graph — and instances of that class need never carry that
+predicate. On `mtg` the top class is `mtg:Ruling` (76,990 instances, no
+`schema:name`); on `hugging-face` it is `hf:Model` while `rdfs:label` appears
+only on the embedded ontology terms. Joining the two maxima produced a query
+that could not match a single statement, on plain default-graph files.
+
+So a body may conjoin substituted vocabulary **only where the card proves the
+pieces meet**, and `class_links` — the `(s_class, predicate, o_class, count)`
+quotient — is the proof. The capabilities that carry a witness are:
+
+| key | what it resolves to | witness |
+|---|---|---|
+| `LABELED_CLASS` | the most populous class that carries `LABEL_PRED` | a `class_links` row for that class *and* predicate |
+| `OBJECT_PRED` | the most frequent relation whose object is not a literal — one a path query can walk | a `class_links` row whose `o_class` is not `(literal)` |
+| `WKT_PATH` | how this dataset hangs a geometry off a subject (`geo:asWKT`, or `geo:hasGeometry?/geo:asWKT`) | the predicates the card recorded |
+| `EXTERNAL_IRI` | that some recorded IRI lies outside the base IRI | `classes` / `in_hubs` |
+
+`LABELED_CLASS` equals `TOP_CLASS` on every dataset whose top class *is*
+labelled, so the common case is unchanged. Where the card cannot prove a
+witness — `class_links` is capped at `top_n` rows, and labels may sit on untyped
+subjects — the label query falls back to the class-free
+`SELECT ?s ?label WHERE { ?s <label> ?label }` rather than disappearing.
+
+Three templates are honest about not being decidable from the card, and may
+return zero rows as a fact about the data rather than a defect:
+`top-dangling` (a fully-described graph has no dangling IRI), `sp-within` (the
+box comes from `wgs84` literals, not from the WKT geometries the query reads)
+and `top-in-hubs` under `GRAPH` scope (the card profiles the default graph). The
+reason is recorded in the source beside each body.
+
 A publisher's own `example_queries` (curated, `--card-file`) are kept alongside
 the generated library, unchanged. Clients surface both: the playground merges
 a loaded file's card queries into its examples panel next to any curated
