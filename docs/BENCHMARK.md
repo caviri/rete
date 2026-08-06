@@ -118,6 +118,42 @@ fetching just the coarse community graph (`summary-url`) reads only the header +
 dictionary + summary — e.g. **2.2 KB of a 15.6 KB file (14%) in 3 requests, the
 index never fetched** — the "overview first, drill down later" promise.
 
+### Cloudflare R2 connection reuse (Chemotion)
+
+Measured 2026-08-06 against the catalog's real
+`https://data.graphplaza.com/chemotion/chemotion.rete` object from the dev
+container (Cloudflare ZRH, `Cf-Cache-Status: DYNAMIC`). The object was pinned by
+length **7,566,404 bytes** and ETag
+`"6cefd111dee3c59c063f0bede9cd60f9"`. The baseline executable was SHA-256
+`734b4ef05320b0fa1c3f3d7ed72c240b51f7f2cb70c4dd5568d3e65ef9059b6a`;
+the optimized executable was
+`14c6d3cefcfbdf43699dc2819b59d0cb7ebd2a9c21a5fbb97efc67153a93c56e`.
+
+Each executable was warmed once per query, then run seven times in alternating
+order as a fresh `rete sparql-url <url> "<query>" --json` process. Reusing one
+`ureq::Agent` for the HEAD probe and range GETs, plus retaining each coalesced
+cache response as one shared allocation, produced:
+
+| Chemotion catalog query | bytes / ranges | baseline median | optimized median | wall-time reduction |
+|---|---:|---:|---:|---:|
+| Molecules with their structure | 1,769,472 / 21 | 3,245 ms | **2,586 ms** | **20.3%** (659 ms) |
+| Most common molecular formulas | 1,114,112 / 16 | 2,267 ms | **1,778 ms** | **21.6%** (489 ms) |
+| Every subtype of spectroscopy | 2,490,368 / 36 | 5,242 ms | **4,128 ms** | **21.3%** (1,114 ms) |
+
+Raw milliseconds (baseline / optimized):
+
+- selective: `3245 3194 3054 3288 3469 3327 3083` /
+  `2568 2761 2501 2748 2586 2683 2508`
+- aggregate: `2492 2655 2209 2267 2189 2329 2263` /
+  `1784 1664 1708 2219 2029 1778 1733`
+- property path: `5352 6239 5242 5090 5146 5344 5164` /
+  `4590 4128 3874 4373 4073 4221 4089`
+
+The result JSON was byte-identical for every sample (one stable hash per query),
+and byte/range counts were unchanged. Every paired optimized sample was faster;
+the gain is transport/allocation overhead, not less query work or different
+answers.
+
 ## Scaling
 
 At **347,884 triples** (2.5× the table above) everything scales ~linearly, with

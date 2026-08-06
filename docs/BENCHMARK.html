@@ -430,6 +430,37 @@ payload. The <strong>progressive path is cheaper still</strong> for summary-safe
 fetching just the coarse community graph (<code>summary-url</code>) reads only the header +
 dictionary + summary — e.g. <strong>2.2 KB of a 15.6 KB file (14%) in 3 requests, the
 index never fetched</strong> — the "overview first, drill down later" promise.</p>
+<h3>Cloudflare R2 connection reuse (Chemotion)</h3>
+<p>Measured 2026-08-06 against the catalog's real
+<code>https://data.graphplaza.com/chemotion/chemotion.rete</code> object from the dev
+container (Cloudflare ZRH, <code>Cf-Cache-Status: DYNAMIC</code>). The object was pinned by
+length <strong>7,566,404 bytes</strong> and ETag
+<code>"6cefd111dee3c59c063f0bede9cd60f9"</code>. The baseline executable was SHA-256
+<code>734b4ef05320b0fa1c3f3d7ed72c240b51f7f2cb70c4dd5568d3e65ef9059b6a</code>;
+the optimized executable was
+<code>14c6d3cefcfbdf43699dc2819b59d0cb7ebd2a9c21a5fbb97efc67153a93c56e</code>.</p>
+<p>Each executable was warmed once per query, then run seven times in alternating
+order as a fresh <code>rete sparql-url &lt;url&gt; "&lt;query&gt;" --json</code> process. Reusing one
+<code>ureq::Agent</code> for the HEAD probe and range GETs, plus retaining each coalesced
+cache response as one shared allocation, produced:</p>
+<table><thead><tr><th>Chemotion catalog query</th><th style="text-align: right">bytes / ranges</th><th style="text-align: right">baseline median</th><th style="text-align: right">optimized median</th><th style="text-align: right">wall-time reduction</th></tr></thead><tbody>
+<tr><td>Molecules with their structure</td><td style="text-align: right">1,769,472 / 21</td><td style="text-align: right">3,245 ms</td><td style="text-align: right"><strong>2,586 ms</strong></td><td style="text-align: right"><strong>20.3%</strong> (659 ms)</td></tr>
+<tr><td>Most common molecular formulas</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">2,267 ms</td><td style="text-align: right"><strong>1,778 ms</strong></td><td style="text-align: right"><strong>21.6%</strong> (489 ms)</td></tr>
+<tr><td>Every subtype of spectroscopy</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">5,242 ms</td><td style="text-align: right"><strong>4,128 ms</strong></td><td style="text-align: right"><strong>21.3%</strong> (1,114 ms)</td></tr>
+</tbody></table>
+<p>Raw milliseconds (baseline / optimized):</p>
+<ul>
+<li>selective: <code>3245 3194 3054 3288 3469 3327 3083</code> /
+<code>2568 2761 2501 2748 2586 2683 2508</code></li>
+<li>aggregate: <code>2492 2655 2209 2267 2189 2329 2263</code> /
+<code>1784 1664 1708 2219 2029 1778 1733</code></li>
+<li>property path: <code>5352 6239 5242 5090 5146 5344 5164</code> /
+<code>4590 4128 3874 4373 4073 4221 4089</code></li>
+</ul>
+<p>The result JSON was byte-identical for every sample (one stable hash per query),
+and byte/range counts were unchanged. Every paired optimized sample was faster;
+the gain is transport/allocation overhead, not less query work or different
+answers.</p>
 <h2>Scaling</h2>
 <p>At <strong>347,884 triples</strong> (2.5× the table above) everything scales ~linearly, with
 no pathological blowup: build 890 ms, triple query 54 ms, property path 103 ms,
