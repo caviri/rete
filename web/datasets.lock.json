@@ -3,6 +3,14 @@
   "generatedFrom": "release-1.0.0-rc1",
   "datasets": [
     {
+      "key": "davidrumsey",
+      "url": "https://data.graphplaza.com/davidrumsey/davidrumsey.rete",
+      "formatVersion": 5,
+      "contentHash": "61d8b8f055e1ede0120ecddb2d5a5167",
+      "size": 67562506,
+      "cardUrl": "https://data.graphplaza.com/davidrumsey/davidrumsey.rete"
+    },
+    {
       "key": "ethz-research-collection",
       "url": "https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete",
       "formatVersion": 5,
