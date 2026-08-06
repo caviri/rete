@@ -44,7 +44,7 @@ use crate::dict::env_restart_interval;
 
 use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
 use crate::ingest::{BuildStats, IngestError, RawQuad};
-use crate::triples::TripleBlockBuilder;
+use crate::triples::encode_sorted_unique;
 use crate::varint::write_uvarint;
 use crate::DictionaryBuilder;
 
@@ -1183,18 +1183,11 @@ impl StreamingTiler {
         let codec = self.codec;
         // encode + synopsis + compress each tile; par_iter preserves order
         let encode_one = |run: &Vec<(u32, u32, u32)>| -> (u32, u32, Vec<u8>, (u32, u32, u32, u32)) {
-            let mut b = TripleBlockBuilder::new();
-            for &t in run {
-                b.push(t);
-            }
-            let bytes = b.build();
-            let syn = match crate::triples::TripleBlock::parse(&bytes) {
-                Ok(blk) => {
-                    let z = blk.zone();
-                    (z.min_b, z.max_b, z.min_c, z.max_c)
-                }
-                Err(_) => (0, u32::MAX, 0, u32::MAX),
-            };
+            let bytes = encode_sorted_unique(run);
+            let blk = crate::triples::TripleBlock::parse(&bytes)
+                .expect("the builder's own encoded tile must parse");
+            let z = blk.zone();
+            let syn = (z.min_b, z.max_b, z.min_c, z.max_c);
             let comp = crate::file::compress(codec, &bytes);
             (run[0].0, run[run.len() - 1].0, comp, syn)
         };

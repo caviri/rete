@@ -15,8 +15,11 @@
 
 use std::sync::OnceLock;
 
-use crate::triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder};
+use crate::triples::{encode_sorted_unique, GroupDirectory, Triple, TripleBlock};
 use crate::varint::uvarint_len;
+
+#[cfg(test)]
+use crate::triples::TripleBlockBuilder;
 
 /// A triple pattern: `None` is an unbound variable, `Some(id)` a bound term.
 pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
@@ -439,11 +442,7 @@ fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
     }
 
     let make_tile = |run: &[Triple]| -> Tile {
-        let mut b = TripleBlockBuilder::new();
-        for &t in run {
-            b.push(t);
-        }
-        Tile::local(run[0].0, run[run.len() - 1].0, b.build())
+        Tile::local(run[0].0, run[run.len() - 1].0, encode_sorted_unique(run))
     };
 
     let mut tiles = Vec::new();
