@@ -25,12 +25,15 @@ docker compose run --rm dev cargo test --workspace --exclude rete-bench
 - Measure the two FFI output buffers that are currently zero-initialized before a
   host overwrites them, and adopt `MaybeUninit` only if the measured benefit and
   safety proof are both compelling.
+- Measure the upper bound of unchecked triple-block decoding on complete SPARQL
+  queries without exposing it in normal builds.
 - Preserve file-format bytes, query results, error behavior, public APIs, and the
   single-threaded default WASM build.
 
 ## Non-goals
 
-- No unchecked indexing in file parsers or query decoders.
+- No unchecked indexing in the default file parsers or query decoders. The only
+  exception is the explicitly enabled research decoder described below.
 - No custom `Send`/`Sync` pointer wrapper, mutex, allocator, vector, or iterator
   trust marker.
 - No `transmute`-based format or FFI conversion.
@@ -95,7 +98,32 @@ Tests will cover exact output, coalesced fetch counts, LRU behavior, a span shar
 by multiple blocks, replacement of overlapping fetches, short underlying reads,
 and a read wider than the cap. The production code remains safe Rust.
 
-### 4. Benchmark-gated FFI buffer experiment
+### 4. Research-only unchecked decoder
+
+`rete-core` and `rete-cli` will expose a non-default `unsafe-decode-bench` Cargo
+feature. With that feature enabled, `sparql-url` gains a hidden
+`--unsafe-decode` flag that selects an alternate triple-block cursor using
+unchecked byte reads. Normal builds do not compile or accept this mode, and the
+default cursor remains unchanged.
+
+The alternate cursor duplicates only the hot triple-block varint traversal; it
+does not make header, section, decompression, dictionary, cache, HTTP, or result
+handling unchecked. This makes the experiment's scope and safety argument small
+and means its timing is a conservative measurement of unchecked decoding rather
+than a different query engine.
+
+The feature is for controlled, known-good artifacts on this branch. Its API and
+CLI help state that malformed bytes can cause undefined behavior. Tests run safe
+and unchecked cursors over builder-produced blocks for every bound/unbound
+pattern and require identical triples. The R2 comparison uses the same pinned
+Chemotion object and requires byte-identical SPARQL output between modes.
+
+The flag will not ship in default artifacts. After measurement, the experimental
+code is retained on this branch only if it provides useful evidence and remains
+fully isolated; it is not a candidate for the normal remote query path because a
+runtime flag cannot prove arbitrary network bytes valid.
+
+### 5. Benchmark-gated FFI buffer experiment
 
 The Java host reader and WASM Asyncify reader currently allocate initialized zero
 buffers before an external host writes the requested bytes. A throwaway
@@ -177,7 +205,8 @@ useful to future maintainers.
 ## Delivery Structure
 
 The work is split into independent commits: HTTP agent reuse, direct tile
-encoding, shared cache backing, and the FFI experiment decision. Each commit has
-focused red-green tests and can be reviewed or reverted without the others. Final
-verification includes formatting, clippy, workspace tests, no-default-feature
-core tests, all-feature core build, benchmark-crate build, and the smoke script.
+encoding, shared cache backing, the research-only unchecked decoder, and the FFI
+experiment decision. Each commit has focused red-green tests and can be reviewed
+or reverted without the others. Final verification includes formatting, clippy,
+workspace tests, no-default-feature core tests, all-feature core build,
+benchmark-crate build, and the smoke script.
