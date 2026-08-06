@@ -124,6 +124,38 @@ median elapsed time. Build work also records peak live heap through the existing
 `rete-bench --build-mem` allocator instrumentation. HTTP tests measure connection
 accepts deterministically; real-network timing is supporting evidence only.
 
+### Catalog R2 workload
+
+The native HTTP and cache changes will also be measured against the catalog's
+`chemotion` dataset at
+`https://data.graphplaza.com/chemotion/chemotion.rete`. On 2026-08-06 the R2
+object reported 7,566,404 bytes, byte-range support, and ETag
+`6cefd111dee3c59c063f0bede9cd60f9`. The workload uses three existing catalog
+examples rather than benchmark-only queries:
+
+- `Molecules with their structure`, a selective class-bound join returning at
+  most 200 rows.
+- `Most common molecular formulas`, a predicate scan plus grouping and ordering.
+- `Every subtype of spectroscopy`, a transitive subclass path with label joins.
+
+The pre-change release binary was warmed once and then run in seven fresh
+processes per query from the Docker environment in Zurich. Its medians and
+observed ranges were:
+
+| Catalog query | Median | Observed range |
+|---|---:|---:|
+| Molecules with their structure | 2,432.1 ms | 2,340.6-2,732.1 ms |
+| Most common molecular formulas | 1,842.2 ms | 1,770.7-1,938.9 ms |
+| Every subtype of spectroscopy | 4,159.8 ms | 4,115.9-4,294.8 ms |
+
+The pinned baseline executable has SHA-256
+`734b4ef05320b0fa1c3f3d7ed72c240b51f7f2cb70c4dd5568d3e65ef9059b6a`.
+The final comparison will alternate the pinned and optimized executables in the
+same container session, verify byte-identical result output for each query, and
+report all samples as well as medians. Because the object is served dynamically
+from R2 and network conditions vary, these timings support but do not replace
+the deterministic connection-reuse test and local allocation measurements.
+
 Each production change is kept only when it removes the intended work and does
 not regress representative wall time or peak memory beyond ordinary measurement
 noise. Results, commands, dataset size, and accepted or rejected experiments are
