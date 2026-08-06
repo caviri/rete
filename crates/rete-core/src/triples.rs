@@ -382,6 +382,119 @@ impl<'a> TripleBlock<'a> {
             pc,
         }
     }
+
+    /// Build an a-group directory without checking each encoded byte access.
+    ///
+    /// # Safety
+    ///
+    /// `self.bytes` must be one complete, immutable block produced by rete's
+    /// encoder. Every count and u32 LEB128 in the block must be canonical and
+    /// terminate inside this same allocation. No recovery is possible for a
+    /// malformed or truncated block; use [`group_directory`](Self::group_directory)
+    /// for all untrusted files.
+    #[cfg(feature = "unsafe-decode-bench")]
+    pub(crate) unsafe fn group_directory_unchecked(&self) -> GroupDirectory {
+        let bytes = self.bytes;
+        let mut entries = Vec::new();
+        let mut p = self.body_start;
+        let next = |pos: &mut usize| {
+            // SAFETY: upheld by this method's caller for the complete immutable
+            // block; the directory walk follows the encoder's exact structure.
+            unsafe { rd_unchecked(bytes, pos) }
+        };
+        let num_a = next(&mut p);
+        entries.reserve(num_a as usize);
+        let mut a = 0u32;
+        for i in 0..num_a {
+            a = a.wrapping_add(next(&mut p));
+            let num_b = next(&mut p);
+            entries.push(DirEntry {
+                a,
+                pos: p,
+                num_b,
+                a_rem_after: num_a - 1 - i,
+            });
+            for _ in 0..num_b {
+                next(&mut p);
+                let num_c = next(&mut p);
+                for _ in 0..num_c {
+                    next(&mut p);
+                }
+            }
+        }
+        GroupDirectory { entries }
+    }
+
+    /// Jump to a directory-selected a-group using unchecked byte decoding.
+    ///
+    /// # Safety
+    ///
+    /// The block must satisfy [`scan_unchecked`](Self::scan_unchecked)'s safety
+    /// contract, and `dir` must have been built from this exact block image.
+    #[cfg(feature = "unsafe-decode-bench")]
+    pub(crate) unsafe fn scan_from_unchecked(
+        &self,
+        dir: &GroupDirectory,
+        pa: u32,
+        pb: Option<u32>,
+        pc: Option<u32>,
+    ) -> UncheckedBlockCursor<'a> {
+        let mut cursor = UncheckedBlockCursor {
+            bytes: self.bytes,
+            pos: self.body_start,
+            a: 0,
+            b: 0,
+            c: 0,
+            a_rem: 0,
+            b_rem: 0,
+            c_rem: 0,
+            started: true,
+            pa: Some(pa),
+            pb,
+            pc,
+        };
+        if let Ok(i) = dir.entries.binary_search_by_key(&pa, |entry| entry.a) {
+            let entry = &dir.entries[i];
+            cursor.pos = entry.pos;
+            cursor.a = entry.a;
+            cursor.a_rem = entry.a_rem_after;
+            cursor.b_rem = entry.num_b;
+        }
+        cursor
+    }
+
+    /// Stream matching triples without checking each encoded byte access.
+    ///
+    /// # Safety
+    ///
+    /// `self.bytes` must be one complete, immutable block produced by rete's
+    /// encoder. Its count fields must describe exactly the following canonical
+    /// u32 LEB128 values, all terminating inside this same allocation. The
+    /// returned cursor must not outlive or observe mutation of that allocation.
+    /// Invalid bytes can cause out-of-bounds reads; normal readers must use
+    /// [`scan`](Self::scan).
+    #[cfg(feature = "unsafe-decode-bench")]
+    pub(crate) unsafe fn scan_unchecked(
+        &self,
+        pa: Option<u32>,
+        pb: Option<u32>,
+        pc: Option<u32>,
+    ) -> UncheckedBlockCursor<'a> {
+        UncheckedBlockCursor {
+            bytes: self.bytes,
+            pos: self.body_start,
+            a: 0,
+            b: 0,
+            c: 0,
+            a_rem: 0,
+            b_rem: 0,
+            c_rem: 0,
+            started: false,
+            pa,
+            pb,
+            pc,
+        }
+    }
 }
 
 /// Read one uvarint at `*pos`, advancing it; `None` if truncated. Panic-free,
@@ -391,6 +504,32 @@ fn rd(bytes: &[u8], pos: &mut usize) -> Option<u32> {
     let (v, n) = read_uvarint(bytes.get(*pos..)?)?;
     *pos += n;
     Some(v as u32)
+}
+
+/// Read one builder-emitted u32 LEB128 without bounds or termination checks.
+///
+/// # Safety
+///
+/// `bytes` must be a complete immutable rete triple block, `*pos` must point
+/// at its next encoded u32, and that value must terminate within five bytes in
+/// this same allocation. The only derived pointer comes from `bytes`; no write
+/// or alias is created, and `pos` advances only within the allocation.
+#[cfg(feature = "unsafe-decode-bench")]
+#[inline(always)]
+unsafe fn rd_unchecked(bytes: &[u8], pos: &mut usize) -> u32 {
+    let mut value = 0u32;
+    let mut shift = 0u32;
+    loop {
+        // SAFETY: the caller guarantees that `pos` addresses the next byte of a
+        // terminating u32 LEB128 inside this slice's allocation.
+        let byte = unsafe { *bytes.get_unchecked(*pos) };
+        *pos += 1;
+        value |= u32::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return value;
+        }
+        shift += 7;
+    }
 }
 
 /// A byte-offset directory of a block's a-groups: one entry per group, sorted
@@ -439,6 +578,35 @@ pub struct BlockCursor<'a> {
     pa: Option<u32>,
     pb: Option<u32>,
     pc: Option<u32>,
+}
+
+/// Research-only cursor whose constructor requires a complete builder-produced
+/// block. It is unavailable in default artifacts.
+#[cfg(feature = "unsafe-decode-bench")]
+pub(crate) struct UncheckedBlockCursor<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    a: u32,
+    b: u32,
+    c: u32,
+    a_rem: u32,
+    b_rem: u32,
+    c_rem: u32,
+    started: bool,
+    pa: Option<u32>,
+    pb: Option<u32>,
+    pc: Option<u32>,
+}
+
+#[cfg(feature = "unsafe-decode-bench")]
+impl UncheckedBlockCursor<'_> {
+    #[inline(always)]
+    fn read(&mut self) -> u32 {
+        // SAFETY: only TripleBlock's unsafe constructors can create this cursor;
+        // their contract guarantees every state-machine read remains in-bounds
+        // and the immutable slice outlives the cursor.
+        unsafe { rd_unchecked(self.bytes, &mut self.pos) }
+    }
 }
 
 impl Iterator for BlockCursor<'_> {
@@ -497,6 +665,68 @@ impl Iterator for BlockCursor<'_> {
                         let nc = rd(bytes, &mut self.pos)?;
                         for _ in 0..nc {
                             rd(bytes, &mut self.pos)?;
+                        }
+                    }
+                    continue;
+                }
+            }
+            self.b_rem = num_b;
+        }
+    }
+}
+
+#[cfg(feature = "unsafe-decode-bench")]
+impl Iterator for UncheckedBlockCursor<'_> {
+    type Item = Triple;
+
+    #[inline]
+    fn next(&mut self) -> Option<Triple> {
+        if !self.started {
+            self.a_rem = self.read();
+            self.started = true;
+        }
+        loop {
+            while self.c_rem > 0 {
+                self.c_rem -= 1;
+                self.c = self.c.wrapping_add(self.read());
+                if self.pc.is_none_or(|value| value == self.c) {
+                    return Some((self.a, self.b, self.c));
+                }
+            }
+            while self.b_rem > 0 {
+                self.b_rem -= 1;
+                self.b = self.b.wrapping_add(self.read());
+                let num_c = self.read();
+                if self.pb.is_some_and(|value| value != self.b) {
+                    for _ in 0..num_c {
+                        self.read();
+                    }
+                    continue;
+                }
+                self.c = 0;
+                self.c_rem = num_c;
+                break;
+            }
+            if self.c_rem > 0 {
+                continue;
+            }
+            if self.a_rem == 0 {
+                return None;
+            }
+            self.a_rem -= 1;
+            self.a = self.a.wrapping_add(self.read());
+            let num_b = self.read();
+            self.b = 0;
+            if let Some(bound_a) = self.pa {
+                if self.a > bound_a {
+                    return None;
+                }
+                if self.a < bound_a {
+                    for _ in 0..num_b {
+                        self.read();
+                        let num_c = self.read();
+                        for _ in 0..num_c {
+                            self.read();
                         }
                     }
                     continue;
@@ -667,6 +897,46 @@ mod tests {
                 if let Ok(blk) = TripleBlock::parse(&bad) {
                     let _ = blk.scan(None, None, None).count();
                     let _ = blk.scan(Some(1), None, None).count();
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "unsafe-decode-bench")]
+    #[test]
+    fn unchecked_cursor_matches_safe_every_pattern() {
+        let mut builder = TripleBlockBuilder::new();
+        for t in sample() {
+            builder.push(t);
+        }
+        let bytes = builder.build();
+        let block = TripleBlock::parse(&bytes).unwrap();
+
+        let values = [None, Some(1), Some(2), Some(5), Some(99)];
+        for pa in values {
+            for pb in values {
+                for pc in values {
+                    let safe: Vec<_> = block.scan(pa, pb, pc).collect();
+                    // SAFETY: `bytes` was just emitted by TripleBlockBuilder and
+                    // remains immutable for the cursor's complete lifetime.
+                    let unchecked: Vec<_> = unsafe { block.scan_unchecked(pa, pb, pc) }.collect();
+                    assert_eq!(unchecked, safe, "scan({pa:?}, {pb:?}, {pc:?})");
+                }
+            }
+        }
+
+        let safe_dir = block.group_directory();
+        // SAFETY: the complete immutable block was builder-produced above.
+        let unchecked_dir = unsafe { block.group_directory_unchecked() };
+        for pa in [0, 1, 2, 5, 99] {
+            for pb in values {
+                for pc in values {
+                    let safe: Vec<_> = block.scan_from(&safe_dir, pa, pb, pc).collect();
+                    // SAFETY: both the block and directory were produced by rete
+                    // from the same complete immutable encoded byte allocation.
+                    let unchecked: Vec<_> =
+                        unsafe { block.scan_from_unchecked(&unchecked_dir, pa, pb, pc) }.collect();
+                    assert_eq!(unchecked, safe, "scan_from({pa}, {pb:?}, {pc:?})");
                 }
             }
         }

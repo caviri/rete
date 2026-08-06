@@ -2024,6 +2024,26 @@ impl Rete {
         &self.index
     }
 
+    /// Permanently select unchecked triple-block decoding for every graph in
+    /// this file instance. This API is compiled only for controlled benchmarks.
+    ///
+    /// # Safety
+    ///
+    /// Every default and named-graph index block, including every block later
+    /// returned by a lazy range loader, must be a complete immutable image
+    /// produced by rete's encoder. Malformed or truncated input can cause an
+    /// out-of-bounds read. Normal applications must not enable this mode.
+    #[cfg(feature = "unsafe-decode-bench")]
+    pub unsafe fn assume_valid_index_blocks(&mut self) {
+        // SAFETY: this method's caller establishes the same invariant for the
+        // default index and for every named graph below.
+        unsafe { self.index.assume_valid_blocks() };
+        for (_, index) in &mut self.named_graphs {
+            // SAFETY: covered by this method's all-index-block contract.
+            unsafe { index.assume_valid_blocks() };
+        }
+    }
+
     /// Resolve every triple of a graph (`None` = default graph) back to terms.
     pub fn dump(&self, graph: Option<&str>) -> Vec<TermTriple> {
         let index = match graph {

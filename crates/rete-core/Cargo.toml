@@ -63,6 +63,9 @@ compression = ["dep:zstd"]
 # Prototype data-parallel query evaluator. NOT default; wasm must never enable it
 # (wasm has no threads). Enables the `parallel` module + `rayon`.
 parallel = ["dep:rayon"]
+# Research-only decoder for controlled benchmarks over builder-produced files.
+# Normal artifacts keep all bounds checks and do not compile this path.
+unsafe-decode-bench = []
 # getrandom's browser backend (crypto.getRandomValues, via js-sys/wasm-bindgen).
 # Enable ONLY for a wasm build that runs in a browser — it makes the module
 # import wasm-bindgen JS glue, which a non-browser wasm host (Chicory on the JVM,

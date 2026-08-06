@@ -123,7 +123,13 @@ pub(crate) fn query_url(
 /// when the query's scans and probes actually touch them. A selective query
 /// reads O(touched tiles), not the whole index. (Pre-tiling v0.1 files fall
 /// back to fetching the index whole.)
-pub(crate) fn sparql_url(url: &str, query: &str, json: bool, entail: bool) -> anyhow::Result<()> {
+pub(crate) fn sparql_url(
+    url: &str,
+    query: &str,
+    json: bool,
+    entail: bool,
+    #[cfg(feature = "unsafe-decode-bench")] unsafe_decode: bool,
+) -> anyhow::Result<()> {
     // `reader` always counts the PHYSICAL HTTP fetches. A read-through block
     // cache (client-side; works over any single-range backend incl. S3) sits
     // above it, so a query's scattered range reads coalesce into a few aligned
@@ -148,6 +154,16 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool, entail: bool) -> an
             block,
         )))?
     };
+    #[cfg(feature = "unsafe-decode-bench")]
+    if unsafe_decode {
+        eprintln!(
+            "WARNING: --unsafe-decode assumes every fetched index block is a complete, immutable, rete-produced image; malformed or truncated input can cause undefined behavior"
+        );
+        // SAFETY: the hidden research flag is the operator's explicit assertion
+        // that this controlled benchmark URL satisfies the invariant printed
+        // above for its full lifetime. Normal builds cannot compile this call.
+        unsafe { rete.assume_valid_index_blocks() };
+    }
     // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     let eval = if entail {

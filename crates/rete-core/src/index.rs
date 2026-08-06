@@ -20,6 +20,8 @@ use crate::varint::uvarint_len;
 
 #[cfg(test)]
 use crate::triples::TripleBlockBuilder;
+#[cfg(feature = "unsafe-decode-bench")]
+use crate::triples::{BlockCursor, UncheckedBlockCursor};
 
 /// A triple pattern: `None` is an unbound variable, `Some(id)` a bound term.
 pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
@@ -36,6 +38,25 @@ pub const INDEX_TILE_BUDGET: usize = 64 * 1024;
 /// scan still coalesces into a handful of range reads.
 const PREFETCH_WINDOW_START: usize = 4;
 const PREFETCH_WINDOW_MAX: usize = 512;
+
+#[cfg(feature = "unsafe-decode-bench")]
+enum DecodeCursor<'a> {
+    Safe(BlockCursor<'a>),
+    Unchecked(UncheckedBlockCursor<'a>),
+}
+
+#[cfg(feature = "unsafe-decode-bench")]
+impl Iterator for DecodeCursor<'_> {
+    type Item = Triple;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Safe(cursor) => cursor.next(),
+            Self::Unchecked(cursor) => cursor.next(),
+        }
+    }
+}
 
 /// Fetches one tile's (uncompressed) block image on demand: the bridge that
 /// lets a remote `GraphIndex` fault tiles in over a `RangeReader` without this
@@ -505,6 +526,10 @@ pub struct GraphIndex {
     /// The reader's concurrent-range fan-out (1 = strictly sequential) — see
     /// [`set_read_concurrency`](Self::set_read_concurrency).
     read_concurrency: usize,
+    /// Research-only selection of the unchecked cursor. Default artifacts do
+    /// not contain this field or its decoder.
+    #[cfg(feature = "unsafe-decode-bench")]
+    unchecked_decode: bool,
 }
 
 impl GraphIndex {
@@ -515,6 +540,8 @@ impl GraphIndex {
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
+            #[cfg(feature = "unsafe-decode-bench")]
+            unchecked_decode: false,
         }
     }
 
@@ -551,7 +578,23 @@ impl GraphIndex {
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
+            #[cfg(feature = "unsafe-decode-bench")]
+            unchecked_decode: false,
         }
+    }
+
+    /// Permanently select unchecked decoding for this index instance.
+    ///
+    /// # Safety
+    ///
+    /// Every local block and every block subsequently returned by the remote
+    /// loaders must be a complete immutable image produced by rete's encoder.
+    /// A malformed, truncated, or concurrently mutated block can cause an
+    /// out-of-bounds read. This research mode must never be enabled for an
+    /// untrusted file.
+    #[cfg(feature = "unsafe-decode-bench")]
+    pub unsafe fn assume_valid_blocks(&mut self) {
+        self.unchecked_decode = true;
     }
 
     /// Attach a batched tile fetcher (see [`TileBulkLoader`]): multi-tile
@@ -870,12 +913,49 @@ impl GraphIndex {
                 TripleBlock::parse(self.tile_data(si, ti))
                     .ok()
                     .filter(|b| b.zone().may_contain(pa, pb, pc))
-                    .map(|b| match pa {
-                        Some(a) => {
-                            let dir = tile.dir.get_or_init(|| b.group_directory());
-                            b.scan_from(dir, a, pb, pc)
+                    .map(|b| {
+                        #[cfg(feature = "unsafe-decode-bench")]
+                        {
+                            if self.unchecked_decode {
+                                return match pa {
+                                    Some(a) => {
+                                        // SAFETY: enabling this mode requires every
+                                        // loader result to be a complete immutable
+                                        // builder-produced block. The directory and
+                                        // cursor borrow this exact tile allocation.
+                                        let dir = tile.dir.get_or_init(|| unsafe {
+                                            b.group_directory_unchecked()
+                                        });
+                                        // SAFETY: the mode's contract and directory
+                                        // construction above satisfy the cursor's
+                                        // validity, lifetime, and provenance rules.
+                                        DecodeCursor::Unchecked(unsafe {
+                                            b.scan_from_unchecked(dir, a, pb, pc)
+                                        })
+                                    }
+                                    // SAFETY: the mode's contract guarantees this is
+                                    // a complete immutable builder-produced block.
+                                    None => DecodeCursor::Unchecked(unsafe {
+                                        b.scan_unchecked(pa, pb, pc)
+                                    }),
+                                };
+                            }
+                            DecodeCursor::Safe(match pa {
+                                Some(a) => {
+                                    let dir = tile.dir.get_or_init(|| b.group_directory());
+                                    b.scan_from(dir, a, pb, pc)
+                                }
+                                None => b.scan(pa, pb, pc),
+                            })
                         }
-                        None => b.scan(pa, pb, pc),
+                        #[cfg(not(feature = "unsafe-decode-bench"))]
+                        match pa {
+                            Some(a) => {
+                                let dir = tile.dir.get_or_init(|| b.group_directory());
+                                b.scan_from(dir, a, pb, pc)
+                            }
+                            None => b.scan(pa, pb, pc),
+                        }
                     })
                     .into_iter()
                     .flatten()
@@ -936,6 +1016,40 @@ mod tests {
             .collect();
         v.sort_unstable();
         v
+    }
+
+    #[cfg(feature = "unsafe-decode-bench")]
+    #[test]
+    fn unchecked_index_matches_safe_every_pattern() {
+        let data = graph().1;
+        let build = |budget| {
+            let mut builder = GraphIndexBuilder::new().with_tile_budget(budget);
+            for &triple in &data {
+                builder.push(triple);
+            }
+            builder.build()
+        };
+        let values = [None, Some(1), Some(2), Some(3), Some(99)];
+
+        for budget in [1usize, INDEX_TILE_BUDGET] {
+            let safe = build(budget);
+            let mut unchecked = build(budget);
+            // SAFETY: both indexes were built in-process from the same valid
+            // triples and their immutable block images have not been modified.
+            unsafe { unchecked.assume_valid_blocks() };
+            for s in values {
+                for p in values {
+                    for o in values {
+                        let pattern = (s, p, o);
+                        assert_eq!(
+                            unchecked.match_pattern(pattern),
+                            safe.match_pattern(pattern),
+                            "budget {budget}, pattern {pattern:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

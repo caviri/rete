@@ -658,6 +658,11 @@ enum Command {
         /// while reading only the bytes the rewritten query touches.
         #[arg(long)]
         entail: bool,
+        /// Skip triple-block bounds checks. Research only: the URL must serve a
+        /// complete immutable file produced by rete's encoder.
+        #[cfg(feature = "unsafe-decode-bench")]
+        #[arg(long, hide = true)]
+        unsafe_decode: bool,
     },
     /// Explain a triple-pattern result over a **remote** `.rete` (HTTP range):
     /// which permutation, section, and byte ranges answer it — fetching only the
@@ -1074,12 +1079,21 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             predicate,
             object,
         } => commands::url::query_url(&url, subject, predicate, object),
+        #[cfg(not(feature = "unsafe-decode-bench"))]
         Command::SparqlUrl {
             url,
             query,
             json,
             entail,
         } => commands::url::sparql_url(&url, &query, json, entail),
+        #[cfg(feature = "unsafe-decode-bench")]
+        Command::SparqlUrl {
+            url,
+            query,
+            json,
+            entail,
+            unsafe_decode,
+        } => commands::url::sparql_url(&url, &query, json, entail, unsafe_decode),
         Command::WhyUrl {
             url,
             subject,

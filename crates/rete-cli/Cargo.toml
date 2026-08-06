@@ -44,6 +44,12 @@ ctrlc = "3"
 # SPARQL *Update* parsing for `rete serve` (queries go through rete-core).
 spargebra.workspace = true
 
+[features]
+default = []
+# Research-only forwarding switch. Normal CLI artifacts contain no unchecked
+# decoder and do not accept its hidden benchmark flag.
+unsafe-decode-bench = ["rete-core/unsafe-decode-bench"]
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
