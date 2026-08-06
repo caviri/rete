@@ -1,0 +1,24 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/nidm/nidm.rete",
+  "derived_from": [
+    "https://github.com/incf-nidash/nidm-specs",
+    "https://openneuro.org/datasets/ds000030"
+  ],
+  "keywords": [
+    "OpenNeuro",
+    "PROV",
+    "cohort",
+    "neuroimaging",
+    "provenance"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/HEAL",
+    "https://www.wikidata.org/entity/Q551875"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/nidm.html"
+  }
+}

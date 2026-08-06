@@ -15,6 +15,15 @@ Subcommands (all read/write JSON; `-` means stdin/stdout):
   report   IN               a stream of verdict rows -> TSV table + summary
   verify   --old A --new B  gate: curated fields carried + starter queries answer
 
+Carrying the old card forward is the FLOOR, not the ceiling. A file this
+project published itself can also gain the identity fields nobody ever wrote —
+`keywords`, `theme`, `canonical_url`, `publisher`, `derived_from` — and that is
+what `--enrich` is: a small JSON document of curated fields laid over the
+carried ones (`curated --enrich`), and the SAME document handed to `verify
+--enrich`, which then permits those keys (and only those) to differ from the
+old card. Anything else changing or vanishing is still a hard failure, so the
+licence to enrich never becomes a licence to lose.
+
 `(no dataset card)` — what the CLI prints for a cardless file — is accepted
 wherever a card is read, and classified as `CARDLESS`.
 """
@@ -133,6 +142,48 @@ def curated_of(card: dict) -> dict:
             continue
         out[key] = value
     return out
+
+
+def read_enrich(path: str | None) -> dict:
+    """A `--enrich` document: curated fields to lay over the carried ones.
+
+    Only the reserved top level is accepted, because that is what `--card-file`
+    accepts — a typo here would otherwise be written into the card as a silently
+    ignored key, or blow up hours later inside `rete build`. An empty value is
+    refused too: `--enrich` exists to ADD, and "add nothing" is a slip, not an
+    instruction to delete a carried field.
+    """
+    if not path:
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    if not isinstance(doc, dict):
+        raise ValueError(f"{path}: an enrichment must be a JSON object")
+    for key, value in doc.items():
+        if key not in CURATED_FIELDS:
+            raise ValueError(
+                f"{path}: '{key}' is not a curated card field "
+                f"(one of: {', '.join(CURATED_FIELDS)})"
+            )
+        if value in (None, "", [], {}):
+            raise ValueError(
+                f"{path}: '{key}' is empty — --enrich adds fields, it never "
+                f"clears one; drop the key instead"
+            )
+    return doc
+
+
+# `keywords` and `theme` are canonicalized by the BUILD — trimmed, sorted,
+# de-duplicated (rete-core/src/card_input.rs) — so an enrichment written in
+# reading order comes back in sorted order. Comparing them raw would report a
+# defect where the format did exactly what it documents.
+_CANONICALIZED_LISTS = {"keywords", "theme"}
+
+
+def _canon(key: str, value):
+    if key in _CANONICALIZED_LISTS and isinstance(value, list):
+        return sorted({str(v).strip() for v in value})
+    return value
 
 
 def _queries(card: dict) -> list[dict]:
@@ -278,18 +329,32 @@ def classify(card: dict | None, key: str, url: str, error: str = "",
 
 
 def cmd_curated(args) -> int:
+    enrich = read_enrich(args.enrich)
     card = read_card(args.input)
     if card is None:
         # A cardless file has nothing to carry; an empty document is a valid
-        # `--card-file` and keeps the caller's command line uniform.
-        write_json({}, args.output)
-        print("card_tools: no existing card — writing an empty curated document",
-              file=sys.stderr)
+        # `--card-file` and keeps the caller's command line uniform. An
+        # enrichment still applies — a file with no card at all is the case that
+        # needs one most (geoadmin-tiles shipped without one).
+        write_json(dict(enrich), args.output)
+        print("card_tools: no existing card — writing "
+              + (f"{len(enrich)} enriched field(s): {', '.join(sorted(enrich))}"
+                 if enrich else "an empty curated document"), file=sys.stderr)
         return 0
     curated = curated_of(card)
+    # Key-by-key at the top level: an enriched key wins outright (a list is
+    # REPLACED, never appended to — half-merged lists are impossible to reason
+    # about), and a carried key the enrichment does not mention is untouched.
+    added = sorted(k for k in enrich if k not in curated)
+    changed = sorted(k for k in enrich if k in curated and curated[k] != enrich[k])
+    curated.update(enrich)
     write_json(curated, args.output)
     print(f"card_tools: carrying {len(curated)} curated field(s): "
           f"{', '.join(sorted(curated)) or '(none)'}", file=sys.stderr)
+    if added:
+        print(f"card_tools: enrichment ADDS {', '.join(added)}", file=sys.stderr)
+    if changed:
+        print(f"card_tools: enrichment REPLACES {', '.join(changed)}", file=sys.stderr)
     return 0
 
 
@@ -379,9 +444,27 @@ def cmd_verify(args) -> int:
     # 1. Curated fields carried across. Losing a publisher's title while
     #    "upgrading" their card is the failure mode this whole tool exists to
     #    avoid, so it is an error, not a warning.
+    #
+    #    An enriched key is exempt from "unchanged" — that is the whole point of
+    #    passing the enrichment — but ONLY the keys the enrichment actually
+    #    names, and each of them must have landed in the new card. So the escape
+    #    hatch cannot widen into "curated fields may drift": naming a key to
+    #    change it is also promising it will be there afterwards.
+    enrich = read_enrich(args.enrich)
+    now = curated_of(new)
+    for key, value in enrich.items():
+        if key not in now:
+            problems.append(f"enriched field never landed in the card: {key} = {value!r}")
+        elif _canon(key, now[key]) != _canon(key, value):
+            problems.append(
+                f"enriched field {key} came back different: "
+                f"{value!r} -> {now[key]!r}"
+            )
     if old is not None:
-        was, now = curated_of(old), curated_of(new)
+        was = curated_of(old)
         for key, value in was.items():
+            if key in enrich:
+                continue
             if key not in now:
                 problems.append(f"curated field dropped: {key} = {value!r}")
             elif now[key] != value:
@@ -450,6 +533,10 @@ def main() -> int:
     p = sub.add_parser("curated", help="old card -> a --card-file document")
     p.add_argument("input")
     p.add_argument("-o", "--output", default="-")
+    p.add_argument("--enrich", metavar="FILE",
+                   help="curated fields to lay over the carried ones "
+                        "(same top level as --card-file); an enriched key wins, "
+                        "a carried key it does not name is untouched")
     p.set_defaults(func=cmd_curated)
 
     p = sub.add_parser("classify", help="one card -> one verdict row")
@@ -470,10 +557,22 @@ def main() -> int:
     p.add_argument("--new", required=True)
     p.add_argument("--allow-empty", nargs="*",
                    help="starter query ids allowed to return zero rows")
+    p.add_argument("--enrich", metavar="FILE",
+                   help="the same document `curated --enrich` was given: its "
+                        "keys may differ from the old card (and must be present "
+                        "in the new one); every other curated field must still "
+                        "be carried unchanged")
     p.set_defaults(func=cmd_verify)
 
     args = parser.parse_args()
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (OSError, ValueError) as exc:
+        # An enrichment with a typo'd key is the common case here, and a
+        # traceback buries the one line that says which key. Fail with the
+        # sentence, not the stack.
+        print(f"card_tools: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

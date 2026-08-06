@@ -38,6 +38,19 @@
 #                                  is louvain, which is the wrong answer for 17 of
 #                                  the 22 published files audited on 2026-08-05 —
 #                                  see README "Known limits".
+#   --enrich FILE                  curated fields to ADD to the ones carried
+#                                  from the old card — the identity half
+#                                  (`keywords`, `theme`, `canonical_url`,
+#                                  `publisher`, `derived_from`, …) that a file
+#                                  published before those fields existed simply
+#                                  does not have. Same top level as
+#                                  `--card-file`. The gate is handed the same
+#                                  document, so exactly these keys may differ
+#                                  from the old card and every other one must
+#                                  still be carried unchanged. Only for files
+#                                  you publish: inventing an identity for
+#                                  someone else's data is what carrying-only
+#                                  protects against.
 #   --allow-empty "id1 id2"        starter queries permitted to return 0 rows
 #   --text-index auto|yes|no       auto (default) mirrors the source: a file that
 #                                  has a full-text index keeps one, because a
@@ -94,7 +107,7 @@ TOOL_VERSION=2
 source=""; out=""; mode="auto"; stream_above_mb=192
 work="/work/dev/recard"; pyramid_algo="auto"; allow_empty=""; expect_sha=""
 keep=0; force=0; verify_data=1; text_index="auto"; allow_section_loss=0
-reuse_staged=0
+reuse_staged=0; enrich=""
 
 die() { echo "recard: $*" >&2; exit 1; }
 say() { echo "== $*"; }
@@ -107,6 +120,7 @@ while [ $# -gt 0 ]; do
     --stream-above-mb) stream_above_mb="$2"; shift 2 ;;
     --work) work="$2"; shift 2 ;;
     --pyramid-algo) pyramid_algo="$2"; shift 2 ;;
+    --enrich) enrich="$2"; shift 2 ;;
     --allow-empty) allow_empty="$2"; shift 2 ;;
     --expect-sha256) expect_sha="$2"; shift 2 ;;
     --text-index) text_index="$2"; shift 2 ;;
@@ -115,7 +129,7 @@ while [ $# -gt 0 ]; do
     --reuse-staged) reuse_staged=1; shift ;;
     --force) force=1; shift ;;
     --no-verify-data) verify_data=0; shift ;;
-    -h|--help) sed -n '2,68p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,79p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -292,7 +306,9 @@ say "[1/6] read the existing card"
 "$RETE" card "$local_src" --json > "$scratch/old-card.json" 2>/dev/null \
   || echo '(no dataset card)' > "$scratch/old-card.json"
 say "[2/6] carry the curated fields"
-python3 -P "$TOOLS" curated "$scratch/old-card.json" -o "$scratch/curated.json"
+[ -z "$enrich" ] || [ -f "$enrich" ] || die "--enrich file not found: $enrich"
+python3 -P "$TOOLS" curated "$scratch/old-card.json" -o "$scratch/curated.json" \
+  ${enrich:+--enrich "$enrich"}
 
 # ---- 3. rebuild --------------------------------------------------------------
 # repyramid reads the whole file into RAM and holds every quad as strings: peak
@@ -398,7 +414,7 @@ say "[5/6] verify the new card"
 "$RETE" card "$tmp_out" --json > "$scratch/new-card.json"
 # shellcheck disable=SC2086
 python3 -P "$TOOLS" verify --old "$scratch/old-card.json" --new "$scratch/new-card.json" \
-  ${allow_empty:+--allow-empty $allow_empty} \
+  ${allow_empty:+--allow-empty $allow_empty} ${enrich:+--enrich "$enrich"} \
   || die "the rebuilt card did not pass — $out left untouched (rebuilt file at $tmp_out)"
 
 # ---- 6. install + receipt ----------------------------------------------------
@@ -413,12 +429,13 @@ out_hash="$(content_hash_of "$out")"
 python3 -P - "$state" "$scratch" "$source" "$src_hash" "$src_bytes" "$out" \
     "$out_hash" "$mode" "$pyramid_algo" "$verify_data" "$TOOL_VERSION" \
     "$src_sha256" "$data_proof" "$nq_sha256" "$nq_statements" \
-    "${peak_rebuild:-}" "${staged_bytes:-}" "${src_text_index:-0}" "${out_text_index:-0}" <<'PY'
+    "${peak_rebuild:-}" "${staged_bytes:-}" "${src_text_index:-0}" "${out_text_index:-0}" \
+    "${enrich:-}" <<'PY'
 import datetime, json, os, sys
 (state, scratch, source, src_hash, src_bytes, out, out_hash, mode,
  pyramid_algo, verify_data, tool_version, src_sha256, data_proof,
  nq_sha256, nq_statements, peak_rebuild, staged_bytes,
- src_text_index, out_text_index) = sys.argv[1:20]
+ src_text_index, out_text_index, enrich) = sys.argv[1:21]
 old = json.load(open(os.path.join(scratch, "old-card.json"))) \
     if os.path.getsize(os.path.join(scratch, "old-card.json")) > 40 else {}
 new = json.load(open(os.path.join(scratch, "new-card.json")))
@@ -451,6 +468,11 @@ json.dump({
     "nquads_sha256": nq_sha256,
     "nquads_statements": int(nq_statements) if nq_statements else None,
     "curated_fields": sorted(json.load(open(os.path.join(scratch, "curated.json")))),
+    # Which of those were ADDED here rather than carried from the old card, and
+    # from what document — so a reader of the receipt can tell a field the
+    # publisher always had from one this pass derived, and go read the source.
+    "enrich_file": enrich or None,
+    "enriched_fields": sorted(json.load(open(enrich))) if enrich else [],
     # Old vs new, so a shorter query list can be read as the repair it is rather
     # than as a loss, and so a shrinking count is visible without re-reading the
     # cards. Old cards counted pre-dedup input; the header counts the file.

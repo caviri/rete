@@ -1,0 +1,23 @@
+{
+  "version": "2.2",
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/ontoneurolog/ontoneurolog.rete",
+  "cite_as": "Temal, L., Dojat, M., Kassel, G. & Gibaud, B. (2008). Towards an ontology for sharing medical images and regions of interest in neuroimaging. Journal of Biomedical Informatics 41:766-778. https://doi.org/10.1016/j.jbi.2008.03.002",
+  "keywords": [
+    "DOLCE",
+    "MRI",
+    "OWL",
+    "neuroimaging",
+    "ontology",
+    "provenance"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/HEAL",
+    "https://www.wikidata.org/entity/Q551875"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/ontoneurolog.html"
+  }
+}

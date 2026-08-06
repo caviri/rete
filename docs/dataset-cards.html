@@ -1173,6 +1173,42 @@ surgical by running <code>verify</code> twice: once against the original card, e
 <strong>exactly one</strong> reported difference, and once against the corrected document,
 expecting a clean pass. Two differences on the first run means something moved
 that you did not intend.</p>
+<h3>Carrying forward is a floor — filling a blank is not rewriting</h3>
+<p>"Carry the curated half across verbatim" answers the dangerous question (may a
+tool alter what a publisher wrote?) but not the useful one: <strong>may it fill in
+what nobody ever wrote?</strong> A file built before <code>keywords</code>, <code>theme</code>,
+<code>canonical_url</code>, <code>publisher</code> and <code>derived_from</code> existed has none of them, and
+carrying-only guarantees it never will. Those are different acts, and only the
+first needs forbidding.</p>
+<p>So <code>recard.sh --enrich FILE</code> takes a document with this same reserved top level
+and lays it over the carried fields. The gate is handed the <em>same</em> document and
+permits exactly the keys it names to differ — and requires every one of them to
+be present afterwards. Enriching <code>keywords</code> while dropping <code>title</code> still fails.</p>
+<p>Two rules make this safe rather than merely convenient:</p>
+<ol>
+<li><strong>Only on files you publish.</strong> For someone else's <code>.rete</code>, an invented ROR or
+DOI is fabricated metadata in another party's record, and nothing in the file
+distinguishes the two cases — so the tool's default stays carry-only and the
+caller opts in per file.</li>
+<li><strong>Derive, or leave it empty.</strong> Every value must trace to something checkable:
+the catalog's own published URL, a resolved concept IRI, an upstream that
+answered. Where nothing supports a field, the honest output is a blank —
+<code>creators</code> needs an ORCID nobody has recorded, and an upstream's DOI belongs
+in <code>derived_from</code> and <code>cite_as</code>, never in <code>doi</code>, which would claim this file
+<em>is</em> that deposit. <code>sparql_endpoint</code> is the sharpest case: it means an
+endpoint a client can send this dataset's query to, so a project home page in
+that field is a lie a client can act on. Probing the 22 files of the
+2026-08-06 batch, one upstream endpoint answered the protocol <em>and</em> answered
+about the file's own IRIs; a second answered the protocol and knew nothing
+about them, which is exactly the failure a home page would have hidden.</li>
+</ol>
+<p>The prose rule is untouched: <code>description</code> and <code>title</code> still travel through
+unchanged. The one repair that is not a rewrite is a <strong>provable encoding
+defect</strong> — <code>memoria</code>'s card stored "MemÃ²ria", the UTF-8 bytes of "Memòria" read
+once as latin-1, and re-decoding them returns the publisher's own string
+exactly. That is recovering what was written, not editing it; it goes through
+<code>--enrich</code> like any other change so the gate reports it, and it is worth doing
+only because the bytes prove the intended text.</p>
 <p><strong>A headline count can go down, and that is the fix, not data loss.</strong> An older
 card counted the raw pre-dedup input multiset; a re-card counts what the file
 actually stores. On <code>lombardi</code> the published card says 70,719 statements, its

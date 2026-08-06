@@ -1,0 +1,27 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/worldcup2026/worldcup2026.rete",
+  "derived_from": [
+    "https://github.com/openfootball/worldcup",
+    "https://www.wikidata.org"
+  ],
+  "keywords": [
+    "Canada",
+    "GeoSPARQL",
+    "Mexico",
+    "OpenFootball",
+    "USA",
+    "World Cup 2026",
+    "football",
+    "soccer"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC",
+    "https://www.wikidata.org/entity/Q2736"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/worldcup2026.html"
+  }
+}

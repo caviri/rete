@@ -1,0 +1,22 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/deps-dev/deps-dev-cargo.rete",
+  "source_date": "2026-07-13",
+  "derived_from": [
+    "https://docs.deps.dev/bigquery/v1/"
+  ],
+  "keywords": [
+    "Cargo",
+    "Rust",
+    "crates.io"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH",
+    "https://www.wikidata.org/entity/Q7397"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/deps-dev.html"
+  }
+}

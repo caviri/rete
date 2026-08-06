@@ -1,0 +1,37 @@
+{
+  "source": "https://www.gbif.org",
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/gbif-birds/gbif-birds.rete",
+  "source_date": "2026-07-01",
+  "derived_from": [
+    "https://registry.opendata.aws/gbif/"
+  ],
+  "cite_as": "GBIF.org (2026). GBIF Occurrence Snapshot 2026-07-01, AWS Open Data (s3://gbif-open-data-eu-central-1). https://www.gbif.org",
+  "keywords": [
+    "Aves",
+    "GBIF",
+    "GeoSPARQL",
+    "IUCN",
+    "RDF-star",
+    "Spain",
+    "Switzerland",
+    "biodiversity",
+    "birds",
+    "citizen science",
+    "conservation",
+    "multilingual",
+    "occurrences",
+    "provenance",
+    "taxonomy"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/ENVI",
+    "https://www.wikidata.org/entity/Q47041",
+    "https://www.wikidata.org/entity/Q5113"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/gbif-birds.html"
+  }
+}

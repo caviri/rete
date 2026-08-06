@@ -64,6 +64,58 @@ Outputs land under `/work/dev/recard/` (git-ignored): `survey/`, `out/`,
   is no in-place byte swap. Every re-card rewrites the file, which is why the
   data has to be proven unchanged afterwards rather than assumed.
 
+## Carrying is the floor, not the ceiling — `--enrich`
+
+Carrying-and-adding-nothing is the right default for **someone else's** file. The
+`nkod` case is the one that set the rule: it is the Czech national open-data
+catalog's `.rete`, and minting a ROR for its publisher or a DOI for its data
+would put fabricated identity into another party's metadata. There is no way to
+tell from inside the file which is which, so the tool refuses for everything.
+
+But most of the catalog is **this project's own**, and there the same caution only
+preserves blanks. Every one of the 21 files re-carded on 2026-08-06 shipped with
+no `keywords`, no `theme`, no `canonical_url`, no `publisher`, no `derived_from`
+— not because anyone decided against them, but because the fields did not exist
+when the files were built and the re-card carried across exactly what was there.
+
+```bash
+bash scripts/recard/recard.sh --source /work/dev/recard/published/nidm.rete \
+  --out /work/dev/recard/out/nidm/nidm.rete \
+  --enrich /work/scripts/recard/enrich/nidm.json
+```
+
+`--enrich FILE` takes a small JSON document with the **same reserved top level as
+`--card-file`** and lays it over the carried fields: an enriched key wins
+outright (a list is *replaced*, never appended to), a carried key it does not
+mention is untouched. The same document is handed to the gate, which then permits
+**exactly those keys** to differ from the old card — and requires each of them to
+be present in the new one. So the licence to enrich never widens into a licence
+to lose: drop `title` while enriching `keywords` and the run still fails.
+
+`recard_batch.sh --enrich-dir DIR` makes it per-key and opt-in: `DIR/<key>.json`
+if it exists, carry-only otherwise.
+
+The documents for this repo's own datasets are generated, not hand-written —
+`scripts/recard/enrich/generate.mjs` derives them from `web/playground-src/catalog.js`
+(loaded as **code**, not regex'd) and writes one JSON per dataset, so the policy
+is reviewable in one file and the artifacts are diffable. `node
+scripts/recard/enrich/generate.mjs --check` re-derives and fails on drift.
+
+What that generator will and will not derive is the interesting part, and it is
+documented at the top of the file. In short: `canonical_url` from the catalog's
+own published URL; `keywords` from the playground tags **after filtering** —
+licence codes duplicate `license`, and "option-C" / "tiles-in-rete" /
+"semantic-zoom" / "federation" are labels for the *file*, not its subject;
+`theme` only from IRIs resolved against a published scheme before writing (three
+of the first eight Wikidata QIDs guessed from memory turned out to be a different
+concept entirely); `derived_from` only where it says more than `source` already
+does, and only URLs that answered 200. And **not**: `creators` (nobody's ORCID is
+on record and naming a person on 21 published files is a human's call), `doi`
+(none of these files has one — an upstream's DOI is `derived_from` plus
+`cite_as`, not `doi`), or `sparql_endpoint` unless the endpoint answers the
+protocol, answers about *this dataset's own IRIs*, and belongs to the upstream
+publisher. One of twenty-two passed that last test.
+
 ## The two proofs
 
 **The data is unchanged.** Both files are serialized to N-Quads and hashed as
@@ -430,11 +482,37 @@ the only way that keeps today's published layout working — at the price of the
 file's build record. **The real fix is a kind of its own for tiles**, plus the
 reader change to match; that is engine + web work, not a flag in these scripts.
 
+### The one file that still does not fit, and what actually costs the RAM
+
+`gbif-birds` (1.53 GB, 333.8 M triples, 43.38 GiB staged N-Quads) has now been
+OOM-killed three times on a 47 GiB machine — twice with its pyramid at VmHWM
+~43.7 GiB, and once with `--no-pyramid` at **44.08 GiB**. Dropping the largest
+section moved the ceiling by less than 1%, so the obvious suspect is the wrong
+one.
+
+A 240-sample VmHWM trace says where it goes. The run climbs to **10.8 GiB and
+plateaus there for most of its length** — that is the streaming assembly, and it
+fits comfortably. Then in its last minutes it goes 10.8 → 16.5 → 29.5 → 37.2 →
+43.6 → 44.1 GiB and dies, with `embedded dataset card (58224 bytes of metadata)`
+as its last output. It had finished assembling; what remained was the **card**,
+and with `--no-pyramid` the only expensive thing there is the pass that runs each
+starter query once, cold, against the finished image to measure it.
+
+That pass is not optional for a re-card: it is what stops a card shipping a query
+nobody ran, and `card_tools.py verify` fails a card that arrives without the row
+counts — so `--no-card-costs` would produce a file and then fail the gate.
+`--memory-budget-mb` does not help either, since it implies `--no-pyramid` and
+excludes `--text-index`: it optimizes the 10.8 GiB half that already fits.
+
+The lever is a bigger machine. Keep the 43.38 GiB staged `.nq` for
+`--reuse-staged` — staging it costs 28 minutes and it is the same input whatever
+the build does next.
+
 ## Known limits
 
-* A cardless source has no curated fields to carry; the re-card gives it a
-  derived card only. Titles and licences for those have to come from a
-  hand-written `--card-file`.
+* A cardless source has no curated fields to carry unless `--enrich` supplies
+  them; without it the re-card gives such a file a derived card only.
+  `geoadmin-tiles` was that case — it shipped with no card at all.
 * Sharded datasets are surveyed by their first shard unless `--include-shards`.
   Re-carding a shard set means re-carding every shard.
 * **`--pyramid-algo` now defaults to `auto`, because `repyramid`'s own default

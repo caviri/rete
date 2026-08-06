@@ -37,6 +37,15 @@
 #   --stream-above-mb N  auto switches to stream above N MB (default 192)
 #   --max-mb N           skip any source larger than N MB (0 = no limit)
 #   --allow-empty "ids"  starter queries permitted to return 0 rows (see README)
+#   --enrich-dir DIR     DIR/<name>.json is passed to recard.sh --enrich, adding
+#                        the curated identity fields a file published before
+#                        those fields existed simply does not have. A key with
+#                        no file in DIR is re-carded carry-only, as before — the
+#                        directory is a set of opt-ins, not a requirement. Only
+#                        for files you publish yourself.
+#   --force              re-card even where a receipt says it is already done
+#                        (what you want after changing the enrichment, since the
+#                        receipt is keyed on the SOURCE, which has not moved)
 #   --jobs N             datasets in parallel (default 1 — each is RAM-hungry)
 #   --dry-run            print the plan, touch nothing
 #   --stop-on-error      abort on the first failure (default: continue)
@@ -72,7 +81,7 @@ here=/work/scripts/recard
 list=""; keys=""; catalog=/work/web/playground-src/catalog.js
 mirror=""; out_dir=/work/dev/recard/out; work=/work/dev/recard
 mode="auto"; stream_above_mb=192; max_mb=0; jobs=1; dry=0; stop=0; allow_empty=""
-sha_dir=""; pyramid_algo="auto"; text_index="auto"
+sha_dir=""; pyramid_algo="auto"; text_index="auto"; enrich_dir=""; force_flag=""
 
 die() { echo "recard_batch: $*" >&2; exit 1; }
 
@@ -91,10 +100,12 @@ while [ $# -gt 0 ]; do
     --stream-above-mb) stream_above_mb="$2"; shift 2 ;;
     --max-mb) max_mb="$2"; shift 2 ;;
     --allow-empty) allow_empty="$2"; shift 2 ;;
+    --enrich-dir) enrich_dir="$2"; shift 2 ;;
+    --force) force_flag="--force"; shift ;;
     --jobs) jobs="$2"; shift 2 ;;
     --dry-run) dry=1; shift ;;
     --stop-on-error) stop=1; shift ;;
-    -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,61p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -222,11 +233,18 @@ run_one() {
       echo "   !! $key: no $sha_dir/$key.sha256 — running WITHOUT a byte anchor" >&2
     fi
   fi
+  # The enrichment is opt-in per key: no file, no --enrich, and the re-card is
+  # the carry-only one it has always been.
+  local enrich=""
+  if [ -n "$enrich_dir" ] && [ -f "$enrich_dir/$key.json" ]; then
+    enrich="$enrich_dir/$key.json"
+  fi
   echo "-- $key: $src -> $out_dir/$key/$key.rete  (log: $log)"
   # shellcheck disable=SC2086
   if bash "$here/recard.sh" --source "$src" --out "$out_dir/$key/$key.rete" \
        --work "$work" --mode "$mode" --stream-above-mb "$stream_above_mb"        --pyramid-algo "$pyramid_algo" --text-index "$text_index" \
        ${allow_empty:+--allow-empty "$allow_empty"} \
+       ${enrich:+--enrich "$enrich"} $force_flag \
        ${expect:+--expect-sha256 "$expect"} \
        > "$log" 2>&1; then
     printf '%s\tOK\t%s\n' "$key" "$(tail -1 "$log")" >> "$summary"

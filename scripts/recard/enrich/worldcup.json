@@ -1,0 +1,28 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/worldcup/worldcup.rete",
+  "derived_from": [
+    "https://github.com/openfootball/worldcup",
+    "https://www.wikidata.org"
+  ],
+  "keywords": [
+    "FiveThirtyEight",
+    "GeoSPARQL",
+    "Qatar 2022",
+    "World Cup",
+    "football",
+    "predictions",
+    "provenance",
+    "schema.org",
+    "soccer"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC",
+    "https://www.wikidata.org/entity/Q2736"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/worldcup.html"
+  }
+}

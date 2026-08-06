@@ -1,0 +1,22 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/factgrid-illuminati/factgrid-illuminati.rete",
+  "sparql_endpoint": "https://database.factgrid.de/sparql",
+  "derived_from": [
+    "https://database.factgrid.de/sparql"
+  ],
+  "keywords": [
+    "FactGrid",
+    "history",
+    "prosopography"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC",
+    "https://www.wikidata.org/entity/Q309"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/factgrid-illuminati.html"
+  }
+}

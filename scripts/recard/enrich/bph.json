@@ -1,0 +1,24 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/bph/bph.rete",
+  "derived_from": [
+    "https://sourcelibrary.org"
+  ],
+  "keywords": [
+    "Amsterdam",
+    "IIIF",
+    "alchemy",
+    "esoterica",
+    "hermetica",
+    "multilingual",
+    "rare books"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/bph.html"
+  }
+}
