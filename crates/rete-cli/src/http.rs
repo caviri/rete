@@ -10,6 +10,7 @@ use std::io::Read;
 use rete_core::RangeReader;
 
 pub struct HttpRangeReader {
+    agent: ureq::Agent,
     url: String,
     len: u64,
 }
@@ -17,12 +18,16 @@ pub struct HttpRangeReader {
 impl HttpRangeReader {
     /// Probe the resource length with a HEAD request.
     pub fn open(url: &str) -> anyhow::Result<Self> {
-        let resp = ureq::head(url).call()?;
+        let agent = ureq::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build();
+        let resp = agent.head(url).call()?;
         let len = resp
             .header("content-length")
             .and_then(|v| v.parse::<u64>().ok())
             .ok_or_else(|| anyhow::anyhow!("server did not report Content-Length for {url}"))?;
         Ok(Self {
+            agent,
             url: url.to_string(),
             len,
         })
@@ -38,8 +43,15 @@ impl RangeReader for HttpRangeReader {
         if len == 0 {
             return Ok(Vec::new());
         }
-        let end = offset + len - 1; // HTTP ranges are inclusive
-        let resp = ureq::get(&self.url)
+        let end = offset.checked_add(len - 1).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "HTTP range end overflows u64",
+            )
+        })?; // HTTP ranges are inclusive
+        let resp = self
+            .agent
+            .get(&self.url)
             .set("Range", &format!("bytes={offset}-{end}"))
             .call()
             .map_err(std::io::Error::other)?;
@@ -121,6 +133,9 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
 
     /// How the throwaway test server treats range requests.
     #[derive(Clone, Copy)]
@@ -211,6 +226,71 @@ mod tests {
         url
     }
 
+    /// HTTP/1.1 range host that keeps accepted sockets open and counts them.
+    /// It exits after serving `request_count` request heads across any number of
+    /// connections, so the pre-agent implementation (one socket per request)
+    /// and the pooled implementation (one socket total) both terminate.
+    fn serve_keep_alive(data: Vec<u8>, request_count: usize) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_server = accepted.clone();
+        std::thread::spawn(move || {
+            let mut served = 0usize;
+            while served < request_count {
+                let (mut stream, _) = listener.accept().unwrap();
+                accepted_server.fetch_add(1, Ordering::SeqCst);
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                while served < request_count {
+                    let mut req = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !req.ends_with(b"\r\n\r\n") {
+                        use std::io::Read as _;
+                        match stream.read(&mut byte) {
+                            Ok(0) | Err(_) => break,
+                            Ok(_) => req.push(byte[0]),
+                        }
+                    }
+                    if !req.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                    let text = String::from_utf8_lossy(&req);
+                    let is_head = text.starts_with("HEAD");
+                    let range = text.lines().find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("range: bytes=")
+                            .map(|value| value.trim().to_string())
+                    });
+                    if is_head {
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: keep-alive\r\n\r\n",
+                            data.len()
+                        );
+                        stream.write_all(response.as_bytes()).unwrap();
+                    } else {
+                        let range = range.unwrap();
+                        let (start, end) = range.split_once('-').unwrap();
+                        let start: usize = start.parse().unwrap();
+                        let end: usize = end.parse().unwrap();
+                        let body = &data[start..=end];
+                        let response = format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                            data.len(),
+                            body.len()
+                        );
+                        stream.write_all(response.as_bytes()).unwrap();
+                        stream.write_all(body).unwrap();
+                    }
+                    stream.flush().unwrap();
+                    served += 1;
+                }
+            }
+        });
+        (url, accepted)
+    }
+
     #[test]
     fn reads_exact_ranges_from_a_range_host() {
         let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
@@ -221,6 +301,28 @@ mod tests {
         assert_eq!(r.read_at(500, 20).unwrap(), &data[500..520]);
         assert_eq!(r.read_at(996, 4).unwrap(), &data[996..1000]);
         assert!(r.read_at(0, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn reuses_the_open_agent_for_sequential_ranges() {
+        let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+        let (url, accepted) = serve_keep_alive(data.clone(), 3);
+        let r = HttpRangeReader::open(&url).unwrap();
+
+        assert_eq!(r.read_at(10, 8).unwrap(), &data[10..18]);
+        assert_eq!(r.read_at(500, 16).unwrap(), &data[500..516]);
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn rejects_an_overflowing_http_range() {
+        let data = vec![0u8; 32];
+        let (url, _) = serve_keep_alive(data, 1);
+        let r = HttpRangeReader::open(&url).unwrap();
+
+        let err = r.read_at(u64::MAX, 2).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("range end overflows"));
     }
 
     /// Proves the `https://` transport works end-to-end against a real host that
