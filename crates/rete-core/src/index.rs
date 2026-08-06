@@ -16,6 +16,7 @@
 use std::sync::OnceLock;
 
 use crate::triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder};
+use crate::varint::uvarint_len;
 
 /// A triple pattern: `None` is an unbound variable, `Some(id)` a bound term.
 pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
@@ -350,16 +351,6 @@ impl GraphIndexBuilder {
     }
 }
 
-/// The encoded varint length of `v` (LEB128).
-fn varint_len(mut v: u64) -> usize {
-    let mut n = 1;
-    while v >= 0x80 {
-        v >>= 7;
-        n += 1;
-    }
-    n
-}
-
 /// Incremental encoded-size accounting for one a-group of a tiled section —
 /// the running-delta chain of [`build_tiles`], streamable triple by triple.
 /// Shared by the in-memory tiler here and the external build's streaming
@@ -381,7 +372,7 @@ impl GroupSizer {
     /// previous group's leading id; `a` again for a mid-group continuation).
     pub(crate) fn start(a: u32, prev_a: u32) -> Self {
         GroupSizer {
-            size: varint_len((a - prev_a) as u64),
+            size: uvarint_len((a - prev_a) as u64),
             num_b: 0,
             cur_b: 0,
             num_c: 0,
@@ -395,10 +386,10 @@ impl GroupSizer {
     pub(crate) fn push(&mut self, b: u32, c: u32) -> usize {
         if self.empty || b != self.cur_b {
             if self.empty {
-                self.size += varint_len(b as u64); // first b-run: delta from 0
+                self.size += uvarint_len(b as u64); // first b-run: delta from 0
             } else {
-                self.size += varint_len(self.num_c); // close the previous b-run
-                self.size += varint_len((b - self.cur_b) as u64);
+                self.size += uvarint_len(self.num_c); // close the previous b-run
+                self.size += uvarint_len((b - self.cur_b) as u64);
             }
             self.cur_b = b;
             self.num_c = 0;
@@ -406,7 +397,7 @@ impl GroupSizer {
             self.num_b += 1;
             self.empty = false;
         }
-        self.size += varint_len((c - self.prev_c) as u64);
+        self.size += uvarint_len((c - self.prev_c) as u64);
         self.prev_c = c;
         self.num_c += 1;
         self.total()
@@ -418,9 +409,9 @@ impl GroupSizer {
             + if self.empty {
                 0
             } else {
-                varint_len(self.num_c)
+                uvarint_len(self.num_c)
             }
-            + varint_len(self.num_b)
+            + uvarint_len(self.num_b)
     }
 }
 

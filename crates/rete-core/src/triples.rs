@@ -6,7 +6,7 @@
 //! `a=subject, b=predicate, c=object`; for POS, `a=predicate, b=object,
 //! c=subject`; and so on. The encoding is role-agnostic.
 
-use crate::varint::{read_uvarint, write_uvarint};
+use crate::varint::{read_uvarint, uvarint_len, write_uvarint};
 
 /// A triple of dictionary IDs in some permutation's component order.
 pub type Triple = (u32, u32, u32);
@@ -67,76 +67,139 @@ impl TripleBlockBuilder {
     pub fn build(mut self) -> Vec<u8> {
         self.triples.sort_unstable();
         self.triples.dedup();
-        let t = &self.triples;
-
-        let mut out = Vec::new();
-        if t.is_empty() {
-            // zone map of zeros + count 0, no body.
-            for _ in 0..7 {
-                write_uvarint(&mut out, 0);
-            }
-            write_uvarint(&mut out, 0); // num_a
-            return out;
-        }
-
-        // Zone map.
-        let (mut min_a, mut max_a) = (u32::MAX, 0u32);
-        let (mut min_b, mut max_b) = (u32::MAX, 0u32);
-        let (mut min_c, mut max_c) = (u32::MAX, 0u32);
-        for &(a, b, c) in t {
-            min_a = min_a.min(a);
-            max_a = max_a.max(a);
-            min_b = min_b.min(b);
-            max_b = max_b.max(b);
-            min_c = min_c.min(c);
-            max_c = max_c.max(c);
-        }
-        for v in [min_a, max_a, min_b, max_b, min_c, max_c, t.len() as u32] {
-            write_uvarint(&mut out, v as u64);
-        }
-
-        // Body: grouped delta adjacency.
-        // First pass: collect a-groups -> b-groups -> c-list.
-        // (b, c-list) for one b under an a; and (a, its b-groups).
-        type BGroup = (u32, Vec<u32>);
-        type AGroup = (u32, Vec<BGroup>);
-        let mut i = 0;
-        let mut a_groups: Vec<AGroup> = Vec::new();
-        while i < t.len() {
-            let a = t[i].0;
-            let mut b_groups: Vec<(u32, Vec<u32>)> = Vec::new();
-            while i < t.len() && t[i].0 == a {
-                let b = t[i].1;
-                let mut cs = Vec::new();
-                while i < t.len() && t[i].0 == a && t[i].1 == b {
-                    cs.push(t[i].2);
-                    i += 1;
-                }
-                b_groups.push((b, cs));
-            }
-            a_groups.push((a, b_groups));
-        }
-
-        write_uvarint(&mut out, a_groups.len() as u64);
-        let mut prev_a = 0u32;
-        for (a, b_groups) in &a_groups {
-            write_uvarint(&mut out, (a - prev_a) as u64);
-            prev_a = *a;
-            write_uvarint(&mut out, b_groups.len() as u64);
-            let mut prev_b = 0u32;
-            for (b, cs) in b_groups {
-                write_uvarint(&mut out, (b - prev_b) as u64);
-                prev_b = *b;
-                write_uvarint(&mut out, cs.len() as u64);
-                let mut prev_c = 0u32;
-                for c in cs {
-                    write_uvarint(&mut out, (c - prev_c) as u64);
-                    prev_c = *c;
-                }
-            }
-        }
-        out
+        encode_sorted_unique(&self.triples)
     }
+}
+
+struct EncodingPlan {
+    zone: [u32; 7],
+    num_a: u64,
+    encoded_len: usize,
+}
+
+/// Plan the exact encoded size without materializing the nested a/b/c groups.
+fn plan_sorted_unique(t: &[Triple]) -> EncodingPlan {
+    let count = u32::try_from(t.len()).expect("triple block count exceeds u32::MAX");
+    let (mut min_b, mut max_b) = (u32::MAX, 0u32);
+    let (mut min_c, mut max_c) = (u32::MAX, 0u32);
+    for &(_, b, c) in t {
+        min_b = min_b.min(b);
+        max_b = max_b.max(b);
+        min_c = min_c.min(c);
+        max_c = max_c.max(c);
+    }
+    let zone = [t[0].0, t[t.len() - 1].0, min_b, max_b, min_c, max_c, count];
+    let mut encoded_len = zone
+        .iter()
+        .map(|&value| uvarint_len(value as u64))
+        .sum::<usize>();
+
+    let mut num_a = 0u64;
+    let mut prev_a = 0u32;
+    let mut i = 0usize;
+    while i < t.len() {
+        let a = t[i].0;
+        num_a += 1;
+        encoded_len = encoded_len
+            .checked_add(uvarint_len((a - prev_a) as u64))
+            .expect("encoded triple block length overflow");
+        prev_a = a;
+
+        let mut num_b = 0u64;
+        let mut prev_b = 0u32;
+        while i < t.len() && t[i].0 == a {
+            let b = t[i].1;
+            num_b += 1;
+            encoded_len = encoded_len
+                .checked_add(uvarint_len((b - prev_b) as u64))
+                .expect("encoded triple block length overflow");
+            prev_b = b;
+
+            let start = i;
+            let mut prev_c = 0u32;
+            while i < t.len() && t[i].0 == a && t[i].1 == b {
+                encoded_len = encoded_len
+                    .checked_add(uvarint_len((t[i].2 - prev_c) as u64))
+                    .expect("encoded triple block length overflow");
+                prev_c = t[i].2;
+                i += 1;
+            }
+            encoded_len = encoded_len
+                .checked_add(uvarint_len((i - start) as u64))
+                .expect("encoded triple block length overflow");
+        }
+        encoded_len = encoded_len
+            .checked_add(uvarint_len(num_b))
+            .expect("encoded triple block length overflow");
+    }
+    encoded_len = encoded_len
+        .checked_add(uvarint_len(num_a))
+        .expect("encoded triple block length overflow");
+
+    EncodingPlan {
+        zone,
+        num_a,
+        encoded_len,
+    }
+}
+
+/// Encode a lexicographically sorted, duplicate-free triple slice directly.
+/// Tile builders already establish this precondition, avoiding their previous
+/// copy, re-sort, dedup, nested grouping allocations, and output growth.
+pub(crate) fn encode_sorted_unique(t: &[Triple]) -> Vec<u8> {
+    assert!(
+        t.windows(2).all(|pair| pair[0] < pair[1]),
+        "encode_sorted_unique requires triples sorted and unique"
+    );
+    if t.is_empty() {
+        return vec![0; 8];
+    }
+
+    let plan = plan_sorted_unique(t);
+    let mut out = Vec::with_capacity(plan.encoded_len);
+    for value in plan.zone {
+        write_uvarint(&mut out, value as u64);
+    }
+    write_uvarint(&mut out, plan.num_a);
+
+    let mut prev_a = 0u32;
+    let mut i = 0usize;
+    while i < t.len() {
+        let a = t[i].0;
+        write_uvarint(&mut out, (a - prev_a) as u64);
+        prev_a = a;
+
+        let a_start = i;
+        let mut num_b = 0u64;
+        while i < t.len() && t[i].0 == a {
+            num_b += 1;
+            let b = t[i].1;
+            while i < t.len() && t[i].0 == a && t[i].1 == b {
+                i += 1;
+            }
+        }
+        write_uvarint(&mut out, num_b);
+
+        i = a_start;
+        let mut prev_b = 0u32;
+        while i < t.len() && t[i].0 == a {
+            let b = t[i].1;
+            write_uvarint(&mut out, (b - prev_b) as u64);
+            prev_b = b;
+            let start = i;
+            while i < t.len() && t[i].0 == a && t[i].1 == b {
+                i += 1;
+            }
+            write_uvarint(&mut out, (i - start) as u64);
+            let mut prev_c = 0u32;
+            for &(_, _, c) in &t[start..i] {
+                write_uvarint(&mut out, (c - prev_c) as u64);
+                prev_c = c;
+            }
+        }
+    }
+    debug_assert_eq!(out.len(), plan.encoded_len);
+    out
 }
 
 /// A parsed triple block.
@@ -459,6 +522,31 @@ mod tests {
             (1, 1, 1), // dup
             (2, 9, 9),
         ]
+    }
+
+    #[test]
+    fn sorted_unique_encoder_matches_literal_format_bytes() {
+        assert_eq!(encode_sorted_unique(&[]), vec![0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            encode_sorted_unique(&[(1, 2, 3)]),
+            vec![1, 1, 2, 2, 3, 3, 1, 1, 1, 1, 2, 1, 3]
+        );
+        assert_eq!(
+            encode_sorted_unique(&[(1, 2, 3), (1, 2, 5), (1, 4, 1), (3, 1, 2)]),
+            vec![1, 3, 1, 4, 1, 5, 4, 2, 1, 2, 2, 2, 3, 2, 2, 1, 1, 2, 1, 1, 1, 2]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "sorted and unique")]
+    fn sorted_unique_encoder_rejects_duplicates() {
+        encode_sorted_unique(&[(1, 2, 3), (1, 2, 3)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "sorted and unique")]
+    fn sorted_unique_encoder_rejects_descending_input() {
+        encode_sorted_unique(&[(2, 1, 1), (1, 1, 1)]);
     }
 
     #[test]

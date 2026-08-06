@@ -1,6 +1,16 @@
 //! Unsigned LEB128 varints — the workhorse integer encoding used throughout the
 //! dictionary and triple sections.
 
+/// Number of bytes needed to encode `value` as unsigned LEB128.
+pub(crate) fn uvarint_len(mut value: u64) -> usize {
+    let mut len = 1;
+    while value >= 0x80 {
+        value >>= 7;
+        len += 1;
+    }
+    len
+}
+
 /// Append `value` to `out` as an unsigned LEB128 varint.
 pub fn write_uvarint(out: &mut Vec<u8>, mut value: u64) {
     loop {
@@ -52,5 +62,15 @@ mod tests {
     #[test]
     fn truncated_is_none() {
         assert!(read_uvarint(&[0x80]).is_none());
+    }
+
+    #[test]
+    fn encoded_lengths_match_leb128_boundaries() {
+        assert_eq!(uvarint_len(0), 1);
+        assert_eq!(uvarint_len(127), 1);
+        assert_eq!(uvarint_len(128), 2);
+        assert_eq!(uvarint_len(16_383), 2);
+        assert_eq!(uvarint_len(16_384), 3);
+        assert_eq!(uvarint_len(u32::MAX as u64), 5);
     }
 }
