@@ -71,6 +71,42 @@ A *parallel* Louvain would not be byte-identical (the partition depends on the
 sequential move order), so the pyramid stays single-threaded; the six index
 permutations and the dictionary/permutation sorts already use all cores (`rayon`).
 
+### Sorted tile encoder (Chemotion)
+
+The tile builders already receive sorted, duplicate-free slices. Encoding those
+slices directly avoids copying every tile into a general builder, re-sorting and
+deduplicating it, materializing nested a/b/c group vectors, and growing the
+output vector. The replacement makes one exact-size planning pass and one write
+pass; the public arbitrary-input builder still sorts and deduplicates before
+delegating.
+
+Measured on the pinned Chemotion export: **1,532,240 triples**, 324,926,543-byte
+N-Quads input, SHA-256
+`a60b7da39192fd2a1bef5b302d22d97291222f1a9805cbab9cc709c24b28c950`.
+Five alternating `rete build --pyramid-algo types --card` samples produced the
+same 6,239,535-byte file with SHA-256
+`df3a21c3032df922edca654a0a3d037a6347eef83736265a287239bf1367c55c`:
+
+| build | raw milliseconds | median |
+|---|---|---:|
+| baseline | `4855 4772 4821 4769 4912` | 4,821 ms |
+| direct encoder | `4970 4802 4810 4692 4738` | **4,802 ms** |
+
+The whole build moved only 0.4% because parsing and pyramid construction
+dominate. The existing exact counting-allocator profiler isolates the affected
+index phase:
+
+| index phase | baseline | direct encoder | change |
+|---|---:|---:|---:|
+| time | 210 ms | **51 ms** | **75.7% faster** |
+| phase peak heap | 179.45 MiB | **162.99 MiB** | **9.2% lower** |
+| live heap after phase | 56.85 MiB | **46.16 MiB** | **18.8% lower** |
+
+The whole-profile heap peak remained 818.14 MiB in both runs because raw input
+strings dominate before indexing. Reproduce the whole-build alternation with
+`scripts/bench_sorted_encoder.sh` and the phase profile with
+`rete-bench --build-mem`.
+
 ### Query result serialization (the WASM hot path)
 
 A query's result is returned to the browser as a JSON string. Writing that
@@ -153,6 +189,93 @@ The result JSON was byte-identical for every sample (one stable hash per query),
 and byte/range counts were unchanged. Every paired optimized sample was faster;
 the gain is transport/allocation overhead, not less query work or different
 answers.
+
+### Experimental unchecked decoding
+
+The non-default `unsafe-decode-bench` feature compiles a second triple-block
+cursor that replaces the hot varint reader's checked slice access with
+`get_unchecked`. It is selected by a hidden `sparql-url --unsafe-decode` flag:
+
+```sh
+cargo build --release -p rete-cli --features unsafe-decode-bench
+target/release/rete sparql-url <trusted-url-or-path> '<query>' --json --unsafe-decode
+```
+
+This is **not safe for arbitrary files or URLs**. The operator must guarantee
+that every fetched block is a complete, immutable image produced by rete's
+encoder; malformed or truncated input can cause undefined behavior. Normal
+builds do not compile the cursor, do not accept the flag, and keep every bounds
+check. Feature builds also hide the flag from `--help` and print a warning when
+it is selected.
+
+Safe and unchecked measurements used the *same* feature-enabled release binary
+(SHA-256
+`3c78b43a7fae60cf13c6c35f8eeff33676d51d13587ae19dd75e866fd6e2052e`)
+and the same pinned Chemotion file (SHA-256
+`b7cca2e3ebe5364e767fb1f34c138d7e100b3997db172357eb4ecf3a9adfa83a`).
+Every compared JSON result was byte-identical and both modes read identical
+byte ranges.
+
+On the local lazy-reader path, 15 alternating samples of "Every subtype of
+spectroscopy" isolated the resolution-heavy decoder work:
+
+| mode | median | minâ€“max | raw milliseconds |
+|---|---:|---:|---|
+| safe | 145 ms | 143â€“156 | `145 147 151 146 143 143 156 145 147 144 145 144 145 143 146` |
+| unchecked | **86 ms** | 84â€“91 | `85 87 86 84 84 85 87 87 85 85 89 91 86 87 85` |
+
+That is a **40.7% local win (59 ms)** for this path-heavy query. A simpler local
+full-scan count moved only 113 ms â†’ 109 ms (3.5%), demonstrating that the gain
+depends strongly on how often query evaluation revisits encoded groups.
+
+Over the catalog's Cloudflare R2 URL (seven alternating samples per mode), the
+network-bound queries mostly hid the decoder saving:
+
+| query | safe median | unchecked median | result |
+|---|---:|---:|---:|
+| Molecules with their structure | **2,379 ms** | 2,387 ms | 0.3% slower / noise |
+| Most common molecular formulas | **1,786 ms** | 1,811 ms | 1.4% slower / noise |
+| Every subtype of spectroscopy | 4,209 ms | **3,955 ms** | **6.0% faster** |
+| spectroscopy repeat | 4,078 ms | **3,940 ms** | **3.4% faster** |
+
+Decision: retain the feature and hidden flag as a benchmark/controlled-data
+experiment because it materially accelerates path-heavy local work and gives a
+repeatable 3â€“6% R2 path win. Keep safe decoding as the only default: selective
+and aggregate R2 queries showed no benefit, while the unchecked failure mode is
+memory unsafety. Reproduce the alternating identity/timing run with
+`scripts/bench_unsafe_decode.sh` (`RETE_SOURCE=<local-file>` for the CPU-only
+case, `RETE_ONLY=path` to isolate the path query).
+
+### Rejected uninitialized FFI buffers
+
+The Java/Chicory and WASM Asyncify range imports currently allocate
+`vec![0u8; len]` before the host overwrites the buffer. A release microbenchmark
+used an opaque `extern "C"` full-buffer writer, alternated 15 samples per mode,
+and consumed every result so neither initialization nor the host write could be
+optimized away:
+
+| range size | zeroed buffer | uninitialized capacity + `set_len` | absolute saving |
+|---:|---:|---:|---:|
+| 64 KiB | 0.54 us | 0.27 us | 0.27 us |
+| 512 KiB | 3.24 us | 1.62 us | 1.62 us |
+| 2,490 KiB | 36.36 us | 18.18 us | 18.18 us |
+
+Skipping initialization halves this isolated memory operation, but even the
+largest representative buffer saves only **0.018 ms**. A complete Chemotion R2
+path takes about 4,000 ms and fetches 36 ranges; Java HTTP/Chicory and browser
+fetch/Asyncify overhead are orders of magnitude larger than this upper bound.
+The temporary benchmark was removed and production keeps initialized buffers:
+adding unsafe initialization state and more complex short/error paths has no
+credible end-to-end payoff.
+
+The other Polars-style techniques were also rejected for this architecture:
+
+- A custom `Send`/`Sync` raw-pointer wrapper is unnecessary: index permutations
+  are independent Rayon jobs, with no measured final-vector merge to eliminate.
+- Rust's `TrustedLen` contract is not a stable application-level API; the direct
+  encoder obtains the useful part safely by calculating exact capacity itself.
+- `transmute` has no target here: rete has no Arrow/Pandas/DuckDB in-memory FFI
+  representation to reinterpret, and its on-disk/network bytes remain untrusted.
 
 ## Scaling
 

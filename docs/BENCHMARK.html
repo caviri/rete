@@ -394,6 +394,35 @@ and the file content hash are byte-identical. Set <code>RETE_BUILD_TIMING=1</cod
 <p>A <em>parallel</em> Louvain would not be byte-identical (the partition depends on the
 sequential move order), so the pyramid stays single-threaded; the six index
 permutations and the dictionary/permutation sorts already use all cores (<code>rayon</code>).</p>
+<h3>Sorted tile encoder (Chemotion)</h3>
+<p>The tile builders already receive sorted, duplicate-free slices. Encoding those
+slices directly avoids copying every tile into a general builder, re-sorting and
+deduplicating it, materializing nested a/b/c group vectors, and growing the
+output vector. The replacement makes one exact-size planning pass and one write
+pass; the public arbitrary-input builder still sorts and deduplicates before
+delegating.</p>
+<p>Measured on the pinned Chemotion export: <strong>1,532,240 triples</strong>, 324,926,543-byte
+N-Quads input, SHA-256
+<code>a60b7da39192fd2a1bef5b302d22d97291222f1a9805cbab9cc709c24b28c950</code>.
+Five alternating <code>rete build --pyramid-algo types --card</code> samples produced the
+same 6,239,535-byte file with SHA-256
+<code>df3a21c3032df922edca654a0a3d037a6347eef83736265a287239bf1367c55c</code>:</p>
+<table><thead><tr><th>build</th><th>raw milliseconds</th><th style="text-align: right">median</th></tr></thead><tbody>
+<tr><td>baseline</td><td><code>4855 4772 4821 4769 4912</code></td><td style="text-align: right">4,821 ms</td></tr>
+<tr><td>direct encoder</td><td><code>4970 4802 4810 4692 4738</code></td><td style="text-align: right"><strong>4,802 ms</strong></td></tr>
+</tbody></table>
+<p>The whole build moved only 0.4% because parsing and pyramid construction
+dominate. The existing exact counting-allocator profiler isolates the affected
+index phase:</p>
+<table><thead><tr><th>index phase</th><th style="text-align: right">baseline</th><th style="text-align: right">direct encoder</th><th style="text-align: right">change</th></tr></thead><tbody>
+<tr><td>time</td><td style="text-align: right">210 ms</td><td style="text-align: right"><strong>51 ms</strong></td><td style="text-align: right"><strong>75.7% faster</strong></td></tr>
+<tr><td>phase peak heap</td><td style="text-align: right">179.45 MiB</td><td style="text-align: right"><strong>162.99 MiB</strong></td><td style="text-align: right"><strong>9.2% lower</strong></td></tr>
+<tr><td>live heap after phase</td><td style="text-align: right">56.85 MiB</td><td style="text-align: right"><strong>46.16 MiB</strong></td><td style="text-align: right"><strong>18.8% lower</strong></td></tr>
+</tbody></table>
+<p>The whole-profile heap peak remained 818.14 MiB in both runs because raw input
+strings dominate before indexing. Reproduce the whole-build alternation with
+<code>scripts/bench_sorted_encoder.sh</code> and the phase profile with
+<code>rete-bench --build-mem</code>.</p>
 <h3>Query result serialization (the WASM hot path)</h3>
 <p>A query's result is returned to the browser as a JSON string. Writing that
 envelope <strong>directly into a <code>String</code></strong> (<code>rete_core::results_envelope_json</code>) instead
@@ -461,6 +490,77 @@ cache response as one shared allocation, produced:</p>
 and byte/range counts were unchanged. Every paired optimized sample was faster;
 the gain is transport/allocation overhead, not less query work or different
 answers.</p>
+<h3>Experimental unchecked decoding</h3>
+<p>The non-default <code>unsafe-decode-bench</code> feature compiles a second triple-block
+cursor that replaces the hot varint reader's checked slice access with
+<code>get_unchecked</code>. It is selected by a hidden <code>sparql-url --unsafe-decode</code> flag:</p>
+<pre><code class="language-sh">cargo build --release -p rete-cli --features unsafe-decode-bench
+target/release/rete sparql-url &lt;trusted-url-or-path&gt; '&lt;query&gt;' --json --unsafe-decode
+</code></pre>
+<p>This is <strong>not safe for arbitrary files or URLs</strong>. The operator must guarantee
+that every fetched block is a complete, immutable image produced by rete's
+encoder; malformed or truncated input can cause undefined behavior. Normal
+builds do not compile the cursor, do not accept the flag, and keep every bounds
+check. Feature builds also hide the flag from <code>--help</code> and print a warning when
+it is selected.</p>
+<p>Safe and unchecked measurements used the <em>same</em> feature-enabled release binary
+(SHA-256
+<code>3c78b43a7fae60cf13c6c35f8eeff33676d51d13587ae19dd75e866fd6e2052e</code>)
+and the same pinned Chemotion file (SHA-256
+<code>b7cca2e3ebe5364e767fb1f34c138d7e100b3997db172357eb4ecf3a9adfa83a</code>).
+Every compared JSON result was byte-identical and both modes read identical
+byte ranges.</p>
+<p>On the local lazy-reader path, 15 alternating samples of "Every subtype of
+spectroscopy" isolated the resolution-heavy decoder work:</p>
+<table><thead><tr><th>mode</th><th style="text-align: right">median</th><th style="text-align: right">minâ€“max</th><th>raw milliseconds</th></tr></thead><tbody>
+<tr><td>safe</td><td style="text-align: right">145 ms</td><td style="text-align: right">143â€“156</td><td><code>145 147 151 146 143 143 156 145 147 144 145 144 145 143 146</code></td></tr>
+<tr><td>unchecked</td><td style="text-align: right"><strong>86 ms</strong></td><td style="text-align: right">84â€“91</td><td><code>85 87 86 84 84 85 87 87 85 85 89 91 86 87 85</code></td></tr>
+</tbody></table>
+<p>That is a <strong>40.7% local win (59 ms)</strong> for this path-heavy query. A simpler local
+full-scan count moved only 113 ms â†’ 109 ms (3.5%), demonstrating that the gain
+depends strongly on how often query evaluation revisits encoded groups.</p>
+<p>Over the catalog's Cloudflare R2 URL (seven alternating samples per mode), the
+network-bound queries mostly hid the decoder saving:</p>
+<table><thead><tr><th>query</th><th style="text-align: right">safe median</th><th style="text-align: right">unchecked median</th><th style="text-align: right">result</th></tr></thead><tbody>
+<tr><td>Molecules with their structure</td><td style="text-align: right"><strong>2,379 ms</strong></td><td style="text-align: right">2,387 ms</td><td style="text-align: right">0.3% slower / noise</td></tr>
+<tr><td>Most common molecular formulas</td><td style="text-align: right"><strong>1,786 ms</strong></td><td style="text-align: right">1,811 ms</td><td style="text-align: right">1.4% slower / noise</td></tr>
+<tr><td>Every subtype of spectroscopy</td><td style="text-align: right">4,209 ms</td><td style="text-align: right"><strong>3,955 ms</strong></td><td style="text-align: right"><strong>6.0% faster</strong></td></tr>
+<tr><td>spectroscopy repeat</td><td style="text-align: right">4,078 ms</td><td style="text-align: right"><strong>3,940 ms</strong></td><td style="text-align: right"><strong>3.4% faster</strong></td></tr>
+</tbody></table>
+<p>Decision: retain the feature and hidden flag as a benchmark/controlled-data
+experiment because it materially accelerates path-heavy local work and gives a
+repeatable 3â€“6% R2 path win. Keep safe decoding as the only default: selective
+and aggregate R2 queries showed no benefit, while the unchecked failure mode is
+memory unsafety. Reproduce the alternating identity/timing run with
+<code>scripts/bench_unsafe_decode.sh</code> (<code>RETE_SOURCE=&lt;local-file&gt;</code> for the CPU-only
+case, <code>RETE_ONLY=path</code> to isolate the path query).</p>
+<h3>Rejected uninitialized FFI buffers</h3>
+<p>The Java/Chicory and WASM Asyncify range imports currently allocate
+<code>vec![0u8; len]</code> before the host overwrites the buffer. A release microbenchmark
+used an opaque <code>extern "C"</code> full-buffer writer, alternated 15 samples per mode,
+and consumed every result so neither initialization nor the host write could be
+optimized away:</p>
+<table><thead><tr><th style="text-align: right">range size</th><th style="text-align: right">zeroed buffer</th><th style="text-align: right">uninitialized capacity + <code>set_len</code></th><th style="text-align: right">absolute saving</th></tr></thead><tbody>
+<tr><td style="text-align: right">64 KiB</td><td style="text-align: right">0.54 us</td><td style="text-align: right">0.27 us</td><td style="text-align: right">0.27 us</td></tr>
+<tr><td style="text-align: right">512 KiB</td><td style="text-align: right">3.24 us</td><td style="text-align: right">1.62 us</td><td style="text-align: right">1.62 us</td></tr>
+<tr><td style="text-align: right">2,490 KiB</td><td style="text-align: right">36.36 us</td><td style="text-align: right">18.18 us</td><td style="text-align: right">18.18 us</td></tr>
+</tbody></table>
+<p>Skipping initialization halves this isolated memory operation, but even the
+largest representative buffer saves only <strong>0.018 ms</strong>. A complete Chemotion R2
+path takes about 4,000 ms and fetches 36 ranges; Java HTTP/Chicory and browser
+fetch/Asyncify overhead are orders of magnitude larger than this upper bound.
+The temporary benchmark was removed and production keeps initialized buffers:
+adding unsafe initialization state and more complex short/error paths has no
+credible end-to-end payoff.</p>
+<p>The other Polars-style techniques were also rejected for this architecture:</p>
+<ul>
+<li>A custom <code>Send</code>/<code>Sync</code> raw-pointer wrapper is unnecessary: index permutations
+are independent Rayon jobs, with no measured final-vector merge to eliminate.</li>
+<li>Rust's <code>TrustedLen</code> contract is not a stable application-level API; the direct
+encoder obtains the useful part safely by calculating exact capacity itself.</li>
+<li><code>transmute</code> has no target here: rete has no Arrow/Pandas/DuckDB in-memory FFI
+representation to reinterpret, and its on-disk/network bytes remain untrusted.</li>
+</ul>
 <h2>Scaling</h2>
 <p>At <strong>347,884 triples</strong> (2.5× the table above) everything scales ~linearly, with
 no pathological blowup: build 890 ms, triple query 54 ms, property path 103 ms,
