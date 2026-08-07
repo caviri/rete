@@ -82,6 +82,38 @@ scripts/preview/run.sh capture --shots-only          # just refresh the thumbnai
 scripts/preview/run.sh capture --reader=sync --concurrency=1   # slow but sturdy
 ```
 
+### Why a partial capture is safe
+
+`answers.json` is committed; the JSONL cache it is consolidated from is
+**gitignored**, so a clean checkout has none. Since `capture` finalizes when it
+finishes — including `capture --dataset=x` — that combination used to mean that
+capturing one dataset on a fresh clone rewrote `answers.json` from a cache
+holding only that dataset, deleting every other answer and churning ~1,100
+generated files behind it.
+
+Finalize is now additive by construction, and the guarantee is the default:
+
+- the committed `answers.json` is the **base**, not the output — cache records
+  are merged over it, so a partial capture can only add or update;
+- the key set is the **whole catalog**, never the `--dataset`/`--scope` subset;
+- a cached **failure never supersedes** an answer that already worked;
+- an output with fewer answers than the committed file **aborts**, naming the
+  count it was about to drop; nothing is written;
+- a **missing cache is seeded** from the committed `answers.json`, so a clean
+  checkout behaves exactly like an incremental one.
+
+The destructive operations still exist, but only ever spelled out in full:
+
+```sh
+scripts/preview/run.sh finalize --allow-shrink   # accept dropping answers (deleted examples)
+scripts/preview/run.sh finalize --rebuild        # ignore the committed file, use the cache alone
+scripts/preview/run.sh capture --force           # re-measure everything
+```
+
+The other subcommands carry no equivalent hazard: `inject`, `cards` and `pages`
+read committed inputs only (`answers.json`, `web/preview/shots/`,
+`docs/og/cards.json`, `docs/*.html`) and never delete an output.
+
 Cards are content-addressed (a `.png.src` sidecar holds a hash of the markup),
 so `run.sh cards` only re-renders what actually changed.
 
