@@ -190,6 +190,90 @@ and byte/range counts were unchanged. Every paired optimized sample was faster;
 the gain is transport/allocation overhead, not less query work or different
 answers.
 
+### Cold R2 adaptive opening (Chemotion)
+
+Measured 2026-08-07 from the dev container against the same real R2 object,
+`https://data.graphplaza.com/chemotion/chemotion.rete` (length **7,566,404
+bytes**, ETag **`"6cefd111dee3c59c063f0bede9cd60f9"`**). The pinned lazy
+baseline executable was SHA-256
+`37b0d50f1a5feee32bbdf60a726576fd28dc8889482ee03d8c7289ee476c86e3`;
+the candidate was
+`37932ffc8c2b72090ef8ab85e85d05202885dd7edbb434dc0b57b282eaba0dc4`.
+
+Each cell is 15 alternating fresh-process samples. `p90` is nearest-rank;
+VmHWM is polled from `/proc/<pid>/status`. `baseline_lazy` is the pinned
+pre-change binary, `delegated_lazy` is the candidate forced lazy with
+`RETE_EAGER_MAX_MB=0`, and `eager_8` is the candidate at the 8 MiB policy.
+The selective workload orders by `?name ?formula ?smiles` before `LIMIT 200`:
+without `ORDER BY`, SPARQL permits either plan to return a different valid
+200-row subset, which is unsuitable for an exact output-hash benchmark.
+
+| query | mode | bytes / GETs | wall median / p90 | VmHWM median / p90 / max |
+|---|---|---:|---:|---:|
+| molecules with their structure | baseline_lazy | 1,703,936 / 24 | 2,285 / 2,355 ms | 16,952 / 17,540 / 17,704 KiB |
+|  | delegated_lazy | 2,031,616 / 25 | 2,256 / 2,381 ms | 20,244 / 20,648 / 20,656 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **765 / 885 ms** | 64,508 / 64,584 / 64,772 KiB |
+| most common molecular formulas | baseline_lazy | 1,114,112 / 16 | 1,490 / 1,520 ms | 12,584 / 12,696 / 12,704 KiB |
+|  | delegated_lazy | 1,114,112 / 16 | 1,515 / 1,635 ms | 12,636 / 12,776 / 12,796 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **709 / 768 ms** | 64,444 / 64,936 / 65,156 KiB |
+| every subtype of spectroscopy | baseline_lazy | 2,490,368 / 36 | 3,232 / 3,779 ms | 23,912 / 24,072 / 24,176 KiB |
+|  | delegated_lazy | 2,490,368 / 36 | 3,254 / 3,576 ms | 23,820 / 24,052 / 24,060 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **885 / 1,173 ms** | 64,528 / 64,868 / 64,880 KiB |
+
+Relative to the same candidate's delegated-lazy path, eager reduced median /
+p90 wall time by **66.1% / 62.8%**, **53.2% / 53.0%**, and **72.8% /
+67.2%**, respectively. Thus all three queries clear the required 25% median
+improvement (the gate required two), none regresses in median or p90, and every
+eager sample performs exactly one data GET. Peak process RSS was 65,156 KiB
+(63.6 MiB), the expected cost of holding and decoding the validated 7.22 MiB
+file image rather than retaining only lazy tiles.
+
+Every sample for a query produced one byte-identical JSON hash across all
+modes:
+
+- molecules: `9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`
+- formulas: `43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640`
+- spectroscopy path: `359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc`
+
+Threshold sweep, again 15 alternating fresh processes per cell:
+
+| query | threshold | bytes / GETs | wall median / p90 | VmHWM median / p90 / max |
+|---|---:|---:|---:|---:|
+| molecules | 0 MiB | 2,031,616 / 25 | 2,286 / 2,562 ms | 20,208 / 20,776 / 20,820 KiB |
+|  | 4 MiB | 2,031,616 / 25 | 2,216 / 2,499 ms | 20,196 / 20,848 / 20,920 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **838 / 889 ms** | 64,284 / 64,668 / 64,792 KiB |
+|  | **16 MiB** | **7,566,404 / 1** | **843 / 893 ms** | 64,408 / 64,652 / 64,756 KiB |
+| formulas | 0 MiB | 1,114,112 / 16 | 1,409 / 1,641 ms | 12,668 / 12,792 / 12,872 KiB |
+|  | 4 MiB | 1,114,112 / 16 | 1,516 / 1,617 ms | 12,628 / 12,824 / 12,908 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **788 / 841 ms** | 64,384 / 64,892 / 65,112 KiB |
+|  | **16 MiB** | **7,566,404 / 1** | **784 / 855 ms** | 64,564 / 64,968 / 64,984 KiB |
+| spectroscopy path | 0 MiB | 2,490,368 / 36 | 3,156 / 3,584 ms | 23,876 / 24,136 / 24,184 KiB |
+|  | 4 MiB | 2,490,368 / 36 | 3,198 / 3,436 ms | 23,896 / 24,068 / 24,184 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **914 / 976 ms** | 64,732 / 65,136 / 65,348 KiB |
+|  | **16 MiB** | **7,566,404 / 1** | **917 / 1,079 ms** | 64,488 / 64,976 / 64,976 KiB |
+
+The 7.22 MiB object remains lazy at thresholds 0 and 4, and switches to the
+same one-GET eager path at 8 and 16. All sweep hashes match the values above.
+Decision: **keep the 8 MiB adaptive eager policy**.
+
+Reproduce with `scripts/bench_cold_r2.py`. The acceptance JSONL was written to
+`/target/bench/cold-r2-15.jsonl` (SHA-256
+`078a7549a9a7e75d059132c434f91e07ade00c5915a8761ebe2ea38a0de1339d`)
+and the sweep to `/target/bench/cold-r2-thresholds.jsonl` (SHA-256
+`6dcd5574a4e57b91d5fefd4006043005d23025232640052a7892432f373bd925`):
+
+```sh
+python3 scripts/bench_cold_r2.py \
+  --baseline /target/bench/rete-cold-r2-baseline \
+  --candidate /target/release/rete --samples 15 \
+  --source https://data.graphplaza.com/chemotion/chemotion.rete \
+  --out /target/bench/cold-r2-15.jsonl
+python3 scripts/bench_cold_r2.py \
+  --candidate /target/release/rete --thresholds 0,4,8,16 --samples 15 \
+  --source https://data.graphplaza.com/chemotion/chemotion.rete \
+  --out /target/bench/cold-r2-thresholds.jsonl
+```
+
 ### Experimental unchecked decoding
 
 The non-default `unsafe-decode-bench` feature compiles a second triple-block
