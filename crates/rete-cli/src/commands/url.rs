@@ -1,12 +1,10 @@
-//! The ranged-read group: read a `.rete` by fetching only the byte ranges each
-//! operation needs — the pyramid summary (`summary_url`), a triple pattern
-//! (`query_url`), or a full SPARQL query (`sparql_url`) — never a full load.
-//! The source is an `http(s)://` URL or a local path: both go through the same
-//! lazy tile-faulting reads, so a file larger than RAM stays queryable in
-//! bounded memory (the local case is how the external build's output is
-//! validated). Each wraps the transport in a `CountingReader` and reports bytes
-//! fetched + range-request count. The load-it-all on-disk variants live in
-//! `commands::query` / `commands::inspect`.
+//! The ranged-read group: read a `.rete` from an `http(s)://` URL or local path.
+//! Summary and triple-pattern operations fetch only their required ranges.
+//! SPARQL eagerly opens small remote objects and keeps lazy tile faulting for
+//! larger remote objects and local paths. Each wraps the transport in a
+//! `CountingReader` and reports bytes fetched + range-request count.
+
+use std::ffi::OsStr;
 
 use rete_core::{
     auto_block, eval_query, BlockCacheReader, CountingReader, Header, RangeReader, Rete,
@@ -16,6 +14,34 @@ use rete_core::{
 use crate::commands::card;
 use crate::commands::range_source::RangedSourceReader;
 use crate::commands::render::print_query_output;
+
+const DEFAULT_EAGER_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+fn parse_eager_max_bytes(raw: Option<&OsStr>) -> anyhow::Result<u64> {
+    let Some(raw) = raw else {
+        return Ok(DEFAULT_EAGER_MAX_BYTES);
+    };
+    let text = raw
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("RETE_EAGER_MAX_MB must be valid UTF-8"))?;
+    let mb = text.parse::<u64>().map_err(|_| {
+        anyhow::anyhow!("RETE_EAGER_MAX_MB must be a non-negative integer, got {text}")
+    })?;
+    let bytes = mb.checked_mul(1024 * 1024).ok_or_else(|| {
+        anyhow::anyhow!("RETE_EAGER_MAX_MB value {text} overflows its byte count")
+    })?;
+    usize::try_from(bytes)
+        .map_err(|_| anyhow::anyhow!("RETE_EAGER_MAX_MB value {text} exceeds this platform"))?;
+    Ok(bytes)
+}
+
+fn eager_max_bytes() -> anyhow::Result<u64> {
+    parse_eager_max_bytes(std::env::var_os("RETE_EAGER_MAX_MB").as_deref())
+}
+
+fn should_eager_open(source: &str, len: u64, max: u64) -> bool {
+    crate::commands::range_source::is_url(source) && len != 0 && max != 0 && len <= max
+}
 
 /// Fetch just the embedded Dataset Card over HTTP — the index-free CARD tier.
 /// Reads only the 128-byte header and the metadata range (two small range
@@ -117,12 +143,9 @@ pub(crate) fn query_url(
     Ok(())
 }
 
-/// Run SPARQL against a `.rete` over HTTP(S) with **lazy tile faulting**: the
-/// open fetches the header, dictionary, pyramid, and the index's small tile
-/// directories; index tiles are then fetched one range request at a time, only
-/// when the query's scans and probes actually touch them. A selective query
-/// reads O(touched tiles), not the whole index. (Pre-tiling v0.1 files fall
-/// back to fetching the index whole.)
+/// Run SPARQL against a `.rete` over HTTP(S). Small non-empty HTTP objects are
+/// opened from one full-file range request; larger objects retain lazy tile
+/// faulting, fetching index tiles only when scans and probes touch them.
 pub(crate) fn sparql_url(
     url: &str,
     query: &str,
@@ -130,29 +153,36 @@ pub(crate) fn sparql_url(
     entail: bool,
     #[cfg(feature = "unsafe-decode-bench")] unsafe_decode: bool,
 ) -> anyhow::Result<()> {
+    let eager_max = eager_max_bytes()?;
     // `reader` always counts the PHYSICAL HTTP fetches. A read-through block
     // cache (client-side; works over any single-range backend incl. S3) sits
     // above it, so a query's scattered range reads coalesce into a few aligned
     // block fetches. `RETE_BLOCK_KB=0` disables it (one fetch per logical read).
     let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(url)?));
     let total = reader.len();
-    // Block size: an explicit `RETE_BLOCK_KB` wins (0 disables the cache); else
-    // auto-tune from the file length, exactly like the wasm client — bigger files
-    // get bigger blocks, so a remote query makes far fewer round trips.
-    let block: u64 = match std::env::var("RETE_BLOCK_KB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-    {
-        Some(kb) => kb * 1024,
-        None => auto_block(total),
-    };
-    let mut rete = if block == 0 {
-        Rete::open_ranged_lazy(reader.clone())?
+    // The block size is computed only in the lazy branch. An explicit
+    // `RETE_BLOCK_KB` wins (0 disables the cache); otherwise auto-tune it.
+    let mut rete = if should_eager_open(url, total, eager_max) {
+        let image = reader.read_at(0, total)?;
+        Rete::open(&image)?
     } else {
-        Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
-            reader.clone(),
-            block,
-        )))?
+        let block = match std::env::var("RETE_BLOCK_KB")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+        {
+            Some(kb) => kb
+                .checked_mul(1024)
+                .ok_or_else(|| anyhow::anyhow!("RETE_BLOCK_KB overflows u64"))?,
+            None => auto_block(total),
+        };
+        if block == 0 {
+            Rete::open_ranged_lazy(reader.clone())?
+        } else {
+            Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
+                reader.clone(),
+                block,
+            )))?
+        }
     };
     #[cfg(feature = "unsafe-decode-bench")]
     if unsafe_decode {
@@ -243,4 +273,33 @@ pub(crate) fn why_url(
         total
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn eager_threshold_contract() {
+        assert_eq!(parse_eager_max_bytes(None).unwrap(), 8 * 1024 * 1024);
+        assert_eq!(parse_eager_max_bytes(Some(OsStr::new("0"))).unwrap(), 0);
+        assert_eq!(
+            parse_eager_max_bytes(Some(OsStr::new("16"))).unwrap(),
+            16 << 20
+        );
+        for raw in ["-1", "8.5", "eight", "18446744073709551615"] {
+            assert!(parse_eager_max_bytes(Some(OsStr::new(raw))).is_err());
+        }
+    }
+
+    #[test]
+    fn eager_policy_is_http_nonempty_bounded_and_inclusive() {
+        let max = 8 << 20;
+        assert!(should_eager_open("https://host/g.rete", max, max));
+        assert!(!should_eager_open("https://host/g.rete", 0, max));
+        assert!(!should_eager_open("https://host/g.rete", max + 1, max));
+        assert!(!should_eager_open("graph.rete", 1024, max));
+        assert!(!should_eager_open("https://host/g.rete", 1024, 0));
+    }
 }
