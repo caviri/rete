@@ -15,6 +15,15 @@ pub struct HttpRangeReader {
     len: u64,
 }
 
+fn range_does_not_fit_in_memory_error(len: u64, offset: u64, url: &str) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!(
+            "HTTP range does not fit in memory: requested {len} bytes at offset {offset} from {url}"
+        ),
+    )
+}
+
 impl HttpRangeReader {
     /// Probe the resource length with a HEAD request.
     pub fn open(url: &str) -> anyhow::Result<Self> {
@@ -66,12 +75,8 @@ impl RangeReader for HttpRangeReader {
                 self.url
             )));
         }
-        let capacity = usize::try_from(len).map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "HTTP range does not fit in memory",
-            )
-        })?;
+        let capacity = usize::try_from(len)
+            .map_err(|_| range_does_not_fit_in_memory_error(len, offset, &self.url))?;
         if let Some(declared) = resp
             .header("content-length")
             .and_then(|v| v.parse::<u64>().ok())
@@ -364,6 +369,16 @@ mod tests {
         let err = r.read_at(u64::MAX, 2).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
         assert!(err.to_string().contains("range end overflows"));
+    }
+
+    #[test]
+    fn allocation_error_identifies_the_failed_range_request() {
+        let err = range_does_not_fit_in_memory_error(4_294_967_296, 17, "http://example.test/a");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        let message = err.to_string();
+        assert!(message.contains("4294967296"), "{message}");
+        assert!(message.contains("offset 17"), "{message}");
+        assert!(message.contains("http://example.test/a"), "{message}");
     }
 
     /// Proves the `https://` transport works end-to-end against a real host that
