@@ -105,6 +105,20 @@ impl RangeReader for RangedSourceReader {
             Self::Http(r) => r.read_at(offset, len),
         }
     }
+
+    fn read_many(&self, ranges: &[(u64, u64)]) -> io::Result<Vec<Vec<u8>>> {
+        match self {
+            Self::Local(r) => r.read_many(ranges),
+            Self::Http(r) => r.read_many(ranges),
+        }
+    }
+
+    fn concurrency(&self) -> usize {
+        match self {
+            Self::Local(r) => r.concurrency(),
+            Self::Http(r) => r.concurrency(),
+        }
+    }
 }
 
 pub(crate) struct LocalRangeReader {
@@ -166,4 +180,105 @@ fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result
         buf = &mut tmp[n..];
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// A range server that serves each GET on a separate thread after a short
+    /// delay, exposing whether a caller overlaps independent range requests.
+    fn serve_parallel_ranges(data: Vec<u8>) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let active = Arc::new(AtomicUsize::new(0));
+        std::thread::spawn({
+            let max_active = max_active.clone();
+            move || {
+                for stream in listener.incoming() {
+                    let data = data.clone();
+                    let max_active = max_active.clone();
+                    let active = active.clone();
+                    std::thread::spawn(move || {
+                        let mut stream = match stream {
+                            Ok(stream) => stream,
+                            Err(_) => return,
+                        };
+                        let mut request = Vec::new();
+                        let mut byte = [0u8; 1];
+                        while !request.ends_with(b"\r\n\r\n") {
+                            if stream.read(&mut byte).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            request.push(byte[0]);
+                        }
+                        let request = String::from_utf8_lossy(&request);
+                        if request.starts_with("HEAD") {
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                data.len()
+                            );
+                            let _ = stream.write_all(response.as_bytes());
+                            return;
+                        }
+                        let range = request
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("range: bytes=")
+                                    .map(str::to_owned)
+                            })
+                            .unwrap();
+                        let (start, end) = range.trim().split_once('-').unwrap();
+                        let start: usize = start.parse().unwrap();
+                        let end: usize = end.parse().unwrap();
+                        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        max_active.fetch_max(now, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(40));
+                        let body = &data[start..=end];
+                        let response = format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            data.len(),
+                            body.len()
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                        let _ = stream.write_all(body);
+                        active.fetch_sub(1, Ordering::SeqCst);
+                    });
+                }
+            }
+        });
+        (url, max_active)
+    }
+
+    #[test]
+    fn http_variant_preserves_batch_order_and_concurrency() {
+        let data: Vec<u8> = (0..128u8).collect();
+        let (url, max_active) = serve_parallel_ranges(data.clone());
+        let reader = RangedSourceReader::open(&url).unwrap();
+        assert_eq!(reader.concurrency(), 16);
+        assert_eq!(
+            reader.read_many(&[(64, 4), (0, 3), (32, 2)]).unwrap(),
+            vec![
+                data[64..68].to_vec(),
+                data[0..3].to_vec(),
+                data[32..34].to_vec()
+            ]
+        );
+        assert!(max_active.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[test]
+    fn local_variant_keeps_default_serial_concurrency() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&[1, 2, 3, 4]).unwrap();
+        let reader = RangedSourceReader::open(file.path().to_str().unwrap()).unwrap();
+        assert_eq!(reader.concurrency(), 1);
+    }
 }
