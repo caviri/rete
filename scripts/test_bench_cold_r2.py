@@ -25,8 +25,13 @@ def load_harness():
 
 class BenchColdR2Tests(unittest.TestCase):
     def test_select_workload_orders_rows_before_applying_limit(self):
+        head_probes = []
+
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_HEAD(self):
+                head_probes.append(
+                    (7_566_404, '"6cefd111dee3c59c063f0bede9cd60f9"')
+                )
                 self.send_response(200)
                 self.send_header("Content-Length", "7566404")
                 self.send_header("ETag", '"6cefd111dee3c59c063f0bede9cd60f9"')
@@ -89,6 +94,13 @@ sys.stderr.write("(fetched 100 bytes in 2 range request(s); file is 7566404 byte
             server.server_close()
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            head_probes,
+            [
+                (7_566_404, '"6cefd111dee3c59c063f0bede9cd60f9"'),
+                (7_566_404, '"6cefd111dee3c59c063f0bede9cd60f9"'),
+            ],
+        )
         self.assertEqual(len(records), 9)
         self.assertEqual(
             len({record["sha256"] for record in records if record["query"] == "select"}),
@@ -222,13 +234,20 @@ sys.stderr.write(
         self.assertEqual(bench.nearest_rank_p90([15, 3, 9, 1, 11]), 15)
         self.assertEqual(bench.nearest_rank_p90(list(range(1, 16))), 14)
 
-    def test_mode_order_reverses_on_alternating_runs(self):
+    def test_mode_order_rotates_every_mode_through_every_position(self):
         bench = load_harness()
         modes = ["baseline_lazy", "delegated_lazy", "eager_8"]
 
-        self.assertEqual(bench.alternating_order(modes, 1), modes)
-        self.assertEqual(bench.alternating_order(modes, 2), list(reversed(modes)))
-        self.assertEqual(bench.alternating_order(modes, 3), modes)
+        self.assertEqual(bench.rotating_order(modes, 1), modes)
+        self.assertEqual(
+            bench.rotating_order(modes, 2),
+            ["delegated_lazy", "eager_8", "baseline_lazy"],
+        )
+        self.assertEqual(
+            bench.rotating_order(modes, 3),
+            ["eager_8", "baseline_lazy", "delegated_lazy"],
+        )
+        self.assertEqual(bench.rotating_order(modes, 4), modes)
 
     def test_summary_reports_median_nearest_rank_p90_and_peak_rss(self):
         bench = load_harness()

@@ -71,8 +71,12 @@ def nearest_rank_p90(values):
     return ordered[math.ceil(0.9 * len(ordered)) - 1]
 
 
-def alternating_order(modes, run):
-    return list(modes) if run % 2 else list(reversed(modes))
+def rotating_order(modes, run):
+    ordered = list(modes)
+    if not ordered:
+        return ordered
+    offset = (run - 1) % len(ordered)
+    return ordered[offset:] + ordered[:offset]
 
 
 def summarize(records):
@@ -257,7 +261,7 @@ def main():
     with arguments.out.open("x", encoding="utf-8") as output:
         for label, query in QUERIES:
             for run in range(1, arguments.samples + 1):
-                for mode in alternating_order(modes, run):
+                for mode in rotating_order(modes, run):
                     wall_ms, byte_count, get_count, peak_rss_kib, stdout = run_one(
                         mode, arguments.source, query
                     )
