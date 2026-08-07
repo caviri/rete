@@ -16035,14 +16035,14 @@
    "index": 0,
    "view": "map",
    "ok": true,
-   "qmeta": "67 mapped feature(s) | 50 range req · 18.8 MB of 71.3 MB fetched (incl. opening the file) · 16.0 MB cached this session · 9115 ms",
+   "qmeta": "67 mapped feature(s) | 50 range req · 18.8 MB of 71.3 MB fetched (incl. opening the file) · 16.0 MB cached this session · 6063 ms",
    "count": null,
    "unit": "",
    "columns": [],
    "rows": [],
    "banner": "",
    "error": "",
-   "elapsedMs": 9144,
+   "elapsedMs": 6081,
    "shot": "web/preview/shots/davidrumsey-0.png"
   },
   "davidrumsey:1": {
@@ -16051,7 +16051,7 @@
    "index": 1,
    "view": "table",
    "ok": true,
-   "qmeta": "40 row(s) | 9 range req · 3.0 MB of 71.3 MB fetched · 19.0 MB cached this session · 3391 ms",
+   "qmeta": "40 row(s) | 9 range req · 3.0 MB of 71.3 MB fetched · 19.0 MB cached this session · 2574 ms",
    "count": 40,
    "unit": "row",
    "columns": [
@@ -16328,7 +16328,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 3437
+   "elapsedMs": 2701
   },
   "davidrumsey:2": {
    "id": "davidrumsey:2",
@@ -16336,7 +16336,7 @@
    "index": 2,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) | 4 range req · 1.0 MB of 71.3 MB fetched · 20.0 MB cached this session · 870 ms",
+   "qmeta": "25 row(s) | 4 range req · 1.0 MB of 71.3 MB fetched · 20.0 MB cached this session · 761 ms",
    "count": 25,
    "unit": "row",
    "columns": [
@@ -16541,7 +16541,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 896
+   "elapsedMs": 833
   },
   "davidrumsey:3": {
    "id": "davidrumsey:3",
@@ -16549,7 +16549,7 @@
    "index": 3,
    "view": "table",
    "ok": true,
-   "qmeta": "40 row(s) | 7 range req · 9.3 MB of 71.3 MB fetched · 29.3 MB cached this session · 1915 ms",
+   "qmeta": "40 row(s) | 7 range req · 9.3 MB of 71.3 MB fetched · 29.3 MB cached this session · 1542 ms",
    "count": 40,
    "unit": "row",
    "columns": [
@@ -16826,7 +16826,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 1940
+   "elapsedMs": 1581
   },
   "davidrumsey:4": {
    "id": "davidrumsey:4",
@@ -16834,7 +16834,7 @@
    "index": 4,
    "view": "table",
    "ok": true,
-   "qmeta": "60 row(s) | 2 range req · 768.0 KB of 71.3 MB fetched · 30.0 MB cached this session · 710 ms",
+   "qmeta": "60 row(s) | 2 range req · 768.0 KB of 71.3 MB fetched · 30.0 MB cached this session · 907 ms",
    "count": 60,
    "unit": "row",
    "columns": [
@@ -17111,7 +17111,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 746
+   "elapsedMs": 958
   },
   "davidrumsey:5": {
    "id": "davidrumsey:5",
@@ -17119,7 +17119,7 @@
    "index": 5,
    "view": "table",
    "ok": true,
-   "qmeta": "40 row(s) | 0 range req · 0 B of 71.3 MB fetched — 0 new bytes, all served from this session's cache (30.0 MB) · 113 ms",
+   "qmeta": "40 row(s) | 0 range req · 0 B of 71.3 MB fetched — 0 new bytes, all served from this session's cache (30.0 MB) · 141 ms",
    "count": 40,
    "unit": "row",
    "columns": [
@@ -17324,22 +17324,400 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 150
+   "elapsedMs": 195
   },
   "davidrumsey:6": {
    "id": "davidrumsey:6",
    "dataset": "davidrumsey",
    "index": 6,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) | 3 range req · 768.0 KB of 71.3 MB fetched · 30.8 MB cached this session · 763 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "50 row(s) | 28 range req · 27.3 MB of 71.3 MB fetched (incl. opening the file) · 27.3 MB cached this session · 22568 ms · reliable reader (reasoning)",
+   "count": 50,
    "unit": "row",
-   "columns": [],
-   "rows": [],
+   "columns": [
+    {
+     "label": "Thumb",
+     "var": "img"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Year",
+     "var": "year"
+    },
+    {
+     "label": "Matched by dct:spatia...",
+     "var": "matched"
+    },
+    {
+     "label": "drm:city",
+     "var": "cities"
+    },
+    {
+     "label": "drm:county",
+     "var": "counties"
+    },
+    {
+     "label": "drm:stateProvince",
+     "var": "states"
+    },
+    {
+     "label": "drm:region",
+     "var": "regions"
+    },
+    {
+     "label": "drm:country",
+     "var": "countries"
+    },
+    {
+     "label": "drm:worldArea",
+     "var": "worlds"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Ta. Superioris Indiae et Tartariae Maioris.)",
+      "media": false
+     },
+     {
+      "text": "1525",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "East Asia",
+      "media": false
+     },
+     {
+      "text": "China · Japan · Korea",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "Tabvla Svperioris Indiae & Tartariae maioris. (to accompany) Claudii Ptolemaei Alexandrini Geographicae ena...",
+      "media": false
+     },
+     {
+      "text": "1541",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "East Asia",
+      "media": false
+     },
+     {
+      "text": "China · Japan · Korea",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "Tatariae Sive Magni Chami Regni typus. Cum Privilegio.",
+      "media": false
+     },
+     {
+      "text": "1570",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Alaska",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "China · Japan · Russia",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "Indiae Orientalis, Insularumque Adiacientium Typus. Cum Privilegio.",
+      "media": false
+     },
+     {
+      "text": "1570",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Southeast Asia",
+      "media": false
+     },
+     {
+      "text": "China · India · Indonesia · Japan",
+      "media": false
+     },
+     {
+      "text": "Asia",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "Tavola Nona, Che Ha Sua Superiore La Tavola Terza. Libro Terzo.",
+      "media": false
+     },
+     {
+      "text": "1587",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "China · Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "Iapan I. (to accompany) Atlas minor Gerardi Mercatoris.",
+      "media": false
+     },
+     {
+      "text": "1607",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "Asia",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "China.",
+      "media": false
+     },
+     {
+      "text": "1607",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "China · Japan · Korea",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "laponia",
+      "media": false
+     },
+     {
+      "text": "1607",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Japan · Korea",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
    "error": "",
-   "elapsedMs": 793
+   "elapsedMs": 22617
   },
   "dblp:0": {
    "id": "dblp:0",
