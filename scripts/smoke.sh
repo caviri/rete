@@ -26,6 +26,35 @@ check() {
   fi
 }
 
+# check_all NAME REQUIRED_FRAGMENT... -- COMMAND...
+# Every literal fragment must occur; unlike `check`, alternatives cannot let a
+# successful row hide missing request-accounting diagnostics.
+check_all() {
+  local name="$1"; shift
+  local fragments=()
+  while [ "$1" != "--" ]; do
+    fragments+=("$1")
+    shift
+  done
+  shift
+  local out; out="$("$@" 2>&1)"
+  local missing=()
+  local fragment
+  for fragment in "${fragments[@]}"; do
+    if ! printf '%s\n' "$out" | grep -Fq -- "$fragment"; then
+      missing+=("$fragment")
+    fi
+  done
+  if [ "${#missing[@]}" -eq 0 ]; then
+    echo "  ok   $name"
+  else
+    echo "  FAIL $name"
+    echo "       missing required fragment(s): ${missing[*]}"
+    echo "$out" | sed 's/^/         /' | head -5
+    fails=$((fails + 1))
+  fi
+}
+
 # check_code NAME EXPECTED_CODE EXPECTED_REGEX -- COMMAND...
 check_code() {
   local name="$1" expected="$2" pat="$3"; shift 3; [ "$1" = "--" ] && shift
@@ -269,8 +298,8 @@ check "card-url json" '"format_version"|index NOT fetched' -- $B card-url "http:
 check "summary-url" "knows|round" -- $B summary-url "http://127.0.0.1:8099/web.rete"
 check "query-url"   "Bob|Alice|result" -- $B query-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>"
 check "sparql-url"  "Bob|solution" -- $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
-check "sparql-url eager" "Bob|solution|1 range request" -- env RETE_EAGER_MAX_MB=8 $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
-check "sparql-url forced lazy" "Bob|solution|range request" -- env RETE_EAGER_MAX_MB=0 RETE_BLOCK_KB=0 $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check_all "sparql-url eager" "Bob" "solution" "1 range request(s)" -- env RETE_EAGER_MAX_MB=8 $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check_all "sparql-url forced lazy" "Bob" "solution" "62 range request(s)" -- env RETE_EAGER_MAX_MB=0 RETE_BLOCK_KB=0 $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "cost-url"    "full query open|range request" -- $B cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "shacl-url"   "MinCountConstraintComponent" -- bash -c "$B shacl-url 'http://127.0.0.1:8099/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
 check "why-url"     "index_permutation|POS|tile" -- $B why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json

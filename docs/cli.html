@@ -719,8 +719,9 @@ bound term is unknown, the index is skipped entirely and the result is empty.</p
 <h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
 <p>Run a full SPARQL query over HTTP. The native CLI first sends a <code>HEAD</code> probe to
 learn the object's length. A non-empty remote file up to 8 MiB is then opened
-eagerly with one exact full-file <code>Range</code> GET; larger files use <strong>lazy tile
-faulting</strong> instead. In the lazy path, the open fetches the header, dictionary,
+eagerly with one exact full-file <code>Range</code> GET for <code>[0,len)</code> (<code>bytes=0-(len-1)</code>);
+larger files use <strong>lazy tile faulting</strong> instead. In the lazy path, the open
+fetches the header, dictionary,
 pyramid, and the index's small tile directories; index tiles are then
 range-fetched only when the query's scans and probes touch them, so a selective
 query reads O(touched tiles) rather than the whole index.</p>
@@ -728,8 +729,8 @@ query reads O(touched tiles) rather than the whole index.</p>
 <code>RETE_EAGER_MAX_MB=0</code> forces the lazy path. It must be a non-negative integer
 whose byte count fits the platform; an invalid value fails before any network
 request. This policy applies only to the native <code>rete sparql-url</code> command, not
-to the browser/WASM reader. A range failure mid-query is reported as an error,
-never as silently fewer rows.</p>
+to the browser/WASM reader. The browser/WASM reader remains lazy. A range
+failure mid-query is reported as an error, never as silently fewer rows.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>
