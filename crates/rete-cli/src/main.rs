@@ -645,7 +645,8 @@ enum Command {
         #[arg(long)]
         no_route: bool,
     },
-    /// Run a SPARQL query over HTTP, range-fetching the file (no full download).
+    /// Run SPARQL against a remote .rete: files up to 8 MiB are fetched eagerly;
+    /// larger files use lazy HTTP range reads. RETE_EAGER_MAX_MB=0 forces lazy.
     SparqlUrl {
         /// http(s):// URL of a `.rete` file (host must honor Range requests).
         url: String,

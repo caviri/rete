@@ -19,7 +19,7 @@ rete verify graph.rete
 rete sparql graph.rete "SELECT ?s ?o WHERE { ?s <urn:knows> ?o } LIMIT 20"
 ```
 
-Query a hosted file without downloading it first:
+Query a hosted file directly from its host:
 
 ```sh
 rete sparql-url https://example.net/graph.rete \

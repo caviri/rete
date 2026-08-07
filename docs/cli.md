@@ -476,12 +476,20 @@ rete query-url https://host/data.rete --object '<http://ex/Dave>'
 ```
 
 ### `rete sparql-url <url> "<query>" [--json]`
-Run a full SPARQL query over HTTP with **lazy tile faulting** (tiled
-files): the open fetches the header, dictionary, pyramid, and the index's
-small tile directories; index tiles are then range-fetched only when the
-query's scans and probes touch them, so a selective query reads O(touched
-tiles) rather than the whole index. A range failure mid-query is reported as
-an error, never as silently fewer rows.
+Run a full SPARQL query over HTTP. The native CLI first sends a `HEAD` probe to
+learn the object's length. A non-empty remote file up to 8 MiB is then opened
+eagerly with one exact full-file `Range` GET; larger files use **lazy tile
+faulting** instead. In the lazy path, the open fetches the header, dictionary,
+pyramid, and the index's small tile directories; index tiles are then
+range-fetched only when the query's scans and probes touch them, so a selective
+query reads O(touched tiles) rather than the whole index.
+
+`RETE_EAGER_MAX_MB` sets the eager threshold in MiB (default `8`), and
+`RETE_EAGER_MAX_MB=0` forces the lazy path. It must be a non-negative integer
+whose byte count fits the platform; an invalid value fails before any network
+request. This policy applies only to the native `rete sparql-url` command, not
+to the browser/WASM reader. A range failure mid-query is reported as an error,
+never as silently fewer rows.
 
 ```sh
 rete sparql-url https://host/data.rete \

@@ -269,6 +269,8 @@ check "card-url json" '"format_version"|index NOT fetched' -- $B card-url "http:
 check "summary-url" "knows|round" -- $B summary-url "http://127.0.0.1:8099/web.rete"
 check "query-url"   "Bob|Alice|result" -- $B query-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>"
 check "sparql-url"  "Bob|solution" -- $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "sparql-url eager" "Bob|solution|1 range request" -- env RETE_EAGER_MAX_MB=8 $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "sparql-url forced lazy" "Bob|solution|range request" -- env RETE_EAGER_MAX_MB=0 RETE_BLOCK_KB=0 $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "cost-url"    "full query open|range request" -- $B cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "shacl-url"   "MinCountConstraintComponent" -- bash -c "$B shacl-url 'http://127.0.0.1:8099/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
 check "why-url"     "index_permutation|POS|tile" -- $B why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json
