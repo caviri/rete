@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Agentic interfaces — MCP, plugin &amp; skills</h1>
+<h1 id="agentic-interfaces--mcp-plugin--skills">Agentic interfaces — MCP, plugin &amp; skills</h1>
 <p>rete has three agent-facing surfaces, all built on the same idea: a <code>.rete</code>
 file is <strong>self-describing</strong> (card, schema, example queries travel inside the
 file), so an agent can go from "what datasets exist?" to a correct SPARQL
@@ -349,7 +349,7 @@ documentation.</p>
 <tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
 <tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
 </tbody></table>
-<h2>The MCP server</h2>
+<h2 id="the-mcp-server">The MCP server</h2>
 <p>One streamable-HTTP endpoint, stateless, <strong>no authentication, no API key</strong>
 (the model lives in the client — the server only serves graphs):</p>
 <pre><code>https://katospiegel-rete.hf.space/mcp/
@@ -366,7 +366,7 @@ documentation.</p>
 <p>Every answer carries <code>stats</code> — the bytes physically fetched — so laziness
 stays observable. The server instructions teach the intended workflow
 (card → schema → examples → query), and reads are disk-cached server-side.</p>
-<h3>Connect from ChatGPT</h3>
+<h3 id="connect-from-chatgpt">Connect from ChatGPT</h3>
 <p>Two integration levels:</p>
 <ol>
 <li><strong>Developer mode (all 18 tools).</strong> Settings → <em>Apps &amp; Connectors</em> →
@@ -383,7 +383,7 @@ the card/schema/examples or everything about one entity.</li>
 is created and does not refresh it on its own. After the server gains
 tools, <em>refresh</em> the connector (or delete and re-add it) and start a new
 chat — otherwise you keep the old tool list.</p>
-<h3>Connect from Claude</h3>
+<h3 id="connect-from-claude">Connect from Claude</h3>
 <ul>
 <li>
 <p><strong>Claude.ai (web/desktop):</strong> Settings → <em>Connectors</em> → <em>Add custom
@@ -399,7 +399,7 @@ the plugin wires the MCP automatically.</p>
 </code></pre>
 </li>
 </ul>
-<h3>Connect from any other MCP client</h3>
+<h3 id="connect-from-any-other-mcp-client">Connect from any other MCP client</h3>
 <p>Generic config (Cursor, Windsurf, custom hosts — field names vary
 slightly per client):</p>
 <pre><code class="language-json">{
@@ -411,7 +411,7 @@ slightly per client):</p>
   }
 }
 </code></pre>
-<h3>Programmatic agents</h3>
+<h3 id="programmatic-agents">Programmatic agents</h3>
 <p>An agent framework can reach a graph two ways: through this MCP server, or by
 calling the <code>rete-graph</code> library <strong>in process</strong>, so the tools run against a
 local path or a URL with no server in between —
@@ -441,7 +441,7 @@ async with Client("https://katospiegel-rete.hf.space/mcp/") as c:
 <a href="https://katospiegel-rete.hf.space/docs"><code>/docs</code></a>) and every dataset is a
 standard <a href="interop.html">SPARQL 1.1 Protocol endpoint</a>
 (<code>/sparql/&lt;key&gt;</code> or <code>/sparql/&lt;any-.rete-URL&gt;</code>).</p>
-<h2>The desktop extension (<code>rete.mcpb</code>)</h2>
+<h2 id="the-desktop-extension-retemcpb">The desktop extension (<code>rete.mcpb</code>)</h2>
 <p>The MCP server above is a <em>hosted</em> surface: it queries the published
 catalog, and your own graphs are not on it. The
 <a href="https://github.com/modelcontextprotocol/mcpb">MCP Bundle</a> inverts that —
@@ -463,7 +463,7 @@ key, or an <code>https://</code> URL to any published <code>.rete</code>.</p>
 byte-range path as a remote graph, via the JS client's <code>file://</code> reader — so
 a multi-gigabyte graph on disk answers a selective query in megabytes and is
 never loaded into memory.</p>
-<h3>Try it now</h3>
+<h3 id="try-it-now">Try it now</h3>
 <p><strong>⬇ <a href="https://data.graphplaza.com/mcpb/rete.mcpb">Download rete.mcpb</a></strong> (1.4 MB)
 — then double-click it, or drag it into Claude Desktop.</p>
 <p>That link always serves the current build; a pinned copy of each version sits
@@ -483,7 +483,7 @@ classes in the BOE graph"</em>. To query your own graphs, point it at a folder
 holding <code>.rete</code> files — reads and writes stay confined to the folders you
 granted, compared on real paths so a symlink cannot escape. See
 <code>clients/mcpb/README.md</code> for the build and test details.</p>
-<h2>The Claude Code plugin</h2>
+<h2 id="the-claude-code-plugin">The Claude Code plugin</h2>
 <p>The repo doubles as a plugin <strong>and</strong> its own marketplace:</p>
 <pre><code>/plugin marketplace add caviri/rete
 /plugin install rete-graph@rete
@@ -496,7 +496,7 @@ granted, compared on real paths so a symlink cannot escape. See
 <p>Versioning follows git — every push to <code>main</code> is a new plugin version, so
 updates arrive without manual bumps. To try it without installing:
 <code>claude --plugin-dir &lt;checkout&gt;</code>.</p>
-<h2>The skills</h2>
+<h2 id="the-skills">The skills</h2>
 <p>Four repo-aware playbooks (in <a href="https://github.com/caviri/rete/tree/main/skills"><code>skills/</code></a>,
 loaded automatically by the plugin):</p>
 <table><thead><tr><th>Skill</th><th>Use it when</th></tr></thead><tbody>
@@ -507,7 +507,7 @@ loaded automatically by the plugin):</p>
 </tbody></table>
 <p>Each is a <code>SKILL.md</code> with reference docs and working scripts — they read
 fine as human documentation too.</p>
-<h2>What an agent session looks like</h2>
+<h2 id="what-an-agent-session-looks-like">What an agent session looks like</h2>
 <p>A typical flow, entirely inside one chat, no rete-specific prompt
 engineering:</p>
 <ol>

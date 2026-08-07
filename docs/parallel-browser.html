@@ -337,13 +337,13 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Parallelism in the browser (experimental)</h1>
+<h1 id="parallelism-in-the-browser-experimental">Parallelism in the browser (experimental)</h1>
 <p>The default offline playground runs <strong>single-threaded</strong> — it is a single
 self-contained <code>file://</code>-able page. This page explains the options and documents
 the <strong>experimental threaded playground</strong> that actually runs the engine on
 multiple browser threads, plus the shared-memory path that is scaffolded but
 version-fragile.</p>
-<h2>The three options</h2>
+<h2 id="the-three-options">The three options</h2>
 <table><thead><tr><th>Approach</th><th>What it is</th><th>For rete</th><th>Catch</th></tr></thead><tbody>
 <tr><td><strong>Web Workers (message passing)</strong> ✅</td><td>Spawn N workers, each a full wasm instance + a copy of the data; partition the seeds, run serial <code>reach</code> per slice, merge results</td><td>Fits batch reachability (embarrassingly parallel); <strong>works on any plain static server — no special headers</strong></td><td>Copies the graph per worker</td></tr>
 <tr><td><strong><code>wasm-bindgen-rayon</code></strong> (WASM threads)</td><td><code>rayon</code> on a pool of Web Workers over <code>SharedArrayBuffer</code> + atomics</td><td>Would run the existing <code>batch_reach_parallel</code> multicore with minimal code change</td><td>Needs <strong>nightly + <code>-Z build-std</code></strong> to build, and the page must be served <strong>cross-origin isolated</strong> (COOP/COEP); also version-fragile (see below)</td></tr>
@@ -352,7 +352,7 @@ version-fragile.</p>
 <p>The <strong>working</strong> in-browser-parallel demo is the <strong>Web Worker pool</strong>: it needs no
 special serving setup, so it is the recommended approach. <strong>WebGPU</strong> is a future,
 workload-specific backend, not a general "make it parallel" switch.</p>
-<h2>The working demo: a Web Worker pool (message passing)</h2>
+<h2 id="the-working-demo-a-web-worker-pool-message-passing">The working demo: a Web Worker pool (message passing)</h2>
 <p>The experimental threaded playground uses a <strong>Web Worker pool with message
 passing</strong> — no <code>SharedArrayBuffer</code>, no cross-origin isolation:</p>
 <ul>
@@ -377,7 +377,7 @@ python3 scripts/serve_coi.py 8080 web
 <p>The page benchmarks <strong>serial <code>reach</code> vs the Web-Worker pool</strong> over many seeds,
 shows the wall-time of each, the speedup, and the worker count, and asserts the
 two result sets are identical before trusting the timing.</p>
-<h2>The scaffolded (but fragile) shared-memory path</h2>
+<h2 id="the-scaffolded-but-fragile-shared-memory-path">The scaffolded (but fragile) shared-memory path</h2>
 <p>The <code>wasm-bindgen-rayon</code> / <code>SharedArrayBuffer</code> shared-memory path is also
 scaffolded, but it is <strong>version-fragile</strong>: it hit a
 <code>DataCloneError: # could not be cloned</code> from a wasm-bindgen ↔ wasm-bindgen-rayon
@@ -392,7 +392,7 @@ Off by default — the normal build is unchanged and stays <code>file://</code>-
 COOP/COEP headers (needed only for this shared-memory path; the Web-Worker
 demo doesn't require them).</li>
 </ul>
-<h3>Why cross-origin isolation (for the shared-memory path only)</h3>
+<h3 id="why-cross-origin-isolation-for-the-shared-memory-path-only">Why cross-origin isolation (for the shared-memory path only)</h3>
 <p><code>SharedArrayBuffer</code> (which a shared-memory worker pool needs) is only exposed
 when the page sends:</p>
 <pre><code>Cross-Origin-Opener-Policy: same-origin

@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Media &amp; SQL companions</h1>
+<h1 id="media--sql-companions">Media &amp; SQL companions</h1>
 <p>A <code>.rete</code> file holds the graph; a <em>published dataset</em> is usually a little more
 than that. This page covers the two kinds of companion that make a dataset shine
 in the <a href="playground-guide.html">playground</a>: <strong>media</strong> — images, IIIF pages, 3D
@@ -345,7 +345,7 @@ models, audio, video and maps rendered inline in query results — and <strong>S
 companions</strong> — the same triples as Parquet/DuckDB/SQLite files for the Explore
 tab. The first half is for anyone publishing a dataset; the pipeline recipes and
 gotchas at the end are development notes.</p>
-<h2>How result cells render</h2>
+<h2 id="how-result-cells-render">How result cells render</h2>
 <p>A SELECT (or triples) result cell whose value is an IRI/URL is rendered
 <strong>inline</strong> when its URL matches a media heuristic — an image becomes a
 thumbnail, a <code>.glb</code> becomes a rotatable 3D model, a <code>.mp3</code> an audio player, a
@@ -423,7 +423,7 @@ link (a blocked IIIF manifest also degrades to <code>⚠ IIIF blocked</code>). T
 own storage is CORS-open; so are Wikimedia Commons, most IIIF servers, and
 <code>iiif.coeli.cat</code>.</li>
 </ul>
-<h2>Preparing media for a dataset</h2>
+<h2 id="preparing-media-for-a-dataset">Preparing media for a dataset</h2>
 <p>To make a cell render inline, emit a triple whose object is a CORS-open URL (or,
 for geo, a WKT literal) on a property the renderers recognise. <code>prop:</code> below is
 each dataset's own property namespace; the renderers key off the <strong>value</strong>, not
@@ -439,7 +439,7 @@ by the existing datasets.</p>
 <p><code>scripts/bioexplora_to_nt.py</code> and <code>scripts/smithsonian3d_to_nt.py</code> are the worked
 examples (specimens → <code>prop:image</code> + <code>geo:asWKT</code>; 3D models → <code>prop:mesh</code> +
 <code>prop:spinVideo</code>/<code>prop:spinGif</code>).</p>
-<h2>SQL companions (the Explore tab)</h2>
+<h2 id="sql-companions-the-explore-tab">SQL companions (the Explore tab)</h2>
 <p>The playground's <strong>Explore</strong> tab queries the <em>same data</em> through DuckDB-WASM and
 SQLite-WASM, side by side with the rete engine — both fetch lazily over HTTP
 ranges (<code>httpfs</code> / VFS), so the comparison is transport-fair.
@@ -453,8 +453,8 @@ ranges (<code>httpfs</code> / VFS), so the comparison is transport-fair.
 For a richer one-wide-table-per-class layout, use
 <code>scripts/rdf_to_entity_tables.py</code> instead — see
 <a href="data-engineering.html">Tables, VKG &amp; big builds</a>.</p>
-<h2>Pipeline recipes (development)</h2>
-<h3>Streamable 3D (.glb)</h3>
+<h2 id="pipeline-recipes-development">Pipeline recipes (development)</h2>
+<h3 id="streamable-3d-glb">Streamable 3D (.glb)</h3>
 <p>Source meshes are usually too big to stream (20–50 MB). Compress with
 <code>gltf-transform optimize</code> (Draco geometry + WebP textures, ~40× smaller, e.g.
 20–50 MB → ~0.5–1 MB), run inside the <code>rete-gltf</code> node image:</p>
@@ -466,7 +466,7 @@ docker run --rm -v "$PWD":/work -w /work rete-gltf \
 <code>scripts/bioexplora_sketchfab.sh</code> is the end-to-end worked example:
 Sketchfab Data API → download each downloadable <code>.glb</code> → Draco+WebP compress →
 upload → write a <code>uid → mesh-url</code> TSV that <code>bioexplora_to_nt.py</code> reads.</p>
-<h3>Turntable spin previews</h3>
+<h3 id="turntable-spin-previews">Turntable spin previews</h3>
 <p>A pre-rendered rotating clip is a lightweight preview that plays like a GIF and
 needs no WebGL on the client. Render it with headless Blender (Cycles on
 OptiX/CUDA GPU) in the <code>rete-blender</code> image (the official Blender 3.6 LTS tarball
@@ -482,7 +482,7 @@ docker run --rm --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -e BLENDER_GPU=1 \
 0→360°, write PNG frames), then ffmpeg makes a tiny VP9 <code>.webm</code> plus a
 palette-optimized <code>.gif</code> fallback. Upload under a <code>…-spin/&lt;id&gt;.{webm,gif}</code> prefix
 and emit <code>prop:spinVideo</code> / <code>prop:spinGif</code>.</p>
-<h3>Uploading to storage</h3>
+<h3 id="uploading-to-storage">Uploading to storage</h3>
 <p>The playground's datasets and media are served from Cloudflare R2 at
 <code>https://data.graphplaza.com/&lt;key&gt;</code> — CORS-open, direct <code>206</code> range responses,
 no token. Upload with the S3 helper (credentials from env, never committed):</p>
@@ -494,7 +494,7 @@ python3 dev/r2_s3.py put &lt;bucket&gt; local/file.glb datasets/&lt;ds&gt;/file.
 <a href="hosting.html">Hosting your .rete</a> for the requirements and alternatives.
 (Source-API secrets such as <code>SKETCHFAB_TOKEN</code> come from <code>.env</code> and must never
 be committed.)</p>
-<h3>Gotchas</h3>
+<h3 id="gotchas">Gotchas</h3>
 <ul>
 <li><strong>CORS is mandatory</strong> — see above; the single most common reason a media cell
 shows nothing is a host that doesn't send <code>access-control-allow-origin</code>.</li>

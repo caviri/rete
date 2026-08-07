@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Agent frameworks — LangChain &amp; Pydantic AI</h1>
+<h1 id="agent-frameworks--langchain--pydantic-ai">Agent frameworks — LangChain &amp; Pydantic AI</h1>
 <p><a href="agents.html">MCP</a> is one way to give a model a <code>.rete</code> graph, and it is the
 right one when you want the published catalog with no code. But an agent
 framework can also talk to the file <strong>directly</strong>: <code>rete-graph</code> is an ordinary
@@ -355,7 +355,7 @@ live in
 </tbody></table>
 <p>They compose: an agent can hold in-process tools for the graph you own and an
 MCP toolset for everything published.</p>
-<h2>Why a <code>.rete</code> is unusually easy to hand an agent</h2>
+<h2 id="why-a-rete-is-unusually-easy-to-hand-an-agent">Why a <code>.rete</code> is unusually easy to hand an agent</h2>
 <p>A model cannot query a graph it does not understand, and the usual fix — hand-
 written schema documentation in the system prompt — rots the moment the data
 changes. A <code>.rete</code> file carries its own description:</p>
@@ -375,12 +375,12 @@ priced by the <em>query</em>, not the file. Opening the 2.27 GB <code>dblp</code
 running a query over it fetched <strong>10.7 MB in 20 requests — 0.47% of the file</strong>
 (measured; <code>stats()</code> reports it). Nothing is downloaded, nothing is indexed,
 there is no database to run.</p>
-<h2>Install</h2>
+<h2 id="install">Install</h2>
 <pre><code class="language-sh">pip install rete-graph                              # the engine + client
 pip install "pydantic-ai-slim[anthropic]"           # ... for Pydantic AI
 pip install langchain langchain-anthropic           # ... for LangChain
 </code></pre>
-<h2>The tool layer</h2>
+<h2 id="the-tool-layer">The tool layer</h2>
 <p>Shared by both frameworks — five methods over one graph, each returning a JSON
 string, from
 <a href="https://github.com/caviri/rete/blob/main/clients/python/examples/agents/rete_tools.py"><code>rete_tools.py</code></a>:</p>
@@ -456,7 +456,7 @@ Method:
 Answer in prose, and state the SPARQL you ran.
 """
 </code></pre>
-<h2>Pydantic AI</h2>
+<h2 id="pydantic-ai">Pydantic AI</h2>
 <p>Pydantic AI takes plain callables as tools and derives the schema from the
 signature and the description from the docstring — so the bound methods go in
 as they are.</p>
@@ -493,7 +493,7 @@ where <code>eli:LegalResource</code> is the largest class with exactly 40,937 in
 model — the pattern the Space's own
 <a href="https://github.com/caviri/rete/blob/main/clients/relay/rete_ask.py"><code>rete_ask.py</code></a>
 uses to return <code>{answer, sparql, table}</code>.</p>
-<h2>LangChain</h2>
+<h2 id="langchain">LangChain</h2>
 <p>Same tools, wrapped with <code>StructuredTool.from_function</code>, driven by
 <code>create_agent</code> (which returns a LangGraph graph, so checkpointers, streaming,
 and human-in-the-loop interrupts are available on it).</p>
@@ -523,7 +523,7 @@ print(result["messages"][-1].content)
 <tr><td>Ley de 18 de junio de 1870 estableciendo reglas para el ejercicio de la gracia de indulto.</td><td>1870‑06‑18</td></tr>
 </tbody></table>
 </blockquote>
-<h2>Your own graphs, offline</h2>
+<h2 id="your-own-graphs-offline">Your own graphs, offline</h2>
 <p>Nothing above is specific to a published dataset. Point the same agent at a
 local file and no packet leaves the machine:</p>
 <pre><code class="language-python">tools = ReteGraphTools("data/my-graph.rete")
@@ -538,7 +538,7 @@ tools = ReteGraphTools("notes.rete")
 </code></pre>
 <p>Local files are read lazily too, so a multi-gigabyte graph on disk is never
 loaded into memory.</p>
-<h2>The MCP route, in both frameworks</h2>
+<h2 id="the-mcp-route-in-both-frameworks">The MCP route, in both frameworks</h2>
 <p>When you want the whole published catalog — plus <code>list_datasets</code>,
 <code>describe_entity</code>, SHACL validation, vocabulary suggestion, <code>build_rete</code> and
 the media tools — point the framework's MCP adapter at the hosted server. No
@@ -571,7 +571,7 @@ result = await agent.ainvoke({"messages": [
 tools is the obvious one: MCP gives you the catalog and a much larger tool
 surface, at the cost of a network hop per call and someone else's server;
 in-process tools give you your own files, offline, at library speed.</p>
-<h2>The SPARQL-endpoint route</h2>
+<h2 id="the-sparql-endpoint-route">The SPARQL-endpoint route</h2>
 <p>If your stack already speaks SPARQL, skip tools entirely. <code>rete serve</code> turns
 any <code>.rete</code> into a SPARQL 1.1 Protocol endpoint:</p>
 <pre><code class="language-sh">rete serve my-graph.rete       # → http://127.0.0.1:7878/sparql (--bind to move it)
@@ -583,7 +583,7 @@ any <code>.rete</code> into a SPARQL 1.1 Protocol endpoint:</p>
 <p>The cost of this route is that the model no longer sees the card, schema, and
 examples unless you feed them in yourself, which is most of what makes the
 in-process loop work.</p>
-<h2>Gotchas</h2>
+<h2 id="gotchas">Gotchas</h2>
 <p>Every one of these was hit while writing this page.</p>
 <p><strong>Trim the schema, always.</strong> <code>schema()</code> on <code>boe</code> — a small graph — is 27
 classes and 1,079 relations, <strong>138 KB of JSON</strong>. Passed to a model unfiltered
@@ -610,7 +610,7 @@ rather than <code>toolset.get_tools()</code>, which requires a <code>RunContext<
 <p><strong>Watch <code>stats()</code> while developing.</strong> It reports bytes and requests actually
 fetched, so an accidentally expensive tool (a <code>SELECT</code> with no <code>LIMIT</code>, a
 schema call on every turn) shows up as a number rather than as a slow agent.</p>
-<h2>See also</h2>
+<h2 id="see-also">See also</h2>
 <ul>
 <li><a href="agents.html">Agentic interfaces</a> — the MCP server, the desktop extension, the
 Claude Code plugin, and the skills.</li>

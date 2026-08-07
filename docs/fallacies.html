@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Experiment — fallacy graphs from a conversation</h1>
+<h1 id="experiment--fallacy-graphs-from-a-conversation">Experiment — fallacy graphs from a conversation</h1>
 <p>An agent connected to the <a href="agents.html">rete MCP server</a> can now <strong>author</strong>
 knowledge graphs, not just read them: search existing vocabularies, draft
 an ontology, lint it until clean, build a real <code>.rete</code>, and validate it —
@@ -346,7 +346,7 @@ all inside one chat. This page documents the flow with a worked example:
 verbatim against the server (the outputs are real).</p>
 <p>The tools involved: <code>suggest_vocabulary</code> → <code>check_ontology</code> → <code>build_rete</code>
 → <code>sparql_query</code> / <code>validate_shacl</code>.</p>
-<h2>The scenario</h2>
+<h2 id="the-scenario">The scenario</h2>
 <p>Someone sends a voice note of a budget debate. The host app (ChatGPT does
 this natively) transcribes it. This is the input to everything below — the
 same shape you would use in a fine-tuning dataset or hand to the agent
@@ -397,12 +397,12 @@ transcript also carries the causal claims used in the
 below — budget cut → breakdowns → downtime, contract review and
 inspections as preventers. The goal: a queryable, validated graph of that
 structure.</p>
-<h2>1. Discover before minting</h2>
+<h2 id="1-discover-before-minting">1. Discover before minting</h2>
 <p><code>suggest_vocabulary("argument fallacy premise")</code> searches
 <a href="https://lov.linkeddata.es">Linked Open Vocabularies</a> and surfaces the
 <strong>Argument Interchange Format</strong> (AIF) — so the ontology anchors to it
 instead of reinventing "argument":</p>
-<h2>2. Draft the ontology, lint until clean</h2>
+<h2 id="2-draft-the-ontology-lint-until-clean">2. Draft the ontology, lint until clean</h2>
 <p>The agent drafts Turtle and calls <code>check_ontology</code>. A deliberately broken
 draft shows what the linter catches:</p>
 <pre><code class="language-json">{"ok": false, "issues": [
@@ -432,7 +432,7 @@ fal:quotes  a owl:ObjectProperty  ; rdfs:domain fal:Fallacy ; rdfs:range fal:Utt
 fal:attacks a owl:ObjectProperty  ; rdfs:domain fal:Fallacy ; rdfs:range fal:Utterance ;
   rdfs:comment "The utterance the fallacious move targets." .
 </code></pre>
-<h2>3. Instances with provenance</h2>
+<h2 id="3-instances-with-provenance">3. Instances with provenance</h2>
 <p>Each intervention becomes an <code>Utterance</code> (text + speaker); each annotation
 a <code>Fallacy</code> node pointing at what it quotes and what it attacks:</p>
 <pre><code class="language-ttl">ex:u1 a fal:Utterance ; fal:saidBy ex:bruno ; fal:text "We should raise the maintenance budget…" .
@@ -441,7 +441,7 @@ ex:u2 a fal:Utterance ; fal:saidBy ex:ana   ; fal:text "We can't trust Bruno —
 ex:f1 a fal:AdHominem ; fal:quotes ex:u2 ; fal:attacks ex:u1 .
 ex:f2 a fal:StrawMan  ; fal:quotes ex:u4 ; fal:attacks ex:u3 .
 </code></pre>
-<h2>4. Build a real, queryable file</h2>
+<h2 id="4-build-a-real-queryable-file">4. Build a real, queryable file</h2>
 <p><code>build_rete(ontology + instances, card={title: "Fallacy analysis — Ana &amp; Bruno budget debate", …}, examples=[…])</code> returns in under a second:</p>
 <pre><code class="language-json">{"dataset": "generated/f2fd70100e1a0a52.rete", "url": "/generated/f2fd70100e1a0a52.rete",
  "bytes": 5609, "quads": 65, "content_hash": "…"}
@@ -450,7 +450,7 @@ ex:f2 a fal:StrawMan  ; fal:quotes ex:u4 ; fal:attacks ex:u3 .
 Dataset Card with the embedded example queries — served at an ephemeral
 URL, range-readable by every client and the playground, and <strong>immediately
 usable by the other tools</strong> via its dataset key.</p>
-<h2>5. Query it — the reasoning payoff</h2>
+<h2 id="5-query-it--the-reasoning-payoff">5. Query it — the reasoning payoff</h2>
 <p>No instance is typed <code>fal:Fallacy</code> directly, only as subclasses. Plain vs
 reasoned, same query:</p>
 <pre><code class="language-sparql">SELECT (COUNT(DISTINCT ?f) AS ?n) WHERE { ?f a fal:Fallacy }
@@ -463,7 +463,7 @@ carries as an example:</p>
 <pre><code>Ana   → fal:AdHominem
 Bruno → fal:StrawMan
 </code></pre>
-<h2>6. SHACL as the annotation contract</h2>
+<h2 id="6-shacl-as-the-annotation-contract">6. SHACL as the annotation contract</h2>
 <p>"Every annotated fallacy must cite the utterance that commits it and the
 one it attacks":</p>
 <pre><code class="language-ttl">[] a sh:NodeShape ;
@@ -505,7 +505,7 @@ CauseNet relations (<code>?x a cn:CausalRelation</code> → 4), and the file emb
 via <code>SERVICE</code> — "does the web's causal knowledge agree with this
 meeting?".</li>
 </ul>
-<h2>Same tooling, other conversations</h2>
+<h2 id="same-tooling-other-conversations">Same tooling, other conversations</h2>
 <p>Nothing here is fallacy-specific — the pattern is <em>speech → ontology →
 instances → validated graph</em>:</p>
 <ul>

@@ -296,7 +296,7 @@ A few properties that make the embedding work:
 - **Physically additive (pyramid-meta v2).** The schema block is appended after the
   v1 summary and written **only when the graph has types**, so a typeless file is
   byte-identical to a v1 build and an older reader silently ignores the new bytes.
-  See [the format spec §7.4](SPEC.md#7-4-the-schema-pyramid-semantic-zoom-v2) for
+  See [the format spec §7.4](SPEC.md#74-the-schema-pyramid--semantic-zoom-v2) for
   the exact byte layout.
 - **Provenance.** The `subClassOf` axioms come straight from the data, from a merged
   ontology file, or from `rete build --materialize` (the RDFS/OWL-RL reasoner). The
@@ -337,4 +337,4 @@ single flat level); everything else here still applies.
 
 See also: [Dataset Cards](dataset-cards.md) (the self-describing card + starter
 queries that ride the same index-free path), [Reasoning](reasoning.md)
-(`--materialize` to infer `subClassOf`), and [the format spec](SPEC.md#7-the-pyramid-community-summarization).
+(`--materialize` to infer `subClassOf`), and [the format spec](SPEC.md#7-the-pyramid--community-summarization).

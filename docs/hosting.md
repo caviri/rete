@@ -71,7 +71,7 @@ python3 dev/r2_s3.py put <bucket> data.rete datasets/mygraph/data.rete
 One sizing note: Cloudflare's cache handles objects up to ~512 MB, so files at
 or below that stay CDN-cacheable. A bigger graph is better published as several
 **shards** queried as one — see
-[Federated queries](federation.md#beyond-union-cross-source-joins-and-sharded-datasets).
+[Federated queries](federation.md#beyond-union--cross-source-joins-and-sharded-datasets).
 
 ### Zenodo (free, permanent, citable)
 

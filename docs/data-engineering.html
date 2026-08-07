@@ -337,13 +337,13 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Tables, VKG &amp; big builds</h1>
+<h1 id="tables-vkg--big-builds">Tables, VKG &amp; big builds</h1>
 <p>Data-engineering companions to the <code>.rete</code> file: lossless tabular exports of
 the same graph, the virtual-knowledge-graph alternative, and recipes for
 pulling genuinely large real datasets. This page is development-facing — for
 building a first file and querying it, start at
 <a href="getting-started.html">Getting started</a>.</p>
-<h2>Lossless entity tables (the best of both worlds)</h2>
+<h2 id="lossless-entity-tables-the-best-of-both-worlds">Lossless entity tables (the best of both worlds)</h2>
 <p><code>scripts/rdf_to_entity_tables.py</code> is the <em>lossless</em> counterpart: it keeps the
 readable one-table-per-type shape <strong>without dropping anything</strong>. Each class
 table has the frequent properties as named <code>LIST</code> columns (occupation,
@@ -373,7 +373,7 @@ than Wikidata's <code>P31</code> — e.g. <code>rdf:type</code> for OBO ontologi
   --props 24 --min-entities 50 -o data/chebi-tables \
   --duckdb data/chebi.duckdb --sqlite data/chebi.sqlite --verify
 </code></pre>
-<h2>Companion: columnar property tables (Parquet, split by type)</h2>
+<h2 id="companion-columnar-property-tables-parquet-split-by-type">Companion: columnar property tables (Parquet, split by type)</h2>
 <p>To compare the <code>.rete</code> graph against a columnar layout,
 <code>scripts/rdf_to_property_tables.py</code> denormalizes the same Wikidata triples into
 <strong>one Parquet table per entity type</strong> (the classic RDF "property table"): rows
@@ -394,7 +394,7 @@ back to its predicate, and a single DuckDB over the set is just views:
 companion for benchmarking storage/query tech against the graph format — not a
 lossless graph encoding (sparse properties become NULLs, heterogeneous classes
 get wide; that's the point of the comparison).</p>
-<h2>Alternative approach: a <em>virtual</em> knowledge graph over the companions</h2>
+<h2 id="alternative-approach-a-virtual-knowledge-graph-over-the-companions">Alternative approach: a <em>virtual</em> knowledge graph over the companions</h2>
 <p>The companions above are materialized the rete way: triples → a <code>.rete</code> (the
 graph) <strong>plus</strong> tabular exports you query with SQL. The playground's Explore tab
 already queries those exports <strong>lazily over <code>httpfs</code></strong> — DuckDB-WASM / SQLite-WASM
@@ -432,7 +432,7 @@ per-dataset <code>.rete</code> and <code>rete federate</code> across them.)</p>
 Ontop-over-DuckDB VKG on the equivalent Parquet — same queries, same HTTP-range
 hosting — measuring bytes fetched, latency, and which graph operations (pyramid /
 reachability / SHACL / coherence) the VKG can't answer cheaply.</p>
-<h2>A real-world graph: a Wikidata biology slice</h2>
+<h2 id="a-real-world-graph-a-wikidata-biology-slice">A real-world graph: a Wikidata biology slice</h2>
 <p>For a genuinely large, real dataset, <code>scripts/fetch_wikidata_bio.py</code> pulls a
 life-sciences slice from the <a href="https://query.wikidata.org">Wikidata Query Service</a>:
 genes, the proteins they encode, the diseases they associate with, drugs that
@@ -451,7 +451,7 @@ disease hierarchy via <code>wdt:P279</code>, and HTTP range queries over a real 
 WDQS time. Output lands in <code>data/</code> (git-ignored, like all fetched datasets —
 the script is tracked, the bytes are regenerated on demand). Be a good WDQS
 citizen: it is rate-limited, so fetch a slice, not a firehose.</p>
-<h2>Real Wikidata at gigabyte scale (Parquet)</h2>
+<h2 id="real-wikidata-at-gigabyte-scale-parquet">Real Wikidata at gigabyte scale (Parquet)</h2>
 <p>The Query Service is for slices, not bulk. For a genuinely large, real
 linked-data graph, <code>scripts/wikidata_parquet_to_nt.py</code> reads the full Wikidata
 "truthy" dump from the

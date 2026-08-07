@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Writable graphs — the manifest &amp; WAL</h1>
+<h1 id="writable-graphs--the-manifest--wal">Writable graphs — the manifest &amp; WAL</h1>
 <p>A <code>.rete</code> file is <strong>immutable by design</strong>: sorted, delta-encoded tiles behind a
 content hash are what make it range-cacheable forever. So how do you <em>edit</em> a
 graph — grow it across sessions, delete and update quads, keep querying while
@@ -376,7 +376,7 @@ for entry in log:   visible = (visible ∖ entry.dels) ∪ entry.adds
 hash each <code>.rete</code> already carries in its header (the same contract the
 playground's <code>datasets.lock.json</code> uses). A replaced or truncated segment fails
 loudly at query time, never silently returns fewer rows.</p>
-<h2>Quickstart</h2>
+<h2 id="quickstart">Quickstart</h2>
 <pre><code class="language-sh"># Session 1: start the log from a built base file.
 rete manifest init mygraph.rete-manifest.json base.rete
 
@@ -403,7 +403,7 @@ per source and unions rows (each file keeps its own dictionary — see
 under <strong>one dictionary</strong>, so cross-segment joins behave exactly as if the
 graph had been built as one file — which is the point: segments are <em>one</em>
 logical graph's history, not independent datasets.</p>
-<h2>Live writes: serve, journal, seal</h2>
+<h2 id="live-writes-serve-journal-seal">Live writes: serve, journal, seal</h2>
 <p><code>rete serve</code> accepts a manifest, which closes the write loop:</p>
 <pre><code class="language-sh">rete serve mygraph.rete-manifest.json          # SPARQL 1.1 Protocol + Update
 </code></pre>
@@ -418,7 +418,7 @@ log entry, and truncates the journal. Restarting the server on the sealed
 manifest reproduces the exact same state — now durable in content-addressed
 segments instead of a replay log. Repeat forever; <code>compact</code> when the log gets
 long.</p>
-<h2>Semantics in short</h2>
+<h2 id="semantics-in-short">Semantics in short</h2>
 <table><thead><tr><th>operation</th><th>how</th></tr></thead><tbody>
 <tr><td>add quads</td><td>append an entry with <code>adds</code></td></tr>
 <tr><td>delete quads</td><td>append an entry with <code>dels</code> (tombstone <code>.rete</code>)</td></tr>
@@ -429,7 +429,7 @@ long.</p>
 <tr><td>verify</td><td>every segment checked against <code>{size, blake3_16}</code> before use</td></tr>
 <tr><td>consolidate</td><td><code>compact</code> → one <code>.rete</code>, deterministic (same fold ⇒ same hash)</td></tr>
 </tbody></table>
-<h2>Limitations (prototype honesty)</h2>
+<h2 id="limitations-prototype-honesty">Limitations (prototype honesty)</h2>
 <ul>
 <li><strong>The fold is materialized per open.</strong> <code>manifest query</code> and <code>serve</code> load
 every segment and re-assemble one in-memory image — O(total quads), like

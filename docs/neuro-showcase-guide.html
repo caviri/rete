@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Neuromorphology — 3D neurons &amp; astrocytes, and a fly connectome</h1>
+<h1 id="neuromorphology--3d-neurons--astrocytes-and-a-fly-connectome">Neuromorphology — 3D neurons &amp; astrocytes, and a fly connectome</h1>
 <p><strong><a href="neuro-showcase.html">▸ Reconstruct the shapes in 3D →</a></strong> — a standalone
 WebGL viewer that streams the electron-microscopy meshes and rebuilds each cell
 in your browser; rotate an astrocyte, or show the whole neuron cluster at once,
@@ -349,7 +349,7 @@ results table</strong>.</p>
 datasets harvested into rete, and the point it makes is about <em>file formats</em> as
 much as neurons — the difference between a <strong>lossless, queryable graph</strong> and a
 <strong>lossy 3D render preview</strong>, kept as two layers instead of one.</p>
-<h2>What's in it</h2>
+<h2 id="whats-in-it">What's in it</h2>
 <p>Just 30 cells, chosen to be interesting rather than large:</p>
 <ul>
 <li><strong>3 astrocytes</strong> from the Blue Brain <strong>Neuro-Glia-Vascular</strong> reconstruction
@@ -367,7 +367,7 @@ connection is attached to the edge itself with <strong>RDF-star</strong>
 (<code>&lt;&lt; ?a neuro:connectsTo ?b &gt;&gt; neuro:weight ?w</code>), so an edge is a first-class
 thing you can query, not a flattened triple.</li>
 </ul>
-<h2>The point: lossless graph + lossy preview</h2>
+<h2 id="the-point-lossless-graph--lossy-preview">The point: lossless graph + lossy preview</h2>
 <p>The astrocyte meshes are enormous — one is 10 million triangles, ~400 MB as raw
 OBJ. That geometry is <strong>not</strong> what belongs in the graph. So the dataset keeps
 two layers:</p>
@@ -382,7 +382,7 @@ imaging resolution), ~8–17 MB instead of hundreds.</li>
 of truth. Draco-GLB is a wonderful <em>delivery</em> format for a browser, but it is
 lossy and it cannot express a graph — so it rides alongside the <code>.rete</code>, never
 replaces it.</p>
-<h2>Try it</h2>
+<h2 id="try-it">Try it</h2>
 <p>Open the playground and run the built-in examples:</p>
 <ul>
 <li><strong>🧊 The astrocytes in 3D</strong> — returns each astrocyte with its mesh URL; click
@@ -394,7 +394,7 @@ mushroom body.</li>
 <li><strong>The connectome cluster as a network</strong> — switch Output to Graph to see the
 wiring draw itself.</li>
 </ul>
-<h2>Licence &amp; credit</h2>
+<h2 id="licence--credit">Licence &amp; credit</h2>
 <p>Mixed, and published here as a <strong>non-commercial research demonstrator with
 attribution</strong>:</p>
 <ul>

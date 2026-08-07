@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Python: build a <code>.rete</code>, step by step</h1>
+<h1 id="python-build-a-rete-step-by-step">Python: build a <code>.rete</code>, step by step</h1>
 <p>This tutorial walks through preparing a <code>.rete</code> file from Python with the
 <code>rete_graph.Builder</code> — a <strong>lazy</strong> builder: every step just records
 configuration and returns the builder, so calls chain freely; nothing parses
@@ -359,7 +359,7 @@ builder = (
 data = builder.run()                             # 5. build
 builder.export("people.rete")                    # 6. ship
 </code></pre>
-<h2>1. Start a builder and add sources</h2>
+<h2 id="1-start-a-builder-and-add-sources">1. Start a builder and add sources</h2>
 <p>A <code>Builder</code> starts empty. <code>add()</code> queues RDF <strong>text</strong> (<code>"nt"</code>, <code>"nq"</code>,
 <code>"ttl"</code>, <code>"rdfxml"</code>), <code>add_file()</code> queues a file (format inferred from the
 suffix), and either accepts a <strong>graph object from another RDF library</strong> —
@@ -380,7 +380,7 @@ builder = (
 <p>All sources merge into one graph. N-Quads sources keep their named graphs
 (they become a dataset; rdflib <code>Dataset</code> objects round-trip the same way).
 Nothing has been parsed yet — the builder only holds text and settings.</p>
-<h2>2. The Dataset Card</h2>
+<h2 id="2-the-dataset-card">2. The Dataset Card</h2>
 <p>A <code>.rete</code> file can embed a <a href="dataset-cards.html">Dataset Card</a> — a data-catalog
 record living in the file's metadata section, so the data travels with its own
 documentation. <code>card()</code> sets the <strong>curated</strong> fields; repeat calls merge:</p>
@@ -466,7 +466,7 @@ nothing for statements living in named graphs — scope it with
 <code>GRAPH ?g { … }</code>, or use a surface that offers the opt-in
 <a href="sparql.html#union-default-graph">union default graph</a> mode (the playground's
 ⛁ All graphs toggle; not standard SPARQL, and not available in this client).</p>
-<h2>3. The pyramid</h2>
+<h2 id="3-the-pyramid">3. The pyramid</h2>
 <p>The <a href="semantic-zoom.html">community pyramid</a> is the file's "zoom-out" structure:
 communities summarized level by level, powering the playground's overview,
 progressive rendering, and label prefix search.</p>
@@ -490,12 +490,12 @@ reachability are unaffected — the file stays fully queryable and gets
 markedly smaller — but summary/progressive views and <code>prefix_search</code> are
 gone. Good for pure query workloads.</li>
 </ul>
-<h2>4. The full-text index</h2>
+<h2 id="4-the-full-text-index">4. The full-text index</h2>
 <p>Opt-in, because it costs file size: a word index over literals that powers
 <code>Graph.text_search()</code> and fast <code>CONTAINS</code> filters (~39× a raw scan):</p>
 <pre><code class="language-python">builder.text_index()
 </code></pre>
-<h2>5. Run</h2>
+<h2 id="5-run">5. Run</h2>
 <p><code>run()</code> executes the whole configuration — parse every source, build the
 dictionary, the triple indexes, the pyramid, the text index, embed the card —
 and returns the complete file image as <code>bytes</code>:</p>
@@ -508,7 +508,7 @@ print(builder.stats)
 rebuilding, and <code>export()</code>/<code>graph()</code> reuse it. Changing <strong>any</strong> setting
 (another <code>add</code>, a card edit, a pyramid flag) invalidates the cache, and the
 next <code>run()</code> rebuilds.</p>
-<h2>6. Verify before shipping</h2>
+<h2 id="6-verify-before-shipping">6. Verify before shipping</h2>
 <p>The image opens like any other graph — check it holds what you meant:</p>
 <pre><code class="language-python">g = builder.graph()                  # == rete.open(builder.run())
 
@@ -519,7 +519,7 @@ g.card()                             # the embedded card, counts included
 g.text_search("alice")               # the index built in step 4
 g.content_hash()                     # blake3-16 — cite it when publishing
 </code></pre>
-<h2>7. Export</h2>
+<h2 id="7-export">7. Export</h2>
 <pre><code class="language-python">path = builder.export("people.rete")
 </code></pre>
 <p>The exported file is <strong>complete and immutable</strong> — build-once, read-many.
@@ -533,7 +533,7 @@ rete info people.rete
 <p>Host it on anything that serves HTTP <code>Range</code> (S3, R2, GitHub, any CDN — see
 <a href="hosting.html">Hosting your .rete</a>) and it is queryable in place from Python,
 the CLI, and the browser playground, with no server.</p>
-<h2>Scaling up, and the CLI equivalents</h2>
+<h2 id="scaling-up-and-the-cli-equivalents">Scaling up, and the CLI equivalents</h2>
 <p>In-memory builds comfortably handle test and small-to-medium graphs (up to a
 few million triples). Past that, switch to the streaming CLI — every builder
 step has a flag twin:</p>
@@ -549,7 +549,7 @@ step has a flag twin:</p>
 <p>The CLI also compresses sections with zstd at higher levels, streams input
 twice instead of holding it, and derives the enriched card profile. See the
 <a href="cli.html">CLI reference</a> and <a href="data-engineering.html">Tables, VKG &amp; big builds</a>.</p>
-<h2>The complete script</h2>
+<h2 id="the-complete-script">The complete script</h2>
 <pre><code class="language-python">"""people.ttl (+ an rdflib graph) -&gt; people.rete, with card + pyramid + text index."""
 import rdflib
 import rete_graph as rete

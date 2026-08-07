@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Topic modeling over communities (LDA)</h1>
+<h1 id="topic-modeling-over-communities-lda">Topic modeling over communities (LDA)</h1>
 <figure class="fig-right">
   <img src="img/topics.svg" alt="Three structural node communities feed into an LDA topic model, which emits a topic card of keywords for each community.">
   <figcaption>Communities are <em>structural</em> (link topology); topics are <em>latent themes</em> in the text on their nodes. LDA labels each community with its dominant theme.</figcaption>
@@ -368,7 +368,7 @@ is 9 "papers" in 3 citation clusters (ML, databases, biology). Citations are
 dense <em>within</em> a cluster and sparse <em>across</em>, so Louvain recovers the 3 groups;
 each paper carries a <code>title</code> and an <code>abstract</code> literal with cluster-specific
 vocabulary.</p>
-<h2>Quick path: structural profiles (no ML)</h2>
+<h2 id="quick-path-structural-profiles-no-ml">Quick path: structural profiles (no ML)</h2>
 <p>Before reaching for LDA, <code>rete communities --profile</code> gives each community a
 no-ML "topic" label straight from the graph: its most frequent literal words,
 <code>rdf:type</code> classes, and predicates. No Python, no dependencies.</p>
@@ -388,7 +388,7 @@ community 2: 3 members, 6 literals
 community's text is a strong baseline. Reach for LDA below when you want <em>latent</em>
 topics (themes that span words and are shared across communities) rather than
 just the top terms. <code>--json --profile</code> adds a <code>"profile": { types, predicates, terms }</code> object to each community for programmatic use.</p>
-<h2>Step 1 — build the file</h2>
+<h2 id="step-1--build-the-file">Step 1 — build the file</h2>
 <pre><code class="language-sh">rete build examples/papers.nt -o papers.rete
 </code></pre>
 <p>Peek at the structure (no index read needed):</p>
@@ -402,7 +402,7 @@ just the top terms. <code>--json --profile</code> adds a <code>"profile": { type
 </code></pre>
 <p>Three communities, each internally dense on <code>cites</code> — exactly the citation
 clusters.</p>
-<h2>Step 2 — extract per-community membership + text</h2>
+<h2 id="step-2--extract-per-community-membership--text">Step 2 — extract per-community membership + text</h2>
 <pre><code class="language-sh">rete communities papers.rete --json &gt; communities.json
 </code></pre>
 <p>The versioned envelope contains one record per community: its <code>members</code> (subject
@@ -428,7 +428,7 @@ IRIs) and <code>text</code> (the lexical values of all literal objects — the t
 <p><code>--round N</code> cuts the dendrogram at a specific round (default: the round chosen
 for the tile budget); <code>--min-size N</code> drops tiny communities. Without <code>--json</code>
 you get a human summary (members + literal counts).</p>
-<h2>Step 3 — run LDA</h2>
+<h2 id="step-3--run-lda">Step 3 — run LDA</h2>
 <p><a href="https://github.com/caviri/rete/blob/main/scripts/lda_topics.py"><code>scripts/lda_topics.py</code></a>
 treats <strong>each community as one document</strong> (its <code>text</code> joined), builds a
 document-term matrix (English stopwords), fits LDA, and prints the top words per
@@ -449,7 +449,7 @@ rete communities papers.rete --json | python3 scripts/lda_topics.py --topics 3
 <p>Community 2 is cleanly the <em>biology</em> cluster (<code>gene, genome, dna, protein</code>).
 The script reads from stdin or a file (<code>lda_topics.py communities.json</code>), and
 <code>--topics</code> / <code>--top-words</code> are tunable.</p>
-<h2>Step 4 (optional) — write topics back as queryable RDF</h2>
+<h2 id="step-4-optional--write-topics-back-as-queryable-rdf">Step 4 (optional) — write topics back as queryable RDF</h2>
 <p>Once you have a label per community, you can attach it to each member and rebuild
 so the topic becomes <strong>queryable with SPARQL</strong>:</p>
 <pre><code class="language-sh"># e.g. community 2 → "biology"
@@ -466,7 +466,7 @@ rete sparql papers-topics.rete \
 </code></pre>
 <p>The topic is now a first-class edge: filter, join, and traverse it like any
 other relation.</p>
-<h2>Honest notes</h2>
+<h2 id="honest-notes">Honest notes</h2>
 <ul>
 <li><strong>LDA needs real text and volume.</strong> This 9-paper demo is <em>illustrative</em>: with
 only 3 documents LDA cannot reliably split the two technical clusters (ML vs.

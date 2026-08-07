@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Python API</h1>
+<h1 id="python-api">Python API</h1>
 <p><code>rete-graph</code> is the Python client for <code>.rete</code> files: native bindings (PyO3) to
 the same Rust engine behind the <a href="cli.html">CLI</a> and the
 <a href="playground-guide.html">browser playground</a>. It opens a graph from a <strong>local
@@ -353,7 +353,7 @@ see <a href="#browser-python-jupyterlite--marimo-wasm">JupyterLite &amp; marimo 
 below. A runnable
 <a href="https://github.com/caviri/rete/blob/main/clients/python/examples/tutorial.ipynb">Jupyter notebook tour</a>
 covers everything below with captured outputs.</p>
-<h2>Open a graph</h2>
+<h2 id="open-a-graph">Open a graph</h2>
 <pre><code class="language-python">import rete_graph as rete
 
 g = rete.open("https://data.graphplaza.com/boe/boe.rete")     # remote, lazy
@@ -372,7 +372,7 @@ silently wrong slice.</p>
 <code>{"fileLength": ..., "bytes": ..., "requests": ...}</code> — the number that makes
 the lazy story visible: a <code>LIMIT 3</code> scan of a 6.9 MB remote file fetches
 ~24% of it in ~13 requests; a cache-hit re-run adds ~0.</p>
-<h3>Custom readers (fsspec, S3, anything)</h3>
+<h3 id="custom-readers-fsspec-s3-anything">Custom readers (fsspec, S3, anything)</h3>
 <p>Any object with <code>read_at(offset, length) -&gt; bytes</code> and a length (a <code>len()</code>
 method or <code>__len__</code>) can back a graph — so fsspec reaches authenticated
 S3/GCS/Azure with no rete-specific code:</p>
@@ -390,7 +390,7 @@ class FsspecReader:
 
 g = rete.open(reader=FsspecReader("s3://my-bucket/data.rete"))
 </code></pre>
-<h2>Query</h2>
+<h2 id="query">Query</h2>
 <pre><code class="language-python">rows = g.query("""
     SELECT ?s ?label WHERE {
         ?s &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; ?label
@@ -411,7 +411,7 @@ g.query("CONSTRUCT { ... } WHERE { ... }")   # -&gt; list of (s, p, o) Term trip
 <p><code>g.query_raw(q)</code> returns the engine's JSON envelope unparsed (the same shape
 the playground uses), and <code>g.query_df(q)</code> returns a pandas DataFrame
 (<code>pip install rete-graph[pandas]</code>).</p>
-<h3>Run the file's own example queries</h3>
+<h3 id="run-the-files-own-example-queries">Run the file's own example queries</h3>
 <p>A <code>.rete</code> can carry <strong>example SPARQL queries inside the file</strong> (in its
 <a href="dataset-cards.html">Dataset Card</a>); CLI-built datasets ship a whole tiered
 starter library. <code>g.examples()</code> reads them — on a remote file that costs one
@@ -423,16 +423,16 @@ g.query(g.examples()[0]["sparql"])          # and they just run
 </code></pre>
 <p>Embed your own with <code>Builder.example()</code> (rich: title + question + SPARQL) or
 <code>Builder.card(example_queries=[...])</code> (plain strings).</p>
-<h3>Reasoning</h3>
+<h3 id="reasoning">Reasoning</h3>
 <p><code>g.query(q, reason=True)</code> turns on OWL 2 QL entailment — <code>rdfs:subClassOf</code>,
 <code>subPropertyOf</code>, <code>domain</code>/<code>range</code> and friends, computed by <strong>query rewriting</strong>
 over the file's ontology, so it works over lazy remote files without
 materializing anything. See <a href="reasoning.html">Reasoning &amp; coherence</a>.</p>
-<h3>Federation</h3>
+<h3 id="federation">Federation</h3>
 <p>SPARQL 1.1 <code>SERVICE</code> works out of the box: join a <code>.rete</code> file against any
 public SPARQL endpoint (Wikidata, DBpedia, …) in one query. See
 <a href="federation.html">Federated queries</a>.</p>
-<h2>Build <code>.rete</code> files from Python</h2>
+<h2 id="build-rete-files-from-python">Build <code>.rete</code> files from Python</h2>
 <p><code>rete.build()</code> produces a complete file image, ready to <code>open()</code>, save, or
 upload:</p>
 <pre><code class="language-python">data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl")
@@ -468,7 +468,7 @@ tests and small-to-medium graphs (say, up to a few million triples). For big
 datasets use the <a href="cli.html"><code>rete build</code> CLI</a>, which streams from disk,
 compresses harder, and derives the enriched card profile — see
 <a href="data-engineering.html">Tables, VKG &amp; big builds</a>.</p>
-<h2>Search and overview</h2>
+<h2 id="search-and-overview">Search and overview</h2>
 <pre><code class="language-python">g.schema()                    # {"classes": [(iri, count)], "relations": [(s, p, o, count)]}
 g.prefix_search("Berl")       # label autocomplete -&gt; [(label, subject_iri)]
 g.text_search("volcano")      # full-text; needs a file built with --text-index
@@ -477,7 +477,7 @@ g.quads, g.terms              # header counts, as properties
 g.graph_names()               # named graphs in a dataset
 g.content_hash()              # blake3-16 hex — a stable cache key
 </code></pre>
-<h2>SHACL validation</h2>
+<h2 id="shacl-validation">SHACL validation</h2>
 <p>From <strong>0.2.2</strong>, validate a graph against SHACL Core shapes written in
 Turtle — data-quality contracts checked in place:</p>
 <pre><code class="language-python">report = g.shacl("""
@@ -529,7 +529,7 @@ is tracked as future work pending Pyodide support.)</li>
 <p>Pyodide wheels are per-ABI-year (not abi3): current Pyodide releases are
 covered; if yours isn't, <code>micropip.install("&lt;url of the .whl&gt;")</code> works from
 any CORS-enabled host.</p>
-<h2>Guarantees and threading</h2>
+<h2 id="guarantees-and-threading">Guarantees and threading</h2>
 <ul>
 <li><strong>No silent partial results</strong>: if a range fetch fails mid-query on a lazy
 handle, the query raises instead of returning fewer rows.</li>
@@ -539,7 +539,7 @@ other Python threads keep running during long queries.</li>
 <li>Errors surface as ordinary exceptions: <code>ValueError</code> for bad SPARQL or RDF
 input, <code>RuntimeError</code> for I/O and format problems.</li>
 </ul>
-<h2>Feature matrix</h2>
+<h2 id="feature-matrix">Feature matrix</h2>
 <table><thead><tr><th>Capability</th><th>Python</th><th>Notes</th></tr></thead><tbody>
 <tr><td>SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE</td><td>✅</td><td><code>query()</code></td></tr>
 <tr><td>Lazy remote open (HTTP Range)</td><td>✅</td><td><code>open(url)</code>, custom <code>headers</code></td></tr>
@@ -559,7 +559,7 @@ input, <code>RuntimeError</code> for I/O and format problems.</li>
 <tr><td>Multi-shard federated open</td><td>⏳</td><td>planned</td></tr>
 <tr><td>Writes / SPARQL UPDATE</td><td>—</td><td><code>.rete</code> is immutable; use <a href="cli.html"><code>rete serve</code></a></td></tr>
 </tbody></table>
-<h2>For contributors</h2>
+<h2 id="for-contributors">For contributors</h2>
 <p>This page is for <em>using</em> the package. Building from source, the CI layout,
 the release/publishing procedure, and the checklist for adding new language
 clients live in <a href="clients-dev.html">Client development &amp; releases</a>.</p>

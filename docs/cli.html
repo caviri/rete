@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>CLI reference</h1>
+<h1 id="cli-reference">CLI reference</h1>
 <p>The <code>rete</code> binary (crate <code>rete-cli</code>). Run <code>rete &lt;command&gt; --help</code> for the
 authoritative flags. Terms are written as canonical N-Triples tokens —
 <code>&lt;http://ex/Alice&gt;</code> for an IRI, <code>"30"</code> or <code>"30"^^&lt;…#integer&gt;</code> for a literal.</p>
@@ -349,8 +349,8 @@ shapes and do not add that field.</p>
 the <code>rete(1)</code> man page. Maintainers generate these from the exact binary with the
 hidden <code>rete generate --output &lt;directory&gt;</code> packaging command; they are never
 maintained as hand-written copies of the CLI definition.</p>
-<h2>Building</h2>
-<h3><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|rdfxml]</code></h3>
+<h2 id="building">Building</h2>
+<h3 id="rete-build-inputs--o-outrete---format-ntnqttlrdfxml"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|rdfxml]</code></h3>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
 Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code>, plus <code>.rdf</code> / <code>.owl</code> /
 <code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
@@ -390,7 +390,7 @@ by <code>rdf:type</code> instead — deterministic, self-naming communities that
 on graphs too large for the single-threaded Louvain build (it falls back to
 Louvain when the graph is untyped). All of these are opt-in; without them the
 output is byte-identical to a plain build.</p>
-<h3><code>rete repyramid &lt;file&gt; -o &lt;out.rete&gt; [--type-predicate &lt;IRI&gt;] [--pyramid-algo louvain|types] [--text-index] [--card …]</code></h3>
+<h3 id="rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-"><code>rete repyramid &lt;file&gt; -o &lt;out.rete&gt; [--type-predicate &lt;IRI&gt;] [--pyramid-algo louvain|types] [--text-index] [--card …]</code></h3>
 <p>Rebuild a file's pyramid <strong>in place</strong>, reading the triples straight from the
 existing <code>.rete</code> — no <code>export | build</code> N-Quads round-trip. Use it to add a schema
 pyramid (or a <code>--text-index</code> / a Dataset Card) to a file built before those
@@ -413,28 +413,28 @@ rete card old.rete --json &gt; old-card.json
 python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
 rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
 </code></pre>
-<h2>Validating</h2>
-<h3><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>
+<h2 id="validating">Validating</h2>
+<h3 id="rete-validate-inputs---format-ntnqttl"><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>
 <p>Parse RDF input(s) without building, to check they are well-formed
 N-Triples/N-Quads/Turtle. Reports statement and named-graph counts, or exits
 non-zero with a precise parse error (file, line, column).</p>
 <pre><code class="language-sh">rete validate data.ttl
 curl -s https://host/data.nt | rete validate - --format nt
 </code></pre>
-<h2>Inspecting</h2>
-<h3><code>rete info &lt;file&gt;</code></h3>
+<h2 id="inspecting">Inspecting</h2>
+<h3 id="rete-info-file"><code>rete info &lt;file&gt;</code></h3>
 <p>Print the decoded 1 KB header (the section directory, codecs, counts, content hash) — plus
 the <a href="dataset-cards.html">Dataset Card</a> catalog when the file carries one. Reads only
 the header and card byte ranges (the same two small reads <code>card-url</code> does over
 HTTP), so a 50 GB file answers in about a second.</p>
-<h3><code>rete stats &lt;file&gt;</code></h3>
+<h3 id="rete-stats-file"><code>rete stats &lt;file&gt;</code></h3>
 <p>Human-friendly overview: file size, default-graph triple count, distinct terms,
 named-graph count, pyramid levels, and top predicates. Notes the label-index and
 <strong>text-index</strong> sizes when the file carries them.</p>
-<h3><code>rete verify &lt;file&gt;</code></h3>
+<h3 id="rete-verify-file"><code>rete verify &lt;file&gt;</code></h3>
 <p>Recompute the blake3 content hash and compare to the header. Exits non-zero with
 <code>FAILED — content hash mismatch</code> on corruption/truncation.</p>
-<h3><code>rete search &lt;file&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
+<h3 id="rete-search-file-prefix---contains-word---contains-prefix-p---limit-n---json"><code>rete search &lt;file&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
 <p>Two modes.</p>
 <p><strong>Label prefix</strong> (default) — the subjects whose label starts with <code>prefix</code>
 (case-insensitive), printed as <code>label&lt;TAB&gt;&lt;iri&gt;</code> (or
@@ -461,7 +461,7 @@ rete search data.rete --contains glucose         # literals containing "glucose"
 rete search data.rete --contains glucose phosphate  # both words (AND)
 rete search data.rete --contains-prefix einst    # a word starting with "einst…"
 </code></pre>
-<h3><code>rete card &lt;file&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
+<h3 id="rete-card-file---json---format-jsonldcroissant---sha256-hex"><code>rete card &lt;file&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
 <p>Print the embedded <a href="dataset-cards.html">Dataset Card</a> — curated metadata
 (title/license/source/creators/publisher/…) plus the derived profile (counts, top
 predicates and classes, vocabularies), the content-hash checksum, and (when the
@@ -478,9 +478,9 @@ its own, so compute it outside (<code>sha256sum file.rete</code>); with it the d
 is validator-clean. Prints <code>(no dataset card)</code> for a file
 built without one. <code>rete info</code> shows the same catalog beneath the header when a
 card is present.</p>
-<h3><code>rete graphs &lt;file&gt;</code></h3>
+<h3 id="rete-graphs-file"><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
-<h3><code>rete export &lt;file&gt; [--format nq|ttl|jsonld]</code></h3>
+<h3 id="rete-export-file---format-nqttljsonld"><code>rete export &lt;file&gt; [--format nq|ttl|jsonld]</code></h3>
 <p>Serialize the dataset. <code>nq</code> (the default) dumps every triple/quad as N-Quads
 (default graph + named graphs) — a lossless round-trip. <code>ttl</code> emits Turtle and
 <code>jsonld</code> emits expanded JSON-LD; both serialize the <strong>default graph only</strong>
@@ -490,12 +490,12 @@ skipped — use <code>nq</code> to export those).</p>
 rete export data.rete --format ttl    # Turtle
 rete export data.rete --format jsonld # expanded JSON-LD
 </code></pre>
-<h2>Querying</h2>
-<h3><code>rete query &lt;file&gt; [--subject S] [--predicate P] [--object O]</code></h3>
+<h2 id="querying">Querying</h2>
+<h3 id="rete-query-file---subject-s---predicate-p---object-o"><code>rete query &lt;file&gt; [--subject S] [--predicate P] [--object O]</code></h3>
 <p>Match a single triple pattern; omitted positions are wildcards.</p>
 <pre><code class="language-sh">rete query data.rete --predicate '&lt;http://ex/knows&gt;'
 </code></pre>
-<h3><code>rete why &lt;file&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
+<h3 id="rete-why-file---subject-s---predicate-p---object-o---json"><code>rete why &lt;file&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
 <p>Explain the provenance of each triple-pattern result. The command reports the
 matched terms, dictionary IDs, graph scope, the chosen permutation (one of the
 six), and the file byte ranges for the dictionary, full index container, selected
@@ -504,7 +504,7 @@ emitted as stable machine-readable JSON with <code>schemaVersion: 1</code>.</p>
 <pre><code class="language-sh">rete why data.rete --predicate '&lt;http://ex/knows&gt;'
 rete why data.rete --subject '&lt;http://ex/Alice&gt;' --json
 </code></pre>
-<h3><code>rete why-url &lt;url&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
+<h3 id="rete-why-url-url---subject-s---predicate-p---object-o---json"><code>rete why-url &lt;url&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
 <p>The remote counterpart of <code>rete why</code>: explain a triple-pattern result over a
 <code>.rete</code> served on HTTP, <strong>range-fetching only the routed tiles</strong> — the same
 provenance (permutation, section, byte ranges, the physical tile) plus the bytes
@@ -517,12 +517,12 @@ fetched and range-request count. The CLI version of the browser's <code>why_url<
 container, the selected permutation payload, and — for tiled files —
 the physical tile holding each match (<code>PERM/index</code>) with its compressed byte
 range.</p>
-<h3><code>rete bgp &lt;file&gt; "&lt;pattern&gt; . &lt;pattern&gt; …"</code></h3>
+<h3 id="rete-bgp-file-pattern--pattern-"><code>rete bgp &lt;file&gt; "&lt;pattern&gt; . &lt;pattern&gt; …"</code></h3>
 <p>Evaluate a Basic Graph Pattern. Patterns are separated by <code>.</code>, terms by spaces;
 <code>?name</code> is a variable (terms may not contain spaces).</p>
 <pre><code class="language-sh">rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
 </code></pre>
-<h3><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json] [--entail]</code></h3>
+<h3 id="rete-sparql-file-query---json---entail"><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json] [--entail]</code></h3>
 <p>Run SPARQL: <code>SELECT</code> / <code>ASK</code> / <code>CONSTRUCT</code> / <code>DESCRIBE</code>. With <code>--json</code>, emit
 standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
 <p><code>--entail</code> turns on <strong>OWL 2 QL reasoning</strong>: the query is rewritten so the answer
@@ -546,7 +546,7 @@ size: <code>RETE_BLOCK_KB</code>, cache capped at 256 MiB), and aggregation stre
 through per-group accumulators — a <code>COUNT</code> over a 9.83 B-triple file runs in a
 2 GiB container (<a href="BENCHMARK.html">benchmark</a>). Preview a query's byte cost with
 <code>rete cost</code>, and see the exact ranges a query read with <code>rete why</code>.</p>
-<h3><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
+<h3 id="rete-serve-file---bind-addr---token-t---journal-path"><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
 <p>Serve one <code>.rete</code> — or a <a href="manifest.html">manifest</a> of segments (<code>.json</code>), whose
 visible fold becomes the served state — as a live <strong>SPARQL 1.1 Protocol
 endpoint — queries and SPARQL Update</strong>. The base file is <strong>never mutated</strong>:
@@ -574,7 +574,7 @@ curl -s --data-urlencode 'query=SELECT * WHERE { ?s ?p ?o } LIMIT 5' http://127.
 curl -s --data-urlencode 'update=INSERT DATA { &lt;http://ex/n1&gt; &lt;http://ex/note&gt; "hello" }' http://127.0.0.1:7878/sparql
 curl -sO http://127.0.0.1:7878/snapshot.rete   # the updated companion .rete
 </code></pre>
-<h3><code>rete cost &lt;file-or-url&gt; "&lt;query&gt;" [--json] [--explain]</code></h3>
+<h3 id="rete-cost-file-or-url-query---json---explain"><code>rete cost &lt;file-or-url&gt; "&lt;query&gt;" [--json] [--explain]</code></h3>
 <p>Preview the byte/range-request cost of a SPARQL query without evaluating it.
 The report parses the query, lists the concrete predicates that can drive
 summary-based routing, and compares three access paths:</p>
@@ -608,7 +608,7 @@ are marked <code>requires_index</code>.</p>
 <code>sparql-url</code>. Treat this as a deployment/debugging preview: it reports the
 current SPARQL engine's range budget, the summary budget, and the exact routed
 single-pattern budget when the query shape allows it.</p>
-<h3><code>rete progressive &lt;file-or-url&gt; "&lt;query&gt;" [--json]</code></h3>
+<h3 id="rete-progressive-file-or-url-query---json"><code>rete progressive &lt;file-or-url&gt; "&lt;query&gt;" [--json]</code></h3>
 <p>Run the first summary-only progressive query path. This command answers only
 the exact shapes that can be proven from the pyramid summary without opening
 the triple index:</p>
@@ -628,7 +628,7 @@ describing the summary stage, exactness, predicate when one is fixed, bytes
 fetched, request count, and <code>reads_index: false</code>. Other query shapes fail
 clearly; use <code>rete sparql</code> for full-index evaluation or <code>rete cost --explain</code> to
 inspect why a query is not summary-answerable yet.</p>
-<h3><code>rete cypher &lt;file&gt; "&lt;query&gt;" [--base &lt;iri&gt;] [--json]</code></h3>
+<h3 id="rete-cypher-file-query---base-iri---json"><code>rete cypher &lt;file&gt; "&lt;query&gt;" [--base &lt;iri&gt;] [--json]</code></h3>
 <p>Run a read-only <strong>Cypher subset</strong> (a prototype). The query is translated to an
 equivalent SPARQL <code>SELECT</code> and evaluated by the same engine — no second query
 engine. Supports <code>MATCH … [WHERE …] RETURN … [LIMIT n]</code>: node patterns
@@ -645,8 +645,8 @@ defaults to <code>http://ex/</code> and is overridable with <code>--base</code>.
 <pre><code class="language-sh">rete cypher deps.rete "MATCH (a:Application) RETURN a"
 rete cypher deps.rete "MATCH (a)-[:dependsOn*]-&gt;(b) WHERE b = &lt;http://ex/log4x&gt; RETURN a"
 </code></pre>
-<h2>Reasoning</h2>
-<h3><code>rete reason [&lt;file&gt;] [--url &lt;url&gt;] [--materialize] [--check] [--verify-card] [--format nq|ttl]</code></h3>
+<h2 id="reasoning">Reasoning</h2>
+<h3 id="rete-reason-file---url-url---materialize---check---verify-card---format-nqttl"><code>rete reason [&lt;file&gt;] [--url &lt;url&gt;] [--materialize] [--check] [--verify-card] [--format nq|ttl]</code></h3>
 <p>Run the prototype <strong>OWL RL / RDFS reasoner</strong>: materialize RDFS/OWL entailments to
 a fixpoint and report any logical <strong>inconsistencies</strong> ("incoherent points", e.g. a
 disjoint-class violation). Prints the count of newly entailed triples and each
@@ -668,8 +668,8 @@ rete reason data.rete --check                  # one-line CI verdict
 rete reason --url https://host/data.rete       # reason over a remote file
 rete reason data.rete --verify-card            # baked card vs fresh run
 </code></pre>
-<h2>Shape validation</h2>
-<h3><code>rete shacl &lt;file&gt; --shapes &lt;shapes.ttl&gt; [--graph &lt;iri&gt;] [--format text|json|ttl]</code></h3>
+<h2 id="shape-validation">Shape validation</h2>
+<h3 id="rete-shacl-file---shapes-shapesttl---graph-iri---format-textjsonttl"><code>rete shacl &lt;file&gt; --shapes &lt;shapes.ttl&gt; [--graph &lt;iri&gt;] [--format text|json|ttl]</code></h3>
 <p>Validate a <code>.rete</code> graph against SHACL Core shapes read from Turtle. The default
 graph is validated unless <code>--graph</code> names one dataset graph. The command exits
 zero when the report conforms and non-zero when it finds validation results, so
@@ -679,7 +679,7 @@ the supported components and current limits.</p>
 rete shacl data.rete --shapes shapes.ttl --format json
 rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/snapshot&gt;'
 </code></pre>
-<h3><code>rete shacl-url &lt;url&gt; --shapes &lt;shapes.ttl&gt; [--format text|json|ttl]</code></h3>
+<h3 id="rete-shacl-url-url---shapes-shapesttl---format-textjsonttl"><code>rete shacl-url &lt;url&gt; --shapes &lt;shapes.ttl&gt; [--format text|json|ttl]</code></h3>
 <p>Validate a <strong>remote</strong> <code>.rete</code> over HTTP, <strong>range-reading only what the shapes
 target</strong>. The file is opened lazily and each focus node's values are fetched as
 routed range reads, so a targeted shape (<code>sh:targetClass</code> / <code>targetNode</code> /
@@ -689,19 +689,19 @@ the bytes fetched and the range-request count. Validates the default graph.</p>
 <pre><code class="language-sh">rete shacl-url https://host/data.rete --shapes shapes.ttl
 # (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
 </code></pre>
-<h2>Coarse graphs (no index read)</h2>
-<h3><code>rete summary &lt;file&gt; [--level k]</code></h3>
+<h2 id="coarse-graphs-no-index-read">Coarse graphs (no index read)</h2>
+<h3 id="rete-summary-file---level-k"><code>rete summary &lt;file&gt; [--level k]</code></h3>
 <p>Print the <strong>structural</strong> coarse graph: the Louvain community quotient graph
 (community → community relations with counts), plus — for v2 files — the <strong>schema
 pyramid</strong>: a leveled <code>rdf:type</code> histogram where abstract classes describe coarse
 levels and leaf classes resolve as you zoom in (e.g. <code>Agent → Person → Scientist → Astronomer</code>). <code>--level k</code> prints just level <code>k</code>'s type histogram (<code>0</code> =
 coarsest / most abstract). Everything here reads <strong>index-free</strong> from the
 pyramid-meta — <code>summary-url</code> shows the same over HTTP without fetching the index.</p>
-<h3><code>rete schema &lt;file&gt;</code></h3>
+<h3 id="rete-schema-file"><code>rete schema &lt;file&gt;</code></h3>
 <p>Print the <strong>semantic</strong> coarse graph: classes (by <code>rdf:type</code>) with instance
 counts, and the class→predicate→class relations between them — the dataset's
 effective schema.</p>
-<h3><code>rete communities &lt;file&gt; [--json] [--profile] [--predicate IRI] [--round N] [--min-size N]</code></h3>
+<h3 id="rete-communities-file---json---profile---predicate-iri---round-n---min-size-n"><code>rete communities &lt;file&gt; [--json] [--profile] [--predicate IRI] [--round N] [--min-size N]</code></h3>
 <p>Recompute the Louvain communities and expose, per community, its <strong>member
 subjects</strong> and the <strong>literal text</strong> of its triples — the per-community text
 corpus for downstream topic modeling. <code>--profile</code> adds a no-ML "topic" profile
@@ -717,11 +717,11 @@ drops communities with fewer than <code>N</code> members. See the
 rete communities researchers.rete --predicate '&lt;http://ex/cites&gt;'  # one criterion
 rete communities papers.rete --json | python3 scripts/lda_topics.py --topics 3
 </code></pre>
-<h3><code>rete predicates &lt;file&gt;</code></h3>
+<h3 id="rete-predicates-file"><code>rete predicates &lt;file&gt;</code></h3>
 <p>Exact per-predicate triple totals, summed from the pyramid summary alone — the
 triple index is never read.</p>
-<h2>Graph traversal</h2>
-<h3><code>rete reach &lt;file&gt; --predicate &lt;iri&gt; --seed &lt;iri&gt;… [--seeds-file F] [--reverse] [--parallel] [--count]</code></h3>
+<h2 id="graph-traversal">Graph traversal</h2>
+<h3 id="rete-reach-file---predicate-iri---seed-iri---seeds-file-f---reverse---parallel---count"><code>rete reach &lt;file&gt; --predicate &lt;iri&gt; --seed &lt;iri&gt;… [--seeds-file F] [--reverse] [--parallel] [--count]</code></h3>
 <p>Multi-source transitive reachability over one relation: for each seed, the set of
 nodes it transitively reaches. <code>--reverse</code> answers <em>"who reaches the seed?"</em>
 (impact analysis); <code>--seeds-file</code> reads one seed IRI per line; <code>--count</code> prints
@@ -733,10 +733,10 @@ rete reach deps.rete --predicate '&lt;http://ex/dependsOn&gt;' --seed '&lt;http:
 # Many seeds at once, in parallel:
 rete reach g.rete --predicate '&lt;http://ex/knows&gt;' --seeds-file seeds.txt --parallel --count
 </code></pre>
-<h2>Over HTTP</h2>
+<h2 id="over-http">Over HTTP</h2>
 <p>Both URL commands work against <code>http://</code> and <code>https://</code> hosts that honor <code>Range</code>
 requests (S3, GitHub, any CDN).</p>
-<h3><code>rete card-url &lt;url&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
+<h3 id="rete-card-url-url---json---format-jsonldcroissant---sha256-hex"><code>rete card-url &lt;url&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
 <p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and one
 coalesced metadata + build-info range, in <strong>two small range requests</strong>. The
 dictionary, index, and pyramid are never fetched: this is the index-free <strong>CARD
@@ -746,7 +746,7 @@ query. Reports bytes fetched + range count. The <code>--format</code> projection
 <code>--sha256</code> for Croissant) match <code>rete card</code>.</p>
 <pre><code class="language-sh">rete card-url https://host/data.rete --json
 </code></pre>
-<h3><code>rete card-audit &lt;path|url&gt; [--json] [--measure] [--only IDS] [--max-mb N] [--write-costs] [--allow-empty]</code></h3>
+<h3 id="rete-card-audit-pathurl---json---measure---only-ids---max-mb-n---write-costs---allow-empty"><code>rete card-audit &lt;path|url&gt; [--json] [--measure] [--only IDS] [--max-mb N] [--write-costs] [--allow-empty]</code></h3>
 <p>Do the starter queries a card <strong>already ships</strong> still answer on the file that
 carries them? A published <code>.rete</code> cannot be re-carded for free, so this decides
 each query's fate from the card's own profile — the CARD tier again, so a
@@ -765,7 +765,7 @@ URL) or a card JSON document from <code>rete card --json</code> / <code>rete car
 <pre><code class="language-sh">rete card-audit https://host/data.rete
 rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
 </code></pre>
-<h4><code>--measure</code>: run them instead of reasoning about them</h4>
+<h4 id="--measure-run-them-instead-of-reasoning-about-them"><code>--measure</code>: run them instead of reasoning about them</h4>
 <p>The static pass has a hard ceiling. Some templates are undecidable <strong>by
 construction</strong> — nothing in a card ties a subject to a predicate, so <code>top-reach</code>
 cannot be settled from one, and a card does not record which objects are also
@@ -798,7 +798,7 @@ the abandonment with the bytes it spent — "costs more than 8 MB" is itself an
 answer. Both matter: eight of <code>switzerland-fedlex</code>'s ten starter queries read
 ~1.02 GB each, so measuring that card remotely without a leash is an 8 GB
 download.</p>
-<h4><code>--write-costs</code>: make the measurement durable</h4>
+<h4 id="--write-costs-make-the-measurement-durable"><code>--write-costs</code>: make the measurement durable</h4>
 <p>Records the run in the file's build-info section, so the next reader gets the
 figures from the CARD tier (two range requests) instead of re-measuring. Local
 files only.</p>
@@ -832,7 +832,7 @@ would be stored as if it were the whole card.</p>
 rete card-audit https://host/data.rete --measure --only ov-triples --max-mb 8
 rete card-audit data.rete --measure --write-costs
 </code></pre>
-<h3><code>rete search-url &lt;url&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
+<h3 id="rete-search-url-url-prefix---contains-word---contains-prefix-p---limit-n---json"><code>rete search-url &lt;url&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
 <p><code>rete search</code> over HTTP — the same two modes and the same output, without
 downloading the file.</p>
 <p>The open is deliberately narrower than any other remote command's. It reads the
@@ -857,10 +857,10 @@ instead of silently scanning.</p>
 rete search-url https://host/data.rete --contains graphs --contains-prefix existen --json
 rete search-url https://host/data.rete "Photosynth" --limit 3   # label prefix
 </code></pre>
-<h3><code>rete summary-url &lt;url&gt;</code></h3>
+<h3 id="rete-summary-url-url"><code>rete summary-url &lt;url&gt;</code></h3>
 <p>Fetch only the header + dictionary + pyramid summary and print the coarse graph.
 The (large) index is never fetched — the "overview first" path.</p>
-<h3><code>rete query-url &lt;url&gt; [--subject S] [--predicate P] [--object O]</code></h3>
+<h3 id="rete-query-url-url---subject-s---predicate-p---object-o"><code>rete query-url &lt;url&gt; [--subject S] [--predicate P] [--object O]</code></h3>
 <p>Match a triple pattern over HTTP, fetching only the byte ranges the query needs
 and reporting how many ranges/bytes were pulled. Bound terms are resolved from
 the dictionary first; if they exist, the reader fetches only the selected
@@ -868,7 +868,7 @@ permutation payload rather than the whole index container. If a
 bound term is unknown, the index is skipped entirely and the result is empty.</p>
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
-<h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
+<h3 id="rete-sparql-url-url-query---json"><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
 <p>Run a full SPARQL query over HTTP with <strong>lazy tile faulting</strong> (tiled
 files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
@@ -878,8 +878,8 @@ an error, never as silently fewer rows.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>
-<h2>Federation</h2>
-<h3><code>rete federate &lt;sources…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]</code></h3>
+<h2 id="federation">Federation</h2>
+<h3 id="rete-federate-sources---query-sparql---json---no-route"><code>rete federate &lt;sources…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]</code></h3>
 <p>Run one SPARQL query across several <code>.rete</code> <strong>sources</strong> — local file paths and/or
 <code>http(s)://</code> URLs, mixed — and merge the results at the <strong>term (string) level</strong>:
 <code>SELECT</code> rows are unioned + deduped, <code>ASK</code> is OR'd across sources, <code>CONSTRUCT</code>
@@ -897,7 +897,7 @@ OpenCitations multi-shard example.</p>
   --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
                                           &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
 </code></pre>
-<h3><code>rete manifest &lt;init|add|status|query|seal|compact&gt;</code></h3>
+<h3 id="rete-manifest-initaddstatusquerysealcompact"><code>rete manifest &lt;init|add|status|query|seal|compact&gt;</code></h3>
 <p>Manage a <strong>writable logical graph</strong> as an ordered log of immutable <code>.rete</code>
 segments plus tombstone (deletion) segments, described by a small JSON
 manifest — grow a dataset across sessions, delete/update quads, query it all
@@ -912,7 +912,7 @@ rete manifest status g.rete-manifest.json --count
 rete manifest seal   g.rete-manifest.json     # journal → segments (stop serve first)
 rete manifest compact g.rete-manifest.json    # the whole log → ONE fresh .rete
 </code></pre>
-<h2>Exit codes</h2>
+<h2 id="exit-codes">Exit codes</h2>
 <ul>
 <li><code>0</code> — success.</li>
 <li><code>1</code> — runtime, data, or network failure: malformed RDF, a missing/corrupt or

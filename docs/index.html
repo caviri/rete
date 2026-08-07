@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>rete</h1>
+<h1 id="rete">rete</h1>
 <p><strong>A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.</strong></p>
 <p><a href="https://github.com/caviri/rete"><code>github.com/caviri/rete</code></a> · crates <strong>v0.3.0</strong> · stable file-format generation <strong>1</strong> (<code>0x05</code>)</p>
 <p><code>rete</code> packs an RDF graph (or a full dataset of named graphs) into one immutable
@@ -349,7 +349,7 @@ queries the file directly with no backend.</p>
 <p>Think <strong>Parquet / SQLite-over-HTTP / PMTiles</strong>, but for RDF + SPARQL.</p>
 <img src="img/lazy-open.svg" alt="Any client — a browser, a notebook, the CLI — sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred.">
 <p><em>Lazy opening: the file stays where it is — on a bucket or on disk — and a query fetches only the bytes it touches. Aggregation streams, so even a <code>COUNT</code> over 9.83 billion triples fits in 2 GiB.</em></p>
-<h2>Why</h2>
+<h2 id="why">Why</h2>
 <ul>
 <li><strong>No database server.</strong> The file <em>is</em> the database. Publish once to static
 hosting; clients query by URL.</li>
@@ -366,7 +366,7 @@ yields an error, never a panic (fuzz-tested).</li>
 </ul>
 <img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
 <p><em>The pyramid: read a coarse summary first, then drill into detail only where a query needs it.</em></p>
-<h2>60-second tour</h2>
+<h2 id="60-second-tour">60-second tour</h2>
 <pre><code class="language-sh"># Build a file from N-Triples (or .nq / .ttl; merge several; or read stdin):
 rete build examples/social.nt -o social.rete
 
@@ -382,7 +382,7 @@ rete query-url https://my-bucket.s3.amazonaws.com/social.rete --object '&lt;http
 rete summary social.rete    # structural (Louvain communities)
 rete schema  social.rete    # semantic (by rdf:type)
 </code></pre>
-<h2>Clients</h2>
+<h2 id="clients">Clients</h2>
 <p>The same engine, in your language of choice — every client opens local files
 <em>and</em> remote URLs (lazy HTTP range reads) and returns parsed SPARQL results:</p>
 <table><thead><tr><th>Client</th><th>Get it</th><th>Runs on</th><th>Docs</th></tr></thead><tbody>
@@ -395,14 +395,14 @@ rete schema  social.rete    # semantic (by rdf:type)
 <tr><td><strong>Agents</strong> — MCP server + Claude Code plugin</td><td><code>/plugin marketplace add caviri/rete</code> — or point any MCP client at the <a href="https://katospiegel-rete.hf.space/mcp/">gateway</a></td><td>ChatGPT, Claude, pydantic-ai, any MCP host</td><td><a href="agents.html">Agentic interfaces</a></td></tr>
 <tr><td><strong>Agent frameworks</strong> — the graph as tools, in process</td><td><code>pip install rete-graph</code> + your framework</td><td>LangChain / LangGraph, Pydantic AI; local or remote graphs, no server</td><td><a href="agent-frameworks.html">LangChain &amp; Pydantic AI</a></td></tr>
 </tbody></table>
-<h2>Documentation</h2>
-<h3>Start here</h3>
+<h2 id="documentation">Documentation</h2>
+<h3 id="start-here">Start here</h3>
 <ul>
 <li><strong><a href="intro.html">Graph data 101</a></strong> — new to graphs/RDF? A beginner's tour, framed by the questions you can ask.</li>
 <li><strong><a href="getting-started.html">Getting started</a></strong> — install (Docker-only), build, query, deploy.</li>
 <li><strong><a href="scenario.html">Real-world scenario</a></strong> — publish a queryable SBOM to a URL; curl examples.</li>
 </ul>
-<h3>Explore in the browser</h3>
+<h3 id="explore-in-the-browser">Explore in the browser</h3>
 <ul>
 <li><strong><a href="playground-guide.html">Playground</a></strong> — the flagship demo: 65 real datasets queried live over HTTP ranges, with SPARQL + SQL + semantic search, media viewers, and AI helpers. <a href="playground.html">Launch it →</a></li>
 <li><strong><a href="plaza-guide.html">Plaza — dataset gallery</a></strong> — browse published datasets as live cards. <a href="plaza/index.html">Open it →</a></li>
@@ -428,7 +428,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 <li><strong><a href="jslab-guide.html">JS lab</a></strong> — an Observable-style notebook: a JavaScript editor beside a live visualization, the code querying a remote <code>.rete</code> as you type. <a href="jslab.html">Launch it →</a></li>
 <li><strong><a href="jupyterlite-guide.html">JupyterLite notebook</a></strong> — a full Jupyter notebook running the <code>rete-graph</code> Python client in your tab, on a Pyodide kernel: <code>pip install</code>-free, queries a remote <code>.rete</code> over HTTP range. <a href="jupyterlite/index.html">Launch it →</a></li>
 </ul>
-<h3>Guides</h3>
+<h3 id="guides">Guides</h3>
 <ul>
 <li><strong><a href="cli.html">CLI reference</a></strong> — every <code>rete</code> subcommand.</li>
 <li><strong><a href="sparql.html">SPARQL support</a></strong> — exactly what the engine evaluates, including <code>SERVICE</code> federation.</li>
@@ -439,18 +439,18 @@ rete schema  social.rete    # semantic (by rdf:type)
 <li><strong><a href="semantic-zoom.html">Semantic zoom</a></strong> — the schema pyramid: overview first, drill into detail.</li>
 <li><strong><a href="compatibility.html">Compatibility &amp; Cypher</a></strong> — RDF interop, validation paths, and the Cypher subset.</li>
 </ul>
-<h3>Publish &amp; share</h3>
+<h3 id="publish--share">Publish &amp; share</h3>
 <ul>
 <li><strong><a href="dataset-cards.html">Dataset Cards</a></strong> — self-describing metadata embedded in the file.</li>
 <li><strong><a href="hosting.html">Hosting your .rete</a></strong> — put the file on R2, Zenodo, GitHub Pages, or S3 and query it by URL.</li>
 <li><strong><a href="media-companions.html">Media &amp; SQL companions</a></strong> — images, IIIF, 3D and audio in query results; Parquet/SQLite companions.</li>
 </ul>
-<h3>Graph analysis</h3>
+<h3 id="graph-analysis">Graph analysis</h3>
 <ul>
 <li><strong><a href="topic-modeling.html">Topic modeling (LDA)</a></strong> — label each community's theme: <code>rete communities</code> + scikit-learn LDA.</li>
 <li><strong><a href="multi-criteria.html">Multi-criteria communities</a></strong> — partition the same graph by different relations/attributes; combine criteria.</li>
 </ul>
-<h3>Development</h3>
+<h3 id="development">Development</h3>
 <ul>
 <li><strong><a href="architecture.html">Architecture</a></strong> — workspace map, build/read/query pipelines, range model, and extension points.</li>
 <li><strong><a href="SPEC.html">Format specification</a></strong> — the on-disk byte layout, for implementers.</li>
@@ -461,7 +461,7 @@ rete schema  social.rete    # semantic (by rdf:type)
 <li><strong><a href="BENCHMARK.html">Benchmarks</a></strong> — sizing, the OpenCitations/Oxigraph comparison, and the LUBM-style suite.</li>
 <li><strong><a href="conformance.html">SPARQL 1.1 conformance</a></strong> — the W3C test-suite scorecard.</li>
 </ul>
-<h2>Version &amp; status</h2>
+<h2 id="version--status">Version &amp; status</h2>
 <p>Developed in the open at <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>.
 The crates are <strong>v0.3.0</strong>, the first release on crates.io. Stable file-format
 generation 1 (header byte <code>0x05</code>) is the compatibility baseline for Rete 1.x.

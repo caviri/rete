@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>A real-world scenario: a queryable SBOM on a URL</h1>
+<h1 id="a-real-world-scenario-a-queryable-sbom-on-a-url">A real-world scenario: a queryable SBOM on a URL</h1>
 <p>A worked end-to-end example: publish a software <strong>dependency graph</strong> (an
 SBOM-style slice) as a single <code>.rete</code> file, then answer <em>"what is impacted by this
 CVE?"</em> — over HTTP, fetching only the bytes the query needs, with no database.</p>
@@ -349,7 +349,7 @@ CVE?"</em> — over HTTP, fetching only the bytes the query needs, with no datab
 &lt;http://ex/logging&gt; dependsOn  &lt;http://ex/log4x&gt;
 &lt;http://ex/log4x&gt;   hasVulnerability  &lt;http://ex/CVE-2099-0001&gt;
 </code></pre>
-<h2>1. Validate, then build</h2>
+<h2 id="1-validate-then-build">1. Validate, then build</h2>
 <p>Check the source is well-formed RDF first, then pack it:</p>
 <pre><code class="language-sh">rete validate examples/deps.nt
 #  valid: 13 statement(s) — 13 in the default graph, 0 named graph(s)
@@ -360,15 +360,15 @@ rete build examples/deps.nt -o deps.rete
 rete verify deps.rete        # confirm the content hash
 #  OK — content hash matches
 </code></pre>
-<h2>2. Publish</h2>
+<h2 id="2-publish">2. Publish</h2>
 <p>It's one immutable file — upload it anywhere that serves HTTP <code>Range</code> requests:</p>
 <pre><code class="language-sh">aws s3 cp deps.rete s3://my-bucket/deps.rete          # S3
 # or commit it to a repo and use the raw URL, or any CDN / static host.
 </code></pre>
 <p>No server, no endpoint, no index to maintain. The file's blake3 content hash
 doubles as an ETag-like id, so clients can cache byte ranges forever.</p>
-<h2>3. Query it from the URL</h2>
-<h3>The headline question: what does the CVE impact?</h3>
+<h2 id="3-query-it-from-the-url">3. Query it from the URL</h2>
+<h3 id="the-headline-question-what-does-the-cve-impact">The headline question: what does the CVE impact?</h3>
 <p>Everything that (transitively) depends on the vulnerable <code>log4x</code>:</p>
 <pre><code class="language-sh">rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
@@ -383,7 +383,7 @@ doubles as an ETag-like id, so clients can cache byte ranges forever.</p>
 this toy size the whole file fits in <strong>one bounded range request</strong>; on a real
 graph the same query pulls a handful of small ranges — dictionary chunks and
 index tiles — from a file thousands of times larger, never scanning linearly.</p>
-<h3>Just the affected <em>libraries</em>, with the CVE id</h3>
+<h3 id="just-the-affected-libraries-with-the-cve-id">Just the affected <em>libraries</em>, with the CVE id</h3>
 <pre><code class="language-sh">rete sparql-url https://my-bucket.s3.amazonaws.com/deps.rete \
   "PREFIX e: &lt;http://ex/&gt;
    SELECT ?lib ?cve WHERE {
@@ -391,17 +391,17 @@ index tiles — from a file thousands of times larger, never scanning linearly.<
      ?lib a e:Library
    }"
 </code></pre>
-<h3>A simple point lookup (triple pattern, no SPARQL)</h3>
+<h3 id="a-simple-point-lookup-triple-pattern-no-sparql">A simple point lookup (triple pattern, no SPARQL)</h3>
 <pre><code class="language-sh">rete query-url https://my-bucket.s3.amazonaws.com/deps.rete \
   --predicate '&lt;http://ex/hasVulnerability&gt;'
 </code></pre>
-<h3>Overview first, without downloading the index</h3>
+<h3 id="overview-first-without-downloading-the-index">Overview first, without downloading the index</h3>
 <img src="img/progressive-fetch.svg" alt="A client issues three small range requests for the header, dictionary, and pyramid summary; the large index block is greyed out and never fetched.">
 <p><em>The overview path: header + dictionary + summary in three range reads (~25% of the file); the triple index stays on the server.</em></p>
 <pre><code class="language-sh">rete summary-url https://my-bucket.s3.amazonaws.com/deps.rete   # community quotient graph
 rete schema      deps.rete                                       # classes &amp; relations (local)
 </code></pre>
-<h2>4. Querying with plain <code>curl</code></h2>
+<h2 id="4-querying-with-plain-curl">4. Querying with plain <code>curl</code></h2>
 <p>There is <strong>no query endpoint</strong> — a <code>.rete</code> query is a set of HTTP <code>Range</code> reads
 that the <code>rete</code> client (or the WASM engine) performs. You can watch and even
 drive those reads with <code>curl</code>.</p>
@@ -422,7 +422,7 @@ curl -sD - -o /dev/null -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete |
 rejected by the client (it would otherwise read the wrong bytes). For large
 files, this is the whole point — a point query pulls a handful of kilobytes from a
 multi-megabyte file instead of the entire thing.</p>
-<h2>5. In the browser</h2>
+<h2 id="5-in-the-browser">5. In the browser</h2>
 <p>The same file serves a zero-backend web app: the <a href="browser.html">browser engine</a>
 range-fetches the overview first, then runs SPARQL client-side. A security
 dashboard could load <code>deps.rete</code> straight from S3 and let users explore impact

@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Blender — knowledge graphs as scenes</h1>
+<h1 id="blender--knowledge-graphs-as-scenes">Blender — knowledge graphs as scenes</h1>
 <p>The Blender add-on makes a <code>.rete</code> file a source of <strong>scene content</strong>. You write
 SPARQL; the answer becomes objects — 3D assets imported, geometry placed, every
 RDF property inherited onto the object as a drivable custom property, relations
@@ -351,7 +351,7 @@ multi-gigabyte graph and a selective query fetches kilobytes.</p>
 <p>Source and build script: <a href="https://github.com/caviri/rete/tree/main/clients/blender"><code>clients/blender/</code></a>.
 Blender 4.2 or newer (tested on 4.5 LTS and 5.1).</p>
 </blockquote>
-<h2>Install</h2>
+<h2 id="install">Install</h2>
 <p>Download <code>rete-&lt;version&gt;.zip</code> and use <strong>Edit ▸ Preferences ▸ Add-ons ▸ ⌄ ▸
 Install from Disk…</strong>. The engine ships inside the extension — no pip, no
 network, no build tools. The panels appear in the 3D viewport sidebar
@@ -360,7 +360,7 @@ network, no build tools. The panels appear in the 3D viewport sidebar
 <pre><code class="language-sh">docker build -t rete-blender clients/blender
 docker run --rm -v "$PWD":/work -w /work rete-blender sh clients/blender/build.sh
 </code></pre>
-<h2>The loop</h2>
+<h2 id="the-loop">The loop</h2>
 <ol>
 <li><strong>Graph</strong> — paste a <code>.rete</code> URL (or pick one from the preset menu) and hit
 <em>Open graph</em>. The file describes itself: title, licence, counts, and the
@@ -371,7 +371,7 @@ text block, editable in the Text Editor.</li>
 to be, and lets you override it.</li>
 <li><strong>Build scene</strong>.</li>
 </ol>
-<h2>How columns become scenes</h2>
+<h2 id="how-columns-become-scenes">How columns become scenes</h2>
 <p>The add-on knows no dataset's vocabulary. Each column earns a role from the
 shape of its values, with the variable name and the predicate that bound it as
 supporting evidence — so an arbitrary query against an arbitrary graph still
@@ -395,7 +395,7 @@ produces a sensible scene.</p>
 vocabularies are pinned explicitly — which matters most for the graphs that
 publish <strong>time as bare decimal seconds</strong>, since those are indistinguishable
 from any other number by value alone.</p>
-<h2>CAD &amp; BIM (IFC)</h2>
+<h2 id="cad--bim-ifc">CAD &amp; BIM (IFC)</h2>
 <p>A building <code>.rete</code> works two ways. Its geometry can live <strong>in the graph</strong> — an
 IFC-derived graph (the FZK-Haus example, from <a href="geosparql.html"><code>cad-ifc</code></a>) carries
 each element's <code>geo3:asWKT3D</code> and <code>geo3:box</code> in metres, its <code>cad:ifcClass</code>, and
@@ -413,7 +413,7 @@ than the engine itself. Without either, IFC rows degrade with a clear message
 and everything else still builds — and most CAD graphs also ship a
 <code>cad:glbModel</code> column that needs no extra install. <code>.dxf</code> uses the importer
 Blender already ships; <code>.step</code> has no core importer.</p>
-<h2>Maps, images &amp; video</h2>
+<h2 id="maps-images--video">Maps, images &amp; video</h2>
 <p>Beyond 3D models, three URL kinds become scene content.</p>
 <p><strong>PMTiles maps.</strong> A <code>.pmtiles</code> URL — a whole tiled map in one immutable,
 HTTP-range-readable file, the same idea as <code>.rete</code> — is read directly, fetching
@@ -448,7 +448,7 @@ are fetched, the same idea as <code>.rete</code> and PMTiles. Plain <code>.las</
 whole and decimated to the point budget. LAZ/COPC need <strong>laspy</strong> with <code>lazrs</code>
 (<code>pip install "laspy[lazrs]"</code>, not bundled); without it, uncompressed <code>.las</code>
 still reads and LAZ/COPC degrade with a clear message.</p>
-<h2>Inherited properties</h2>
+<h2 id="inherited-properties">Inherited properties</h2>
 <p>With <strong>Inherit all properties</strong>, every statement about every imported entity is
 fetched — batched, so a thousand entities cost a handful of queries — and
 written onto the object as custom properties. They appear in <strong>Object Properties
@@ -459,7 +459,7 @@ round-trips losslessly.</p>
 <p>That is the whole idea: a bone's tissue type, a building element's IFC class, a
 paper's citation count stop being metadata in a table and become quantities that
 drive geometry, shading and simulation.</p>
-<h2>Placement, honestly</h2>
+<h2 id="placement-honestly">Placement, honestly</h2>
 <p>Graphs are authored in millimetres (anatomy), metres (buildings), or degrees
 (maps). The <strong>Placement</strong> panel folds unit scale, a <em>fit to size</em> mode, Y-up→Z-up
 conversion, an X flip and recentring into one transform applied to the whole
@@ -469,14 +469,14 @@ result.</p>
 105 × 68 metres, comfortably inside the longitude/latitude envelope; projected
 as degrees it would scatter across half a continent. See
 <a href="geosparql.html">GeoSPARQL</a> for the geometry vocabulary itself.</p>
-<h2>Time</h2>
+<h2 id="time">Time</h2>
 <p><strong>Appear</strong> keys objects in and out at their moment (with constant interpolation,
 so what you scrub is what you render). <strong>Grow in</strong> scales them up. <strong>Motion
 path</strong> turns rows sharing an entity into one keyframed trajectory — and works
 out which column names the moving thing, since trajectory datasets give every
 sample its own IRI. <strong>Retime assets</strong> places each asset's own animation at its
 own moment.</p>
-<h2>Relations, and relations as physics</h2>
+<h2 id="relations-and-relations-as-physics">Relations, and relations as physics</h2>
 <p>One predicate, read three ways: as Blender's <strong>object hierarchy</strong> (a partonomy
 becomes the Outliner), as <strong>collections</strong>, or as <strong>edge geometry</strong> — one line
 per statement in a single mesh, ready for a Skin or Wireframe modifier.</p>
@@ -487,18 +487,18 @@ normalised into a usable band. Anatomical adjacency, a building's topology, a
 citation network — the graph stops being a diagram and becomes a structure that
 holds itself together, which you can then pull apart to see what the topology
 actually does.</p>
-<h2>Scale</h2>
+<h2 id="scale">Scale</h2>
 <p><strong>As point cloud</strong> writes the whole result into one attributed mesh — a vertex
 per row, numeric and colour columns as named attributes, categorical ones as an
 integer index plus a lookup table — with a Geometry Nodes instancer attached.
 That carries results far past what one-object-per-row can.</p>
-<h2>Live values in drivers</h2>
+<h2 id="live-values-in-drivers">Live values in drivers</h2>
 <pre><code class="language-python">rete_count("?s a &lt;https://w3id.org/rete/anatomy#Muscle&gt;")
 rete("SELECT (AVG(?m) AS ?avg) WHERE { ?s &lt;https://x.org/mass&gt; ?m }", variable="avg")
 </code></pre>
 <p>Both are registered in Blender's driver namespace and memoised, since a driver
 is evaluated on every redraw.</p>
-<h2>Exploring, and exporting</h2>
+<h2 id="exploring-and-exporting">Exploring, and exporting</h2>
 <p>Select an object and <strong>Expand neighbours</strong> pulls its graph neighbours into the
 scene with the connecting edges drawn; <strong>Select by query</strong> runs SPARQL and
 selects what it returns.</p>
@@ -507,7 +507,7 @@ hierarchy, collections, materials, mesh statistics, animation ranges and every
 custom property, with original predicates restored and imported entities keeping
 their IRIs. The vocabulary is <code>https://w3id.org/rete/scene#</code>, described inside
 the exported file along with runnable example queries.</p>
-<h2>Graphs to try</h2>
+<h2 id="graphs-to-try">Graphs to try</h2>
 <p><code>z-anatomy</code> (4,884 human structures with per-system <code>.glb</code>), <code>smithsonian3d</code>
 (2,199 CC0 models), <code>dance</code> (salsa duets as animated skeletons), <code>bioexplora</code>
 (specimen scans), <code>scrolls</code> (Herculaneum segment meshes), <code>tracking</code> (player

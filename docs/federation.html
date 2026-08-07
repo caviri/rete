@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Federated queries across several <code>.rete</code> files</h1>
+<h1 id="federated-queries-across-several-rete-files">Federated queries across several <code>.rete</code> files</h1>
 <p><code>rete federate</code> runs <strong>one SPARQL query across many <code>.rete</code> sources</strong> — local
 file paths and/or <code>http(s)://</code> URLs, mixed freely — and merges the results. It is
 the answer to "my data is sharded into several files; query them as one."</p>
@@ -350,7 +350,7 @@ SPARQL 1.1 <code>SERVICE</code> clause, covered in <a href="sparql.html">SPARQL 
 <p>The same union+routing federation is also available <strong>in the browser</strong> — the
 <a href="#in-the-playground">playground</a> turns the SPARQL console into a multi-source
 one with a "<strong>+ Add source</strong>" button, each source range-queried lazily.</p>
-<h2>Why federation works at the term level</h2>
+<h2 id="why-federation-works-at-the-term-level">Why federation works at the term level</h2>
 <figure class="fig-right">
   <img src="img/federation.svg" alt="A SPARQL query goes to a router that does predicate routing, fans out to three .rete files each with its own dictionary, then results are merged at the term level into a row set.">
   <figcaption>Each file keeps its own dictionary; the router sends each pattern only to files holding its predicate, then results merge at the term level.</figcaption>
@@ -366,7 +366,7 @@ the <strong>term-level result rows are merged</strong>. This is exactly correct 
 the citation data below, sharded by citing year, is precisely this shape: each
 <code>cites</code> edge (and its <code>date</code>/<code>type</code>) lives wholly within one year-shard, so each
 shard produces whole, self-contained answer rows.</p>
-<h2>Merge semantics</h2>
+<h2 id="merge-semantics">Merge semantics</h2>
 <table><thead><tr><th>Query form</th><th>Merge across sources</th></tr></thead><tbody>
 <tr><td><code>SELECT</code></td><td><strong>Union</strong> of solution rows, <strong>deduped</strong> (identical rows collapse), stable order (source order, then within-source order).</td></tr>
 <tr><td><code>ASK</code></td><td><strong>Logical OR</strong> — true if any source matches.</td></tr>
@@ -375,7 +375,7 @@ shard produces whole, self-contained answer rows.</p>
 <p>Dedup is over the projected variables for <code>SELECT *</code> it is over all bound
 variables. A row that appears in two shards (e.g. a node that cites the target
 and shows up in two files) is reported once.</p>
-<h2>Routing / pruning (default on)</h2>
+<h2 id="routing--pruning-default-on">Routing / pruning (default on)</h2>
 <p>Before evaluating, <code>federate</code> reads each source's <strong>predicate set</strong> cheaply from
 its pyramid <strong>summary</strong> — the (large) triple <strong>index is never touched</strong> (the same
 "summary first" path used by <code>rete predicates</code> and <code>rete summary-url</code>). It also
@@ -395,7 +395,7 @@ whole file.</p>
 <p>Per-source diagnostics (rows contributed + time), the queried-vs-pruned tally,
 and the list of pruned sources are written to <strong>stderr</strong> the merged results go to
 stdout.</p>
-<h2>Limitations</h2>
+<h2 id="limitations">Limitations</h2>
 <p>This is a deliberately honest prototype — it is correct for sharded data and
 clear about what it does <strong>not</strong> do.</p>
 <ul>
@@ -412,14 +412,14 @@ client-side, or wait for a future <code>--reduce</code> that folds per-source ag
 <li><strong><code>GROUP BY</code></strong> is likewise evaluated per source then unioned, so the same group
 key can appear once per shard.</li>
 </ul>
-<h2>Real example — OpenCitations, sharded by citing year</h2>
+<h2 id="real-example--opencitations-sharded-by-citing-year">Real example — OpenCitations, sharded by citing year</h2>
 <p>The repo ships a real dataset: citations <strong>of the AlphaFold paper</strong>
 (<code>&lt;https://doi.org/10.1038/s41586-021-03819-2&gt;</code>), sharded by citing year into
 <code>data/opencitations/cites-&lt;year&gt;.rete</code>. Each shard uses
 <code>&lt;http://purl.org/spar/cito/cites&gt;</code>, <code>&lt;http://purl.org/dc/terms/date&gt;</code>, and
 <code>rdf:type</code>. (Regenerate with <code>python3 scripts/fetch_opencitations.py</code>, then
 <code>for f in data/opencitations/*.nt; do rete build "$f" -o "${f%.nt}.rete"; done</code>.)</p>
-<h3>Federated SELECT across two year-shards</h3>
+<h3 id="federated-select-across-two-year-shards">Federated SELECT across two year-shards</h3>
 <pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE {
              ?citing &lt;http://purl.org/spar/cito/cites&gt;
@@ -443,7 +443,7 @@ federated 2 source(s): 2 queried, 0 pruned (routing on); 10 merged result(s)
 <p>Note the <strong>per-source <code>LIMIT</code></strong> caveat in action: <code>LIMIT 5</code> yielded 5 rows from
 <em>each</em> shard, so the union holds 10. The first five are 2021 citers, the last
 five 2024 citers.</p>
-<h3>Routing in action — a predicate-disjoint shard is pruned</h3>
+<h3 id="routing-in-action--a-predicate-disjoint-shard-is-pruned">Routing in action — a predicate-disjoint shard is pruned</h3>
 <p>Add a source that uses a different predicate (here a shard whose only predicate
 is <code>rdfs:label</code>, not <code>cito:cites</code>). The <code>cites</code> query prunes it without ever
 reading its index:</p>
@@ -463,13 +463,13 @@ federated 3 source(s): 2 queried, 1 pruned (routing on); 6 merged result(s)
 rows). For year-shards that all share <code>cito:cites</code>, routing keeps every shard —
 pruning helps when sources are <strong>heterogeneous</strong> (different predicates per file),
 which is the common federation case.</p>
-<h3>ASK federation (logical OR)</h3>
+<h3 id="ask-federation-logical-or">ASK federation (logical OR)</h3>
 <pre><code class="language-sh">rete federate data/opencitations/cites-2017.rete data/opencitations/cites-2024.rete \
   --query 'ASK { ?x &lt;http://purl.org/spar/cito/cites&gt;
                     &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; }'
 # → true   (at least one shard has a citation)
 </code></pre>
-<h3>URL sources</h3>
+<h3 id="url-sources">URL sources</h3>
 <p>Sources may be <code>http(s)://</code> URLs of <code>.rete</code> files hosted on R2, S3, or any
 direct origin that honors HTTP <strong>Range</strong> requests — mix them with local paths freely:</p>
 <pre><code class="language-sh">rete federate \
@@ -483,7 +483,7 @@ never a full download both routing and evaluation fetch only the bytes they need
 The release catalog pins its public R2 objects in <code>web/datasets.lock.json</code>; the
 catalog audit also verifies that every shard is stable format generation 1 and
 exposes <code>Content-Range</code> to browser CORS callers.</p>
-<h2>In the playground</h2>
+<h2 id="in-the-playground">In the playground</h2>
 <p>The <a href="playground.html">playground</a> brings the same federation to the browser:
 <strong>federation is a kind of SPARQL</strong>, so it lives in the SPARQL console rather than
 a separate mode. Under the query editor a <strong>Sources</strong> strip shows the current
@@ -504,7 +504,7 @@ playground's JS over the existing single-source query paths, so no extra engine
 code runs. An example can pre-load its partner with one click. A <strong>live line ticks
 during the query</strong> — <code>N/M sources answered · range requests · MB · elapsed</code> — so a
 long multi-source fan-out isn't a silent spinner.</p>
-<h3>Beyond union — cross-source joins and sharded datasets</h3>
+<h3 id="beyond-union--cross-source-joins-and-sharded-datasets">Beyond union — cross-source joins and sharded datasets</h3>
 <p>The playground goes past the CLI's union: it also does a <strong>term-level cross-source
 JOIN</strong> — one BGP split across sources and joined on the shared variables — so the
 "cross-file join is not found" limit above is a <em>CLI</em> limit, not a playground one.

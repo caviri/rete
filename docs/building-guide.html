@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>FZK-Haus — a building as a 3D knowledge graph</h1>
+<h1 id="fzk-haus--a-building-as-a-3d-knowledge-graph">FZK-Haus — a building as a 3D knowledge graph</h1>
 <p><strong><a href="building.html">▸ Open the 3D building →</a></strong> — a three.js explorer over the
 <code>fzk-haus</code> knowledge graph: pick any wall, door, window, slab or room and see
 where it sits — its floor, the rooms it encloses, the rooms next to it, and
@@ -347,7 +347,7 @@ running in the browser against the <code>.rete</code>.</p>
   <img src="img/building-guide.png" alt="The FZK-Haus 3D explorer: a detached two-storey house rendered in 3D at the centre with walls, a pitched roof, windows and a spiral stair, a left sidebar of element-type checkboxes (Walls, Slabs, Windows, Doors, Stairs, Railings, Beams, Members, Rooms) with counts and a storey filter (Erdgeschoss, Dachgeschoss), and a legend for selected / adjacent room / enclosing element / query result.">
   <figcaption>The explorer renders every IFC element of the house in 3D and colour-codes a picked element's relations — the rooms it encloses, the rooms adjacent to it, and the results of a spatial query.</figcaption>
 </figure>
-<h2>From CAD to graph</h2>
+<h2 id="from-cad-to-graph">From CAD to graph</h2>
 <p>The model is <strong>AC20-FZK-Haus</strong>, an openly-licensed IFC4 sample building (a small
 detached house) published by KIT for the IBPSA Project 1. IFC (ISO 16739) is the
 open BIM exchange format, and it is already semantic: it carries <em>typed
@@ -365,7 +365,7 @@ spatial breakdown: <code>bot:Site</code>, <code>bot:Building</code>, <code>bot:S
 <li><strong>geo3</strong> for geometry: every element carries a 3D point and an
 axis-aligned bounding box, in metres, in the building's own coordinate frame.</li>
 </ul>
-<h2>What you see</h2>
+<h2 id="what-you-see">What you see</h2>
 <p>The centre pane is a real 3D scene: left-drag to orbit, right-drag (or
 Shift-drag) to pan, scroll to zoom, click any element to select it. The left
 sidebar toggles element types — Walls, Slabs, Windows, Doors, Stairs, Railings,
@@ -375,14 +375,14 @@ and room by name. The right panel describes whatever is selected: its IFC type,
 floor, material, and its topological neighbours — for a room, the rooms adjacent
 to it and the elements that enclose it; for a wall, the rooms it encloses.
 Clicking a related item jumps to it.</p>
-<h2>Every relation is a materialised edge</h2>
+<h2 id="every-relation-is-a-materialised-edge">Every relation is a materialised edge</h2>
 <p>The colours in the legend aren't drawn by hand. Room adjacency comes from the
 IFC space boundaries (<code>cad:boundsSpace</code> → <code>cad:adjacentSpace</code>); "what's near the
 staircase" is computed by <strong>geo3</strong>, rete's extension of GeoSPARQL into three
 dimensions (<code>geof3:distance3D</code>, and the same <code>geo3:box</code> / <code>geo3:asWKT3D</code> geometry
 the anatomy explorer uses) — the <em>identical engine</em>, now finding relations
 between the physical parts of a building instead of an organism.</p>
-<h2>Select by query</h2>
+<h2 id="select-by-query">Select by query</h2>
 <p>The <strong>Select by query</strong> panel runs that idea live. Ready examples — the rooms on
 each floor, the building's element inventory, the rooms adjacent to the living
 room, the walls that enclose the kitchen, the ten elements nearest the staircase
@@ -392,7 +392,7 @@ lazily, once) and highlighted straight onto the model. There's also a box to
 write your own SPARQL; matches populate the results table below the scene and
 clicking a row selects that element in 3D. Room labels are language-tagged, so
 match them as <code>"Wohnen"@en</code>.</p>
-<h2>The same data, queryable</h2>
+<h2 id="the-same-data-queryable">The same data, queryable</h2>
 <p>The explorer is one lens on a regular playground dataset. Open
 <a href="playground.html#dataset=fzk-haus&amp;load=lazy"><code>fzk-haus</code></a> to run SPARQL directly —
 the same spatial structure, topology, and 3D geometry, with no rendering in the

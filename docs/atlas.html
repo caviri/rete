@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Historical Atlas — SPARQL + GIS over time</h1>
+<h1 id="historical-atlas--sparql--gis-over-time">Historical Atlas — SPARQL + GIS over time</h1>
 <p><strong><a href="atlas-app.html">▸ Launch the atlas</a></strong> — a single, fully static HTML page. No
 server, no database, no map tiles, no build step: the whole thing runs in your
 browser over a <code>.rete</code> file through the WebAssembly engine — either the copy
@@ -357,13 +357,13 @@ timeline nav) — drawn entirely from query results.</p>
   <img src="img/atlas-1914.png" alt="The Historical Atlas at 1914 CE: a SPARQL example-query picker and editor on the left over a world map of the empires of 1914, with a temporal timeline at the bottom whose markers include an 'Outbreak of World War I · 1914 CE' event tooltip.">
   <figcaption>The atlas at <b>1914 CE</b> — every border polygon comes from a GeoSPARQL query over the <code>history.rete</code>, drawn on a dependency-free canvas. Left: the example picker, the live query, the data-source selector, and the territory legend. Bottom: the era timeline, with historical-event markers (hover for a tooltip).</figcaption>
 </figure>
-<h2>What you're looking at</h2>
+<h2 id="what-youre-looking-at">What you're looking at</h2>
 <p>The dataset is <code>history.rete</code> — world territorial borders at <strong>eighteen snapshots
 from 2000 BCE to 2010 CE</strong> (<a href="https://github.com/aourednik/historical-basemaps">aourednik/historical-basemaps</a>,
 GPL-3.0). Each border is stored as a GeoSPARQL <code>geo:wktLiteral</code> polygon with an
 integer <code>ex:year</code>, so a snapshot is just <code>FILTER(?year = …)</code> and the geometry is
 whatever your query binds to <code>?wkt</code>.</p>
-<h2>How it works</h2>
+<h2 id="how-it-works">How it works</h2>
 <ol>
 <li><strong>The map is driven by SPARQL.</strong> The editor holds a query; <em>every row it
 returns that binds <code>?wkt</code></em> is parsed (a tiny in-page WKT reader) and drawn —
@@ -522,7 +522,7 @@ state back to defaults while keeping your named views.</li>
 WebAssembly — see <a href="geosparql.html">GeoSPARQL</a> for the spatial functions and
 <a href="browser.html">Browser / WASM</a> for how the engine runs client-side (including
 the lazy HTTP-range reader).</p>
-<h2>Build it yourself</h2>
+<h2 id="build-it-yourself">Build it yourself</h2>
 <p>The page is assembled by inlining the no-modules WASM engine and the embedded
 <code>.rete</code> into a template (the same offline-only pattern as the playground); the
 remote <code>lazy</code>/<code>cached</code> modes point at the same file served by HTTP range:</p>
