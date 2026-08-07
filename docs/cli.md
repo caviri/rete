@@ -140,7 +140,8 @@ line (or the same versioned `matches` envelope with `{subject}` entries under
 requires a literal word starting with `einst`. Answered from the opt-in
 **TEXT_INDEX** section (`rete build --text-index`); on a remote file only the
 queried words' posting lists are fetched, not the whole index. A file built
-without `--text-index` reports that it has no text index.
+without `--text-index` reports that it has no text index. To search a file you
+have **not** downloaded, use `rete search-url` (below).
 
 ```sh
 rete search data.rete gluc                       # label prefix (autocomplete)
@@ -607,6 +608,38 @@ would be stored as if it were the whole card.
 rete card-audit data.rete --measure --json | jq '.findings[] | select(.observed.outcome=="empty")'
 rete card-audit https://host/data.rete --measure --only ov-triples --max-mb 8
 rete card-audit data.rete --measure --write-costs
+```
+
+### `rete search-url <url> [<prefix>] [--contains <word>…] [--contains-prefix P] [--limit N] [--json]`
+`rete search` over HTTP — the same two modes and the same output, without
+downloading the file.
+
+The open is deliberately narrower than any other remote command's. It reads the
+header and the **subject** halves of the dictionary (the shared and subject-only
+sections), and stops: no permutation tile directories, no pyramid, no index.
+`--contains` then faults the TEXT_INDEX token table once and one range request
+per posting list; the bare prefix mode faults the pyramid instead, where the
+label index lives.
+
+That narrowness is the point, because on a literal-heavy graph the dictionary is
+most of the file and its **object-only chunk directory** — which carries every
+chunk's first term verbatim — is most of what a normal open costs. Searching
+`epfl-infoscience.rete` (1.64 GB; a 1.35 GB dictionary, a 186 MB text index over
+titles and 132k abstracts) for `photosynthesis`:
+
+| | bytes fetched | requests | time |
+|---|---|---|---|
+| `sparql-url` with `FILTER(CONTAINS(…))` | 334 MB | 83 | 28.6 s |
+| `search-url --contains` | **29.5 MB** | **5** | **4.8 s** |
+
+Same five hits. The 29.5 MB is the token table itself; label-prefix mode over the
+same file costs 1.4 MB in 4 requests. A file built without `--text-index` says so
+instead of silently scanning.
+
+```sh
+rete search-url https://host/data.rete --contains glucose phosphate
+rete search-url https://host/data.rete --contains graphs --contains-prefix existen --json
+rete search-url https://host/data.rete "Photosynth" --limit 3   # label prefix
 ```
 
 ### `rete summary-url <url>`

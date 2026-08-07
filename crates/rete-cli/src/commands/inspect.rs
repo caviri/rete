@@ -241,7 +241,7 @@ pub(crate) fn search_contains(
 }
 
 /// Minimal JSON string escaping for the `--json` output.
-fn json_str(s: &str) -> String {
+pub(crate) fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {

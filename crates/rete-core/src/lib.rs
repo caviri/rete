@@ -129,7 +129,7 @@ pub mod range {
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
         read_card_and_build_info_ranged, read_metadata_ranged, read_schema_coherence_ranged,
-        read_schema_summary_ranged, ByteRange, LayoutSegment, SummaryView,
+        read_schema_summary_ranged, ByteRange, LayoutSegment, SearchView, SummaryView,
     };
     pub use crate::reader::{CountingReader, RangeReader, SliceReader};
 }
@@ -166,7 +166,7 @@ pub use file::{
     plan_build_info, read_build_info, read_card_and_build_info_ranged, read_metadata_ranged,
     read_schema_coherence_ranged, read_schema_summary_ranged, replace_metadata, schema_classes,
     schema_coherence, schema_summary, verify, write_dataset, write_dataset_with_metadata,
-    write_file, BuildInfoPlan, ByteRange, LayoutSegment, Rete, SummaryView, TermTriple,
+    write_file, BuildInfoPlan, ByteRange, LayoutSegment, Rete, SearchView, SummaryView, TermTriple,
     TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 #[doc(hidden)]

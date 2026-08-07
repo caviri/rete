@@ -480,6 +480,38 @@ impl Graph {
         text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
     }
 
+    /// Byte length of the TEXT_INDEX section, `0` when the file has none — a
+    /// header read, never a fault. The UI asks this to decide whether to offer
+    /// full-text search at all, and to state the cost before the first one.
+    /// `f64` because the section outgrows `u32`: causenet's is 1.88 GB.
+    pub fn text_index_len(&self) -> f64 {
+        self.rete.header().text_index_len as f64
+    }
+
+    /// Byte length of the TEXT_INDEX's leading **token table** — what a first
+    /// [`Graph::text_search_one`] actually faults, and therefore the only honest
+    /// number to quote as its cost. [`Graph::text_index_len`] is the whole
+    /// section, postings blob included, and overstates it 6.5× on
+    /// `epfl-infoscience` (195 MB section, 29 MB token table); the postings are
+    /// only ever fetched one list at a time. `0` when the file has no text index
+    /// or the length could not be read — the caller must then say nothing about
+    /// a token table rather than pass the section length off as one.
+    /// `f64` for the same reason as the section length: causenet's table is
+    /// 1.88 GB.
+    pub fn text_index_token_table_len(&self) -> f64 {
+        self.rete.text_index_token_table_len().unwrap_or(0) as f64
+    }
+
+    /// [`Graph::text_search`] from ONE phrase: whitespace splits it into words
+    /// and **every** word must match (AND), like `rete search --contains a b`.
+    /// One string in, one string out — that is what the remote twin's
+    /// hand-marshaled asyncify path can carry (a JS array marshaled raw is what
+    /// traps), and the UI is a single text box either way. Same JSON envelope.
+    pub fn text_search_one(&self, phrase: &str, limit: usize) -> Result<String, JsValue> {
+        let words: Vec<String> = phrase.split_whitespace().map(str::to_owned).collect();
+        text_search_json(&self.rete, &words, None, limit)
+    }
+
     /// See [`why_triples`].
     pub fn why_triples(
         &self,
@@ -927,6 +959,37 @@ impl RemoteGraph {
         limit: usize,
     ) -> Result<String, JsValue> {
         text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
+    }
+
+    /// See [`Graph::text_index_len`] — read from the resident header, so it
+    /// costs no fetch at all. Worth asking before [`RemoteGraph::text_search`]:
+    /// it is the size of the section the first search starts pulling over the
+    /// wire, so the UI can warn instead of surprising the user.
+    pub fn text_index_len(&self) -> f64 {
+        self.rete.header().text_index_len as f64
+    }
+
+    /// See [`Graph::text_index_token_table_len`] — the figure to quote before
+    /// [`RemoteGraph::text_search`], because it is what that first search pulls
+    /// over the wire; the section length would promise the user several times
+    /// the real bill.
+    ///
+    /// Unlike [`RemoteGraph::text_index_len`] this is not free: the token
+    /// table's length lives in the section's first bytes, not the header, so it
+    /// costs ONE ≤10-byte range read (memoized). Trivial next to the table it
+    /// measures — but it *is* IO, so the asyncify path must drive this call
+    /// rather than treat it as a header field.
+    pub fn text_index_token_table_len(&self) -> f64 {
+        self.rete.text_index_token_table_len().unwrap_or(0) as f64
+    }
+
+    /// See [`Graph::text_search_one`] — over the resident remote handle, with
+    /// the same token-table-then-posting-lists fault pattern as
+    /// [`RemoteGraph::text_search`]. This is the shape the playground's raw
+    /// asyncify glue drives: one string in, one string out, marshaled once.
+    pub fn text_search_one(&self, phrase: &str, limit: usize) -> Result<String, JsValue> {
+        let words: Vec<String> = phrase.split_whitespace().map(str::to_owned).collect();
+        text_search_json(&self.rete, &words, None, limit)
     }
 
     /// See [`card_url`] — the Dataset Card, over the resident handle's reader
