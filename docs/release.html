@@ -337,14 +337,14 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Rete 0.3.0</h1>
+<h1 id="rete-030">Rete 0.3.0</h1>
 <p>The first release of <code>rete-core</code>, <code>rete-cli</code>, and <code>rete-wasm</code> on crates.io.</p>
 <p>This is deliberately a 0.x. The code is the same code the 1.0 line will ship,
 and the on-disk format is already stable generation 1 — but publishing at 0.3.0
 first proves the packaging, the docs.rs builds, <code>cargo install rete-cli</code>, and
 the release automation against the real registry before any version has to
 honour a compatibility promise. Report problems here rather than against 1.0.0.</p>
-<h2>Install and artifacts</h2>
+<h2 id="install-and-artifacts">Install and artifacts</h2>
 <pre><code class="language-sh">cargo install rete-cli --version 0.3.0 --locked
 </code></pre>
 <p>The release also provides native archives for:</p>
@@ -375,7 +375,7 @@ See the <a href="agents.html">agentic interfaces guide</a>.</li>
 CycloneDX JSON SBOM and GitHub artifact attestations are published with the
 release; the SBOM describes the Rust dependency graph and is bound to the
 native and WASM archives, while the extension carries build provenance only.</p>
-<h2>Crates.io publication runbook</h2>
+<h2 id="cratesio-publication-runbook">Crates.io publication runbook</h2>
 <p>crates.io can only attach a trusted publisher to a crate that already exists, so
 this first publication is a one-time manual bootstrap; every later tag publishes
 through GitHub OIDC with no stored registry secret. It runs only after the
@@ -403,7 +403,7 @@ workflow manually against the <code>v0.3.0</code> tag with <code>verify_crates_i
 This requests and automatically revokes a short-lived OIDC token, validates the
 tag and package preflight, and makes no publish call. Later release tags publish
 in dependency order through the same protected job.</p>
-<h2>Language clients</h2>
+<h2 id="language-clients">Language clients</h2>
 <p>Client versions track the engine's <code>MAJOR.MINOR</code>: <code>rete-graph</code> 0.3.x on PyPI and
 npm, and the R package, all embed engine 0.3.x. The patch component moves
 independently, so a binding-only fix ships as 0.3.1 without an engine release.
@@ -412,7 +412,7 @@ Every client also exposes the engine version it embeds — <code>rete_graph .__e
 install support feature X?", since the binding's own version tracks the binding.</p>
 <p>Clients release from their own tags (<code>py-v0.3.0</code>, <code>js-v0.3.0</code>), not the <code>v*</code>
 release tag.</p>
-<h3>Cutting a version</h3>
+<h3 id="cutting-a-version">Cutting a version</h3>
 <p><code>scripts/sync_versions.py --set X.Y.Z</code> stamps the workspace, the exact
 <code>rete-core</code> pins the publishable crates carry, and every client manifest.
 <code>--write</code> will not do this: it only repairs <code>MAJOR.MINOR</code> drift (it writes
@@ -428,7 +428,7 @@ compares <code>MAJOR.MINOR</code> only.</p>
 <p>Also note the engine version is compiled into the wasm (<code>rete_core::VERSION</code>),
 so a bump changes the shipped browser binaries: rerun <code>scripts/build_wasm.sh</code>
 and commit the artifacts, or the parity gate rejects the release PR.</p>
-<h3>The Pyodide fallback wheel</h3>
+<h3 id="the-pyodide-fallback-wheel">The Pyodide fallback wheel</h3>
 <p><code>%pip install rete-graph</code> resolves from PyPI and needs no pin. But Pyodide
 0.29's installer predates PEP 783, which renamed the wheel platform tag
 <code>pyodide_*</code> to <code>pyemscripten_*</code>, so it cannot see the wheel PyPI now requires.
@@ -444,7 +444,7 @@ platform tag disagrees with what <code>docs/python.md</code> promises, uploads i
 <code>wheels/</code>, and verifies the documented URL returns 200 with a plausible body.
 <code>sync_versions.py --check</code> keeps that URL's version honest; only this step makes
 it resolve.</p>
-<h2>Compatibility statement</h2>
+<h2 id="compatibility-statement">Compatibility statement</h2>
 <p>Pre-1.0 <code>.rete</code> bytes were explicitly unstable. Rebuild every dataset from its
 source RDF with the 0.3 toolchain; do not rename an older file and assume it is
 compatible. Files produced by 0.3.0 may still need one final rebuild if review
@@ -453,7 +453,7 @@ changes the format before 1.0.0. The durable compatibility promise starts at
 <p>The Rust crates declare Rust 1.87 as their minimum supported version. The
 public Rust, CLI, and WASM surfaces carry no semantic-versioning promise while
 the crates are 0.x; semver applies from 1.0.0 onward.</p>
-<h2>Verify a download</h2>
+<h2 id="verify-a-download">Verify a download</h2>
 <pre><code class="language-sh">sha256sum -c SHA256SUMS
 gh attestation verify rete-0.3.0-x86_64-unknown-linux-gnu.tar.gz \
   --repo caviri/rete
@@ -464,7 +464,7 @@ gh attestation verify rete-0.3.0-x86_64-unknown-linux-gnu.tar.gz \
 rete verify graph.rete
 rete sparql graph.rete 'SELECT * WHERE { ?s ?p ?o } LIMIT 1'
 </code></pre>
-<h2>Known limitations</h2>
+<h2 id="known-limitations">Known limitations</h2>
 <ul>
 <li>Browser execution is single-threaded by default. Threads are experimental and
 require cross-origin isolation.</li>

@@ -337,12 +337,12 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Architecture</h1>
+<h1 id="architecture">Architecture</h1>
 <p><code>rete</code> is a publish-and-query RDF stack built around one immutable,
 range-readable file. The design bias is simple: do expensive graph preparation at
 build time, ship one cacheable artifact, and let clients answer useful questions
 with bounded reads before they reach for a server.</p>
-<h2>Workspace Map</h2>
+<h2 id="workspace-map">Workspace Map</h2>
 <table><thead><tr><th>Path</th><th>Responsibility</th></tr></thead><tbody>
 <tr><td><code>crates/rete-core</code></td><td>File format, dictionary, triple indexes, pyramid summary, SPARQL evaluation, reasoning, SHACL, range readers</td></tr>
 <tr><td><code>crates/rete-cli</code></td><td>The <code>rete</code> binary, command routing, JSON/text rendering, URL/range command helpers</td></tr>
@@ -356,7 +356,7 @@ with bounded reads before they reach for a server.</p>
 <p>The CLI is split by command group under <code>crates/rete-cli/src/commands/</code>. Core
 query behavior lives in <code>rete-core</code>; the CLI and WASM layers should mostly adapt
 inputs and outputs rather than reimplement engine logic.</p>
-<h2>Build Pipeline</h2>
+<h2 id="build-pipeline">Build Pipeline</h2>
 <p><code>rete build</code> turns RDF text into a <code>.rete</code> snapshot:</p>
 <ol>
 <li>Parse RDF input into default-graph triples and optional named-graph quads.</li>
@@ -397,7 +397,7 @@ breakdown. (A <em>parallel</em> Louvain is not byte-identical — the partition 
 the sequential move order — so the pyramid stays single-threaded; the index
 permutations and the dictionary/permutation sorts already use all cores via
 <code>rayon</code>.)</p>
-<h2>File Layout</h2>
+<h2 id="file-layout">File Layout</h2>
 <p>The header is a fixed 1 KB block: a small core (magic, version, content hash,
 counts, codecs) plus a <strong>typed section directory</strong> of <code>(kind, offset, length)</code>
 entries that point at every other section. New top-level sections are added as new
@@ -432,7 +432,7 @@ once, then <code>rete search --contains &lt;word&gt;</code> (or <code>prefix_sea
 <code>--contains</code> over a multi-GB file fetches kilobytes. It is off by default (a build
 without the flag is byte-identical to one without the feature) and lives outside
 the pyramid-meta so SPARQL never pays for it. See §6.3 of the SPEC.</p>
-<h2>Query Pipeline</h2>
+<h2 id="query-pipeline">Query Pipeline</h2>
 <p>SPARQL goes through four stages:</p>
 <ol>
 <li><code>spargebra</code> parses the query.</li>
@@ -470,7 +470,7 @@ subqueries are supported (lowered to an independent inner plan, then joined on
 shared variables), and so is <code>SERVICE</code> federation — the block ships to the
 remote endpoint through a host-injected <code>ServiceClient</code> and its solutions join
 like any other operand (see <a href="sparql.html">sparql</a>).</p>
-<h2>Result Provenance</h2>
+<h2 id="result-provenance">Result Provenance</h2>
 <p><code>Rete::query_with_provenance</code> is the core API behind <code>rete why</code>. It runs the same
 triple-pattern path as <code>Rete::query</code>, then attaches:</p>
 <ul>
@@ -499,7 +499,7 @@ this subject have that predicate?", or a join probe that misses) is answered wit
 in-tile zone map would also reject — so it can never drop a result; the trailer is
 appended past the tiles, so older readers ignore it (backward-compatible). It
 costs one extra small tail read per section at open, amortized across a session.</p>
-<h2>Progressive And Cost Paths</h2>
+<h2 id="progressive-and-cost-paths">Progressive And Cost Paths</h2>
 <p>The summary path is the first layer of progressive querying. These query shapes
 are exact from the summary and skip the full index:</p>
 <ul>
@@ -520,7 +520,7 @@ the six (SPO/POS/OSP/SOP/PSO/OPS) permutations, follows the container length
 prefixes, and fetches only that permutation payload. The next architectural step is physical community-tile
 directories: use the pyramid to fetch only relevant community ranges instead of
 even a whole permutation section.</p>
-<h2>Range Reads</h2>
+<h2 id="range-reads">Range Reads</h2>
 <p>Range readers use the same file layout as local readers. A ranged open typically
 does:</p>
 <ol>
@@ -533,14 +533,14 @@ on the query shape.</li>
 <p>The product boundary here is strict: a host that ignores <code>Range</code> must fail
 clearly instead of silently downloading the world and pretending the query was
 bounded.</p>
-<h2>Reasoning And Validation</h2>
+<h2 id="reasoning-and-validation">Reasoning And Validation</h2>
 <p><code>build --materialize</code> can run the RDFS/OWL-RL subset at build time and write the
 inferred triples into the snapshot. SHACL validation reads the snapshot and shape
 graph, then validates the asserted or already-materialized data through
 <code>rete-core</code>'s reusable SHACL API.</p>
 <p>Reasoning and SHACL are intentionally snapshot-oriented. A <code>.rete</code> file records
 the graph state you publish; validation runs against that exact state.</p>
-<h2>Browser And WASM</h2>
+<h2 id="browser-and-wasm">Browser And WASM</h2>
 <p>The browser API is compiled from <code>crates/rete-wasm</code> and embedded in the static
 playground. The default WASM build is single-threaded and avoids native-only
 dependencies. The native <code>parallel</code> feature uses Rayon for CPU-side workloads
@@ -563,7 +563,7 @@ generator inlines those fragments, the no-modules WASM glue, the WASM bytes, and
 the bundled <code>.rete</code> datasets into <code>docs/playground.html</code>. Run it with
 <code>uv run python scripts/build_playground.py</code>. Do not hand-edit
 <code>docs/playground.html</code>.</p>
-<h2>Safety Invariants</h2>
+<h2 id="safety-invariants">Safety Invariants</h2>
 <ul>
 <li>Binary readers handle corrupt or truncated bytes with clean errors, not panics.</li>
 <li>Bounds checks are product behavior because <code>.rete</code> files may be fetched from
@@ -574,7 +574,7 @@ arbitrary URLs.</li>
 <li>File-format changes require updates to <code>docs/SPEC.md</code>, layout tests, and
 compatibility notes.</li>
 </ul>
-<h2>Extension Points</h2>
+<h2 id="extension-points">Extension Points</h2>
 <table><thead><tr><th>Area</th><th>Next work</th></tr></thead><tbody>
 <tr><td>Tile-routed query refinement</td><td>Add physical community-tile directories so exact routing can fetch relevant community ranges, not whole permutation payloads</td></tr>
 <tr><td>Result provenance</td><td>Extend tile-range provenance (done for permutation tiles) to pyramid/community tiles</td></tr>

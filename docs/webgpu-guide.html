@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>WebGPU coherence — finding contradictions between two unsure graphs</h1>
+<h1 id="webgpu-coherence--finding-contradictions-between-two-unsure-graphs">WebGPU coherence — finding contradictions between two unsure graphs</h1>
 <p><strong><a href="webgpu.html">▸ Run the experiment →</a></strong> — a page you run yourself, on your own
 GPU: it explains the idea, lets you paste an argument to find its cracks, then
 benchmarks WebGPU against a single CPU core on your actual hardware.</p>
@@ -347,7 +347,7 @@ numbers, including where the idea does not pay off.</p>
   <img src="img/webgpu-guide.png" alt="The rete webgpu experiment page, headed 'finding contradictions between two unsure graphs', with three entry cards (Explain it to me / Let me try it / Show me the numbers), a left sidebar of sections (Understand, Try it, The maths, The benchmark, In context), and prose introducing two friends who each keep a notebook of what causes what, writing degrees of confidence between 0 and 1 rather than yes/no.">
   <figcaption>Two notebooks of "what causes what", each claim carrying a confidence instead of a yes/no — the page finds where they disagree, and how badly.</figcaption>
 </figure>
-<h2>The question</h2>
+<h2 id="the-question">The question</h2>
 <p>Knowledge graphs built by machines — scraped from papers, extracted from text,
 merged from databases — almost never produce certainty. They produce
 <strong>confidence</strong>: a degree between 0 and 1, reasoned about with fuzzy logic
@@ -360,7 +360,7 @@ claim contradicts anything, but <em>following the arrows</em> (the graph's
 transitive closure, computed with max-min composition instead of ordinary
 matrix multiply) reveals that a graph implies something its own author never
 wrote, and that implication is what clashes with the other graph.</p>
-<h2>What you can do on the page</h2>
+<h2 id="what-you-can-do-on-the-page">What you can do on the page</h2>
 <p>Read the explanation of same-line vs. chained contradictions with a worked
 six-statement example, then paste your own cause-and-effect argument into an
 editable sandbox to see which of its claims disagree, echo each other, or
@@ -369,7 +369,7 @@ yourself: it generates a synthetic fuzzy graph of your chosen size, runs the
 same two checks as WebGPU compute shaders, races them against a single CPU
 core (an honest baseline, since rete's own engine is single-threaded in the
 browser too), and reports your GPU's numbers next to the reference run.</p>
-<h2>The honest result</h2>
+<h2 id="the-honest-result">The honest result</h2>
 <p>WebGPU is <strong>not a general win</strong> here. For an elementwise same-line check
 (<code>min</code> of two confidence values, counted), the speedup plateaus around
 <strong>2×</strong>, because at scale almost all the wall-clock time is spent uploading

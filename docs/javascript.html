@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>JavaScript API</h1>
+<h1 id="javascript-api">JavaScript API</h1>
 <p><code>rete-graph</code> on npm is the JavaScript client for <code>.rete</code> files: the same
 WebAssembly engine behind the <a href="playground-guide.html">playground</a>, packaged for
 <strong>browsers and Node</strong> with an idiomatic wrapper — parsed <code>Term</code> results,
@@ -355,7 +355,7 @@ for (const row of g.query(`
 }
 console.log(g.stats()); // { fileLength, bytes, requests } — lazy, not a download
 </code></pre>
-<h2>Or a single <code>&lt;script&gt;</code> tag — no bundler, no install</h2>
+<h2 id="or-a-single-script-tag--no-bundler-no-install">Or a single <code>&lt;script&gt;</code> tag — no bundler, no install</h2>
 <p>p5.js-style: one self-contained file (engine embedded), full and minified,
 served by any npm CDN:</p>
 <pre><code class="language-html">&lt;script src="https://cdn.jsdelivr.net/npm/rete-graph@0.3.0/dist/rete-graph.min.js"&gt;&lt;/script&gt;
@@ -368,7 +368,7 @@ served by any npm CDN:</p>
 &lt;/script&gt;
 </code></pre>
 <p><code>…/dist/rete-graph.js</code> is the readable twin; pin the version in the URL.</p>
-<h2>Where remote opens work</h2>
+<h2 id="where-remote-opens-work">Where remote opens work</h2>
 <p>Remote graphs are read with synchronous XHR range requests (that's what lets
 the engine stay simple and synchronous):</p>
 <table><thead><tr><th>Environment</th><th><code>open(url)</code></th><th><code>open(bytes)</code></th></tr></thead><tbody>
@@ -379,7 +379,7 @@ the engine stay simple and synchronous):</p>
 <p>On a main thread, either fetch the bytes yourself (small files) or run the
 graph in a worker — the pattern the playground uses. Hosts must send CORS
 headers and honor <code>Range</code> (<a href="hosting.html">Hosting your .rete</a>).</p>
-<h2>Query results</h2>
+<h2 id="query-results">Query results</h2>
 <p><code>query()</code> returns <code>{variable: Term}</code> rows for SELECT, a boolean for ASK, and
 <code>[s, p, o]</code> <code>Term</code> triples for CONSTRUCT/DESCRIBE. A <code>Term</code> has <code>.kind</code>
 (<code>"iri" | "literal" | "bnode" | "triple"</code>), <code>.value</code>, <code>.datatype</code>, <code>.lang</code>,
@@ -406,7 +406,7 @@ SPARQL endpoints (full query pushdown — prefer it for heavy joins over big
 remote files). Both levels, the exact semantics, and the
 which-level-when table live on the dedicated page:
 <strong><a href="comunica.html">Comunica — rete in the RDF/JS ecosystem</a></strong>.</p>
-<h2>Feature matrix</h2>
+<h2 id="feature-matrix">Feature matrix</h2>
 <table><thead><tr><th>Capability</th><th>JS</th><th>Notes</th></tr></thead><tbody>
 <tr><td>SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE</td><td>✅</td><td><code>query()</code></td></tr>
 <tr><td>Lazy remote open (HTTP Range)</td><td>✅</td><td>Node + browser workers</td></tr>

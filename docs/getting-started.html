@@ -337,8 +337,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Getting started</h1>
-<h2>Getting the CLI</h2>
+<h1 id="getting-started">Getting started</h1>
+<h2 id="getting-the-cli">Getting the CLI</h2>
 <p>You do not need a Rust toolchain, a clone of the repo, or its dev container to
 <em>use</em> rete. A prebuilt CLI image is published —
 <a href="https://github.com/caviri/rete/blob/main/docker/README.html"><code>ghcr.io/caviri/rete-cli</code></a>,
@@ -376,7 +376,7 @@ no file appears); use
 <code>npm install rete-graph</code> (<a href="javascript.html">JavaScript</a>), or a build from source
 (below). Remote graphs need no install beyond the image and no mount at all —
 see <em>Deploying &amp; querying over a URL</em> further down.</p>
-<h2>Building from source</h2>
+<h2 id="building-from-source">Building from source</h2>
 <p>Building <code>rete</code> <em>itself</em> — as opposed to using it — happens <strong>entirely inside a
 container</strong>; nothing runs on the host. The dev container
 (<a href="https://github.com/caviri/rete/tree/main/.devcontainer"><code>.devcontainer/</code></a>)
@@ -391,7 +391,7 @@ cargo build --release -p rete-cli
 </code></pre>
 <p>The compiled CLI is at <code>target/release/rete</code>; put it on your <code>PATH</code> and the
 examples below run without the alias (or substitute <code>cargo run -p rete-cli --</code>).</p>
-<h2>Building a <code>.rete</code> file</h2>
+<h2 id="building-a-rete-file">Building a <code>.rete</code> file</h2>
 <figure class="fig-right">
   <img src="img/build-pipeline.svg" alt="A pipeline: .nt, .ttl and .nq inputs feed into 'rete build', which produces one social.rete file containing a dictionary, indexes and a pyramid, ready to put on an HTTP host or URL.">
   <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
@@ -407,7 +407,7 @@ rete build dump.unknown --format nt -o out.rete  # force a format
 </code></pre>
 <p>N-Quads inputs build a <strong>dataset</strong>: one shared dictionary, a default-graph index,
 and one index per named graph.</p>
-<h3>A full ontology: RDF/XML → an optimized <code>.rete</code></h3>
+<h3 id="a-full-ontology-rdfxml--an-optimized-rete">A full ontology: RDF/XML → an optimized <code>.rete</code></h3>
 <p>Most OBO/W3C ontologies ship as <strong>RDF/XML</strong> (<code>*.owl</code>), which <code>rete build</code> reads
 directly — no conversion step:</p>
 <pre><code class="language-sh"># assemble, with a self-describing Dataset Card (title/license/source/examples)
@@ -432,7 +432,7 @@ register it in the <a href="playground-guide.html">playground</a> as a remote da
 alongside it with a columnar/SQL view, generate
 <a href="data-engineering.html#lossless-entity-tables-the-best-of-both-worlds">lossless entity tables</a>
 straight from the same N-Triples.</p>
-<h2>Querying locally</h2>
+<h2 id="querying-locally">Querying locally</h2>
 <pre><code class="language-sh"># Triple pattern — any of subject/predicate/object may be omitted (a wildcard):
 rete query data.rete --predicate '&lt;http://ex/knows&gt;'
 rete query data.rete --object   '&lt;http://ex/Alice&gt;'
@@ -447,7 +447,7 @@ rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?x ?z WHERE { ?x e:kn
 rete sparql data.rete "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10" --json
 </code></pre>
 <p>See the <a href="sparql.html">SPARQL support</a> page for the full feature list.</p>
-<h2>Validating shapes</h2>
+<h2 id="validating-shapes">Validating shapes</h2>
 <p>Use <code>rete shacl</code> when you need semantic data-quality checks, not just syntax or
 file integrity. Shapes are Turtle files; the command exits non-zero if the graph
 does not conform.</p>
@@ -455,7 +455,7 @@ does not conform.</p>
 rete shacl data.rete --shapes shapes.ttl --format json
 </code></pre>
 <p>See <a href="shacl.html">SHACL validation</a> for the supported SHACL Core surface.</p>
-<h2>Inspecting a file</h2>
+<h2 id="inspecting-a-file">Inspecting a file</h2>
 <pre><code class="language-sh">rete info   data.rete          # raw header
 rete stats  data.rete          # size, counts, top predicates, planner stats, entity shapes
 rete verify data.rete          # check the blake3 content hash (detect corruption)
@@ -473,7 +473,7 @@ rete predicates data.rete  # exact per-predicate totals, from the summary alone
 functional / inverse-functional hints — the cardinality the cost-based join
 planner uses) and the <strong>entity shapes</strong> (the most common <em>characteristic sets</em> —
 which predicate-combinations subjects carry, e.g. <code>{type, name, age} ×N</code>).</p>
-<h3>Label search (autocomplete)</h3>
+<h3 id="label-search-autocomplete">Label search (autocomplete)</h3>
 <p><code>rete search data.rete &lt;prefix&gt;</code> resolves a case-insensitive label prefix
 <strong>without scanning the literals</strong>. At build time rete extracts the display labels
 (<code>rdfs:label</code>, <code>skos:prefLabel</code>/<code>altLabel</code>, <code>foaf:name</code>, <code>dc(terms):title</code>,
@@ -491,7 +491,7 @@ is <strong>bounded</strong> (top 8,192 labeled subjects by degree), so on a very
 it covers the prominent entities; an exhaustive match still needs the FILTER
 scan. Files built before this feature have no label index — rebuild to add it
 (the block is additive and backward-compatible, so old readers ignore it).</p>
-<h3>Full-text search (word / CONTAINS)</h3>
+<h3 id="full-text-search-word--contains">Full-text search (word / CONTAINS)</h3>
 <p>Label prefix search finds an entity by the <em>start</em> of its label. To find entities
 by a <strong>word anywhere in any of their literals</strong>, build with <code>--text-index</code> and
 query with <code>rete search --contains</code>:</p>
@@ -511,7 +511,7 @@ kilobytes, not the whole index. It is <strong>opt-in</strong> because it is siza
 without <code>--text-index</code> is byte-identical to one built before the feature, and
 <code>rete search --contains</code> on such a file reports that there is no text index.
 <code>rete stats</code> shows the section's size when present.</p>
-<h2>Deploying &amp; querying over a URL</h2>
+<h2 id="deploying--querying-over-a-url">Deploying &amp; querying over a URL</h2>
 <p>A <code>.rete</code> file is immutable and self-describing, so any static host that honors
 HTTP <code>Range</code> requests works — S3, GCS, GitHub, a CDN, or the bundled dev server:</p>
 <pre><code class="language-sh"># Local range-capable server for testing:
@@ -528,7 +528,7 @@ reads just the header, dictionary, and summary — <strong>the index is never
 downloaded</strong>. The host <strong>must</strong> return <code>206 Partial Content</code> to a <code>Range</code>
 request; a host that ignores <code>Range</code> (returns <code>200</code>) is rejected with a clear
 error rather than silently returning wrong bytes.</p>
-<h2>Generating synthetic test data</h2>
+<h2 id="generating-synthetic-test-data">Generating synthetic test data</h2>
 <p><code>scripts/synth_graph.py</code> generates a realistic scholarly knowledge graph —
 papers, authors, venues, institutions, grants, fields — with the statistics
 real graphs have (power-law citations via preferential attachment, field
@@ -551,7 +551,7 @@ give natural variability at the same size/noise point. A per-kind breakdown of
 every noise event goes to stderr, so a test knows exactly what mess it got.
 (<code>scripts/gen_graph.py</code> is the older, simpler social-graph generator used by
 <code>scripts/bench.sh</code>.)</p>
-<h3>Scaling to ~1 GB</h3>
+<h3 id="scaling-to-1-gb">Scaling to ~1 GB</h3>
 <p>The generator and <code>rete build</code> scale linearly, so a big stress-test graph is
 just a bigger <code>--papers</code>. Output is roughly <strong>85 bytes/triple</strong> as N-Triples
 and <strong>31 triples/paper</strong>, so ~1 GB is about 400k papers / 12.5M triples:</p>
@@ -567,7 +567,7 @@ requests instead of the whole file — the range-query promise, at 1 GB.</p>
 <p>The playground's <code>scholar</code> / <code>scholar-noisy</code> demo datasets are built with this
 generator (250 papers, seed 42, noise 0 and 0.25 — the exact commands are in
 the <code>scripts/build_playground.py</code> docstring).</p>
-<h2>Going further</h2>
+<h2 id="going-further">Going further</h2>
 <p>That's the whole loop: build a file, query it, put it on a URL. Where next:</p>
 <ul>
 <li><strong><a href="hosting.html">Hosting your .rete</a></strong> — R2, Zenodo, GitHub Pages, S3: what a
@@ -578,7 +578,7 @@ published datasets) in the browser.</li>
 tables next to the graph, the virtual-knowledge-graph comparison, and recipes
 for pulling real Wikidata at gigabyte scale.</li>
 </ul>
-<h2>Testing</h2>
+<h2 id="testing">Testing</h2>
 <pre><code class="language-sh">cargo test            # full suite (unit, round-trip, robustness, ranged, HTTP)
 cargo clippy --workspace --all-targets -- -D warnings
 bash scripts/smoke.sh # end-to-end acceptance test of every CLI subcommand

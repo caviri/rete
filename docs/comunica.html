@@ -337,11 +337,11 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Comunica — rete in the RDF/JS ecosystem</h1>
+<h1 id="comunica--rete-in-the-rdfjs-ecosystem">Comunica — rete in the RDF/JS ecosystem</h1>
 <p><a href="https://comunica.dev">Comunica</a> is the modular JavaScript SPARQL framework
 behind LDflex, GraphQL-LD, and much of the Solid ecosystem. rete plugs into
 it at two levels — pick by where the joins should run.</p>
-<h2>Level 1 — zero code: rete datasets as SPARQL endpoints</h2>
+<h2 id="level-1--zero-code-rete-datasets-as-sparql-endpoints">Level 1 — zero code: rete datasets as SPARQL endpoints</h2>
 <p>Every published dataset — and <strong>any</strong> <code>.rete</code> URL on the web — is a
 standard SPARQL 1.1 endpoint via the gateway, and Comunica speaks to
 endpoints natively (verified, this exact command):</p>
@@ -366,7 +366,7 @@ finished bindings. Use this level for heavy multi-join queries over big
 remote files, and to let Comunica federate rete data with everything else
 it speaks. Unregistered files work too:
 <code>…/sparql/https://example.org/any.rete</code>.</p>
-<h2>Level 2 — native: <code>ReteSource</code> (npm <code>rete-graph</code> ≥ 0.2.0)</h2>
+<h2 id="level-2--native-retesource-npm-rete-graph--020">Level 2 — native: <code>ReteSource</code> (npm <code>rete-graph</code> ≥ 0.2.0)</h2>
 <p>An <a href="https://rdf.js.org/stream-spec/">RDF/JS Source</a> over an open graph —
 local bytes or a lazy URL — pluggable into any Comunica pipeline with no
 server anywhere:</p>
@@ -397,7 +397,7 @@ as nested RDF/JS <code>Quad</code>s.</li>
 <li><strong>Zero dependencies</strong> — the package ships its own minimal RDF/JS terms
 and stream (nothing else enters your bundle).</li>
 </ul>
-<h2>Which level, when</h2>
+<h2 id="which-level-when">Which level, when</h2>
 <table><thead><tr><th>Situation</th><th>Use</th></tr></thead><tbody>
 <tr><td>Big remote file, multi-join query</td><td><strong>Level 1</strong> — full pushdown, rete's own joins</td></tr>
 <tr><td>Local/embedded file in a JS app</td><td><strong>Level 2</strong> — no server round-trips at all</td></tr>

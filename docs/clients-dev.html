@@ -337,11 +337,11 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Client development &amp; releases</h1>
+<h1 id="client-development--releases">Client development &amp; releases</h1>
 <p>Maintainer documentation for the language clients under <code>clients/</code> — how they
 are laid out, built, tested, and released. <strong>Users</strong> should read the pages in
 the <em>Clients</em> nav section instead (e.g. <a href="python.html">Python — rete-graph</a>).</p>
-<h2>Monorepo layout</h2>
+<h2 id="monorepo-layout">Monorepo layout</h2>
 <p>One directory per language client, each owning its toolchain:</p>
 <pre><code>clients/
   python/        # PyO3 + maturin -&gt; PyPI `rete-graph`
@@ -353,7 +353,7 @@ crate is <strong>excluded from the cargo workspace</strong> (root <code>Cargo.to
 <code>fuzz/</code>): it versions and locks independently (<code>clients/python/Cargo.lock</code>),
 so the workspace release gates (<code>--locked</code> checks, feature matrix, coverage
 floors, MSRV) never see binding-only changes.</p>
-<h2>The Python client</h2>
+<h2 id="the-python-client">The Python client</h2>
 <pre><code>clients/python/
   Cargo.toml               # cdylib `_rete`; pyo3 abi3-py39, rete-core, ureq
   pyproject.toml           # maturin backend; the PyPI version lives HERE
@@ -377,7 +377,7 @@ searches). Keep new bindings consistent with that.</li>
 card schema has required fields (counts, <code>format_version</code>, every field of a
 rich example query); a partial entry makes <code>rete card</code> reject the card.</li>
 </ul>
-<h3>Build and test (Docker-only, nothing on the host)</h3>
+<h3 id="build-and-test-docker-only-nothing-on-the-host">Build and test (Docker-only, nothing on the host)</h3>
 <pre><code class="language-sh"># wheel
 docker run --rm -v "$PWD":/io ghcr.io/pyo3/maturin build \
     --release -m clients/python/Cargo.toml --out clients/python/dist
@@ -391,13 +391,13 @@ docker run --rm -v "$PWD":/io -w /io/clients/python python:3.12-slim bash -c \
     "pip install -q uv; uv venv /tmp/v &amp;&amp; uv pip install --python /tmp/v/bin/python \
      dist/*.whl pytest pandas rdflib &amp;&amp; /tmp/v/bin/python -m pytest tests -q"
 </code></pre>
-<h2>CI: two workflows, deliberately separate</h2>
+<h2 id="ci-two-workflows-deliberately-separate">CI: two workflows, deliberately separate</h2>
 <table><thead><tr><th>Workflow</th><th>Trigger</th><th>Does</th></tr></thead><tbody>
 <tr><td><code>python-test.yml</code></td><td>PR / push touching <code>clients/python/**</code> or <code>crates/rete-core/**</code></td><td>fmt + clippy, build wheel, pytest (incl. the live R2 remote smoke) — <strong>never publishes</strong></td></tr>
 <tr><td><code>python-client-publish.yml</code></td><td>pushing a <code>py-v*</code> tag only</td><td>full wheel matrix + sdist, then PyPI upload</td></tr>
 </tbody></table>
 <p>Merging to main can never publish; releasing is always the deliberate tag.</p>
-<h2>Releasing to PyPI</h2>
+<h2 id="releasing-to-pypi">Releasing to PyPI</h2>
 <p>Publishing uses <strong>trusted publishing</strong> (OIDC) — no tokens, no secrets. The
 registered publisher on PyPI: project <code>rete-graph</code>, owner <code>caviri</code>, repo
 <code>rete</code>, workflow <code>python-client-publish.yml</code>, environment <code>pypi</code>. Renaming
@@ -421,12 +421,12 @@ CPython ≥ 3.9 — no per-Python-version matrix.</li>
 </ul>
 <p>Optionally add required reviewers to the <code>pypi</code> GitHub environment to make
 every release pause for a manual approval.</p>
-<h2>Runtime compatibility</h2>
+<h2 id="runtime-compatibility">Runtime compatibility</h2>
 <p>The main wheels are <strong>native</strong> CPython extensions: anything running real
 CPython works out of the box — scripts, Jupyter, <strong>marimo (desktop/server)</strong>,
 Colab, uv/pip/poetry/conda environments, Linux (x86_64/aarch64, glibc
 2.17+/2.28+), macOS (Intel + Apple Silicon), Windows x64.</p>
-<h3>The Pyodide (browser Python) build</h3>
+<h3 id="the-pyodide-browser-python-build">The Pyodide (browser Python) build</h3>
 <p>From 0.2.0 the release also ships <strong>PyEmscripten wheels</strong> (PEP 783,
 <code>pyemscripten_*_wasm32</code> tags — accepted by PyPI) for Pyodide runtimes:
 JupyterLite, marimo WASM. How it works, all behind
@@ -488,7 +488,7 @@ JupyterLite check for releases that touch the reader.</p>
 <p><strong>wasm64 (tracked future work)</strong>: wasm32 caps memory at 4 GiB. Browsers ship
 memory64 now, but Pyodide/emscripten don't build for it yet — when Pyodide
 gains a wasm64 ABI, add its wheel here; nothing in our code assumes 32-bit.</p>
-<h2>The JavaScript client</h2>
+<h2 id="the-javascript-client">The JavaScript client</h2>
 <p><code>clients/js/</code> (npm <code>rete-graph</code>) wraps the <strong>wasm engine built fresh from the
 checked-out crates</strong> — <code>build-wasm.sh</code> runs <code>wasm-pack build crates/rete-wasm --target web</code> into <code>vendor/pkg</code> (gitignored). It deliberately does <em>not</em>
 vendor the committed <code>web/pkg</code> playground artifacts: those follow their own
@@ -515,7 +515,7 @@ Trusted Publisher: repo <code>caviri/rete</code>, workflow <code>js-client-publi
 <code>card()</code> export in rete-wasm — an engine change, so the playground gate
 applies), custom headers, a Builder.</li>
 </ul>
-<h2>The R client</h2>
+<h2 id="the-r-client">The R client</h2>
 <p><code>clients/r/</code> (package <code>rete</code>) binds <code>rete-core</code> with <strong>extendr</strong>, scaffolded
 by <code>rextendr::use_extendr()</code> in its CRAN-ready shape (<code>configure</code> +
 <code>tools/msrv.R</code> check for cargo, <code>src/Makevars.in</code> drives the cargo build
@@ -580,7 +580,7 @@ non-executable <code>configure</code> (<code>R CMD build</code> silently correct
 the problem from tarball-based checks). Fixed via
 <code>git update-index --chmod=+x</code>; keep it when regenerating the scaffold.</li>
 </ul>
-<h3>Releasing to CRAN (and the pragmatic path first)</h3>
+<h3 id="releasing-to-cran-and-the-pragmatic-path-first">Releasing to CRAN (and the pragmatic path first)</h3>
 <p>CRAN has a <a href="https://cran.r-project.org/web/packages/using_rust.html">Rust policy</a>:
 builds must not download the network, so every crate must be <strong>vendored</strong>
 into the source tarball:</p>
@@ -615,7 +615,7 @@ a <code>packages.json</code> pointing at <code>caviri/rete</code>, <code>subdir:
 binaries for all platforms on every push — users
 <code>install.packages("rete", repos = "https://caviri.r-universe.dev")</code> with no
 Rust toolchain — and it exercises the exact source layout CRAN will see.</p>
-<h2>Adding a new language client (R, Go, …)</h2>
+<h2 id="adding-a-new-language-client-r-go-">Adding a new language client (R, Go, …)</h2>
 <p>The checklist that made Python work:</p>
 <ol>
 <li><code>clients/&lt;lang&gt;/</code> with its own toolchain and lockfile; bind <code>rete-core</code>
@@ -631,7 +631,7 @@ registry's trusted-publishing equivalent.</li>
 <li>A user page in the <em>Clients</em> nav section, dev notes in this page, and a
 runnable example (notebook or equivalent) executed in CI or Docker.</li>
 </ol>
-<h2>Docs maintenance</h2>
+<h2 id="docs-maintenance">Docs maintenance</h2>
 <p>Client pages are Markdown under <code>docs/</code>; the nav lives in
 <code>crates/docgen/src/main.rs</code> (<code>SECTIONS</code>). After editing either:</p>
 <pre><code class="language-sh">docker run --rm -v "$PWD":/work -w /work rust:1.92-bookworm cargo run -q -p docgen

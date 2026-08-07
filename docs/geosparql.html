@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>GeoSPARQL (geometry + time)</h1>
+<h1 id="geosparql-geometry--time">GeoSPARQL (geometry + time)</h1>
 <p>rete stores geometry as standard <a href="https://www.ogc.org/standard/geosparql/">GeoSPARQL</a>
 <code>geo:wktLiteral</code> values and answers a focused set of <strong>GeoSPARQL filter
 functions</strong> — so you can ask spatial questions (<em>point-in-polygon</em>,
@@ -347,7 +347,7 @@ geometry code is pure Rust (<code>core</code> + <code>f64</code>, no GIS C libra
 file of polygons-with-time is queryable in place, offline.</p>
 <p>Try it in the <strong><a href="playground.html">playground</a></strong> — pick the <em>history.rete</em>
 dataset and the <strong>Geo</strong> examples.</p>
-<h2>Data model</h2>
+<h2 id="data-model">Data model</h2>
 <p>Geometry follows the GeoSPARQL convention — a feature links to a geometry node
 that carries a WKT literal:</p>
 <pre><code class="language-turtle">&lt;http://ex/terr/France_1914&gt;
@@ -367,7 +367,7 @@ axes, so do <strong>not</strong> feed it lat/lon EPSG:4326 data.</li>
 <li>Time is just an ordinary literal (<code>ex:year 1914</code>, or <code>ex:startYear</code>/
 <code>ex:endYear</code>), so a temporal slice is a plain <code>FILTER(?year = 1914)</code>.</li>
 </ul>
-<h2>Functions</h2>
+<h2 id="functions">Functions</h2>
 <table><thead><tr><th>Function</th><th>Returns</th><th>Notes</th></tr></thead><tbody>
 <tr><td><code>geof:sfContains(g1, g2)</code></td><td><code>xsd:boolean</code></td><td><code>g2</code> inside/on <code>g1</code> (POLYGON ⊇ POINT is the common case)</td></tr>
 <tr><td><code>geof:sfWithin(g1, g2)</code></td><td><code>xsd:boolean</code></td><td><code>sfContains(g2, g1)</code></td></tr>
@@ -384,7 +384,7 @@ axes, so do <strong>not</strong> feed it lat/lon EPSG:4326 data.</li>
 ordinates (dropped). A malformed or non-geometry argument is a type error: the
 row drops out of a <code>FILTER</code> and the variable is left unbound in a <code>BIND</code> — never
 an engine error.</p>
-<h2>Example — "which territory contained this point in year Y?"</h2>
+<h2 id="example--which-territory-contained-this-point-in-year-y">Example — "which territory contained this point in year Y?"</h2>
 <p>The headline query combines a temporal filter and a spatial predicate in one
 <code>FILTER</code>:</p>
 <pre><code class="language-sparql">PREFIX geo:  &lt;http://www.opengis.net/ont/geosparql#&gt;
@@ -409,7 +409,7 @@ SELECT ?territory ?km WHERE {
        &lt;http://www.opengis.net/def/uom/OGC/1.0/metre&gt;) / 1000 AS ?km)
 } ORDER BY ?km LIMIT 8
 </code></pre>
-<h2>The example dataset</h2>
+<h2 id="the-example-dataset">The example dataset</h2>
 <p><code>history.rete</code> (embedded in the playground) is built from
 <a href="https://github.com/aourednik/historical-basemaps"><strong>aourednik/historical-basemaps</strong></a>
 (GPL-3.0) — world territorial borders at snapshots from 323 BCE to 1994 CE. Each
@@ -427,7 +427,7 @@ administrative boundaries pulled from its public
 <ul>
 <li><code>start_date</code>/<code>end_date</code>) — via the <code>ohm</code> subcommand.</li>
 </ul>
-<h2>Scope &amp; limitations</h2>
+<h2 id="scope--limitations">Scope &amp; limitations</h2>
 <p>v1 is deliberately tight and exact for the common cases rather than broad:</p>
 <ul>
 <li><strong>Planar</strong> Cartesian computation on lon/lat (haversine only for the metre

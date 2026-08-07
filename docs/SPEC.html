@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Rete — a cloud-native, range-queryable RDF graph file</h1>
+<h1 id="rete--a-cloud-native-range-queryable-rdf-graph-file">Rete — a cloud-native, range-queryable RDF graph file</h1>
 <p><strong>Status:</strong> Stable format generation <strong>1</strong>, implemented (header byte <code>0x05</code>; Rete 1.x compatibility baseline) · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
 <blockquote>
 <p>One file. Put it on S3, GitHub, or any HTTP server that honors <code>Range</code>.
@@ -346,8 +346,8 @@ Give a client the URL. Run SPARQL. No database server.</p>
 with a <strong>pyramid</strong> of progressively-refined detail.</p>
 </blockquote>
 <hr />
-<h2>1. Goals &amp; non-goals</h2>
-<h3>Goals</h3>
+<h2 id="1-goals--non-goals">1. Goals &amp; non-goals</h2>
+<h3 id="goals">Goals</h3>
 <ul>
 <li><strong>Single immutable file</strong>, queryable in place over HTTP <code>Range</code> requests.</li>
 <li><strong>Bounded request count</strong> to answer a query — the client reads a small header
@@ -361,7 +361,7 @@ the client refines by "zooming into" regions of interest.</li>
 <li><strong>RDF-faithful</strong>: IRIs, blank nodes, literals (with datatype + language tag),
 and named graphs (quads).</li>
 </ul>
-<h3>Non-goals</h3>
+<h3 id="non-goals">Non-goals</h3>
 <ul>
 <li><strong>Mutation.</strong> The file is build-once / read-many; this buys aggressive
 compression and CDN caching. Updates happen <em>around</em> the file, not in it:
@@ -372,7 +372,7 @@ base and publishes the merged state as a fresh <code>.rete</code> snapshot (see
 <li><strong>Inference / reasoning</strong> at query time. Materialize before build if wanted.</li>
 </ul>
 <hr />
-<h2>2. Prior art we build on</h2>
+<h2 id="2-prior-art-we-build-on">2. Prior art we build on</h2>
 <table><thead><tr><th>Source</th><th>What we take</th></tr></thead><tbody>
 <tr><td><strong>HDT</strong> (Header-Dictionary-Triples)</td><td>Dictionary + bitmap-encoded triples; the closest existing queryable single-file RDF format. We extend it toward range/progressive access.</td></tr>
 <tr><td><strong>PMTiles</strong></td><td>Header → root directory → leaf directories → data, all byte-range addressable, with a bounded number of requests. This is the spine of our pyramid + index.</td></tr>
@@ -381,7 +381,7 @@ base and publishes the merged state as a fresh <code>.rete</code> snapshot (see
 <tr><td><strong>Oxigraph</strong> (<code>oxrdf</code>, <code>spargebra</code>, <code>oxttl</code>)</td><td>Reuse RDF model, SPARQL parser, and algebra rather than writing our own.</td></tr>
 </tbody></table>
 <hr />
-<h2>3. Conceptual model</h2>
+<h2 id="3-conceptual-model">3. Conceptual model</h2>
 <p>An RDF dataset = a set of <strong>quads</strong> <code>(subject, predicate, object, graph)</code>.</p>
 <p>Three transformations make it range-queryable:</p>
 <ol>
@@ -395,7 +395,7 @@ communities. Level 0 is a <em>quotient graph</em> (communities as supernodes, wi
 aggregated edges). Each deeper level expands supernodes into their members.</li>
 </ol>
 <hr />
-<h2>4. File layout</h2>
+<h2 id="4-file-layout">4. File layout</h2>
 <p>The stable generation-1 on-disk layout (what <code>write_file</code>/<code>write_dataset</code>
 actually emit). The
 header is the directory: it carries the absolute offset+length of every section, so a
@@ -436,7 +436,7 @@ range — so single-pattern routing fetches the selected permutation section (on
 of the six) and decompresses only the matching tile(s). Per-<em>community</em> leaf directories
 (mapping <code>(level, tile, perm)</code> to byte ranges across the pyramid) are part of
 the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</p>
-<h3>4.1 Header (1024 bytes, little-endian)</h3>
+<h3 id="41-header-1024-bytes-little-endian">4.1 Header (1024 bytes, little-endian)</h3>
 <p>The header is a fixed <strong>64-byte core</strong> followed by a <strong>typed section directory</strong> —
 up to 40 entries of 24 bytes each <code>(kind, flags, offset, length)</code> — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
@@ -500,7 +500,7 @@ it, on old readers (which see an unknown kind-7 entry and ignore it) and new
 ones alike; treat its contents as advisory provenance, not integrity-protected
 data.</p>
 <hr />
-<h2>5. Dictionary</h2>
+<h2 id="5-dictionary">5. Dictionary</h2>
 <img src="img/dictionary-roles.svg" alt="The dictionary's four front-coded sections: SHARED terms (both subject and object), SUBJECTS-only, OBJECTS-only, and PREDICATES, with role-ordered IDs.">
 <p><em>Four front-coded sections with role-ordered IDs: a term's ID range reveals whether it is a subject, object, or predicate.</em></p>
 <ul>
@@ -538,7 +538,7 @@ supports <code>O(log n)</code> term↔ID lookup once loaded. Each section is add
 ~64 KiB chunk rather than the whole section.</p>
 </li>
 </ul>
-<h3>5.1 Section encoding (front-coded, restart-indexed)</h3>
+<h3 id="51-section-encoding-front-coded-restart-indexed">5.1 Section encoding (front-coded, restart-indexed)</h3>
 <p>Each dictionary <em>kind</em> (shared / subjects / objects / predicates / graphs) is one
 <strong>section</strong>. Within a section terms are UTF-8, <strong>sorted ascending</strong>, deduped, and
 assigned <strong>dense 1-based IDs</strong> in that order (ID <code>0</code> is reserved as "absent").</p>
@@ -560,7 +560,7 @@ that run comparing each materialized term; return its ID or <code>None</code>.</
 <p>Restart points are also the natural <strong>chunk/compression boundaries</strong>: a client
 fetches just the run(s) covering the IDs/terms a query touches.</p>
 <hr />
-<h2>6. Triples / quads</h2>
+<h2 id="6-triples--quads">6. Triples / quads</h2>
 <ul>
 <li>Stored as integer triples in all <strong>six permutations</strong>: <strong>SPO, POS, OSP, SOP,
 PSO, OPS</strong> (stable format <code>0x05</code>; experimental <code>0x03</code> stored only the first three).
@@ -579,7 +579,7 @@ sets plus a default-graph union. (Full GSPO permutations are a later optimizatio
 into fixed-size <strong>blocks</strong>. Every block is prefixed with a <strong>zone map</strong>
 (min ID, max ID, count) so the query planner can skip blocks — Parquet-style.</li>
 </ul>
-<h3>6.1 Triple block encoding (grouped delta)</h3>
+<h3 id="61-triple-block-encoding-grouped-delta">6.1 Triple block encoding (grouped delta)</h3>
 <p>Within a block, triples for a permutation are sorted ascending on <code>(a, b, c)</code>
 (e.g. SPO ⇒ a=S, b=P, c=O) and stored as a nested <strong>grouped, delta-coded</strong>
 adjacency — the compact, decode-forward form HDT calls bitmap-triples, written
@@ -596,7 +596,7 @@ body:      varint num_a
 The <strong>zone map</strong> lets the planner skip a block whose <code>[min,max]</code> range cannot
 contain a bound constant before fetching the body — the §7 routing then bounds
 <em>which</em> blocks are fetched at all.</p>
-<h3>6.2 Tiled permutation sections (format <code>0x02</code>)</h3>
+<h3 id="62-tiled-permutation-sections-format-0x02">6.2 Tiled permutation sections (format <code>0x02</code>)</h3>
 <p>Each permutation section is <strong>tiled</strong>: consecutive runs of whole a-groups are
 packed to a byte budget (default 64 KiB of encoded triples), and each tile is a
 fully self-contained §6.1 block (its own zone map; deltas restart). Tiles are
@@ -644,7 +644,7 @@ directory locally and faults exactly <strong>one</strong> chunk, and <code>id �
 its chunk arithmetically and faults one. A lazily-opened remote file therefore
 pays the section headers + directories (KBs) up front and O(touched chunks)
 afterwards, instead of the whole dictionary container.</p>
-<h3>6.3 Full-text index (TEXT_INDEX section, optional)</h3>
+<h3 id="63-full-text-index-textindex-section-optional">6.3 Full-text index (TEXT_INDEX section, optional)</h3>
 <p>An <strong>opt-in</strong> section (kind <code>6</code>, built with <code>rete build --text-index</code>) that maps
 each <strong>word</strong> appearing in a string literal to the <strong>subjects</strong> that carry it, so
 a reader can answer "which entities mention <code>glucose</code>?" without scanning the
@@ -681,11 +681,11 @@ A required layout change uses a new format byte, keeps <code>0x05</code> read su
 ships with a documented rebuild or migration path. Experimental formats <code>0x01</code>
 through <code>0x04</code> are a clean break and must be rebuilt from RDF source.</p>
 <hr />
-<h2>7. The pyramid — community summarization</h2>
+<h2 id="7-the-pyramid--community-summarization">7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>
 <img src="img/pyramid.svg" alt="The pyramid: a coarse community summary (a few super-nodes) at the top, communities in the middle, and the full triple graph at the base; clients read the top first and descend only where needed.">
 <p><em>Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.</em></p>
-<h3>7.1 Build time</h3>
+<h3 id="71-build-time">7.1 Build time</h3>
 <ol>
 <li>
 <p>Run hierarchical community detection (<strong>Louvain</strong>; <code>--pyramid-algo types</code>
@@ -718,7 +718,7 @@ from community <code>A</code> to community <code>B</code>, with a count.</li>
 expands into) so a client can drill down without re-clustering.</p>
 </li>
 </ol>
-<h3>7.2 Query / browse time</h3>
+<h3 id="72-query--browse-time">7.2 Query / browse time</h3>
 <ul>
 <li>Client loads <strong>level 0</strong> (small): a graph of supernodes + aggregated relations.
 Good for overview, "shape of the data," and routing.</li>
@@ -729,7 +729,7 @@ up answers via superedges) or be <strong>routed</strong> — use level 0 to find
 communities can satisfy the pattern, then descend only into those tiles. This
 is the graph analog of Parquet block-skipping.</li>
 </ul>
-<h3>7.3 The pyramid-meta section (on disk)</h3>
+<h3 id="73-the-pyramid-meta-section-on-disk">7.3 The pyramid-meta section (on disk)</h3>
 <p>The pyramid-meta section (<code>crates/rete-core/src/meta.rs</code>) is a flat varint stream.
 <strong>v1</strong> carries the chosen round, the summary super-edges, and (reserved) per-tile
 triple blocks:</p>
@@ -754,7 +754,7 @@ varint num_descriptors;    per: varint community, dominant_idx+1 (0 = none),
 </code></pre>
 <p>The string table holds both class and predicate IRIs, so the schema pyramid decodes
 <strong>without the dictionary</strong> — the ontology travels as self-contained text.</p>
-<h3>7.4 The schema pyramid — semantic zoom (v2)</h3>
+<h3 id="74-the-schema-pyramid--semantic-zoom-v2">7.4 The schema pyramid — semantic zoom (v2)</h3>
 <p>The community pyramid (§7.1) is <strong>topological</strong>; the schema pyramid is the
 <strong>ontology, leveled</strong> — upper-level classes describe coarse zoom, leaf classes
 resolve as you zoom in. It is built once, index-free, into pyramid-meta:</p>
@@ -788,7 +788,7 @@ summary: <code>rete summary --level k</code> (and <code>summary-url</code>) rend
 the triple index. The <code>subClassOf</code> axioms come from the data, or from
 <code>rete build --materialize</code> (the OWL-RL reasoner).</p>
 <hr />
-<h2>8. SPARQL evaluation (staged)</h2>
+<h2 id="8-sparql-evaluation-staged">8. SPARQL evaluation (staged)</h2>
 <p>Implemented in <code>rete-core::sparql</code> (parses with <code>spargebra</code>, lowers to a small
 plan algebra — <code>Bgp</code>/<code>Join</code>/<code>Union</code>/<code>Minus</code>/<code>LeftJoin</code>/<code>Filter</code>/<code>Path</code>/<code>Values</code>/
 <code>Graph</code>):</p>
@@ -836,7 +836,7 @@ call to one empty solution per the spec.</li>
 <p>The planner's job is to minimize <strong>bytes fetched</strong>, not CPU — the cost model is
 dominated by range-request count and block sizes.</p>
 <hr />
-<h2>9. Access protocol (the client)</h2>
+<h2 id="9-access-protocol-the-client">9. Access protocol (the client)</h2>
 <p>The header <em>is</em> the directory — every section offset/length is in it, so no
 separate directory/footer round-trip is needed:</p>
 <pre><code>1. GET bytes=0-1023         → header: all section offsets/lengths + content hash
@@ -880,7 +880,7 @@ garbage, each then exercised through <code>dump</code>/<code>query</code>/SPARQL
 path.)</li>
 </ul>
 <hr />
-<h2>10. Language &amp; build</h2>
+<h2 id="10-language--build">10. Language &amp; build</h2>
 <ul>
 <li><strong>Rust core</strong>, compiled to both <strong>native</strong> (CLI, server-side) and <strong>WASM</strong>
 (browser client) — identical query code in both.</li>
@@ -893,7 +893,7 @@ carries the Rust toolchain, rustfmt, clippy, Python smoke-test tooling,
 <code>wasm-pack</code>, and the WASM target.</li>
 </ul>
 <hr />
-<h2>11. Glossary</h2>
+<h2 id="11-glossary">11. Glossary</h2>
 <ul>
 <li><strong>Term</strong> — an RDF IRI, blank node, or literal.</li>
 <li><strong>Quotient graph</strong> — graph whose nodes are communities and whose edges

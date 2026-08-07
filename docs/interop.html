@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Triple-store interop</h1>
+<h1 id="triple-store-interop">Triple-store interop</h1>
 <p>A <code>.rete</code> file is not a silo. <strong>N-Quads is the interchange</strong>: <code>rete export</code>
 streams a lossless dump that every triple store bulk-loads, and <code>rete build</code>
 ingests every store's native export. This page gives the verified recipes in
@@ -347,7 +347,7 @@ that skips migration entirely.</p>
 <p>Fidelity is not taken on faith: the project's regression suite runs
 <strong>differentially against Oxigraph</strong> — the same data loaded into both
 engines must answer every query identically, on every CI run.</p>
-<h2>rete → any triple store</h2>
+<h2 id="rete--any-triple-store">rete → any triple store</h2>
 <p><code>rete export</code> streams the dataset with constant memory — it never loads the
 graph. The default format is <strong>N-Quads, lossless</strong>: default graph + named
 graphs, RDF-star quoted triples included.</p>
@@ -361,7 +361,7 @@ rete export data.rete --format jsonld  &gt; default-graph.jsonld
 <p><code>export</code> reads a local file. For a remote <code>.rete</code>, download it first (it is
 one GET) — harvesting through paginated <code>CONSTRUCT</code> works but is far
 slower than a dump.</p>
-<h3>Load into Oxigraph</h3>
+<h3 id="load-into-oxigraph">Load into Oxigraph</h3>
 <p>Oxigraph's bulk loader is parallel and takes gzip directly:</p>
 <pre><code class="language-sh"># CLI (or the same subcommands via the docker image oxigraph/oxigraph):
 oxigraph load --location ./store --file dump.nq.gz
@@ -379,7 +379,7 @@ $ curl -s "http://localhost:7878/query" \
     -H "Accept: application/sparql-results+json"
 {"head":{"vars":["n"]},"results":{"bindings":[{"n":{"type":"literal","value":"6","datatype":"http://www.w3.org/2001/XMLSchema#integer"}}]}}
 </code></pre>
-<h3>Load into GraphDB</h3>
+<h3 id="load-into-graphdb">Load into GraphDB</h3>
 <p>For big files use the server-side bulk importer (<code>importrdf</code>), pointing at
 a repository config:</p>
 <pre><code class="language-sh">importrdf preload --force -c repo-config.ttl dump.nq.gz
@@ -390,14 +390,14 @@ curl -X POST "http://localhost:7200/repositories/myrepo/statements" \
   -H "Content-Type: application/n-quads" \
   --data-binary @dump.nq
 </code></pre>
-<h3>Load into Jena / Fuseki</h3>
+<h3 id="load-into-jena--fuseki">Load into Jena / Fuseki</h3>
 <pre><code class="language-sh">tdb2.tdbloader --loc ./tdb dump.nq.gz        # bulk load
 fuseki-server --loc ./tdb /ds                # serve
 </code></pre>
-<h2>Any triple store → rete</h2>
+<h2 id="any-triple-store--rete">Any triple store → rete</h2>
 <p><code>rete build</code> ingests N-Triples, N-Quads, Turtle, and RDF/XML — so the
 reverse direction is each store's native dump piped into a build:</p>
-<h3>From Oxigraph</h3>
+<h3 id="from-oxigraph">From Oxigraph</h3>
 <pre><code class="language-sh">oxigraph dump --location ./store --file dump.nq --format nq
 rete build dump.nq -o out.rete
 </code></pre>
@@ -405,7 +405,7 @@ rete build dump.nq -o out.rete
 <code>.rete</code>, and the row-level answers match the original query for query —
 including the named graph, which survives the full
 rete → Oxigraph → rete cycle.</p>
-<h3>From GraphDB</h3>
+<h3 id="from-graphdb">From GraphDB</h3>
 <pre><code class="language-sh"># The statements endpoint IS the dump (workbench "Export" does the same):
 curl -H "Accept: application/n-quads" \
   "http://localhost:7200/repositories/myrepo/statements?infer=false" &gt; dump.nq
@@ -415,11 +415,11 @@ rete build dump.nq -o out.rete
 materialized inferences frozen into the file, drop it — but consider
 shipping the ontology instead and letting rete's
 <a href="reasoning.html">OWL 2 QL reasoning</a> answer entailments at query time.</p>
-<h3>From Jena</h3>
+<h3 id="from-jena">From Jena</h3>
 <pre><code class="language-sh">tdb2.tdbdump --loc ./tdb &gt; dump.nq
 rete build dump.nq -o out.rete
 </code></pre>
-<h3>Scale notes</h3>
+<h3 id="scale-notes">Scale notes</h3>
 <ul>
 <li>Hundreds of millions of triples are routine builds (data.bnf.fr: 716 M;
 one 726 M-triple file). If RAM is the constraint, <code>rete build --memory-budget-mb</code> runs the chunked external build — same byte-identical
@@ -428,7 +428,7 @@ file, bounded memory.</li>
 over the migrated data, and a <a href="dataset-cards.html">Dataset Card</a> so the file
 explains itself.</li>
 </ul>
-<h2>The no-migration option: federation</h2>
+<h2 id="the-no-migration-option-federation">The no-migration option: federation</h2>
 <p>If the goal is only that another engine can <em>query</em> <code>.rete</code> data, skip the
 dump entirely — any SPARQL 1.1 engine with <code>SERVICE</code> support can federate
 against a rete endpoint, live and lazy:</p>

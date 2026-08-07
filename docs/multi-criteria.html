@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Multi-criteria community splitting</h1>
+<h1 id="multi-criteria-community-splitting">Multi-criteria community splitting</h1>
 <figure class="fig-right">
   <img src="img/multi-criteria.svg" alt="The same six nodes shown twice: partitioned by :cites into one set of clusters on the left, and by :hasTopic into a different set of clusters on the right.">
   <figcaption>The same nodes regroup depending on which relation (or attribute) you partition by — there is no single "correct" community.</figcaption>
@@ -354,7 +354,7 @@ has 8 researchers with three criteria that <strong>deliberately disagree</strong
 </ul>
 <pre><code class="language-sh">rete build examples/researchers.nt -o researchers.rete
 </code></pre>
-<h2>Criterion 1 &amp; 2 — structural, by a single relation (<code>--predicate</code>)</h2>
+<h2 id="criterion-1--2--structural-by-a-single-relation---predicate">Criterion 1 &amp; 2 — structural, by a single relation (<code>--predicate</code>)</h2>
 <p><code>rete communities --predicate &lt;iri&gt;</code> detects communities using <strong>only</strong> that
 relation's edges, giving a criterion-specific partition:</p>
 <pre><code class="language-sh">rete communities researchers.rete --predicate '&lt;http://ex/cites&gt;'
@@ -370,7 +370,7 @@ rete communities researchers.rete --predicate '&lt;http://ex/coauthor&gt;'
 <p>Same graph, same nodes — <strong>different communities</strong> depending on the relation.
 Citation says "two camps"; coauthorship says "four cross-camp pairs". (With no
 <code>--predicate</code>, detection uses <em>all</em> edges and yields a blended partition.)</p>
-<h2>Criterion 3 — attribute, via SPARQL (free, overlapping-friendly)</h2>
+<h2 id="criterion-3--attribute-via-sparql-free-overlapping-friendly">Criterion 3 — attribute, via SPARQL (free, overlapping-friendly)</h2>
 <p>Attribute groupings ("everyone at OrgX", "papers tagged biology") need no special
 feature — they're a <code>GROUP BY</code>:</p>
 <pre><code class="language-sh">rete sparql researchers.rete \
@@ -379,7 +379,7 @@ feature — they're a <code>GROUP BY</code>:</p>
 </code></pre>
 <p>Attribute criteria <strong>handle overlap for free</strong> (a node can have several tags) and
 are fully queryable — no partition needed.</p>
-<h2>Combining criteria</h2>
+<h2 id="combining-criteria">Combining criteria</h2>
 <p>"Find groups coherent in <em>both</em> discipline and organization" is <strong>consensus /
 multi-view clustering</strong> — a downstream analysis, exactly like the
 <a href="topic-modeling.html">LDA pipeline</a>: <code>rete</code> supplies each criterion's partition
@@ -387,7 +387,7 @@ multi-view clustering</strong> — a downstream analysis, exactly like the
 consensus step combines them. Likewise, <strong>overlapping</strong> community detection (a
 node in several communities — link communities, BigCLAM) is its own algorithm,
 not Louvain's hard partition; <code>rete</code> would feed it the same way it feeds LDA.</p>
-<h2>The one design constraint: physical tiling wants a single partition</h2>
+<h2 id="the-one-design-constraint-physical-tiling-wants-a-single-partition">The one design constraint: physical tiling wants a single partition</h2>
 <p>The pyramid's <strong>tiles</strong> exist for byte locality / range-fetch, and that benefits
 from <em>one</em> partition that minimizes edge cut. So the pragmatic split is:</p>
 <ul>

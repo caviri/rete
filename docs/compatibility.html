@@ -337,8 +337,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Compatibility, validation &amp; interop</h1>
-<h2>Stable <code>.rete</code> file compatibility</h2>
+<h1 id="compatibility-validation--interop">Compatibility, validation &amp; interop</h1>
+<h2 id="stable-rete-file-compatibility">Stable <code>.rete</code> file compatibility</h2>
 <p>Format byte <code>0x05</code> is stable format generation 1, introduced by Rete 1.0.0.
 Files produced before Rete 1.0.0 are experimental artifacts and must be rebuilt.
 Every stable Rete reader from 1.0.0 onward reads format <code>0x05</code>. Newer readers may
@@ -346,7 +346,7 @@ add optional sections and flags that preserve <code>0x05</code> semantics. A req
 change uses a new format byte, retains <code>0x05</code> read support, and ships with a
 documented rebuild or migration path. Older readers may reject a newer format
 cleanly; silent misinterpretation is never permitted.</p>
-<h2>Is it compatible with RDF?</h2>
+<h2 id="is-it-compatible-with-rdf">Is it compatible with RDF?</h2>
 <p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
 format <em>for</em> RDF, built on the standard Rust RDF stack
 (<a href="https://crates.io/crates/oxrdf"><code>oxrdf</code></a>,
@@ -401,7 +401,7 @@ in-place SPARQL Update — the file is immutable by design, though
 <a href="cli.html"><code>rete serve</code></a> runs a live endpoint that accepts SPARQL Update into a
 journal beside the untouched base file. Turtle/JSON-LD export covers the default
 graph only (use N-Quads export for named graphs).</p>
-<h2>Validation</h2>
+<h2 id="validation">Validation</h2>
 <p>There are five independent ways to check correctness:</p>
 <ol>
 <li>
@@ -449,7 +449,7 @@ documented subset, not full OWL DL).</p>
 <p><code>rete shacl</code> is SHACL Core support, not the whole shape-language universe:
 SHACL-SPARQL, SHACL-AF, JavaScript extensions, SHACL 1.2 draft features, and ShEx
 are not implemented.</p>
-<h2>Could it speak Cypher too?</h2>
+<h2 id="could-it-speak-cypher-too">Could it speak Cypher too?</h2>
 <p>Short answer: <strong>not today, and it's a different data model — but a useful subset
 could be translated to SPARQL.</strong> Here's the honest picture.</p>
 <p>Cypher targets the <strong>labeled property graph (LPG)</strong> model (Neo4j): nodes and
@@ -476,7 +476,7 @@ no stored procedures) — the file is immutable and server-less by design.</p>
 layer, not a second engine: a small Cypher subset is parsed into an AST, emitted
 as an equivalent SPARQL <code>SELECT</code> string, and evaluated by the existing SPARQL
 engine — so it reuses the same BGP/join, property-path, and <code>FILTER</code> machinery.</p>
-<h3>Supported subset (read-only)</h3>
+<h3 id="supported-subset-read-only">Supported subset (read-only)</h3>
 <pre><code class="language-text">query      := MATCH patterns [WHERE conditions] RETURN items [LIMIT n]
 patterns   := pattern ("," pattern)*
 pattern    := node (rel node)*
@@ -493,7 +493,7 @@ item       := var | var "." prop
 </code></pre>
 <p>Variable-length <code>-[:REL*]-&gt;</code> lowers to the SPARQL property path <code>REL+</code>
 (<strong>one-or-more</strong>) for the prototype; bounded forms (<code>*N..M</code>) are not supported.</p>
-<h3>Name → IRI convention</h3>
+<h3 id="name--iri-convention">Name → IRI convention</h3>
 <p>A bare label/relationship/property name <code>X</code> maps to <code>&lt;BASE + X&gt;</code>, where <code>BASE</code>
 defaults to <code>http://ex/</code> and is overridable with <code>--base</code>. With the default base:</p>
 <table><thead><tr><th>Cypher</th><th>Emitted SPARQL</th></tr></thead><tbody>
@@ -502,13 +502,13 @@ defaults to <code>http://ex/</code> and is overridable with <code>--base</code>.
 <tr><td><code>a.name</code></td><td><code>?a &lt;http://ex/name&gt; ?a_name</code></td></tr>
 <tr><td><code>(a)-[:dependsOn*]-&gt;(b)</code></td><td><code>?a &lt;http://ex/dependsOn&gt;+ ?b</code></td></tr>
 </tbody></table>
-<h3>Out of scope (rejected with a clear error, never a panic)</h3>
+<h3 id="out-of-scope-rejected-with-a-clear-error-never-a-panic">Out of scope (rejected with a clear error, never a panic)</h3>
 <p>Writes (<code>CREATE</code> / <code>MERGE</code> / <code>SET</code> / <code>DELETE</code>), <code>OPTIONAL MATCH</code>, <code>WITH</code>,
 aggregations, <code>RETURN *</code>, relationship variables/properties
 (<code>[r:REL {since: 2020}]</code>), and multiple labels per node. These genuinely depend
 on LPG features (relationship properties) or write/aggregation semantics outside
 this prototype's scope.</p>
-<h3>Worked example</h3>
+<h3 id="worked-example">Worked example</h3>
 <p>Against the bundled <code>examples/deps.nt</code> dependency graph:</p>
 <pre><code class="language-sh">rete build examples/deps.nt -o deps.rete
 

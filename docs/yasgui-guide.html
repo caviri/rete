@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>SPARQL IDE — yasgui·wasm</h1>
+<h1 id="sparql-ide--yasguiwasm">SPARQL IDE — yasgui·wasm</h1>
 <p><strong><a href="yasgui.html">▸ Launch the IDE</a></strong> — one static HTML file, no server, no account.</p>
 <p>A <a href="https://github.com/TriplyDB/Yasgui">Yasgui</a>-style SPARQL IDE with one twist: the <em>endpoint</em> is a
 <strong><code>.rete</code> file</strong>. Where the original sends every query to a SPARQL server, here the engine is the rete
@@ -353,7 +353,7 @@ and never uploaded anywhere.</li>
 <p>The <strong>datasets ▾</strong> menu offers a curated slice of the <a href="playground-guide.html">published datasets</a>
 (Getty ULAN lineage, Spanish law, Herculaneum scrolls, Magic cards, a 100 MB Wikidata bite, …), each
 served straight from object storage.</p>
-<h2>What it does</h2>
+<h2 id="what-it-does">What it does</h2>
 <p>Everything you'd expect from Yasgui, plus a few things a server endpoint can't offer:</p>
 <ul>
 <li><strong>Tabs</strong> — each with its own endpoint, query, and results; rename by double-click, reorder by drag,
@@ -378,12 +378,12 @@ ontology; try it on the <code>boe</code> dataset.</li>
 <li><strong>A per-query traffic line</strong> — elapsed time plus bytes / range requests actually fetched, measured by
 the engine. In-memory files report <em>in-memory</em>; cached re-runs report <em>0 bytes fetched</em>.</li>
 </ul>
-<h2>Hosting your own</h2>
+<h2 id="hosting-your-own">Hosting your own</h2>
 <p>Point the endpoint field at any <code>.rete</code> you <a href="hosting.html">host yourself</a>: the server must send
 <code>Access-Control-Allow-Origin</code> and honor <code>Range</code> requests (status 206) — R2, S3-compatible stores,
 GitHub releases and Zenodo all qualify. Build the file with <a href="cli.html"><code>rete build</code></a>, from RDF or
 <a href="data-engineering.html">anything else</a>.</p>
-<h2>How it's built</h2>
+<h2 id="how-its-built">How it's built</h2>
 <p><code>scripts/build_yasgui.py</code> inlines the CodeMirror bundle, the wasm-bindgen no-modules glue and the
 base64-encoded engine into <code>docs/yasgui.html</code> from <code>web/yasgui.template.html</code> +
 <code>web/yasgui-src/{app,worker}.js</code>. Queries run in a Blob-spawned Web Worker — the lazy remote reader

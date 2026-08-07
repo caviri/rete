@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Graph-map &amp; topic-map (experiment)</h1>
+<h1 id="graph-map--topic-map-experiment">Graph-map &amp; topic-map (experiment)</h1>
 <blockquote>
 <p><strong>Side experiment, not part of the core tool.</strong> Everything here only <em>reads</em> a
 <code>.rete</code> (and the community pyramid already inside it) and emits a standalone
@@ -366,7 +366,7 @@ itself: no server, no full download.</p>
 <p>A different browser lens on the same graphs — <a href="ask-the-graph.html"><strong>ask the graph</strong></a>,
 a transformers.js graphRAG search — has its own page now.</p>
 </blockquote>
-<h2>Why a map at all</h2>
+<h2 id="why-a-map-at-all">Why a map at all</h2>
 <p>Force-directed pictures of a big graph collapse into a hairball. A map fixes
 that with <strong>levels of detail</strong>: zoomed out you see a handful of coarse regions
 (the "continents"); as you zoom in, finer structure resolves — exactly how a
@@ -374,7 +374,7 @@ web map goes country → city → street. rete's pyramid <em>is</em> that level 
 so the mapping is direct. (Prior art: GMap, <em>"Visualizing Graphs and Clusters
 as Maps"</em>.)</p>
 <hr />
-<h2>1. Structural graph-map — the community pyramid</h2>
+<h2 id="1-structural-graph-map--the-community-pyramid">1. Structural graph-map — the community pyramid</h2>
 <p>Nodes are rete's pyramid communities; the most-connected hubs dominate when
 zoomed out. Each super-community is drawn as a translucent <strong>convex-hull
 boundary</strong>, with its finer child communities rendering <em>inside</em> it as you zoom.</p>
@@ -398,7 +398,7 @@ size / sub-community count; <strong>click</strong> a node to highlight all its l
 (bottom-right) shows the whole graph with a viewport box; a <strong>clear</strong> button and
 <strong>layer toggles</strong> (boundaries / links / nodes / labels) control what's drawn.</p>
 <hr />
-<h2>2. Semantic topic-map — communities by LDA topic</h2>
+<h2 id="2-semantic-topic-map--communities-by-lda-topic">2. Semantic topic-map — communities by LDA topic</h2>
 <p>The structural map says how the graph is <em>wired</em>; this says what each cluster is
 <em>about</em>. rete supplies the two hard parts — the Louvain partition <strong>and</strong> the
 per-community text — and LDA is the standard downstream step (see
@@ -438,7 +438,7 @@ network (dense links + abstracts) is the canonical fit — see
 <a href="topic-modeling.html">Topic modeling</a>.</p>
 </blockquote>
 <hr />
-<h2>3. 3D side-elevation — the pyramid as stacked strata</h2>
+<h2 id="3-3d-side-elevation--the-pyramid-as-stacked-strata">3. 3D side-elevation — the pyramid as stacked strata</h2>
 <p>A button to <strong>rotate the map 90°</strong> and see it from the side: each zoom level
 becomes a <strong>horizontal plane</strong> stacked in 3D, and the lines between planes are
 the <strong>parent→child</strong> links of the community hierarchy. Built with
@@ -470,7 +470,7 @@ picking/tooltips; the depth slider is an alpha cutoff along the depth axis.</li>
 <p><img src="img/graphmap-3d-three.png" alt="three.js 3D side elevation" />
 <em>The three.js prototype: glowing stacked strata with camera-fog depth.</em></p>
 <hr />
-<h2>Run it</h2>
+<h2 id="run-it">Run it</h2>
 <p>Both maps share a standalone toolchain image (tippecanoe + python-igraph +
 scikit-learn + pmtiles) and call the rete binary already built at
 <code>target/release/rete</code>.</p>
@@ -497,7 +497,7 @@ edges + parent→child links), which <code>build_map.py</code> emits alongside t
 <code>.pmtiles</code>.</p>
 <p>See <a href="https://github.com/caviri/rete/blob/main/experiments/graph-map/README.html"><code>experiments/graph-map/README.md</code></a>
 for all flags (<code>--max-base</code>, <code>--footprint</code>, <code>--topics</code>, <code>--maxzoom</code>, …).</p>
-<h2>Caveats (it's an experiment)</h2>
+<h2 id="caveats-its-an-experiment">Caveats (it's an experiment)</h2>
 <ul>
 <li><strong>Layout is the cost, not the tiling.</strong> DRL handles ~100k base communities;
 past that, <code>--max-base</code> keeps the most-connected ones.</li>

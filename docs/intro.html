@@ -337,12 +337,12 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Graph data, for dummies</h1>
+<h1 id="graph-data-for-dummies">Graph data, for dummies</h1>
 <p>A gentle, practical tour of graph/network data formats and standards — with one
 question running through every section: <strong>what kinds of questions does this let
 me ask?</strong> If you've never touched RDF, SPARQL, or Neo4j, start here. By the end
 you'll know the landscape and exactly what you can ask a <code>.rete</code> file.</p>
-<h2>What is a graph (a.k.a. a network)?</h2>
+<h2 id="what-is-a-graph-aka-a-network">What is a graph (a.k.a. a network)?</h2>
 <figure class="fig-right">
   <img src="img/graph-vs-table.svg" alt="The same facts shown as a relational table of rows on the left and as a node-link graph on the right, joined by a 'same facts' arrow.">
   <figcaption>The same facts as rows vs. as a graph. A graph stores the relationships directly, so "who is connected to whom" is a traversal, not a join.</figcaption>
@@ -369,7 +369,7 @@ picture before I zoom in?"</li>
 <p>Tables are great at "all rows where age &gt; 30". Graphs are great at "everything
 reachable from here by following relationships." Hold onto that distinction — it
 explains everything below.</p>
-<h2>Two big families: RDF vs. Labeled Property Graphs</h2>
+<h2 id="two-big-families-rdf-vs-labeled-property-graphs">Two big families: RDF vs. Labeled Property Graphs</h2>
 <p>There are two dominant ways to <em>write down</em> a graph. They model the same dots and
 lines, but differently.</p>
 <figure class="fig-right">
@@ -402,7 +402,7 @@ superpower and the main thing plain RDF can't do without extra modeling.</p>
 It can also translate a small, read-only <strong>subset of Cypher</strong> into SPARQL so LPG
 folks can ask familiar <code>MATCH … RETURN</code> questions; see
 <a href="compatibility.html">Compatibility &amp; interop</a>.</p>
-<h2>The standards, plainly</h2>
+<h2 id="the-standards-plainly">The standards, plainly</h2>
 <p>The RDF world is a stack of standards, each answering a different <em>kind</em> of
 question. Here's the whole map on one page — and what <code>rete</code> does with each.</p>
 <table><thead><tr><th>Standard</th><th>What it's for</th><th>A question it helps answer</th><th>In <code>rete</code>?</th></tr></thead><tbody>
@@ -422,7 +422,7 @@ subset</strong>, not a full OWL DL engine. A <code>.rete</code> file itself is i
 — there is no in-place SPARQL Update; for a <em>living</em> graph, <a href="cli.html"><code>rete serve</code></a>
 runs a small live endpoint that accepts SPARQL Update into a journal while the
 base file stays untouched.</p>
-<h2>What kinds of questions can you actually ask <code>rete</code>?</h2>
+<h2 id="what-kinds-of-questions-can-you-actually-ask-rete">What kinds of questions can you actually ask <code>rete</code>?</h2>
 <p>This is the heart of it. Below: a plain-English question → the kind of query it
 is → the concrete <code>rete</code> command. (Examples use the bundled dependency graph,
 <code>examples/deps.nt</code>; build it once with <code>rete build examples/deps.nt -o deps.rete</code>.)</p>
@@ -471,7 +471,7 @@ incoherence, so it doubles as a CI gate.</p>
 </code></pre>
 <p>(Want plain "is this file valid RDF / not corrupt?" instead? That's <code>rete validate</code> on the source and <code>rete verify</code> on the built file — see
 <a href="compatibility.html">compatibility</a>.)</p>
-<h2>Where <code>rete</code> fits</h2>
+<h2 id="where-rete-fits">Where <code>rete</code> fits</h2>
 <p><code>rete</code> is a <strong>format + query</strong> layer for RDF that you can drop on a plain URL: no
 database server, no query endpoint. Publish one immutable <code>.rete</code> file to S3, a
 CDN, or a GitHub raw URL, and clients answer the questions above by fetching only

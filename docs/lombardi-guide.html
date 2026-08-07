@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Redrawing Lombardi — network drawings as a live graph</h1>
+<h1 id="redrawing-lombardi--network-drawings-as-a-live-graph">Redrawing Lombardi — network drawings as a live graph</h1>
 <p><strong><a href="lombardi.html">▸ Open the drawings →</a></strong> — Mark Lombardi hand-inked networks
 of banks, shell companies, arms deals and political scandal as diagrams of
 names joined by curved lines. This page reads 51 of those drawings live out of
@@ -347,7 +347,7 @@ nothing pre-rendered, every line comes back out of the graph.</p>
   <img src="img/lombardi-guide.png" alt="The Redrawing Lombardi app showing a hand-inked-style network drawing (Nugan Hand Bank Sydney) of named entities connected by curved arcs on a cream background, a left sidebar listing 51 drawings with node/arc/year counts, a notation legend mapping line styles to relation types, and a panel showing the SPARQL queries sent to the .rete file with bytes-read counts.">
   <figcaption>The Nugan Hand Bank drawing redrawn live from the graph, with the sidebar of 51 drawings, the notation legend, and the query log all reading straight out of lombardi.rete.</figcaption>
 </figure>
-<h2>Finding a drawing</h2>
+<h2 id="finding-a-drawing">Finding a drawing</h2>
 <p>Search the sidebar's 51 titles (<code>Harken</code>, <code>BCCI</code>, <code>Nugan Hand</code>…), each listed
 with its node, arc and year-span counts, and pick one to have it redraw on the
 sheet. In Lombardi's hand the <em>line style itself is the meaning</em>, so the
@@ -360,14 +360,14 @@ small ringed year marker along the timeline at the foot of the sheet. Click any
 name to pull its <strong>index card</strong> — who it reaches, who reaches it, and which
 other sheets it appears on — the browser's equivalent of the 14,500 real cards
 Lombardi kept before he drew a single line.</p>
-<h2>Tracing what he never recorded</h2>
+<h2 id="tracing-what-he-never-recorded">Tracing what he never recorded</h2>
 <p>For the 17 drawings MoMA holds, an <strong>Arrange</strong> control lays the photographed
 original behind the redrawn names, with a slider that fades it in and out, so
 you can drag each name onto where Lombardi actually placed it — a layer no
 source ever captured, since Tolksdorf digitized who-connects-to-whom, never
 coordinates. The traced positions download as JSON, <strong>Load</strong> reopens a saved
 trace, and <strong>Reset</strong> throws it away for the automatic layout again.</p>
-<h2>One graph, not 51</h2>
+<h2 id="one-graph-not-51">One graph, not 51</h2>
 <p>The 51 titles look like separate posters, but they aren't: Tolksdorf gave the
 same actor the same node id wherever Lombardi drew it again, so hundreds of
 people, banks and shells recur across sheets and the whole set joins into
@@ -377,7 +377,7 @@ page is a live SPARQL query, and the "queries sent to the .rete" log makes the
 cost of that visible: opening a drawing might read "640 KB read of 1.0 MB —
 only what the queries touched," because a range read pulls only the bytes each
 query needs, never the whole file.</p>
-<h2>The same data, queryable</h2>
+<h2 id="the-same-data-queryable">The same data, queryable</h2>
 <ul>
 <li><a href="playground.html#dataset=lombardi&amp;load=lazy"><code>lombardi</code></a> — all 51 drawings as
 one graph, 70.4K triples: query who connects two scandals, which actors

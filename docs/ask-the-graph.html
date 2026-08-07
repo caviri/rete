@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Ask the graph — browser graphRAG</h1>
+<h1 id="ask-the-graph--browser-graphrag">Ask the graph — browser graphRAG</h1>
 <p><strong><a href="ask-browser.html">▸ Launch "ask the graph"</a></strong> — a knowledge-graph search that
 runs <em>entirely in your browser</em>: no server, no database, no API key. You type a
 question in plain language; it finds the most relevant entities in the graph and
@@ -349,7 +349,7 @@ ranking is plain cosine similarity over vectors computed on the fly.</p>
   <img src="img/ask-the-graph.png" alt="The ask-the-graph page: a left sidebar explaining how it works (a small AI model turns your question into a vector, ranks every entity, then walks the graph's links), a dataset selector, a model cache, and a question box with an Ask button.">
   <figcaption>Ask a question in natural language; the page embeds it in-browser, ranks the graph's entities by meaning, and walks their links to show how the top answers connect.</figcaption>
 </figure>
-<h2>How it works</h2>
+<h2 id="how-it-works">How it works</h2>
 <ol>
 <li><strong>A small AI model, in your browser, turns your question into a vector.</strong> The
 page loads a multilingual sentence-embedding model with
@@ -366,7 +366,7 @@ graph</em>, not just a list.</li>
 <p>The graph is a remote <code>.rete</code> (or an in-browser embed for the bundled demo); the
 entity vectors travel alongside it as a small sidecar. The page fetches only what
 it needs and does the rest locally.</p>
-<h2>Datasets</h2>
+<h2 id="datasets">Datasets</h2>
 <p>The selector offers a bundled <strong>demo</strong> (a handful of papers embedded in the
 page), and remote <strong>Wikidata</strong> slices (100 MB / 1 GB) served over HTTP range from
 the project's storage. Pick one, let the model warm up once, and ask away.</p>

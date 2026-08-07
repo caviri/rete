@@ -337,11 +337,11 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>WASM &amp; JavaScript API</h1>
+<h1 id="wasm--javascript-api">WASM &amp; JavaScript API</h1>
 <p><code>crates/rete-wasm</code> compiles the <strong>same</strong> engine (dictionary, permutation indexes,
 SPARQL, zstd decode) to WebAssembly, so a web page queries a <code>.rete</code> file
 client-side with no server. <code>web/index.html</code> is a working serverless explorer.</p>
-<h2>Build</h2>
+<h2 id="build">Build</h2>
 <pre><code class="language-sh">docker compose build wasm
 docker compose run --rm wasm
 </code></pre>
@@ -362,7 +362,7 @@ before its explicit, pinned Binaryen transform.</p>
 <p>zstd's C encoder isn't used on wasm; decoding uses the pure-Rust <code>ruzstd</code>, so the
 browser reads compressed files fine. <code>rete-wasm</code> depends on <code>rete-core</code> with
 <code>--no-default-features</code>.</p>
-<h2>Stable JS API</h2>
+<h2 id="stable-js-api">Stable JS API</h2>
 <p>The 1.0 stable surface is <code>Graph</code>, <code>RemoteGraph</code>, <code>build</code>, <code>query</code>,
 <code>query_sparql</code>, <code>header_ranges</code>, <code>summary_overview</code>, and the validation and
 reasoning functions documented below. <code>reach_parallel</code> and the <code>threads</code>
@@ -465,7 +465,7 @@ is an error — never a silently incomplete result.</p>
 <p>The length probe uses a one-byte ranged <code>GET</code> (reading the total from
 <code>Content-Range</code>) rather than <code>HEAD</code>, since some hosts reject <code>HEAD</code> —
 notably Hugging Face's signed-redirect storage, which answers <code>405</code>.</p>
-<h2>Caching remote reads</h2>
+<h2 id="caching-remote-reads">Caching remote reads</h2>
 <p>Range reads are <strong>cached</strong>, so re-running or refining a query on a remote dataset
 re-fetches almost nothing. Two layers:</p>
 <ul>
@@ -543,7 +543,7 @@ browser-style camelCase fields: <code>resultCount</code>, <code>matchedPattern</
 container; <code>indexSectionRange</code> is the selected permutation payload inside it.
 Tile provenance reports the physical tile holding each match —
 <code>{ "available": true, "id": "SPO/3", "range": { … } }</code>.</p>
-<h3>Minimal example</h3>
+<h3 id="minimal-example">Minimal example</h3>
 <pre><code class="language-js">import init, { info, query_sparql } from "./pkg/rete_wasm.js";
 await init();
 const bytes = new Uint8Array(await (await fetch("/data.rete")).arrayBuffer());
@@ -551,7 +551,7 @@ console.log(JSON.parse(info(bytes)));
 const rows = JSON.parse(query_sparql(bytes,
   `PREFIX e: &lt;http://ex/&gt; SELECT ?y WHERE { e:Alice e:knows ?y }`));
 </code></pre>
-<h2>Progressive loading (overview without the index)</h2>
+<h2 id="progressive-loading-overview-without-the-index">Progressive loading (overview without the index)</h2>
 <img src="img/progressive-fetch.svg" alt="A client issues three small range requests for the header, dictionary, and pyramid summary; the large index block is greyed out and never fetched.">
 <p><em>Three small range requests (header + dictionary + summary, ~25% of the file) build the coarse graph; the large triple index is never downloaded.</em></p>
 <p><code>header_ranges</code> + <code>summary_overview</code> implement the "overview first" path in the
@@ -609,7 +609,7 @@ of these shapes:</p>
   }
 }
 </code></pre>
-<h2>The demo page / playground</h2>
+<h2 id="the-demo-page--playground">The demo page / playground</h2>
 <p><code>docs/playground.html</code> is the static console build. It is generated from
 <code>web/playground.template.html</code> plus the source fragments in
 <code>web/playground-src/</code>, then inlines the no-modules WASM glue, WASM bytes, and
@@ -623,7 +623,7 @@ HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
 tiles cross the wire), caches those reads across queries (above), and federates a
 query across <strong>several</strong> sources via the SPARQL console's <strong>+ Add source</strong> button
 — see <a href="federation.html#in-the-playground">Federated queries</a>.</p>
-<h3>Rich result cells and focused cards</h3>
+<h3 id="rich-result-cells-and-focused-cards">Rich result cells and focused cards</h3>
 <p>Every Table column and Card field has the same explicit render-type menu. In
 addition to Auto, Text, Link, Button, Image, IIIF, PDF viewer, Map, 3D, Audio,
 Video, Spin, and Number, two opt-in types handle values that Auto deliberately
@@ -653,7 +653,7 @@ is wider and leaves neighboring cards visible. Navigate it with Prev/Next,
 Left/Right, native horizontal trackpad scrolling, Shift+wheel, dragging a
 non-interactive card area, or the visible horizontal scrollbar. Touch devices
 retain native swipe and vertical scrolling inside long cards.</p>
-<h3>Find a term</h3>
+<h3 id="find-a-term">Find a term</h3>
 <p>The console's <strong>🔎 Find a term</strong> button opens a picker so you don't have to know
 a graph's IRIs by heart. It opens on the schema card's <strong>classes and predicates</strong>
 (instant, from the resident card) and, as you type, also searches <strong>entities by
@@ -668,7 +668,7 @@ instant; on a remote graph the read is a single bounded range query. The <strong
 selector at the top chooses which predicate is read as the human label
 (<code>rdfs:label</code>, <code>skos:prefLabel</code>, <code>schema:name</code>, … or <code>auto</code>), and the same choice
 drives the editor's inline <strong>Labels</strong> decode chips.</p>
-<h2>Media &amp; companions</h2>
+<h2 id="media--companions">Media &amp; companions</h2>
 <p>Inline rendering of images / IIIF / 3D / audio / geo cells in playground
 results — and the asset-preparation pipelines behind them — moved to their own
 page: <a href="media-companions.html">Media &amp; SQL companions</a>.</p>

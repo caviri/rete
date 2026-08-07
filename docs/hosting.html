@@ -337,12 +337,12 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Hosting your <code>.rete</code></h1>
+<h1 id="hosting-your-rete">Hosting your <code>.rete</code></h1>
 <p>A <code>.rete</code> file needs <strong>no special server</strong> — the whole promise of the format is
 that any HTTP host can serve it queryably. This page says exactly what a host
 must support, how to check it in ten seconds, and gives working recipes for the
 hosts this project uses in production.</p>
-<h2>What a host must support</h2>
+<h2 id="what-a-host-must-support">What a host must support</h2>
 <ol>
 <li><strong>HTTP range requests.</strong> A <code>Range: bytes=…</code> request must get back
 <code>206 Partial Content</code> with exactly those bytes. A host that ignores <code>Range</code>
@@ -359,7 +359,7 @@ ranged <code>GET</code> and reads the total from <code>Content-Range</code> — 
 safelisted, so that fallback additionally needs
 <code>Access-Control-Expose-Headers: Content-Range</code>. Satisfy either one.</li>
 </ol>
-<h3>The ten-second check</h3>
+<h3 id="the-ten-second-check">The ten-second check</h3>
 <pre><code class="language-sh"># 206 + a content-range header = ranges work:
 curl -sI -r 0-1023 https://host/path/data.rete | grep -iE "^HTTP|content-range"
 # HTTP/2 206
@@ -373,8 +373,8 @@ curl -sI -r 0-1023 -H "Origin: https://example.org" https://host/path/data.rete 
 dataset card in two range requests — and the same URL pasted into the
 <a href="playground-guide.html">playground</a>'s <strong>+ Add source → Connect (lazy)</strong> queries it
 live.</p>
-<h2>Recipes</h2>
-<h3>Cloudflare R2 (what the playground uses)</h3>
+<h2 id="recipes">Recipes</h2>
+<h3 id="cloudflare-r2-what-the-playground-uses">Cloudflare R2 (what the playground uses)</h3>
 <p>All the playground's datasets are served from an R2 bucket behind a custom
 domain (<code>data.graphplaza.com</code>): direct <code>206</code> responses, free egress, CORS-open.
 Two things to configure once on the bucket:</p>
@@ -397,8 +397,8 @@ python3 dev/r2_s3.py put &lt;bucket&gt; data.rete datasets/mygraph/data.rete
 <p>One sizing note: Cloudflare's cache handles objects up to ~512 MB, so files at
 or below that stay CDN-cacheable. A bigger graph is better published as several
 <strong>shards</strong> queried as one — see
-<a href="federation.html#beyond-union-cross-source-joins-and-sharded-datasets">Federated queries</a>.</p>
-<h3>Zenodo (free, permanent, citable)</h3>
+<a href="federation.html#beyond-union--cross-source-joins-and-sharded-datasets">Federated queries</a>.</p>
+<h3 id="zenodo-free-permanent-citable">Zenodo (free, permanent, citable)</h3>
 <p>An academic repository works as a live query host: Zenodo serves uploads with
 <code>206</code> ranges and CORS, and gives the deposit a <strong>DOI</strong> — so a paper's data
 citation can point at a file that is <em>directly queryable in the browser</em>. No
@@ -409,12 +409,12 @@ playground's <code>wikidata-zenodo</code> dataset is a 1 GB <code>.rete</code> s
 a Zenodo DOI, and it benchmarks on par with R2 (~4 s to first answer).</p>
 <p>Upload through the normal Zenodo web UI or REST API; the file URL under
 <code>https://zenodo.org/records/&lt;id&gt;/files/&lt;name&gt;</code> is the query URL.</p>
-<h3>GitHub Pages / raw.githubusercontent.com</h3>
+<h3 id="github-pages--rawgithubusercontentcom">GitHub Pages / raw.githubusercontent.com</h3>
 <p>Both serve ranges and send <code>Access-Control-Allow-Origin: *</code>, so a small <code>.rete</code>
 can live right next to your project site (this repo's own docs site hosts demo
 files that way). The constraint is GitHub's <strong>100 MB per-file limit</strong> — fine
 for demos and small graphs, not for the big ones.</p>
-<h3>S3 / GCS / any static host</h3>
+<h3 id="s3--gcs--any-static-host">S3 / GCS / any static host</h3>
 <p>Standard object stores work out of the box for the CLI; for browsers, attach
 the same kind of CORS policy as the R2 recipe (S3 and GCS both take a JSON CORS
 configuration; make sure <code>GET</code> + <code>HEAD</code> are allowed and <code>Content-Range</code> is
@@ -422,13 +422,13 @@ exposed). For local development, the bundled dev server speaks ranges:</p>
 <pre><code class="language-sh">python3 scripts/range_server.py 8000 .
 rete card-url http://127.0.0.1:8000/data.rete
 </code></pre>
-<h3>Hosts that do <em>not</em> work (from the browser)</h3>
+<h3 id="hosts-that-do-not-work-from-the-browser">Hosts that do <em>not</em> work (from the browser)</h3>
 <p>A host can serve the CLI fine and still fail in a browser. The known offender:
 Hugging Face's <code>buckets/…/resolve</code> endpoint answers <code>405</code> to a cross-origin
 browser <code>GET</code> (the CLI sends no <code>Origin</code>, so it never notices). If a host
 can't be made CORS-friendly, put a CORS-open front (a proxy, or R2) in front of
 the bytes.</p>
-<h2>After hosting: publish it properly</h2>
+<h2 id="after-hosting-publish-it-properly">After hosting: publish it properly</h2>
 <ul>
 <li>Embed a <a href="dataset-cards.html">Dataset Card</a> at build time (<code>rete build --card</code>)
 so anyone who finds the URL gets the title, license, counts, and runnable

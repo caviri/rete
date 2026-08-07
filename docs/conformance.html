@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>SPARQL 1.1 conformance</h1>
+<h1 id="sparql-11-conformance">SPARQL 1.1 conformance</h1>
 <p>How much of SPARQL does rete actually answer correctly? This runs the official
 <strong>W3C SPARQL 1.1 query-evaluation test suite</strong> — the canonical
 <a href="https://github.com/w3c/rdf-tests"><code>w3c/rdf-tests</code></a> fixtures: each test ships a
@@ -353,7 +353,7 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <pre><code class="language-sh">python scripts/sparql_conformance.py \
   --rete target/release/rete --suite &lt;rdf-tests&gt;/sparql/sparql11
 </code></pre>
-<h2>Scorecard</h2>
+<h2 id="scorecard">Scorecard</h2>
 <p><strong>309 query-evaluation tests</strong>, byte-for-byte against the W3C expected results.
 "n/s" = errored / not supported.</p>
 <table><thead><tr><th>Category</th><th style="text-align: right">pass</th><th style="text-align: right">n/s</th><th>notes</th></tr></thead><tbody>
@@ -382,7 +382,7 @@ count drops below <code>tests/conformance-baseline.json</code>. It was not alway
 figure here read 232 / 75.1% while the engine actually scored 236 / 76.4%, and
 nothing would have caught it moving the other way.</p>
 </blockquote>
-<h2>Coverage notes</h2>
+<h2 id="coverage-notes">Coverage notes</h2>
 <p><strong>Strong areas.</strong> Negation (<code>MINUS</code> / <code>NOT EXISTS</code>), JSON results, XSD casts
 (with strict lexical validation), and projection expressions are 100%. Property
 paths are near-full — including negated property sets (<code>!(:p1|…|:pn)</code>) and the
@@ -421,7 +421,7 @@ relative-base resolution. The non-deterministic builtins <code>RAND</code>,
 <code>UUID</code>/<code>STRUUID</code>, <code>BNODE</code> work in the browser too (via <code>getrandom</code>'s <code>js</code>
 backend), and an error in an <code>IF</code> condition propagates rather than silently
 taking the else-branch.</p>
-<h2>The same answers, lazily and remotely</h2>
+<h2 id="the-same-answers-lazily-and-remotely">The same answers, lazily and remotely</h2>
 <p>The conformance run opens each file <strong>locally (in memory)</strong>. rete's three read
 modes — local, <strong>remote-lazy</strong> (HTTP range reads via <code>sparql_url</code> /
 <code>sparql-url</code>), and <strong>remote-cached</strong> (download once, query in memory) — share the
@@ -430,7 +430,7 @@ results — demonstrated on a real ~12 M-triple graph: the same query yields the
 lazily from a CDN, or federated across shards. The tiny conformance fixtures make
 per-mode <em>timing</em> meaningless — that comparison lives in
 <a href="BENCHMARK.html">BENCHMARK</a>, on a graph large enough for it to matter.</p>
-<h2>Reproduce</h2>
+<h2 id="reproduce">Reproduce</h2>
 <pre><code class="language-sh">git clone --depth 1 --filter=blob:none --sparse https://github.com/w3c/rdf-tests
 cd rdf-tests &amp;&amp; git sparse-checkout set sparql/sparql11 &amp;&amp; cd ..
 cargo build --release -p rete-cli

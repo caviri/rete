@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>File explorer — browse a <code>.rete</code> like an archive</h1>
+<h1 id="file-explorer--browse-a-rete-like-an-archive">File explorer — browse a <code>.rete</code> like an archive</h1>
 <p>Open a <code>.rete</code> the way an archive tool opens a <code>.zip</code>: folders, files, a preview
 pane, and <strong>extract</strong>. It runs in a browser and ships as a desktop app for macOS
 and Windows.</p>
@@ -351,7 +351,7 @@ into.</p>
 part of the released surface. The desktop builds are unsigned.</p>
 </blockquote>
 <hr />
-<h2>Run it in a browser</h2>
+<h2 id="run-it-in-a-browser">Run it in a browser</h2>
 <p>Served from the repo root, like the <a href="plaza-guide.html">plaza</a>:</p>
 <pre><code class="language-sh">python3 -m http.server 8901
 # → http://127.0.0.1:8901/experiments/rete-file-explorer/index.html
@@ -360,7 +360,7 @@ part of the released surface. The desktop builds are unsigned.</p>
 first if that directory is stale.</p>
 <p>Open one of the catalogued datasets, paste any <code>.rete</code> URL, or <strong>drag a file onto
 the window</strong> — anywhere, at any time.</p>
-<h2>Install the desktop app</h2>
+<h2 id="install-the-desktop-app">Install the desktop app</h2>
 <p>Builds are attached to a GitHub Release by
 <a href="https://github.com/caviri/rete/actions/workflows/desktop-release.yml"><code>.github/workflows/desktop-release.yml</code></a>:
 a universal macOS <code>.dmg</code> (Apple Silicon + Intel) and a Windows <code>.msi</code> /
@@ -377,7 +377,7 @@ Once, after dragging to Applications:</p>
 </code></pre>
 <p>Or right-click the app → <strong>Open</strong> → <strong>Open</strong>. On Windows, SmartScreen shows
 "Windows protected your PC" → <strong>More info</strong> → <strong>Run anyway</strong>.</p>
-<h2>Quick Look on macOS (experimental)</h2>
+<h2 id="quick-look-on-macos-experimental">Quick Look on macOS (experimental)</h2>
 <p>The app bundles a <strong>Quick Look preview extension</strong>: select a <code>.rete</code> in Finder,
 press space, and its Dataset Card appears — title, description, licence,
 publisher, the section table, quad and term counts, content hash.</p>
@@ -401,7 +401,7 @@ rather than adding a second project file to keep in sync.</p>
 (<code>com.graphplaza.rete</code>), which is what the extension keys off and what gives
 Finder double-click-to-open.</p>
 <hr />
-<h2>Five views, because there is no single honest tree</h2>
+<h2 id="five-views-because-there-is-no-single-honest-tree">Five views, because there is no single honest tree</h2>
 <p>RDF is a graph. It has no canonical folder hierarchy — but it has several
 defensible ones, each true in its own way, so you switch between them.</p>
 <table><thead><tr><th>View</th><th>Folders are</th><th>What it costs</th></tr></thead><tbody>
@@ -417,7 +417,7 @@ of a file and the DICTIONARY 9%, and click a section to see its extent drawn
 against the whole file. See <a href="SPEC.html">the format spec</a> for what each section holds.</p>
 <p>A "file" is a resource's Concise Bounded Description, previewable as a property
 table, JSON-LD, or Turtle, with its incoming references underneath.</p>
-<h2>Folders that do not bottom out</h2>
+<h2 id="folders-that-do-not-bottom-out">Folders that do not bottom out</h2>
 <p>Expanding an instance lists the resources it points at, labelled by the predicate
 that got you there, plus a <code>↩ referenced by</code> folder for the inbound side. So you
 descend <code>Creature → A-Acererak the Archlich → printedIn → Adventures in the Forgotten Realms → ↩ referenced by → …</code> for as long as the data keeps going.</p>
@@ -425,7 +425,7 @@ descend <code>Creature → A-Acererak the Archlich → printedIn → Adventures 
 travel with each node, so a link back to something already on your path is marked
 <code>↺</code> rather than pretending to be new. Literals are deliberately <em>not</em> children —
 they are the contents of the file, shown in the preview.</p>
-<h2>Two layouts</h2>
+<h2 id="two-layouts">Two layouts</h2>
 <ul>
 <li><strong>Tree</strong> — nested and expandable. The twisty expands; clicking the name opens
 the preview. They are separate targets on purpose: a resource is both a folder
@@ -433,7 +433,7 @@ and a file, so clicking its name must not collapse it.</li>
 <li><strong>Icons</strong> — one folder at a time as tiles with a breadcrumb, like a file
 manager. Tiles show a real thumbnail wherever the data has one.</li>
 </ul>
-<h2>Naming things</h2>
+<h2 id="naming-things">Naming things</h2>
 <p>IRIs make serviceable filenames and terrible reading. The <strong>name by</strong> control
 lists every literal-valued predicate the schema knows about, with counts, and
 lets you choose which supplies display names — because <code>rdfs:label</code> is not
@@ -441,7 +441,7 @@ universal. The default tries the usual set in order (<code>rdfs:label</code>,
 <code>skos:prefLabel</code>, <code>schema:name</code>, <code>dcterms:title</code>, …).</p>
 <p>Names are never on the critical path: listings paint local names immediately and
 patch labels in as background chunks land.</p>
-<h2>Search</h2>
+<h2 id="search">Search</h2>
 <p>Two indexes can answer a text search and neither is guaranteed, so the box tries
 the better one first and <strong>tells you which answered</strong>:</p>
 <table><thead><tr><th>Index</th><th>Matches</th><th>Present when</th></tr></thead><tbody>
@@ -451,21 +451,21 @@ the better one first and <strong>tells you which answered</strong>:</p>
 <p>That distinction matters. Silently returning nothing because a file has no text
 index is indistinguishable from "no matches", and the difference decides whether
 you rephrase the search or rebuild the file.</p>
-<h2>SPARQL</h2>
+<h2 id="sparql">SPARQL</h2>
 <p>The folder views can only answer questions someone anticipated. The <strong>SPARQL</strong>
 tab is the escape hatch: an editor seeded from the file's own biggest class,
 <code>Ctrl</code>/<code>Cmd</code>+<code>Enter</code> to run, results as a table whose IRIs are clickable — so you
 can query your way to something and then keep walking the graph from it.
 <code>CONSTRUCT</code> and <code>DESCRIBE</code> come back as Turtle. Results export as CSV or JSON.</p>
 <p>See <a href="sparql.html">SPARQL support</a> for what the engine accepts.</p>
-<h2>Extract</h2>
+<h2 id="extract">Extract</h2>
 <p>Select a class, predicate, or named-graph folder and pull it out as <strong>CSV</strong>,
 <strong>JSON</strong>, or <strong>N-Triples</strong>, with a row cap you control.</p>
 <p>This is the half of the archive metaphor that RDF tooling never offers:
 <a href="cli.html"><code>rete export</code></a> is all-or-nothing, and the alternative is writing SPARQL.
 "Tick the <code>Person</code> folder, get a spreadsheet" is the actual product.</p>
 <hr />
-<h2>What it costs to browse</h2>
+<h2 id="what-it-costs-to-browse">What it costs to browse</h2>
 <p>The footer meter reads <code>RemoteGraph.stats()</code> — cumulative <em>physical</em> bytes and
 requests, not a guess.</p>
 <table><thead><tr><th>Archive</th><th>Size</th><th>Open</th><th>Traffic to open</th></tr></thead><tbody>
@@ -478,7 +478,7 @@ requests, not a guess.</p>
 the session to 109 MB. That cost is dominated by <strong>dictionary chunk faults</strong>
 while decoding subject IDs, not by the <code>?s a &lt;C&gt;</code> scan, which is a contiguous POS
 range.</p>
-<h2>Files without a pyramid have no class list</h2>
+<h2 id="files-without-a-pyramid-have-no-class-list">Files without a pyramid have no class list</h2>
 <p><code>gharchive</code>, <code>orcid</code>, <code>dblp</code> and the <code>wikidata-xxl</code> shards carry
 <code>schemaMetaLen = 0</code>. Types and Predicates are empty for them, because deriving
 classes would mean scanning the whole file — the page says so rather than
@@ -486,7 +486,7 @@ appearing broken, and Namespace and Sections still work.</p>
 <p>Check before you wonder: a nonzero <code>schemaMetaLen</code> in the header means the views
 will populate.</p>
 <hr />
-<h2>Shape, for reuse</h2>
+<h2 id="shape-for-reuse">Shape, for reuse</h2>
 <p>The split is deliberate:</p>
 <ul>
 <li><strong><code>js/rete-fs.js</code></strong> — the whole projection: header parsing, the five views,

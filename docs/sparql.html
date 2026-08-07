@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>SPARQL support</h1>
+<h1 id="sparql-support">SPARQL support</h1>
 <p>The engine lives in <code>rete-core::sparql</code>. Queries are parsed with
 <a href="https://crates.io/crates/spargebra"><code>spargebra</code></a> and lowered to a small plan
 algebra (<code>Bgp</code>/<code>Join</code>/<code>Union</code>/<code>Minus</code>/<code>LeftJoin</code>/<code>Filter</code>/<code>Path</code>/<code>Values</code>/
@@ -353,7 +353,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
   <img src="img/bgp-join.svg" alt="Two triple patterns sharing the variable ?f are joined on it, producing a binding table with columns for the bound variables.">
   <figcaption>A basic graph pattern is a join on shared variables: patterns that share <code>?f</code> are intersected via the permutation indexes.</figcaption>
 </figure>
-<h2>Supported</h2>
+<h2 id="supported">Supported</h2>
 <table><thead><tr><th>Area</th><th>Details</th></tr></thead><tbody>
 <tr><td><strong>Query forms</strong></td><td><code>SELECT</code>, <code>ASK</code>, <code>CONSTRUCT</code>, <code>DESCRIBE</code></td></tr>
 <tr><td><strong>Patterns</strong></td><td>Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables</td></tr>
@@ -367,10 +367,10 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 <tr><td><strong>RDF-star</strong></td><td>Quoted triples <code>&lt;&lt; s p o &gt;&gt;</code> in subject/object position — ingest (N-Triples-star &amp; Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables <code>&lt;&lt; ?s :p ?o &gt;&gt;</code>) and the <code>isTRIPLE</code> / <code>TRIPLE</code> / <code>SUBJECT</code> / <code>PREDICATE</code> / <code>OBJECT</code> built-ins. See <a href="#rdf-star">below</a>.</td></tr>
 <tr><td><strong>Reasoning (OWL 2 QL)</strong></td><td>Opt-in ontology-mediated answering by <strong>query rewriting</strong> — no materialization: <code>rdfs:subClassOf</code> / <code>subPropertyOf</code> hierarchy + <code>rdfs:domain</code> / <code>range</code> type inference, computed over the raw data. <code>rete sparql … --entail</code>, or the playground <strong>🧠 Reason</strong> toggle. See <a href="#reasoning-owl-2-ql">below</a>.</td></tr>
 </tbody></table>
-<h2>Property paths</h2>
+<h2 id="property-paths">Property paths</h2>
 <p>Property paths are evaluated goal-directed from a bound endpoint and support
 <code>p+</code>, <code>p*</code>, <code>p?</code>, reverse <code>^p</code>, sequence <code>a/b</code>, and alternative <code>a|b</code>.</p>
-<h3>Zero-length semantics</h3>
+<h3 id="zero-length-semantics">Zero-length semantics</h3>
 <p><code>*</code> and <code>?</code> include the zero-length path (a node reaches itself); <code>+</code> does not.
 This holds in every binding direction:</p>
 <pre><code class="language-sparql"># Alice plus everyone she transitively knows (includes Alice herself):
@@ -378,13 +378,13 @@ SELECT ?y WHERE { ex:Alice ex:knows* ?y }
 # Everyone who reaches Carol in ≤1 hop (includes Carol):
 SELECT ?x WHERE { ?x ex:knows? ex:Carol }
 </code></pre>
-<h3>Index-free aggregates</h3>
+<h3 id="index-free-aggregates">Index-free aggregates</h3>
 <p>Exact per-predicate totals come straight from the pyramid summary's superedge
 counts, without reading the triple index:</p>
 <pre><code class="language-sh">rete predicates data.rete            # CLI
 </code></pre>
 <p>The same per-predicate totals back the playground's index-free aggregate path.</p>
-<h3>Evaluation model</h3>
+<h3 id="evaluation-model">Evaluation model</h3>
 <p>The algebra evaluates as a lazy pull pipeline over integer slot rows: joins,
 <code>MINUS</code>, <code>DISTINCT</code>, filters, and <code>GRAPH</code> stream, so <code>LIMIT</code> and <code>ASK</code> stop the
 underlying index scans early, and under a small known demand joins switch to
@@ -401,7 +401,7 @@ resolved to strings only at projection. It is still not a <em>cost-based</em> pl
 join order is a selectivity heuristic — and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph still
 wins.</p>
-<h3>Community-split evaluation</h3>
+<h3 id="community-split-evaluation">Community-split evaluation</h3>
 <p>The engine can also evaluate a SELECT with a <strong>split-where-sound,
 global-where-not</strong> strategy that always returns exactly the whole-graph
 answer. The one place the pyramid partition genuinely applies is a <em>subject
@@ -478,13 +478,13 @@ dataset).</li>
 <em>about</em> each matched resource — still reads the default graph; the union
 applies to the pattern matching that selects the resources.</li>
 </ul>
-<h2>Output views &amp; query shapes</h2>
+<h2 id="output-views--query-shapes">Output views &amp; query shapes</h2>
 <p>The playground renders one result several ways — Table, Graph, Map, Time,
 TTL/JSON-LD — and each view expects a particular query shape (a geometry column
 for Map, a year/date column for Time, …). That matrix lives with the rest of the
 playground documentation: see
 <a href="playground-guide.html#output-views">Playground — output views</a>.</p>
-<h2>Federation: <code>SERVICE</code></h2>
+<h2 id="federation-service">Federation: <code>SERVICE</code></h2>
 <p>SPARQL 1.1 federated query is supported: a <code>SERVICE &lt;endpoint&gt; { … }</code> block is
 shipped (as written) to the remote SPARQL endpoint at evaluation time and its
 solutions join the surrounding pattern on shared variables — so one query can
@@ -513,7 +513,7 @@ HTTP transport (<code>ServiceClient</code>); in the browser the endpoint must al
 CORS (the big public ones do).</li>
 <li><code>SERVICE ?endpoint { … }</code> (a variable endpoint) is not supported.</li>
 </ul>
-<h2>RDF-star</h2>
+<h2 id="rdf-star">RDF-star</h2>
 <p>rete supports <strong>RDF-star</strong>: a <em>quoted triple</em> <code>&lt;&lt; s p o &gt;&gt;</code> may stand in the
 subject or object position of another triple, so you can make statements <strong>about
 statements</strong> — the natural home for provenance and annotation (who recorded a
@@ -572,7 +572,7 @@ an RDF 1.2 N-Triples file and an RDF-star file are interchangeable. RDF 1.2
 <code>VERSION "1.2"</code> declaration is accepted. RDF 1.2 reification (<code>rdf:reifies</code>) and
 the new SPARQL 1.2 direction functions are not yet supported — see
 <a href="compatibility.html#is-it-compatible-with-rdf">Compatibility</a>.</p>
-<h2>Reasoning (OWL 2 QL)</h2>
+<h2 id="reasoning-owl-2-ql">Reasoning (OWL 2 QL)</h2>
 <p>rete answers ontology-mediated queries by <strong>rewriting the query</strong>, not by
 materializing entailments. That is the OWL 2 QL idea, and it is the profile that
 fits a cloud-native, range-queried file: the TBox is small, the ABox is huge and
@@ -620,14 +620,14 @@ matches; with it on you get the entailed answers for the supported cases — it 
 only ever be <em>incomplete</em> for that one chaining shape. The whole-graph RL reasoner
 (<code>rete reason</code> / the Coherence tab) is a separate, materializing tool for
 coherence checking.</p>
-<h2>Not supported</h2>
+<h2 id="not-supported">Not supported</h2>
 <p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
 <ul>
 <li><strong><code>SERVICE ?var</code></strong> — federation to a variable-bound endpoint.</li>
 <li>Complex <code>ORDER BY</code> <strong>key expressions</strong> beyond a bare variable/constant are not
 yet evaluated for ordering.</li>
 </ul>
-<h2>Examples</h2>
+<h2 id="examples">Examples</h2>
 <pre><code class="language-sparql"># 2-hop join
 PREFIX ex: &lt;http://ex/&gt;
 SELECT ?z WHERE { ex:Alice ex:knows ?y . ?y ex:knows ?z }

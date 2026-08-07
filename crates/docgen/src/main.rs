@@ -5,10 +5,11 @@
 //! a shared template with a sidebar; inter-doc `.md` links are rewritten to
 //! `.html`. Run: `cargo run -p docgen` (from the repo root, or pass the docs dir).
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use pulldown_cmark::{html, Options, Parser};
+use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
 
 /// Crate version, shown in the sidebar next to the repository link.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -322,10 +323,88 @@ fn render_markdown(md: &str) -> String {
     opts.insert(Options::ENABLE_FOOTNOTES);
     opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
 
-    let parser = Parser::new_ext(md, opts);
+    let mut events: Vec<Event> = Parser::new_ext(md, opts).collect();
+    anchor_headings(&mut events);
     let mut out = String::new();
-    html::push_html(&mut out, parser);
+    html::push_html(&mut out, events.into_iter());
     rewrite_links(&out)
+}
+
+/// Give every heading an `id`, so an in-page link written in the Markdown
+/// (`[jump](#some-heading)`) lands somewhere in the built page.
+///
+/// The ids follow GitHub's slug convention, because that is what an author
+/// writing `docs/*.md` sees working on github.com and will naturally copy: the
+/// heading's *text* (markup dropped — `` `code` ``, links and emphasis
+/// contribute what they read as, not how they are written), lowercased, with
+/// everything that is not alphanumeric, space or hyphen removed and spaces
+/// turned into hyphens. Repeats of one slug get a `-1`, `-2`, … suffix.
+///
+/// An explicit `{#id}` (ENABLE_HEADING_ATTRIBUTES) is the author's own and is
+/// kept verbatim — only recorded so a later heading cannot silently take it.
+fn anchor_headings(events: &mut [Event<'_>]) {
+    let mut used: HashMap<String, usize> = HashMap::new();
+    let mut i = 0;
+    while i < events.len() {
+        if !matches!(events[i], Event::Start(Tag::Heading { .. })) {
+            i += 1;
+            continue;
+        }
+        // Read the heading's text off the events between it and its close.
+        let mut text = String::new();
+        let mut end = i + 1;
+        while end < events.len() && !matches!(events[end], Event::End(TagEnd::Heading(_))) {
+            match &events[end] {
+                Event::Text(t) | Event::Code(t) => text.push_str(t),
+                Event::SoftBreak | Event::HardBreak => text.push(' '),
+                _ => {}
+            }
+            end += 1;
+        }
+        if let Event::Start(Tag::Heading { id, .. }) = &mut events[i] {
+            let anchor = match id.take() {
+                Some(explicit) => {
+                    used.insert(explicit.to_string(), 1);
+                    explicit.to_string()
+                }
+                None => unique(&mut used, slug(&text)),
+            };
+            *id = Some(anchor.into());
+        }
+        i = end + 1;
+    }
+}
+
+/// A heading's text → the anchor GitHub would mint for it.
+fn slug(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
+        } else if ch == '-' || ch.is_whitespace() {
+            // Runs are kept, not collapsed: `--limit <n>` slugs to `---limit-n`,
+            // exactly as it does on github.com.
+            out.push('-');
+        }
+    }
+    out
+}
+
+/// Claim `base`, or the first free `base-1`, `base-2`, … if it is already taken.
+fn unique(used: &mut HashMap<String, usize>, base: String) -> String {
+    let base = if base.is_empty() {
+        "section".to_string()
+    } else {
+        base
+    };
+    let seen = used.entry(base.clone()).or_insert(0);
+    let anchor = if *seen == 0 {
+        base
+    } else {
+        format!("{base}-{seen}")
+    };
+    *seen += 1;
+    anchor
 }
 
 /// Make links between docs work in the rendered site: a `docs/`-prefixed or bare
@@ -1026,7 +1105,9 @@ const GLOSSARY_JS: &str = r#"
 
 /// "On this page" table of contents, built client-side from the `<h2>`/`<h3>`
 /// headings and shown sticky at the top-right (collapses on narrow screens). It
-/// gives each heading a slug id, links to it, and highlights the section in view.
+/// links to each heading and highlights the section in view. The ids it links to
+/// are already in the HTML (see `anchor_headings`); the slugger below is only a
+/// fallback for a heading that somehow arrived without one.
 const TOC_JS: &str = r##"
 (function () {
   document.addEventListener("DOMContentLoaded", function () {
@@ -1108,3 +1189,55 @@ const TOC_JS: &str = r##"
   render();
 })();
 "##;
+
+#[cfg(test)]
+mod tests {
+    use super::render_markdown;
+
+    /// The ids have to be the ones github.com mints for the same headings —
+    /// that is the whole point of the convention, and what makes an anchor an
+    /// author tested on GitHub keep working here.
+    #[test]
+    fn headings_get_github_slugs() {
+        let html = render_markdown(
+            "# Getting started\n\n\
+             ## `rete search <file> [<prefix>] [--limit <n>] [--json]`\n\n\
+             ## Beyond union — cross-source joins\n\n\
+             ### 7.4 The schema pyramid (v2)\n",
+        );
+        assert!(html.contains(r#"<h1 id="getting-started">"#), "{html}");
+        // Punctuation is dropped, but the spaces around it are not: `--limit`
+        // after a space slugs to `---limit`, and an em dash leaves `--`.
+        assert!(
+            html.contains(r#"<h2 id="rete-search-file-prefix---limit-n---json">"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<h2 id="beyond-union--cross-source-joins">"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<h3 id="74-the-schema-pyramid-v2">"#),
+            "{html}"
+        );
+    }
+
+    /// A heading is slugged from what it *reads* as, not from its markup.
+    #[test]
+    fn heading_markup_does_not_reach_the_slug() {
+        let html = render_markdown("## The **fast** [path](x.md) to `.rete`\n");
+        assert!(
+            html.contains(r#"<h2 id="the-fast-path-to-rete">"#),
+            "{html}"
+        );
+    }
+
+    /// Two headings that read alike still get one anchor each.
+    #[test]
+    fn repeated_headings_are_numbered() {
+        let html = render_markdown("## Notes\n\n## Notes\n\n## Notes\n");
+        assert!(html.contains(r#"<h2 id="notes">"#), "{html}");
+        assert!(html.contains(r#"<h2 id="notes-1">"#), "{html}");
+        assert!(html.contains(r#"<h2 id="notes-2">"#), "{html}");
+    }
+}

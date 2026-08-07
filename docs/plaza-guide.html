@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Plaza — a gallery of self-describing datasets</h1>
+<h1 id="plaza--a-gallery-of-self-describing-datasets">Plaza — a gallery of self-describing datasets</h1>
 <p><strong><a href="plaza/index.html">▸ Open the gallery →</a></strong> — "a gathering place for
 self-describing semantic datasets": a searchable grid of every published
 <code>.rete</code> graph, each shown as a live-read card rather than a hand-written blurb.</p>
@@ -345,7 +345,7 @@ self-describing semantic datasets": a searchable grid of every published
   <img src="img/plaza-guide.png" alt="The rete plaza page, 'a gathering place for self-describing semantic datasets', with a search box, a row of vocabulary/tag filter chips (ChEBI, DBpedia, GeoSPARQL, OWL, Wikidata, ontology, scholarly, ...), and a grid of dataset cards each showing a schema-pyramid thumbnail of classes (Paper, Person, City, literal), a title (scholar, history, nomisma, linked-jazz), a description, and stats like size, triple count and term count with the vocabularies used.">
   <figcaption>Every card on this page is read live from its dataset's own `.rete` file — nothing here is typed by hand.</figcaption>
 </figure>
-<h2>What it is</h2>
+<h2 id="what-it-is">What it is</h2>
 <p>Plaza is not a catalog file someone maintains — it's a page that opens a list
 of <code>.rete</code> files and asks each one to describe itself. Two small HTTP range
 reads (the header, then the metadata section) pull back the dataset's
@@ -353,13 +353,13 @@ reads (the header, then the metadata section) pull back the dataset's
 uses, and a schema-pyramid sketch of its classes. That sketch is drawn on the
 spot from the card's own class list, so it changes the moment the underlying
 data does.</p>
-<h2>How to use it</h2>
+<h2 id="how-to-use-it">How to use it</h2>
 <p>Type in the search box to filter by name, tag, or vocabulary, or click any of
 the chip filters (ChEBI, Wikidata, GeoSPARQL, OWL, …) to narrow the grid to
 datasets that actually use that vocabulary. Click a card to open its detail
 view and explore further — the query panel, schema graph, and file links all
 read from the same live card.</p>
-<h2>The key idea</h2>
+<h2 id="the-key-idea">The key idea</h2>
 <p>Because a <code>.rete</code> file carries its own card, a directory like this needs no
 server and no maintained index — pointing the page at a list of files is
 enough. That's the same <a href="dataset-cards.html">Dataset Cards</a> mechanism the

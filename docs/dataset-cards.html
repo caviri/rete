@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Dataset Cards</h1>
+<h1 id="dataset-cards">Dataset Cards</h1>
 <p>A <strong>Dataset Card</strong> is a small, embeddable data-catalog record carried <em>inside</em> a
 <code>.rete</code> file. It turns an opaque graph blob into a <strong>self-describing dataset</strong>:
 who made it, under what license, where it came from — plus an auto-computed
@@ -349,7 +349,7 @@ right after the 1 KB header. Adding a card is <strong>not a format change</stron
 without one is byte-for-byte identical to a pre-card build, and an older reader
 simply ignores the section. The card is folded into the file's <code>blake3</code> content
 hash, so <code>rete verify</code> covers it and it is <strong>tamper-evident</strong>.</p>
-<h2>Building a card</h2>
+<h2 id="building-a-card">Building a card</h2>
 <p>Cards are <strong>opt-in</strong>: a plain <code>rete build</code> writes no card and is unchanged. Pass
 any card flag to embed one. The statistics are derived from the data; the curated
 fields (title, license, …) are yours to supply.</p>
@@ -403,7 +403,7 @@ file with <code>--card-file</code>. Explicit flags override whatever the file pr
 and lists — see <a href="#the-description-markdown-not-html">The description</a> for what
 is supported, why raw HTML is not, and how to write one without hand-escaping
 newlines.</p>
-<h2>What's in a card</h2>
+<h2 id="whats-in-a-card">What's in a card</h2>
 <table><thead><tr><th>Field</th><th>Source</th><th>Meaning</th></tr></thead><tbody>
 <tr><td><code>title</code>, <code>license</code>, <code>source</code>, <code>created</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>Free-text catalog metadata. Omitted fields are absent from the JSON.</td></tr>
 <tr><td><code>description</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>The dataset's abstract, read as <strong>Markdown</strong> — headings, lists, links, code. Raw HTML is escaped, never rendered. May be written as an array of lines. Capped at 8 KiB. See <a href="#the-description-markdown-not-html">The description</a>.</td></tr>
@@ -438,7 +438,7 @@ list is <strong>capped</strong> and <strong>deterministically ordered</strong> (
 broken lexically), so building the same input twice yields a <strong>byte-identical</strong>
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching <code>rete progressive</code>.</p>
-<h3>Where to get <code>theme</code> IRIs</h3>
+<h3 id="where-to-get-theme-iris">Where to get <code>theme</code> IRIs</h3>
 <p><code>theme</code> rejects free text, which is only helpful if you know where an IRI
 comes from. Pick a <strong>published concept scheme</strong> and copy the concept's IRI —
 every example below resolves as printed:</p>
@@ -475,7 +475,7 @@ a reader to search by belongs in <code>keywords</code>, which takes free text pr
 you are never tempted to invent an IRI. <strong>Never mint a theme IRI yourself</strong> — a
 plausible-looking IRI in a scheme's namespace that resolves to nothing is worse
 than no theme at all.</p>
-<h3>One card, three versions</h3>
+<h3 id="one-card-three-versions">One card, three versions</h3>
 <p>A <code>.rete</code> file carries three different versions, each with its own owner. They
 answer different questions and are never merged:</p>
 <table><thead><tr><th>field</th><th>owner</th><th>answers</th><th>example</th></tr></thead><tbody>
@@ -487,7 +487,7 @@ answer different questions and are never merged:</p>
 <code>format_version</code> is stamped by the builder and changes only when the format
 does. <code>builder</code> lives in the unhashed build-info section because it is a fact
 about one build, not about the data.</p>
-<h2>The description: Markdown, not HTML</h2>
+<h2 id="the-description-markdown-not-html">The description: Markdown, not HTML</h2>
 <p><code>description</code> is the one curated field long enough to want structure, so it is
 read as <strong>Markdown</strong>. The card viewer renders headings, lists, links and code;
 every other surface reduces the same text to one readable line.</p>
@@ -505,7 +505,7 @@ every other surface reduces the same text to one readable line.</p>
   ]
 }
 </code></pre>
-<h3>Supported</h3>
+<h3 id="supported">Supported</h3>
 <table><thead><tr><th>Construct</th><th>Written as</th></tr></thead><tbody>
 <tr><td>Headings</td><td><code># One</code> … <code>###### Six</code> — rendered <strong>shifted down</strong>, so a card never emits an <code>&lt;h1&gt;</code>; the viewer's own title owns that level</td></tr>
 <tr><td>Bulleted lists</td><td><code>- item</code>, <code>* item</code>, <code>+ item</code> — <strong>nested by indentation</strong></td></tr>
@@ -520,7 +520,7 @@ every other surface reduces the same text to one readable line.</p>
 graph — and the viewer already draws its own tables from the derived profile),
 reference-style links, images, and footnotes. Every construct is more parser
 for less description.</p>
-<h3>Raw HTML is not supported — and that is the point</h3>
+<h3 id="raw-html-is-not-supported--and-that-is-the-point">Raw HTML is not supported — and that is the point</h3>
 <p>HTML in a description is <strong>escaped, not rendered</strong>: <code>&lt;b&gt;x&lt;/b&gt;</code> shows up as the
 five characters <code>&lt;b&gt;x&lt;/b&gt;</code>, and a <code>&lt;script&gt;</code> shows up as text.</p>
 <p>This is a deliberate refusal, not a missing feature. A card is <strong>third-party
@@ -539,7 +539,7 @@ element and executes nothing.</p>
 <p>The same reasoning already governs the card's JSON view, which tokenizes the
 raw bytes and escapes every token precisely so a <code>&lt;</code> inside a description
 cannot become an element.</p>
-<h3>Writing a multi-line description</h3>
+<h3 id="writing-a-multi-line-description">Writing a multi-line description</h3>
 <p>A JSON string can only carry line breaks as <code>\n</code> escapes, which is miserable to
 write by hand and worse to review. Three ways out, in the order they are worth
 reaching for:</p>
@@ -555,7 +555,7 @@ Markdown typed into it works as typed — the JSON mirror beside it inserts the
 </ol>
 <p>A literal <code>"description": "line one\nline two"</code> is of course still valid, and
 still what the file stores.</p>
-<h3>How long may it be?</h3>
+<h3 id="how-long-may-it-be">How long may it be?</h3>
 <p>Up to <strong>8 KiB</strong> of UTF-8 — the same budget as the <a href="#custom-fields-the-extra-bag"><code>extra</code> bag</a>,
 for the same reason: both ride in the metadata section that every CARD-tier
 reader fetches on every open. For scale, the longest description on the
@@ -567,7 +567,7 @@ that no longer says what the publisher wrote. A description is the dataset's
 <code>canonical_url</code>, or put it in the graph.</p>
 <p>Readers never validate any of this. A card written oversized by some other tool
 still opens — the cap is a write-time rule, like every other card rule.</p>
-<h3>Where a description is shown</h3>
+<h3 id="where-a-description-is-shown">Where a description is shown</h3>
 <p>Only the <strong>🏷 Card viewer</strong> renders blocks; it is a scrollable panel with room
 for them. Every other surface has room for one line, so it shows the same text
 with its block markers removed (<code>## Heading</code> becomes <code>Heading</code>, <code>- item</code>
@@ -580,7 +580,7 @@ becomes <code>• item</code>) rather than leaking raw markers into a paragraph:
 <tr><td><code>rete card</code> (terminal)</td><td>the source as written, indented to the value column</td></tr>
 <tr><td><code>--format jsonld</code> / <code>croissant</code></td><td>the source as written (both formats take Markdown in <code>description</code>)</td></tr>
 </tbody></table>
-<h2>Custom fields: the <code>extra</code> bag</h2>
+<h2 id="custom-fields-the-extra-bag">Custom fields: the <code>extra</code> bag</h2>
 <p>A publisher can put <strong>their own fields</strong> in a card — internal identifiers,
 review status, project tags, anything the official fields don't cover — under
 one reserved key, <code>extra</code>, in the <code>--card-file</code> document:</p>
@@ -600,7 +600,7 @@ validate against — they come from the card file only. (In Python,
 <code>Builder.card()</code> routes any keyword that is not a rete-defined field into the
 bag, and <code>extra={...}</code> merges a whole dict — the client writes the card it is
 given; the caps below are enforced by <code>rete build</code>.)</p>
-<h3>First-class field or the bag? The rule</h3>
+<h3 id="first-class-field-or-the-bag-the-rule">First-class field or the bag? The rule</h3>
 <p>Before putting anything in <code>extra</code>, ask two questions:</p>
 <p><strong>1. Does a standard vocabulary already have a term for it?</strong> If not — the
 meaning is yours, not agreed — it belongs in <code>extra</code>. The bag deliberately
@@ -647,7 +647,7 @@ coverage is known but <em>not encoded in the data</em>. If you need it today, th
 honest stopgap is the bag <em>plus the issue</em>: the value travels verbatim in
 <code>--json</code>, and the projection stays truthfully opaque until the field gets
 its term.</p>
-<h3>Why one bag, not prefixed keys</h3>
+<h3 id="why-one-bag-not-prefixed-keys">Why one bag, not prefixed keys</h3>
 <p>The failure mode worth designing against is a <strong>future collision</strong>: rete adds
 an official card field, and some published card already uses that name for
 something else. With prefixed top-level keys (<code>x-…</code>) custom and official
@@ -661,7 +661,7 @@ capture it. A consumer that doesn't care skips one key.</p>
 <p>One key inside the bag is reserved: <code>@context</code>, held back for a future
 author-supplied JSON-LD mapping (see the projection below). Everything else in
 <code>extra</code> is, by construction, not rete's.</p>
-<h3>What custom fields actually cost — and the limits</h3>
+<h3 id="what-custom-fields-actually-cost--and-the-limits">What custom fields actually cost — and the limits</h3>
 <p>Custom fields never touch the header: the header is a <strong>fixed 1 KiB of
 offsets</strong>, and no card content of any size can disturb it. What they grow is
 the <strong>metadata section</strong> — and that section is fetched by every CARD-tier
@@ -679,7 +679,7 @@ the 1 KiB header plus one coalesced metadata+build-info range, bag or no bag —
 pinned by test. The one cost worth knowing: on the smallest cards a maxed-out
 bag can push the coalesced range past a conservative TCP initial window
 (~14.6 KB), i.e. one extra round trip — never an extra request.</p>
-<h3>Overflow: the build fails</h3>
+<h3 id="overflow-the-build-fails">Overflow: the build fails</h3>
 <p>A bag over any limit <strong>rejects the build</strong> with the limit and the actual size
 in the error — it is never truncated. Truncation would ship a card that says
 something different from what its author wrote, with no way to know which
@@ -688,7 +688,7 @@ and "what hashed" would diverge invisibly. The derived profile lists <em>are</em
 capped (with <code>truncated</code> set) because they can be re-derived; curated input
 cannot — only its author knows what to cut, and at build time the fix costs a
 minute.</p>
-<h3>Deterministic, hashed, tamper-evident</h3>
+<h3 id="deterministic-hashed-tamper-evident">Deterministic, hashed, tamper-evident</h3>
 <p>The bag is curated input, so it lives <strong>inside</strong> the blake3 content hash like
 every other curated field — <code>rete verify</code> covers it, and any edit is detected.
 That placement is safe because its serialization is deterministic: keys are
@@ -698,7 +698,7 @@ even when the card file's keys are authored in a different order. The
 consequence: per-build volatile facts (timestamps, CI run ids) do <strong>not</strong>
 belong in <code>extra</code> — they would make every build hash differently, and the
 unhashed build-info section already records exactly those facts.</p>
-<h3>How the projections treat custom fields</h3>
+<h3 id="how-the-projections-treat-custom-fields">How the projections treat custom fields</h3>
 <p>A custom field has no vocabulary term, so projecting it as ordinary RDF would
 invent semantics. The projections keep the fields without pretending to
 understand them:</p>
@@ -720,7 +720,7 @@ honestly-mappable <em>subset</em> (no <code>recordSet</code>, no partitions), fo
 that would do nothing with opaque publisher keys.</li>
 <li><strong><code>--json</code></strong> always carries the bag verbatim.</li>
 </ul>
-<h2>Build conditions: the build-info section</h2>
+<h2 id="build-conditions-the-build-info-section">Build conditions: the build-info section</h2>
 <p>The card answers <em>what the data is</em>; a second, adjacent record answers <strong>how
 this particular file came to be</strong> — the questions you ask when a file behaves
 oddly and there was previously no way to answer them from the file ("which
@@ -739,7 +739,7 @@ algorithm, <code>--text-index</code>, <code>--materialize</code>/<code>--reason<
 <li><code>dropped_queries</code> — starter queries this build generated, <strong>ran</strong>, and then
 refused to ship (below). Absent on a healthy build.</li>
 </ul>
-<h3>Why it sits outside the content hash</h3>
+<h3 id="why-it-sits-outside-the-content-hash">Why it sits outside the content hash</h3>
 <p>The card folds into the file's reproducible blake3 content hash, and <strong>two
 builds of identical data must keep hashing identically</strong> — that property is
 load-bearing (release parity checks, dedup, cache validators). A timestamp and
@@ -750,7 +750,7 @@ readers skip it knowingly), stripping it from two builds of the same input
 yields byte-identical images, and its contents are advisory provenance, not
 integrity-protected data. Cardless builds carry no build-info at all and remain
 byte-identical to pre-build-info output.</p>
-<h3>The starter-query cost figures</h3>
+<h3 id="the-starter-query-cost-figures">The starter-query cost figures</h3>
 <p>Each starter query is run once, <strong>cold</strong> (a fresh lazy open per query, what a
 stateless remote client pays), against the finished image. Two kinds of number
 are recorded together but labelled apart:</p>
@@ -770,7 +770,7 @@ quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
 <p>The memory-bounded external build and <code>rete merge</code> record
 timestamp/builder/params but no costs (their cards carry no derived starter
 queries to measure).</p>
-<h3>A build does not ship a query it just measured at zero rows</h3>
+<h3 id="a-build-does-not-ship-a-query-it-just-measured-at-zero-rows">A build does not ship a query it just measured at zero rows</h3>
 <p>The run above is not only a costing. It is the moment a carded build stops
 <em>reasoning</em> about whether its starter queries answer and simply <strong>observes</strong> it
 — and where an observation exists it is ground truth, so it wins over every
@@ -835,7 +835,7 @@ produced, unchecked. The build says so on stderr. Note the consequence for
 reproducibility: the flag used to be hash-neutral, and on a dataset that <em>has</em> a
 useless starter query it no longer is (the measured build ships a smaller card).
 On every dataset whose queries all answer, it remains hash-neutral.</p>
-<h3>Measuring a file that already exists</h3>
+<h3 id="measuring-a-file-that-already-exists">Measuring a file that already exists</h3>
 <p>Almost nothing published carries this record. A survey of 110 cards found
 <strong>one</strong> file with a build record — every other <code>query_costs</code> is missing, so the
 field that would say "this starter query returns N rows and costs M bytes in K
@@ -863,13 +863,13 @@ evaluation, so a 497,905-row starter query materializes 497,905 rows).
 against ≈36 GiB for a <code>repyramid</code> re-card of the same file. See
 <code>rete card-audit</code> in the <a href="cli.html">CLI reference</a>.</li>
 </ul>
-<h3>The one-row smoke query</h3>
+<h3 id="the-one-row-smoke-query">The one-row smoke query</h3>
 <p>Every generated library now begins with <code>ov-one-row</code>: <em>return exactly one
 statement</em>. It is the unambiguous "did this file open and answer?" probe — the
 previous nearest thing was a <code>COUNT</code>, which on a named-graph-only file honestly
 answers <code>0</code> and reads as failure. The body is graph-scope aware like every
 other starter, so it returns exactly one row on any non-empty file.</p>
-<h2>The three-tier exploration model</h2>
+<h2 id="the-three-tier-exploration-model">The three-tier exploration model</h2>
 <p>The enriched card exists to fix a graph's <strong>cold-start problem</strong>: a newcomer who
 opens a <code>.rete</code> has no reference for what to ask. Every exploration question is
 answerable from one of three tiers, in increasing cost — and the card makes that
@@ -886,7 +886,7 @@ gets the whole self-description (counts, vocabulary, class graph, signals,
 starter queries, build record) without downloading the file. Measured on the
 published catalog: 7,670 of 71,237,191 bytes for NKOD and 54,601 of
 1,161,874,550 bytes for Hugging Face, two range requests each.</p>
-<h2>The starter-query library</h2>
+<h2 id="the-starter-query-library">The starter-query library</h2>
 <p><code>queries</code> is a vetted set of starter SPARQL queries, <strong>auto-instantiated at
 build</strong> with the dataset's own vocabulary (<code>{{TOP_CLASS}}</code> → the most populous
 class, <code>{{LABEL_PRED}}</code> → the detected label predicate, and so on) and emitted
@@ -901,7 +901,7 @@ Each query carries:</p>
 <li>a <code>tier</code> tag (<code>card</code> / <code>summary</code> / <code>index</code>) — the cheapest tier that answers it;</li>
 <li>the <code>requires</code> capability keys that gated its emission.</li>
 </ul>
-<h3>Presence is not co-occurrence</h3>
+<h3 id="presence-is-not-co-occurrence">Presence is not co-occurrence</h3>
 <p>"The required signal is present" is not enough on its own, and getting that
 wrong is how a starter query comes back empty. <code>{{TOP_CLASS}}</code> is the class with
 the most instances; <code>{{LABEL_PRED}}</code> is the most-used labelling predicate. Both
@@ -935,7 +935,7 @@ the generated library, unchanged. Clients surface both: the playground merges
 a loaded file's card queries into its examples panel next to any curated
 catalog examples (deduplicated against them), so even an off-catalog <code>.rete</code>
 opened by URL offers its own starter questions.</p>
-<h2>Named-graph datasets</h2>
+<h2 id="named-graph-datasets">Named-graph datasets</h2>
 <p>Some datasets (DCAT catalogs like NKOD, provenance stores, anything built from
 N-Quads) keep <strong>every statement in named graphs</strong> — the default graph is empty,
 and the card records exactly that (<code>triple_count: 0</code>, <code>named_graph_count &gt; 0</code>).
@@ -953,7 +953,7 @@ body for <strong>where the data actually lives</strong>:</p>
 projected so each row says where it lives (<code>ng-sample</code>). Graph-scoped bodies
 need the triple index, so they are tagged <code>index</code> — the <code>summary</code> fast path
 covers the default graph only.</p>
-<h3>Fixing the card on an existing named-graph <code>.rete</code></h3>
+<h3 id="fixing-the-card-on-an-existing-named-graph-rete">Fixing the card on an existing named-graph <code>.rete</code></h3>
 <p>The library is generated <strong>at build time and baked into the file</strong>, so a
 <code>.rete</code> published with an older generator keeps its default-graph-scoped
 starter queries until its publisher re-embeds a card. (That is the named-graph
@@ -980,7 +980,7 @@ replaces the published one. On a named-graph-only input, every query in the
 new card is <code>GRAPH</code>-scoped and returns rows; for example <code>ov-triples</code> becomes:</p>
 <pre><code class="language-sparql">SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }
 </code></pre>
-<h2>Maintaining a published card</h2>
+<h2 id="maintaining-a-published-card">Maintaining a published card</h2>
 <p>A card is written <strong>once, at build time</strong>, and never again. Everything in this
 section follows from that one fact, and most confusion about cards dissolves
 once it is internalised: <strong>fixing the card generator today does not fix a
@@ -993,7 +993,7 @@ changes.</p>
 <p>So the work splits in two: <strong>find out which files need it</strong> (cheap, and there
 is a tool for exactly that), then <strong>pick a command that can actually do it at
 that file's size</strong> (not cheap, and the ceiling is real).</p>
-<h3>How a card goes stale</h3>
+<h3 id="how-a-card-goes-stale">How a card goes stale</h3>
 <table><thead><tr><th>symptom</th><th>what a reader loses</th><th>how bad</th></tr></thead><tbody>
 <tr><td><strong>no build record</strong></td><td><code>built_at</code>, <code>builder</code>, <code>params</code>, and the per-query <code>rows</code>/<code>bytes</code>/<code>requests</code> a client would use to budget a query before running it</td><td>invisible until someone asks</td></tr>
 <tr><td><strong>a dated profile</strong></td><td>a <code>top_n</code> cap that predates the field, no <code>ov-one-row</code> smoke query, derived lists missing later additions</td><td>cosmetic</td></tr>
@@ -1005,7 +1005,7 @@ default-graph bodies on a <a href="#named-graph-datasets">named-graph dataset</a
 <a href="#presence-is-not-co-occurrence">a join the card never proved co-occurs</a>. A
 carded build also measures every query it generates, so a current <code>rete</code> will
 not ship one it just watched return nothing; older files had no such check.</p>
-<h3>Survey first — the survey is free, the re-card is not</h3>
+<h3 id="survey-first--the-survey-is-free-the-re-card-is-not">Survey first — the survey is free, the re-card is not</h3>
 <p>Re-carding is a bandwidth cost, not a CPU one: the file is rewritten, so a
 remote dataset has to come down in full and go back up in full. The published
 catalog is <strong>248 GB across 98 files</strong> (22 of them ≥ 1 GB), which makes
@@ -1027,7 +1027,7 @@ already on disk (<code>--cards &lt;dir&gt;</code>), so iterate there rather than
 And one file is not cheap: <code>geoadmin-tiles</code> carries an embedded PMTiles section
 <em>ahead</em> of its metadata, so its coalesced card range is 117 MB rather than
 6 KB — survey it last, or not at all.</p>
-<h3>Deciding one file: <code>rete card-audit</code></h3>
+<h3 id="deciding-one-file-rete-card-audit">Deciding one file: <code>rete card-audit</code></h3>
 <p>Where the survey classifies a catalog, <a href="cli.html"><code>rete card-audit</code></a> explains one
 file — one row per starter query the card already ships, decided from the same
 card bytes, using the query generator's own judgement rather than a second copy
@@ -1048,7 +1048,7 @@ the published <code>lombardi.rete</code>, both undecidables come back <code>answ
 and 1 row); the whole 22-query audit reads 3.58 MB in 1,447 range requests,
 cold. <code>--write-costs</code> then records the run in the file's build record, so the
 next reader gets the numbers from the CARD tier instead of re-measuring.</p>
-<h3>Which rebuild path — the ceiling is statements, not bytes</h3>
+<h3 id="which-rebuild-path--the-ceiling-is-statements-not-bytes">Which rebuild path — the ceiling is statements, not bytes</h3>
 <p>There are three tools, and choosing between them by file size is the mistake.
 <code>repyramid</code> materializes <strong>every quad as owned strings</strong> before re-assembling,
 so its RAM tracks the <strong>statement count</strong>: ~350–700 bytes per statement on
@@ -1092,7 +1092,7 @@ with a large result materializes it. <code>switzerland-fedlex</code> took 381 s 
 at <strong>14.2 GiB</strong> for <code>--measure --write-costs</code>, of which <code>ng-list</code> alone —
 497,905 rows — accounts for 3.2 GiB. Budget for the widest starter query, not
 for the file.</p>
-<h3>What a re-card changes — and what it must not</h3>
+<h3 id="what-a-re-card-changes--and-what-it-must-not">What a re-card changes — and what it must not</h3>
 <p>It <strong>re-derives the whole derived half</strong> from the data the file already holds:
 the profile, the signals, the class-link quotient, and the starter-query
 library with every generator fix since the file was built. It <strong>adds the build
@@ -1129,7 +1129,7 @@ time. <code>switzerland-fedlex</code> moved 66,392,663 → 56,321,446 the same w
 new number against the data proof (identical N-Quads), never against the old
 one; and where the old number is real provenance — an input line count, as
 fedlex's was — keep both, in words, by hand.</p>
-<h3>Publishing the result</h3>
+<h3 id="publishing-the-result">Publishing the result</h3>
 <p>A re-card changes the content hash, by construction and correctly: the card is
 part of what the file says about itself. So the rebuilt file is a <strong>new object</strong>
 to upload, <code>scripts/check_dataset_catalog.py</code> has to re-probe it, and
@@ -1143,7 +1143,7 @@ shifts everything behind it), but its <strong>identity is preserved</strong> —
 published files, which grew by 2,007 bytes (<code>tree-city-inventory</code>), 1,952
 (<code>lombardi</code>) and 32 (<code>switzerland-fedlex</code>) while keeping their content hash,
 their <code>rete verify</code>, and their exported N-Quads byte for byte.</p>
-<h2>Interoperability: JSON at rest, RDF on demand</h2>
+<h2 id="interoperability-json-at-rest-rdf-on-demand">Interoperability: JSON at rest, RDF on demand</h2>
 <p>A card lifted out of a <code>.rete</code> should already be RDF — a dataset describing
 itself in standard vocabularies. The first design decision was <strong>JSON-LD at
 rest versus a projection</strong>, and it was decided by measurement, not preference.
@@ -1161,7 +1161,7 @@ faithful</em> at-rest form costs:</p>
 <code>rete card --format jsonld</code> (and <code>card-url</code>) reshapes bytes already fetched —
 no network, no index read — and there is no second artefact to drift, because
 the projection is derived from the stored card on every call.</p>
-<h3>The JSON-LD projection (<code>--format jsonld</code>)</h3>
+<h3 id="the-json-ld-projection---format-jsonld">The JSON-LD projection (<code>--format jsonld</code>)</h3>
 <p>One document, typed both <code>schema:Dataset</code> <strong>and</strong> <code>void:Dataset</code> — one dataset
 described in two vocabularies, not two objects. The mapping reuses standard
 terms before inventing any:</p>
@@ -1186,7 +1186,7 @@ intended VoID/schema.org/PROV triples (58 of them on the demo card). It
 deliberately projects the interoperable core; the full profile (starter
 queries, hubs, datatype histograms, signals) stays in <code>--json</code>, where its
 private names are honest.</p>
-<h3>Croissant — the honest subset (<code>--format croissant</code>)</h3>
+<h3 id="croissant--the-honest-subset---format-croissant">Croissant — the honest subset (<code>--format croissant</code>)</h3>
 <p>Croissant models <strong>tables</strong>: <code>recordSet</code> → <code>field</code> → <code>dataType</code>. An RDF graph
 has no records, and forcing the card into a record-set shape would produce a
 document that validates and misleads. So <code>--format croissant</code> maps what
@@ -1209,7 +1209,7 @@ and exactly that one missing-property error without it.</p>
 <pre><code class="language-sh">rete card data.rete --format jsonld                      # VoID + schema.org + PROV
 rete card data.rete --format croissant --sha256 $(sha256sum data.rete | cut -d' ' -f1)
 </code></pre>
-<h2>Back-compatibility</h2>
+<h2 id="back-compatibility">Back-compatibility</h2>
 <p>All enriched fields are additive with serde defaults, so a card written by an
 older <code>rete</code> (plain <code>example_queries</code>, none of the new fields) still
 deserializes. Because the new fields change the card JSON, they change the
@@ -1222,7 +1222,7 @@ file <strong>verifies it</strong> (the hash never covered the new section), rend
 card (unknown JSON fields are ignored by serde), and queries it (the unknown
 kind-7 directory entry is preserved and skipped by the section-directory
 contract the header has always had).</p>
-<h2>Reading a card</h2>
+<h2 id="reading-a-card">Reading a card</h2>
 <p><code>rete card</code> prints a human-readable catalog; <code>--json</code> emits the raw card:</p>
 <pre><code class="language-sh">rete card data.rete
 #  Dataset Card
@@ -1242,7 +1242,7 @@ contract the header has always had).</p>
 
 rete card data.rete --json     # the embedded JSON, pretty-printed
 </code></pre>
-<h3>In the browser</h3>
+<h3 id="in-the-browser">In the browser</h3>
 <p>The <a href="playground.html">playground</a>'s <strong>🏷 Card</strong> button renders the same card,
 and the build record with it. Both come from <strong>one</strong> engine call — the header
 plus the single coalesced range that covers the card and the adjacent
@@ -1285,7 +1285,7 @@ catalog — so <code>info</code> is a one-shot overview of <em>what the file is<
 it's laid out</em>. A file with no card just shows the header.</p>
 <p>The <code>checksum</code> line is the file's <code>blake3</code> content hash (the same value
 <code>rete verify</code> checks) — it identifies the exact bytes, card included.</p>
-<h2>How it sits in the file</h2>
+<h2 id="how-it-sits-in-the-file">How it sits in the file</h2>
 <p>The card is stored as compact <strong>JSON</strong> in the metadata section, which sits
 between the header and the dictionary:</p>
 <pre><code class="language-text">[0..1024)     header              (metadata_offset = 1024, metadata_len = card bytes)

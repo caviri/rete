@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Semantic zoom — the schema pyramid</h1>
+<h1 id="semantic-zoom--the-schema-pyramid">Semantic zoom — the schema pyramid</h1>
 <blockquote>
 <p><strong>The one-paragraph pitch.</strong> Open any <code>.rete</code> and ask <em>"what kinds of things are
 in here?"</em> — and get an answer that <strong>zooms</strong>. At a glance you see the broad
@@ -357,7 +357,7 @@ everything else.</p>
 resolve from abstract classes into leaves — and the whole stack is fetched
 index-free, in a few kilobytes, over HTTP.</em></p>
 <hr />
-<h2>Why it exists</h2>
+<h2 id="why-it-exists">Why it exists</h2>
 <p>A knowledge graph you've never seen is <strong>opaque</strong>: you don't know which classes
 exist, how they relate, or where to start. The flat answer — <em>"here are 200
 classes, alphabetical"</em> — is noise. What you actually want is to start coarse and
@@ -379,7 +379,7 @@ rolling their types up to depth <code>d</code> produces level <code>d</code>'s h
 becomes <code>Scientist</code> becomes <code>Person</code> becomes <code>Agent</code>. Nothing is invented; the
 ontology in the data does the work.</em></p>
 <hr />
-<h2>What you need in the data</h2>
+<h2 id="what-you-need-in-the-data">What you need in the data</h2>
 <table><thead><tr><th>Ingredient</th><th>Predicate</th><th>Required?</th></tr></thead><tbody>
 <tr><td><strong>Typed instances</strong></td><td><code>rdf:type</code> (<code>a</code>)</td><td>Yes — no types, no schema pyramid.</td></tr>
 <tr><td><strong>A class hierarchy</strong></td><td><code>rdfs:subClassOf</code></td><td>Optional — without it the pyramid is a single flat level (= the Dataset Card's class list).</td></tr>
@@ -390,7 +390,7 @@ RDFS/OWL-RL reasoner — see <a href="reasoning.html">Reasoning</a>). Multiple i
 handled by picking a canonical (lexicographically smallest) parent so the rollup is
 a deterministic tree.</p>
 <hr />
-<h2>Build it</h2>
+<h2 id="build-it">Build it</h2>
 <p>Nothing special: it's part of the normal pyramid, so a plain <code>rete build</code> produces
 it. Take this little graph — five classes in a <code>subClassOf</code> tree plus four typed
 people/orgs:</p>
@@ -416,8 +416,8 @@ axioms live in a separate ontology, merge them in the same build:
 <code>rete build people.nt ontology.ttl -o people.rete</code>. If they're only <em>implied</em>,
 <code>rete build people.nt --materialize -o people.rete</code> infers them first.)</p>
 <hr />
-<h2>Use it</h2>
-<h3>Browse every level at once</h3>
+<h2 id="use-it">Use it</h2>
+<h3 id="browse-every-level-at-once">Browse every level at once</h3>
 <p><code>rete summary</code> prints the community super-edge graph and then the schema pyramid —
 one line per semantic level, coarse (abstract) at the top:</p>
 <pre><code class="language-text">$ rete summary people.rete
@@ -433,7 +433,7 @@ schema pyramid — 4 level(s), 6 class(es) in the subClassOf hierarchy:
 that <code>Agent</code> is <code>Person ×3</code> + <code>Organisation ×1</code>; that <code>Person</code> is <code>Scientist ×2</code> +
 <code>Artist ×1</code>; that <code>Scientist</code> is <code>Astronomer ×2</code>. <strong>Counts conserve up the
 hierarchy</strong> — each level re-partitions the <em>same</em> instances at a finer grain.</p>
-<h3>Zoom to one level</h3>
+<h3 id="zoom-to-one-level">Zoom to one level</h3>
 <p><code>--level k</code> prints just one level's type histogram (<code>0</code> = coarsest / most abstract):</p>
 <pre><code class="language-text">$ rete summary people.rete --level 0          # the big picture
 schema pyramid level 0 — depth 0 (round 1), 1 class(es):
@@ -452,7 +452,7 @@ schema pyramid level 3 — depth 3 (round 0), 3 class(es):
 </code></pre>
 <p>A viewer wires <code>--level k</code> to a zoom slider: render level 0 when zoomed out, fetch
 deeper levels as the user drills in.</p>
-<h3>Over HTTP / S3 — the index-free payoff</h3>
+<h3 id="over-http--s3--the-index-free-payoff">Over HTTP / S3 — the index-free payoff</h3>
 <p>This is the selling point. The schema pyramid lives in the pyramid-meta section, so
 <code>summary-url</code> fetches it <strong>without downloading the file and without touching the
 triple index</strong> — only the header, dictionary, and pyramid:</p>
@@ -477,7 +477,7 @@ GitHub Pages) and a browser or CLI gets a zoomable type map for the cost of a fe
 kilobytes. See <a href="dataset-cards.html#the-three-tier-exploration-model">Dataset Cards → the three-tier model</a>
 for how this tier sits alongside the index-free <code>card-url</code> and the lazy
 <code>sparql-url</code> tiers.</p>
-<h3>Read it programmatically</h3>
+<h3 id="read-it-programmatically">Read it programmatically</h3>
 <p>The Rust API exposes the pyramid index-free through <code>SummaryView</code>
 (<code>rete-core</code>), which reads only the header + dictionary + pyramid ranges:</p>
 <pre><code class="language-rust">use rete_core::{SummaryView, SliceReader};
@@ -496,7 +496,7 @@ for k in 0..view.level_count() {
 <p>Any <code>RangeReader</code> works here — back it with an HTTP client and you read the schema
 pyramid straight off a URL.</p>
 <hr />
-<h2>A graph, not a tree — multiple parents and lateral links</h2>
+<h2 id="a-graph-not-a-tree--multiple-parents-and-lateral-links">A graph, not a tree — multiple parents and lateral links</h2>
 <p>A real ontology isn't a strict tree. Two things break the "every class sits in
 exactly one branch" assumption, and the schema pyramid keeps <strong>both</strong>:</p>
 <img src="img/ontology-graph.svg" alt="Class nodes laid out by depth. Solid blue subClassOf edges form the is-a hierarchy, including Astronaut which has TWO parents (Scientist and Explorer). A dashed green edge shows a lateral 'memberOf' relation from Person to Organisation. A legend distinguishes is-a edges from lateral relation edges.">
@@ -529,7 +529,7 @@ the pyramid be non-exclusive and keep connections?"</em> is <strong>yes, by cons
 it's a <em>leveled multigraph</em> over the ontology, not a leveled tree. On the API these
 are <code>view.level_links</code> (<code>Vec&lt;LevelLinks&gt;</code>, each a <code>Vec&lt;ClassRelation&gt;</code>).</p>
 <hr />
-<h2>Per-community descriptors (progressive zoom)</h2>
+<h2 id="per-community-descriptors-progressive-zoom">Per-community descriptors (progressive zoom)</h2>
 <p>Alongside the global levels, the pyramid ships a <strong>descriptor per community</strong>: its
 dominant class, local type histogram, and — when the data has them — a geographic
 bounding box (CRS84 lon/lat) and a temporal range. These let a client refine the
@@ -542,13 +542,13 @@ annotate are a separate, in-progress storage step; until those land, a descripto
 is a standalone summary of its community.</p>
 </blockquote>
 <hr />
-<h2>No hierarchy? It still works</h2>
+<h2 id="no-hierarchy-it-still-works">No hierarchy? It still works</h2>
 <p>If your data has types but <strong>no <code>subClassOf</code></strong>, the pyramid degrades gracefully to
 a <strong>single flat level</strong> — exactly the class histogram you'd get from the Dataset
 Card — so <code>rete summary --level 0</code> always answers. Add a hierarchy (or
 <code>--materialize</code>) later and the levels appear automatically on the next build.</p>
 <hr />
-<h2>How the ontology is embedded in the format</h2>
+<h2 id="how-the-ontology-is-embedded-in-the-format">How the ontology is embedded in the format</h2>
 <p>The ontology isn't a sidecar — it is <strong>derived once at build time and written into
 the file's own sections</strong>, where range clients read it without the triple index.
 Three <em>orthogonal</em> structures are embedded, each answering a different question:</p>
@@ -570,7 +570,7 @@ the small metadata/pyramid ranges. The index stays on the server.</li>
 <li><strong>Physically additive (pyramid-meta v2).</strong> The schema block is appended after the
 v1 summary and written <strong>only when the graph has types</strong>, so a typeless file is
 byte-identical to a v1 build and an older reader silently ignores the new bytes.
-See <a href="SPEC.html#7-4-the-schema-pyramid-semantic-zoom-v2">the format spec §7.4</a> for
+See <a href="SPEC.html#74-the-schema-pyramid--semantic-zoom-v2">the format spec §7.4</a> for
 the exact byte layout.</li>
 <li><strong>Provenance.</strong> The <code>subClassOf</code> axioms come straight from the data, from a merged
 ontology file, or from <code>rete build --materialize</code> (the RDFS/OWL-RL reasoner). The
@@ -579,7 +579,7 @@ pyramid never invents structure — it <em>embeds the ontology that's already th
 hash, safe to cache). Levels (≤ 6), classes/relations per level, and descriptors
 are all capped, so the embedded ontology stays small <strong>regardless of graph size</strong>.</li>
 </ul>
-<h2>Cost vs benefit — is the pyramid worth it?</h2>
+<h2 id="cost-vs-benefit--is-the-pyramid-worth-it">Cost vs benefit — is the pyramid worth it?</h2>
 <p>Measured honestly (see the <a href="BENCHMARK.html#the-pyramid-cost-vs-benefit">benchmark</a>),
 the two pyramidal structures have very different economics:</p>
 <ul>
@@ -592,7 +592,7 @@ serve selective SPARQL, <code>--no-pyramid</code> is smaller and just as fast.</
 </ul>
 <p>Rule of thumb: <strong>keep the pyramid when you want index-free overview/exploration;
 drop it (<code>--no-pyramid</code>) when you only serve selective queries at scale.</strong></p>
-<h2>When to reach for it</h2>
+<h2 id="when-to-reach-for-it">When to reach for it</h2>
 <ul>
 <li><strong>Publishing a dataset</strong> people will explore cold — the schema pyramid is the
 zoomable legend that tells them what to ask.</li>
@@ -607,7 +607,7 @@ single flat level); everything else here still applies.</p>
 <hr />
 <p>See also: <a href="dataset-cards.html">Dataset Cards</a> (the self-describing card + starter
 queries that ride the same index-free path), <a href="reasoning.html">Reasoning</a>
-(<code>--materialize</code> to infer <code>subClassOf</code>), and <a href="SPEC.html#7-the-pyramid-community-summarization">the format spec</a>.</p>
+(<code>--materialize</code> to infer <code>subClassOf</code>), and <a href="SPEC.html#7-the-pyramid--community-summarization">the format spec</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

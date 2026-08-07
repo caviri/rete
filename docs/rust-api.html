@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Rust API</h1>
+<h1 id="rust-api">Rust API</h1>
 <p><code>rete-core</code> is the embeddable Rust implementation of the <code>.rete</code> format. Its
 supported surface is organized into five facade modules, which become the
 SemVer-stable API at <code>1.0.0</code>:</p>
@@ -352,7 +352,7 @@ SemVer-stable API at <code>1.0.0</code>:</p>
 exports and implementation namespaces for the other workspace crates, but they
 are not part of the 1.x compatibility contract and may change without a major
 release.</p>
-<h2>Add the dependency</h2>
+<h2 id="add-the-dependency">Add the dependency</h2>
 <p>Until the 1.0.0 release, pin the exact 0.x version:</p>
 <pre><code class="language-toml">[dependencies]
 rete-core = "=0.3.0"
@@ -360,7 +360,7 @@ rete-core = "=0.3.0"
 <p>The default feature set supports compressed <code>.rete</code> files. Optional parallel or
 browser-thread features remain experimental; they do not change the five facade
 module names.</p>
-<h2>Build, open, and query</h2>
+<h2 id="build-open-and-query">Build, open, and query</h2>
 <p>The in-memory path is useful for applications that already have RDF text or a
 complete file image:</p>
 <pre><code class="language-rust">use rete_core::format::{assemble_dataset, parse_statements, Rete};
@@ -386,7 +386,7 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 <p><code>QueryOutput</code>, public error enums, and other result-shape enums are
 non-exhaustive. Always keep a wildcard arm when matching them; new variants can
 then be added in a compatible 1.x release.</p>
-<h2>Read by byte range</h2>
+<h2 id="read-by-byte-range">Read by byte range</h2>
 <p>Implement <code>RangeReader</code> for a local file, object-store client, or HTTP client.
 Every range must either return exactly the requested bytes or an error; offsets
 from an untrusted remote file must not be used as unchecked slice indexes.</p>
@@ -404,7 +404,7 @@ fn inspect_summary(bytes: &amp;[u8]) -&gt; Result&lt;(), Box&lt;dyn std::error::
 <p>Remote readers should preserve HTTP <code>Range</code> semantics. See <a href="hosting.html">Hosting your
 <code>.rete</code></a> for required CORS response headers and <a href="browser.html">WASM &amp; JavaScript
 API</a> for the browser-specific reader.</p>
-<h2>Validate and reason</h2>
+<h2 id="validate-and-reason">Validate and reason</h2>
 <p>SHACL can operate directly against a <code>.rete</code> index, so a lazy remote graph only
 fetches ranges used by the shapes:</p>
 <pre><code class="language-rust">use rete_core::format::Rete;
@@ -421,7 +421,7 @@ fn validate(bytes: &amp;[u8], shapes_turtle: &amp;str) -&gt; Result&lt;bool, Box
 and reasoned query entry points. It is deliberately a bounded RDFS/OWL profile,
 not a complete OWL reasoner; see <a href="reasoning.html">Reasoning &amp; coherence</a> for the
 supported entailments and inconsistency checks.</p>
-<h2>Compatibility policy</h2>
+<h2 id="compatibility-policy">Compatibility policy</h2>
 <ul>
 <li><code>.rete</code> format compatibility and Rust API compatibility are versioned
 independently. The format byte and read window live in <code>format</code>.</li>

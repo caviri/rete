@@ -337,7 +337,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>SHACL validation</h1>
+<h1 id="shacl-validation">SHACL validation</h1>
 <p><code>rete shacl</code> validates a <code>.rete</code> file against SHACL Core shapes. It is meant for
 release checks and CI gates: build the graph once, run the shape file against the
 default graph or a named graph, and fail the job if the validation report is not
@@ -350,7 +350,7 @@ rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/releases/2026-06
 <p>The command exits with status <code>0</code> when the report conforms and non-zero when it
 finds at least one result. Shapes are read as Turtle. Data comes from the <code>.rete</code>
 file, so validation runs over exactly the graph you publish and query.</p>
-<h2>Validating a remote graph (lazy)</h2>
+<h2 id="validating-a-remote-graph-lazy">Validating a remote graph (lazy)</h2>
 <p>SHACL validation is <strong>node-by-node</strong>: a shape names its targets (a class, a node,
 the subjects/objects of a predicate), then checks each focus node's own property
 values. That maps onto <strong>routed range reads</strong>, so a remote <code>.rete</code> can be
@@ -365,7 +365,7 @@ exception is a <strong>target-less shape</strong> (one that implicitly targets e
 general inverse path, which must read the whole graph; <code>^predicate</code> inverse paths
 are routed (they become a single <code>(?, p, focus)</code> lookup). <code>shacl-url</code> validates the
 default graph.</p>
-<h2>A minimal shape</h2>
+<h2 id="a-minimal-shape">A minimal shape</h2>
 <pre><code class="language-turtle">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
 @prefix ex: &lt;http://ex/&gt; .
 @prefix xsd: &lt;http://www.w3.org/2001/XMLSchema#&gt; .
@@ -396,7 +396,7 @@ ex:PersonShape
 </code></pre>
 <p>Use <code>--format json</code> for automation and <code>--format ttl</code> for a Turtle validation
 report.</p>
-<h2>Supported SHACL surface</h2>
+<h2 id="supported-shacl-surface">Supported SHACL surface</h2>
 <p>This implementation targets the stable W3C SHACL Core 2017 Recommendation. It
 does not try to implement SHACL-SPARQL, SHACL-AF, SHACL-JS, SHACL 1.2 drafts, or
 ShEx.</p>
@@ -432,7 +432,7 @@ ShEx.</p>
 <tr><td>Closed shapes</td><td><code>sh:closed</code>, <code>sh:ignoredProperties</code></td></tr>
 <tr><td>Qualified values</td><td><code>sh:qualifiedValueShape</code>, <code>sh:qualifiedMinCount</code>, <code>sh:qualifiedMaxCount</code>, <code>sh:qualifiedValueShapesDisjoint</code></td></tr>
 </tbody></table>
-<h2>Current limits</h2>
+<h2 id="current-limits">Current limits</h2>
 <ul>
 <li>Shape files must be Turtle.</li>
 <li>SHACL-SPARQL constraints, custom functions, rules, and JavaScript extensions
@@ -443,7 +443,7 @@ treated as fatal engine errors.</li>
 validates the already-materialized graph; otherwise it validates asserted data
 only.</li>
 </ul>
-<h2>Core API</h2>
+<h2 id="core-api">Core API</h2>
 <p>The CLI uses the reusable core API. <code>validate_shacl</code> is generic over a
 [<code>GraphView</code>] — the data graph can be an in-memory <code>DataGraph</code> (eager) or a
 <code>ReteGraph</code> that routes every lookup as a range read (lazy / remote):</p>
