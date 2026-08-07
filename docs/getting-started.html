@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Getting started · rete docs</title>
-  <meta name="description" content="rete is developed and built entirely inside a container — nothing runs on the host. The dev container (.devcontainer/) carries the Rust 1.92 toolchain, rustfmt, clippy, Python, the…" />
+  <meta name="description" content="You do not need a Rust toolchain, a clone of the repo, or its dev container to use rete. A prebuilt CLI image is published — ghcr.io/caviri/rete-cli, 30 MB on distroless, multi-arch (amd64 + arm64) —…" />
   <link rel="canonical" href="https://caviri.github.io/rete/getting-started.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Getting started · rete docs" />
-  <meta property="og:description" content="rete is developed and built entirely inside a container — nothing runs on the host. The dev container (.devcontainer/) carries the Rust 1.92 toolchain, rustfmt, clippy, Python, the…" />
+  <meta property="og:description" content="You do not need a Rust toolchain, a clone of the repo, or its dev container to use rete. A prebuilt CLI image is published — ghcr.io/caviri/rete-cli, 30 MB on distroless, multi-arch (amd64 + arm64) —…" />
   <meta property="og:url" content="https://caviri.github.io/rete/getting-started.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/getting-started.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Getting started · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Getting started · rete docs" />
-  <meta name="twitter:description" content="rete is developed and built entirely inside a container — nothing runs on the host. The dev container (.devcontainer/) carries the Rust 1.92 toolchain, rustfmt, clippy, Python, the…" />
+  <meta name="twitter:description" content="You do not need a Rust toolchain, a clone of the repo, or its dev container to use rete. A prebuilt CLI image is published — ghcr.io/caviri/rete-cli, 30 MB on distroless, multi-arch (amd64 + arm64) —…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/getting-started.png" />
   <meta name="rete:section" content="Start here" />
   <script>
@@ -338,11 +338,50 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>Getting started</h1>
-<h2>Everything runs in Docker</h2>
-<p><code>rete</code> is developed and built <strong>entirely inside a container</strong> — nothing runs on
-the host. The dev container (<a href="https://github.com/caviri/rete/tree/main/.devcontainer"><code>.devcontainer/</code></a>) carries the
-Rust 1.92 toolchain, rustfmt, clippy, Python, the <code>wasm32-unknown-unknown</code>
-target, and <code>wasm-pack</code>.</p>
+<h2>Getting the CLI</h2>
+<p>You do not need a Rust toolchain, a clone of the repo, or its dev container to
+<em>use</em> rete. A prebuilt CLI image is published —
+<a href="https://github.com/caviri/rete/blob/main/docker/README.html"><code>ghcr.io/caviri/rete-cli</code></a>,
+~30 MB on distroless, multi-arch (amd64 + arm64) — so turning an RDF dump into a
+<code>.rete</code> is one command:</p>
+<pre><code class="language-sh"># run this in the directory that holds your dump
+docker run --rm -v "$PWD:/data" ghcr.io/caviri/rete-cli:latest \
+  build /data/dump.nt -o /data/out.rete --card --title "My graph"
+</code></pre>
+<pre><code class="language-text">embedded dataset card (16240 bytes of metadata)
+wrote /data/out.rete: 5 triples, 8 terms, 1 pyramid level(s), 18061 bytes
+</code></pre>
+<p><code>-v "$PWD:/data"</code> maps the current directory onto <code>/data</code> inside the container,
+so <code>/data/out.rete</code> <strong>is</strong> <code>./out.rete</code> on your machine — the file is next to
+your dump when the command exits, with nothing to extract from a container.</p>
+<p>The rest of this page writes commands as a bare <code>rete …</code>. Define this alias once
+and they all run as written against the files in your current directory
+(<code>-w /data</code> makes the container's working directory <em>your</em> directory, so plain
+filenames resolve; <code>-i</code> lets you pipe into it):</p>
+<pre><code class="language-sh">alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:latest'
+</code></pre>
+<blockquote>
+<p><strong>Three container gotchas, all of them silent.</strong> Piping needs <code>docker run -i</code>
+— the alias sets it, but without <code>-i</code> stdin is empty and <code>rete build -</code> writes
+a valid, <strong>0-triple</strong> file and exits 0. On Linux the image runs as root, so add
+<code>--user "$(id -u):$(id -g)"</code> unless you want the output owned by root. On
+Windows Git Bash, MSYS rewrites both the mount and <code>/data/…</code> arguments
+(<code>/data/dump.nt</code> becomes <code>C:/Program Files/Git/data/dump.nt</code>, and a <code>$PWD</code>
+mount resolves to a directory that is not yours — the build reports success and
+no file appears); use
+<code>MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/data" …</code>.</p>
+</blockquote>
+<p>Other routes to the same engine, if a container is not what you want:
+<code>pip install rete-graph</code> (<a href="python.html">Python</a>),
+<code>npm install rete-graph</code> (<a href="javascript.html">JavaScript</a>), or a build from source
+(below). Remote graphs need no install beyond the image and no mount at all —
+see <em>Deploying &amp; querying over a URL</em> further down.</p>
+<h2>Building from source</h2>
+<p>Building <code>rete</code> <em>itself</em> — as opposed to using it — happens <strong>entirely inside a
+container</strong>; nothing runs on the host. The dev container
+(<a href="https://github.com/caviri/rete/tree/main/.devcontainer"><code>.devcontainer/</code></a>)
+carries the Rust 1.92 toolchain, rustfmt, clippy, Python, the
+<code>wasm32-unknown-unknown</code> target, and <code>wasm-pack</code>.</p>
 <p>Open the folder in a dev container (VS Code: <em>Reopen in Container</em>), or run the
 same image directly:</p>
 <pre><code class="language-sh">docker build -t rete-dev -f .devcontainer/Dockerfile .
@@ -350,8 +389,8 @@ docker run --rm -it -v "${PWD}:/work" -w /work rete-dev bash
 # then, inside:
 cargo build --release -p rete-cli
 </code></pre>
-<p>The compiled CLI is at <code>target/release/rete</code>. The examples below assume it is on
-your <code>PATH</code> (or substitute <code>cargo run -p rete-cli --</code>).</p>
+<p>The compiled CLI is at <code>target/release/rete</code>; put it on your <code>PATH</code> and the
+examples below run without the alias (or substitute <code>cargo run -p rete-cli --</code>).</p>
 <h2>Building a <code>.rete</code> file</h2>
 <figure class="fig-right">
   <img src="img/build-pipeline.svg" alt="A pipeline: .nt, .ttl and .nq inputs feed into 'rete build', which produces one social.rete file containing a dictionary, indexes and a pyramid, ready to put on an HTTP host or URL.">
