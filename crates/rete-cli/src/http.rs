@@ -75,6 +75,30 @@ impl RangeReader for HttpRangeReader {
                 self.url
             )));
         }
+        let expected_content_range = format!("bytes {offset}-{end}/{}", self.len);
+        match resp.header("content-range") {
+            Some(actual) if actual == expected_content_range => {}
+            Some(actual) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid Content-Range for requested {len} bytes at offset {offset} from {}: \
+                         expected {expected_content_range:?}, got {actual:?}",
+                        self.url
+                    ),
+                ));
+            }
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "missing Content-Range for requested {len} bytes at offset {offset} from {}; \
+                         expected {expected_content_range:?}",
+                        self.url
+                    ),
+                ));
+            }
+        }
         let capacity = usize::try_from(len)
             .map_err(|_| range_does_not_fit_in_memory_error(len, offset, &self.url))?;
         if let Some(declared) = resp
@@ -93,7 +117,17 @@ impl RangeReader for HttpRangeReader {
         let mut body = Vec::with_capacity(capacity);
         resp.into_reader()
             .take(len.saturating_add(1))
-            .read_to_end(&mut body)?;
+            .read_to_end(&mut body)
+            .map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to read HTTP range response body for requested {len} bytes at \
+                         offset {offset} from {}: {error}",
+                        self.url
+                    ),
+                )
+            })?;
         // A mismatched transfer (server closed early, range past EOF, proxy
         // hiccup, or extra bytes) must be a clean error, not a silently wrong
         // buffer handed to
@@ -181,6 +215,20 @@ mod tests {
         TruncateBody,
         /// A broken host: returns the requested range plus one extra byte.
         OverlongBody,
+        /// A broken host: reports a different first byte in Content-Range.
+        WrongRangeStart,
+        /// A broken host: reports a different last byte in Content-Range.
+        WrongRangeEnd,
+        /// A broken host: reports a different resource length in Content-Range.
+        WrongRangeTotal,
+        /// A broken host: omits Content-Range from a 206 response.
+        MissingContentRange,
+        /// A broken host: sends a syntactically invalid Content-Range.
+        MalformedContentRange,
+        /// A broken host: sends the wrong range unit.
+        WrongRangeUnit,
+        /// A broken host: does not disclose the complete resource length.
+        UnknownRangeTotal,
         /// A broken host: `500` on every GET.
         Error500,
     }
@@ -232,7 +280,14 @@ mod tests {
                     (
                         ServerMode::HonorRange
                         | ServerMode::TruncateBody
-                        | ServerMode::OverlongBody,
+                        | ServerMode::OverlongBody
+                        | ServerMode::WrongRangeStart
+                        | ServerMode::WrongRangeEnd
+                        | ServerMode::WrongRangeTotal
+                        | ServerMode::MissingContentRange
+                        | ServerMode::MalformedContentRange
+                        | ServerMode::WrongRangeUnit
+                        | ServerMode::UnknownRangeTotal,
                         Some(r),
                     ) => {
                         let (a, b) = r.split_once('-').unwrap();
@@ -251,9 +306,30 @@ mod tests {
                         } else {
                             slice.len()
                         };
+                        let content_range = match mode {
+                            ServerMode::WrongRangeStart => {
+                                format!("Content-Range: bytes {}-{b}/{total}\r\n", a + 1)
+                            }
+                            ServerMode::WrongRangeEnd => {
+                                format!("Content-Range: bytes {a}-{}/{total}\r\n", b - 1)
+                            }
+                            ServerMode::WrongRangeTotal => {
+                                format!("Content-Range: bytes {a}-{b}/{}\r\n", total + 1)
+                            }
+                            ServerMode::MissingContentRange => String::new(),
+                            ServerMode::MalformedContentRange => {
+                                "Content-Range: bytes malformed\r\n".to_string()
+                            }
+                            ServerMode::WrongRangeUnit => {
+                                format!("Content-Range: items {a}-{b}/{total}\r\n")
+                            }
+                            ServerMode::UnknownRangeTotal => {
+                                format!("Content-Range: bytes {a}-{b}/*\r\n")
+                            }
+                            _ => format!("Content-Range: bytes {a}-{b}/{total}\r\n"),
+                        };
                         let h = format!(
-                            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            declared_len
+                            "HTTP/1.1 206 Partial Content\r\n{content_range}Content-Length: {declared_len}\r\nConnection: close\r\n\r\n"
                         );
                         let _ = stream.write_all(h.as_bytes());
                         let _ = stream.write_all(sent);
@@ -425,6 +501,12 @@ mod tests {
             msg.contains("short range response") || msg.contains("closed before"),
             "expected a truncation error, got: {err}"
         );
+        assert!(msg.contains(&url), "missing URL context: {msg}");
+        assert!(msg.contains("offset 100"), "missing offset context: {msg}");
+        assert!(
+            msg.contains("requested 40 bytes"),
+            "missing requested-length context: {msg}"
+        );
         // And a range that genuinely runs past EOF on an honest host errors too.
         let data: Vec<u8> = (0..100u8).collect();
         let url = serve(data, ServerMode::HonorRange);
@@ -440,6 +522,33 @@ mod tests {
         let reader = HttpRangeReader::open(&url).unwrap();
         let err = reader.read_at(100, 40).unwrap_err();
         assert!(err.to_string().contains("range response length"), "{err}");
+    }
+
+    #[test]
+    fn rejects_missing_malformed_or_mismatched_content_range() {
+        let cases = [
+            (ServerMode::WrongRangeStart, "wrong start"),
+            (ServerMode::WrongRangeEnd, "wrong end"),
+            (ServerMode::WrongRangeTotal, "wrong total"),
+            (ServerMode::MissingContentRange, "missing header"),
+            (ServerMode::MalformedContentRange, "malformed header"),
+            (ServerMode::WrongRangeUnit, "wrong unit"),
+            (ServerMode::UnknownRangeTotal, "unknown total"),
+        ];
+        for (mode, case) in cases {
+            let data: Vec<u8> = (0..=255).cycle().take(1000).collect();
+            let url = serve(data, mode);
+            let reader = HttpRangeReader::open(&url).unwrap();
+            let err = match reader.read_at(100, 40) {
+                Err(error) => error,
+                Ok(_) => panic!("accepted {case}"),
+            };
+            let message = err.to_string();
+            assert!(message.contains("Content-Range"), "{case}: {message}");
+            assert!(message.contains(&url), "{case}: {message}");
+            assert!(message.contains("offset 100"), "{case}: {message}");
+            assert!(message.contains("40 bytes"), "{case}: {message}");
+        }
     }
 
     #[test]
