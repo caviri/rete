@@ -165,39 +165,91 @@ Full guide: **[Semantic zoom (schema pyramid)](https://caviri.github.io/rete/sem
 
 ## Quick start
 
-Everything runs through the checked-in **Docker Compose/devcontainer** toolchain
-(nothing builds on your host):
+You do not need Rust, a clone of this repo, or its dev container to *use* rete.
+A prebuilt CLI image is published — `ghcr.io/caviri/rete-cli`, ~30 MB on
+distroless, multi-arch (amd64 + arm64) — so **RDF dump → `.rete` is one
+command**:
 
 ```sh
-# Build the canonical image, then build the CLI in the shared target volume:
-docker compose build dev
-docker compose run --rm dev cargo build --release -p rete-cli
+# run this in the directory that holds your dump
+docker run --rm -v "$PWD:/data" ghcr.io/caviri/rete-cli:latest \
+  build /data/dump.nt -o /data/out.rete --card --title "My graph"
+```
+```text
+embedded dataset card (16240 bytes of metadata)
+wrote /data/out.rete: 5 triples, 8 terms, 1 pyramid level(s), 18061 bytes
 ```
 
+`-v "$PWD:/data"` maps the current directory onto `/data` inside the container,
+so `/data/out.rete` **is** `./out.rete` on your machine: the file is sitting
+next to your dump when the command exits, with nothing to copy out of a
+container. `--card` embeds the
+[Dataset Card](https://caviri.github.io/rete/dataset-cards.html) — counts,
+vocabulary, and runnable starter queries — and is optional.
+
+Inspect and query it with the same image. One alias keeps the rest readable
+(`-w /data` makes the container's working directory *your* directory, so plain
+filenames work):
+
 ```sh
-# 1. Build a .rete from N-Triples / Turtle / N-Quads (--card embeds the self-description):
-rete build examples/social.nt -o social.rete --card --title "Social graph"
+alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:latest'
 
-# 2. Query it — a triple pattern, or full SPARQL:
-rete query  social.rete --predicate '<http://ex/knows>'
-rete why    social.rete --predicate '<http://ex/knows>'   # explain result provenance
-rete sparql social.rete "PREFIX e: <http://ex/> \
-  SELECT ?p ?age WHERE { ?p e:age ?age . FILTER(?age > 27) }"
+rete stats   out.rete    # size, counts, top predicates, planner stats, entity shapes
+rete card    out.rete    # the self-description: vocabulary, signals, starter queries
+rete summary out.rete --level 0   # the schema pyramid, most abstract level
+rete sparql  out.rete 'SELECT ?s ?name WHERE { ?s <http://xmlns.com/foaf/0.1/name> ?name }'
+rete why     out.rete --predicate '<http://ex/knows>'   # explain result provenance
+```
 
-# 3. Read the self-description (no index touched) and the leveled type legend:
-rete card    social.rete            # counts, vocabulary, signals, starter queries
-rete summary social.rete --level 0  # the schema pyramid at its most abstract level
+Variants worth knowing:
 
-# 4. Or query straight from a URL — fetches only the byte ranges it needs:
-rete card-url   https://my-bucket.s3.amazonaws.com/social.rete   # 2 range requests
+```sh
+# Turtle, N-Quads and RDF/XML (.rdf / .owl — how most OWL ontologies ship) are
+# detected by extension; --format nt|nq|ttl|rdfxml overrides detection.
+rete build ontology.owl -o ontology.rete
+
+# Several inputs merge into one file under a shared dictionary.
+rete build part1.nt part2.nt -o merged.rete
+
+# `-` reads stdin, so a dump never has to touch your disk (defaults to N-Triples).
+curl -sL https://host/dump.nt | rete build - -o out.rete
+```
+
+> **Three container gotchas, all of them silent.** Piping needs `docker run -i`
+> — the alias above sets it, but without `-i` stdin is empty and `build -`
+> writes a valid, **0-triple** file and exits 0. On Linux the image runs as
+> root, so add `--user "$(id -u):$(id -g)"` unless you want output owned by
+> root. On Windows Git Bash, MSYS rewrites both the mount and `/data/…`
+> arguments (`/data/dump.nt` becomes `C:/Program Files/Git/data/dump.nt`, and a
+> `$PWD` mount resolves to a directory that is not yours — the build reports
+> success and no file appears); use
+> `MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/data" …`.
+
+A graph that already lives on a URL needs no download, and no mount either if
+you point the bare image at it — these are the range-read commands, fetching
+only the bytes an answer needs:
+
+```sh
+docker run --rm ghcr.io/caviri/rete-cli:latest \
+  card-url https://data.graphplaza.com/opencitations/opencitations.rete
+# fetched 2764 of 35852509508 bytes in 3 range request(s) — index NOT fetched
+#   title   : OpenCitations Meta
+#   triples : 5178674356
+
 rete query-url  https://my-bucket.s3.amazonaws.com/social.rete --object '<http://ex/Alice>'
-rete sparql-url https://my-bucket.s3.amazonaws.com/social.rete "SELECT * WHERE { ?s ?p ?o } LIMIT 5"
+rete sparql-url https://my-bucket.s3.amazonaws.com/social.rete 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'
 ```
 
 `query-url` resolves bound terms from the dictionary, then range-fetches only the
 best-matching permutation payload for that triple pattern; `sparql-url`
 faults in index tiles as a query touches them. `rete cost --explain` shows when a
 query can use the summary-only or routed-pattern budgets.
+
+Prefer not to go through Docker at all? The same engine ships as
+`pip install rete-graph` and `npm install rete-graph` (see
+[Clients](#clients)), which build and query files from Python and JavaScript
+directly. The other two published images — the full toolchain and the
+HTTP/MCP relay — are documented in [`docker/README.md`](docker/README.md).
 
 ### Try it in your browser (no install)
 
@@ -298,6 +350,17 @@ UNION-fan-out, while SPARQL 1.1 `SERVICE` calls external endpoints from inside a
 query.
 
 ## Develop (Docker only)
+
+This section is about **building the project**, not using it — if you only want
+to turn a dump into a `.rete`, the [quick start](#quick-start) above needs none
+of it. Everything here runs through the checked-in Docker Compose/devcontainer
+toolchain, so nothing builds on your host:
+
+```sh
+# The canonical image, then the CLI in the shared target volume (target/release/rete):
+docker compose build dev
+docker compose run --rm dev cargo build --release -p rete-cli
+```
 
 ```sh
 docker compose run --rm dev cargo test --workspace --exclude rete-bench
