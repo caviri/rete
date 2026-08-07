@@ -257,6 +257,36 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Search a **remote** `.rete` over HTTP range reads — the counterpart of
+    /// `rete search`, with the same two modes and the same output.
+    ///
+    /// Opens for **search only**: the header and the subject halves of the
+    /// dictionary, then the TEXT_INDEX token table on the first `--contains`
+    /// and one range request per posting list and per dictionary chunk holding
+    /// a hit. The index tile directories a SPARQL open must fetch to route, and
+    /// the object-only dictionary directory that dominates a normal open on a
+    /// literal-heavy graph, are both skipped — so this is by far the cheapest
+    /// way to find an entity by its text in a file you have not downloaded.
+    /// Bare (label-prefix) mode faults the pyramid instead.
+    SearchUrl {
+        /// http(s):// URL of a `.rete` file (host must honor Range requests).
+        url: String,
+        /// Case-insensitive label prefix (empty matches the first `--limit`).
+        #[arg(default_value = "")]
+        prefix: String,
+        /// Full-text: require each WORD to appear in the subject's literals (AND).
+        #[arg(long = "contains", num_args = 1.., value_name = "WORD")]
+        contains: Vec<String>,
+        /// Full-text: also require a literal word starting with this prefix.
+        #[arg(long = "contains-prefix", value_name = "PREFIX")]
+        contains_prefix: Option<String>,
+        /// Maximum number of matches to print.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit `{schemaVersion:1,matches:[…]}` JSON, as `search` does.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the embedded Dataset Card (data-catalog metadata), if the file has
     /// one — title/license/source, counts, top predicates and classes,
     /// vocabularies, the content-hash checksum, and (when present) the build
@@ -1008,6 +1038,21 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 )
             }
         }
+        Command::SearchUrl {
+            url,
+            prefix,
+            contains,
+            contains_prefix,
+            limit,
+            json,
+        } => commands::url::search_url(
+            &url,
+            &prefix,
+            &contains,
+            contains_prefix.as_deref(),
+            limit,
+            json,
+        ),
         Command::Card {
             file,
             json,

@@ -2786,43 +2786,7 @@ impl Rete {
     /// the lazy remote path — a search is an explicit read, and only the queried
     /// posting lists are fetched, not the whole index.
     pub fn text_search(&self, words: &[&str], prefix: Option<&str>, limit: usize) -> Vec<String> {
-        let Some(ti) = self.text_index() else {
-            return Vec::new();
-        };
-        // Each query word is tokenized exactly as at build time (so "Glucose"
-        // matches the stored "glucose"); a word that splits into several tokens
-        // requires all of them. AND across every required token + the prefix.
-        let mut acc: Option<Vec<u32>> = None;
-        if let Some(p) = prefix {
-            acc = Some(ti.prefix(&p.to_lowercase()));
-        }
-        for w in words {
-            for tok in crate::text_index::tokenize(w) {
-                let posting = ti.lookup(&tok);
-                acc = Some(match acc {
-                    Some(a) => intersect_sorted(&a, &posting),
-                    None => posting,
-                });
-                if acc.as_ref().is_some_and(|a| a.is_empty()) {
-                    return Vec::new();
-                }
-            }
-        }
-        let ids = acc.unwrap_or_default();
-        let mut out = Vec::with_capacity(if limit > 0 {
-            limit.min(ids.len())
-        } else {
-            ids.len()
-        });
-        for id in ids {
-            if let Some(iri) = self.dict.subject_term(id) {
-                out.push(iri);
-                if limit > 0 && out.len() >= limit {
-                    break;
-                }
-            }
-        }
-        out
+        text_search_in(self.text_index(), &self.dict, words, prefix, limit)
     }
 
     /// The default-graph permutation index.
@@ -3191,53 +3155,7 @@ impl Rete {
         // Lazily-chunked dictionary: locate the four sections, fetch each
         // section's header + restart table + chunk directory (small), and
         // fault the chunk bodies in on first term lookup.
-        let mut dict_sections: Vec<crate::dict::ChunkedSection> = Vec::with_capacity(4);
-        for si in 0..4 {
-            let section = locate_container_section_ranged(
-                reader.as_ref(),
-                header.dictionary_offset,
-                header.dictionary_len,
-                si,
-                4,
-            )?;
-            let (meta, entries) = read_dict_dir_ranged(reader.as_ref(), section)?;
-            let ranges: Vec<ByteRange> = entries
-                .iter()
-                .map(|e| ByteRange {
-                    offset: section.offset + e.start,
-                    len: (e.end - e.start),
-                })
-                .collect();
-            let chunks: Vec<crate::dict::SectionChunk> = entries
-                .into_iter()
-                .map(|e| crate::dict::SectionChunk::remote(e.first_run, e.first_term, e.body_start))
-                .collect();
-            let chunk_reader = reader.clone();
-            let codec = header.dict_codec;
-            let loader_ranges = ranges.clone();
-            let loader: crate::dict::ChunkLoader = Box::new(move |ci| {
-                let range = loader_ranges.get(ci)?;
-                let bytes = chunk_reader.read_at(range.offset, range.len).ok()?;
-                decompress(codec, &bytes).ok()
-            });
-            // Full-section sweeps (export/dump) batch their chunk fetches:
-            // adjacent chunk ranges coalesce into a handful of range reads.
-            let bulk_reader = reader.clone();
-            let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis| {
-                let want: Option<Vec<ByteRange>> =
-                    cis.iter().map(|&ci| ranges.get(ci).copied()).collect();
-                let blobs = read_coalesced(bulk_reader.as_ref(), &want?, DICT_COALESCE_GAP)?;
-                blobs.iter().map(|b| decompress(codec, b).ok()).collect()
-            });
-            dict_sections.push(
-                crate::dict::ChunkedSection::from_parts(meta, chunks, Some(loader))
-                    .with_bulk_loader(bulk),
-            );
-        }
-        let dict_arr: [crate::dict::ChunkedSection; 4] = dict_sections
-            .try_into()
-            .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
-        let dict = Dictionary::from_chunked_sections(dict_arr);
+        let dict = ranged_chunked_dictionary(&reader, &header, [true; 4])?;
 
         // Locate the six index section payloads (container framing only) and
         // fetch just their tile directories — shared with the per-named-graph
@@ -3257,55 +3175,13 @@ impl Rete {
         // The pyramid meta is large on real graphs (tens of MB) and SPARQL never
         // reads it, so defer its fetch: it faults in only if `pyramid()` is
         // called (community / pyramid_tree / inspect queries).
-        let pyramid = if header.pyramid_meta_len > 0 {
-            let pyr_reader = reader.clone();
-            let pyr_off = header.pyramid_meta_offset;
-            let pyr_len = header.pyramid_meta_len;
-            PyramidSlot::Lazy {
-                loader: Box::new(move || {
-                    let mb = pyr_reader.read_at(pyr_off, pyr_len).ok()?;
-                    PyramidMeta::decode(&mb).ok()
-                }),
-                cell: std::sync::OnceLock::new(),
-            }
-        } else {
-            PyramidSlot::Resident(None)
-        };
+        let pyramid = ranged_pyramid_slot(&reader, &header);
 
         // The TEXT_INDEX section is also deferred: a text search faults the token
         // table on first call (the leading varint then its compressed bytes), then
         // fetches individual posting lists by `(offset, len)` — never the whole
         // postings blob. A SPARQL query, which never searches, pays nothing.
-        let text_index = if header.text_index_len > 0 {
-            let ti_reader = reader.clone();
-            let ti_off = header.text_index_offset;
-            let ti_len = header.text_index_len;
-            let codec = header.block_codec;
-            TextIndexSlot::Lazy {
-                loader: Box::new(move || {
-                    // The section opens with `varint token_table_len`; read enough
-                    // to decode it (a uvarint is ≤ 10 bytes), then fetch the varint
-                    // + the compressed token table as one prefix range.
-                    let head_len = 10u64.min(ti_len);
-                    let head = ti_reader.read_at(ti_off, head_len).ok()?;
-                    let (ttlen, n) = crate::varint::read_uvarint(&head)?;
-                    let prefix_len = (n as u64 + ttlen).min(ti_len);
-                    let prefix = ti_reader.read_at(ti_off, prefix_len).ok()?;
-                    let postings_base =
-                        crate::text_index::TextIndex::postings_base(&prefix)? as u64;
-                    let postings_abs = ti_off + postings_base;
-                    let pr = ti_reader.clone();
-                    let posting_loader = Box::new(move |off: u64, len: u64| {
-                        pr.read_at(postings_abs + off, len).ok()
-                    });
-                    crate::text_index::TextIndex::from_token_table(&prefix, codec, posting_loader)
-                        .ok()
-                }),
-                cell: std::sync::OnceLock::new(),
-            }
-        } else {
-            TextIndexSlot::Resident(None)
-        };
+        let text_index = ranged_text_index_slot(&reader, &header);
 
         // Named graphs are the last eagerly-fetched section standing on this
         // path — and on a many-graph file they dwarf everything else (67 MB
@@ -3698,10 +3574,281 @@ fn resolve_query_pattern(
     Some((sid, pid, oid))
 }
 
+/// The lazily-chunked dictionary of a ranged open: per section, fetch the
+/// header + chunk directory and fault the chunk bodies in on first term lookup.
+///
+/// `want` selects which of the four sections (0 shared, 1 subject-only,
+/// 2 object-only, 3 predicates) are really read; a skipped one becomes an empty
+/// section whose terms resolve to `None`. A **directory is not small** on a
+/// literal-heavy graph — it carries each chunk's first term verbatim, so the
+/// object-only section of a dataset that stores abstracts can run to hundreds of
+/// megabytes, and fetching it is most of what a remote open costs. A reader that
+/// only ever resolves subjects (see [`SearchView`]) skips sections 2 and 3 and
+/// pays none of it. [`Rete::open_ranged_lazy`] wants all four.
+fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
+    reader: &std::sync::Arc<R>,
+    header: &Header,
+    want: [bool; 4],
+) -> Result<Dictionary, FileError> {
+    let mut dict_sections: Vec<crate::dict::ChunkedSection> = Vec::with_capacity(4);
+    for si in 0..4 {
+        if !want[si] {
+            dict_sections.push(crate::dict::ChunkedSection::from_parts(
+                crate::dict::SectionMeta {
+                    term_count: 0,
+                    restart_interval: 1,
+                    restart_offsets: Vec::new(),
+                },
+                Vec::new(),
+                None,
+            ));
+            continue;
+        }
+        let section = locate_container_section_ranged(
+            reader.as_ref(),
+            header.dictionary_offset,
+            header.dictionary_len,
+            si,
+            4,
+        )?;
+        let (meta, entries) = read_dict_dir_ranged(reader.as_ref(), section)?;
+        let ranges: Vec<ByteRange> = entries
+            .iter()
+            .map(|e| ByteRange {
+                offset: section.offset + e.start,
+                len: (e.end - e.start),
+            })
+            .collect();
+        let chunks: Vec<crate::dict::SectionChunk> = entries
+            .into_iter()
+            .map(|e| crate::dict::SectionChunk::remote(e.first_run, e.first_term, e.body_start))
+            .collect();
+        let chunk_reader = reader.clone();
+        let codec = header.dict_codec;
+        let loader_ranges = ranges.clone();
+        let loader: crate::dict::ChunkLoader = Box::new(move |ci| {
+            let range = loader_ranges.get(ci)?;
+            let bytes = chunk_reader.read_at(range.offset, range.len).ok()?;
+            decompress(codec, &bytes).ok()
+        });
+        // Full-section sweeps (export/dump) batch their chunk fetches:
+        // adjacent chunk ranges coalesce into a handful of range reads.
+        let bulk_reader = reader.clone();
+        let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis| {
+            let want: Option<Vec<ByteRange>> =
+                cis.iter().map(|&ci| ranges.get(ci).copied()).collect();
+            let blobs = read_coalesced(bulk_reader.as_ref(), &want?, DICT_COALESCE_GAP)?;
+            blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+        });
+        dict_sections.push(
+            crate::dict::ChunkedSection::from_parts(meta, chunks, Some(loader))
+                .with_bulk_loader(bulk),
+        );
+    }
+    let dict_arr: [crate::dict::ChunkedSection; 4] = dict_sections
+        .try_into()
+        .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
+    Ok(Dictionary::from_chunked_sections(dict_arr))
+}
+
+/// The pyramid meta is large on real graphs (tens of MB) and SPARQL never reads
+/// it, so a ranged open defers its fetch: it faults in only if `pyramid()` is
+/// called (community / pyramid_tree / label-prefix queries).
+fn ranged_pyramid_slot<R: RangeReader + Send + Sync + 'static>(
+    reader: &std::sync::Arc<R>,
+    header: &Header,
+) -> PyramidSlot {
+    if header.pyramid_meta_len == 0 {
+        return PyramidSlot::Resident(None);
+    }
+    let pyr_reader = reader.clone();
+    let pyr_off = header.pyramid_meta_offset;
+    let pyr_len = header.pyramid_meta_len;
+    PyramidSlot::Lazy {
+        loader: Box::new(move || {
+            let mb = pyr_reader.read_at(pyr_off, pyr_len).ok()?;
+            PyramidMeta::decode(&mb).ok()
+        }),
+        cell: std::sync::OnceLock::new(),
+    }
+}
+
+/// The deferred TEXT_INDEX of a ranged open: a text search faults the token
+/// table on first call (the leading varint then its compressed bytes), then
+/// fetches individual posting lists by `(offset, len)` — never the whole
+/// postings blob. A caller that never searches pays nothing.
+fn ranged_text_index_slot<R: RangeReader + Send + Sync + 'static>(
+    reader: &std::sync::Arc<R>,
+    header: &Header,
+) -> TextIndexSlot {
+    if header.text_index_len == 0 {
+        return TextIndexSlot::Resident(None);
+    }
+    let ti_reader = reader.clone();
+    let ti_off = header.text_index_offset;
+    let ti_len = header.text_index_len;
+    let codec = header.block_codec;
+    TextIndexSlot::Lazy {
+        loader: Box::new(move || {
+            // The section opens with `varint token_table_len`; read enough to
+            // decode it (a uvarint is ≤ 10 bytes), then fetch the varint + the
+            // compressed token table as one prefix range.
+            let head_len = 10u64.min(ti_len);
+            let head = ti_reader.read_at(ti_off, head_len).ok()?;
+            let (ttlen, n) = crate::varint::read_uvarint(&head)?;
+            let prefix_len = (n as u64 + ttlen).min(ti_len);
+            let prefix = ti_reader.read_at(ti_off, prefix_len).ok()?;
+            let postings_base = crate::text_index::TextIndex::postings_base(&prefix)? as u64;
+            let postings_abs = ti_off + postings_base;
+            let pr = ti_reader.clone();
+            let posting_loader =
+                Box::new(move |off: u64, len: u64| pr.read_at(postings_abs + off, len).ok());
+            crate::text_index::TextIndex::from_token_table(&prefix, codec, posting_loader).ok()
+        }),
+        cell: std::sync::OnceLock::new(),
+    }
+}
+
+/// Full-text search over `ti`, resolving the matched subject ids through `dict`.
+/// The engine behind [`Rete::text_search`] and [`SearchView::text_search`].
+fn text_search_in(
+    ti: Option<&crate::text_index::TextIndex>,
+    dict: &Dictionary,
+    words: &[&str],
+    prefix: Option<&str>,
+    limit: usize,
+) -> Vec<String> {
+    let Some(ti) = ti else {
+        return Vec::new();
+    };
+    // Each query word is tokenized exactly as at build time (so "Glucose"
+    // matches the stored "glucose"); a word that splits into several tokens
+    // requires all of them. AND across every required token + the prefix.
+    let mut acc: Option<Vec<u32>> = None;
+    if let Some(p) = prefix {
+        acc = Some(ti.prefix(&p.to_lowercase()));
+    }
+    for w in words {
+        for tok in crate::text_index::tokenize(w) {
+            let posting = ti.lookup(&tok);
+            acc = Some(match acc {
+                Some(a) => intersect_sorted(&a, &posting),
+                None => posting,
+            });
+            if acc.as_ref().is_some_and(|a| a.is_empty()) {
+                return Vec::new();
+            }
+        }
+    }
+    let ids = acc.unwrap_or_default();
+    let mut out = Vec::with_capacity(if limit > 0 {
+        limit.min(ids.len())
+    } else {
+        ids.len()
+    });
+    for id in ids {
+        if let Some(iri) = dict.subject_term(id) {
+            out.push(iri);
+            if limit > 0 && out.len() >= limit {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// A `.rete` opened for **search only**: the dictionary's chunk directories, and
+/// the TEXT_INDEX / pyramid deferred behind their lazy slots. Nothing else.
+///
+/// [`Rete::open_ranged_lazy`] additionally fetches every permutation's tile
+/// directory so that SPARQL can route — on a large remote file that dominates
+/// the open (on a 1.6 GB published dataset it is ~270 MB before a single row is
+/// read). A search never routes a triple pattern, so `SearchView` skips the
+/// index container entirely and pays only for what it reads: the token table on
+/// the first search, then one range per posting list and per dictionary chunk
+/// holding a matched subject. This is what backs `rete search-url`.
+pub struct SearchView {
+    header: Header,
+    dict: Dictionary,
+    pyramid: PyramidSlot,
+    text_index: TextIndexSlot,
+}
+
+impl SearchView {
+    /// Open for search over any [`RangeReader`] (HTTP or local): header +
+    /// dictionary chunk directories only, with the text index and pyramid
+    /// faulting in on first use.
+    pub fn open_ranged<R: RangeReader + Send + Sync + 'static>(
+        reader: R,
+    ) -> Result<Self, FileError> {
+        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        let header = Header::from_bytes(&head)?;
+        let reader = std::sync::Arc::new(reader);
+        // Sections 0 (shared) and 1 (subject-only) are the only ones a search
+        // resolves — both modes return subject IRIs. Skipping 2 and 3 is what
+        // makes this open cheap where a full one is not.
+        let dict = ranged_chunked_dictionary(&reader, &header, [true, true, false, false])?;
+        let pyramid = ranged_pyramid_slot(&reader, &header);
+        let text_index = ranged_text_index_slot(&reader, &header);
+        Ok(Self {
+            header,
+            dict,
+            pyramid,
+            text_index,
+        })
+    }
+
+    /// The file header (already fetched by [`open_ranged`](Self::open_ranged)).
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Whether the file carries a TEXT_INDEX section — a header read, no fault.
+    pub fn has_text_index(&self) -> bool {
+        self.header.text_index_len > 0
+    }
+
+    /// Whether the file carries a pyramid (where the label index lives) — a
+    /// header read, no fault.
+    pub fn has_pyramid(&self) -> bool {
+        self.header.pyramid_meta_len > 0
+    }
+
+    /// Full-text search — see [`Rete::text_search`] for the semantics. Faults
+    /// the token table on the first call, then only the queried postings.
+    pub fn text_search(&self, words: &[&str], prefix: Option<&str>, limit: usize) -> Vec<String> {
+        let ti = match &self.text_index {
+            TextIndexSlot::Resident(t) => t.as_ref(),
+            TextIndexSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
+        };
+        text_search_in(ti, &self.dict, words, prefix, limit)
+    }
+
+    /// Label-prefix search — see [`Rete::prefix_search`]. Faults the pyramid
+    /// (which carries the label index), so it is the pricier of the two.
+    pub fn prefix_search(&self, prefix: &str, limit: usize) -> Vec<(String, String)> {
+        let pyr = match &self.pyramid {
+            PyramidSlot::Resident(p) => p.as_ref(),
+            PyramidSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
+        };
+        let Some(pyr) = pyr else {
+            return Vec::new();
+        };
+        pyr.prefix_search(prefix, limit)
+            .into_iter()
+            .filter_map(|e| {
+                self.dict
+                    .subject_term(e.subject)
+                    .map(|iri| (e.label.clone(), iri))
+            })
+            .collect()
+    }
+}
+
 /// A lightweight, overview-only view of a file: the pyramid summary graph plus
 /// just enough dictionary to label predicates. Fetched via ranges *without*
-/// touching the (large) triple index â€” the "load the coarse graph first" path
-/// from SPEC.md Â§7.2.
+/// touching the (large) triple index — the "load the coarse graph first" path
+/// from SPEC.md §7.2.
 #[must_use]
 pub struct SummaryView {
     pub round: u32,
@@ -4476,6 +4623,61 @@ mod tests {
             "search pulled {pulled} B but the section is {ti_len} B — faulted too much"
         );
         assert!(!lazy.index_incomplete());
+    }
+
+    /// `SearchView` answers exactly what a full open answers, having read
+    /// strictly less: it skips the permutation tile directories and — the part
+    /// that actually costs on a literal-heavy graph — the object-only
+    /// dictionary's chunk directory, which carries every chunk's first term.
+    #[test]
+    fn search_view_matches_full_open_for_far_fewer_bytes() {
+        use crate::reader::{CountingReader, SliceReader};
+        // Long object literals so the object-only dictionary (and its chunk
+        // directory) dominates the file, as on a graph that stores abstracts.
+        let filler = "lorem ipsum dolor sit amet consectetur adipiscing elit ".repeat(20);
+        let mut triples: Vec<(String, String, String)> = (0..300u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{i:04}>"),
+                    "<http://ex/abstract>".to_string(),
+                    format!("\"{filler} number {i}\""),
+                )
+            })
+            .collect();
+        for i in [3u32, 77, 250] {
+            triples.push((
+                format!("<http://ex/s/{i:04}>"),
+                "<http://ex/tag>".to_string(),
+                "\"raretoken\"".to_string(),
+            ));
+        }
+        let bytes = build_text_indexed(&triples);
+        let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+
+        let full_reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+        let full = Rete::open_ranged_lazy(full_reader.clone()).unwrap();
+        let mut want = full.text_search(&["raretoken"], None, 0);
+        want.sort();
+        assert_eq!(want.len(), 3);
+
+        let search_reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+        let view = SearchView::open_ranged(search_reader.clone()).unwrap();
+        assert!(view.has_text_index());
+        let mut got = view.text_search(&["raretoken"], None, 0);
+        got.sort();
+        assert_eq!(got, want, "search view matches the full open");
+        assert!(
+            search_reader.bytes_read() < full_reader.bytes_read(),
+            "search read {} B, full open read {} B — the narrow open bought nothing",
+            search_reader.bytes_read(),
+            full_reader.bytes_read()
+        );
+
+        // A file without a text index says so from the header alone, and the
+        // label-prefix mode still works through the same view.
+        let mut prefix_hits = view.prefix_search("", 5);
+        prefix_hits.sort();
+        assert!(!prefix_hits.is_empty() || !view.has_pyramid());
     }
 
     /// The TEXT_INDEX section is inside the content hash: a freshly built

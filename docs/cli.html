@@ -354,7 +354,7 @@ maintained as hand-written copies of the CLI definition.</p>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
 Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code>, plus <code>.rdf</code> / <code>.owl</code> /
 <code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
-defaults to N-Triples; <code>--format</code> forces a format for all inputs (use <code>--format rdfxml</code> for an RDF/XML file with a non-standard extension). N-Quads inputs produce
+defaults to N-Triples; <code>--format</code> forces a format for all inputs (use <code>--format  rdfxml</code> for an RDF/XML file with a non-standard extension). N-Quads inputs produce
 a dataset with named graphs.</p>
 <pre><code class="language-sh">rete build a.nt b.nt -o merged.rete
 curl -s https://host/data.nt | rete build - -o data.rete
@@ -364,7 +364,7 @@ curl -s https://host/data.nt | rete build - -o data.rete
 adding triples it stamps the <strong>coherence verdict</strong> into the Dataset Card (implies
 <code>--card</code>) — so a remote reader learns whether the graph is logically coherent from
 the index-free card with no compute; unlike <code>--materialize</code> it records
-<code>coherent: false</code> honestly rather than aborting (verify later with <code>rete reason --verify-card</code>, combine with <code>--materialize</code> to also bake the inferred triples).
+<code>coherent: false</code> honestly rather than aborting (verify later with <code>rete reason  --verify-card</code>, combine with <code>--materialize</code> to also bake the inferred triples).
 <code>--card</code> (and <code>--card-file</code> / <code>--title</code> / <code>--license</code> / <code>--source</code> /
 <code>--description</code> / <code>--created</code>) embeds a <a href="dataset-cards.html">Dataset Card</a> —
 data-catalog metadata plus an auto-derived profile; the card file's <code>extra</code>
@@ -454,7 +454,8 @@ line (or the same versioned <code>matches</code> envelope with <code>{subject}</
 requires a literal word starting with <code>einst</code>. Answered from the opt-in
 <strong>TEXT_INDEX</strong> section (<code>rete build --text-index</code>); on a remote file only the
 queried words' posting lists are fetched, not the whole index. A file built
-without <code>--text-index</code> reports that it has no text index.</p>
+without <code>--text-index</code> reports that it has no text index. To search a file you
+have <strong>not</strong> downloaded, use <code>rete search-url</code> (below).</p>
 <pre><code class="language-sh">rete search data.rete gluc                       # label prefix (autocomplete)
 rete search data.rete --contains glucose         # literals containing "glucose"
 rete search data.rete --contains glucose phosphate  # both words (AND)
@@ -658,7 +659,7 @@ documented subset, not full OWL DL — see <a href="reasoning.html">Reasoning &a
 local file (omit the positional <code>&lt;file&gt;</code>).</li>
 <li><code>--check</code> is <strong>coherence-gate mode</strong>: print one verdict line and exit non-zero
 on any incoherent point (suppresses <code>--materialize</code> output) — the minimal CI gate.</li>
-<li><code>--verify-card</code> checks the file's <strong>baked coherence card</strong> (from <code>rete build --reason</code>) against a fresh reasoning run, guarding against drift or a stale
+<li><code>--verify-card</code> checks the file's <strong>baked coherence card</strong> (from <code>rete build  --reason</code>) against a fresh reasoning run, guarding against drift or a stale
 ruleset; it exits non-zero if the stored verdict disagrees with recomputation.</li>
 </ul>
 <pre><code class="language-sh">rete reason data.rete
@@ -693,7 +694,7 @@ the bytes fetched and the range-request count. Validates the default graph.</p>
 <p>Print the <strong>structural</strong> coarse graph: the Louvain community quotient graph
 (community → community relations with counts), plus — for v2 files — the <strong>schema
 pyramid</strong>: a leveled <code>rdf:type</code> histogram where abstract classes describe coarse
-levels and leaf classes resolve as you zoom in (e.g. <code>Agent → Person → Scientist → Astronomer</code>). <code>--level k</code> prints just level <code>k</code>'s type histogram (<code>0</code> =
+levels and leaf classes resolve as you zoom in (e.g. <code>Agent → Person → Scientist  → Astronomer</code>). <code>--level k</code> prints just level <code>k</code>'s type histogram (<code>0</code> =
 coarsest / most abstract). Everything here reads <strong>index-free</strong> from the
 pyramid-meta — <code>summary-url</code> shows the same over HTTP without fetching the index.</p>
 <h3><code>rete schema &lt;file&gt;</code></h3>
@@ -707,7 +708,7 @@ corpus for downstream topic modeling. <code>--profile</code> adds a no-ML "topic
 per community (top literal words, <code>rdf:type</code> classes, and predicates).
 <code>--predicate &lt;iri&gt;</code> detects communities using <strong>only</strong> that relation's edges — a
 criterion-specific partition (see <a href="multi-criteria.html">multi-criteria splitting</a>).
-<code>--json</code> emits <code>{schemaVersion:1, communities:[{community, size, members:[&lt;iri&gt;…], text:[lexical…]}]}</code> (plus a <code>profile</code> object on each record
+<code>--json</code> emits <code>{schemaVersion:1, communities:[{community, size,  members:[&lt;iri&gt;…], text:[lexical…]}]}</code> (plus a <code>profile</code> object on each record
 when <code>--profile</code> is set); <code>--round N</code> cuts the dendrogram at a
 specific round (default: the round chosen for the tile budget); <code>--min-size N</code>
 drops communities with fewer than <code>N</code> members. See the
@@ -830,6 +831,31 @@ would be stored as if it were the whole card.</p>
 <pre><code class="language-sh">rete card-audit data.rete --measure --json | jq '.findings[] | select(.observed.outcome=="empty")'
 rete card-audit https://host/data.rete --measure --only ov-triples --max-mb 8
 rete card-audit data.rete --measure --write-costs
+</code></pre>
+<h3><code>rete search-url &lt;url&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
+<p><code>rete search</code> over HTTP — the same two modes and the same output, without
+downloading the file.</p>
+<p>The open is deliberately narrower than any other remote command's. It reads the
+header and the <strong>subject</strong> halves of the dictionary (the shared and subject-only
+sections), and stops: no permutation tile directories, no pyramid, no index.
+<code>--contains</code> then faults the TEXT_INDEX token table once and one range request
+per posting list; the bare prefix mode faults the pyramid instead, where the
+label index lives.</p>
+<p>That narrowness is the point, because on a literal-heavy graph the dictionary is
+most of the file and its <strong>object-only chunk directory</strong> — which carries every
+chunk's first term verbatim — is most of what a normal open costs. Searching
+<code>epfl-infoscience.rete</code> (1.64 GB; a 1.35 GB dictionary, a 186 MB text index over
+titles and 132k abstracts) for <code>photosynthesis</code>:</p>
+<table><thead><tr><th></th><th>bytes fetched</th><th>requests</th><th>time</th></tr></thead><tbody>
+<tr><td><code>sparql-url</code> with <code>FILTER(CONTAINS(…))</code></td><td>334 MB</td><td>83</td><td>28.6 s</td></tr>
+<tr><td><code>search-url --contains</code></td><td><strong>29.5 MB</strong></td><td><strong>5</strong></td><td><strong>4.8 s</strong></td></tr>
+</tbody></table>
+<p>Same five hits. The 29.5 MB is the token table itself; label-prefix mode over the
+same file costs 1.4 MB in 4 requests. A file built without <code>--text-index</code> says so
+instead of silently scanning.</p>
+<pre><code class="language-sh">rete search-url https://host/data.rete --contains glucose phosphate
+rete search-url https://host/data.rete --contains graphs --contains-prefix existen --json
+rete search-url https://host/data.rete "Photosynth" --limit 3   # label prefix
 </code></pre>
 <h3><code>rete summary-url &lt;url&gt;</code></h3>
 <p>Fetch only the header + dictionary + pyramid summary and print the coarse graph.
