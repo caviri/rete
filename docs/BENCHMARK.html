@@ -505,6 +505,26 @@ pre-change binary, <code>delegated_lazy</code> is the candidate forced lazy with
 The selective workload orders by <code>?name ?formula ?smiles</code> before <code>LIMIT 200</code>:
 without <code>ORDER BY</code>, SPARQL permits either plan to return a different valid
 200-row subset, which is unsuitable for an exact output-hash benchmark.</p>
+<p>That adjustment followed a deliberately preserved failed smoke of the original
+unordered workload. <code>/target/bench/cold-r2-smoke.jsonl</code> contains the two
+matching lazy records written before the eager hash gate stopped the run (2
+lines, 541 bytes, SHA-256
+<code>8bb7018301d372912b13be9c7692ff274695680e9c40475ea0e372b5beb6cf1a</code>).
+The raw lazy body was 79,495 bytes with SHA-256
+<code>9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8</code>;
+the eager body was 68,689 bytes with SHA-256
+<code>75ed8d5a58786d94fa1c8b8bec82b276afe70f44d6898e5207492a5b517ae13b</code>.
+Each contained 200 unique rows, but their intersection was only five rows (195
+were unique to each valid unordered subset). A diagnostic ordered run then
+produced the same 79,495-byte body and
+<code>9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8</code>
+hash in both modes. This isolated unordered LIMIT selection, rather than
+corrupt reads or JSON serialization, before the ordered workload was accepted.</p>
+<p>The accepted 15-sample comparison and 0/4/8/16 MiB sweep each issued HEAD both
+before and after their samples. Every before/after probe matched the pinned
+length <strong>7,566,404</strong> and ETag
+<strong><code>"6cefd111dee3c59c063f0bede9cd60f9"</code></strong>, so the accepted results never span a
+source-metadata change.</p>
 <table><thead><tr><th>query</th><th>mode</th><th style="text-align: right">bytes / GETs</th><th style="text-align: right">wall median / p90</th><th style="text-align: right">VmHWM median / p90 / max</th></tr></thead><tbody>
 <tr><td>molecules with their structure</td><td>baseline_lazy</td><td style="text-align: right">1,703,936 / 24</td><td style="text-align: right">2,285 / 2,355 ms</td><td style="text-align: right">16,952 / 17,540 / 17,704 KiB</td></tr>
 <tr><td></td><td>delegated_lazy</td><td style="text-align: right">2,031,616 / 25</td><td style="text-align: right">2,256 / 2,381 ms</td><td style="text-align: right">20,244 / 20,648 / 20,656 KiB</td></tr>

@@ -208,6 +208,28 @@ The selective workload orders by `?name ?formula ?smiles` before `LIMIT 200`:
 without `ORDER BY`, SPARQL permits either plan to return a different valid
 200-row subset, which is unsuitable for an exact output-hash benchmark.
 
+That adjustment followed a deliberately preserved failed smoke of the original
+unordered workload. `/target/bench/cold-r2-smoke.jsonl` contains the two
+matching lazy records written before the eager hash gate stopped the run (2
+lines, 541 bytes, SHA-256
+`8bb7018301d372912b13be9c7692ff274695680e9c40475ea0e372b5beb6cf1a`).
+The raw lazy body was 79,495 bytes with SHA-256
+`9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`;
+the eager body was 68,689 bytes with SHA-256
+`75ed8d5a58786d94fa1c8b8bec82b276afe70f44d6898e5207492a5b517ae13b`.
+Each contained 200 unique rows, but their intersection was only five rows (195
+were unique to each valid unordered subset). A diagnostic ordered run then
+produced the same 79,495-byte body and
+`9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`
+hash in both modes. This isolated unordered LIMIT selection, rather than
+corrupt reads or JSON serialization, before the ordered workload was accepted.
+
+The accepted 15-sample comparison and 0/4/8/16 MiB sweep each issued HEAD both
+before and after their samples. Every before/after probe matched the pinned
+length **7,566,404** and ETag
+**`"6cefd111dee3c59c063f0bede9cd60f9"`**, so the accepted results never span a
+source-metadata change.
+
 | query | mode | bytes / GETs | wall median / p90 | VmHWM median / p90 / max |
 |---|---|---:|---:|---:|
 | molecules with their structure | baseline_lazy | 1,703,936 / 24 | 2,285 / 2,355 ms | 16,952 / 17,540 / 17,704 KiB |
