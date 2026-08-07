@@ -12,9 +12,18 @@
 //   web/preview/.cache/answers.jsonl   (cache, gitignored)
 //   web/preview/answers.json           (consolidated, committed — see --finalize)
 //
+// SAFETY CONTRACT. answers.json is committed and expensive (hours of live
+// queries); the cache it is consolidated from is gitignored, so on a clean
+// checkout it does not exist. Finalize is therefore ADDITIVE, never a
+// replacement: it seeds from the committed answers.json, merges the cache over
+// it, keeps the whole catalog in view regardless of --scope/--dataset, and
+// refuses to write a file with fewer answers than the one already committed.
+// See finalize() for the three guards and the flags that lift them.
+//
 // Runs inside the Playwright image; see scripts/preview/run.sh.
 //   node scripts/preview/capture.mjs [--scope=all|embedded] [--dataset=<substr>]
 //                                    [--concurrency=4] [--timeout=90000] [--force]
+//   node scripts/preview/capture.mjs --finalize [--rebuild] [--allow-shrink]
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +40,7 @@ const JSONL = path.join(CACHE_DIR, "answers.jsonl");
 // INPUT to the card render, so a clean checkout has to be able to reproduce the
 // PNGs byte-for-byte without re-running a multi-hour live sweep.
 const SHOTS_DIR = path.join(ROOT, "web", "preview", "shots");
+const ANSWERS = path.join(ROOT, "web", "preview", "answers.json");
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -47,6 +57,15 @@ const TIMEOUT = Number(flag("timeout", 90000));
 const OPEN_TIMEOUT = Number(flag("open-timeout", 180000));
 const FORCE = args.includes("--force");
 const FINALIZE_ONLY = args.includes("--finalize");
+// Deliberately discard the committed answers and consolidate the cache alone —
+// the only way to record that an example that used to work no longer does. It
+// still refuses to shrink the file without --allow-shrink, so a --rebuild run
+// against a half-populated cache stops instead of deleting the other answers.
+const REBUILD = args.includes("--rebuild");
+// Permit an output with fewer answers than the committed file: needed when a
+// catalog example is genuinely deleted, and paired with --rebuild to re-record
+// regressions. Never a default.
+const ALLOW_SHRINK = args.includes("--allow-shrink");
 // Re-run only the drawing views, to refresh their result thumbnails without
 // paying for the whole sweep again.
 const SHOTS_ONLY = args.includes("--shots-only");
@@ -91,6 +110,31 @@ function allCases() {
   return cases;
 }
 
+/**
+ * Every example id in the catalog, ignoring --scope and --dataset.
+ *
+ * finalize() must use THIS and not allCases(): allCases() honours the filters,
+ * so consolidating at the end of `capture --dataset=x` used to emit a file
+ * containing x and nothing else — deleting every other dataset's answer even
+ * when the cache still held them.
+ */
+function catalogIds() {
+  const ids = [];
+  for (const [key, examples] of Object.entries(CATALOG.examples)) {
+    if (!datasetByKey.has(key)) throw new Error(`catalog examples refer to unknown dataset ${key}`);
+    for (let index = 0; index < examples.length; index++) ids.push(`${key}:${index}`);
+  }
+  return ids;
+}
+
+/** The committed answers — the base every finalize builds on, and the floor it may not go under. */
+function readCommitted() {
+  if (!fs.existsSync(ANSWERS)) return {};
+  // Deliberately not tolerant: silently treating an unreadable committed file as
+  // empty would disable the shrink guard exactly when it matters most.
+  return JSON.parse(fs.readFileSync(ANSWERS, "utf8")).answers || {};
+}
+
 function groupByDataset(cases) {
   const groups = new Map();
   for (const entry of cases) {
@@ -121,31 +165,102 @@ function readCache() {
   return seen;
 }
 
-/** Consolidate the append-only cache into the committed, deterministic JSON. */
+/**
+ * Merge the append-only cache into the committed, deterministic JSON.
+ *
+ * Additive by construction. The committed answers.json is the base; cache
+ * records are laid over it; the key set is the WHOLE catalog. So a partial
+ * capture — one dataset, one scope, a clean checkout with no cache at all — can
+ * only add or update entries, never remove them.
+ *
+ * Three guards, in order of how much they cost to get wrong:
+ *   1. base = committed answers (skip with --rebuild),
+ *   2. a cached FAILURE never supersedes an answer that already worked — the
+ *      same rule readCache() applies inside the cache, extended to the file,
+ *   3. an output smaller than the committed file aborts unless --allow-shrink.
+ */
 function finalize() {
+  const committed = readCommitted();
   const seen = readCache();
+  const base = REBUILD ? {} : committed;
   const answers = {};
-  for (const entry of allCases()) {
-    const record = seen.get(entry.id);
-    if (record) answers[entry.id] = record;
+  for (const id of catalogIds()) {
+    const previous = base[id];
+    const fresh = seen.get(id);
+    // Guard 2: prefer what was just measured, unless it is a failure standing
+    // against an answer that worked (a flaky remote sweep must not strip data).
+    const pick = fresh && (fresh.ok || !previous || !previous.ok) ? fresh : previous;
+    if (pick) answers[id] = pick;
   }
   const ordered = Object.keys(answers).sort().reduce((acc, k) => (acc[k] = answers[k], acc), {});
-  const out = path.join(ROOT, "web", "preview", "answers.json");
-  fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, JSON.stringify({
+
+  // Guard 3. Entries can still legitimately disappear — an example deleted from
+  // the catalog is no longer addressable — but never by accident and never
+  // silently, because re-measuring one costs a live query against a multi-GB
+  // remote graph.
+  const before = Object.keys(committed).length;
+  const after = Object.keys(ordered).length;
+  const okBefore = Object.values(committed).filter((a) => a.ok).length;
+  const okAfter = Object.values(ordered).filter((a) => a.ok).length;
+  if (!ALLOW_SHRINK && (after < before || okAfter < okBefore)) {
+    const gone = Object.keys(committed).filter((id) => !(id in ordered));
+    const inCatalog = new Set(catalogIds());
+    const droppedButStillInCatalog = gone.filter((id) => inCatalog.has(id));
+    console.error(
+      `finalize refused: this would shrink web/preview/answers.json.\n`
+      + `  committed: ${before} answers (${okBefore} with data)\n`
+      + `  would write: ${after} answers (${okAfter} with data)  `
+      + `— dropping ${before - after} entr${before - after === 1 ? "y" : "ies"}`
+      + `${okBefore - okAfter > 0 ? `, ${okBefore - okAfter} of them measured answers` : ""}\n`
+      + (gone.length ? `  first dropped: ${gone.slice(0, 8).join(", ")}${gone.length > 8 ? ` … (+${gone.length - 8})` : ""}\n` : "")
+      + (droppedButStillInCatalog.length
+        ? `  ${droppedButStillInCatalog.length} of those are STILL in the catalog — this is data loss, not pruning.\n`
+        : `  (all dropped ids have left the catalog)\n`)
+      + `  Nothing was written. If the loss is intended, re-run with --allow-shrink:\n`
+      + `    scripts/preview/run.sh finalize --allow-shrink\n`
+      + `  To reconsolidate from the cache alone, add --rebuild.`,
+    );
+    process.exit(1);
+  }
+
+  fs.mkdirSync(path.dirname(ANSWERS), { recursive: true });
+  fs.writeFileSync(ANSWERS, JSON.stringify({
     // No timestamp: this file is committed, and a rebuild that changes nothing
     // should produce no diff.
     generator: "scripts/preview/capture.mjs",
     answers: ordered,
   }, null, 1) + "\n");
-  const ok = Object.values(ordered).filter((a) => a.ok).length;
-  console.log(`finalize: ${Object.keys(ordered).length} answers (${ok} with data) -> web/preview/answers.json`);
+  const delta = after - before;
+  console.log(`finalize: ${after} answers (${okAfter} with data) -> web/preview/answers.json`
+    + ` [was ${before} (${okBefore}); ${delta === 0 ? "no net change" : `${delta > 0 ? "+" : ""}${delta}`}`
+    + `${REBUILD ? ", --rebuild" : ""}${ALLOW_SHRINK ? ", --allow-shrink" : ""}]`);
 }
 
 if (FINALIZE_ONLY) { finalize(); process.exit(0); }
 
+/**
+ * Give a clean checkout the cache it would have had.
+ *
+ * The cache is gitignored, so a fresh clone starts with none — and every record
+ * in the committed answers.json came out of exactly this cache, in exactly this
+ * shape. Seeding it back makes the first run on a clone incremental, like a run
+ * on the machine that did the original sweep: only the missing and failed
+ * examples are measured. `--force` still re-measures everything.
+ */
+function seedCacheFromCommitted() {
+  if (fs.existsSync(JSONL)) return;
+  const committed = readCommitted();
+  const ids = Object.keys(committed).sort();
+  if (!ids.length) return;
+  fs.writeFileSync(JSONL, ids.map((id) => JSON.stringify({ ...committed[id], id })).join("\n") + "\n");
+  console.log(`seed: no cache on disk — seeded ${ids.length} answer(s) from the committed `
+    + `web/preview/answers.json, so this run tops them up instead of replacing them `
+    + `(--force to re-measure everything).`);
+}
+
 fs.mkdirSync(CACHE_DIR, { recursive: true });
 fs.mkdirSync(SHOTS_DIR, { recursive: true });
+seedCacheFromCommitted();
 const cached = FORCE ? new Map() : readCache();
 const jsonl = fs.createWriteStream(JSONL, { flags: "a" });
 const write = (record) => new Promise((resolve) => jsonl.write(JSON.stringify(record) + "\n", resolve));
