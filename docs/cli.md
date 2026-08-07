@@ -477,20 +477,24 @@ rete query-url https://host/data.rete --object '<http://ex/Dave>'
 
 ### `rete sparql-url <url> "<query>" [--json]`
 Run a full SPARQL query over HTTP. The native CLI first sends a `HEAD` probe to
-learn the object's length. A non-empty remote file up to 8 MiB is then opened
-eagerly with one exact full-file `Range` GET for `[0,len)` (`bytes=0-(len-1)`);
-larger files use **lazy tile faulting** instead. In the lazy path, the open
-fetches the header, dictionary,
-pyramid, and the index's small tile directories; index tiles are then
-range-fetched only when the query's scans and probes touch them, so a selective
-query reads O(touched tiles) rather than the whole index.
+learn the object's length. A non-empty remote file up to 8 MiB is fetched with
+one exact full-file `Range` GET for `[0,len)` (`bytes=0-(len-1)`) into a bounded,
+owned in-memory range source. The bytes remain compressed; `Rete` opens them
+through its lazy ranged reader and decompresses dictionary chunks, index tiles,
+and optional sections only when the query touches them. Physical accounting is
+therefore one GET and the full compressed file length, without the eager
+`Rete::open` whole-image decode. Larger files use **remote-lazy tile faulting**:
+the open fetches the header and small dictionary/index directories, then reads
+O(touched tiles) rather than the whole index.
 
 `RETE_EAGER_MAX_MB` sets the eager threshold in MiB (default `8`), and
 `RETE_EAGER_MAX_MB=0` forces the lazy path. It must be a non-negative integer
 whose byte count fits the platform; an invalid value fails before any network
-request. This policy applies only to the native `rete sparql-url` command, not
-to the browser/WASM reader. The browser/WASM reader remains lazy. A range
-failure mid-query is reported as an error, never as silently fewer rows.
+request. The value is parsed only for HTTP(S); a local path accepted by this
+command keeps its prior behavior even if the environment value is invalid.
+Larger native HTTP objects, native HTTP reads with `RETE_EAGER_MAX_MB=0`, and
+browser/WASM readers remain remote-lazy. A range failure mid-query is reported
+as an error, never as silently fewer rows.
 
 ```sh
 rete sparql-url https://host/data.rete \

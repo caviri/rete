@@ -497,11 +497,17 @@ bytes</strong>, ETag <strong><code>"6cefd111dee3c59c063f0bede9cd60f9"</code></st
 baseline executable was SHA-256
 <code>37b0d50f1a5feee32bbdf60a726576fd28dc8889482ee03d8c7289ee476c86e3</code>;
 the candidate was
-<code>37932ffc8c2b72090ef8ab85e85d05202885dd7edbb434dc0b57b282eaba0dc4</code>.</p>
-<p>Each cell is 15 alternating fresh-process samples. <code>p90</code> is nearest-rank;
+<code>10da5c99583e4a2845a0144ec85b7a6ff4509d2abbe6c4669db551eafd739b27</code>.</p>
+<p>Each cell is 15 fresh-process samples. Mode order uses a cyclic rotation rather
+than reversal, so each of the three comparison modes occupies each launch
+position five times; the four-mode threshold sweep likewise rotates every mode
+through every position. <code>p90</code> is nearest-rank;
 VmHWM is polled from <code>/proc/&lt;pid&gt;/status</code>. <code>baseline_lazy</code> is the pinned
 pre-change binary, <code>delegated_lazy</code> is the candidate forced lazy with
-<code>RETE_EAGER_MAX_MB=0</code>, and <code>eager_8</code> is the candidate at the 8 MiB policy.
+<code>RETE_EAGER_MAX_MB=0</code>, and <code>eager_8</code> is the candidate at the 8 MiB policy. The
+<code>eager_8</code> harness label means one eager <em>transfer</em>, not an eager parser: the
+compressed file is retained in a bounded owned memory reader and opened with
+<code>Rete::open_ranged_lazy</code>, so section decompression remains demand-driven.
 The selective workload orders by <code>?name ?formula ?smiles</code> before <code>LIMIT 200</code>:
 without <code>ORDER BY</code>, SPARQL permits either plan to return a different valid
 200-row subset, which is unsuitable for an exact output-hash benchmark.</p>
@@ -526,23 +532,24 @@ length <strong>7,566,404</strong> and ETag
 <strong><code>"6cefd111dee3c59c063f0bede9cd60f9"</code></strong>, so the accepted results never span a
 source-metadata change.</p>
 <table><thead><tr><th>query</th><th>mode</th><th style="text-align: right">bytes / GETs</th><th style="text-align: right">wall median / p90</th><th style="text-align: right">VmHWM median / p90 / max</th></tr></thead><tbody>
-<tr><td>molecules with their structure</td><td>baseline_lazy</td><td style="text-align: right">1,703,936 / 24</td><td style="text-align: right">2,285 / 2,355 ms</td><td style="text-align: right">16,952 / 17,540 / 17,704 KiB</td></tr>
-<tr><td></td><td>delegated_lazy</td><td style="text-align: right">2,031,616 / 25</td><td style="text-align: right">2,256 / 2,381 ms</td><td style="text-align: right">20,244 / 20,648 / 20,656 KiB</td></tr>
-<tr><td></td><td><strong>eager_8</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>765 / 885 ms</strong></td><td style="text-align: right">64,508 / 64,584 / 64,772 KiB</td></tr>
-<tr><td>most common molecular formulas</td><td>baseline_lazy</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">1,490 / 1,520 ms</td><td style="text-align: right">12,584 / 12,696 / 12,704 KiB</td></tr>
-<tr><td></td><td>delegated_lazy</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">1,515 / 1,635 ms</td><td style="text-align: right">12,636 / 12,776 / 12,796 KiB</td></tr>
-<tr><td></td><td><strong>eager_8</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>709 / 768 ms</strong></td><td style="text-align: right">64,444 / 64,936 / 65,156 KiB</td></tr>
-<tr><td>every subtype of spectroscopy</td><td>baseline_lazy</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">3,232 / 3,779 ms</td><td style="text-align: right">23,912 / 24,072 / 24,176 KiB</td></tr>
-<tr><td></td><td>delegated_lazy</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">3,254 / 3,576 ms</td><td style="text-align: right">23,820 / 24,052 / 24,060 KiB</td></tr>
-<tr><td></td><td><strong>eager_8</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>885 / 1,173 ms</strong></td><td style="text-align: right">64,528 / 64,868 / 64,880 KiB</td></tr>
+<tr><td>molecules with their structure</td><td>baseline_lazy</td><td style="text-align: right">1,703,936 / 24</td><td style="text-align: right">2,064 / 2,169 ms</td><td style="text-align: right">17,184 / 17,720 / 17,900 KiB</td></tr>
+<tr><td></td><td>delegated_lazy</td><td style="text-align: right">2,031,616 / 25</td><td style="text-align: right">2,159 / 2,429 ms</td><td style="text-align: right">20,128 / 20,492 / 20,576 KiB</td></tr>
+<tr><td></td><td><strong>eager_8</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>737 / 778 ms</strong></td><td style="text-align: right"><strong>22,600 / 23,200 / 23,284 KiB</strong></td></tr>
+<tr><td>most common molecular formulas</td><td>baseline_lazy</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">1,433 / 1,512 ms</td><td style="text-align: right">12,492 / 12,748 / 12,764 KiB</td></tr>
+<tr><td></td><td>delegated_lazy</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">1,470 / 1,631 ms</td><td style="text-align: right">12,556 / 12,656 / 12,804 KiB</td></tr>
+<tr><td></td><td><strong>eager_8</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>728 / 767 ms</strong></td><td style="text-align: right"><strong>18,340 / 18,744 / 18,992 KiB</strong></td></tr>
+<tr><td>every subtype of spectroscopy</td><td>baseline_lazy</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">3,262 / 3,408 ms</td><td style="text-align: right">23,788 / 23,956 / 23,956 KiB</td></tr>
+<tr><td></td><td>delegated_lazy</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">3,215 / 3,438 ms</td><td style="text-align: right">23,752 / 23,904 / 23,928 KiB</td></tr>
+<tr><td></td><td><strong>eager_8</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>844 / 932 ms</strong></td><td style="text-align: right"><strong>28,296 / 28,472 / 28,700 KiB</strong></td></tr>
 </tbody></table>
-<p>Relative to the same candidate's delegated-lazy path, eager reduced median /
-p90 wall time by <strong>66.1% / 62.8%</strong>, <strong>53.2% / 53.0%</strong>, and <strong>72.8% /
-67.2%</strong>, respectively. Thus all three queries clear the required 25% median
+<p>Relative to the same candidate's delegated-lazy path, the one-transfer mode
+reduced median / p90 wall time by <strong>65.9% / 68.0%</strong>, <strong>50.5% / 53.0%</strong>, and
+<strong>73.7% / 72.9%</strong>, respectively. Thus all three queries clear the required 25% median
 improvement (the gate required two), none regresses in median or p90, and every
-eager sample performs exactly one data GET. Peak process RSS was 65,156 KiB
-(63.6 MiB), the expected cost of holding and decoding the validated 7.22 MiB
-file image rather than retaining only lazy tiles.</p>
+eligible sample performs exactly one data GET. Peak process RSS was <strong>28,700
+KiB (28.0 MiB)</strong>: the process retains the validated 7.22 MiB compressed image,
+but only demand-decodes the sections this query touches rather than opening all
+sections eagerly.</p>
 <p>Every sample for a query produced one byte-identical JSON hash across all
 modes:</p>
 <ul>
@@ -550,38 +557,41 @@ modes:</p>
 <li>formulas: <code>43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640</code></li>
 <li>spectroscopy path: <code>359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc</code></li>
 </ul>
-<p>Threshold sweep, again 15 alternating fresh processes per cell:</p>
+<p>Threshold sweep, again 15 cyclically rotated fresh processes per cell:</p>
 <table><thead><tr><th>query</th><th style="text-align: right">threshold</th><th style="text-align: right">bytes / GETs</th><th style="text-align: right">wall median / p90</th><th style="text-align: right">VmHWM median / p90 / max</th></tr></thead><tbody>
-<tr><td>molecules</td><td style="text-align: right">0 MiB</td><td style="text-align: right">2,031,616 / 25</td><td style="text-align: right">2,286 / 2,562 ms</td><td style="text-align: right">20,208 / 20,776 / 20,820 KiB</td></tr>
-<tr><td></td><td style="text-align: right">4 MiB</td><td style="text-align: right">2,031,616 / 25</td><td style="text-align: right">2,216 / 2,499 ms</td><td style="text-align: right">20,196 / 20,848 / 20,920 KiB</td></tr>
-<tr><td></td><td style="text-align: right"><strong>8 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>838 / 889 ms</strong></td><td style="text-align: right">64,284 / 64,668 / 64,792 KiB</td></tr>
-<tr><td></td><td style="text-align: right"><strong>16 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>843 / 893 ms</strong></td><td style="text-align: right">64,408 / 64,652 / 64,756 KiB</td></tr>
-<tr><td>formulas</td><td style="text-align: right">0 MiB</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">1,409 / 1,641 ms</td><td style="text-align: right">12,668 / 12,792 / 12,872 KiB</td></tr>
-<tr><td></td><td style="text-align: right">4 MiB</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">1,516 / 1,617 ms</td><td style="text-align: right">12,628 / 12,824 / 12,908 KiB</td></tr>
-<tr><td></td><td style="text-align: right"><strong>8 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>788 / 841 ms</strong></td><td style="text-align: right">64,384 / 64,892 / 65,112 KiB</td></tr>
-<tr><td></td><td style="text-align: right"><strong>16 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>784 / 855 ms</strong></td><td style="text-align: right">64,564 / 64,968 / 64,984 KiB</td></tr>
-<tr><td>spectroscopy path</td><td style="text-align: right">0 MiB</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">3,156 / 3,584 ms</td><td style="text-align: right">23,876 / 24,136 / 24,184 KiB</td></tr>
-<tr><td></td><td style="text-align: right">4 MiB</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">3,198 / 3,436 ms</td><td style="text-align: right">23,896 / 24,068 / 24,184 KiB</td></tr>
-<tr><td></td><td style="text-align: right"><strong>8 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>914 / 976 ms</strong></td><td style="text-align: right">64,732 / 65,136 / 65,348 KiB</td></tr>
-<tr><td></td><td style="text-align: right"><strong>16 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>917 / 1,079 ms</strong></td><td style="text-align: right">64,488 / 64,976 / 64,976 KiB</td></tr>
+<tr><td>molecules</td><td style="text-align: right">0 MiB</td><td style="text-align: right">2,031,616 / 25</td><td style="text-align: right">2,125 / 2,345 ms</td><td style="text-align: right">20,000 / 20,464 / 20,640 KiB</td></tr>
+<tr><td></td><td style="text-align: right">4 MiB</td><td style="text-align: right">2,031,616 / 25</td><td style="text-align: right">2,254 / 2,579 ms</td><td style="text-align: right">19,964 / 20,344 / 20,524 KiB</td></tr>
+<tr><td></td><td style="text-align: right"><strong>8 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>737 / 805 ms</strong></td><td style="text-align: right"><strong>22,116 / 23,036 / 23,524 KiB</strong></td></tr>
+<tr><td></td><td style="text-align: right"><strong>16 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>764 / 806 ms</strong></td><td style="text-align: right"><strong>22,416 / 23,160 / 23,224 KiB</strong></td></tr>
+<tr><td>formulas</td><td style="text-align: right">0 MiB</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">1,380 / 1,519 ms</td><td style="text-align: right">12,544 / 12,636 / 12,728 KiB</td></tr>
+<tr><td></td><td style="text-align: right">4 MiB</td><td style="text-align: right">1,114,112 / 16</td><td style="text-align: right">1,419 / 1,519 ms</td><td style="text-align: right">12,516 / 12,696 / 12,720 KiB</td></tr>
+<tr><td></td><td style="text-align: right"><strong>8 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>703 / 769 ms</strong></td><td style="text-align: right"><strong>18,468 / 18,632 / 18,672 KiB</strong></td></tr>
+<tr><td></td><td style="text-align: right"><strong>16 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>717 / 810 ms</strong></td><td style="text-align: right"><strong>18,552 / 18,652 / 18,696 KiB</strong></td></tr>
+<tr><td>spectroscopy path</td><td style="text-align: right">0 MiB</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">3,314 / 3,592 ms</td><td style="text-align: right">23,636 / 23,844 / 23,856 KiB</td></tr>
+<tr><td></td><td style="text-align: right">4 MiB</td><td style="text-align: right">2,490,368 / 36</td><td style="text-align: right">3,102 / 3,349 ms</td><td style="text-align: right">23,680 / 23,868 / 23,948 KiB</td></tr>
+<tr><td></td><td style="text-align: right"><strong>8 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>870 / 927 ms</strong></td><td style="text-align: right"><strong>28,184 / 28,524 / 28,740 KiB</strong></td></tr>
+<tr><td></td><td style="text-align: right"><strong>16 MiB</strong></td><td style="text-align: right"><strong>7,566,404 / 1</strong></td><td style="text-align: right"><strong>870 / 913 ms</strong></td><td style="text-align: right"><strong>28,232 / 28,464 / 28,468 KiB</strong></td></tr>
 </tbody></table>
-<p>The 7.22 MiB object remains lazy at thresholds 0 and 4, and switches to the
-same one-GET eager path at 8 and 16. All sweep hashes match the values above.
+<p>The 7.22 MiB object remains remote-lazy at thresholds 0 and 4, and switches to
+the same one-GET, lazy-from-memory path at 8 and 16. All sweep hashes match the values above.
 Decision: <strong>keep the 8 MiB adaptive eager policy</strong>.</p>
 <p>Reproduce with <code>scripts/bench_cold_r2.py</code>. The acceptance JSONL was written to
-<code>/target/bench/cold-r2-15.jsonl</code> (SHA-256
-<code>078a7549a9a7e75d059132c434f91e07ade00c5915a8761ebe2ea38a0de1339d</code>)
-and the sweep to <code>/target/bench/cold-r2-thresholds.jsonl</code> (SHA-256
-<code>6dcd5574a4e57b91d5fefd4006043005d23025232640052a7892432f373bd925</code>):</p>
+<code>/target/bench/cold-r2-final-fix-15.jsonl</code> (SHA-256
+<code>625a46811d0a0ab1c45a297728c13d60d6270bf4f76c6ba897e2b79701a24a3f</code>),
+the sweep to <code>/target/bench/cold-r2-final-fix-thresholds.jsonl</code> (SHA-256
+<code>90c449dd978b67d0df45e35b96a62da1541c69065d737899432d206ea8897406</code>),
+and the final one-sample 0/8 pinned check to
+<code>/target/bench/cold-r2-final-fix-0-8.jsonl</code> (SHA-256
+<code>60fff7d0234fe662c788daf51c3fc772caac64304ef9ec5d783ed5b5ccfb7de1</code>):</p>
 <pre><code class="language-sh">python3 scripts/bench_cold_r2.py \
   --baseline /target/bench/rete-cold-r2-baseline \
   --candidate /target/release/rete --samples 15 \
   --source https://data.graphplaza.com/chemotion/chemotion.rete \
-  --out /target/bench/cold-r2-15.jsonl
+  --out /target/bench/cold-r2-final-fix-15.jsonl
 python3 scripts/bench_cold_r2.py \
   --candidate /target/release/rete --thresholds 0,4,8,16 --samples 15 \
   --source https://data.graphplaza.com/chemotion/chemotion.rete \
-  --out /target/bench/cold-r2-thresholds.jsonl
+  --out /target/bench/cold-r2-final-fix-thresholds.jsonl
 </code></pre>
 <h3>Experimental unchecked decoding</h3>
 <p>The non-default <code>unsafe-decode-bench</code> feature compiles a second triple-block

@@ -718,19 +718,23 @@ bound term is unknown, the index is skipped entirely and the result is empty.</p
 </code></pre>
 <h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
 <p>Run a full SPARQL query over HTTP. The native CLI first sends a <code>HEAD</code> probe to
-learn the object's length. A non-empty remote file up to 8 MiB is then opened
-eagerly with one exact full-file <code>Range</code> GET for <code>[0,len)</code> (<code>bytes=0-(len-1)</code>);
-larger files use <strong>lazy tile faulting</strong> instead. In the lazy path, the open
-fetches the header, dictionary,
-pyramid, and the index's small tile directories; index tiles are then
-range-fetched only when the query's scans and probes touch them, so a selective
-query reads O(touched tiles) rather than the whole index.</p>
+learn the object's length. A non-empty remote file up to 8 MiB is fetched with
+one exact full-file <code>Range</code> GET for <code>[0,len)</code> (<code>bytes=0-(len-1)</code>) into a bounded,
+owned in-memory range source. The bytes remain compressed; <code>Rete</code> opens them
+through its lazy ranged reader and decompresses dictionary chunks, index tiles,
+and optional sections only when the query touches them. Physical accounting is
+therefore one GET and the full compressed file length, without the eager
+<code>Rete::open</code> whole-image decode. Larger files use <strong>remote-lazy tile faulting</strong>:
+the open fetches the header and small dictionary/index directories, then reads
+O(touched tiles) rather than the whole index.</p>
 <p><code>RETE_EAGER_MAX_MB</code> sets the eager threshold in MiB (default <code>8</code>), and
 <code>RETE_EAGER_MAX_MB=0</code> forces the lazy path. It must be a non-negative integer
 whose byte count fits the platform; an invalid value fails before any network
-request. This policy applies only to the native <code>rete sparql-url</code> command, not
-to the browser/WASM reader. The browser/WASM reader remains lazy. A range
-failure mid-query is reported as an error, never as silently fewer rows.</p>
+request. The value is parsed only for HTTP(S); a local path accepted by this
+command keeps its prior behavior even if the environment value is invalid.
+Larger native HTTP objects, native HTTP reads with <code>RETE_EAGER_MAX_MB=0</code>, and
+browser/WASM readers remain remote-lazy. A range failure mid-query is reported
+as an error, never as silently fewer rows.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>

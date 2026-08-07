@@ -24,14 +24,16 @@ The name comes from Latin **rēte**, meaning "net". Pronounce it **RAY-teh**
 summary, and a self-describing **schema pyramid** — into **one immutable `.rete`
 file**. Put that file on S3, GitHub Pages, or any HTTP host that supports range
 requests, hand a client the URL, and it runs **real SPARQL** against the file in
-place, **fetching only the bytes a query needs**. The same engine compiles to
-WebAssembly, so a **browser can query the file directly with no backend**.
+place. Remote-lazy paths **fetch only the bytes a query needs**; the native CLI
+may instead fetch an eligible small object once into bounded compressed memory,
+then still decode its sections lazily. The same engine compiles to WebAssembly,
+so a **browser can query the file directly with no backend**.
 
 > Think **Parquet** (for tables) or **PMTiles** (for maps) — but for **RDF
 > graphs + SPARQL**.
 
 <p align="center">
-  <img src="docs/img/lazy-open.svg" alt="Any client — a browser, a notebook, the CLI — sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred. A COUNT over 9.83 billion triples runs inside a 2 GiB container." width="680">
+  <img src="docs/img/lazy-open.svg" alt="A remote-lazy client sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred. Browser and WASM readers stay remote-lazy; the native CLI can fetch a small eligible HTTP object once into bounded compressed memory and decode it lazily there. A COUNT over 9.83 billion triples runs inside a 2 GiB container." width="680">
 </p>
 
 - **No server.** The file *is* the database. Publish once to static hosting.
@@ -42,9 +44,11 @@ WebAssembly, so a **browser can query the file directly with no backend**.
   (309 tests; ≈89% excluding the RDFS/OWL-entailment regime rete leaves out by
   design and the SERVICE tests, which need a live endpoint — `SERVICE`
   federation itself [is supported](https://caviri.github.io/rete/sparql.html)).
-- **Lazy over HTTP — and on disk.** Range-read the file wherever it lives: a
-  selective query faults in only the dictionary chunks and index tiles it
-  touches, so a **1 GB graph stays interactive in the browser**
+- **Lazy over HTTP — and on disk.** Browser/WASM URLs, larger or eager-disabled
+  native HTTP objects, and large local files fault in only the dictionary chunks
+  and index tiles a query touches. Eligible small native HTTP objects use one
+  bounded full-file GET but retain the compressed bytes and decode sections
+  lazily from memory. Thus a **1 GB graph stays interactive in the browser**
   ([try it](https://caviri.github.io/rete/explore-100mb.html)) and a **52 GB
   graph opens locally in KBs** (files past 1 GiB go through the same range
   reader).
@@ -67,7 +71,7 @@ WebAssembly, so a **browser can query the file directly with no backend**.
 ## Clients
 
 One engine, every runtime — every client opens local files *and* remote URLs
-through the same lazy range reader and returns parsed SPARQL results (all
+through the same range-query engine and returns parsed SPARQL results (all
 client versions track the engine's 0.3.0 line):
 
 | Client | Get it | Notes |
@@ -183,16 +187,18 @@ rete sparql social.rete "PREFIX e: <http://ex/> \
 rete card    social.rete            # counts, vocabulary, signals, starter queries
 rete summary social.rete --level 0  # the schema pyramid at its most abstract level
 
-# 4. Or query straight from a URL — fetches only the byte ranges it needs:
+# 4. Or query straight from a URL — range-lazy, except small native SPARQL files:
 rete card-url   https://my-bucket.s3.amazonaws.com/social.rete   # 2 range requests
 rete query-url  https://my-bucket.s3.amazonaws.com/social.rete --object '<http://ex/Alice>'
 rete sparql-url https://my-bucket.s3.amazonaws.com/social.rete "SELECT * WHERE { ?s ?p ?o } LIMIT 5"
 ```
 
 `query-url` resolves bound terms from the dictionary, then range-fetches only the
-best-matching permutation payload for that triple pattern; `sparql-url`
-faults in index tiles as a query touches them. `rete cost --explain` shows when a
-query can use the summary-only or routed-pattern budgets.
+best-matching permutation payload for that triple pattern. Native `sparql-url`
+fetches an eligible small HTTP object once into bounded compressed memory and
+then faults/decompresses sections lazily there; larger or eager-disabled objects
+stay remote-lazy. Browser/WASM URLs are always remote-lazy. `rete cost --explain`
+shows when a query can use the summary-only or routed-pattern budgets.
 
 ### Try it in your browser (no install)
 

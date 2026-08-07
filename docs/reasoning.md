@@ -4,9 +4,11 @@ rete reasons over an ontology **two complementary ways**:
 
 - **Query rewriting — OWL 2 QL** ([jump](#reasoning-by-query-rewriting-owl-2-ql)):
   rewrite the *query* so its answer includes the entailed solutions, computed over
-  the **raw data with no materialization**. Opt-in, lazy — it works over a remote
-  file with no rebuild and fetches only the bytes the rewritten query touches — and
-  the natural fit for ontology-mediated **query answering**.
+  the **raw data with no materialization**. Opt-in and lazy at the decode boundary,
+  it works over a remote file with no rebuild. Remote-lazy transports fetch only
+  touched ranges; eligible small native HTTP objects may be transferred once —
+  still with lazy section decoding — and are the natural fit for ontology-mediated
+  **query answering**.
 - **Materialization — OWL RL / RDFS** (the rest of this page): forward-chain the
   entailed *triples* to a fixpoint, to either **bake** them into the file
   (`rete build --materialize`) or **coherence-check** it (`rete reason`).
@@ -251,14 +253,17 @@ The **OWL 2 QL** profile exists for exactly this case — a large ABox, a small
 TBox, and queries that are *first-order rewritable*. Instead of baking inferences
 into the data, rete rewrites the **query** so that evaluating it over the **raw**
 data yields the certain (entailed) answers. A remote `.rete` becomes
-ontology-aware with **no rebuild**, and only the bytes the rewritten query touches
-are fetched.
+ontology-aware with **no rebuild**. Browser/WASM readers and larger or
+eager-disabled native HTTP sources fetch only the ranges the rewritten query
+touches. For an eligible small native HTTP object, `sparql-url` instead performs
+one bounded full-object transfer, retains the compressed bytes, and still decodes
+dictionary chunks, index tiles, and optional sections lazily from memory.
 
 Reasoning is **opt-in** — a plain query is never changed:
 
 ```sh
 rete sparql     data.rete "SELECT ?o WHERE { ?o a :Aves }" --entail
-rete sparql-url https://host/data.rete "…" --entail        # lazy, over HTTP range
+rete sparql-url https://host/data.rete "…" --entail        # adaptive native HTTP read
 ```
 
 In the browser, the [playground](playground-guide.html)'s **🧠 Reason** toggle

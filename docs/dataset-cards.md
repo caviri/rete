@@ -180,11 +180,14 @@ A few properties worth knowing:
   byte-identical to a cardless build, and existing files keep verifying unchanged.
 - **Integrity-covered.** The card bytes are part of the `blake3` content hash, so
   `rete verify` validates the card too and any edit to it is detected.
-- **Off the query path.** Range-reading opens (`rete query-url`, `sparql-url`,
-  `summary-url`, federation routing) fetch sections by offset and **never read
-  the card**, so embedding one adds nothing to query-time bytes-on-the-wire. To
-  read the card remotely without downloading the file, `rete card-url` fetches
-  just the header + metadata range (two ranges, index untouched).
+- **Off the remote-lazy query path.** `rete query-url`, `summary-url`, federation
+  routing, browser/WASM queries, and larger or eager-disabled native
+  `sparql-url` opens fetch sections by offset and **never read the card**, so it
+  adds nothing to their query-time bytes-on-the-wire. An eligible small native
+  `sparql-url` object is transferred once in full, so that transfer includes the
+  card bytes; the bounded in-memory range opener still does not decode the card.
+  To read the card explicitly without downloading the file, `rete card-url`
+  fetches just the header + metadata range (two ranges, index untouched).
 - **Opaque to the engine.** `rete-core` treats the section as raw bytes; the card
   schema lives entirely in the CLI. The metadata section is a general extension
   point — a card is just its first use.

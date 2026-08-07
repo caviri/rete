@@ -198,12 +198,18 @@ bytes**, ETag **`"6cefd111dee3c59c063f0bede9cd60f9"`**). The pinned lazy
 baseline executable was SHA-256
 `37b0d50f1a5feee32bbdf60a726576fd28dc8889482ee03d8c7289ee476c86e3`;
 the candidate was
-`37932ffc8c2b72090ef8ab85e85d05202885dd7edbb434dc0b57b282eaba0dc4`.
+`10da5c99583e4a2845a0144ec85b7a6ff4509d2abbe6c4669db551eafd739b27`.
 
-Each cell is 15 alternating fresh-process samples. `p90` is nearest-rank;
+Each cell is 15 fresh-process samples. Mode order uses a cyclic rotation rather
+than reversal, so each of the three comparison modes occupies each launch
+position five times; the four-mode threshold sweep likewise rotates every mode
+through every position. `p90` is nearest-rank;
 VmHWM is polled from `/proc/<pid>/status`. `baseline_lazy` is the pinned
 pre-change binary, `delegated_lazy` is the candidate forced lazy with
-`RETE_EAGER_MAX_MB=0`, and `eager_8` is the candidate at the 8 MiB policy.
+`RETE_EAGER_MAX_MB=0`, and `eager_8` is the candidate at the 8 MiB policy. The
+`eager_8` harness label means one eager *transfer*, not an eager parser: the
+compressed file is retained in a bounded owned memory reader and opened with
+`Rete::open_ranged_lazy`, so section decompression remains demand-driven.
 The selective workload orders by `?name ?formula ?smiles` before `LIMIT 200`:
 without `ORDER BY`, SPARQL permits either plan to return a different valid
 200-row subset, which is unsuitable for an exact output-hash benchmark.
@@ -232,23 +238,24 @@ source-metadata change.
 
 | query | mode | bytes / GETs | wall median / p90 | VmHWM median / p90 / max |
 |---|---|---:|---:|---:|
-| molecules with their structure | baseline_lazy | 1,703,936 / 24 | 2,285 / 2,355 ms | 16,952 / 17,540 / 17,704 KiB |
-|  | delegated_lazy | 2,031,616 / 25 | 2,256 / 2,381 ms | 20,244 / 20,648 / 20,656 KiB |
-|  | **eager_8** | **7,566,404 / 1** | **765 / 885 ms** | 64,508 / 64,584 / 64,772 KiB |
-| most common molecular formulas | baseline_lazy | 1,114,112 / 16 | 1,490 / 1,520 ms | 12,584 / 12,696 / 12,704 KiB |
-|  | delegated_lazy | 1,114,112 / 16 | 1,515 / 1,635 ms | 12,636 / 12,776 / 12,796 KiB |
-|  | **eager_8** | **7,566,404 / 1** | **709 / 768 ms** | 64,444 / 64,936 / 65,156 KiB |
-| every subtype of spectroscopy | baseline_lazy | 2,490,368 / 36 | 3,232 / 3,779 ms | 23,912 / 24,072 / 24,176 KiB |
-|  | delegated_lazy | 2,490,368 / 36 | 3,254 / 3,576 ms | 23,820 / 24,052 / 24,060 KiB |
-|  | **eager_8** | **7,566,404 / 1** | **885 / 1,173 ms** | 64,528 / 64,868 / 64,880 KiB |
+| molecules with their structure | baseline_lazy | 1,703,936 / 24 | 2,064 / 2,169 ms | 17,184 / 17,720 / 17,900 KiB |
+|  | delegated_lazy | 2,031,616 / 25 | 2,159 / 2,429 ms | 20,128 / 20,492 / 20,576 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **737 / 778 ms** | **22,600 / 23,200 / 23,284 KiB** |
+| most common molecular formulas | baseline_lazy | 1,114,112 / 16 | 1,433 / 1,512 ms | 12,492 / 12,748 / 12,764 KiB |
+|  | delegated_lazy | 1,114,112 / 16 | 1,470 / 1,631 ms | 12,556 / 12,656 / 12,804 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **728 / 767 ms** | **18,340 / 18,744 / 18,992 KiB** |
+| every subtype of spectroscopy | baseline_lazy | 2,490,368 / 36 | 3,262 / 3,408 ms | 23,788 / 23,956 / 23,956 KiB |
+|  | delegated_lazy | 2,490,368 / 36 | 3,215 / 3,438 ms | 23,752 / 23,904 / 23,928 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **844 / 932 ms** | **28,296 / 28,472 / 28,700 KiB** |
 
-Relative to the same candidate's delegated-lazy path, eager reduced median /
-p90 wall time by **66.1% / 62.8%**, **53.2% / 53.0%**, and **72.8% /
-67.2%**, respectively. Thus all three queries clear the required 25% median
+Relative to the same candidate's delegated-lazy path, the one-transfer mode
+reduced median / p90 wall time by **65.9% / 68.0%**, **50.5% / 53.0%**, and
+**73.7% / 72.9%**, respectively. Thus all three queries clear the required 25% median
 improvement (the gate required two), none regresses in median or p90, and every
-eager sample performs exactly one data GET. Peak process RSS was 65,156 KiB
-(63.6 MiB), the expected cost of holding and decoding the validated 7.22 MiB
-file image rather than retaining only lazy tiles.
+eligible sample performs exactly one data GET. Peak process RSS was **28,700
+KiB (28.0 MiB)**: the process retains the validated 7.22 MiB compressed image,
+but only demand-decodes the sections this query touches rather than opening all
+sections eagerly.
 
 Every sample for a query produced one byte-identical JSON hash across all
 modes:
@@ -257,43 +264,46 @@ modes:
 - formulas: `43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640`
 - spectroscopy path: `359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc`
 
-Threshold sweep, again 15 alternating fresh processes per cell:
+Threshold sweep, again 15 cyclically rotated fresh processes per cell:
 
 | query | threshold | bytes / GETs | wall median / p90 | VmHWM median / p90 / max |
 |---|---:|---:|---:|---:|
-| molecules | 0 MiB | 2,031,616 / 25 | 2,286 / 2,562 ms | 20,208 / 20,776 / 20,820 KiB |
-|  | 4 MiB | 2,031,616 / 25 | 2,216 / 2,499 ms | 20,196 / 20,848 / 20,920 KiB |
-|  | **8 MiB** | **7,566,404 / 1** | **838 / 889 ms** | 64,284 / 64,668 / 64,792 KiB |
-|  | **16 MiB** | **7,566,404 / 1** | **843 / 893 ms** | 64,408 / 64,652 / 64,756 KiB |
-| formulas | 0 MiB | 1,114,112 / 16 | 1,409 / 1,641 ms | 12,668 / 12,792 / 12,872 KiB |
-|  | 4 MiB | 1,114,112 / 16 | 1,516 / 1,617 ms | 12,628 / 12,824 / 12,908 KiB |
-|  | **8 MiB** | **7,566,404 / 1** | **788 / 841 ms** | 64,384 / 64,892 / 65,112 KiB |
-|  | **16 MiB** | **7,566,404 / 1** | **784 / 855 ms** | 64,564 / 64,968 / 64,984 KiB |
-| spectroscopy path | 0 MiB | 2,490,368 / 36 | 3,156 / 3,584 ms | 23,876 / 24,136 / 24,184 KiB |
-|  | 4 MiB | 2,490,368 / 36 | 3,198 / 3,436 ms | 23,896 / 24,068 / 24,184 KiB |
-|  | **8 MiB** | **7,566,404 / 1** | **914 / 976 ms** | 64,732 / 65,136 / 65,348 KiB |
-|  | **16 MiB** | **7,566,404 / 1** | **917 / 1,079 ms** | 64,488 / 64,976 / 64,976 KiB |
+| molecules | 0 MiB | 2,031,616 / 25 | 2,125 / 2,345 ms | 20,000 / 20,464 / 20,640 KiB |
+|  | 4 MiB | 2,031,616 / 25 | 2,254 / 2,579 ms | 19,964 / 20,344 / 20,524 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **737 / 805 ms** | **22,116 / 23,036 / 23,524 KiB** |
+|  | **16 MiB** | **7,566,404 / 1** | **764 / 806 ms** | **22,416 / 23,160 / 23,224 KiB** |
+| formulas | 0 MiB | 1,114,112 / 16 | 1,380 / 1,519 ms | 12,544 / 12,636 / 12,728 KiB |
+|  | 4 MiB | 1,114,112 / 16 | 1,419 / 1,519 ms | 12,516 / 12,696 / 12,720 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **703 / 769 ms** | **18,468 / 18,632 / 18,672 KiB** |
+|  | **16 MiB** | **7,566,404 / 1** | **717 / 810 ms** | **18,552 / 18,652 / 18,696 KiB** |
+| spectroscopy path | 0 MiB | 2,490,368 / 36 | 3,314 / 3,592 ms | 23,636 / 23,844 / 23,856 KiB |
+|  | 4 MiB | 2,490,368 / 36 | 3,102 / 3,349 ms | 23,680 / 23,868 / 23,948 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **870 / 927 ms** | **28,184 / 28,524 / 28,740 KiB** |
+|  | **16 MiB** | **7,566,404 / 1** | **870 / 913 ms** | **28,232 / 28,464 / 28,468 KiB** |
 
-The 7.22 MiB object remains lazy at thresholds 0 and 4, and switches to the
-same one-GET eager path at 8 and 16. All sweep hashes match the values above.
+The 7.22 MiB object remains remote-lazy at thresholds 0 and 4, and switches to
+the same one-GET, lazy-from-memory path at 8 and 16. All sweep hashes match the values above.
 Decision: **keep the 8 MiB adaptive eager policy**.
 
 Reproduce with `scripts/bench_cold_r2.py`. The acceptance JSONL was written to
-`/target/bench/cold-r2-15.jsonl` (SHA-256
-`078a7549a9a7e75d059132c434f91e07ade00c5915a8761ebe2ea38a0de1339d`)
-and the sweep to `/target/bench/cold-r2-thresholds.jsonl` (SHA-256
-`6dcd5574a4e57b91d5fefd4006043005d23025232640052a7892432f373bd925`):
+`/target/bench/cold-r2-final-fix-15.jsonl` (SHA-256
+`625a46811d0a0ab1c45a297728c13d60d6270bf4f76c6ba897e2b79701a24a3f`),
+the sweep to `/target/bench/cold-r2-final-fix-thresholds.jsonl` (SHA-256
+`90c449dd978b67d0df45e35b96a62da1541c69065d737899432d206ea8897406`),
+and the final one-sample 0/8 pinned check to
+`/target/bench/cold-r2-final-fix-0-8.jsonl` (SHA-256
+`60fff7d0234fe662c788daf51c3fc772caac64304ef9ec5d783ed5b5ccfb7de1`):
 
 ```sh
 python3 scripts/bench_cold_r2.py \
   --baseline /target/bench/rete-cold-r2-baseline \
   --candidate /target/release/rete --samples 15 \
   --source https://data.graphplaza.com/chemotion/chemotion.rete \
-  --out /target/bench/cold-r2-15.jsonl
+  --out /target/bench/cold-r2-final-fix-15.jsonl
 python3 scripts/bench_cold_r2.py \
   --candidate /target/release/rete --thresholds 0,4,8,16 --samples 15 \
   --source https://data.graphplaza.com/chemotion/chemotion.rete \
-  --out /target/bench/cold-r2-thresholds.jsonl
+  --out /target/bench/cold-r2-final-fix-thresholds.jsonl
 ```
 
 ### Experimental unchecked decoding
