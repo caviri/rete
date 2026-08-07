@@ -450,6 +450,23 @@ export class Graph {
         return ret;
     }
     /**
+     * Byte length of the TEXT_INDEX's leading **token table** — what a first
+     * [`Graph::text_search_one`] actually faults, and therefore the only honest
+     * number to quote as its cost. [`Graph::text_index_len`] is the whole
+     * section, postings blob included, and overstates it 6.5× on
+     * `epfl-infoscience` (195 MB section, 29 MB token table); the postings are
+     * only ever fetched one list at a time. `0` when the file has no text index
+     * or the length could not be read — the caller must then say nothing about
+     * a token table rather than pass the section length off as one.
+     * `f64` for the same reason as the section length: causenet's table is
+     * 1.88 GB.
+     * @returns {number}
+     */
+    text_index_token_table_len() {
+        const ret = wasm.graph_text_index_token_table_len(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * See [`text_search`].
      * @param {string[]} words
      * @param {string | null | undefined} contains_prefix
@@ -1007,6 +1024,23 @@ export class RemoteGraph {
      */
     text_index_len() {
         const ret = wasm.remotegraph_text_index_len(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * See [`Graph::text_index_token_table_len`] — the figure to quote before
+     * [`RemoteGraph::text_search`], because it is what that first search pulls
+     * over the wire; the section length would promise the user several times
+     * the real bill.
+     *
+     * Unlike [`RemoteGraph::text_index_len`] this is not free: the token
+     * table's length lives in the section's first bytes, not the header, so it
+     * costs ONE ≤10-byte range read (memoized). Trivial next to the table it
+     * measures — but it *is* IO, so the asyncify path must drive this call
+     * rather than treat it as a header field.
+     * @returns {number}
+     */
+    text_index_token_table_len() {
+        const ret = wasm.remotegraph_text_index_token_table_len(this.__wbg_ptr);
         return ret;
     }
     /**

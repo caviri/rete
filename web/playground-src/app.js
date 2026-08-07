@@ -288,15 +288,37 @@
         self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
       });
     }
-    // TEXT_INDEX size of the remote file: read straight off the resident header,
-    // so it costs NO fetch beyond opening the session. The page asks this before
-    // offering full-text search at all — a file built without --text-index
-    // answers 0, and the panel then offers nothing it can't deliver.
+    // What full-text search would cost on this remote file. TWO numbers, because
+    // they answer different questions: textIndexLen is the whole TEXT_INDEX
+    // section, read straight off the resident header (no fetch), and 0 means the
+    // file was built without --text-index so the panel offers nothing it can't
+    // deliver; tokenTableLen is the section's leading token table, which is what
+    // a first search actually faults — several times SMALLER, and the only
+    // figure honest to quote as the price of pressing Search.
     if (m.type === "tlen") {
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
       Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
-        // No IO -> no Asyncify drive needed, in either reader mode.
-        return JSON.stringify({ textIndexLen: g.text_index_len() });
+        var secLen = g.text_index_len();   // header field: no IO, no drive, either mode.
+        // The token table's length lives in the SECTION's first bytes, not the
+        // header, so this one does read — ≤10 bytes, one block. In async mode
+        // that read suspends and must be driven. Driving the generated wrapper
+        // is normally what corrupts the session, but only because a wrapper
+        // re-marshals arguments and runs a free()-epilogue on every pass: this
+        // one takes no arguments and returns a bare f64, so it is a pointer read
+        // and a raw call — identical to driving the raw export, which is why it
+        // needs no glue of its own.
+        // A hand-swapped engine predating the probe answers 0 rather than
+        // failing the whole call: the panel still works, it just describes the
+        // cost instead of pricing it.
+        if (typeof g.text_index_token_table_len !== "function") {
+          return JSON.stringify({ textIndexLen: secLen, tokenTableLen: 0 });
+        }
+        return Promise.resolve(
+          ASYNC ? wasm_bindgen.reteDrive(function () { return g.text_index_token_table_len(); })
+                : g.text_index_token_table_len()
+        ).then(function (ttLen) {
+          return JSON.stringify({ textIndexLen: secLen, tokenTableLen: ttLen });
+        });
       }).then(function (json) {
         self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
       }).catch(function (err) {
@@ -879,10 +901,13 @@ self.onmessage = function (e) {
     }));
   }
 
-  // How big is the remote file's TEXT_INDEX? Read from the header the session
-  // already holds — no fetch of its own. Resolves { json: '{"textIndexLen":N}' }
-  // like the other worker calls; N === 0 means the file was built without
-  // --text-index and full-text search is simply not on offer for it.
+  // How big is the remote file's TEXT_INDEX, and how big is the token table a
+  // first search would fault out of it? Resolves
+  // { json: '{"textIndexLen":N,"tokenTableLen":M}' } like the other worker
+  // calls. N comes from the header the session already holds (N === 0 means the
+  // file was built without --text-index and full-text search is simply not on
+  // offer for it); M costs one ≤10-byte range read, and is the number the panel
+  // quotes — the section length would promise several times the real bill.
   function remoteTextIndexLen(url) {
     return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
       const id = ++remoteSeq;
@@ -1141,12 +1166,18 @@ self.onmessage = function (e) {
   // The first word lookup FAULTS the index's token table whole — measured at
   // 29 MB on epfl-infoscience, 419 MB on wikidata-ontology and 1.88 GB on
   // causenet-full-typed — so this is never search-as-you-type: it waits for an
-  // explicit Enter / Search press, and states that cost (from text_index_len())
-  // BEFORE the first one. The table then stays resident for the session, so
-  // every later word is postings only, a few KB. Most published datasets carry
-  // no text index at all; those get one quiet line and no box that can't work.
+  // explicit Enter / Search press, and states that cost BEFORE the first one.
+  // That stated cost is the TOKEN TABLE's length, never the section's: the
+  // section counts the postings blob too, which a search only ever reads one
+  // posting list at a time, and quoting it overstates the bill 6.5× on
+  // epfl-infoscience (186.1 MB section, 27.7 MB table). The gate is only
+  // justified if the number defending it is the real one. The table then stays
+  // resident for the session, so every later word is postings only, a few KB.
+  // Most published datasets carry no text index at all; those get one quiet line
+  // and no box that can't work.
   const FT_LIMIT = 25;
-  let ftLen = null;        // TEXT_INDEX byte length; null = not known yet
+  let ftLen = null;        // TEXT_INDEX section byte length; null = not known yet
+  let ftTokenLen = 0;      // its leading token table; 0 = unknown, so don't quote it
   let ftSupported = true;  // false = an engine build without text_index_len
   let ftProbing = false;   // a remote header probe is in flight
   let ftFaulted = false;   // this session already paid for the token table
@@ -1158,10 +1189,14 @@ self.onmessage = function (e) {
   // check, because probing it opens a remote session — exactly the cost lazy
   // mode exists to defer until a query actually needs it.
   function resetFullText() {
-    ftLen = null; ftProbing = false; ftFaulted = false; ftError = ""; ftSeq++;
+    ftLen = null; ftTokenLen = 0; ftProbing = false; ftFaulted = false; ftError = ""; ftSeq++;
     if (state.graph) {
       try { ftLen = Number(state.graph.text_index_len()); ftSupported = true; }
       catch (_e) { ftSupported = false; }   // an engine predating the export
+      // Separately guarded: an engine that has text_index_len but predates the
+      // token-table probe must still get a working panel, just a vaguer one.
+      try { ftTokenLen = Number(state.graph.text_index_token_table_len()) || 0; }
+      catch (_e) { ftTokenLen = 0; }
     }
     renderFullText();
   }
@@ -1236,7 +1271,8 @@ self.onmessage = function (e) {
     }
     const seq = ++ftSeq;
     ftSetResults(`<div class="ef-loading"><span class="spindle"></span> ` +
-      (ftFaulted ? "reading postings" : `faulting the ${formatBytes(ftLen)} token table`) +
+      (ftFaulted ? "reading postings"
+                 : (ftTokenLen ? `faulting the ${formatBytes(ftTokenLen)} token table` : "faulting the token table")) +
       (state.remote ? " over range reads" : "") + `…</div>`);
     const finish = (json, log) => {
       if (seq !== ftSeq) return;
@@ -1258,16 +1294,23 @@ self.onmessage = function (e) {
     }, 16);
   }
 
-  // Remote only: ask the worker for this file's TEXT_INDEX size. It is a header
-  // field, so the read itself costs nothing once the session is open.
+  // Remote only: ask the worker what a search here would cost. The section
+  // length is a header field; the token table's length is the section's first
+  // ≤10 bytes — one small range read, next to nothing beside the 27.7 MB it
+  // lets us quote honestly instead of guessing high.
   function probeFullTextRemote() {
     if (!state.remote || ftProbing) return;
     ftProbing = true; ftError = "";
     renderFullText();
     remoteTextIndexLen(state.remote.url).then((out) => {
-      let v = null;
-      try { v = JSON.parse(out.json).textIndexLen; } catch (_e) { v = null; }
+      let v = null, tt = 0;
+      try {
+        const o = JSON.parse(out.json);
+        v = o.textIndexLen;
+        tt = Number(o.tokenTableLen) || 0;   // absent on an older worker payload
+      } catch (_e) { v = null; }
       ftProbing = false;
+      ftTokenLen = tt;
       if (typeof v === "number") ftLen = v; else ftSupported = false;
       renderFullText();
     }).catch((e) => {
@@ -1300,7 +1343,7 @@ self.onmessage = function (e) {
       box.innerHTML =
         `<div>Whole words anywhere in <b>any</b> literal — the tier <b>🔎 Find a term</b> can't reach (that one prefix-matches the bounded label index).</div>` +
         `<div><button id="ftCheck" type="button" class="secondary">Check for a text index</button></div>` +
-        `<div class="ef-empty">Reads this remote file's header and reports the index's size, so you see what a first search costs before paying it.</div>` + err;
+        `<div class="ef-empty">Reads this remote file's header, plus the ten bytes that state how big its token table is — so you see what a first search costs before paying it.</div>` + err;
       const b = $("ftCheck");
       if (b) b.onclick = probeFullTextRemote;
       return;
@@ -1310,9 +1353,15 @@ self.onmessage = function (e) {
         `<div>This dataset has <b>no full-text index</b>. <code>rete build --text-index</code> adds one — then whole words from any literal are searchable right here, with no download.</div>` + err;
       return;
     }
+    // Quote the TOKEN TABLE, not the section: that is what a first search pulls.
+    // Without the figure (an engine or worker predating the probe) say what
+    // happens and what is known, but never rename the section a token table —
+    // an overstated price is exactly the dishonesty this gate exists to avoid.
     const cost = ftFaulted
       ? `Token table resident for this session — each further word is postings only, a few KB.`
-      : `First search fetches the whole <b>${formatBytes(ftLen)}</b> token table${state.remote ? " over HTTP range" : ""}; it then stays resident for this session, so every later word costs a few KB. Runs on Enter — never as you type.`;
+      : (ftTokenLen
+        ? `First search fetches the whole <b>${formatBytes(ftTokenLen)}</b> token table${state.remote ? " over HTTP range" : ""} — the head of a ${formatBytes(ftLen)} index, whose postings are then read a list at a time. It stays resident for this session, so every later word costs a few KB. Runs on Enter — never as you type.`
+        : `First search fetches this file's whole token table${state.remote ? " over HTTP range" : ""} — the head of a ${formatBytes(ftLen)} index, typically a fraction of it. It then stays resident for this session, so every later word costs a few KB. Runs on Enter — never as you type.`);
     box.innerHTML =
       `<div>Whole words anywhere in <b>any</b> literal, read from this file's own text index — including subjects no label index holds. Several words means <b>all</b> of them must match.</div>` +
       `<div style="display:flex;gap:6px;align-items:stretch">` +

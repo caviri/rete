@@ -1980,16 +1980,85 @@ enum PyramidSlot {
 /// fetch/parse failed.
 type TextIndexLoader = Box<dyn Fn() -> Option<crate::text_index::TextIndex> + Send + Sync>;
 
+/// Answers the token table's byte length from the section's first ≤10 bytes —
+/// the length varint alone, never the table it measures.
+type TokenTableProbe = Box<dyn Fn() -> Option<u64> + Send + Sync>;
+
 /// The TEXT_INDEX section, held either resident (eager opens decode the whole
 /// thing) or deferred (the lazy remote open keeps only a loader that fetches the
 /// token table on first search, then faults posting lists one at a time). SPARQL
 /// never touches it, so the lazy remote path keeps its small range budget.
+///
+/// Both variants can also answer how long the section's leading **token table**
+/// is without faulting it — the figure a caller needs to state what a first
+/// search will cost, since `header.text_index_len` counts the postings blob too
+/// and overstates it by several times on a literal-heavy graph.
 enum TextIndexSlot {
-    Resident(Option<crate::text_index::TextIndex>),
+    Resident {
+        index: Option<crate::text_index::TextIndex>,
+        /// Measured from the section bytes this open already held; `None` when
+        /// the file carries no text index.
+        token_table_len: Option<u64>,
+    },
     Lazy {
         loader: TextIndexLoader,
         cell: std::sync::OnceLock<Option<crate::text_index::TextIndex>>,
+        /// One ≤10-byte range read, memoized in `token_table_cell`.
+        token_table: TokenTableProbe,
+        token_table_cell: std::sync::OnceLock<Option<u64>>,
     },
+}
+
+impl TextIndexSlot {
+    /// The parsed index, faulting it in (token table first) on the lazy path.
+    fn index(&self) -> Option<&crate::text_index::TextIndex> {
+        match self {
+            TextIndexSlot::Resident { index, .. } => index.as_ref(),
+            TextIndexSlot::Lazy { loader, cell, .. } => cell.get_or_init(loader).as_ref(),
+        }
+    }
+
+    /// Byte length of the section's leading token table — see
+    /// [`Rete::text_index_token_table_len`].
+    fn token_table_len(&self) -> Option<u64> {
+        match self {
+            TextIndexSlot::Resident {
+                token_table_len, ..
+            } => *token_table_len,
+            TextIndexSlot::Lazy {
+                token_table,
+                token_table_cell,
+                ..
+            } => *token_table_cell.get_or_init(token_table),
+        }
+    }
+}
+
+/// Decode a whole TEXT_INDEX section held in memory, measuring its token table
+/// on the way past. `section` is `None` when the file carries no text index.
+fn resident_text_index_slot(section: Option<&[u8]>, codec: u8) -> Result<TextIndexSlot, FileError> {
+    let Some(section) = section else {
+        return Ok(TextIndexSlot::Resident {
+            index: None,
+            token_table_len: None,
+        });
+    };
+    Ok(TextIndexSlot::Resident {
+        index: Some(
+            crate::text_index::TextIndex::from_section(section, codec)
+                .map_err(|_| FileError::Container("malformed text index"))?,
+        ),
+        token_table_len: crate::text_index::TextIndex::postings_base(section).map(|b| b as u64),
+    })
+}
+
+/// Byte length of the TEXT_INDEX section's leading token table — its length
+/// varint plus the compressed table, i.e. the prefix range a first search
+/// fetches. Reads the section's first ≤10 bytes and nothing else.
+fn read_token_table_len<R: RangeReader + ?Sized>(reader: &R, off: u64, len: u64) -> Option<u64> {
+    let head = reader.read_at(off, 10u64.min(len)).ok()?;
+    let (ttlen, n) = crate::varint::read_uvarint(&head)?;
+    Some((n as u64 + ttlen).min(len))
 }
 
 /// A named graph's container decodes RESIDENT (one range read, one decode) up
@@ -2528,17 +2597,14 @@ impl Rete {
 
         // The TEXT_INDEX section (opt-in `--text-index`); decode the whole thing
         // resident on a full-image open.
-        let text_index = TextIndexSlot::Resident(if header.text_index_len > 0 {
-            Some(
-                crate::text_index::TextIndex::from_section(
-                    region(header.text_index_offset, header.text_index_len)?,
-                    header.block_codec,
-                )
-                .map_err(|_| FileError::Container("malformed text index"))?,
-            )
-        } else {
-            None
-        });
+        let text_index = resident_text_index_slot(
+            if header.text_index_len > 0 {
+                Some(region(header.text_index_offset, header.text_index_len)?)
+            } else {
+                None
+            },
+            header.block_codec,
+        )?;
 
         let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
             decode_named_graphs(
@@ -2764,16 +2830,31 @@ impl Rete {
     /// The full-text index (TEXT_INDEX section), faulting it in on first access
     /// on the lazy remote path. `None` when the file carries no text index.
     pub(crate) fn text_index(&self) -> Option<&crate::text_index::TextIndex> {
-        match &self.text_index {
-            TextIndexSlot::Resident(t) => t.as_ref(),
-            TextIndexSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
-        }
+        self.text_index.index()
     }
 
     /// Whether this file carries a full-text (TEXT_INDEX) section, i.e. it was
     /// built with `--text-index`. Cheap — reads the header, never faults.
     pub fn has_text_index(&self) -> bool {
         self.header.text_index_len > 0
+    }
+
+    /// Byte length of the TEXT_INDEX section's leading **token table** — the
+    /// length varint plus the compressed table, which is exactly what a first
+    /// [`text_search`](Self::text_search) faults. `None` when the file carries
+    /// no text index (or its head could not be read).
+    ///
+    /// This is the number to quote as the cost of a first search, NOT
+    /// `header().text_index_len`: that counts the postings blob too, which is
+    /// the bulk of the section and is only ever fetched one posting list at a
+    /// time. On the published `epfl-infoscience.rete` the section is 195 MB and
+    /// its token table 29 MB — a 6.5× difference.
+    ///
+    /// Costs nothing on a resident open (measured while the bytes were in hand);
+    /// a lazy/ranged open pays one ≤10-byte range read, memoized, and still
+    /// never faults the table itself.
+    pub fn text_index_token_table_len(&self) -> Option<u64> {
+        self.text_index.token_table_len()
     }
 
     /// Full-text search over the literals: subject IRIs that carry **every** word
@@ -3094,15 +3175,12 @@ impl Rete {
 
         // Fetch the whole TEXT_INDEX section resident (this opener does one range
         // read per section; the lazy opener below is the one that defers it).
-        let text_index = TextIndexSlot::Resident(if header.text_index_len > 0 {
-            let tb = reader.read_at(header.text_index_offset, header.text_index_len)?;
-            Some(
-                crate::text_index::TextIndex::from_section(&tb, header.block_codec)
-                    .map_err(|_| FileError::Container("malformed text index"))?,
-            )
+        let text_index_bytes = if header.text_index_len > 0 {
+            Some(reader.read_at(header.text_index_offset, header.text_index_len)?)
         } else {
             None
-        });
+        };
+        let text_index = resident_text_index_slot(text_index_bytes.as_deref(), header.block_codec)?;
 
         let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
@@ -3682,9 +3760,13 @@ fn ranged_text_index_slot<R: RangeReader + Send + Sync + 'static>(
     header: &Header,
 ) -> TextIndexSlot {
     if header.text_index_len == 0 {
-        return TextIndexSlot::Resident(None);
+        return TextIndexSlot::Resident {
+            index: None,
+            token_table_len: None,
+        };
     }
     let ti_reader = reader.clone();
+    let probe_reader = reader.clone();
     let ti_off = header.text_index_offset;
     let ti_len = header.text_index_len;
     let codec = header.block_codec;
@@ -3693,10 +3775,7 @@ fn ranged_text_index_slot<R: RangeReader + Send + Sync + 'static>(
             // The section opens with `varint token_table_len`; read enough to
             // decode it (a uvarint is ≤ 10 bytes), then fetch the varint + the
             // compressed token table as one prefix range.
-            let head_len = 10u64.min(ti_len);
-            let head = ti_reader.read_at(ti_off, head_len).ok()?;
-            let (ttlen, n) = crate::varint::read_uvarint(&head)?;
-            let prefix_len = (n as u64 + ttlen).min(ti_len);
+            let prefix_len = read_token_table_len(&*ti_reader, ti_off, ti_len)?;
             let prefix = ti_reader.read_at(ti_off, prefix_len).ok()?;
             let postings_base = crate::text_index::TextIndex::postings_base(&prefix)? as u64;
             let postings_abs = ti_off + postings_base;
@@ -3706,6 +3785,10 @@ fn ranged_text_index_slot<R: RangeReader + Send + Sync + 'static>(
             crate::text_index::TextIndex::from_token_table(&prefix, codec, posting_loader).ok()
         }),
         cell: std::sync::OnceLock::new(),
+        // The same leading varint the loader starts from, asked on its own so a
+        // caller can *state* the cost of a first search without paying it.
+        token_table: Box::new(move || read_token_table_len(&*probe_reader, ti_off, ti_len)),
+        token_table_cell: std::sync::OnceLock::new(),
     }
 }
 
@@ -3817,11 +3900,14 @@ impl SearchView {
     /// Full-text search — see [`Rete::text_search`] for the semantics. Faults
     /// the token table on the first call, then only the queried postings.
     pub fn text_search(&self, words: &[&str], prefix: Option<&str>, limit: usize) -> Vec<String> {
-        let ti = match &self.text_index {
-            TextIndexSlot::Resident(t) => t.as_ref(),
-            TextIndexSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
-        };
-        text_search_in(ti, &self.dict, words, prefix, limit)
+        text_search_in(self.text_index.index(), &self.dict, words, prefix, limit)
+    }
+
+    /// What that first search will cost — see
+    /// [`Rete::text_index_token_table_len`]. One ≤10-byte range read, so a
+    /// caller can quote the figure before deciding to search.
+    pub fn text_index_token_table_len(&self) -> Option<u64> {
+        self.text_index.token_table_len()
     }
 
     /// Label-prefix search — see [`Rete::prefix_search`]. Faults the pyramid

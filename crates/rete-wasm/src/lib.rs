@@ -488,6 +488,20 @@ impl Graph {
         self.rete.header().text_index_len as f64
     }
 
+    /// Byte length of the TEXT_INDEX's leading **token table** — what a first
+    /// [`Graph::text_search_one`] actually faults, and therefore the only honest
+    /// number to quote as its cost. [`Graph::text_index_len`] is the whole
+    /// section, postings blob included, and overstates it 6.5× on
+    /// `epfl-infoscience` (195 MB section, 29 MB token table); the postings are
+    /// only ever fetched one list at a time. `0` when the file has no text index
+    /// or the length could not be read — the caller must then say nothing about
+    /// a token table rather than pass the section length off as one.
+    /// `f64` for the same reason as the section length: causenet's table is
+    /// 1.88 GB.
+    pub fn text_index_token_table_len(&self) -> f64 {
+        self.rete.text_index_token_table_len().unwrap_or(0) as f64
+    }
+
     /// [`Graph::text_search`] from ONE phrase: whitespace splits it into words
     /// and **every** word must match (AND), like `rete search --contains a b`.
     /// One string in, one string out — that is what the remote twin's
@@ -953,6 +967,20 @@ impl RemoteGraph {
     /// wire, so the UI can warn instead of surprising the user.
     pub fn text_index_len(&self) -> f64 {
         self.rete.header().text_index_len as f64
+    }
+
+    /// See [`Graph::text_index_token_table_len`] — the figure to quote before
+    /// [`RemoteGraph::text_search`], because it is what that first search pulls
+    /// over the wire; the section length would promise the user several times
+    /// the real bill.
+    ///
+    /// Unlike [`RemoteGraph::text_index_len`] this is not free: the token
+    /// table's length lives in the section's first bytes, not the header, so it
+    /// costs ONE ≤10-byte range read (memoized). Trivial next to the table it
+    /// measures — but it *is* IO, so the asyncify path must drive this call
+    /// rather than treat it as a header field.
+    pub fn text_index_token_table_len(&self) -> f64 {
+        self.rete.text_index_token_table_len().unwrap_or(0) as f64
     }
 
     /// See [`Graph::text_search_one`] — over the resident remote handle, with
