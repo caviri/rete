@@ -66,19 +66,46 @@ impl RangeReader for HttpRangeReader {
                 self.url
             )));
         }
-        let mut buf = Vec::with_capacity(len as usize);
-        resp.into_reader().take(len).read_to_end(&mut buf)?;
-        // A truncated transfer (server closed early, range past EOF, proxy
-        // hiccup) must be a clean error, not a silently short buffer handed to
-        // the format parsers — mirroring `SliceReader`'s out-of-bounds error.
-        if (buf.len() as u64) < len {
-            return Err(std::io::Error::other(format!(
-                "short range response: got {} of {len} bytes at offset {offset} from {}",
-                buf.len(),
-                self.url
-            )));
+        let capacity = usize::try_from(len).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "HTTP range does not fit in memory",
+            )
+        })?;
+        if let Some(declared) = resp
+            .header("content-length")
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            if declared != len {
+                let kind = if declared < len { "short" } else { "overlong" };
+                return Err(std::io::Error::other(format!(
+                    "{kind} range response length mismatch: declared {declared}, expected {len} bytes \
+                     at offset {offset} from {}",
+                    self.url
+                )));
+            }
         }
-        Ok(buf)
+        let mut body = Vec::with_capacity(capacity);
+        resp.into_reader()
+            .take(len.saturating_add(1))
+            .read_to_end(&mut body)?;
+        // A mismatched transfer (server closed early, range past EOF, proxy
+        // hiccup, or extra bytes) must be a clean error, not a silently wrong
+        // buffer handed to
+        // the format parsers — mirroring `SliceReader`'s out-of-bounds error.
+        match (body.len() as u64).cmp(&len) {
+            std::cmp::Ordering::Less => Err(std::io::Error::other(format!(
+                "short range response length mismatch: got {} of {len} bytes at offset {offset} from {}",
+                body.len(),
+                self.url
+            ))),
+            std::cmp::Ordering::Greater => Err(std::io::Error::other(format!(
+                "overlong range response length mismatch: got {} of {len} bytes at offset {offset} from {}",
+                body.len(),
+                self.url
+            ))),
+            std::cmp::Ordering::Equal => Ok(body),
+        }
     }
 
     /// Issue the (independent) ranges concurrently across a small thread pool.
@@ -147,6 +174,8 @@ mod tests {
         /// A flaky host: claims the full range (`206` + Content-Length) but
         /// closes the connection after sending only half the bytes.
         TruncateBody,
+        /// A broken host: returns the requested range plus one extra byte.
+        OverlongBody,
         /// A broken host: `500` on every GET.
         Error500,
     }
@@ -195,21 +224,33 @@ mod tests {
                             b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                         );
                     }
-                    (ServerMode::HonorRange | ServerMode::TruncateBody, Some(r)) => {
+                    (
+                        ServerMode::HonorRange
+                        | ServerMode::TruncateBody
+                        | ServerMode::OverlongBody,
+                        Some(r),
+                    ) => {
                         let (a, b) = r.split_once('-').unwrap();
                         let a: usize = a.parse().unwrap();
                         let b: usize = b.parse().unwrap();
                         let slice = &data[a..=b.min(total - 1)];
-                        let h = format!(
-                            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            slice.len()
-                        );
-                        let _ = stream.write_all(h.as_bytes());
                         let sent = if matches!(mode, ServerMode::TruncateBody) {
                             &slice[..slice.len() / 2] // lie, then hang up early
+                        } else if matches!(mode, ServerMode::OverlongBody) {
+                            &data[a..=b.min(total - 2) + 1]
                         } else {
                             slice
                         };
+                        let declared_len = if matches!(mode, ServerMode::OverlongBody) {
+                            sent.len()
+                        } else {
+                            slice.len()
+                        };
+                        let h = format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            declared_len
+                        );
+                        let _ = stream.write_all(h.as_bytes());
                         let _ = stream.write_all(sent);
                     }
                     // Ignore Range (or no Range sent): 200 with the whole body.
@@ -375,6 +416,15 @@ mod tests {
         let r = HttpRangeReader::open(&url).unwrap();
         let err = r.read_at(90, 20).unwrap_err();
         assert!(err.to_string().contains("short range response"), "{err}");
+    }
+
+    #[test]
+    fn rejects_an_overlong_range_response() {
+        let data: Vec<u8> = (0..=255).cycle().take(1000).collect();
+        let url = serve(data, ServerMode::OverlongBody);
+        let reader = HttpRangeReader::open(&url).unwrap();
+        let err = reader.read_at(100, 40).unwrap_err();
+        assert!(err.to_string().contains("range response length"), "{err}");
     }
 
     #[test]
