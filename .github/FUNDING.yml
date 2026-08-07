@@ -5,8 +5,9 @@
 # Every entry is a *handle*, not a URL — GitHub builds the link itself
 # (patreon: caviri → https://www.patreon.com/caviri). A wrong handle silently
 # points the button at somebody else's account, so only fill in the ones whose
-# spelling is known.
+# spelling is known. Ko-fi is the handle the docs footer already links
+# (crates/docgen/src/main.rs), so all four agree.
 github: caviri
 patreon: caviri
 open_collective: caviri
-# ko_fi: <handle>          # the tail of https://ko-fi.com/<handle>
+ko_fi: caviri
