@@ -288,6 +288,37 @@
         self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
       });
     }
+    // TEXT_INDEX size of the remote file: read straight off the resident header,
+    // so it costs NO fetch beyond opening the session. The page asks this before
+    // offering full-text search at all — a file built without --text-index
+    // answers 0, and the panel then offers nothing it can't deliver.
+    if (m.type === "tlen") {
+      pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
+      Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
+        // No IO -> no Asyncify drive needed, in either reader mode.
+        return JSON.stringify({ textIndexLen: g.text_index_len() });
+      }).then(function (json) {
+        self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+      }).catch(function (err) {
+        self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
+      });
+    }
+    // Full-text (whole-word) search over the resident remote session. Unlike
+    // psearch this FAULTS the TEXT_INDEX token table on its first call (tens of
+    // MB, GBs on the biggest files) — which is exactly why the page only sends
+    // it on an explicit press, never per keystroke. Afterwards the table stays
+    // resident in this session and each further word is a few KB of postings.
+    if (m.type === "tsearch") {
+      pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
+      Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
+        return ASYNC ? wasm_bindgen.reteTextSearchRemote(g, m.phrase, m.limit || 25)
+                     : Promise.resolve(g.text_search_one(m.phrase, m.limit || 25));
+      }).then(function (json) {
+        self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+      }).catch(function (err) {
+        self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
+      });
+    }
   };
 })();`;
 
@@ -848,6 +879,29 @@ self.onmessage = function (e) {
     }));
   }
 
+  // How big is the remote file's TEXT_INDEX? Read from the header the session
+  // already holds — no fetch of its own. Resolves { json: '{"textIndexLen":N}' }
+  // like the other worker calls; N === 0 means the file was built without
+  // --text-index and full-text search is simply not on offer for it.
+  function remoteTextIndexLen(url) {
+    return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++remoteSeq;
+      remotePending.set(id, { resolve, reject });
+      remoteWorker.postMessage({ type: "tlen", id, url });
+    }));
+  }
+
+  // Full-text (whole-word, AND-ed) search over a remote-lazy graph — same worker
+  // route as remotePrefixSearch, but a MUCH heavier first call: it faults the
+  // whole TEXT_INDEX token table. Only ever called from an explicit press.
+  function remoteTextSearch(url, phrase, limit) {
+    return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++remoteSeq;
+      remotePending.set(id, { resolve, reject });
+      remoteWorker.postMessage({ type: "tsearch", id, url, phrase, limit: limit || 25 });
+    }));
+  }
+
   function enhanceEditor(id, lang, onChange) {
     if (!window.PlaygroundEditor) return;
     window.PlaygroundEditor.enhance(id, lang, {
@@ -1077,6 +1131,207 @@ self.onmessage = function (e) {
     efSearch();
   }
   function closeFinder() { $("finderModal").classList.add("hidden"); }
+
+  // ── Full text (the sidebar's "Full text" section) ────────────────────────
+  // The SECOND search tier, and deliberately not the first one's twin:
+  //   🔎 Find a term → the bounded LABEL index (prefix_search, capped at 8,192
+  //                    entries, already resident) — safe on every keystroke.
+  //   Full text      → the file's TEXT_INDEX section: whole words anywhere in
+  //                    ANY literal, including subjects no label index holds.
+  // The first word lookup FAULTS the index's token table whole — measured at
+  // 29 MB on epfl-infoscience, 419 MB on wikidata-ontology and 1.88 GB on
+  // causenet-full-typed — so this is never search-as-you-type: it waits for an
+  // explicit Enter / Search press, and states that cost (from text_index_len())
+  // BEFORE the first one. The table then stays resident for the session, so
+  // every later word is postings only, a few KB. Most published datasets carry
+  // no text index at all; those get one quiet line and no box that can't work.
+  const FT_LIMIT = 25;
+  let ftLen = null;        // TEXT_INDEX byte length; null = not known yet
+  let ftSupported = true;  // false = an engine build without text_index_len
+  let ftProbing = false;   // a remote header probe is in flight
+  let ftFaulted = false;   // this session already paid for the token table
+  let ftError = "";        // a probe failure, shown inline
+  let ftSeq = 0;           // drops out-of-order / stale-dataset results
+
+  // Called on every dataset load. An in-memory graph answers instantly (its
+  // header is in the buffer we already hold); a remote one waits for an explicit
+  // check, because probing it opens a remote session — exactly the cost lazy
+  // mode exists to defer until a query actually needs it.
+  function resetFullText() {
+    ftLen = null; ftProbing = false; ftFaulted = false; ftError = ""; ftSeq++;
+    if (state.graph) {
+      try { ftLen = Number(state.graph.text_index_len()); ftSupported = true; }
+      catch (_e) { ftSupported = false; }   // an engine predating the export
+    }
+    renderFullText();
+  }
+
+  function ftSetResults(html) { const r = $("ftResults"); if (r) r.innerHTML = html; }
+  function ftSetCost(html) { const c = $("ftCost"); if (c) c.innerHTML = html; }
+  function ftFail(e) {
+    ftSetResults(`<div class="ef-empty">Search failed: ${esc(shorten(String((e && e.message) || e), 180))}</div>`);
+  }
+
+  // One result row: the short local name up top, the full IRI (shortened, on
+  // hover in full) beneath — the entity-finder's shape, so the two tiers read
+  // the same. Clicking inserts <IRI> at the caret, like every other hit list.
+  function ftItemHtml(iri) {
+    return `<button type="button" class="ef-item" data-iri="${esc(iri)}" title="${esc(iri)} — click to insert at the caret">` +
+      `<span class="ef-label">${esc(localName(iri))}</span>` +
+      `<span class="ef-iri"><span class="ef-kind ef-entity">subject</span> ${esc(shorten(iri, 64))}</span></button>`;
+  }
+
+  // The engine returns [{"subject":…}] (the same envelope text_search uses);
+  // tolerate a {matches:[…]} wrapper too, and de-duplicate.
+  function parseFullTextHits(json) {
+    let v = null;
+    try { v = JSON.parse(json); } catch (_e) { return []; }
+    const rows = Array.isArray(v) ? v : ((v && (v.matches || v.hits)) || []);
+    const out = [], seen = new Set();
+    rows.forEach((r) => {
+      const iri = String((r && (r.subject || r.s)) || (typeof r === "string" ? r : "")).replace(/^<|>$/g, "");
+      if (!iri || seen.has(iri)) return;
+      seen.add(iri);
+      out.push(iri);
+    });
+    return out;
+  }
+
+  // What the last search actually cost on the wire. The worker's per-fetch log
+  // is one entry per physical range request, with `b` = bytes — the same log
+  // psearch returns, so the panel can report the fault instead of describing it.
+  function ftBytesNote(log) {
+    if (!state.remote) return "";
+    if (!log || !log.length) return " Last search: no new range requests — answered from bytes already fetched.";
+    let bytes = 0;
+    log.forEach((e) => { bytes += (e && e.b) || 0; });
+    return ` Last search: ${log.length} range request(s) · ${formatBytes(bytes)} fetched.`;
+  }
+
+  function renderFullTextHits(hits, phrase, log) {
+    ftSetCost(`Token table resident for this session — each further word is postings only, a few KB.` + ftBytesNote(log));
+    if (!hits.length) {
+      ftSetResults(`<div class="ef-empty">No subject carries a literal with ` +
+        (/\s/.test(phrase) ? `all of <b>${esc(shorten(phrase, 60))}</b> in it (every word must match).` : `<b>${esc(shorten(phrase, 60))}</b> in it.`) +
+        `</div>`);
+      return;
+    }
+    const more = hits.length >= FT_LIMIT
+      ? `<div class="ef-empty">First ${FT_LIMIT} matches — add another word to narrow it.</div>` : "";
+    ftSetResults(`<div class="ef-group">Subjects</div>` + hits.map(ftItemHtml).join("") + more);
+    $$("#ftResults .ef-item").forEach((b) => {
+      b.onclick = () => insertAtCaret("q", "<" + b.dataset.iri + ">");
+    });
+  }
+
+  // The explicit search. Remote goes through the query worker (tsearch), like
+  // every other range-reading call; an in-memory graph answers in-process.
+  function runFullTextSearch() {
+    const inp = $("ftInput");
+    if (!inp || !ftLen) return;
+    const phrase = (inp.value || "").trim();
+    if (!phrase) {
+      ftSetResults(`<div class="ef-empty">Type a word — or several, all of which must match — then press Enter.</div>`);
+      return;
+    }
+    const seq = ++ftSeq;
+    ftSetResults(`<div class="ef-loading"><span class="spindle"></span> ` +
+      (ftFaulted ? "reading postings" : `faulting the ${formatBytes(ftLen)} token table`) +
+      (state.remote ? " over range reads" : "") + `…</div>`);
+    const finish = (json, log) => {
+      if (seq !== ftSeq) return;
+      ftFaulted = true;   // the table is in memory now — say so on the cost line
+      renderFullTextHits(parseFullTextHits(json), phrase, log);
+    };
+    if (state.remote) {
+      remoteTextSearch(state.remote.url, phrase, FT_LIMIT)
+        .then((out) => finish(out.json, out.log))
+        .catch((e) => { if (seq === ftSeq) ftFail(e); });
+      return;
+    }
+    // In-memory: no network, but the call is synchronous — yield one frame so
+    // the spinner actually paints before the engine blocks the thread.
+    setTimeout(() => {
+      if (seq !== ftSeq) return;
+      try { finish(state.graph.text_search_one(phrase, FT_LIMIT), null); }
+      catch (e) { ftFail(e); }
+    }, 16);
+  }
+
+  // Remote only: ask the worker for this file's TEXT_INDEX size. It is a header
+  // field, so the read itself costs nothing once the session is open.
+  function probeFullTextRemote() {
+    if (!state.remote || ftProbing) return;
+    ftProbing = true; ftError = "";
+    renderFullText();
+    remoteTextIndexLen(state.remote.url).then((out) => {
+      let v = null;
+      try { v = JSON.parse(out.json).textIndexLen; } catch (_e) { v = null; }
+      ftProbing = false;
+      if (typeof v === "number") ftLen = v; else ftSupported = false;
+      renderFullText();
+    }).catch((e) => {
+      ftProbing = false;
+      const msg = String((e && e.message) || e);
+      // An engine build predating text_index_len: withdraw the panel rather
+      // than leave a box that can never answer.
+      if (/is not a function|text_index_len/i.test(msg)) ftSupported = false;
+      else ftError = msg;
+      renderFullText();
+    });
+  }
+
+  function renderFullText() {
+    const sec = $("fullTextPanel"), box = $("fullTextInfo");
+    if (!sec || !box) return;
+    // Nothing loaded, or an engine without the text-index exports: no section at
+    // all. setMode() only toggles .hidden per tab, so this uses inline display
+    // and the two never fight.
+    if (!ftSupported || (!state.graph && !state.remote)) { sec.style.display = "none"; return; }
+    sec.style.display = "";
+    const err = ftError ? `<div class="ef-empty">Couldn't read the text index: ${esc(shorten(ftError, 180))}</div>` : "";
+    if (ftProbing) {
+      box.innerHTML = `<div class="ef-loading"><span class="spindle"></span> reading this file's header…</div>`;
+      return;
+    }
+    if (ftLen === null) {
+      // Remote, not probed. Offer the check, not the box — asking costs a
+      // session open, and we don't spend that on a dataset nobody has queried.
+      box.innerHTML =
+        `<div>Whole words anywhere in <b>any</b> literal — the tier <b>🔎 Find a term</b> can't reach (that one prefix-matches the bounded label index).</div>` +
+        `<div><button id="ftCheck" type="button" class="secondary">Check for a text index</button></div>` +
+        `<div class="ef-empty">Reads this remote file's header and reports the index's size, so you see what a first search costs before paying it.</div>` + err;
+      const b = $("ftCheck");
+      if (b) b.onclick = probeFullTextRemote;
+      return;
+    }
+    if (!ftLen) {
+      box.innerHTML =
+        `<div>This dataset has <b>no full-text index</b>. <code>rete build --text-index</code> adds one — then whole words from any literal are searchable right here, with no download.</div>` + err;
+      return;
+    }
+    const cost = ftFaulted
+      ? `Token table resident for this session — each further word is postings only, a few KB.`
+      : `First search fetches the whole <b>${formatBytes(ftLen)}</b> token table${state.remote ? " over HTTP range" : ""}; it then stays resident for this session, so every later word costs a few KB. Runs on Enter — never as you type.`;
+    box.innerHTML =
+      `<div>Whole words anywhere in <b>any</b> literal, read from this file's own text index — including subjects no label index holds. Several words means <b>all</b> of them must match.</div>` +
+      `<div style="display:flex;gap:6px;align-items:stretch">` +
+        `<input id="ftInput" class="ef-input" type="search" autocomplete="off" spellcheck="false" style="flex:1 1 auto;min-width:0" placeholder="word(s), then Enter" aria-label="Search the full-text index" />` +
+        `<button id="ftGo" type="button" class="secondary" style="flex:0 0 auto;white-space:nowrap" title="Search the text index — the explicit press that does the fetching">Search</button>` +
+      `</div>` +
+      `<div class="ef-empty" id="ftCost">${cost}</div>` +
+      // min-height:0 so the (shared) .ef-results box collapses while empty
+      // instead of reserving the modal's 80px in a narrow sidebar.
+      `<div class="ef-results" id="ftResults" style="min-height:0"></div>` +
+      `<details class="lazy-explainer">` +
+        `<summary>Why this one waits for Enter</summary>` +
+        `<p class="microcopy" style="margin-top:6px">A word lookup faults the index's <b>token table</b> whole: 29 MB on <code>epfl-infoscience</code>, 419 MB on <code>wikidata-ontology</code>, 1.88 GB on <code>causenet-full-typed</code>. Per keystroke that would pull hundreds of MB for a word you hadn't finished typing — so it is an explicit press, and the table is then kept for the rest of the session.</p>` +
+      `</details>` + err;
+    // Deliberately NO input handler: this tier never searches as you type.
+    const inp = $("ftInput"), go = $("ftGo");
+    if (inp) inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); runFullTextSearch(); } };
+    if (go) go.onclick = runFullTextSearch;
+  }
 
   function setEd(id, text) {
     if (window.PlaygroundEditor) window.PlaygroundEditor.setText(id, text);
@@ -1335,6 +1590,7 @@ self.onmessage = function (e) {
     renderReachDefaults();
     renderShaclExamples();
     renderProvenanceDefaults();
+    resetFullText();   // the new file's own TEXT_INDEX (or none) — header read
 
     const infoRow = datasetInfo(state.dataset);
     // datasetInfo() is strict now — a bundled/cached load of a key that is
@@ -1466,6 +1722,7 @@ self.onmessage = function (e) {
     renderShaclExamples();
     renderReachDefaults();
     renderProvenanceDefaults();
+    resetFullText();   // remote: offers the header check, probes nothing yet
     closeSource();
     setMode("sparql");
     // Load the dataset's first example query automatically (parity with bundled).
@@ -11623,6 +11880,7 @@ self.onmessage = function (e) {
     renderDatasetOptions();
     wireEvents();
     renderHistory();
+    renderFullText();   // hidden until a graph is open — never an empty box
     // IIIF cells render their thumbnail asynchronously; hydrate them whenever a
     // result table appears or re-renders (debounced; processed-once per cell).
     try {

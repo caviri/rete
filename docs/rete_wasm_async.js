@@ -443,6 +443,17 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * Byte length of the TEXT_INDEX section, `0` when the file has none — a
+         * header read, never a fault. The UI asks this to decide whether to offer
+         * full-text search at all, and to state the cost before the first one.
+         * `f64` because the section outgrows `u32`: causenet's is 1.88 GB.
+         * @returns {number}
+         */
+        text_index_len() {
+            const ret = wasm.graph_text_index_len(this.__wbg_ptr);
+            return ret;
+        }
+        /**
          * See [`text_search`].
          * @param {string[]} words
          * @param {string | null | undefined} contains_prefix
@@ -469,6 +480,36 @@ let wasm_bindgen = (function(exports) {
                 return getStringFromWasm0(ptr3, len3);
             } finally {
                 wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * [`Graph::text_search`] from ONE phrase: whitespace splits it into words
+         * and **every** word must match (AND), like `rete search --contains a b`.
+         * One string in, one string out — that is what the remote twin's
+         * hand-marshaled asyncify path can carry (a JS array marshaled raw is what
+         * traps), and the UI is a single text box either way. Same JSON envelope.
+         * @param {string} phrase
+         * @param {number} limit
+         * @returns {string}
+         */
+        text_search_one(phrase, limit) {
+            let deferred3_0;
+            let deferred3_1;
+            try {
+                const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ret = wasm.graph_text_search_one(this.__wbg_ptr, ptr0, len0, limit);
+                var ptr2 = ret[0];
+                var len2 = ret[1];
+                if (ret[3]) {
+                    ptr2 = 0; len2 = 0;
+                    throw takeObject(ret[2]);
+                }
+                deferred3_0 = ptr2;
+                deferred3_1 = len2;
+                return getStringFromWasm0(ptr2, len2);
+            } finally {
+                wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
             }
         }
         /**
@@ -964,6 +1005,17 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * See [`Graph::text_index_len`] — read from the resident header, so it
+         * costs no fetch at all. Worth asking before [`RemoteGraph::text_search`]:
+         * it is the size of the section the first search starts pulling over the
+         * wire, so the UI can warn instead of surprising the user.
+         * @returns {number}
+         */
+        text_index_len() {
+            const ret = wasm.remotegraph_text_index_len(this.__wbg_ptr);
+            return ret;
+        }
+        /**
          * See [`text_search`] — over the resident remote handle. Faults the TEXT_INDEX
          * token table on the first call, then fetches only the queried posting lists
          * (never the whole postings blob), serving repeat searches from memory.
@@ -992,6 +1044,35 @@ let wasm_bindgen = (function(exports) {
                 return getStringFromWasm0(ptr3, len3);
             } finally {
                 wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * See [`Graph::text_search_one`] — over the resident remote handle, with
+         * the same token-table-then-posting-lists fault pattern as
+         * [`RemoteGraph::text_search`]. This is the shape the playground's raw
+         * asyncify glue drives: one string in, one string out, marshaled once.
+         * @param {string} phrase
+         * @param {number} limit
+         * @returns {string}
+         */
+        text_search_one(phrase, limit) {
+            let deferred3_0;
+            let deferred3_1;
+            try {
+                const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ret = wasm.remotegraph_text_search_one(this.__wbg_ptr, ptr0, len0, limit);
+                var ptr2 = ret[0];
+                var len2 = ret[1];
+                if (ret[3]) {
+                    ptr2 = 0; len2 = 0;
+                    throw takeObject(ret[2]);
+                }
+                deferred3_0 = ptr2;
+                deferred3_1 = len2;
+                return getStringFromWasm0(ptr2, len2);
+            } finally {
+                wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
             }
         }
     }
@@ -2571,6 +2652,17 @@ let wasm_bindgen = (function(exports) {
             const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len0 = WASM_VECTOR_LEN;
             return __reteCallRaw(function () { return wasm.remotegraph_prefix_search(g.__wbg_ptr, ptr0, len0, limit); }, true);
+          });
+        };
+        // Full-text search, same raw shape. text_search_one takes ONE phrase
+        // (the wasm side splits it into AND-ed words) precisely so this stays a
+        // single string in / single string out: marshaling a JS array raw is
+        // what produced the signature-mismatch traps above.
+        exports.reteTextSearchRemote = function (g, phrase, limit) {
+          return __reteSerial(function () {
+            const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            return __reteCallRaw(function () { return wasm.remotegraph_text_search_one(g.__wbg_ptr, ptr0, len0, limit); }, true);
           });
         };
         // RAW-driven generic *_url call (schema_url, check_schema_url, shacl_url,

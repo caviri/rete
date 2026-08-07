@@ -480,6 +480,24 @@ impl Graph {
         text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
     }
 
+    /// Byte length of the TEXT_INDEX section, `0` when the file has none — a
+    /// header read, never a fault. The UI asks this to decide whether to offer
+    /// full-text search at all, and to state the cost before the first one.
+    /// `f64` because the section outgrows `u32`: causenet's is 1.88 GB.
+    pub fn text_index_len(&self) -> f64 {
+        self.rete.header().text_index_len as f64
+    }
+
+    /// [`Graph::text_search`] from ONE phrase: whitespace splits it into words
+    /// and **every** word must match (AND), like `rete search --contains a b`.
+    /// One string in, one string out — that is what the remote twin's
+    /// hand-marshaled asyncify path can carry (a JS array marshaled raw is what
+    /// traps), and the UI is a single text box either way. Same JSON envelope.
+    pub fn text_search_one(&self, phrase: &str, limit: usize) -> Result<String, JsValue> {
+        let words: Vec<String> = phrase.split_whitespace().map(str::to_owned).collect();
+        text_search_json(&self.rete, &words, None, limit)
+    }
+
     /// See [`why_triples`].
     pub fn why_triples(
         &self,
@@ -927,6 +945,23 @@ impl RemoteGraph {
         limit: usize,
     ) -> Result<String, JsValue> {
         text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
+    }
+
+    /// See [`Graph::text_index_len`] — read from the resident header, so it
+    /// costs no fetch at all. Worth asking before [`RemoteGraph::text_search`]:
+    /// it is the size of the section the first search starts pulling over the
+    /// wire, so the UI can warn instead of surprising the user.
+    pub fn text_index_len(&self) -> f64 {
+        self.rete.header().text_index_len as f64
+    }
+
+    /// See [`Graph::text_search_one`] — over the resident remote handle, with
+    /// the same token-table-then-posting-lists fault pattern as
+    /// [`RemoteGraph::text_search`]. This is the shape the playground's raw
+    /// asyncify glue drives: one string in, one string out, marshaled once.
+    pub fn text_search_one(&self, phrase: &str, limit: usize) -> Result<String, JsValue> {
+        let words: Vec<String> = phrase.split_whitespace().map(str::to_owned).collect();
+        text_search_json(&self.rete, &words, None, limit)
     }
 
     /// See [`card_url`] — the Dataset Card, over the resident handle's reader

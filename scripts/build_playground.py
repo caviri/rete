@@ -280,6 +280,17 @@ ASYNC_ENV_JS = """
             return __reteCallRaw(function () { return wasm.remotegraph_prefix_search(g.__wbg_ptr, ptr0, len0, limit); }, true);
           });
         };
+        // Full-text search, same raw shape. text_search_one takes ONE phrase
+        // (the wasm side splits it into AND-ed words) precisely so this stays a
+        // single string in / single string out: marshaling a JS array raw is
+        // what produced the signature-mismatch traps above.
+        exports.reteTextSearchRemote = function (g, phrase, limit) {
+          return __reteSerial(function () {
+            const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            return __reteCallRaw(function () { return wasm.remotegraph_text_search_one(g.__wbg_ptr, ptr0, len0, limit); }, true);
+          });
+        };
         // RAW-driven generic *_url call (schema_url, check_schema_url, shacl_url,
         // reach_url, why_url, …) — the worker's generic "call" path used to drive
         // the generated WRAPPER through suspend/rewind, which re-marshals its
