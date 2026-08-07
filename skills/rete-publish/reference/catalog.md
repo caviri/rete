@@ -17,6 +17,23 @@ Everything is keyed by a lowercase, kebab-case dataset key such as `foo` or
 For embedded data, omit `kind` and `url`; it is discovered from the inlined
 bytes. Its remote mirror derives as `remoteBase/<key>/<key>.rete`.
 
+**`textIndex`** — set `"textIndex": true` if, and only if, the published file was
+built with `--text-index` (a TEXT_INDEX section, kind 6, in its header). It is a
+declaration, not a switch: nothing reads it at query time, but two checks hold it
+to the truth, so a wrong value is a red gate rather than a quiet lie.
+
+- `tests/gate/checks/check_text_index_claims.mjs` (offline, every gate run) —
+  the flag and the prose must agree. If `textIndex: true`, at least one of
+  `label` / `description` / `datasetMeta.provenance` / `datasetExtra.tags` must
+  say so ("TEXT_INDEX on for full-text search over its literals."); if the flag
+  is absent, none of them may claim one.
+- `scripts/check_dataset_catalog.py` (network, weekly) — the flag vs the section
+  directory the bucket actually serves.
+
+A full-text index is opt-in at build time and `FILTER(CONTAINS(…))` answers with
+or without one — by word lookup or by full scan — so an undeclared index is
+invisible in both directions until something compares the header to the catalog.
+
 ## 2. `datasetMeta`
 
 ```js

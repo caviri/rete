@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 from urllib.error import HTTPError, URLError
@@ -20,9 +22,49 @@ LOCK = ROOT / "web" / "datasets.lock.json"
 RANGE_END = 1023
 REQUIRED_EXPOSED = {"content-range"}
 
+# Typed section directory (SPEC.md 4.1): a 64-byte core, then `section_count`
+# entries of 24 bytes — kind u16, flags u16, reserved u32, offset u64, length u64.
+SECTION_COUNT_OFFSET = 44
+SECTION_DIR_OFFSET = 64
+SECTION_ENTRY_LEN = 24
+SECTION_TEXT_INDEX = 6
+SECTION_NAMES = {
+    1: "Metadata",
+    2: "Dictionary",
+    3: "Index",
+    4: "PyramidMeta",
+    5: "NamedGraphs",
+    6: "TextIndex",
+    7: "BuildInfo",
+}
+
 
 def lower_headers(headers: dict[str, str]) -> dict[str, str]:
     return {name.lower(): value for name, value in headers.items()}
+
+
+def parse_sections(body: bytes) -> list[dict]:
+    """Decode the header's section directory from the first 1024 bytes."""
+    if len(body) < RANGE_END + 1 or body[:4] != b"RETE":
+        return []
+    count = struct.unpack_from("<H", body, SECTION_COUNT_OFFSET)[0]
+    if SECTION_DIR_OFFSET + count * SECTION_ENTRY_LEN > RANGE_END + 1:
+        return []
+    sections = []
+    for index in range(count):
+        position = SECTION_DIR_OFFSET + index * SECTION_ENTRY_LEN
+        kind, flags = struct.unpack_from("<HH", body, position)
+        offset, length = struct.unpack_from("<QQ", body, position + 8)
+        sections.append(
+            {
+                "kind": kind,
+                "name": SECTION_NAMES.get(kind, f"Unknown({kind})"),
+                "flags": flags,
+                "offset": offset,
+                "length": length,
+            }
+        )
+    return sections
 
 
 def parse_content_range(value: str) -> tuple[int, int, int] | None:
@@ -79,6 +121,10 @@ def validate_probe(
     if format_version != 5:
         errors.append(f"expected stable format byte 5, got {format_version}")
     content_hash = body[8:24].hex() if len(body) >= 24 else None
+    sections = parse_sections(body)
+    text_index_bytes = sum(
+        section["length"] for section in sections if section["kind"] == SECTION_TEXT_INDEX
+    )
 
     if expected:
         if expected.get("formatVersion") != format_version:
@@ -95,6 +141,8 @@ def validate_probe(
         "formatVersion": format_version,
         "contentHash": content_hash,
         "size": size,
+        "sections": [section["name"] for section in sections],
+        "textIndexBytes": text_index_bytes,
         "errors": errors,
     }
 
@@ -118,25 +166,72 @@ process.stdout.write(JSON.stringify(sandbox.window.RETE_PLAYGROUND_CATALOG));
     return json.loads(completed.stdout)
 
 
-def catalog_targets(catalog: dict) -> list[dict[str, str]]:
+def catalog_targets(catalog: dict) -> list[dict]:
     base = catalog["remoteBase"].rstrip("/")
-    targets: list[dict[str, str]] = []
+    targets: list[dict] = []
     for dataset in catalog.get("datasets", []):
         key = dataset["key"]
+        # `textIndex: true` is the catalog's DECLARATION that the published
+        # object carries a TEXT_INDEX section. Carried per target so the probe
+        # can hold the declaration to the bytes actually served.
+        declares = dataset.get("textIndex") is True
         shards = dataset.get("shards") or []
         if shards:
             targets.extend(
-                {"key": f"{key}#{index}", "url": url}
+                {"key": f"{key}#{index}", "dataset": key, "textIndex": declares, "url": url}
                 for index, url in enumerate(shards, 1)
             )
             continue
         targets.append(
             {
                 "key": key,
+                "dataset": key,
+                "textIndex": declares,
                 "url": dataset.get("url") or f"{base}/{key}/{key}.rete",
             }
         )
     return targets
+
+
+def text_index_failures(targets: list[dict], results: list[dict]) -> list[str]:
+    """Hold every `textIndex: true` declaration to the section directory served.
+
+    A full-text index is opt-in at build time, so the catalog's claim and the
+    file's sections drift silently: `FILTER(CONTAINS(…))` still answers without
+    an index, by full scan, and nothing else notices. Compared per DATASET (not
+    per shard) because the declaration is a dataset-level fact.
+    """
+    declared = {target["dataset"]: target["textIndex"] for target in targets}
+    expected: dict[str, int] = defaultdict(int)
+    for target in targets:
+        expected[target["dataset"]] += 1
+    observed: dict[str, int] = defaultdict(int)
+    probed: dict[str, int] = defaultdict(int)
+    by_key = {target["key"]: target["dataset"] for target in targets}
+    for result in results:
+        dataset = by_key.get(result["key"], result["key"])
+        if result["errors"]:
+            continue
+        probed[dataset] += 1
+        observed[dataset] += result.get("textIndexBytes") or 0
+    failures = []
+    for dataset, declares in sorted(declared.items()):
+        # Only judge a dataset every one of whose shards answered: a partial
+        # sweep cannot prove the ABSENCE of an index the missing shard may hold.
+        if probed.get(dataset, 0) != expected[dataset]:
+            continue
+        has_index = observed[dataset] > 0
+        if declares and not has_index:
+            failures.append(
+                f"{dataset}: catalog declares textIndex but the published file has "
+                "NO TEXT_INDEX section (drop the claim, or rebuild with --text-index)"
+            )
+        elif has_index and not declares:
+            failures.append(
+                f"{dataset}: the published file carries a TEXT_INDEX ({observed[dataset]:,} bytes) "
+                "the catalog never declares — add `textIndex: true` and say so in the description"
+            )
+    return failures
 
 
 def probe(target: dict[str, str], expected: dict | None, timeout: int) -> dict:
@@ -175,6 +270,8 @@ def probe(target: dict[str, str], expected: dict | None, timeout: int) -> dict:
             "formatVersion": None,
             "contentHash": None,
             "size": None,
+            "sections": [],
+            "textIndexBytes": 0,
             "errors": [f"request failed: {error}"],
         }
     result["key"] = target["key"]
@@ -246,8 +343,15 @@ def main() -> int:
             else:
                 print(
                     f"OK   {result['key']}: v{result['formatVersion']} "
-                    f"{result['size']} bytes {result['contentHash']}"
+                    f"{result['size']} bytes {result['contentHash']} "
+                    f"[{'+'.join(result['sections'])}]"
                 )
+
+    # The catalog's `textIndex: true` declaration vs the section directory the
+    # bucket actually serves. Free: it reads the 1024 bytes already fetched.
+    claim_failures = text_index_failures(targets, results)
+    for message in claim_failures:
+        print(f"FAIL text-index claim — {message}")
 
     results.sort(key=lambda item: item["key"])
     if args.report:
@@ -260,7 +364,11 @@ def main() -> int:
             write_lock(args.lock, results)
             print(f"wrote {args.lock}")
     print(f"catalog: {len(results) - len(failures)}/{len(results)} stable object(s)")
-    return 1 if failures else 0
+    print(
+        f"text-index claims: {len(claim_failures)} mismatch(es) between "
+        "`textIndex:` in the catalog and the TEXT_INDEX section served"
+    )
+    return 1 if (failures or claim_failures) else 0
 
 
 if __name__ == "__main__":
