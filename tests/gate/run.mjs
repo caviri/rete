@@ -184,6 +184,27 @@ function g0() {
     });
     record("G0", `catalog examples declared prefixes (${checked})`, bad.length === 0, bad.slice(0, 3).join(" "));
   } catch (e) { record("G0", "catalog examples declared prefixes", false, String(e).slice(0, 120)); }
+  // A full-text index is OPT-IN at build time, so the catalog's prose and the
+  // file's sections drift silently (CONTAINS still answers — by full scan).
+  // `boe` and `memoria` advertised an index their published files never had.
+  // Offline half: the `textIndex:` declaration and the prose must agree.
+  // Network half (flag vs the section actually served): check_dataset_catalog.py.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_text_index_claims.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record(
+      "G0",
+      "full-text index claims match the catalog's declaration",
+      ok,
+      ok ? `${verdict.declaringTextIndex} declare one, ${verdict.surfacesScanned} surfaces` : out.slice(-240),
+    );
+  } catch (e) {
+    record("G0", "full-text index claims match the catalog's declaration", false,
+      String(e.stdout || e.stderr || e).slice(-240));
+  }
 }
 
 // ---------- servers ----------

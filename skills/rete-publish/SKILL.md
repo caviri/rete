@@ -62,7 +62,9 @@ templates are in **[reference/catalog.md](reference/catalog.md)**. Add:
 
 1. `datasets`: `{key, kind:"remote-lazy", url, label, description}`. Omit `url`
    for embedded data; remote URLs derive from
-   `remoteBase/<key>/<key>.rete`.
+   `remoteBase/<key>/<key>.rete`. Add `textIndex: true` if the file was built
+   with `--text-index`, and say so in the description — the gate compares the
+   flag to the prose, and the weekly catalog probe compares it to the header.
 2. `datasetMeta`: `{triples, size, license, source, provenance}`.
 3. `datasetExtra`: `{icon, tags}`.
 4. Two to five `examples` with family, label, view, columns, a useful tip, and
