@@ -507,7 +507,9 @@ pre-change binary, <code>delegated_lazy</code> is the candidate forced lazy with
 <code>RETE_EAGER_MAX_MB=0</code>, and <code>eager_8</code> is the candidate at the 8 MiB policy. The
 <code>eager_8</code> harness label means one eager <em>transfer</em>, not an eager parser: the
 compressed file is retained in a bounded owned memory reader and opened with
-<code>Rete::open_ranged_lazy</code>, so section decompression remains demand-driven.
+<code>Rete::open_ranged_lazy</code>, so dictionary chunks, default-graph index tiles, the
+pyramid, and text-index decompression remain demand-driven. Named graphs still
+decode during open.
 The selective workload orders by <code>?name ?formula ?smiles</code> before <code>LIMIT 200</code>:
 without <code>ORDER BY</code>, SPARQL permits either plan to return a different valid
 200-row subset, which is unsuitable for an exact output-hash benchmark.</p>
@@ -548,8 +550,9 @@ reduced median / p90 wall time by <strong>65.9% / 68.0%</strong>, <strong>50.5% 
 improvement (the gate required two), none regresses in median or p90, and every
 eligible sample performs exactly one data GET. Peak process RSS was <strong>28,700
 KiB (28.0 MiB)</strong>: the process retains the validated 7.22 MiB compressed image,
-but only demand-decodes the sections this query touches rather than opening all
-sections eagerly.</p>
+but demand-decodes only the touched dictionary chunks and default-graph tiles;
+pyramid/text-index data stay deferred. Named graphs would still decode during
+open rather than on first query use.</p>
 <p>Every sample for a query produced one byte-identical JSON hash across all
 modes:</p>
 <ul>

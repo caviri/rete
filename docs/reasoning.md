@@ -7,8 +7,9 @@ rete reasons over an ontology **two complementary ways**:
   the **raw data with no materialization**. Opt-in and lazy at the decode boundary,
   it works over a remote file with no rebuild. Remote-lazy transports fetch only
   touched ranges; eligible small native HTTP objects may be transferred once —
-  still with lazy section decoding — and are the natural fit for ontology-mediated
-  **query answering**.
+  still with lazy dictionary-chunk, default-graph-tile, pyramid, and text-index
+  decoding (named graphs open resident) — and are the natural fit for
+  ontology-mediated **query answering**.
 - **Materialization — OWL RL / RDFS** (the rest of this page): forward-chain the
   entailed *triples* to a fixpoint, to either **bake** them into the file
   (`rete build --materialize`) or **coherence-check** it (`rete reason`).
@@ -63,9 +64,8 @@ rete reason data.rete --verify-card          # re-check a build-time coherence s
 
 `rete reason` **exits non-zero when any inconsistency is found**, and zero when
 the graph is coherent — so it drops straight into CI as a coherence check. `--url`
-reads a remote `.rete` lazily over HTTP ranges (like `rete sparql-url`), refusing an
-incomplete result if a range fetch fails. `--check` prints a single verdict line for
-scripts.
+reads a remote `.rete` lazily over HTTP ranges, refusing an incomplete result if
+a range fetch fails. `--check` prints a single verdict line for scripts.
 
 ## Build-time materialization
 
@@ -257,7 +257,8 @@ ontology-aware with **no rebuild**. Browser/WASM readers and larger or
 eager-disabled native HTTP sources fetch only the ranges the rewritten query
 touches. For an eligible small native HTTP object, `sparql-url` instead performs
 one bounded full-object transfer, retains the compressed bytes, and still decodes
-dictionary chunks, index tiles, and optional sections lazily from memory.
+dictionary chunks, default-graph index tiles, the pyramid, and text-index data
+lazily from memory. Named graphs still decode during open.
 
 Reasoning is **opt-in** — a plain query is never changed:
 

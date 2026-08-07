@@ -26,14 +26,16 @@ file**. Put that file on S3, GitHub Pages, or any HTTP host that supports range
 requests, hand a client the URL, and it runs **real SPARQL** against the file in
 place. Remote-lazy paths **fetch only the bytes a query needs**; the native CLI
 may instead fetch an eligible small object once into bounded compressed memory,
-then still decode its sections lazily. The same engine compiles to WebAssembly,
-so a **browser can query the file directly with no backend**.
+then lazily decode dictionary chunks, default-graph index tiles, the pyramid,
+and the text index from that memory. Named graphs still decode during open. The
+same engine compiles to WebAssembly, so a **browser can query the file directly
+with no backend**.
 
 > Think **Parquet** (for tables) or **PMTiles** (for maps) — but for **RDF
 > graphs + SPARQL**.
 
 <p align="center">
-  <img src="docs/img/lazy-open.svg" alt="A remote-lazy client sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred. Browser and WASM readers stay remote-lazy; the native CLI can fetch a small eligible HTTP object once into bounded compressed memory and decode it lazily there. A COUNT over 9.83 billion triples runs inside a 2 GiB container." width="680">
+  <img src="docs/img/lazy-open.svg" alt="A remote-lazy client sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred. Browser and WASM readers stay remote-lazy; the native CLI can fetch a small eligible HTTP object once into bounded compressed memory, then lazily decode dictionary chunks, default-graph tiles, pyramid and text-index data there. Named graphs still decode during open. A COUNT over 9.83 billion triples runs inside a 2 GiB container." width="680">
 </p>
 
 - **No server.** The file *is* the database. Publish once to static hosting.
@@ -47,8 +49,10 @@ so a **browser can query the file directly with no backend**.
 - **Lazy over HTTP — and on disk.** Browser/WASM URLs, larger or eager-disabled
   native HTTP objects, and large local files fault in only the dictionary chunks
   and index tiles a query touches. Eligible small native HTTP objects use one
-  bounded full-file GET but retain the compressed bytes and decode sections
-  lazily from memory. Thus a **1 GB graph stays interactive in the browser**
+  bounded full-file GET but retain the compressed bytes and lazily decode
+  dictionary chunks, default-graph tiles, pyramid and text-index data from
+  memory; named graphs still decode during open. Thus a **1 GB graph stays
+  interactive in the browser**
   ([try it](https://caviri.github.io/rete/explore-100mb.html)) and a **52 GB
   graph opens locally in KBs** (files past 1 GiB go through the same range
   reader).
@@ -196,9 +200,11 @@ rete sparql-url https://my-bucket.s3.amazonaws.com/social.rete "SELECT * WHERE {
 `query-url` resolves bound terms from the dictionary, then range-fetches only the
 best-matching permutation payload for that triple pattern. Native `sparql-url`
 fetches an eligible small HTTP object once into bounded compressed memory and
-then faults/decompresses sections lazily there; larger or eager-disabled objects
-stay remote-lazy. Browser/WASM URLs are always remote-lazy. `rete cost --explain`
-shows when a query can use the summary-only or routed-pattern budgets.
+then lazily faults dictionary chunks and default-graph tiles there; pyramid and
+text-index data are also deferred, while named graphs decode during open. Larger
+or eager-disabled objects stay remote-lazy. Browser/WASM URLs are always
+remote-lazy. `rete cost --explain` shows when a query can use the summary-only or
+routed-pattern budgets.
 
 ### Try it in your browser (no install)
 

@@ -721,10 +721,11 @@ bound term is unknown, the index is skipped entirely and the result is empty.</p
 learn the object's length. A non-empty remote file up to 8 MiB is fetched with
 one exact full-file <code>Range</code> GET for <code>[0,len)</code> (<code>bytes=0-(len-1)</code>) into a bounded,
 owned in-memory range source. The bytes remain compressed; <code>Rete</code> opens them
-through its lazy ranged reader and decompresses dictionary chunks, index tiles,
-and optional sections only when the query touches them. Physical accounting is
-therefore one GET and the full compressed file length, without the eager
-<code>Rete::open</code> whole-image decode. Larger files use <strong>remote-lazy tile faulting</strong>:
+through its lazy ranged reader and decompresses dictionary chunks,
+default-graph index tiles, the pyramid, and text-index data on demand. The
+named-graphs section still decodes during open. Physical accounting is therefore
+one GET and the full compressed file length, without the eager <code>Rete::open</code>
+whole-image decode of every section. Larger files use <strong>remote-lazy tile faulting</strong>:
 the open fetches the header and small dictionary/index directories, then reads
 O(touched tiles) rather than the whole index.</p>
 <p><code>RETE_EAGER_MAX_MB</code> sets the eager threshold in MiB (default <code>8</code>), and

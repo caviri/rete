@@ -345,8 +345,9 @@ rewrite the <em>query</em> so its answer includes the entailed solutions, comput
 the <strong>raw data with no materialization</strong>. Opt-in and lazy at the decode boundary,
 it works over a remote file with no rebuild. Remote-lazy transports fetch only
 touched ranges; eligible small native HTTP objects may be transferred once —
-still with lazy section decoding — and are the natural fit for ontology-mediated
-<strong>query answering</strong>.</li>
+still with lazy dictionary-chunk, default-graph-tile, pyramid, and text-index
+decoding (named graphs open resident) — and are the natural fit for
+ontology-mediated <strong>query answering</strong>.</li>
 <li><strong>Materialization — OWL RL / RDFS</strong> (the rest of this page): forward-chain the
 entailed <em>triples</em> to a fixpoint, to either <strong>bake</strong> them into the file
 (<code>rete build --materialize</code>) or <strong>coherence-check</strong> it (<code>rete reason</code>).</li>
@@ -396,9 +397,8 @@ rete reason data.rete --verify-card          # re-check a build-time coherence s
 </code></pre>
 <p><code>rete reason</code> <strong>exits non-zero when any inconsistency is found</strong>, and zero when
 the graph is coherent — so it drops straight into CI as a coherence check. <code>--url</code>
-reads a remote <code>.rete</code> lazily over HTTP ranges (like <code>rete sparql-url</code>), refusing an
-incomplete result if a range fetch fails. <code>--check</code> prints a single verdict line for
-scripts.</p>
+reads a remote <code>.rete</code> lazily over HTTP ranges, refusing an incomplete result if
+a range fetch fails. <code>--check</code> prints a single verdict line for scripts.</p>
 <h2>Build-time materialization</h2>
 <p><code>rete reason --materialize</code> <em>prints</em> the closed graph but doesn't change the file.
 To <strong>persist</strong> the entailments — so they ship in the <code>.rete</code> and need no
@@ -549,7 +549,8 @@ ontology-aware with <strong>no rebuild</strong>. Browser/WASM readers and larger
 eager-disabled native HTTP sources fetch only the ranges the rewritten query
 touches. For an eligible small native HTTP object, <code>sparql-url</code> instead performs
 one bounded full-object transfer, retains the compressed bytes, and still decodes
-dictionary chunks, index tiles, and optional sections lazily from memory.</p>
+dictionary chunks, default-graph index tiles, the pyramid, and text-index data
+lazily from memory. Named graphs still decode during open.</p>
 <p>Reasoning is <strong>opt-in</strong> — a plain query is never changed:</p>
 <pre><code class="language-sh">rete sparql     data.rete "SELECT ?o WHERE { ?o a :Aves }" --entail
 rete sparql-url https://host/data.rete "…" --entail        # adaptive native HTTP read

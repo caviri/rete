@@ -480,10 +480,11 @@ Run a full SPARQL query over HTTP. The native CLI first sends a `HEAD` probe to
 learn the object's length. A non-empty remote file up to 8 MiB is fetched with
 one exact full-file `Range` GET for `[0,len)` (`bytes=0-(len-1)`) into a bounded,
 owned in-memory range source. The bytes remain compressed; `Rete` opens them
-through its lazy ranged reader and decompresses dictionary chunks, index tiles,
-and optional sections only when the query touches them. Physical accounting is
-therefore one GET and the full compressed file length, without the eager
-`Rete::open` whole-image decode. Larger files use **remote-lazy tile faulting**:
+through its lazy ranged reader and decompresses dictionary chunks,
+default-graph index tiles, the pyramid, and text-index data on demand. The
+named-graphs section still decodes during open. Physical accounting is therefore
+one GET and the full compressed file length, without the eager `Rete::open`
+whole-image decode of every section. Larger files use **remote-lazy tile faulting**:
 the open fetches the header and small dictionary/index directories, then reads
 O(touched tiles) rather than the whole index.
 
