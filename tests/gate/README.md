@@ -40,6 +40,26 @@ and network (the lazy checks read the live R2 datasets).
 The gate's local Range servers bind OS-assigned ports, so gates from separate
 worktrees can run concurrently without one suite reading another checkout.
 
+## Writing a check
+
+The runner reads a check's **last JSON line**, not its exit code
+(`lastJson(stdout).verdict === "PASS"`). A check that dies on a bare
+`assert.equal` prints no verdict at all, so the log gets a 160-character slice of
+a Node stack trace instead of the numbers. Collect the assertions with
+`checks/_expect.mjs` and always print a verdict:
+
+```js
+import { expect } from "./_expect.mjs";
+const t = expect("test_catalog_matrix");
+t.equal("allQueries", all.length, 676, "every catalog query must be in the matrix");
+t.finish({ allQueries: all.length });
+```
+
+PASS prints `{"verdict":"PASS", …payload}` as before. FAIL prints
+`{"verdict":"FAIL","failures":[{"check":"allQueries","actual":676,"expected":669,…}], …}`
+plus one compact stderr line, and still exits 1 — so a stale tripwire tells you
+which number went stale and what it is now.
+
 ## Tiers
 
 | Tier | What it verifies | Time |

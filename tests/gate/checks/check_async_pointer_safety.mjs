@@ -15,7 +15,13 @@
 //
 // Checked against BOTH the generator (the source of truth) and the generated file
 // that actually ships, so regenerating cannot silently drop it.
+//
+// Probes are COLLECTED, not thrown (see _expect.mjs) — every missing normalizer
+// gets named in one FAIL verdict instead of the first one killing the run and
+// leaving CI a stack-trace tail. The PASS line stays the `[G0] …` string the
+// runner greps for.
 import fs from "node:fs";
+import { expect } from "./_expect.mjs";
 
 const root = process.env.RETE_ROOT || "/work";
 const targets = [
@@ -23,40 +29,47 @@ const targets = [
   { path: `${root}/docs/rete_wasm_async.js`, label: "generated glue" },
 ];
 
-function fail(message) {
-  throw new Error(`async pointer safety: ${message}`);
-}
+const t = expect("check_async_pointer_safety");
 
 let checked = 0;
-for (const { path, label } of targets) {
-  if (!fs.existsSync(path)) {
-    // The generated glue only exists after a wasm build; the generator always does.
-    if (label === "generator") fail(`${path} is missing`);
-    continue;
-  }
-  const src = fs.readFileSync(path, "utf8");
-  if (!src.includes("__reteDoFetch")) continue; // not the asyncify glue
-  checked++;
+try {
+  for (const { path, label } of targets) {
+    if (!fs.existsSync(path)) {
+      // The generated glue only exists after a wasm build; the generator always does.
+      if (label === "generator") t.fail("generatorPresent", `${path} is missing`, { actual: "missing", expected: path });
+      continue;
+    }
+    const src = fs.readFileSync(path, "utf8");
+    if (!src.includes("__reteDoFetch")) continue; // not the asyncify glue
+    checked++;
 
-  if (!/function __reteP\(ptr\)\s*\{\s*return ptr >>> 0;\s*\}/.test(src)) {
-    fail(`${label}: the __reteP(ptr) => ptr >>> 0 normalizer is gone`);
+    t.ok(`${label}: __reteP normalizer`,
+      /function __reteP\(ptr\)\s*\{\s*return ptr >>> 0;\s*\}/.test(src),
+      "the __reteP(ptr) => ptr >>> 0 normalizer is gone");
+    // The write destination is the one that threw in the wild.
+    t.ok(`${label}: dstPtr via __reteP`,
+      /let pos = __reteP\(dstPtr\)/.test(src),
+      "dstPtr is dereferenced without __reteP — a >2 GiB heap will throw RangeError");
+    // The range table and the length out-param are read through DataView, which
+    // rejects negative offsets just as hard.
+    t.ok(`${label}: offsPtr/lensPtr via __reteP`,
+      /__reteP\(offsPtr\)/.test(src) && /__reteP\(lensPtr\)/.test(src),
+      "offsPtr/lensPtr are read without __reteP");
+    t.ok(`${label}: outPtr via __reteP`,
+      /setBigUint64\(__reteP\(outPtr\)/.test(src),
+      "outPtr is written without __reteP");
+    t.ok(`${label}: __reteStr via __reteP`,
+      /function __reteStr\(ptr, len\) \{ const p = __reteP\(ptr\);/.test(src),
+      "__reteStr slices with a raw pointer");
   }
-  // The write destination is the one that threw in the wild.
-  if (!/let pos = __reteP\(dstPtr\)/.test(src)) {
-    fail(`${label}: dstPtr is dereferenced without __reteP — a >2 GiB heap will throw RangeError`);
-  }
-  // The range table and the length out-param are read through DataView, which
-  // rejects negative offsets just as hard.
-  if (!/__reteP\(offsPtr\)/.test(src) || !/__reteP\(lensPtr\)/.test(src)) {
-    fail(`${label}: offsPtr/lensPtr are read without __reteP`);
-  }
-  if (!/setBigUint64\(__reteP\(outPtr\)/.test(src)) {
-    fail(`${label}: outPtr is written without __reteP`);
-  }
-  if (!/function __reteStr\(ptr, len\) \{ const p = __reteP\(ptr\);/.test(src)) {
-    fail(`${label}: __reteStr slices with a raw pointer`);
-  }
+
+  t.ok("someGlueWasChecked", checked > 0, "no asyncify glue was checked — the probes are stale");
+} catch (error) {
+  t.threw("async pointer safety", error);
 }
 
-if (checked === 0) fail("no asyncify glue was checked — the probes are stale");
-console.log(`[G0] async glue normalizes every wasm pointer (>2 GiB safe) — ${checked} file(s)`);
+// This check's runner contract is a grep for `[G0]` on stdout, and that string is
+// also the green log line — so the pass output stays byte-for-byte what it was,
+// and the JSON verdict is emitted only when something actually failed.
+if (t.failed) t.finish({ files: checked });
+else console.log(`[G0] async glue normalizes every wasm pointer (>2 GiB safe) — ${checked} file(s)`);
