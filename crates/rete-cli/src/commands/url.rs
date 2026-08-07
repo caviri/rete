@@ -17,6 +17,56 @@ use crate::commands::render::print_query_output;
 
 const DEFAULT_EAGER_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
+/// An owned in-memory range source for a file fetched in one bounded HTTP GET.
+/// The lazy `Rete` opener keeps this reader for demand-driven section decoding.
+struct OwnedMemoryRangeReader {
+    bytes: Vec<u8>,
+    len: u64,
+}
+
+impl OwnedMemoryRangeReader {
+    fn new(bytes: Vec<u8>) -> std::io::Result<Self> {
+        let len = u64::try_from(bytes.len()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "in-memory file length exceeds the ranged-reader limit",
+            )
+        })?;
+        Ok(Self { bytes, len })
+    }
+
+    fn out_of_bounds(&self, offset: u64, len: u64) -> std::io::Error {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "in-memory range out of bounds: requested {len} bytes at offset {offset} \
+                 from a {}-byte file",
+                self.len
+            ),
+        )
+    }
+}
+
+impl RangeReader for OwnedMemoryRangeReader {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        let end = offset
+            .checked_add(len)
+            .filter(|end| *end <= self.len)
+            .ok_or_else(|| self.out_of_bounds(offset, len))?;
+        let start = usize::try_from(offset).map_err(|_| self.out_of_bounds(offset, len))?;
+        let end = usize::try_from(end).map_err(|_| self.out_of_bounds(offset, len))?;
+        Ok(self.bytes[start..end].to_vec())
+    }
+}
+
+fn open_fetched_image(image: Vec<u8>) -> anyhow::Result<Rete> {
+    Ok(Rete::open_ranged_lazy(OwnedMemoryRangeReader::new(image)?)?)
+}
+
 fn parse_eager_max_bytes(raw: Option<&OsStr>) -> anyhow::Result<u64> {
     let Some(raw) = raw else {
         return Ok(DEFAULT_EAGER_MAX_BYTES);
@@ -153,7 +203,14 @@ pub(crate) fn sparql_url(
     entail: bool,
     #[cfg(feature = "unsafe-decode-bench")] unsafe_decode: bool,
 ) -> anyhow::Result<()> {
-    let eager_max = eager_max_bytes()?;
+    // This command historically also accepts a local path. The native eager
+    // threshold is an HTTP policy, so local sources must not parse or depend on
+    // its environment setting. For HTTP(S), validation still precedes HEAD/GET.
+    let eager_max = if crate::commands::range_source::is_url(url) {
+        eager_max_bytes()?
+    } else {
+        0
+    };
     // `reader` always counts the PHYSICAL HTTP fetches. A read-through block
     // cache (client-side; works over any single-range backend incl. S3) sits
     // above it, so a query's scattered range reads coalesce into a few aligned
@@ -164,7 +221,7 @@ pub(crate) fn sparql_url(
     // `RETE_BLOCK_KB` wins (0 disables the cache); otherwise auto-tune it.
     let mut rete = if should_eager_open(url, total, eager_max) {
         let image = reader.read_at(0, total)?;
-        Rete::open(&image)?
+        open_fetched_image(image)?
     } else {
         let block = match std::env::var("RETE_BLOCK_KB")
             .ok()
@@ -301,5 +358,57 @@ mod tests {
         assert!(!should_eager_open("https://host/g.rete", max + 1, max));
         assert!(!should_eager_open("graph.rete", 1024, max));
         assert!(!should_eager_open("https://host/g.rete", 1024, 0));
+    }
+
+    #[test]
+    fn owned_memory_reader_is_exact_and_bounds_checked() {
+        let reader = OwnedMemoryRangeReader::new(vec![10, 11, 12, 13]).unwrap();
+
+        assert_eq!(reader.len(), 4);
+        assert_eq!(reader.read_at(1, 2).unwrap(), vec![11, 12]);
+        assert!(reader.read_at(4, 0).unwrap().is_empty());
+        for (offset, len) in [(3, 2), (5, 0), (u64::MAX, 1), (1, u64::MAX)] {
+            let error = reader.read_at(offset, len).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+            let message = error.to_string();
+            assert!(message.contains(&offset.to_string()), "{message}");
+            assert!(message.contains(&len.to_string()), "{message}");
+        }
+    }
+
+    #[test]
+    fn fetched_image_open_defers_unused_pyramid_decoding() {
+        use rete_core::{
+            build_pyramid_meta, write_file, DictionaryBuilder, GraphIndexBuilder,
+            DEFAULT_TILE_BUDGET,
+        };
+
+        let triple = (
+            "<http://example.test/s>",
+            "<http://example.test/p>",
+            "<http://example.test/o>",
+        );
+        let mut dictionary = DictionaryBuilder::new();
+        dictionary.observe(triple.0, triple.1, triple.2);
+        let dictionary = dictionary.build();
+        let ids = vec![dictionary.encode(triple.0, triple.1, triple.2).unwrap()];
+        let mut index = GraphIndexBuilder::new();
+        index.push(ids[0]);
+        let (pyramid, levels) = build_pyramid_meta(&dictionary, &ids, DEFAULT_TILE_BUDGET);
+        let mut image = write_file(&dictionary, &index.build(), false, &pyramid, levels);
+        let header = Header::from_bytes(&image).unwrap();
+        assert!(header.pyramid_meta_len > 0);
+        let start = usize::try_from(header.pyramid_meta_offset).unwrap();
+        let end = usize::try_from(header.pyramid_meta_offset + header.pyramid_meta_len).unwrap();
+        image[start..end].fill(0xff);
+
+        assert!(
+            Rete::open(&image).is_err(),
+            "eager open unexpectedly accepted the corrupt pyramid"
+        );
+        assert!(
+            open_fetched_image(image).is_ok(),
+            "lazy open must defer the untouched corrupt pyramid"
+        );
     }
 }

@@ -130,7 +130,13 @@ fn sparql_url_eager_fetches_an_eligible_object_once() {
     assert!(output.status.success());
     assert_eq!(stats.heads.load(Ordering::SeqCst), 1);
     assert_eq!(stats.gets.load(Ordering::SeqCst), 1);
-    assert_eq!(*stats.ranges.lock().unwrap(), vec![(0, len - 1)]);
+    assert_eq!(
+        *stats.ranges.lock().unwrap(),
+        vec![common::RangeObservation {
+            requested: 0..len,
+            served: 0..len,
+        }]
+    );
 }
 
 #[test]
@@ -151,6 +157,20 @@ fn invalid_eager_configuration_fails_before_networking() {
 }
 
 #[test]
+fn invalid_eager_configuration_does_not_change_local_source_behavior() {
+    let fixture = common::fixture();
+
+    common::rete()
+        .env("RETE_EAGER_MAX_MB", "eight")
+        .arg("sparql-url")
+        .arg(&fixture.rete)
+        .args([SELECT, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("example.test/bob"));
+}
+
+#[test]
 fn sparql_url_zero_threshold_forces_the_lazy_path() {
     let fixture = common::fixture();
     let bytes = std::fs::read(&fixture.rete).unwrap();
@@ -165,7 +185,12 @@ fn sparql_url_zero_threshold_forces_the_lazy_path() {
     assert!(output.status.success());
     assert_eq!(stats.heads.load(Ordering::SeqCst), 1);
     assert!(stats.gets.load(Ordering::SeqCst) > 1);
-    assert!(!stats.ranges.lock().unwrap().contains(&(0, len - 1)));
+    assert!(stats
+        .ranges
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|range| range.requested != (0..len)));
 }
 
 #[test]
@@ -243,5 +268,11 @@ fn sparql_url_eager_rejects_malformed_eligible_bytes_without_panicking() {
     assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"));
     assert_eq!(stats.heads.load(Ordering::SeqCst), 1);
     assert_eq!(stats.gets.load(Ordering::SeqCst), 1);
-    assert_eq!(*stats.ranges.lock().unwrap(), vec![(0, len - 1)]);
+    assert_eq!(
+        *stats.ranges.lock().unwrap(),
+        vec![common::RangeObservation {
+            requested: 0..len,
+            served: 0..len,
+        }]
+    );
 }

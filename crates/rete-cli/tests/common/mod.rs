@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::{io::Write as _, net::TcpListener};
 use std::{
@@ -94,7 +95,15 @@ pub fn serve(data: Vec<u8>, mode: RangeMode) -> String {
 pub struct RangeStats {
     pub heads: AtomicUsize,
     pub gets: AtomicUsize,
-    pub ranges: Mutex<Vec<(usize, usize)>>,
+    pub ranges: Mutex<Vec<RangeObservation>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RangeObservation {
+    /// Literal half-open range requested by the client.
+    pub requested: Range<usize>,
+    /// Half-open range actually returned after server-side normalization.
+    pub served: Range<usize>,
 }
 
 pub fn serve_with_stats(data: Vec<u8>, mode: RangeMode) -> (String, Arc<RangeStats>) {
@@ -143,12 +152,15 @@ pub fn serve_with_stats(data: Vec<u8>, mode: RangeMode) -> (String, Arc<RangeSta
                 if let Some(range) = range {
                     let (start, end) = range.split_once('-').unwrap();
                     let start: usize = start.parse().unwrap();
-                    let end: usize = end.parse().unwrap();
-                    let end = end.min(total - 1);
-                    let body = &data[start..=end];
-                    server_stats.ranges.lock().unwrap().push((start, end));
+                    let requested_end: usize = end.parse().unwrap();
+                    let response_end = requested_end.min(total - 1);
+                    let body = &data[start..=response_end];
+                    server_stats.ranges.lock().unwrap().push(RangeObservation {
+                        requested: start..requested_end.checked_add(1).unwrap(),
+                        served: start..response_end.checked_add(1).unwrap(),
+                    });
                     let headers = format!(
-                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{response_end}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()
                     );
                     let _ = stream.write_all(headers.as_bytes());
