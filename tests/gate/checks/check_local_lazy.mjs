@@ -30,16 +30,19 @@ import { expect } from "./_expect.mjs";
 const PGPORT = process.env.PGPORT || "8090";
 const t = expect("check_local_lazy");
 
-// 220k triples over 110k subjects. The literal on each row is pseudo-random
+// 90k triples over 45k subjects, each carrying a LONG pseudo-random literal
 // (seeded LCG → base36), so front-coding and zstd cannot fold the dictionary
-// away and the file really is several MB — a compressible filler produced a
-// ~1 MB file where a bounded read is most of it, which would make the ratio
-// below meaningless. Seeded, so the bytes are identical every run.
-const SUBJECTS = 110000;
+// away. Size comes from the literals, not the triple count, deliberately: the
+// file has to be several MB for the byte ratio below to mean anything, while the
+// in-page build has to finish on a 2-core CI runner. A compressible filler gave
+// a ~1 MB file where a bounded read is most of it; 110k short rows gave a good
+// ratio and timed out in CI. Seeded, so the bytes are identical every run.
+const SUBJECTS = 45000;
+const NOISE_CHUNKS = 90;   // ≈ 990 characters per literal
 
 // One bounded question: a single subject, both of its triples. It must touch a
 // term lookup and one index tile, not the graph.
-const QUERY = `SELECT ?p ?o WHERE { <https://example.org/gate/local/s042000> ?p ?o }`;
+const QUERY = `SELECT ?p ?o WHERE { <https://example.org/gate/local/s012345> ?p ?o }`;
 
 // Patch every way a page can turn a Blob into bytes, BEFORE the app boots.
 const INSTRUMENT = () => {
@@ -83,20 +86,28 @@ const openLocalAndQuery = async (page, bytes) => {
   await page.setInputFiles("#loadFileInput", {
     name: "gate-local.rete", mimeType: "application/octet-stream", buffer: bytes,
   });
-  // The lazy route paints its own note; the whole-file route sets #meta. Wait
-  // for either rather than a fixed sleep.
-  await page.waitForFunction(() => {
+  // Wait for THIS file to be open, on whichever route it took. The size must be
+  // matched exactly: the page boots with a bundled dataset resident, so a bare
+  // `inMemoryBytes > 0` is already true before the file is even read, and the
+  // whole-file assertions below would race a graph that has not been swapped yet.
+  await page.waitForFunction((want) => {
     const f = window.__reteOpenFacts && window.__reteOpenFacts();
-    return !!f && (f.local || f.inMemoryBytes > 0);
-  }, null, { timeout: 120000 });
+    return !!f && (f.local === true || f.inMemoryBytes === want);
+  }, bytes.length, { timeout: 240000 });
 
   await page.evaluate((q) => window.PlaygroundEditor.setText("q", q), QUERY);
-  await page.evaluate(() => document.getElementById("run").click());
-  await page.waitForFunction(
-    () => document.querySelectorAll("#out table tbody tr").length > 0 ||
-          !!document.querySelector("#out .error-box"),
-    null, { timeout: 180000 },
-  );
+  await page.evaluate(() => {
+    window.__qmetaBefore = (document.getElementById("qmeta") || {}).textContent || "";
+    document.getElementById("run").click();
+  });
+  // Wait for the RUN TO FINISH, not for rows. Waiting on rows turns "answered 0"
+  // into a timeout, and a timeout says nothing about what happened — the whole
+  // point of the _expect collector is that a failure names its value.
+  await page.waitForFunction(() => {
+    const qm = (document.getElementById("qmeta") || {}).textContent || "";
+    return !!document.querySelector("#out .error-box") ||
+      (qm !== window.__qmetaBefore && /row\(s\)|triples|boolean|error/i.test(qm));
+  }, null, { timeout: 300000 });
   return page.evaluate(() => ({
     rows: document.querySelectorAll("#out table tbody tr").length,
     err: (document.querySelector("#out .error-box") || {}).textContent || "",
@@ -118,14 +129,14 @@ const main = async () => {
     // ---- build the fixture in the page's own engine -------------------------
     const builder = await openPage(browser, { lazyAboveMB: null, asyncReads: false });
     builder.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
-    const built = await builder.evaluate((n) => {
+    const built = await builder.evaluate(([n, chunks]) => {
       const B = "https://example.org/gate/local/";
       let seed = 20260102;
-      const noise = () => {              // 60-ish incompressible characters
-        let s = "";
-        for (let k = 0; k < 6; k++) {
+      const noise = () => {              // chunks × 6 chars, each a fresh draw
+        let s = "";                      // (deriving the second half from the
+        for (let k = 0; k < chunks; k++) {   // first would just compress away)
           seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-          s += seed.toString(36).padStart(6, "0");
+          s += ((seed >>> 8) & 0x7fffff).toString(36).padStart(5, "0") + "-";
         }
         return s;
       };
@@ -143,7 +154,7 @@ const main = async () => {
         bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
       }
       return btoa(bin);
-    }, SUBJECTS);
+    }, [SUBJECTS, NOISE_CHUNKS]);
     await builder.close();
     fileBytes = Buffer.from(built, "base64");
     report.fileBytes = fileBytes.length;

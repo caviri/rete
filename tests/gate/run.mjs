@@ -385,7 +385,7 @@ const G2 = [
   ["check_cache_mode", "whole-file cache persists across reload · zero second read", 120000, false],
   ["check_cache_url", "off-catalog URL cache: size-first consent · zero-network reload + deep link", 240000, false],
   ["check_optional_tabs", "Ask AI + Semantic/RAG initialize without model downloads", 90000, false],
-  ["check_local_lazy", "a LOCAL .rete opens through the range reader (both engines) and is never read whole; small files still load whole", 300000, false],
+  ["check_local_lazy", "a LOCAL .rete opens through the range reader (both engines) and is never read whole; small files still load whole", 900000, false],
 ];
 async function g2(port) {
   for (const [name, label, timeout, requiresLiveR2] of G2) {
