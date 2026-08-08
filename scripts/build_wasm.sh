@@ -19,11 +19,20 @@ command -v wasm-opt >/dev/null || {
 if [[ -z "${RETE_SOURCE_REVISION:-}" ]]; then
   if [[ -n "${GITHUB_SHA:-}" ]]; then
     RETE_SOURCE_REVISION="$GITHUB_SHA"
-  elif RETE_SOURCE_REVISION="$(git rev-parse HEAD 2>/dev/null)"; then
+  # `-c safe.directory=*`: the checkout is a bind mount, so inside the container
+  # /work is owned by a uid git does not recognize and it refuses the repository
+  # as "dubious ownership" — which made `docker compose run --rm wasm` fail on a
+  # FRESH CLONE with "cannot resolve the source revision", a message about the
+  # wrong thing entirely. Scoped to this one read-only command rather than
+  # written into the container's global config.
+  elif RETE_SOURCE_REVISION="$(git -c safe.directory='*' rev-parse HEAD 2>/dev/null)"; then
     :
   else
-    echo "cannot resolve the source revision inside this worktree mount" >&2
-    echo "pass: docker compose run -e RETE_SOURCE_REVISION=<sha> --rm wasm" >&2
+    # What is left is a real git WORKTREE: its .git is a file pointing at a host
+    # path the container cannot see, so no ownership exception can help.
+    echo "cannot resolve the source revision: /work is a git worktree whose .git file" >&2
+    echo "points outside the mount (or is not a repository at all)." >&2
+    echo "pass: docker compose run -e RETE_SOURCE_REVISION=\$(git rev-parse HEAD) --rm wasm" >&2
     exit 1
   fi
 fi
