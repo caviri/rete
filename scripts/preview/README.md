@@ -127,3 +127,23 @@ fresh build.
 example has no share page or no card, if any `og:image` 404s or is relative
 (unfurlers drop relative URLs silently), or if a rendered docs page or app page
 lost its tags. It is a static check — no browser, no network.
+
+`tests/gate/checks/check_catalog_answers.mjs` (tier G0) reads the ANSWERS. A
+shipped catalog example may not be recorded as answering nothing — no rows, or
+the single row `COUNT` owes an aggregate filled with nothing but zeros — unless
+the example carries `allowEmpty: true` (and then it must really be empty, so the
+flag cannot become a mute button).
+
+That check exists because this file is the ONLY measurement of the ~60
+`remote-lazy` datasets: the live sweep, `check_catalog_examples.mjs`, defaults to
+`--scope=embedded` because sweeping the multi-gigabyte ones costs hours. Nine
+examples sat here recorded at 0 rows across several releases, and nothing read
+them. If it goes red, re-run the query, fix it, and re-capture that dataset:
+
+```sh
+scripts/preview/run.sh capture --dataset=<key> --force
+scripts/preview/run.sh build
+```
+
+A stale `answers.json` is a real defect, not bookkeeping: the share page of an
+example with no answer ships with no **Answer:** line at all.
