@@ -43,28 +43,13 @@ cp web/pkg/rete_wasm.js web/pkg/rete_wasm_bg.wasm docs/engine/
 bash scripts/build_playground_async.sh
 uv run python scripts/stage_playground_datasets.py
 uv run python scripts/build_playground.py
-mkdir -p tests/gate/.cache
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt -o tests/gate/.cache/worldcup2026.rete
-# Same triples, but WITH a Dataset Card — the card modal check needs a file that
-# actually carries one (the bundled demo datasets do not).
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt \
-  --card-file tests/gate/fixtures/card-fixture.card.json -o tests/gate/.cache/card-fixture.rete
-# The same triples with a card carrying EVERY curated field (keywords, theme,
-# creators/publisher with ORCID+ROR, the extra bag, …). Paired with the card
-# above — which has none of them — it is what lets the card-modal check assert
-# that a missing field renders as ABSENT rather than as an empty row.
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt \
-  --card-file tests/gate/fixtures/card-full.card.json -o tests/gate/.cache/card-full.rete
-# A file whose default graph is EMPTY (every quad in a named graph), with a card
-# reporting triple_count 0 / named_graph_count 3 — the nkod.rete shape. The
-# empty-default-graph explainer check reads the remote path's fact from it.
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/named-graphs-only.nq \
-  --card-file tests/gate/fixtures/named-graphs-only.card.json -o tests/gate/.cache/named-graphs-only.rete
-# The same quads WITHOUT a card: the cardless remote path, where the
-# empty-default-graph explainer must fall back to asking the file itself
-# (two first-match ASKs) instead of staying silent.
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/named-graphs-only.nq \
-  -o tests/gate/.cache/named-graphs-only-nocard.rete
+# The gate's .rete fixtures. This used to be five inline `cargo run` lines here,
+# five more in .github/workflows/ci.yml, and a curl in tests/gate/gate.sh — three
+# producers of the same five files, which is how they drifted. One producer now,
+# with the recipe and the asserted properties of each fixture in
+# tests/gate/fixtures/manifest.json, and a capability check on the rete-cli that
+# writes them (a stale binary silently drops every curated card field).
+bash tests/gate/fixtures.sh
 
 python3 -P - <<'PY'
 import hashlib
