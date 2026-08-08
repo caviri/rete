@@ -76,7 +76,7 @@ import java.util.function.Function;
  * differs — an HTTP {@code Range} request or a {@link FileChannel} positional
  * read. (Because a JVM host call is synchronous, no Asyncify is needed, unlike
  * the browser.) The no-argument {@link #info()}, {@link #query(String)},
- * {@link #graphs()}, {@link #scanInGraph} and {@link #scanQuads} methods work on
+ * {@link #graphs()}, {@code scanInGraph} and {@code scanQuads} methods work on
  * either; the {@code …Remote} spellings are kept as aliases.
  *
  * <p><b>Thread-safety:</b> a {@code Rete} instance owns a single wasm linear
@@ -644,7 +644,10 @@ public final class Rete implements AutoCloseable {
         return out;
     }
 
-    /** Graph-scoped triple scan over the open {@code .rete} (see {@link #scanInGraph}). */
+    /**
+     * Graph-scoped triple scan over the open {@code .rete} (see
+     * {@link #scanInGraph(byte[], String, String, String, String)}).
+     */
     public List<String[]> scanInGraph(String graph, String subject, String predicate, String object) {
         checkOpen();
         byte[] sBytes = subject == null ? null : subject.getBytes(StandardCharsets.UTF_8);
@@ -672,7 +675,10 @@ public final class Rete implements AutoCloseable {
         }
     }
 
-    /** All-graphs quad scan over the open {@code .rete} (see {@link #scanQuads}). */
+    /**
+     * All-graphs quad scan over the open {@code .rete} (see
+     * {@link #scanQuads(byte[], String, String, String)}).
+     */
     public List<String[]> scanQuads(String subject, String predicate, String object) {
         checkOpen();
         byte[] sBytes = subject == null ? null : subject.getBytes(StandardCharsets.UTF_8);
