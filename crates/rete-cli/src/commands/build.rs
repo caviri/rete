@@ -349,19 +349,27 @@ pub(crate) fn build(
             pyramid_algo,
             |stats, dict, triples| match curated {
                 Some(curated) => {
-                    let blob = card::derive_card_encoded(
+                    // Derive NOW (the dictionary and id-triples are resident and
+                    // about to be consumed), stamp the counts LATER: the number
+                    // of quads the file actually holds is only known once the
+                    // indexes have deduplicated the input, and a card that
+                    // reports the ingested count instead over-states every
+                    // dataset built from overlapping harvest pages.
+                    let card = card::derive_card_encoded(
                         dict,
                         triples,
                         stats.statements as u64,
                         stats.terms as u64,
                         stats.named_graphs as u64,
                         curated,
-                    )
-                    .to_json_bytes();
-                    eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-                    blob
+                    );
+                    rete_core::ingest::DeferredMetadata::new(move |counts| {
+                        let blob = card.with_final_counts(counts).to_json_bytes();
+                        eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                        blob
+                    })
                 }
-                None => Vec::new(),
+                None => rete_core::ingest::DeferredMetadata::none(),
             },
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -452,11 +460,15 @@ pub(crate) fn build(
                 if let Some(r) = reasoning.as_ref() {
                     dataset_card = dataset_card.with_coherence(r, materialize);
                 }
-                let blob = dataset_card.to_json_bytes();
-                eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-                blob
+                // See the streaming path: the counts are stamped once the
+                // indexes have deduplicated the input.
+                rete_core::ingest::DeferredMetadata::new(move |counts| {
+                    let blob = dataset_card.with_final_counts(counts).to_json_bytes();
+                    eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                    blob
+                })
             }
-            None => Vec::new(),
+            None => rete_core::ingest::DeferredMetadata::none(),
         },
     );
     let bytes = if card_requested {
@@ -682,17 +694,19 @@ pub(crate) fn repyramid(
         pyramid_algo,
         |stats, quads| match curated {
             Some(curated) => {
-                let blob = card::derive_card(
+                let card = card::derive_card(
                     quads,
                     stats.terms as u64,
                     stats.named_graphs as u64,
                     curated,
-                )
-                .to_json_bytes();
-                eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-                blob
+                );
+                rete_core::ingest::DeferredMetadata::new(move |counts| {
+                    let blob = card.with_final_counts(counts).to_json_bytes();
+                    eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
+                    blob
+                })
             }
-            None => Vec::new(),
+            None => rete_core::ingest::DeferredMetadata::none(),
         },
     );
     let out_bytes = if card_requested {

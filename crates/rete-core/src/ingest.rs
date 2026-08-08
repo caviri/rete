@@ -335,9 +335,16 @@ pub(crate) fn quoted_triple_parts(t: &str) -> Option<(String, String, String)> {
 }
 
 /// Counts describing an assembled file, for status lines and UIs.
+///
+/// In the [`BuildStats`] a metadata callback receives, `statements` and
+/// `default_triples` are the counts **ingested** — the input multiset, before
+/// the index deduplicates it. In the `BuildStats` an assemble function
+/// *returns*, they are the counts actually **written** (see
+/// [`FinalCounts`]), so a status line reports what the file holds. Use
+/// [`FinalCounts`] rather than these when a payload must agree with the header.
 #[derive(Debug, Clone, Copy)]
 pub struct BuildStats {
-    /// Total statements ingested, across the default graph and every named one.
+    /// Total statements, across the default graph and every named one.
     pub statements: usize,
     /// Statements that landed in the default graph.
     pub default_triples: usize,
@@ -347,6 +354,66 @@ pub struct BuildStats {
     pub terms: usize,
     /// Levels in the community pyramid, or `0` when the build skipped it.
     pub pyramid_levels: u16,
+}
+
+/// The **deduplicated** counts of the file being written — what the header
+/// records, and therefore what any embedded metadata has to report.
+///
+/// The input multiset is not the file: every permutation index sorts and
+/// deduplicates, so a harvest that pages with overlapping windows writes fewer
+/// quads than it ingested. These counts are known only once the indexes exist,
+/// which is why a payload that carries them is derived in two stages (see
+/// [`IntoMetadata`]).
+#[derive(Debug, Clone, Copy)]
+pub struct FinalCounts {
+    /// Unique triples in the default graph.
+    pub default_triples: u64,
+    /// Unique quads across the default graph and every named graph — exactly
+    /// the header's `quad_count`.
+    pub quads: u64,
+}
+
+/// What a build's metadata callback may return.
+///
+/// A `Vec<u8>` is the payload verbatim — the common case (no metadata, or a
+/// payload that carries no counts). [`DeferredMetadata`] is a payload that
+/// *does* carry counts: the callback derives everything it needs while the
+/// source quads are still resident, and returns a finalizer that the writer
+/// calls with the [`FinalCounts`], which only exist once the indexes have
+/// deduplicated the input. Without that second stage a card can only report the
+/// ingested count, which over-reports any input containing duplicates.
+pub trait IntoMetadata {
+    /// Produce the metadata section payload for a file with these counts.
+    fn into_metadata(self, counts: FinalCounts) -> Vec<u8>;
+}
+
+impl IntoMetadata for Vec<u8> {
+    fn into_metadata(self, _counts: FinalCounts) -> Vec<u8> {
+        self
+    }
+}
+
+/// A metadata payload whose final form needs the written (deduplicated) counts.
+/// See [`IntoMetadata`].
+pub struct DeferredMetadata(Box<dyn FnOnce(FinalCounts) -> Vec<u8>>);
+
+impl DeferredMetadata {
+    /// Defer `f` until the indexes are built and the true counts are known.
+    pub fn new(f: impl FnOnce(FinalCounts) -> Vec<u8> + 'static) -> Self {
+        DeferredMetadata(Box::new(f))
+    }
+
+    /// No metadata section — byte-identical to a metadata-free build. Lets one
+    /// `match` arm opt out while the other defers, without a type mismatch.
+    pub fn none() -> Self {
+        DeferredMetadata::new(|_| Vec::new())
+    }
+}
+
+impl IntoMetadata for DeferredMetadata {
+    fn into_metadata(self, counts: FinalCounts) -> Vec<u8> {
+        (self.0)(counts)
+    }
 }
 
 /// Assemble a complete `.rete` file image from parsed quads: one shared
@@ -360,12 +427,14 @@ pub fn assemble_dataset(quads: Vec<RawQuad>, metadata: &[u8]) -> (Vec<u8>, Build
 }
 
 /// Like [`assemble_dataset`], but the metadata payload is derived from the
-/// [`BuildStats`] right before serialization — for metadata that embeds counts
-/// only known after the dictionary and indexes are built (the Dataset Card).
-/// Returning an empty `Vec` is byte-identical to a metadata-free build.
-pub fn assemble_dataset_with(
+/// [`BuildStats`] and the source quads while they are still resident — for
+/// metadata that describes the graph (the Dataset Card). Returning an empty
+/// `Vec` is byte-identical to a metadata-free build; return a
+/// [`DeferredMetadata`] for a payload that must also carry the file's
+/// deduplicated counts, which exist only once the indexes are built.
+pub fn assemble_dataset_with<M: IntoMetadata>(
     quads: Vec<RawQuad>,
-    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
     assemble_dataset_with_opts(quads, true, false, None, metadata)
 }
@@ -376,12 +445,12 @@ pub fn assemble_dataset_with(
 /// pyramid-less file is fully queryable and markedly smaller (the pyramid is the
 /// largest section on highly-connected graphs). Only the community / summary /
 /// progressive paths need it.
-pub fn assemble_dataset_with_opts(
+pub fn assemble_dataset_with_opts<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
-    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
     assemble_dataset_with_opts_algo(
         quads,
@@ -396,13 +465,13 @@ pub fn assemble_dataset_with_opts(
 /// Like [`assemble_dataset_with_opts`], but selects the community [`PyramidAlgo`]
 /// (the in-memory build path for `rete build --pyramid-algo …`).
 #[allow(clippy::too_many_arguments)]
-pub fn assemble_dataset_with_opts_algo(
+pub fn assemble_dataset_with_opts_algo<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
-    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
 
@@ -437,7 +506,7 @@ pub fn assemble_dataset_with_opts_algo(
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
     };
-    let blob = metadata(&stats, &quads);
+    let pending = metadata(&stats, &quads);
     drop(quads);
 
     finish_assembly(
@@ -448,7 +517,7 @@ pub fn assemble_dataset_with_opts_algo(
         with_text_index,
         type_override,
         algo,
-        blob,
+        pending,
         stats,
     )
 }
@@ -467,12 +536,12 @@ pub fn assemble_dataset_with_opts_algo(
 /// The metadata callback derives the Dataset Card from the built dictionary +
 /// default-graph id-triples (resolving terms through the dictionary), since the
 /// raw quads were never retained. `stream` propagates parse/IO errors.
-pub fn assemble_dataset_streaming<S>(
+pub fn assemble_dataset_streaming<S, M: IntoMetadata>(
     stream: S,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
-    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
 where
     S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
@@ -490,13 +559,13 @@ where
 /// Like [`assemble_dataset_streaming`], but selects the community [`PyramidAlgo`]
 /// (the streaming, low-RAM build path for `rete build --pyramid-algo …`).
 #[allow(clippy::too_many_arguments)]
-pub fn assemble_dataset_streaming_algo<S>(
+pub fn assemble_dataset_streaming_algo<S, M: IntoMetadata>(
     mut stream: S,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
-    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
 where
     S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
@@ -528,7 +597,7 @@ where
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
     };
-    let blob = metadata(&stats, &dict, &default_triples);
+    let pending = metadata(&stats, &dict, &default_triples);
     Ok(finish_assembly(
         dict,
         default_triples,
@@ -537,7 +606,7 @@ where
         with_text_index,
         type_override,
         algo,
-        blob,
+        pending,
         stats,
     ))
 }
@@ -547,7 +616,7 @@ where
 /// full-text index, the permutation indexes, and serialize the file image. Takes
 /// the id-triples **by value** so they are freed as the permutations consume them.
 #[allow(clippy::too_many_arguments)]
-fn finish_assembly(
+fn finish_assembly<M: IntoMetadata>(
     dict: Dictionary,
     default_triples: Vec<(u32, u32, u32)>,
     named: std::collections::BTreeMap<String, Vec<(u32, u32, u32)>>,
@@ -555,7 +624,7 @@ fn finish_assembly(
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
-    blob: Vec<u8>,
+    pending: M,
     mut stats: BuildStats,
 ) -> (Vec<u8>, BuildStats) {
     let has_named = !named.is_empty();
@@ -612,6 +681,26 @@ fn finish_assembly(
         .into_iter()
         .map(|(g, ts)| (g, build_index(ts)))
         .collect();
+
+    // Only now is the DEDUPLICATED size of the file known: every index sorts and
+    // dedups, so an input containing duplicate statements (a harvest that pages
+    // with overlapping windows, a merge of overlapping dumps) writes fewer quads
+    // than it ingested. `write_dataset_from_parts` stamps exactly this sum into
+    // the header, so a metadata payload finalized with it cannot disagree with
+    // the header — which is what an embedded Dataset Card used to do.
+    let counts = FinalCounts {
+        default_triples: def.triple_count() as u64,
+        quads: def.triple_count() as u64
+            + named_indexes
+                .iter()
+                .map(|(_, ix)| ix.triple_count() as u64)
+                .sum::<u64>(),
+    };
+    let blob = pending.into_metadata(counts);
+    // Report what was WRITTEN, not what was read: the returned stats drive the
+    // CLI's "wrote …: N quads" line, which described the file, not the input.
+    stats.statements = counts.quads as usize;
+    stats.default_triples = counts.default_triples as usize;
 
     let bytes = crate::file::write_dataset_from_parts(
         &dict_container,

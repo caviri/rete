@@ -7,6 +7,21 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **The embedded Dataset Card reports the size of the file, not the size of the
+  input.** The card was derived from the statements *ingested*, while the header
+  records what the index kept after deduplication — and every permutation index
+  sorts and dedups. For duplicate-free input the two numbers are equal, which is
+  why the gap went unnoticed; for anything paged with overlapping windows (most
+  SPARQL harvests) the published card over-stated the graph. `switzerland-fedlex`
+  advertised 66,392,663 quads for a 56,321,446-quad file. `rete card` and
+  `rete info` now cannot disagree, and neither can the `wrote …` build summary.
+  A card that carries counts is now derived in two stages — everything that
+  needs the source quads while they are resident, then the counts stamped once
+  the indexes exist (`rete_core::ingest::DeferredMetadata` / `FinalCounts`), so
+  no build path pays extra memory for the correction. Fixes #128.
+  - The distributions (predicate/class histograms, hub degrees) are still
+    tallied over the ingested multiset — they describe shape, not size.
+
 - **A build no longer ships a starter query it just measured at zero rows.**
   A carded build already runs every generated starter query against the
   finished file to record its cost — so for those files emptiness is

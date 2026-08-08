@@ -221,9 +221,15 @@ where
     let quad_count = deduped_count.unwrap_or(0);
 
     // ---- Phase 5: stream the final file -------------------------------------
+    // `statements` is what was INGESTED; `quad_count` is what the permutation
+    // merge actually kept after dedup, and it is what the header records. The
+    // metadata callback (the Dataset Card) has to see the latter, or a build
+    // from input containing duplicates publishes a card that disagrees with its
+    // own file. They are equal whenever the input has no duplicates, which is
+    // why the gap went unnoticed.
     let mut stats = BuildStats {
-        statements: statements as usize,
-        default_triples: statements as usize,
+        statements: quad_count as usize,
+        default_triples: quad_count as usize,
         named_graphs: 0,
         terms: merged.term_count as usize,
         pyramid_levels: 0,
@@ -1557,7 +1563,15 @@ mod tests {
         // on the floor — instead check both a floor build (1 chunk) and verify
         // chunk-count > 1 via a direct Chunker probe below.
         let (bytes_floor, stats) = build_ext(quads.clone(), 0);
-        assert_eq!(stats.statements, quads.len());
+        // `test_quads` repeats some statements, so this fixture is exactly the
+        // case #128 was about: the reported count is what the build WROTE (and
+        // what the header records), not what it read.
+        let header = crate::Header::from_bytes(&bytes_floor).unwrap();
+        assert_eq!(stats.statements as u64, header.quad_count);
+        assert!(
+            stats.statements < quads.len(),
+            "fixture must contain duplicates for this to mean anything"
+        );
         assert_eq!(
             bytes_floor, reference,
             "single-chunk external build must be byte-identical"

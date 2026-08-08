@@ -473,6 +473,25 @@ impl DatasetCard {
         self.coherence = Coherence::from_reasoning(r, materialized);
         self
     }
+
+    /// Replace the derived sizes with the counts the file was actually written
+    /// with (consuming builder).
+    ///
+    /// A card is derived from the ingested statements, which is the input
+    /// multiset; the file holds that multiset **deduplicated**, because every
+    /// permutation index sorts and dedups. The two agree for input with no
+    /// duplicates — and only then, which is why `rete card` used to report the
+    /// raw harvest size of any dataset paged with overlapping windows while
+    /// `rete info` reported the real one. The header's count is authoritative;
+    /// this is how it reaches the card. See `rete_core::FinalCounts`.
+    ///
+    /// The distributions (predicate/class histograms, hub degrees) stay over the
+    /// derived multiset — they are shapes, not sizes.
+    pub(crate) fn with_final_counts(mut self, counts: rete_core::ingest::FinalCounts) -> Self {
+        self.triple_count = counts.default_triples;
+        self.quad_count = counts.quads;
+        self
+    }
 }
 
 /// The versioned JSON envelope used by the local and remote `card --json`
@@ -2276,6 +2295,72 @@ mod tests {
             derived, reference,
             "card class_links must equal schema_summary's quotient row-for-row"
         );
+    }
+
+    /// The card must report the size of the FILE, not the size of the input.
+    ///
+    /// Regression for #128: the card was derived from the ingested statement
+    /// count while the header records the count the index kept after dedup, so
+    /// any dataset built from input containing duplicate statements — which is
+    /// every harvest that pages with overlapping windows — published an inflated
+    /// size. The two agree for duplicate-free input, which is why it went
+    /// unnoticed. Here the input has duplicates in both the default graph and a
+    /// named graph, so a card taken from the ingest count cannot pass.
+    #[test]
+    fn card_counts_are_the_deduplicated_counts() {
+        use rete_core::ingest::{self, DeferredMetadata};
+        use rete_core::Rete;
+
+        let g = |s: &str, p: &str, o: &str, graph: &str| {
+            (
+                s.to_string(),
+                p.to_string(),
+                o.to_string(),
+                Some(graph.to_string()),
+            )
+        };
+        let quads = vec![
+            q("<http://ex/a>", "<http://ex/p>", "<http://ex/1>"),
+            q("<http://ex/b>", "<http://ex/p>", "<http://ex/2>"),
+            q("<http://ex/a>", "<http://ex/p>", "<http://ex/1>"), // duplicate
+            g("<http://ex/n>", "<http://ex/q>", "\"v\"", "<http://ex/g>"),
+            g("<http://ex/n>", "<http://ex/q>", "\"v\"", "<http://ex/g>"), // duplicate
+        ];
+        // 5 statements ingested; 3 unique (2 default + 1 named).
+        let (bytes, stats) =
+            ingest::assemble_dataset_with_opts(quads, false, false, None, |stats, quads| {
+                let card = derive_card(
+                    quads,
+                    stats.terms as u64,
+                    stats.named_graphs as u64,
+                    CardInput::default(),
+                );
+                DeferredMetadata::new(move |counts| card.with_final_counts(counts).to_json_bytes())
+            });
+
+        let header = rete_core::Header::from_bytes(&bytes).unwrap();
+        let card = load_card(&bytes).unwrap().expect("card embedded");
+        assert_eq!(header.quad_count, 3, "header records the deduped quads");
+        assert_eq!(
+            card.quad_count, header.quad_count,
+            "card and header must not disagree about the size of the same file"
+        );
+        assert_eq!(card.triple_count, 2, "default-graph triples, deduped");
+
+        // And the index agrees with both.
+        let rete = Rete::open(&bytes).unwrap();
+        let default_triples = rete.dump(None).len() as u64;
+        let named: u64 = rete
+            .graph_names()
+            .iter()
+            .map(|name| rete.dump(Some(name)).len() as u64)
+            .sum();
+        assert_eq!(default_triples + named, card.quad_count);
+
+        // The returned stats describe the file too — they print the `wrote …`
+        // line, which used to report the raw input size.
+        assert_eq!(stats.statements, 3);
+        assert_eq!(stats.default_triples, 2);
     }
 
     #[test]
