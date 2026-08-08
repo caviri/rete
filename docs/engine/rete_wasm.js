@@ -1259,7 +1259,7 @@ export function card_and_build(bytes) {
  * `card` and `build` are the sections' **own bytes** as text, not a
  * re-serialization — the card a client displays is the card the file holds.
  * `text_index` is the one thing the file does *not* store about itself and this
- * reader measures instead (see [`text_index_json`]). Worker-only
+ * reader measures instead (see the private `text_index_json`). Worker-only
  * (synchronous XHR).
  * @param {string} url
  * @returns {string}
