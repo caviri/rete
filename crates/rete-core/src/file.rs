@@ -770,21 +770,81 @@ fn read_dict_dir_ranged<R: RangeReader>(
     };
     // Fast path: the directory already sits in the prefix we read (small section
     // — its restart table is tiny, so the ~few KiB over-read is negligible).
+    // A short prefix is not wasted: those bytes seed the probe below.
+    let mut have: Vec<u8> = Vec::new();
     if dir_start < head.len() as u64 {
-        if let Ok(entries) = parse_chunk_dir_only(&head[dir_start as usize..], dir_total) {
-            return Ok(finish(entries));
+        match parse_chunk_dir_only(&head[dir_start as usize..], dir_total)? {
+            ChunkDirParse::Done(entries) => return Ok(finish(entries)),
+            ChunkDirParse::Truncated { .. } => have = head[dir_start as usize..].to_vec(),
         }
     }
     // Big section: range-read the directory on its own, skipping the table.
-    let mut prefetch = 4096u64.min(dir_total).max(1);
+    //
+    // Nothing records the directory's byte length, so it has to be probed. Two
+    // things keep that probe near ONE directory's worth of bytes. Each round
+    // **appends** to the bytes already held instead of re-reading from the
+    // start — the previous loop re-read the whole prefix every time, so a
+    // 234 MB directory (epfl-infoscience's object section) cost 537 MB of range
+    // reads to fetch. And a truncated parse reports how many entries fit in how
+    // many bytes, which extrapolates the rest instead of blindly doubling. The
+    // extrapolation may only quadruple a round, so a wild guess on a directory
+    // with wildly uneven entries (one stored term can be hundreds of KB) can
+    // never fetch the section body.
+    let mut want = 4096u64.min(dir_total).max(1);
     loop {
-        let dir = reader.read_at(section.offset + dir_start, prefetch)?;
-        match parse_chunk_dir_only(&dir, dir_total) {
-            Ok(entries) => return Ok(finish(entries)),
-            Err(_) if prefetch < dir_total => prefetch = prefetch.saturating_mul(2).min(dir_total),
-            Err(e) => return Err(e),
+        let held = have.len() as u64;
+        if want > held {
+            let extra = reader.read_at(section.offset + dir_start + held, want - held)?;
+            if extra.is_empty() {
+                return Err(FileError::Container("truncated dict chunk directory"));
+            }
+            have.extend_from_slice(&extra);
+        }
+        let held = have.len() as u64;
+        match parse_chunk_dir_only(&have, dir_total)? {
+            ChunkDirParse::Done(entries) => return Ok(finish(entries)),
+            ChunkDirParse::Truncated { .. } if held >= dir_total => {
+                return Err(FileError::Container("truncated dict chunk directory"));
+            }
+            ChunkDirParse::Truncated {
+                parsed,
+                used,
+                total,
+            } => {
+                // Extrapolate from a sample big enough to mean something;
+                // otherwise just double. Undershooting only costs another
+                // (append-only) round, so the estimate carries a small margin
+                // rather than a generous one.
+                let est = if parsed >= 16 && used > 0 {
+                    let whole = ((used as u64) / (parsed as u64)).saturating_mul(total as u64);
+                    whole.saturating_add(whole / 8).saturating_add(64)
+                } else {
+                    // Too small a sample to extrapolate from: double.
+                    held.saturating_mul(2)
+                };
+                want = est
+                    .max(held.saturating_add(1))
+                    .min(held.saturating_mul(4))
+                    .min(dir_total);
+            }
         }
     }
+}
+
+/// What [`parse_chunk_dir_only`] made of a chunk-directory prefix: either the
+/// whole directory, or how far a truncated one got (the probe's step hint).
+/// Truncation is not an error here — the caller is deliberately reading a
+/// prefix and deciding how much more to fetch.
+enum ChunkDirParse {
+    Done(Vec<DictChunkEntry>),
+    Truncated {
+        /// Entries fully decoded from the prefix.
+        parsed: usize,
+        /// Bytes those entries occupied (directory-relative).
+        used: usize,
+        /// Chunk count the directory declares.
+        total: usize,
+    },
 }
 
 /// Parse just the chunk directory (the bytes after a section header):
@@ -792,28 +852,47 @@ fn read_dict_dir_ranged<R: RangeReader>(
 /// Chunk byte ranges (`start`/`end`) come back relative to the directory's own
 /// start; `body_start` is 0 (a lite section never uses it — lookups derive run
 /// offsets per chunk). Bodies aren't needed here, so `dir` may end at the first
-/// body as long as it covers the whole directory.
-fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<Vec<DictChunkEntry>, FileError> {
+/// body as long as it covers the whole directory. A `dir` that stops mid-entry
+/// is reported as [`ChunkDirParse::Truncated`], not an error: only bytes that
+/// cannot be a directory at any length (a chunk range overrunning the section)
+/// fail.
+fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, FileError> {
     let mut pos = 0usize;
-    let take = |pos: &mut usize| -> Result<u64, FileError> {
-        let (v, n) = read_uvarint(dir.get(*pos..).unwrap_or(&[]))
-            .ok_or(FileError::Container("truncated dict chunk directory"))?;
+    let take = |pos: &mut usize| -> Option<u64> {
+        let (v, n) = read_uvarint(dir.get(*pos..).unwrap_or(&[]))?;
         *pos += n;
-        Ok(v)
+        Some(v)
     };
-    let num_chunks = take(&mut pos)? as usize;
+    let Some(num_chunks) = take(&mut pos) else {
+        return Ok(ChunkDirParse::Truncated {
+            parsed: 0,
+            used: 0,
+            total: 0,
+        });
+    };
+    let num_chunks = num_chunks as usize;
     let mut entries = Vec::with_capacity(num_chunks.min(dir.len()));
-    let mut lens = Vec::with_capacity(num_chunks.min(dir.len()));
+    let mut lens: Vec<u64> = Vec::with_capacity(num_chunks.min(dir.len()));
     let mut prev_run = 0usize;
     for _ in 0..num_chunks {
-        let drun = take(&mut pos)? as usize;
-        let tlen = take(&mut pos)? as usize;
-        let term = dir
-            .get(pos..pos.saturating_add(tlen))
-            .ok_or(FileError::Container("truncated dict chunk first term"))?
-            .to_vec();
+        let entry_start = pos;
+        let short = ChunkDirParse::Truncated {
+            parsed: entries.len(),
+            used: entry_start,
+            total: num_chunks,
+        };
+        let (Some(drun), Some(tlen)) = (take(&mut pos), take(&mut pos)) else {
+            return Ok(short);
+        };
+        let (drun, tlen) = (drun as usize, tlen as usize);
+        let Some(term) = dir.get(pos..pos.saturating_add(tlen)) else {
+            return Ok(short);
+        };
+        let term = term.to_vec();
         pos += tlen;
-        let clen = take(&mut pos)?;
+        let Some(clen) = take(&mut pos) else {
+            return Ok(short);
+        };
         let first_run = prev_run + drun;
         entries.push(DictChunkEntry {
             first_run,
@@ -835,7 +914,7 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<Vec<DictChunkEntry
         e.end = end;
         start = end;
     }
-    Ok(entries)
+    Ok(ChunkDirParse::Done(entries))
 }
 
 /// Decode one chunked dictionary section payload into a resident
@@ -3964,13 +4043,18 @@ fn text_search_in(
 /// A `.rete` opened for **search only**: the dictionary's chunk directories, and
 /// the TEXT_INDEX / pyramid deferred behind their lazy slots. Nothing else.
 ///
-/// [`Rete::open_ranged_lazy`] additionally fetches every permutation's tile
-/// directory so that SPARQL can route — on a large remote file that dominates
-/// the open (on a 1.6 GB published dataset it is ~270 MB before a single row is
-/// read). A search never routes a triple pattern, so `SearchView` skips the
-/// index container entirely and pays only for what it reads: the token table on
-/// the first search, then one range per posting list and per dictionary chunk
-/// holding a matched subject. This is what backs `rete search-url`.
+/// What makes this cheap is skipping dictionary sections 2 and 3 (object-only
+/// and predicates) — NOT skipping the index. Measured on the published
+/// `epfl-infoscience.rete` (1.64 GB), a full [`Rete::open_ranged_lazy`] reads
+/// 536,947,344 B, of which the six permutation tile directories are **49,940 B
+/// in 40 reads** and the dictionary is 536,896,380 B in 36 reads: the
+/// object-only chunk directory alone is 234,400,728 B, because it stores every
+/// chunk's first term verbatim (see #198). This view opens sections 0 and 1
+/// only — both search modes return subject IRIs — and costs **21,554 B in 9
+/// reads** on the same file. It also skips the index container and defers the
+/// TEXT_INDEX and pyramid, so it pays only for what it reads: the token table
+/// on the first search, then one range per posting list and per dictionary
+/// chunk holding a matched subject. This is what backs `rete search-url`.
 pub struct SearchView {
     header: Header,
     dict: Dictionary,
@@ -4956,6 +5040,91 @@ mod tests {
         let mut prefix_hits = view.prefix_search("", 5);
         prefix_hits.sort();
         assert!(!prefix_hits.is_empty() || !view.has_pyramid());
+    }
+
+    /// Nothing records a dictionary chunk directory's byte length, so a ranged
+    /// open probes for it. That probe must cost about ONE directory, not several
+    /// — it used to re-read the whole prefix on every round, so the sum was
+    /// ~2x the last (already over-sized) read: 537 MB of range reads to fetch
+    /// epfl-infoscience's 234 MB object-only directory. Here the same probe runs
+    /// against a file whose object literals are long enough that its directory
+    /// is well past the 8 KiB header prefix, and must (a) stay inside the
+    /// append-only bound of 2x the directory and (b) beat what the old
+    /// re-reading loop would have spent.
+    #[test]
+    fn dict_chunk_directory_probe_costs_about_one_directory() {
+        use crate::reader::{CountingReader, SliceReader};
+        // ~4 KiB literals: one restart run (16 terms) far exceeds the 64 KiB
+        // chunk budget, so every chunk stores a full 4 KiB term in the directory
+        // — the shape that makes this directory expensive on real graphs.
+        let filler = "x".repeat(4000);
+        let triples: Vec<(String, String, String)> = (0..800u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{i:04}>"),
+                    "<http://ex/abstract>".to_string(),
+                    format!("\"{i:04} {filler}\""),
+                )
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new();
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+
+        let reader = CountingReader::new(SliceReader::new(&bytes));
+        let header = Header::from_bytes(&reader.read_at(0, HEADER_LEN as u64).unwrap()).unwrap();
+        // Section 2 is object-only: the one carrying the long literals.
+        let section = locate_container_section_ranged(
+            &reader,
+            header.dictionary_offset,
+            header.dictionary_len,
+            2,
+            4,
+        )
+        .unwrap();
+
+        let before = reader.bytes_read();
+        let (_meta, entries) = read_dict_dir_ranged(&reader, section).unwrap();
+        let spent = reader.bytes_read() - before;
+
+        // The first chunk body starts where the directory ends.
+        let dir_end = entries[0].start;
+        let head = reader.read_at(section.offset, 64).unwrap();
+        let (header_len, n0) = read_uvarint(&head).unwrap();
+        let dir_start = n0 as u64 + header_len;
+        let dir_len = dir_end - dir_start;
+        let dir_total = section.len - dir_start;
+        assert!(
+            dir_start + dir_len > 8192,
+            "directory fits the header prefix ({dir_len} B) — the probe never runs"
+        );
+
+        // What the previous loop spent: every round re-read from the start.
+        let mut old = 0u64;
+        let mut p = 4096u64.min(dir_total).max(1);
+        loop {
+            let got = p.min(dir_total);
+            old += got;
+            if got >= dir_len || p >= dir_total {
+                break;
+            }
+            p = p.saturating_mul(2).min(dir_total);
+        }
+        assert!(
+            spent <= dir_len * 2,
+            "probe read {spent} B for a {dir_len} B directory — past the append-only bound"
+        );
+        assert!(
+            spent < old,
+            "probe read {spent} B; the re-reading loop it replaced spent {old} B"
+        );
     }
 
     /// The TEXT_INDEX section is inside the content hash: a freshly built
