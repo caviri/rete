@@ -29,6 +29,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
@@ -79,6 +80,23 @@ import java.util.function.Function;
  * {@link #graphs()}, {@code scanInGraph} and {@code scanQuads} methods work on
  * either; the {@code …Remote} spellings are kept as aliases.
  *
+ * <p><b>Streaming a scan.</b> The list-returning {@link #scanQuads(String,
+ * String, String)} makes the engine build the <em>whole</em> result inside wasm
+ * before returning, which for an unconstrained {@code (null, null, null)} is the
+ * same wall in a different place. {@link #scanCursor(String, String, String)}
+ * returns a {@link QuadCursor} that pulls bounded batches instead, so
+ * time-to-first-row and peak memory are set by the batch rather than by the
+ * graph:
+ *
+ * <pre>{@code
+ * try (Rete rete = Rete.openFile(Path.of("/data/cordis.rete"));
+ *      QuadCursor rows = rete.scanCursor(null, null, null)) {
+ *     while (rows.hasNext()) {
+ *         String[] quad = rows.next();   // {s, p, o, graph}
+ *     }
+ * }
+ * }</pre>
+ *
  * <p><b>Thread-safety:</b> a {@code Rete} instance owns a single wasm linear
  * memory and is <em>not</em> thread-safe. Use one instance per thread (loading
  * is cheap after the first one — see below), or guard calls with your own lock.
@@ -102,6 +120,33 @@ public final class Rete implements AutoCloseable {
 
     /** Set to {@code true} to run the engine on Chicory's interpreter. */
     public static final String INTERPRETER_PROPERTY = "rete.chicory.interpreter";
+
+    /**
+     * Rows a {@link QuadCursor} pulls per wasm call (default
+     * {@value #DEFAULT_SCAN_BATCH}). Read when a cursor is opened.
+     *
+     * <p>This is the <b>ceiling</b>: a cursor opens smaller and doubles up to it
+     * (see {@link QuadCursor}), so the number below is what a long drain settles
+     * at, not what the first row costs.
+     *
+     * <p>A straight trade: smaller batches cross the wasm boundary more often,
+     * larger ones hold more rows at once. The default is the knee of the measured
+     * curve, not a guess — draining all 2,701,457 quads of {@code mirbase.rete},
+     * median of three fresh JVMs at each fixed size:
+     *
+     * <pre>
+     *   batch      64   128   256   512  2048  8192      (rows per wasm call)
+     *   drain    13.5  14.0  13.3  13.0  12.2  12.2  s
+     * </pre>
+     *
+     * Throughput is flat at and above 2048 and degrades by 6–15% below it, where
+     * the per-call cost stops being amortized. 2048 is therefore the smallest
+     * ceiling that still reaches full drain throughput; the ramp takes care of
+     * the latency end.
+     */
+    public static final String SCAN_BATCH_PROPERTY = "rete.scan.batch";
+
+    private static final int DEFAULT_SCAN_BATCH = 2048;
 
     /** Result-buffer status codes, matching {@code ffi/src/lib.rs}. */
     private static final int STATUS_OK = 0;
@@ -144,6 +189,24 @@ public final class Rete implements AutoCloseable {
     private final ExportFunction handleGraphsFn;
     private final ExportFunction handleScanInGraphFn;
     private final ExportFunction handleScanQuadsFn;
+    private final ExportFunction handleScanOpenFn;
+    private final ExportFunction handleScanNextFn;
+    private final ExportFunction handleScanCloseFn;
+    private final ExportFunction openCursorsFn;
+
+    /**
+     * Ids of scan cursors whose Java {@link QuadCursor} was garbage-collected
+     * without {@code close()}. The cleaner thread only enqueues here; the ids are
+     * released on the owning thread by {@link #reapAbandonedCursors()}, because
+     * this instance owns one wasm memory and calling into it from another thread
+     * is not safe.
+     */
+    private final ConcurrentLinkedQueue<Integer> abandonedCursors = new ConcurrentLinkedQueue<>();
+
+    /** Streaming accounting; see {@link #rowsStreamed()}. */
+    private long rowsStreamed;
+
+    private long batchCalls;
 
     /**
      * Resident ranged-handle id, or -1 when this instance has no open file
@@ -172,6 +235,10 @@ public final class Rete implements AutoCloseable {
         this.handleGraphsFn = instance.export("rete_handle_graphs");
         this.handleScanInGraphFn = instance.export("rete_handle_scan_in_graph");
         this.handleScanQuadsFn = instance.export("rete_handle_scan_quads");
+        this.handleScanOpenFn = instance.export("rete_handle_scan_open");
+        this.handleScanNextFn = instance.export("rete_handle_scan_next");
+        this.handleScanCloseFn = instance.export("rete_handle_scan_close");
+        this.openCursorsFn = instance.export("rete_open_cursors");
     }
 
     /**
@@ -702,6 +769,163 @@ public final class Rete implements AutoCloseable {
         }
     }
 
+    // --- streaming scans over an open file ---------------------------------
+
+    /**
+     * Open a <b>streaming</b> scan of a triple pattern across the default graph
+     * <em>and</em> every named graph — the cursor form of
+     * {@link #scanQuads(String, String, String)}.
+     *
+     * <p>Use this whenever the pattern is not narrow. {@code scanQuads} makes the
+     * engine build the complete result inside wasm32 linear memory before the
+     * first row is returned, so an unconstrained {@code (null, null, null)} over
+     * a large graph exhausts the 4&nbsp;GiB address space however much JVM heap
+     * there is. A cursor pulls {@value #DEFAULT_SCAN_BATCH} rows per wasm call
+     * (override with the {@link #SCAN_BATCH_PROPERTY} system property), so
+     * time-to-first-row and peak memory are bounded by the batch rather than by
+     * the graph.
+     *
+     * <p>Each row is {@code {subject, predicate, object, graph}} in N-Triples
+     * syntax, with a {@code null} graph for the default graph. Close it — see
+     * {@link QuadCursor}.
+     *
+     * @throws IllegalStateException if no {@code .rete} is open on this engine
+     */
+    public QuadCursor scanCursor(String subject, String predicate, String object) {
+        return openCursor(null, subject, predicate, object, true);
+    }
+
+    /**
+     * A {@link #scanCursor} scoped to one graph: {@code graph == null} is the
+     * default graph, a non-null {@code graph} is a named graph as an N-Triples
+     * term (as returned by {@link #graphs()}). The cursor form of
+     * {@link #scanInGraph(String, String, String, String)}; every row carries the
+     * graph asked for.
+     */
+    public QuadCursor scanCursorInGraph(
+            String graph, String subject, String predicate, String object) {
+        return openCursor(graph, subject, predicate, object, false);
+    }
+
+    private QuadCursor openCursor(
+            String graph, String subject, String predicate, String object, boolean allGraphs) {
+        checkOpen();
+        // Piggy-back the reap on any cursor open: a long-lived Sail that never
+        // closes anything still cannot accumulate engine-side cursors.
+        reapAbandonedCursors();
+        byte[] sBytes = subject == null ? null : subject.getBytes(StandardCharsets.UTF_8);
+        byte[] pBytes = predicate == null ? null : predicate.getBytes(StandardCharsets.UTF_8);
+        byte[] oBytes = object == null ? null : object.getBytes(StandardCharsets.UTF_8);
+        byte[] gBytes = graph == null ? null : graph.getBytes(StandardCharsets.UTF_8);
+        int sPtr = sBytes == null ? 0 : writeInput(sBytes);
+        int pPtr = pBytes == null ? 0 : writeInput(pBytes);
+        int oPtr = oBytes == null ? 0 : writeInput(oBytes);
+        int gPtr = gBytes == null ? 0 : writeInput(gBytes);
+        try {
+            long resultPtr =
+                    handleScanOpenFn.apply(
+                            handle,
+                            sPtr, len(sBytes),
+                            pPtr, len(pBytes),
+                            oPtr, len(oBytes),
+                            gPtr, len(gBytes),
+                            allGraphs ? 1 : 0)[0];
+            int cursorId = readLe32(readResult(resultPtr), 0);
+            return new QuadCursor(this, cursorId, scanBatchSize(), abandonedCursors);
+        } finally {
+            freeIf(sPtr, sBytes);
+            freeIf(pPtr, pBytes);
+            freeIf(oPtr, oBytes);
+            freeIf(gPtr, gBytes);
+        }
+    }
+
+    /** One batch of a streaming scan: the rows, and whether the scan is finished. */
+    record Batch(List<String[]> rows, boolean done) {}
+
+    /** Pull one batch from an open cursor. Package-private: {@link QuadCursor} drives it. */
+    Batch nextBatch(int cursorId, int maxRows) {
+        batchCalls++;
+        byte[] payload = readResult(handleScanNextFn.apply(cursorId, maxRows)[0]);
+        int count = readLe32(payload, 0);
+        boolean done = readLe32(payload, 4) != 0;
+        int pos = 8;
+        List<String[]> rows = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            String[] quad = new String[4];
+            for (int j = 0; j < 3; j++) {
+                int len = readLe32(payload, pos);
+                pos += 4;
+                quad[j] = new String(payload, pos, len, StandardCharsets.UTF_8);
+                pos += len;
+            }
+            int glen = readLe32(payload, pos);
+            pos += 4;
+            quad[3] = glen == 0 ? null : new String(payload, pos, glen, StandardCharsets.UTF_8);
+            pos += glen;
+            rows.add(quad);
+        }
+        rowsStreamed += count;
+        return new Batch(rows, done);
+    }
+
+    /**
+     * How many rows this engine has produced through streaming cursors, and how
+     * many wasm calls it took. The companion to {@link #bytesRead()}: it is what
+     * shows a scan was answered <em>incrementally</em>. A {@code LIMIT 1} over a
+     * 26-million-quad graph that leaves this at a few thousand streamed; one that
+     * leaves it at 26 million did not.
+     */
+    public long rowsStreamed() {
+        return rowsStreamed;
+    }
+
+    /** Wasm calls made to pull batches — see {@link #rowsStreamed()}. */
+    public long batchCalls() {
+        return batchCalls;
+    }
+
+    /** Release one cursor. Idempotent in the engine; a no-op once the file is closed. */
+    void closeCursor(int cursorId) {
+        if (handle < 0) {
+            return; // closing the handle already dropped every cursor on it
+        }
+        readResult(handleScanCloseFn.apply(cursorId)[0]);
+    }
+
+    /**
+     * Release the cursors whose {@link QuadCursor} was collected without
+     * {@code close()}. Called automatically whenever a cursor is opened and on
+     * {@link #close()}; public so a caller that opens cursors rarely but holds
+     * the engine for a long time can force it.
+     *
+     * @return how many were released
+     */
+    public int reapAbandonedCursors() {
+        int n = 0;
+        Integer id;
+        while ((id = abandonedCursors.poll()) != null) {
+            closeCursor(id);
+            n++;
+        }
+        return n;
+    }
+
+    /**
+     * How many scan cursors this engine currently holds open. Zero is the
+     * invariant a long-lived {@code Sail} depends on; a number that climbs with
+     * the query count is a leak.
+     */
+    public int openCursorCount() {
+        return readLe32(readResult(openCursorsFn.apply()[0]), 0);
+    }
+
+    /** Rows pulled per wasm call by a {@link QuadCursor}; see {@link #SCAN_BATCH_PROPERTY}. */
+    private static int scanBatchSize() {
+        int n = Integer.getInteger(SCAN_BATCH_PROPERTY, DEFAULT_SCAN_BATCH);
+        return n > 0 ? n : DEFAULT_SCAN_BATCH;
+    }
+
     // The …Remote spellings, from before a local file could be opened this way.
     // Kept as aliases: they were never HTTP-specific, only HTTP-named.
 
@@ -762,9 +986,12 @@ public final class Rete implements AutoCloseable {
     @Override
     public void close() {
         if (handle >= 0) {
+            // Dropping the handle drops every scan cursor on it, so a caller who
+            // abandoned one still leaks nothing past the file's own lifetime.
             handleCloseFn.apply(handle);
             handle = -1;
         }
+        abandonedCursors.clear();
         fetcher.close();
     }
 

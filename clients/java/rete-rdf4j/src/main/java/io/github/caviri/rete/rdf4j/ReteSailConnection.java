@@ -2,6 +2,7 @@ package io.github.caviri.rete.rdf4j;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.caviri.rete.QuadCursor;
 import io.github.caviri.rete.Rete;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -81,7 +82,7 @@ class ReteSailConnection extends AbstractSailConnection {
     @Override
     protected CloseableIteration<? extends Statement> getStatementsInternal(
             Resource subj, IRI pred, Value obj, boolean includeInferred, Resource... contexts) {
-        return new CloseableIteratorIteration<>(cursor(subj, pred, obj, contexts));
+        return cursor(subj, pred, obj, contexts);
     }
 
     @Override
@@ -104,37 +105,121 @@ class ReteSailConnection extends AbstractSailConnection {
      * context is that named graph. Bound subject/predicate/object are rendered to
      * N-Triples for the engine; graph IRIs are the plain string rete stores.
      *
-     * <p>Returns a cursor, not a list: a match becomes a {@link Statement} only
-     * when the consumer asks for it, and when several contexts are named, a
-     * context is scanned only once the previous one is exhausted. So the
-     * connection never holds every {@code Statement} of a scan at once — which
-     * for a join over a large graph is the difference between a bounded heap and
-     * an {@code OutOfMemoryError}. (The engine still materializes its own side of
-     * one scan; a streaming cursor across the wasm boundary is issue #115's
-     * remaining item.)
+     * <p>Returns a cursor, not a list, on <b>both</b> sides of the boundary. A
+     * match becomes a {@link Statement} only when the consumer asks for it; and
+     * over a lazily opened file the engine itself streams, pulling a bounded
+     * batch of rows per wasm call instead of building the whole result first.
+     * That is what makes {@code SELECT ?s ?p ?o … LIMIT 1} answerable: RDF4J
+     * issues exactly {@code getStatements(null, null, null)} for it — the
+     * {@code LIMIT} sits above the triple source, so the Sail never sees it —
+     * takes one row, and closes the iteration. Materializing the scan first
+     * turned that query into a whole-graph read.
+     *
+     * <p>When several contexts are named, a context is scanned only once the
+     * previous one is exhausted. The in-memory ({@code byte[]}) path still
+     * buffers: the image is already resident in linear memory there, so a cursor
+     * would bound nothing.
      */
-    private Iterator<Statement> cursor(Resource subj, IRI pred, Value obj, Resource... contexts) {
+    private CloseableIteration<Statement> cursor(
+            Resource subj, IRI pred, Value obj, Resource... contexts) {
         String s = subj == null ? null : NTriplesUtil.toNTriplesString(subj);
         String p = pred == null ? null : NTriplesUtil.toNTriplesString(pred);
         String o = obj == null ? null : NTriplesUtil.toNTriplesString(obj);
-        if (contexts == null || contexts.length == 0) {
-            return new StatementCursor(s, p, o, null);
+        List<String> graphs = null;
+        if (contexts != null && contexts.length > 0) {
+            // Graph identifiers are N-Triples terms (as rete stores them), the
+            // same encoding as s/p/o — not a plain IRI string.
+            graphs = new ArrayList<>(contexts.length);
+            for (Resource ctx : contexts) {
+                graphs.add(ctx == null ? null : NTriplesUtil.toNTriplesString(ctx));
+            }
         }
-        // Graph identifiers are N-Triples terms (as rete stores them), the same
-        // encoding as s/p/o — not a plain IRI string.
-        List<String> graphs = new ArrayList<>(contexts.length);
-        for (Resource ctx : contexts) {
-            graphs.add(ctx == null ? null : NTriplesUtil.toNTriplesString(ctx));
-        }
-        return new StatementCursor(s, p, o, graphs);
+        return ranged
+                ? new StreamingCursor(s, p, o, graphs)
+                : new BufferedCursor(s, p, o, graphs);
     }
 
     /**
-     * One scan at a time, one {@code Statement} at a time. With {@code graphs ==
-     * null} it is the all-graphs quad scan and each row carries its own graph;
-     * otherwise it walks the named contexts in order, scanning each lazily.
+     * The streaming cursor over a lazily opened file: one engine-side
+     * {@link QuadCursor} at a time, one {@code Statement} at a time. Its
+     * {@link #close()} releases the engine-side cursor — on normal completion,
+     * on early abandonment (RDF4J closes every iteration it stops pulling from),
+     * and on an exception.
      */
-    private final class StatementCursor implements Iterator<Statement> {
+    private final class StreamingCursor implements CloseableIteration<Statement> {
+        private final String s;
+        private final String p;
+        private final String o;
+        private final Iterator<String> graphs; // null = all-graphs quad scan
+        private QuadCursor rows;
+        private boolean closed;
+
+        StreamingCursor(String s, String p, String o, List<String> graphs) {
+            this.s = s;
+            this.p = p;
+            this.o = o;
+            this.graphs = graphs == null ? null : graphs.iterator();
+            if (graphs == null) {
+                this.rows = guard(() -> engine.scanCursor(s, p, o));
+            }
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (closed) {
+                return false;
+            }
+            while (rows == null || !rows.hasNext()) {
+                if (rows != null) {
+                    rows.close();
+                    rows = null;
+                }
+                if (graphs == null || !graphs.hasNext()) {
+                    return false;
+                }
+                String g = graphs.next();
+                rows = guard(() -> engine.scanCursorInGraph(g, s, p, o));
+            }
+            return true;
+        }
+
+        @Override
+        public Statement next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            return guard(
+                    () -> {
+                        String[] r = rows.next();
+                        return statement(r[0], r[1], r[2], r[3]);
+                    });
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            if (rows != null) {
+                rows.close();
+                rows = null;
+            }
+        }
+
+        /** Any engine failure closes the cursor before it propagates. */
+        private <T> T guard(Supplier<T> run) {
+            try {
+                return run.get();
+            } catch (RuntimeException e) {
+                close();
+                throw e instanceof SailException se ? se : new SailException(e);
+            }
+        }
+    }
+
+    /**
+     * The in-memory path: the scan is buffered, because the whole image already
+     * is. Same statement-at-a-time behaviour on the JVM side.
+     */
+    private final class BufferedCursor implements CloseableIteration<Statement> {
         private final String s;
         private final String p;
         private final String o;
@@ -142,7 +227,7 @@ class ReteSailConnection extends AbstractSailConnection {
         private Iterator<String[]> rows;
         private String graph;
 
-        StatementCursor(String s, String p, String o, List<String> graphs) {
+        BufferedCursor(String s, String p, String o, List<String> graphs) {
             this.s = s;
             this.p = p;
             this.o = o;
@@ -168,6 +253,11 @@ class ReteSailConnection extends AbstractSailConnection {
             String[] r = rows.next();
             // Quad rows carry the graph in slot 3; graph-scoped rows are triples.
             return statement(r[0], r[1], r[2], graphs == null ? r[3] : graph);
+        }
+
+        @Override
+        public void close() {
+            rows = Collections.emptyIterator();
         }
 
         private Iterator<String[]> scan(Supplier<List<String[]>> run) {
@@ -198,7 +288,7 @@ class ReteSailConnection extends AbstractSailConnection {
         @Override
         public CloseableIteration<? extends Statement> getStatements(
                 Resource subj, IRI pred, Value obj, Resource... contexts) {
-            return new CloseableIteratorIteration<>(cursor(subj, pred, obj, contexts));
+            return cursor(subj, pred, obj, contexts);
         }
 
         @Override
@@ -235,11 +325,22 @@ class ReteSailConnection extends AbstractSailConnection {
             return quadCount();
         }
         // Named contexts: still a scan, because the header counts the dataset,
-        // not each graph. Bounded by the size of the graphs actually asked for.
+        // not each graph. Over a lazily opened file it is a STREAMING scan —
+        // counting a graph must not require holding it, which was the whole
+        // failure mode this Sail had for `?s ?p ?o`.
         long total = 0;
         for (Resource ctx : contexts) {
             String graph = ctx == null ? null : NTriplesUtil.toNTriplesString(ctx);
-            total += scanInGraph(graph, null, null, null).size();
+            if (ranged) {
+                try (QuadCursor rows = engine.scanCursorInGraph(graph, null, null, null)) {
+                    while (rows.hasNext()) {
+                        rows.next();
+                        total++;
+                    }
+                }
+            } else {
+                total += scanInGraph(graph, null, null, null).size();
+            }
         }
         return total;
     }

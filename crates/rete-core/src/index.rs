@@ -820,6 +820,123 @@ impl GraphIndex {
         self.scan_iter_with(pattern, Self::best_permutation(pattern))
     }
 
+    /// One bounded, **resumable** slice of `pattern`'s matches: the pull form of
+    /// [`scan_iter`](Self::scan_iter), for a caller that cannot hold a borrow
+    /// across calls.
+    ///
+    /// Returns `(triples, next_cursor, done)`; start at `cursor = 0` and feed the
+    /// returned cursor back until `done`. The whole resume state is one opaque
+    /// `u64` — `(tile index, next a-group id)` — so no iterator, no thread and no
+    /// self-referential struct has to survive between calls. That is the shape a
+    /// foreign-function boundary needs: a wasm module cannot suspend a Rust
+    /// iterator mid-scan and hand control back to its host, but it can be handed
+    /// a `u64` and told to carry on.
+    ///
+    /// `max_rows` is a **floor**, not a hard cut: a batch always ends on an
+    /// a-group boundary of the chosen permutation, so no group is ever split
+    /// across two calls and the overshoot is one group's fanout. Nothing is ever
+    /// rescanned ([`TripleBlock::scan_resume`] jumps straight to the group
+    /// through the tile's directory), so a full drain is O(n) overall — unlike
+    /// `(offset, limit)`, which is O(n²/limit).
+    ///
+    /// Every call either yields at least one row or reports `done`, so a caller
+    /// never has to guard against an empty non-final batch.
+    ///
+    /// **Order.** Rows arrive in the chosen permutation's order and each batch is
+    /// re-sorted canonically, exactly as [`match_pattern`](Self::match_pattern)
+    /// does for a whole result. For a fully unbound pattern (routed to SPO) that
+    /// makes the concatenation of every batch identical to `match_pattern`'s
+    /// output; for a bound pattern the *set* is identical but the canonical
+    /// re-sort is per batch rather than global.
+    ///
+    /// **Memory** is O(`max_rows` + one a-group + the tiles faulted so far) —
+    /// never O(matches). That is the whole point: an unbounded `(?s ?p ?o)` over
+    /// a 26-million-quad graph used to materialize every match before the caller
+    /// saw one row.
+    pub fn scan_batch(
+        &self,
+        pattern: Pattern,
+        cursor: u64,
+        max_rows: usize,
+    ) -> (Vec<Triple>, u64, bool) {
+        let max_rows = max_rows.max(1);
+        let perm = Self::best_permutation(pattern);
+        let [pa, pb, pc] = perm.order_pattern(pattern);
+        let si = perm.section_index();
+        // Same routing as `scan_iter_with`: the tile directory alone decides the
+        // span, so this is free on a lazy/remote open.
+        let (start, end) = self.tile_span(si, pa);
+        let mut ti = ((cursor >> 32) as usize).max(start);
+        let mut from_a = cursor as u32;
+        let mut out: Vec<Triple> = Vec::new();
+        // Same geometric prefetch ramp as the streaming scan: a batch that stops
+        // after one tile never fetches the ones behind it.
+        let mut window = PREFETCH_WINDOW_START;
+        while ti < end {
+            // Synopsis pre-fault prune — no tile is fetched to reject it.
+            if !self.sections[si][ti].syn_admits(pb, pc) {
+                ti += 1;
+                from_a = 0;
+                continue;
+            }
+            if self.sections[si][ti].data.get().is_none() {
+                self.prefetch_span(si, ti, (ti + window).min(end));
+                window = window.saturating_mul(2).min(PREFETCH_WINDOW_MAX);
+            }
+            let tile = &self.sections[si][ti];
+            let mut resume_at: Option<u32> = None;
+            if let Some(block) = TripleBlock::parse(self.tile_data(si, ti))
+                .ok()
+                .filter(|b| b.zone().may_contain(pa, pb, pc))
+            {
+                let rows = match pa {
+                    // A bound leading id is one a-group; it cannot be split
+                    // inside a tile, only across tiles (a mega-group split), so
+                    // there is nothing finer to resume at than the tile.
+                    Some(a) => {
+                        let dir = tile.dir.get_or_init(|| block.group_directory());
+                        block.scan_from(dir, a, pb, pc)
+                    }
+                    // Fresh tile: no directory needed, so a straight drain never
+                    // pays for one.
+                    None if from_a == 0 => block.scan(None, pb, pc),
+                    None => {
+                        let dir = tile.dir.get_or_init(|| block.group_directory());
+                        block.scan_resume(dir, from_a, pb, pc)
+                    }
+                };
+                // Only a leading-unbound scan can be resumed mid-tile: with `pa`
+                // bound there is one a-group and `scan_from` always restarts it
+                // from the top, so cutting inside it would duplicate rows.
+                let splittable = pa.is_none();
+                let mut last_a: Option<u32> = None;
+                for abc in rows {
+                    // Full, and this row opens a new a-group ⇒ cut here and
+                    // resume at this group. The row is dropped, not lost: the
+                    // next call re-enters at exactly this id.
+                    if splittable && out.len() >= max_rows && last_a != Some(abc.0) {
+                        resume_at = Some(abc.0);
+                        break;
+                    }
+                    last_a = Some(abc.0);
+                    out.push(perm.back(abc));
+                }
+            }
+            if let Some(a) = resume_at {
+                out.sort_unstable();
+                return (out, ((ti as u64) << 32) | a as u64, false);
+            }
+            ti += 1;
+            from_a = 0;
+            if out.len() >= max_rows {
+                break;
+            }
+        }
+        let done = ti >= end;
+        out.sort_unstable();
+        (out, (ti as u64) << 32, done)
+    }
+
     /// Stream `pattern`'s matches **sorted on the canonical column `sort_col`**
     /// (0=subject, 1=predicate, 2=object): the stream's `sort_col` values are
     /// ascending. Chooses a permutation that routes on the bound prefix *and*

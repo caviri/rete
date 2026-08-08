@@ -3115,13 +3115,34 @@ impl Rete {
     /// either; it batches the same per-term faults. Peak memory is
     /// O(faulted dictionary chunks + faulted index tiles), *not* O(triples).
     pub fn dump_iter(&self, graph: Option<&str>) -> impl Iterator<Item = TermTriple> + '_ {
+        self.query_iter(graph, None, None, None)
+    }
+
+    /// [`dump_iter`](Self::dump_iter) generalized to a triple **pattern**: the
+    /// lazy pull form of [`query_in_graph`](Self::query_in_graph). A bound term
+    /// unknown to the dictionary, or an unknown graph IRI, yields nothing.
+    ///
+    /// Same constant-memory guarantee — one triple decoded and resolved per
+    /// `next()`, never a `Vec` of every match — and the same absence of a
+    /// dictionary prefetch, so stopping after a handful of matches costs a
+    /// handful of dictionary reads. `query_in_graph` is the eager twin; prefer
+    /// this one wherever the consumer can stop early (`ASK`, `LIMIT`, an RDF4J
+    /// `getStatements` that is about to be sliced).
+    pub fn query_iter(
+        &self,
+        graph: Option<&str>,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> impl Iterator<Item = TermTriple> + '_ {
         let index = match graph {
             None => Some(&self.index),
             Some(g) => self.graph_index(g),
         };
         index
+            .zip(self.resolve_query_pattern(s, p, o))
             .into_iter()
-            .flat_map(|ix| ix.scan_iter((None, None, None)))
+            .flat_map(|(ix, pattern)| ix.scan_iter(pattern))
             .filter_map(move |(s, p, o)| {
                 Some((
                     self.dict.subject_term(s)?,
@@ -3129,6 +3150,74 @@ impl Rete {
                     self.dict.object_term(o)?,
                 ))
             })
+    }
+
+    /// One bounded, **resumable** slice of a pattern's matches inside one graph
+    /// (`None` = default): `(triples, next_cursor, done)`. Start at `cursor = 0`
+    /// and feed the returned cursor back until `done`.
+    ///
+    /// This is [`query_in_graph`](Self::query_in_graph) made streamable across a
+    /// boundary that cannot hold a Rust borrow — the wasm/JVM one. The engine
+    /// keeps no iterator alive between calls; the entire resume state is the
+    /// opaque `u64` (see [`GraphIndex::scan_batch`]), so a client's cursor
+    /// survives being suspended, and a cursor that is abandoned leaks nothing
+    /// but a `u64`.
+    ///
+    /// The dictionary is faulted **per batch**, not whole: taking ten matches
+    /// off the front of a 9.8-billion-quad file reads ten matches' worth of
+    /// terms. That is the difference between `LIMIT 1` answering in bounded time
+    /// and it reading a 30 GB dictionary first.
+    ///
+    /// `max_quads` is a floor (batches end on an a-group boundary), and every
+    /// call either returns at least one row or reports `done`.
+    pub fn query_batch(
+        &self,
+        graph: Option<&str>,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+        cursor: u64,
+        max_quads: usize,
+    ) -> (Vec<TermTriple>, u64, bool) {
+        let index = match graph {
+            None => &self.index,
+            // An unknown graph IRI is an empty scan, not an error — same as
+            // `query_in_graph` and `dump_batch`.
+            Some(g) => match self.graph_index(g) {
+                Some(i) => i,
+                None => return (Vec::new(), cursor, true),
+            },
+        };
+        // A bound term the dictionary does not know can match nothing, and the
+        // index is never touched.
+        let Some(pattern) = self.resolve_query_pattern(s, p, o) else {
+            return (Vec::new(), cursor, true);
+        };
+        let (ids, next, done) = index.scan_batch(pattern, cursor, max_quads);
+        // One coalesced dictionary fault for THIS batch — the same call
+        // `query_in_graph` and `dump_batch` make, and the reason a partial walk
+        // costs in proportion to what it actually read.
+        if !ids.is_empty() {
+            let mut nodes = Vec::with_capacity(ids.len() * 2);
+            let mut preds = Vec::with_capacity(ids.len());
+            for &(s, p, o) in &ids {
+                nodes.push(self.dict.subject_node(s));
+                nodes.push(self.dict.object_node(o));
+                preds.push(p);
+            }
+            self.dict.prefetch_terms(&nodes, &preds);
+        }
+        let triples = ids
+            .into_iter()
+            .filter_map(|(s, p, o)| {
+                Some((
+                    self.dict.subject_term(s)?,
+                    self.dict.predicate_term(p)?,
+                    self.dict.object_term(o)?,
+                ))
+            })
+            .collect();
+        (triples, next, done)
     }
 
     /// Resolve one bounded slice of a graph's triples. Returns
@@ -6157,6 +6246,184 @@ mod tests {
         // not the default graph leaking through.
         let (t, _, done) = fresh.dump_batch(Some("http://ex/nope"), 0, 16);
         assert!(t.is_empty() && done);
+    }
+
+    /// `query_batch` is `dump_batch` generalized to a PATTERN — the primitive the
+    /// Java client's RDF4J cursor pulls through, one bounded batch per wasm call.
+    /// Three things have to hold or the cursor is a materializing scan wearing a
+    /// cursor's clothes: driven to exhaustion it must reproduce the eager
+    /// `query_in_graph` for every pattern shape and every batch size; taking one
+    /// row must cost far fewer bytes than draining; and every call must either
+    /// yield a row or say `done`, so the caller can never spin.
+    #[test]
+    fn query_batch_matches_query_in_graph_and_stops_early() {
+        use crate::reader::{CountingReader, SliceReader};
+
+        // Enough triples over tiny tiles that a scan spans many tiles, with two
+        // predicates and a repeated subject so bound patterns have real fanout.
+        let triples: Vec<(String, String, String)> = (0..2000u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{:04}>", i / 2),
+                    format!("<http://ex/p/{}>", i % 2),
+                    format!("<http://ex/o/{i:04}>"),
+                )
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in &triples {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let bytes = write_file(&dict, &ib.build(), false, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+
+        let drain = |s: Option<&str>, p: Option<&str>, o: Option<&str>, max: usize| {
+            let (mut out, mut cursor, mut calls) = (Vec::new(), 0u64, 0);
+            loop {
+                let (batch, next, done) = rete.query_batch(None, s, p, o, cursor, max);
+                // The contract the client relies on: rows, or done. Never
+                // "nothing yet, call again" — that is an unbounded spin.
+                assert!(!batch.is_empty() || done, "empty non-final batch");
+                out.extend(batch);
+                cursor = next;
+                calls += 1;
+                assert!(calls < 20_000, "cursor failed to advance");
+                if done {
+                    break out;
+                }
+            }
+        };
+        let shapes: [(Option<&str>, Option<&str>, Option<&str>); 6] = [
+            (None, None, None),
+            (Some("<http://ex/s/0007>"), None, None),
+            (None, Some("<http://ex/p/1>"), None),
+            (None, None, Some("<http://ex/o/0042>")),
+            (Some("<http://ex/s/0007>"), Some("<http://ex/p/0>"), None),
+            (
+                Some("<http://ex/s/0007>"),
+                Some("<http://ex/p/0>"),
+                Some("<http://ex/o/0014>"),
+            ),
+        ];
+        for (s, p, o) in shapes {
+            let eager = rete.query_in_graph(None, s, p, o);
+            assert!(
+                !eager.is_empty(),
+                "fixture shape {s:?} {p:?} {o:?} matches nothing"
+            );
+            // The lazy pull form agrees exactly, order included.
+            assert_eq!(
+                rete.query_iter(None, s, p, o).collect::<Vec<_>>(),
+                eager,
+                "query_iter disagrees for {s:?} {p:?} {o:?}"
+            );
+            for max in [1usize, 3, 64, 100_000] {
+                let mut got = drain(s, p, o, max);
+                let mut want = eager.clone();
+                // A batch is re-sorted canonically per batch, not globally, so
+                // a bound pattern's batches can arrive in permutation order.
+                got.sort();
+                want.sort();
+                assert_eq!(got, want, "batch size {max} changed {s:?} {p:?} {o:?}");
+            }
+            // The fully unbound scan routes to SPO, so batching is order-exact.
+            if s.is_none() && p.is_none() && o.is_none() {
+                assert_eq!(drain(s, p, o, 7), eager, "unbound batching reordered rows");
+            }
+        }
+
+        // A bound term the dictionary has never seen, and an unknown graph, are
+        // both finished-and-empty rather than errors or a leak of everything.
+        let (t, _, done) = rete.query_batch(None, Some("<http://ex/nope>"), None, None, 0, 16);
+        assert!(t.is_empty() && done);
+        let (t, _, done) = rete.query_batch(Some("http://ex/nope"), None, None, None, 0, 16);
+        assert!(t.is_empty() && done);
+        assert_eq!(
+            rete.query_iter(None, Some("<http://ex/nope>"), None, None)
+                .count(),
+            0
+        );
+
+        // Lazily: one row must not drag the whole scan across the reader. This
+        // is the property that makes `LIMIT 1` bounded on a 48 GiB file.
+        let read_bytes = |take: usize| -> u64 {
+            let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+            let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+            let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let before = reader.bytes_read();
+            let (mut n, mut cursor) = (0usize, 0u64);
+            loop {
+                let (batch, next, done) = rete.query_batch(None, None, None, None, cursor, 1);
+                n += batch.len();
+                cursor = next;
+                if done || n >= take {
+                    break;
+                }
+            }
+            assert!(n >= take.min(triples.len()));
+            assert!(!rete.index_incomplete());
+            reader.bytes_read() - before
+        };
+        let first_only = read_bytes(1);
+        let everything = read_bytes(triples.len());
+        assert!(
+            first_only < everything,
+            "query_batch is not lazy: one row read {first_only} B, a full scan {everything} B"
+        );
+        #[cfg(feature = "compression")]
+        assert!(
+            first_only * 2 < everything,
+            "query_batch is not lazy: one row read {first_only} B of the {everything} B a full scan reads"
+        );
+    }
+
+    /// A batched cursor over a QUADS file must stay inside the graph it was
+    /// given: the default graph and each named graph resume independently.
+    #[test]
+    fn query_batch_is_graph_scoped() {
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o) in [
+            ("Alice", "knows", "Bob"),
+            ("Alice", "knows", "Carol"),
+            ("Alice", "knows", "Dave"),
+            ("Erin", "knows", "Frank"),
+            ("Alice", "knows", "Zoe"),
+        ] {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut def = GraphIndexBuilder::new();
+        def.push(dict.encode("Alice", "knows", "Bob").unwrap());
+        def.push(dict.encode("Alice", "knows", "Carol").unwrap());
+        let mut g1 = GraphIndexBuilder::new();
+        g1.push(dict.encode("Alice", "knows", "Dave").unwrap());
+        g1.push(dict.encode("Erin", "knows", "Frank").unwrap());
+        let mut g2 = GraphIndexBuilder::new();
+        g2.push(dict.encode("Alice", "knows", "Zoe").unwrap());
+        let named = vec![
+            ("http://ex/g1".to_string(), g1.build()),
+            ("http://ex/g2".to_string(), g2.build()),
+        ];
+        let bytes = write_dataset(&dict, &def.build(), &named, true, &[], 0);
+        let rete = Rete::open(&bytes).unwrap();
+        for graph in [None, Some("http://ex/g1"), Some("http://ex/g2")] {
+            let eager = rete.query_in_graph(graph, None, None, None);
+            let (mut out, mut cursor) = (Vec::new(), 0u64);
+            loop {
+                let (batch, next, done) = rete.query_batch(graph, None, None, None, cursor, 1);
+                out.extend(batch);
+                cursor = next;
+                if done {
+                    break;
+                }
+            }
+            assert_eq!(out, eager, "graph {graph:?} batched differently");
+        }
     }
 
     #[test]
