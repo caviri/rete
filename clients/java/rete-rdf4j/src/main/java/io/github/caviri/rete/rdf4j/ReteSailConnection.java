@@ -169,18 +169,23 @@ class ReteSailConnection extends AbstractSailConnection {
             if (closed) {
                 return false;
             }
-            while (rows == null || !rows.hasNext()) {
-                if (rows != null) {
-                    rows.close();
-                    rows = null;
-                }
-                if (graphs == null || !graphs.hasNext()) {
-                    return false;
-                }
-                String g = graphs.next();
-                rows = guard(() -> engine.scanCursorInGraph(g, s, p, o));
-            }
-            return true;
+            // The whole advance is guarded, not just the open: pulling a batch
+            // happens inside QuadCursor.hasNext(), so that is where an engine
+            // failure surfaces and where the cursor has to be released.
+            return guard(
+                    () -> {
+                        while (rows == null || !rows.hasNext()) {
+                            if (rows != null) {
+                                rows.close();
+                                rows = null;
+                            }
+                            if (graphs == null || !graphs.hasNext()) {
+                                return false;
+                            }
+                            rows = engine.scanCursorInGraph(graphs.next(), s, p, o);
+                        }
+                        return true;
+                    });
         }
 
         @Override
@@ -204,12 +209,23 @@ class ReteSailConnection extends AbstractSailConnection {
             }
         }
 
-        /** Any engine failure closes the cursor before it propagates. */
+        /**
+         * Any engine failure closes the cursor before it propagates — but the
+         * close may itself fail (an engine that ran out of memory cannot release
+         * anything either), and if it did the release must not become the
+         * reported error.
+         */
         private <T> T guard(Supplier<T> run) {
             try {
                 return run.get();
             } catch (RuntimeException e) {
-                close();
+                try {
+                    close();
+                } catch (RuntimeException closeFailure) {
+                    closed = true;
+                    rows = null;
+                    e.addSuppressed(closeFailure);
+                }
                 throw e instanceof SailException se ? se : new SailException(e);
             }
         }

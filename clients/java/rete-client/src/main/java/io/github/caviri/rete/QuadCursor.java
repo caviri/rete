@@ -154,7 +154,17 @@ public final class QuadCursor implements Iterator<String[]>, AutoCloseable {
             done = b.done();
             batch = Math.min(batch * 2, maxBatch);
         } catch (RuntimeException | Error e) {
-            close();
+            // Release, but never let the release replace the diagnosis: when the
+            // engine has exhausted linear memory, closing the cursor traps too,
+            // and a bare close() here turned "the scan ran out of memory" into a
+            // stack that pointed at close(). The original wins; the failure to
+            // release rides along as suppressed.
+            try {
+                close();
+            } catch (RuntimeException | Error closeFailure) {
+                closed = true;
+                e.addSuppressed(closeFailure);
+            }
             throw e;
         }
     }
