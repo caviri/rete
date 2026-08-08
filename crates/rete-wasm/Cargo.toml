@@ -53,7 +53,12 @@ wasm-bindgen = "0.2"
 serde_json = "1"
 # Sync-XHR range reader for the in-worker remote-query path (`sparql_url`).
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["XmlHttpRequest", "XmlHttpRequestResponseType", "console"] }
+# `Blob` + `FileReaderSync` are the LOCAL half of the same range reader: a file
+# the user picked is read with `Blob.slice()` + a synchronous `FileReaderSync`
+# (worker-only, like sync XHR), so a local open costs the same handful of ranges
+# a remote one does instead of `arrayBuffer()`-ing the whole file. See
+# `LOCAL_SCHEME` in src/lib.rs.
+web-sys = { version = "0.3", features = ["Blob", "FileReaderSync", "XmlHttpRequest", "XmlHttpRequestResponseType", "console"] }
 # Threaded variant only (feature = "threads"). 1.3 targets wasm-bindgen 0.2.x,
 # matching the 0.2.122 already pinned in Cargo.lock.
 wasm-bindgen-rayon = { version = "1.3", optional = true }

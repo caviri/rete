@@ -1488,6 +1488,20 @@ let wasm_bindgen = (function(exports) {
     exports.file_len_url = file_len_url;
 
     /**
+     * Drop a registration made by [`register_local_file`]. Releases this wasm
+     * instance's reference to the `Blob`; any open handle over it stops working.
+     * @param {string} url
+     * @returns {boolean}
+     */
+    function forget_local_file(url) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.forget_local_file(ptr0, len0);
+        return ret !== 0;
+    }
+    exports.forget_local_file = forget_local_file;
+
+    /**
      * The named-graph IRIs of a dataset, as a JSON array.
      * @param {Uint8Array} bytes
      * @returns {string}
@@ -2027,6 +2041,32 @@ let wasm_bindgen = (function(exports) {
         }
     }
     exports.reason_url = reason_url;
+
+    /**
+     * Register a local `File`/`Blob` under a `rete-local:…` URL, so every `*_url`
+     * entry point can range-read it.
+     *
+     * **Worker-only** (the read uses `FileReaderSync`), and the caller mints the
+     * URL: a worker can be torn down and rebuilt — the playground does that on a
+     * wasm trap, an engine switch, or a phone memory reclaim — and the page must be
+     * able to re-register the same file under the same URL so a resident session
+     * key stays stable. Re-registering an existing URL replaces the blob.
+     * @param {string} url
+     * @param {Blob} blob
+     */
+    function register_local_file(url, blob) {
+        try {
+            const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.register_local_file(ptr0, len0, addBorrowedObject(blob));
+            if (ret[1]) {
+                throw takeObject(ret[0]);
+            }
+        } finally {
+            heap[stack_pointer++] = undefined;
+        }
+    }
+    exports.register_local_file = register_local_file;
 
     /**
      * The ontology profile (the semantic coarse graph), as JSON:
@@ -2766,6 +2806,13 @@ let wasm_bindgen = (function(exports) {
     function __wbg_get_imports() {
         const import0 = {
             __proto__: null,
+            __wbg___wbindgen_debug_string_0accd80f45e5faa2: function(arg0, arg1) {
+                const ret = debugString(getObject(arg1));
+                const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+                getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+            },
             __wbg___wbindgen_is_function_754e9f305ff6029e: function(arg0) {
                 const ret = typeof(getObject(arg0)) === 'function';
                 return ret;
@@ -2833,6 +2880,14 @@ let wasm_bindgen = (function(exports) {
                 const ret = new Error(getStringFromWasm0(arg0, arg1));
                 return addHeapObject(ret);
             },
+            __wbg_new_578aeef4b6b94378: function(arg0) {
+                const ret = new Uint8Array(getObject(arg0));
+                return addHeapObject(ret);
+            },
+            __wbg_new_a1b9f645bba64f0f: function() { return handleError(function () {
+                const ret = new FileReaderSync();
+                return addHeapObject(ret);
+            }, arguments); },
             __wbg_new_d90091b82fdf5b91: function() {
                 const ret = new Array();
                 return addHeapObject(ret);
@@ -2862,6 +2917,10 @@ let wasm_bindgen = (function(exports) {
             __wbg_randomFillSync_6c25eac9869eb53c: function() { return handleError(function (arg0, arg1) {
                 getObject(arg0).randomFillSync(takeObject(arg1));
             }, arguments); },
+            __wbg_readAsArrayBuffer_f1b8da05559618d9: function() { return handleError(function (arg0, arg1) {
+                const ret = getObject(arg0).readAsArrayBuffer(getObject(arg1));
+                return addHeapObject(ret);
+            }, arguments); },
             __wbg_require_b4edbdcf3e2a1ef0: function() { return handleError(function () {
                 const ret = module.require;
                 return addHeapObject(ret);
@@ -2878,6 +2937,14 @@ let wasm_bindgen = (function(exports) {
             }, arguments); },
             __wbg_setRequestHeader_b5e8e6d03614f3e5: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
                 getObject(arg0).setRequestHeader(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
+            }, arguments); },
+            __wbg_size_9970092b88b1094c: function(arg0) {
+                const ret = getObject(arg0).size;
+                return ret;
+            },
+            __wbg_slice_02bb778501725738: function() { return handleError(function (arg0, arg1, arg2) {
+                const ret = getObject(arg0).slice(arg1, arg2);
+                return addHeapObject(ret);
             }, arguments); },
             __wbg_static_accessor_GLOBAL_9d53f2689e622ca1: function() {
                 const ret = typeof global === 'undefined' ? null : global;
@@ -2956,6 +3023,77 @@ let wasm_bindgen = (function(exports) {
 
         heap[idx] = obj;
         return idx;
+    }
+
+    function addBorrowedObject(obj) {
+        if (stack_pointer == 1) throw new Error('out of js stack');
+        heap[--stack_pointer] = obj;
+        return stack_pointer;
+    }
+
+    function debugString(val) {
+        // primitive types
+        const type = typeof val;
+        if (type == 'number' || type == 'boolean' || val == null) {
+            return  `${val}`;
+        }
+        if (type == 'string') {
+            return `"${val}"`;
+        }
+        if (type == 'symbol') {
+            const description = val.description;
+            if (description == null) {
+                return 'Symbol';
+            } else {
+                return `Symbol(${description})`;
+            }
+        }
+        if (type == 'function') {
+            const name = val.name;
+            if (typeof name == 'string' && name.length > 0) {
+                return `Function(${name})`;
+            } else {
+                return 'Function';
+            }
+        }
+        // objects
+        if (Array.isArray(val)) {
+            const length = val.length;
+            let debug = '[';
+            if (length > 0) {
+                debug += debugString(val[0]);
+            }
+            for(let i = 1; i < length; i++) {
+                debug += ', ' + debugString(val[i]);
+            }
+            debug += ']';
+            return debug;
+        }
+        // Test for built-in
+        const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+        let className;
+        if (builtInMatches && builtInMatches.length > 1) {
+            className = builtInMatches[1];
+        } else {
+            // Failed to match the standard '[object ClassName]'
+            return toString.call(val);
+        }
+        if (className == 'Object') {
+            // we're a user defined class or Object
+            // JSON.stringify avoids problems with cycles, and is generally much
+            // easier than looping through ownProperties of `val`.
+            try {
+                return 'Object(' + JSON.stringify(val) + ')';
+            } catch (_) {
+                return 'Object';
+            }
+        }
+        // errors
+        if (val instanceof Error) {
+            return `${val.name}: ${val.message}\n${val.stack}`;
+        }
+        // TODO we could test for more things here, like `Set`s and `Map`s.
+        return className;
     }
 
     function dropObject(idx) {
@@ -3071,6 +3209,8 @@ let wasm_bindgen = (function(exports) {
         WASM_VECTOR_LEN = offset;
         return ptr;
     }
+
+    let stack_pointer = 1024;
 
     function takeObject(idx) {
         const ret = getObject(idx);

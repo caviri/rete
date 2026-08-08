@@ -6,7 +6,7 @@
 
 import {
   VIEWS, VIEW_BY_ID, makeContext, openFile, extract, candidateLabelPredicates,
-  readSelfDescription, parseHeader, humanBytes, humanCount, localName, parseTerm,
+  readSelfDescription, parseHeader, HEADER_LEN, humanBytes, humanCount, localName, parseTerm,
 } from "./rete-fs.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -140,28 +140,60 @@ async function openRemote(entry) {
   }
 }
 
+// Below this a local file is still handed to the engine whole (faster when the
+// browse touches everything); above it the whole-file read is the thing that
+// kills the tab, so it opens through the range reader instead. Same knob and
+// default as the playground and yasgui.
+const LOCAL_LAZY_ABOVE_MB_DEFAULT = 128;
+function localLazyAboveBytes() {
+  let mb = LOCAL_LAZY_ABOVE_MB_DEFAULT;
+  try {
+    const raw = localStorage.getItem("localLazyAboveMB");
+    if (raw !== null && raw !== "" && Number.isFinite(+raw) && +raw >= 0) mb = +raw;
+  } catch (_) { /* private mode: keep the default */ }
+  return mb * 1024 * 1024;
+}
+
+// The self-description a local file gets: the same two reads openRemote makes
+// over HTTP Range, made with Blob.slice() instead. 1 KiB of header plus the
+// card, whether the file is 4 MB or 40 GB — this used to be `file.arrayBuffer()`
+// for every file, which is the whole of issue #102 in one line.
+async function readLocalSelfDescription(file) {
+  const head = new Uint8Array(await file.slice(0, HEADER_LEN).arrayBuffer());
+  const header = parseHeader(head);
+  let card = null;
+  const metaSection = header.sections.find((s) => s.kind === 1);
+  if (metaSection && metaSection.length) {
+    try {
+      const raw = await file.slice(metaSection.offset, metaSection.offset + metaSection.length).arrayBuffer();
+      card = JSON.parse(new TextDecoder().decode(new Uint8Array(raw)));
+    } catch (_) { /* unparseable card is not fatal */ }
+  }
+  return { header, card };
+}
+
 async function openLocal(file) {
   if (state.opening) return;
   state.opening = true;
   setStatus(`reading ${file.name}…`);
   resetPanes();
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const header = parseHeader(bytes);
-    let card = null;
-    const metaSection = header.sections.find((s) => s.kind === 1);
-    if (metaSection && metaSection.length) {
-      try {
-        card = JSON.parse(new TextDecoder().decode(
-          bytes.subarray(metaSection.offset, metaSection.offset + metaSection.length)
-        ));
-      } catch (_) { /* unparseable card is not fatal */ }
-    }
+    const { header, card } = await readLocalSelfDescription(file);
     bootWorker();
-    const copy = bytes.slice();
-    const opened = await send({ type: "open", mode: "local", bytes: copy.buffer, transfer: [copy.buffer] });
+    let opened;
+    if (file.size > localLazyAboveBytes()) {
+      // The File crosses into the worker by reference (a structured clone of a
+      // blob copies no bytes); the engine slices the ranges it needs.
+      opened = await send({
+        type: "open", mode: "local-lazy",
+        url: `rete-local:${encodeURIComponent(file.name || "file.rete")}`, file,
+      });
+    } else {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      opened = await send({ type: "open", mode: "local", bytes: bytes.buffer, transfer: [bytes.buffer] });
+    }
     finishOpen({
-      source: file.name, url: null, size: bytes.byteLength,
+      source: file.name, url: null, size: file.size,
       header, card, schema: opened.schema, schemaError: opened.schemaError,
     });
   } catch (err) {

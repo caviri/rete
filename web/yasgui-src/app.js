@@ -1,5 +1,6 @@
 // yasgui-wasm — a Yasgui-style SPARQL IDE where the "endpoint" is a .rete file:
-// paste a URL (read lazily over HTTP range) or open a local file, and every
+// paste a URL (read lazily over HTTP range) or open a local file (read lazily
+// off disk, through the same range reader), and every
 // query runs in a WebAssembly engine inside this page. UI after Yasgui
 // (github.com/TriplyDB/Yasgui) — underline tabs, the 40px round query button,
 // YASR-style result views (Table / Pivot / Turtle / Response) — and YASQE-style
@@ -252,7 +253,26 @@ const DEFAULT_QUERY =
 
 let tabs = [];
 let activeId = null;
-const files = new Map(); // fileKey → ArrayBuffer (session only — cannot persist)
+// fileKey → File (session only — cannot persist). A File, NOT its bytes:
+// attaching one reads nothing, and a big one is opened lazily through the same
+// range reader the remote path uses (issue #102).
+const files = new Map();
+// Below this a local file is still read WHOLE into the engine (faster when the
+// query touches everything); above it the whole-file read is what kills the tab,
+// so it opens lazily. `localStorage.localLazyAboveMB` overrides; 0 forces lazy.
+const LOCAL_LAZY_ABOVE_MB_DEFAULT = 128;
+function localLazyAboveBytes() {
+  let mb = LOCAL_LAZY_ABOVE_MB_DEFAULT;
+  try {
+    const raw = localStorage.getItem("localLazyAboveMB");
+    if (raw !== null && raw !== "" && Number.isFinite(+raw) && +raw >= 0) mb = +raw;
+  } catch (_) { /* private mode: keep the default */ }
+  return mb * 1024 * 1024;
+}
+// The address the engine reads a local blob by. Not a network URL: the wasm
+// reader recognizes the scheme and slices the registered File instead of
+// issuing an HTTP Range request.
+const localUrlFor = (fileKey) => `rete-local:${encodeURIComponent(fileKey)}`;
 let tabSeq = 0;
 
 const active = () => tabs.find((t) => t.id === activeId) || tabs[0];
@@ -619,10 +639,13 @@ function statsLine(t) {
   if (n == null) s = "";
   s += `${s ? " in " : "Took "}${fmtMs(r.ms)}`;
   if (r.reason) s += ` · 🧠 reasoned`;
+  // "read", not "fetched": the same range reader answers a local blob, where
+  // nothing is fetched from anywhere.
+  const verb = r.local ? "read" : "fetched";
   if (r.traffic && r.traffic.requests > 0) {
-    s += ` · fetched ${fmtBytes(r.traffic.bytes)} in ${r.traffic.requests} range request${r.traffic.requests === 1 ? "" : "s"} (of a ${fmtBytes(r.traffic.fileLength)} file)`;
+    s += ` · ${verb} ${fmtBytes(r.traffic.bytes)} in ${r.traffic.requests} range request${r.traffic.requests === 1 ? "" : "s"} (of a ${fmtBytes(r.traffic.fileLength)} file)`;
   } else if (r.traffic) {
-    s += ` · 0 bytes fetched (cache)`;
+    s += ` · 0 bytes ${verb} (cache)`;
   } else if (r.remote === false) {
     s += ` · in-memory`;
   }
@@ -886,15 +909,26 @@ async function ensureOpen(t) {
   if (ep.mode === "url") {
     reply = await engine.call({ type: "open", key, mode: "remote", url: ep.url });
   } else {
-    const buf = files.get(ep.fileKey);
-    if (!buf) throw new Error(`the uploaded file "${ep.fileName}" is gone — re-attach it with ⬆ open file`);
-    const copy = buf.slice(0); // keep the original for reopens after a Stop
-    reply = await engine.call({ type: "open", key, mode: "local", bytes: copy }, [copy]);
+    const file = files.get(ep.fileKey);
+    if (!file) throw new Error(`the uploaded file "${ep.fileName}" is gone — re-attach it with ⬆ open file`);
+    if (file.size > localLazyAboveBytes()) {
+      // Lazy: the File goes into the worker by reference (structured clone does
+      // not copy a blob) and the engine slices the ranges it needs. Registered
+      // on every open because a Stop kills the worker with its wasm instance.
+      reply = await engine.call({ type: "open", key, mode: "local-lazy", url: localUrlFor(ep.fileKey), file });
+    } else {
+      // Whole-file: a fresh transferable buffer each open — the File stays the
+      // source of truth, so a reopen after a Stop needs nothing kept alive.
+      const buf = await file.arrayBuffer();
+      reply = await engine.call({ type: "open", key, mode: "local", bytes: buf }, [buf]);
+    }
   }
   engine.openKeys.add(key);
-  t.chip = reply.remote
-    ? `${fmtBytes(reply.stats ? reply.stats.fileLength : 0)} file · remote, read lazily over HTTP range`
-    : `${fmtInt(reply.info ? reply.info.quads : 0)} triples · in-memory`;
+  t.chip = reply.local
+    ? `${fmtBytes(reply.stats ? reply.stats.fileLength : 0)} file · local, read lazily from disk`
+    : reply.remote
+      ? `${fmtBytes(reply.stats ? reply.stats.fileLength : 0)} file · remote, read lazily over HTTP range`
+      : `${fmtInt(reply.info ? reply.info.quads : 0)} triples · in-memory`;
   renderEndpoint();
   return key;
 }
@@ -919,7 +953,7 @@ async function runQuery() {
     const envelope = JSON.parse(reply.json);
     t.results = {
       envelope, raw: reply.json, ms: reply.ms,
-      traffic: reply.traffic, remote: reply.remote, reason: !!t.reason, error: null,
+      traffic: reply.traffic, remote: reply.remote, local: !!reply.local, reason: !!t.reason, error: null,
     };
     t.page = 1; t.sort = null; t.filter = ""; t.pivot = null;
     if (envelope.kind === "construct" && !envelope.triples) envelope.triples = [];
@@ -998,17 +1032,18 @@ function tabFromHash() {
 
 /* ------------------------------------------------------- files & catalog */
 
+// Attaching costs nothing: the File is a handle, and whether its bytes are read
+// whole or a range at a time is decided in ensureOpen, when the engine actually
+// opens it.
 function attachFile(file) {
-  file.arrayBuffer().then((buf) => {
-    const t = active();
-    const fileKey = `file:${file.name}:${file.size}:${file.lastModified}`;
-    files.set(fileKey, buf);
-    t.endpoint = { mode: "file", fileKey, fileName: file.name, size: file.size };
-    t.chip = null;
-    renderEndpoint();
-    persistSoon();
-    toast(`${file.name} attached — it stays in this browser, nothing is uploaded`);
-  });
+  const t = active();
+  const fileKey = `file:${file.name}:${file.size}:${file.lastModified}`;
+  files.set(fileKey, file);
+  t.endpoint = { mode: "file", fileKey, fileName: file.name, size: file.size };
+  t.chip = null;
+  renderEndpoint();
+  persistSoon();
+  toast(`${file.name} attached — it stays in this browser, nothing is uploaded`);
 }
 
 function renderCatalog() {

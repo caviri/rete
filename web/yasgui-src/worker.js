@@ -6,9 +6,13 @@
 //
 // Protocol (request → reply carries the same `type` + `reqId`):
 //   {type:"init",  wasm:ArrayBuffer}                      → {ok}
-//   {type:"open",  reqId, key, mode:"remote"|"local", url?, bytes?}
-//                                                         → {ok, remote, info?, stats?, openMs}
-//   {type:"query", reqId, key, sparql, reason:bool}       → {ok, json, ms, traffic?, remote}
+//   {type:"open",  reqId, key, mode:"remote"|"local"|"local-lazy",
+//                  url?, bytes?, file?}
+//                                             → {ok, remote, local, info?, stats?, openMs}
+// "local-lazy" is a File read through the SAME range reader as "remote": the
+// blob is registered under a `rete-local:` URL and sliced a range at a time, so
+// a big local file no longer has to fit in memory twice to be queried (#102).
+//   {type:"query", reqId, key, sparql, reason:bool}  → {ok, json, ms, traffic?, remote, local}
 //   {type:"close", reqId, key}                            → {ok}
 // Plus unsolicited {type:"progress", bytes} ticks — cumulative physical bytes
 // fetched by the engine since this worker booted (the engine calls the global
@@ -51,15 +55,26 @@ self.onmessage = async (e) => {
       let g = graphs.get(m.key);
       if (!g) {
         const t0 = performance.now();
-        g = m.mode === "remote"
-          ? { handle: new wasm_bindgen.RemoteGraph(m.url), remote: true }
-          : { handle: new wasm_bindgen.Graph(new Uint8Array(m.bytes)), remote: false };
+        if (m.mode === "local-lazy") {
+          if (typeof wasm_bindgen.register_local_file !== "function") {
+            throw new Error("this engine build cannot read a local file lazily (no register_local_file export)");
+          }
+          // Registered here, not once at boot: a Stop terminates this worker and
+          // takes the wasm instance's registration map with it, and ensureOpen
+          // re-opens every graph on the next run.
+          wasm_bindgen.register_local_file(m.url, m.file);
+          g = { handle: new wasm_bindgen.RemoteGraph(m.url), remote: true, local: true };
+        } else if (m.mode === "remote") {
+          g = { handle: new wasm_bindgen.RemoteGraph(m.url), remote: true, local: false };
+        } else {
+          g = { handle: new wasm_bindgen.Graph(new Uint8Array(m.bytes)), remote: false, local: false };
+        }
         g.openMs = Math.round(performance.now() - t0);
         graphs.set(m.key, g);
       }
       let info = null;
       if (!g.remote) { try { info = JSON.parse(g.handle.info()); } catch (_) {} }
-      reply({ ok: true, remote: g.remote, info, stats: readStats(g), openMs: g.openMs });
+      reply({ ok: true, remote: g.remote, local: !!g.local, info, stats: readStats(g), openMs: g.openMs });
       return;
     }
 
@@ -78,7 +93,7 @@ self.onmessage = async (e) => {
         : null;
       // flush any progress not yet ticked out
       postMessage({ type: "progress", bytes: fetchedTotal });
-      reply({ ok: true, json, ms, traffic, remote: g.remote });
+      reply({ ok: true, json, ms, traffic, remote: g.remote, local: !!g.local });
       return;
     }
 

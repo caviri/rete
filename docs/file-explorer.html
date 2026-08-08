@@ -365,10 +365,12 @@ the window</strong> — anywhere, at any time.</p>
 <a href="https://github.com/caviri/rete/actions/workflows/desktop-release.yml"><code>.github/workflows/desktop-release.yml</code></a>:
 a universal macOS <code>.dmg</code> (Apple Silicon + Intel) and a Windows <code>.msi</code> /
 <code>-setup.exe</code>.</p>
-<p>The desktop build drives <code>rete-core</code> natively rather than WASM, which buys three
-things the browser cannot give: no 4 GB heap ceiling, real threads, and
-positional reads against a local file — so a multi-gigabyte <code>.rete</code> on disk
-faults in rather than being read whole.</p>
+<p>The desktop build drives <code>rete-core</code> natively rather than WASM, which buys two
+things the browser cannot give: no 4 GB heap ceiling, and real threads. Lazy
+reads against a local file are no longer one of them — since issue #102 the
+browser opens a dropped <code>.rete</code> through the same range reader it uses for a URL,
+slicing the blob instead of issuing HTTP ranges, so a multi-gigabyte file on disk
+faults in there too rather than being read whole.</p>
 <p><strong>They are unsigned.</strong> macOS refuses them on first open ("cannot be opened
 because the developer cannot be verified", or "is damaged"); neither is true —
 it is the quarantine attribute doing its job on an app with no Developer ID.
