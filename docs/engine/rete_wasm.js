@@ -569,9 +569,9 @@ if (Symbol.dispose) Graph.prototype[Symbol.dispose] = Graph.prototype.free;
  * cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
  * it would have to buffer every quad first, which is exactly the `Vec` that
  * [`Rete::dump`] builds and that OOMs on a large file. This wraps
- * [`Rete::dump_iter`] instead, so the scan can be suspended between calls and
- * resumed in place — one triple decoded per `next()`, never a whole-graph
- * materialization anywhere in the pipeline.
+ * [`Rete::dump_batch`] instead, so the scan can be suspended between calls and
+ * resumed in place — the whole resume state is one subject id, never a
+ * whole-graph materialization anywhere in the pipeline.
  *
  * # Why batched (and not one call per quad)
  *
@@ -583,10 +583,13 @@ if (Symbol.dispose) Graph.prototype[Symbol.dispose] = Graph.prototype.free;
  *
  * # Cost model
  *
- * The dictionary is prefetched once (a dump resolves every term anyway), and
- * index tiles fault in as the scan advances and stay resident, so a full dump
- * of a *remote* graph ends up fetching essentially the whole file. Peak memory
- * is O(dictionary + index), never O(quads).
+ * The dictionary is **not** prefetched whole: each batch faults only the
+ * chunks its own terms live in, so taking five quads off the front costs five
+ * quads' worth of dictionary rather than all of it. Index tiles fault in as the
+ * scan advances and stay resident, and so do dictionary chunks, so a dump
+ * driven *to the end* still ends up fetching essentially the whole file — that
+ * is inherent in exporting a graph. Peak memory is O(faulted dictionary +
+ * index), never O(quads).
  */
 export class QuadCursor {
     static __wrap(ptr) {

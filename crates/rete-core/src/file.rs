@@ -2937,18 +2937,85 @@ impl Rete {
     }
 
     /// Stream every triple of a graph (`None` = default) to `f`, resolving terms
-    /// one at a time — no full `Vec` materialization, so it is safe on graphs far
+    /// a batch at a time — no full `Vec` materialization, so it is safe on graphs far
     /// larger than RAM. `rete export` uses this to serialize 100M+ triple files
     /// that `dump()` (which collects every term into a `Vec<String>`) would OOM on.
+    ///
+    /// On a lazy/ranged open the dictionary is **not** prefetched whole: each
+    /// batch faults only the chunks its own terms live in. Dumping ONE named
+    /// graph therefore costs that graph's terms, not the file's. Dumping
+    /// *everything* still reads every dictionary byte and leaves every chunk
+    /// resident — that is inherent, and it, not the prefetch, is what sets the
+    /// peak of a full export. See the comment in the body for both measurements.
     pub fn dump_each<F: FnMut(&str, &str, &str)>(&self, graph: Option<&str>, mut f: F) {
-        // A FULL dump resolves every term, so faulting the whole dictionary in
-        // coalesced range reads beats one fault per term. This belongs here and
-        // not in `dump_iter`: it is only ever amortized when the caller is
-        // guaranteed to reach the end, which is exactly what `dump_each` is.
-        self.dict.prefetch_all();
-        for (s, p, o) in self.dump_iter(graph) {
-            f(&s, &p, &o);
+        let index = match graph {
+            None => Some(&self.index),
+            Some(g) => self.graph_index(g),
+        };
+        let Some(index) = index else { return };
+        let dict = &self.dict;
+        // Resolve in fixed-size batches with ONE coalesced dictionary fault per
+        // batch — the same `prefetch_terms` call `dump_batch` makes, for the
+        // same reason.
+        //
+        // This used to be `Dictionary::prefetch_all` up front, on the argument
+        // that a full dump reaches every term anyway so the bytes are owed
+        // either way. That argument only holds for a dump of EVERYTHING, and
+        // `dump_each` takes a graph. Measured on `cordis.rete` (801 MB, a
+        // 417 MB dictionary, six named graphs), lazily opened:
+        //
+        //   dump_each(Some(fundingschemes))  417 MB read, 2510 MB peak RSS
+        //                              →     173 MB read,  619 MB peak RSS
+        //   dump_each(None) — the EMPTY default graph, which is the first thing
+        //   `rete export` calls on a quads file:
+        //                                    415 MB read, 2508 MB peak RSS
+        //                              →       0 MB read,   95 MB peak RSS
+        //
+        // The 2.5 GB comes from asking for every chunk at once: the bulk loader
+        // coalesces adjacent chunks into one span, so the whole dictionary
+        // section is materialized three times over before the first triple —
+        // the fetched span, the per-chunk copies sliced out of it, and the
+        // decompressed bodies.
+        //
+        // Be clear about what this does NOT buy. A dump of the whole default
+        // graph still faults every chunk, and chunks stay resident once
+        // faulted, so `rete export` of a single-graph file is unchanged:
+        // `figshare.rete` (222 MB, a 126 MB dictionary) peaks at 874 MB lazily
+        // either way. The resident dictionary is the floor there, not this.
+        const RESOLVE_BATCH: usize = 4096;
+        let mut ids: Vec<(u32, u32, u32)> = Vec::with_capacity(RESOLVE_BATCH);
+        let mut nodes: Vec<u32> = Vec::with_capacity(RESOLVE_BATCH * 2);
+        let mut preds: Vec<u32> = Vec::with_capacity(RESOLVE_BATCH);
+        let mut flush = |ids: &mut Vec<(u32, u32, u32)>, f: &mut F| {
+            if ids.is_empty() {
+                return;
+            }
+            nodes.clear();
+            preds.clear();
+            for &(s, p, o) in ids.iter() {
+                nodes.push(dict.subject_node(s));
+                nodes.push(dict.object_node(o));
+                preds.push(p);
+            }
+            dict.prefetch_terms(&nodes, &preds);
+            for &(s, p, o) in ids.iter() {
+                if let (Some(s), Some(p), Some(o)) = (
+                    dict.subject_term(s),
+                    dict.predicate_term(p),
+                    dict.object_term(o),
+                ) {
+                    f(&s, &p, &o);
+                }
+            }
+            ids.clear();
+        };
+        for t in index.scan_iter((None, None, None)) {
+            ids.push(t);
+            if ids.len() == RESOLVE_BATCH {
+                flush(&mut ids, &mut f);
+            }
         }
+        flush(&mut ids, &mut f);
     }
 
     /// The **pull** twin of [`Rete::dump_each`](Self::dump_each): every triple of a
@@ -2965,8 +3032,8 @@ impl Rete {
     /// stopping after a handful of triples costs a handful of dictionary reads
     /// rather than the whole dictionary — which on a lazy remote open of a large
     /// file would be gigabytes before the first triple, defeating the point of a
-    /// pull API. [`dump_each`](Self::dump_each), which always runs to the end,
-    /// prefetches up front where that cost is genuinely amortized. Peak memory is
+    /// pull API. [`dump_each`](Self::dump_each) does not prefetch it whole
+    /// either; it batches the same per-term faults. Peak memory is
     /// O(faulted dictionary chunks + faulted index tiles), *not* O(triples).
     pub fn dump_iter(&self, graph: Option<&str>) -> impl Iterator<Item = TermTriple> + '_ {
         let index = match graph {
@@ -3491,10 +3558,25 @@ impl Rete {
                 None => return Vec::new(),
             },
         };
-        self.dict.prefetch_all();
-        index
-            .match_pattern(pattern)
-            .into_iter()
+        let ids = index.match_pattern(pattern);
+        // One coalesced dictionary fault for THIS pattern's output, not the
+        // whole dictionary. `prefetch_all` used to sit here, which made a
+        // bounded `(s, p, o, g)` lookup — the primitive an RDF4J `Sail`'s
+        // `getStatements` calls, once per named graph via `query_quads` — pay
+        // for every term in the file: on `cordis.rete` (801 MB, a 417 MB
+        // dictionary) a 15-row answer read 416 MB and peaked at 2.5 GB RSS.
+        // Same call `dump_batch` makes, for the same reason.
+        if !ids.is_empty() {
+            let mut nodes = Vec::with_capacity(ids.len() * 2);
+            let mut preds = Vec::with_capacity(ids.len());
+            for &(s, p, o) in &ids {
+                nodes.push(self.dict.subject_node(s));
+                nodes.push(self.dict.object_node(o));
+                preds.push(p);
+            }
+            self.dict.prefetch_terms(&nodes, &preds);
+        }
+        ids.into_iter()
             .filter_map(|(s, p, o)| {
                 Some((
                     self.dict.subject_term(s)?,
@@ -5959,6 +6041,156 @@ mod tests {
         assert!(rete
             .query_in_graph(Some("http://ex/missing"), None, None, None)
             .is_empty());
+    }
+
+    /// A **bounded** `query_in_graph` — and a dump of one named graph — must not
+    /// fault the whole dictionary on a lazily range-read file.
+    ///
+    /// Both used to call `Dictionary::prefetch_all`, so the graph-scoped pattern
+    /// primitive an RDF4J `Sail` calls once per named graph paid for every term
+    /// in the file to answer a handful of rows. Measured on `cordis.rete`
+    /// (801 MB, a 417 MB dictionary) before the fix: a 15-row answer read
+    /// 416 MB and peaked at 2.5 GB RSS. The fixture below is the same shape in
+    /// miniature — long literals so the dictionary dominates the file — and the
+    /// assertion is the invariant that regressed: bytes read must stay well
+    /// under the dictionary section. Lazy answers are compared against eager
+    /// throughout: cheaper is only interesting if it is also correct.
+    #[test]
+    fn bounded_query_in_graph_does_not_fault_the_whole_dictionary() {
+        use crate::reader::{CountingReader, SliceReader};
+
+        // Long, distinct, poorly-compressible object literals: the dictionary is
+        // the payload here, exactly as on a graph that stores abstracts or
+        // embedded media. Repeating one filler string would not do — front
+        // coding plus zstd shrink 2000 near-identical literals to ~6 KB, which
+        // is smaller than the index and makes the measurement meaningless.
+        let payload = |i: u32| -> String {
+            let mut s = String::with_capacity(800);
+            let mut x = i as u64 ^ 0x9e37_79b9_7f4a_7c15;
+            while s.len() < 800 {
+                x = x
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                s.push_str(&format!("{:016x}", x ^ (x >> 29)));
+            }
+            s
+        };
+        // Half the quads go to the named graph, and the two halves are kept
+        // lexically apart (`a…` / `b…`) so each lands in its own dictionary
+        // chunks — the real layout on a quads file whose graphs use different
+        // IRI namespaces, e.g. `cordis.rete`. Interleaving them instead would
+        // put a term of both graphs in every chunk, and then no per-graph
+        // access pattern could avoid faulting the whole dictionary.
+        let quads: Vec<(String, String, String, bool)> = (0..2000u32)
+            .map(|i| {
+                let named = i % 2 == 0;
+                let ns = if named { 'a' } else { 'b' };
+                (
+                    format!("<http://ex/{ns}/s/{i:04}>"),
+                    "<http://ex/abstract>".to_string(),
+                    format!("\"{ns}{} number {i}\"", payload(i)),
+                    named,
+                )
+            })
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, p, o, _) in &quads {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut def = GraphIndexBuilder::new().with_tile_budget(256);
+        let mut g1 = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o, named) in &quads {
+            let t = dict.encode(s, p, o).unwrap();
+            if *named {
+                g1.push(t);
+            } else {
+                def.push(t);
+            }
+        }
+        let named = vec![("http://ex/g1".to_string(), g1.build())];
+        let bytes = write_dataset(&dict, &def.build(), &named, true, &[], 0);
+
+        let eager = Rete::open(&bytes).unwrap();
+        let dict_len = eager.header().dictionary_len;
+
+        // `probe` runs one closure against a COLD lazy open and reports the
+        // bytes it faulted beyond the open itself.
+        let leaked: &'static [u8] = Box::leak(bytes.clone().into_boxed_slice());
+        let probe = |f: &dyn Fn(&Rete) -> Vec<TermTriple>| -> (Vec<TermTriple>, u64) {
+            let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+            let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let before = reader.bytes_read();
+            let out = f(&lazy);
+            assert!(!lazy.index_incomplete(), "a chunk fetch failed");
+            (out, reader.bytes_read() - before)
+        };
+
+        // 1. One bound subject in the named graph.
+        let want = eager.query_in_graph(
+            Some("http://ex/g1"),
+            Some("<http://ex/a/s/0100>"),
+            None,
+            None,
+        );
+        assert_eq!(want.len(), 1, "fixture: expected exactly one match");
+        let (got, pulled) = probe(&|r| {
+            r.query_in_graph(
+                Some("http://ex/g1"),
+                Some("<http://ex/a/s/0100>"),
+                None,
+                None,
+            )
+        });
+        assert_eq!(got, want, "lazy query_in_graph disagrees with eager");
+        assert!(
+            pulled * 4 < dict_len,
+            "a 1-row query_in_graph faulted {pulled} B of a {dict_len} B dictionary — \
+             it is prefetching the whole thing again"
+        );
+
+        // 2. A graph with NOTHING to resolve must not fault the dictionary.
+        //    Both shapes below used to pull every chunk before returning an
+        //    empty answer, and `rete export` hits the second one first on a
+        //    quads file whose default graph is empty — on `cordis.rete` that
+        //    was 415 MB read and 2.5 GB of peak RSS to emit zero triples. What
+        //    is left is the named-graph directory walk it takes to learn the
+        //    graph is absent at all; that is index, not dictionary.
+        let (empty, q_pulled) =
+            probe(&|r| r.query_in_graph(Some("http://ex/nope"), None, None, None));
+        assert!(empty.is_empty());
+        let (_, d_pulled) = probe(&|r| {
+            let mut n = 0usize;
+            r.dump_each(Some("http://ex/nope"), |_, _, _| n += 1);
+            assert_eq!(n, 0, "an absent graph yielded triples");
+            Vec::new()
+        });
+        assert_eq!(
+            q_pulled, d_pulled,
+            "query_in_graph and dump_each disagree on what an absent graph costs"
+        );
+        assert!(
+            q_pulled * 4 < dict_len,
+            "an absent graph faulted {q_pulled} B of a {dict_len} B dictionary"
+        );
+
+        // 3. Dumping ONE named graph costs that graph, not the whole file: the
+        //    default graph's half of the dictionary must stay unfaulted.
+        let want: Vec<TermTriple> = eager.dump(Some("http://ex/g1"));
+        assert_eq!(want.len(), 1000);
+        let (got, pulled) = probe(&|r| {
+            let mut out = Vec::new();
+            r.dump_each(Some("http://ex/g1"), |s, p, o| {
+                out.push((s.to_string(), p.to_string(), o.to_string()))
+            });
+            out
+        });
+        assert_eq!(got, want, "lazy dump_each disagrees with eager dump");
+        assert!(
+            pulled * 3 < dict_len * 2,
+            "dumping half the graph faulted {pulled} B of a {dict_len} B dictionary — \
+             the other graph's chunks are being pulled in too"
+        );
     }
 
     #[test]
