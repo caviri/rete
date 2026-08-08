@@ -1410,11 +1410,17 @@ fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
 struct XhrRangeReader {
     url: String,
     len: u64,
-    /// The resource's first [`rete_core::HEADER_LEN`] bytes, when opening already
-    /// had to read them. The sync length probe does, so
-    /// [`polyglot_base`](Self::polyglot_base) is free there; the asyncify build
-    /// probes the length differently and leaves this empty.
-    head: Vec<u8>,
+    /// The resource's first [`rete_core::HEADER_LEN`] bytes, cached once.
+    ///
+    /// Opening a `.rete` reads this window several times over — the sync length
+    /// probe reads it, [`polyglot_base`](Self::polyglot_base) needs it, and every
+    /// `read_*_ranged` helper starts by reading the header — and the bytes cannot
+    /// change under us: the file is immutable for the session, and a host that
+    /// served different bytes for the same range would already have broken every
+    /// other read. So the first reader to pay for it fills this in and the rest
+    /// are served from memory, which is what keeps the CARD tier at its
+    /// advertised two requests.
+    head: std::sync::OnceLock<Vec<u8>>,
 }
 
 // Asyncify variant only (feature = "asyncify"): one dedicated async import in
@@ -1599,10 +1605,12 @@ impl XhrRangeReader {
             if ok == 0 || len == 0 {
                 return Err(js_error(format!("could not determine length of {url}")));
             }
+            // The async length probe reads the window on the JS side and only
+            // hands back the length, so the first `head_window()` pays for it.
             Ok(Self {
                 url: url.to_string(),
                 len,
-                head: Vec::new(),
+                head: std::sync::OnceLock::new(),
             })
         }
         #[cfg(not(feature = "asyncify"))]
@@ -1615,11 +1623,15 @@ impl XhrRangeReader {
             for _ in 0..4 {
                 match Self::probe_len(url) {
                     Ok((len, head)) => {
+                        let cached = std::sync::OnceLock::new();
+                        if !head.is_empty() {
+                            let _ = cached.set(head);
+                        }
                         return Ok(Self {
                             url: url.to_string(),
                             len,
-                            head,
-                        })
+                            head: cached,
+                        });
                     }
                     Err(e) => last = e,
                 }
@@ -1628,22 +1640,26 @@ impl XhrRangeReader {
         }
     }
 
+    /// The cached first [`rete_core::HEADER_LEN`] bytes, fetching them once if
+    /// nobody has yet. `None` only when the resource cannot be read at all — the
+    /// open that follows reports the real error.
+    fn head_window(&self) -> Option<&[u8]> {
+        if let Some(head) = self.head.get() {
+            return Some(head);
+        }
+        let head = self.fetch_at(0, rete_core::HEADER_LEN as u64).ok()?;
+        let _ = self.head.set(head);
+        self.head.get().map(Vec::as_slice)
+    }
+
     /// Where the `.rete` starts inside this resource: `0` for an ordinary file,
     /// and the size of the HTML shell for a **polyglot** — a file that is both a
     /// web page and a graph, whose first bytes carry a `RETE-BASE:` marker naming
-    /// the offset. On the sync build the length probe already read that window,
-    /// so this costs nothing; otherwise it is one 1 KiB read, and the header read
-    /// that follows serves it from the block cache anyway.
+    /// the offset. Reads only the header window, which the open that follows
+    /// needs anyway and now gets from [`head_window`](Self::head_window).
     fn polyglot_base(&self) -> u64 {
-        let probed;
-        let head = if self.head.is_empty() {
-            probed = match self.read_at(0, rete_core::HEADER_LEN as u64) {
-                Ok(head) => head,
-                Err(_) => return 0, // not readable — the open that follows will say why
-            };
-            &probed
-        } else {
-            &self.head
+        let Some(head) = self.head_window() else {
+            return 0;
         };
         if head.starts_with(&rete_core::MAGIC) {
             return 0;
@@ -1825,10 +1841,59 @@ impl RangeReader for XhrRangeReader {
         }
     }
 
+    /// Reads that land entirely inside the cached header window are answered
+    /// from memory: opening a file re-reads those bytes several times (length
+    /// probe, polyglot marker, then every `read_*_ranged` helper's own header
+    /// read) and they are immutable for the session, so paying for them once is
+    /// the difference between the CARD tier costing two requests and four.
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());
         }
+        if let Some(head) = self.head.get() {
+            if let Some(end) = offset.checked_add(len) {
+                if end <= head.len() as u64 {
+                    return Ok(head[offset as usize..end as usize].to_vec());
+                }
+            }
+        }
+        self.fetch_at(offset, len)
+    }
+
+    /// Synchronous XHR can't run two requests at once on one thread, so the
+    /// engine's sequential faults serialize their round trips. If the page
+    /// installs `globalThis.reteReadMany(url, offsets, lens)` — a fetch-worker
+    /// pool that fetches the ranges in parallel and blocks (via SAB/Atomics)
+    /// until done — use it; it returns one buffer with the spans concatenated
+    /// in order, or `null`/throws if it can't (no cross-origin isolation, a
+    /// non-206, a short read). On `null` we fall back to the sequential reads
+    /// below, which keep the rigorous per-range validation.
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        // Asyncify build: fetch the whole batch concurrently in one suspend.
+        #[cfg(feature = "asyncify")]
+        {
+            self.read_ranges_async(ranges)
+        }
+        #[cfg(not(feature = "asyncify"))]
+        {
+            let (_, _, total) = checked_async_layout(ranges)?;
+            if ranges.len() > 1 {
+                if let Some(buf) = self.read_many_via_pool(ranges) {
+                    if buf.len() == total {
+                        return split_range_response(ranges, buf, total, "globalThis.reteReadMany");
+                    }
+                }
+            }
+            ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
+        }
+    }
+}
+
+/// The raw transport, below the header cache in [`RangeReader::read_at`].
+impl XhrRangeReader {
+    /// One real range request. Never consults the cached header window — this is
+    /// what fills it.
+    fn fetch_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         // Asyncify build: a single read is a 1-range async fetch (suspends).
         #[cfg(feature = "asyncify")]
         {
@@ -1878,34 +1943,6 @@ impl RangeReader for XhrRangeReader {
             // opaque synchronous query (postMessage works mid-sync-call).
             report_progress(buf.len(), &[(offset, len)]);
             Ok(buf)
-        }
-    }
-
-    /// Synchronous XHR can't run two requests at once on one thread, so the
-    /// engine's sequential faults serialize their round trips. If the page
-    /// installs `globalThis.reteReadMany(url, offsets, lens)` — a fetch-worker
-    /// pool that fetches the ranges in parallel and blocks (via SAB/Atomics)
-    /// until done — use it; it returns one buffer with the spans concatenated
-    /// in order, or `null`/throws if it can't (no cross-origin isolation, a
-    /// non-206, a short read). On `null` we fall back to the sequential reads
-    /// below, which keep the rigorous per-range validation.
-    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
-        // Asyncify build: fetch the whole batch concurrently in one suspend.
-        #[cfg(feature = "asyncify")]
-        {
-            self.read_ranges_async(ranges)
-        }
-        #[cfg(not(feature = "asyncify"))]
-        {
-            let (_, _, total) = checked_async_layout(ranges)?;
-            if ranges.len() > 1 {
-                if let Some(buf) = self.read_many_via_pool(ranges) {
-                    if buf.len() == total {
-                        return split_range_response(ranges, buf, total, "globalThis.reteReadMany");
-                    }
-                }
-            }
-            ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
         }
     }
 }
