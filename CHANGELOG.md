@@ -39,6 +39,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Generated heading anchors keep their underscores, like GitHub's.** `docgen`
+  slugs a heading into the id github.com would mint for it — that is the entire
+  point of the convention, since an author writes and tests in-page links on
+  GitHub. Its slugger dropped `_`, which GitHub keeps (`_` sits in the gap its
+  punctuation class jumps over), so `6.3 Full-text index (TEXT_INDEX section,
+  optional)` became `…-textindex-…` in the built page against `…-text_index-…`
+  on GitHub. A spec full of `TEXT_INDEX`-shaped identifiers made that a live
+  trap: the one link already written to the GitHub-correct anchor failed the
+  docs link check and was *changed to match the slugger* instead. One anchor and
+  one link change; `docs/dataset-cards.md → SPEC §6.3` now resolves in both
+  places.
+
 - **The embedded Dataset Card reports the size of the file, not the size of the
   input.** The card was derived from the statements *ingested*, while the header
   records what the index kept after deduplication — and every permutation index

@@ -644,7 +644,7 @@ directory locally and faults exactly <strong>one</strong> chunk, and <code>id â†
 its chunk arithmetically and faults one. A lazily-opened remote file therefore
 pays the section headers + directories (KBs) up front and O(touched chunks)
 afterwards, instead of the whole dictionary container.</p>
-<h3 id="63-full-text-index-textindex-section-optional">6.3 Full-text index (TEXT_INDEX section, optional)</h3>
+<h3 id="63-full-text-index-text_index-section-optional">6.3 Full-text index (TEXT_INDEX section, optional)</h3>
 <p>An <strong>opt-in</strong> section (kind <code>6</code>, built with <code>rete build --text-index</code>) that maps
 each <strong>word</strong> appearing in a string literal to the <strong>subjects</strong> that carry it, so
 a reader can answer "which entities mention <code>glucose</code>?" without scanning the

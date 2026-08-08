@@ -119,7 +119,7 @@ card — the card folds into a reproducible content hash. Counts are over the ra
 
 ### The full-text signal: measured, not stored
 
-A `.rete` carries an optional **TEXT_INDEX section** (kind `6`, [SPEC §6.3](SPEC.md#63-full-text-index-textindex-section-optional)),
+A `.rete` carries an optional **TEXT_INDEX section** (kind `6`, [SPEC §6.3](SPEC.md#63-full-text-index-text_index-section-optional)),
 opt-in via `rete build --text-index` / `rete repyramid --text-index`. A file
 that has one answers `FILTER(CONTAINS(…))` by word lookup; a file that does not
 answers **the same query with the same rows** by full scan. The capability is
