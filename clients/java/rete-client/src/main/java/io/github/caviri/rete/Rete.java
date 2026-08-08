@@ -22,7 +22,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -49,19 +53,31 @@ import java.util.function.Function;
  * }
  * }</pre>
  *
- * <p><b>Remote (lazy) querying:</b> {@link #openRemote(URI)} opens a {@code
- * .rete} over HTTP and answers queries by fetching only the byte ranges each
- * query touches (via HTTP {@code Range} requests) — the file is never fully
- * downloaded. The engine's range reads are satisfied by a host function this
- * client supplies; because a JVM host call is synchronous, no Asyncify is
- * needed (unlike the browser).
+ * <p><b>Lazy (range-read) querying — the way to open anything large.</b> The
+ * {@code byte[]} entry points above copy the whole image into wasm32 linear
+ * memory on every call, which is a hard wall around 700&nbsp;MB regardless of
+ * {@code -Xmx}: the address space, not the heap, runs out. {@link #openFile(Path)}
+ * and {@link #openRemote(URI)} instead open the file <em>by range</em> — the
+ * engine asks the host for the byte ranges a query actually touches and the
+ * image never enters linear memory at all:
  *
  * <pre>{@code
+ * try (Rete rete = Rete.openFile(Path.of("/data/cordis.rete"))) {   // 764 MB, or 52 GB
+ *     String json = rete.query("SELECT * WHERE { ?s ?p ?o } LIMIT 10");
+ *     System.out.println(rete.bytesRead() + " bytes read");
+ * }
  * try (Rete rete = Rete.openRemote(URI.create("https://data.example.org/x.rete"))) {
- *     String json = rete.queryRemote("SELECT * WHERE { ?s ?p ?o } LIMIT 10");
- *     System.out.println(rete.bytesFetched() + " bytes fetched");
+ *     String json = rete.query("SELECT * WHERE { ?s ?p ?o } LIMIT 10");
  * }
  * }</pre>
+ *
+ * <p>Both are the <em>same</em> reader: the engine's range reads are satisfied
+ * by one host function this client supplies, and only its bottom transport
+ * differs — an HTTP {@code Range} request or a {@link FileChannel} positional
+ * read. (Because a JVM host call is synchronous, no Asyncify is needed, unlike
+ * the browser.) The no-argument {@link #info()}, {@link #query(String)},
+ * {@link #graphs()}, {@code scanInGraph} and {@code scanQuads} methods work on
+ * either; the {@code …Remote} spellings are kept as aliases.
  *
  * <p><b>Thread-safety:</b> a {@code Rete} instance owns a single wasm linear
  * memory and is <em>not</em> thread-safe. Use one instance per thread (loading
@@ -121,7 +137,7 @@ public final class Rete implements AutoCloseable {
     private final ExportFunction graphsFn;
     private final ExportFunction scanInGraphFn;
     private final ExportFunction scanQuadsFn;
-    private final ExportFunction remoteOpenFn;
+    private final ExportFunction rangedOpenFn;
     private final ExportFunction handleCloseFn;
     private final ExportFunction handleInfoFn;
     private final ExportFunction handleQueryFn;
@@ -129,8 +145,11 @@ public final class Rete implements AutoCloseable {
     private final ExportFunction handleScanInGraphFn;
     private final ExportFunction handleScanQuadsFn;
 
-    /** Resident remote handle id, or -1 when this instance is local. */
-    private int remoteHandle = -1;
+    /**
+     * Resident ranged-handle id, or -1 when this instance has no open file
+     * (i.e. it was created by {@link #load()} for {@code byte[]} querying).
+     */
+    private int handle = -1;
 
     private Rete(Instance instance, RangeFetcher fetcher) {
         this.instance = instance;
@@ -146,7 +165,7 @@ public final class Rete implements AutoCloseable {
         this.graphsFn = instance.export("rete_graphs");
         this.scanInGraphFn = instance.export("rete_scan_in_graph");
         this.scanQuadsFn = instance.export("rete_scan_quads");
-        this.remoteOpenFn = instance.export("rete_remote_open");
+        this.rangedOpenFn = instance.export("rete_ranged_open");
         this.handleCloseFn = instance.export("rete_handle_close");
         this.handleInfoFn = instance.export("rete_handle_info");
         this.handleQueryFn = instance.export("rete_handle_query");
@@ -165,24 +184,58 @@ public final class Rete implements AutoCloseable {
      *     built without the engine — see the build instructions in the README)
      */
     public static Rete load() {
-        // The module imports a host range-read function (used only on the remote
-        // path); a local engine supplies a stub that must never be called.
-        return instantiate(RangeFetcher.LOCAL_STUB);
+        // The module imports a host range-read function (used only when a file
+        // is open); a byte[]-only engine supplies a stub that is never called.
+        return instantiate(RangeFetcher.NO_SOURCE);
+    }
+
+    /**
+     * Open a {@code .rete} <b>on disk</b> for lazy, range-read querying: the file
+     * is <em>not</em> read into memory, and each call reads only the byte ranges
+     * it needs through a {@link FileChannel}.
+     *
+     * <p>This is the way to open a file larger than a few hundred megabytes. The
+     * {@code byte[]} entry points ({@link #info(byte[])}, {@link #query(byte[],
+     * String)}, …) copy the whole image into wasm32 linear memory <em>per
+     * call</em>, so they fail on a large file with {@code out of memory} however
+     * much JVM heap is available — the 4&nbsp;GiB wasm address space is what runs
+     * out, and the heap is not involved. Nothing here enters linear memory but
+     * the blocks a query touches.
+     *
+     * <p>The returned instance owns an open file descriptor; {@link #close()}
+     * releases it, so use try-with-resources.
+     *
+     * @throws ReteException if the file cannot be opened or is not a {@code .rete}
+     */
+    public static Rete openFile(Path path) {
+        FileRangeFetcher file = new FileRangeFetcher(path);
+        try {
+            return openRanged(file);
+        } catch (RuntimeException e) {
+            file.close();
+            throw e;
+        }
     }
 
     /**
      * Open a <b>remote</b> {@code .rete} over HTTP for lazy, range-read querying:
-     * the file is not downloaded; each {@link #queryRemote}/{@code *Remote} call
-     * fetches only the byte ranges it needs via HTTP {@code Range} requests.
-     * The resource must support range requests (HTTP 206 / {@code Content-Range}).
+     * the file is not downloaded; each call fetches only the byte ranges it needs
+     * via HTTP {@code Range} requests. The resource must support range requests
+     * (HTTP 206 / {@code Content-Range}).
      *
      * @throws ReteException if the resource cannot be opened
      */
     public static Rete openRemote(URI url) {
-        HttpRangeFetcher remote = new HttpRangeFetcher(url);
-        Rete rete = instantiate(remote);
-        int handle = readLe32(rete.readResult(rete.remoteOpenFn.apply(remote.totalLength())[0]), 0);
-        rete.remoteHandle = handle;
+        return openRanged(new HttpRangeFetcher(url));
+    }
+
+    /**
+     * The one lazy-open path, shared by {@link #openFile} and {@link #openRemote}
+     * — the transport is the only difference between them.
+     */
+    private static Rete openRanged(RangeFetcher source) {
+        Rete rete = instantiate(source);
+        rete.handle = readLe32(rete.readResult(rete.rangedOpenFn.apply(source.length())[0]), 0);
         return rete;
     }
 
@@ -548,32 +601,36 @@ public final class Rete implements AutoCloseable {
                 | ((b[i + 3] & 0xFF) << 24);
     }
 
-    // --- remote (lazy) operations -----------------------------------------
+    // --- operations on an open file (lazy, range-read) ---------------------
+    //
+    // These work identically for a file opened with openFile(Path) or
+    // openRemote(URI): they run against the resident handle, and the reader
+    // underneath faults in only the ranges each call touches.
 
-    /** Header summary of the remote {@code .rete} (see {@link #info}). */
-    public String infoRemote() {
-        checkRemote();
-        return new String(readResult(handleInfoFn.apply(remoteHandle)[0]), StandardCharsets.UTF_8);
+    /** Header summary of the open {@code .rete} (see {@link #info(byte[])}). */
+    public String info() {
+        checkOpen();
+        return new String(readResult(handleInfoFn.apply(handle)[0]), StandardCharsets.UTF_8);
     }
 
-    /** SPARQL over the remote {@code .rete} (see {@link #query}); lazy range reads. */
-    public String queryRemote(String sparql) {
-        checkRemote();
+    /** SPARQL over the open {@code .rete} (see {@link #query(byte[], String)}). */
+    public String query(String sparql) {
+        checkOpen();
         byte[] q = sparql.getBytes(StandardCharsets.UTF_8);
         int qPtr = writeInput(q);
         try {
             return new String(
-                    readResult(handleQueryFn.apply(remoteHandle, qPtr, q.length)[0]),
+                    readResult(handleQueryFn.apply(handle, qPtr, q.length)[0]),
                     StandardCharsets.UTF_8);
         } finally {
             free.apply(qPtr, q.length);
         }
     }
 
-    /** Named graphs of the remote {@code .rete} (see {@link #graphs}). */
-    public List<String> graphsRemote() {
-        checkRemote();
-        byte[] payload = readResult(handleGraphsFn.apply(remoteHandle)[0]);
+    /** Named graphs of the open {@code .rete} (see {@link #graphs(byte[])}). */
+    public List<String> graphs() {
+        checkOpen();
+        byte[] payload = readResult(handleGraphsFn.apply(handle)[0]);
         int pos = 0;
         int count = readLe32(payload, pos);
         pos += 4;
@@ -587,9 +644,12 @@ public final class Rete implements AutoCloseable {
         return out;
     }
 
-    /** Graph-scoped triple scan over the remote {@code .rete} (see {@link #scanInGraph}). */
-    public List<String[]> scanInGraphRemote(String graph, String subject, String predicate, String object) {
-        checkRemote();
+    /**
+     * Graph-scoped triple scan over the open {@code .rete} (see
+     * {@link #scanInGraph(byte[], String, String, String, String)}).
+     */
+    public List<String[]> scanInGraph(String graph, String subject, String predicate, String object) {
+        checkOpen();
         byte[] sBytes = subject == null ? null : subject.getBytes(StandardCharsets.UTF_8);
         byte[] pBytes = predicate == null ? null : predicate.getBytes(StandardCharsets.UTF_8);
         byte[] oBytes = object == null ? null : object.getBytes(StandardCharsets.UTF_8);
@@ -601,7 +661,7 @@ public final class Rete implements AutoCloseable {
         try {
             long resultPtr =
                     handleScanInGraphFn.apply(
-                            remoteHandle,
+                            handle,
                             sPtr, len(sBytes),
                             pPtr, len(pBytes),
                             oPtr, len(oBytes),
@@ -615,9 +675,12 @@ public final class Rete implements AutoCloseable {
         }
     }
 
-    /** All-graphs quad scan over the remote {@code .rete} (see {@link #scanQuads}). */
-    public List<String[]> scanQuadsRemote(String subject, String predicate, String object) {
-        checkRemote();
+    /**
+     * All-graphs quad scan over the open {@code .rete} (see
+     * {@link #scanQuads(byte[], String, String, String)}).
+     */
+    public List<String[]> scanQuads(String subject, String predicate, String object) {
+        checkOpen();
         byte[] sBytes = subject == null ? null : subject.getBytes(StandardCharsets.UTF_8);
         byte[] pBytes = predicate == null ? null : predicate.getBytes(StandardCharsets.UTF_8);
         byte[] oBytes = object == null ? null : object.getBytes(StandardCharsets.UTF_8);
@@ -627,7 +690,7 @@ public final class Rete implements AutoCloseable {
         try {
             long resultPtr =
                     handleScanQuadsFn.apply(
-                            remoteHandle,
+                            handle,
                             sPtr, len(sBytes),
                             pPtr, len(pBytes),
                             oPtr, len(oBytes))[0];
@@ -639,28 +702,70 @@ public final class Rete implements AutoCloseable {
         }
     }
 
-    /** Total bytes fetched over HTTP so far (0 for a local engine). */
-    public long bytesFetched() {
+    // The …Remote spellings, from before a local file could be opened this way.
+    // Kept as aliases: they were never HTTP-specific, only HTTP-named.
+
+    /** Alias of {@link #info()}. */
+    public String infoRemote() {
+        return info();
+    }
+
+    /** Alias of {@link #query(String)}. */
+    public String queryRemote(String sparql) {
+        return query(sparql);
+    }
+
+    /** Alias of {@link #graphs()}. */
+    public List<String> graphsRemote() {
+        return graphs();
+    }
+
+    /** Alias of {@link #scanInGraph(String, String, String, String)}. */
+    public List<String[]> scanInGraphRemote(
+            String graph, String subject, String predicate, String object) {
+        return scanInGraph(graph, subject, predicate, object);
+    }
+
+    /** Alias of {@link #scanQuads(String, String, String)}. */
+    public List<String[]> scanQuadsRemote(String subject, String predicate, String object) {
+        return scanQuads(subject, predicate, object);
+    }
+
+    /**
+     * Bytes read from the backing file so far — over HTTP for
+     * {@link #openRemote}, from disk for {@link #openFile}. Zero for an engine
+     * created by {@link #load()}, which has no backing file.
+     */
+    public long bytesRead() {
         return fetcher.bytesFetched();
     }
 
-    private void checkRemote() {
-        if (remoteHandle < 0) {
-            throw new IllegalStateException("not a remote engine — use Rete.openRemote(uri)");
+    /** Alias of {@link #bytesRead()}. */
+    public long bytesFetched() {
+        return bytesRead();
+    }
+
+    private void checkOpen() {
+        if (handle < 0) {
+            throw new IllegalStateException(
+                    "no .rete is open on this engine — use Rete.openFile(path) or"
+                            + " Rete.openRemote(uri)");
         }
     }
 
     /**
-     * Releases the resident remote handle (if any). Chicory instances are plain
-     * heap objects reclaimed by the GC, so a local engine has nothing to release;
-     * {@code close()} still lets callers use try-with-resources uniformly.
+     * Releases the resident handle and the backing file descriptor (if any).
+     * Chicory instances are plain heap objects reclaimed by the GC, so an engine
+     * from {@link #load()} has nothing to release; {@code close()} still lets
+     * callers use try-with-resources uniformly.
      */
     @Override
     public void close() {
-        if (remoteHandle >= 0) {
-            handleCloseFn.apply(remoteHandle);
-            remoteHandle = -1;
+        if (handle >= 0) {
+            handleCloseFn.apply(handle);
+            handle = -1;
         }
+        fetcher.close();
     }
 
     // --- linear-memory plumbing -------------------------------------------
@@ -700,22 +805,105 @@ public final class Rete implements AutoCloseable {
 
     // --- range backend ----------------------------------------------------
 
-    /** Supplies byte ranges of the backing resource to the wasm engine. */
+    /**
+     * Supplies byte ranges of the backing resource to the wasm engine — the one
+     * seam between the engine and where the bytes live. The engine cannot tell
+     * an implementation apart from any other, which is exactly why a local file
+     * needed no new reader on the Rust side: it is the HTTP path with a
+     * different {@link #read} underneath.
+     */
     interface RangeFetcher {
         /** Read exactly {@code len} bytes at {@code offset}. */
         byte[] read(long offset, int len);
 
-        /** Total bytes fetched so far. */
+        /** Total size of the resource, in bytes. */
+        default long length() {
+            return 0L;
+        }
+
+        /** Total bytes read so far. */
         default long bytesFetched() {
             return 0L;
         }
 
-        /** A local engine never fetches ranges; a call here is a bug. */
-        RangeFetcher LOCAL_STUB =
+        /** Release any OS resource held (a socket, a file descriptor). */
+        default void close() {
+            // nothing by default
+        }
+
+        /** An engine with no file open never reads ranges; a call here is a bug. */
+        RangeFetcher NO_SOURCE =
                 (offset, len) -> {
                     throw new IllegalStateException(
-                            "range read attempted on a local Rete (use Rete.openRemote)");
+                            "range read attempted on an engine with no .rete open"
+                                    + " (use Rete.openFile or Rete.openRemote)");
                 };
+    }
+
+    /**
+     * The local transport: one positional {@link FileChannel} read per range.
+     *
+     * <p>Batched like the HTTP one (the engine coalesces and block-aligns ranges
+     * before they get here), but with no round trip to pay for — the only real
+     * cost is the copy of what was asked for. {@code FileChannel.read(ByteBuffer,
+     * long)} is positional, so it neither moves nor shares a file position and is
+     * safe if the engine is ever driven from more than one thread.
+     */
+    private static final class FileRangeFetcher implements RangeFetcher {
+        private final Path path;
+        private final FileChannel channel;
+        private final long total;
+        private final AtomicLong read = new AtomicLong();
+
+        FileRangeFetcher(Path path) {
+            this.path = path;
+            try {
+                this.channel = FileChannel.open(path, StandardOpenOption.READ);
+                this.total = channel.size();
+            } catch (IOException e) {
+                throw new ReteException("cannot open " + path + ": " + e);
+            }
+        }
+
+        @Override
+        public long length() {
+            return total;
+        }
+
+        @Override
+        public long bytesFetched() {
+            return read.get();
+        }
+
+        @Override
+        public byte[] read(long offset, int len) {
+            ByteBuffer buf = ByteBuffer.allocate(len);
+            long pos = offset;
+            try {
+                while (buf.hasRemaining()) {
+                    int n = channel.read(buf, pos);
+                    if (n < 0) {
+                        throw new ReteException(
+                                "short read at offset " + offset + " of " + path + ": wanted "
+                                        + len + ", got " + buf.position());
+                    }
+                    pos += n;
+                }
+            } catch (IOException e) {
+                throw new ReteException("range read failed on " + path + ": " + e);
+            }
+            read.addAndGet(len);
+            return buf.array();
+        }
+
+        @Override
+        public void close() {
+            try {
+                channel.close();
+            } catch (IOException e) {
+                throw new UncheckedIOException("closing " + path, e);
+            }
+        }
     }
 
     /** An HTTP {@code Range}-request fetcher; also counts the bytes it fetches. */
@@ -731,7 +919,8 @@ public final class Rete implements AutoCloseable {
             this.total = probeLength();
         }
 
-        long totalLength() {
+        @Override
+        public long length() {
             return total;
         }
 

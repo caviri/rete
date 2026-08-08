@@ -118,17 +118,23 @@ pub extern "C" fn rete_version() -> *mut u8 {
     pack(STATUS_OK, env!("CARGO_PKG_VERSION").as_bytes())
 }
 
-// --- remote (lazy, range-read) support --------------------------------------
+// --- ranged (lazy) support ---------------------------------------------------
 //
-// A remote `.rete` is queried without loading the whole file: the engine's
-// range reads are satisfied by a single host import the runtime supplies. Unlike
-// the browser (which needs Asyncify to fetch), a JVM host function is
-// synchronous — it can do a blocking HTTP Range GET and return — so the sync
-// engine "just works" over it.
+// A `.rete` is queried **without loading the whole file**: the engine's range
+// reads are satisfied by a single host import the runtime supplies, so the file
+// image never enters wasm32 linear memory. Unlike the browser (which needs
+// Asyncify to fetch), a JVM host function is synchronous — it can do a blocking
+// HTTP Range GET *or* a blocking `FileChannel.read` and return — so the sync
+// engine "just works" over either.
+//
+// Nothing below knows or cares where the bytes come from: `rete_host_read_range`
+// is the whole seam, and the host decides whether it is HTTP or a local file.
+// That is why the local-file path needed no new reader here — exactly as the
+// browser's local path is `XhrRangeReader` with a `Blob` under it (PR #200).
 
 #[link(wasm_import_module = "env")]
 extern "C" {
-    /// The host reads `len` bytes at `offset` of the remote resource and writes
+    /// The host reads `len` bytes at `offset` of the backing resource and writes
     /// them to `dest`, returning the number of bytes written (`len` on success;
     /// anything else is treated as a failed read).
     fn rete_host_read_range(offset: u64, len: u32, dest: *mut u8) -> u32;
@@ -179,9 +185,10 @@ fn auto_block(len: u64) -> u64 {
     mult * DEFAULT_BLOCK
 }
 
-/// Open a remote `.rete` of total size `file_len` lazily: a block-caching reader
-/// over the host range backend, faulting only the ranges a query touches.
-fn open_remote(file_len: u64) -> Result<Rete, String> {
+/// Open a `.rete` of total size `file_len` lazily over the host range backend:
+/// a block-caching reader that faults in only the ranges a query touches. The
+/// backend may be HTTP or a local file — this code cannot tell.
+fn open_ranged(file_len: u64) -> Result<Rete, String> {
     let cached = std::sync::Arc::new(BlockCacheReader::new(
         HostRangeReader { total: file_len },
         auto_block(file_len),
@@ -189,7 +196,7 @@ fn open_remote(file_len: u64) -> Result<Rete, String> {
     Rete::open_ranged_lazy(cached).map_err(|e| e.to_string())
 }
 
-/// Turn a partial lazy fetch into an error: a remote op must never return a
+/// Turn a partial lazy fetch into an error: a ranged op must never return a
 /// result computed over silently incomplete data.
 fn guard_complete(rete: &Rete) -> Result<(), String> {
     if rete.index_incomplete() {
@@ -474,12 +481,12 @@ pub unsafe extern "C" fn rete_query(
     }
 }
 
-// --- resident remote handles ------------------------------------------------
+// --- resident ranged handles -------------------------------------------------
 //
-// A remote `.rete` is opened once (`rete_remote_open`) into a resident handle
-// whose block cache stays warm across calls, then queried by id. This is what a
+// A `.rete` is opened once (`rete_ranged_open`) into a resident handle whose
+// block cache stays warm across calls, then queried by id. This is what a
 // consumer that issues many scans — an RDF4J `Sail` evaluating a SPARQL query —
-// needs: re-opening per scan would re-fetch the header/dictionary every time.
+// needs: re-opening per scan would re-read the header/dictionary every time.
 // The engine is single-threaded, so a thread-local registry is sufficient.
 
 thread_local! {
@@ -488,12 +495,16 @@ thread_local! {
     static NEXT_HANDLE: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
 }
 
-/// Open a remote `.rete` of total size `file_len` into a resident handle. The
-/// success payload is the 4-byte LE handle id; close it with
-/// [`rete_handle_close`]. Range reads route through [`rete_host_read_range`].
+/// Open a `.rete` of total size `file_len` into a resident handle, reading it
+/// lazily through [`rete_host_read_range`]. The success payload is the 4-byte LE
+/// handle id; close it with [`rete_handle_close`].
+///
+/// **Source-agnostic**: the host decides what backs the ranges (an HTTP `Range`
+/// GET, a `FileChannel`, a memory-mapped buffer, …). Nothing in this module
+/// distinguishes them.
 #[no_mangle]
-pub extern "C" fn rete_remote_open(file_len: u64) -> *mut u8 {
-    match open_remote(file_len) {
+pub extern "C" fn rete_ranged_open(file_len: u64) -> *mut u8 {
+    match open_ranged(file_len) {
         Ok(rete) => {
             let id = NEXT_HANDLE.with(|n| {
                 let id = n.get();
@@ -507,7 +518,14 @@ pub extern "C" fn rete_remote_open(file_len: u64) -> *mut u8 {
     }
 }
 
-/// Drop a resident remote handle (idempotent).
+/// Former name of [`rete_ranged_open`], kept so a host built against the old
+/// ABI still links. Identical behaviour.
+#[no_mangle]
+pub extern "C" fn rete_remote_open(file_len: u64) -> *mut u8 {
+    rete_ranged_open(file_len)
+}
+
+/// Drop a resident ranged handle (idempotent).
 #[no_mangle]
 pub extern "C" fn rete_handle_close(id: u32) -> *mut u8 {
     HANDLES.with(|h| h.borrow_mut().remove(&id));
@@ -518,11 +536,11 @@ pub extern "C" fn rete_handle_close(id: u32) -> *mut u8 {
 fn with_handle<F: FnOnce(&Rete) -> *mut u8>(id: u32, f: F) -> *mut u8 {
     HANDLES.with(|h| match h.borrow().get(&id) {
         Some(rete) => f(rete),
-        None => pack(STATUS_ERR, b"invalid or closed remote handle"),
+        None => pack(STATUS_ERR, b"invalid or closed ranged handle"),
     })
 }
 
-/// Header summary of a remote handle (see [`rete_info`]).
+/// Header summary of a ranged handle (see [`rete_info`]).
 #[no_mangle]
 pub extern "C" fn rete_handle_info(id: u32) -> *mut u8 {
     with_handle(id, |rete| {
@@ -538,7 +556,7 @@ pub extern "C" fn rete_handle_info(id: u32) -> *mut u8 {
     })
 }
 
-/// SPARQL over a remote handle (see [`rete_query`]); refuses incomplete results.
+/// SPARQL over a ranged handle (see [`rete_query`]); refuses incomplete results.
 ///
 /// # Safety
 /// The query pointer/length must describe readable module memory.
@@ -557,7 +575,7 @@ pub unsafe extern "C" fn rete_handle_query(id: u32, q_ptr: *const u8, q_len: u32
     })
 }
 
-/// Named graphs of a remote handle (see [`rete_graphs`]).
+/// Named graphs of a ranged handle (see [`rete_graphs`]).
 #[no_mangle]
 pub extern "C" fn rete_handle_graphs(id: u32) -> *mut u8 {
     with_handle(id, |rete| {
@@ -572,7 +590,7 @@ pub extern "C" fn rete_handle_graphs(id: u32) -> *mut u8 {
     })
 }
 
-/// Graph-scoped triple-pattern scan over a remote handle (see
+/// Graph-scoped triple-pattern scan over a ranged handle (see
 /// [`rete_scan_in_graph`]). Refuses incomplete results.
 ///
 /// # Safety
@@ -615,7 +633,7 @@ pub unsafe extern "C" fn rete_handle_scan_in_graph(
     })
 }
 
-/// All-graphs quad scan over a remote handle (see [`rete_scan_quads`]). Refuses
+/// All-graphs quad scan over a ranged handle (see [`rete_scan_quads`]). Refuses
 /// incomplete results.
 ///
 /// # Safety

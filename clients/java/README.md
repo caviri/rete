@@ -28,10 +28,11 @@ Two Maven modules (Reactor under this directory):
 | `rete-client` | `io.github.caviri:rete-client` | the lightweight engine wrapper (Chicory only)      |
 | `rete-rdf4j`  | `io.github.caviri:rete-rdf4j`  | a read-only [RDF4J](https://rdf4j.org/) `Sail`/`Repository` over a `.rete` |
 
-Both work over an **in-memory** image or a **remote** `.rete` read lazily over
-HTTP (only the byte ranges a query touches are fetched — the file is never fully
-downloaded). Named graphs are exposed as RDF4J contexts. The binding is
-read-only.
+Both read a `.rete` from three sources: an **in-memory** image, a **file on
+disk**, or a **URL**. The last two are read *lazily* — only the byte ranges a
+query touches are ever read, so file size stops being a limit (see [Lazy
+(range-read) querying](#lazy-range-read-querying-any-size)). Named graphs are
+exposed as RDF4J contexts. The binding is read-only.
 
 ## `rete-client` usage
 
@@ -70,24 +71,57 @@ A `Rete` instance owns a single wasm linear memory and is **not** thread-safe �
 use one per thread (loading is cheap after the first, see
 [Execution mode](#execution-mode-compiled-by-default)) or guard calls with a lock.
 
-### Remote (lazy) querying
+### Lazy (range-read) querying: any size
 
-Query a `.rete` hosted over HTTP without downloading it — the engine issues
-`Range` requests for only the bytes each query needs (the host fetch is done by
-a synchronous Java `HttpClient` call, so no Asyncify is involved):
+The `byte[]` entry points above copy the whole image into **wasm32 linear
+memory on every call**. That is a hard ceiling at roughly 700 MB and the JVM
+heap has nothing to do with it — the wasm address space is what runs out, so
+`-Xmx` does not move it. Open the file *by range* instead and the image never
+enters linear memory at all:
 
 ```java
+import java.nio.file.Path;
 import java.net.URI;
 
+// From disk — a FileChannel serves the ranges.
+try (Rete rete = Rete.openFile(Path.of("/data/cordis.rete"))) {
+    String json = rete.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10");
+    System.out.println(rete.bytesRead() + " bytes read (≪ file size)");
+}
+
+// Over HTTP — Range requests serve the ranges. Same reader, same methods.
 try (Rete rete = Rete.openRemote(URI.create("https://data.example.org/dataset.rete"))) {
-    String json = rete.queryRemote("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10");
-    System.out.println(rete.bytesFetched() + " bytes fetched (≪ file size)");
+    String json = rete.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10");
 }
 ```
 
-The resource must support HTTP range requests (206 / `Content-Range`). The
-open cost (header + dictionary) is paid once into a resident handle whose block
-cache stays warm across queries.
+`info()`, `query(String)`, `graphs()`, `scanInGraph(g,s,p,o)` and
+`scanQuads(s,p,o)` work on either. (`infoRemote()`, `queryRemote(String)`, …
+are kept as aliases; they were never HTTP-specific, only HTTP-named.) A remote
+resource must support HTTP range requests (206 / `Content-Range`); a file needs
+nothing but read permission. Either way the open cost is paid once into a
+resident handle whose block cache stays warm across queries — `close()` releases
+it, and the file descriptor with it.
+
+Measured in this repo's Java image (`--memory=12g`, `-Xmx8g`, one fresh JVM per
+figure, peak RSS from the kernel's `VmHWM`, compiled engine):
+
+| file | op | whole-image `byte[]` | `openFile(Path)` | |
+| --- | --- | --- | --- | --- |
+| `mirbase.rete` 39.2 MiB | `info()` | 14.3 s · 738 MB · 100% read | **1.3 s · 557 MB · 6.4% read** | 10.7× faster |
+| | `query()` `LIMIT 100` | 14.4 s · 708 MB · 100% | **1.7 s · 544 MB · 8.9%** | 8.6× faster |
+| `davidrumsey.rete` 71.3 MiB | `info()` | 30.4 s · 1004 MB · 100% | **1.4 s · 556 MB · 3.9%** | 22× faster |
+| | `query()` `LIMIT 100` | 30.2 s · 935 MB · 100% | **1.7 s · 569 MB · 7.7%** | 17.7× faster |
+| `cordis.rete` 763.9 MiB | `info()` | **fails** after 79.6 s · 4212 MB | **1.7 s · 582 MB · 6.0%** | — |
+| | `query()` `LIMIT 100` | **fails** after 78.9 s · 4990 MB | **1.6 s · 587 MB · 5.6%** | — |
+
+"fails" is `ReteException: decompression failed: out of memory`, raised inside
+wasm with 8 GiB of JVM heap untouched.
+
+About 545 MB of every figure in the right-hand column is the floor: a JVM plus
+the one-off Chicory compile of the engine (see
+[Execution mode](#execution-mode-compiled-by-default)). The graph itself costs
+tens of megabytes, not gigabytes.
 
 ### Execution mode: compiled by default
 
@@ -297,17 +331,24 @@ the wasm module (`ffi/src/lib.rs`):
 
 The host reads `status`/`len`/`payload`, then frees every buffer it was handed.
 
-### Remote (the one import)
+### Ranged reads (the one import)
 
 The module imports a single function the runtime supplies:
 
 - `env.rete_host_read_range(offset: i64, len: i32, dest: i32) -> i32` — the host
   writes `len` bytes at `offset` of the resource into linear memory at `dest`
-  and returns the count. The Java side does an HTTP `Range` GET; because the
-  call is synchronous, the engine's sync range reads work without Asyncify.
+  and returns the count. Because the call is synchronous, the engine's sync
+  range reads work without Asyncify.
 
-Remote querying uses a resident handle: `rete_remote_open(file_len) -> id`, then
+**That import is the whole seam, and it is source-agnostic**: the Java side
+satisfies it with an HTTP `Range` GET (`openRemote`) or a positional
+`FileChannel.read` (`openFile`), and nothing in the wasm module can tell the
+difference. This is the same shape the browser client uses — one
+`XhrRangeReader` whose bottom transport is either `fetch` or `Blob.slice()`.
+
+Ranged querying uses a resident handle: `rete_ranged_open(file_len) -> id`, then
 `rete_handle_query(id, query)` / `rete_handle_scan_quads(id, …)` /
 `rete_handle_scan_in_graph(id, …, g)` / `rete_handle_graphs(id)` /
 `rete_handle_info(id)`, and `rete_handle_close(id)`. Opening once keeps the
-block cache warm across a query's many scans.
+block cache warm across a query's many scans. (`rete_remote_open` remains as an
+alias of `rete_ranged_open`, for a host built against the older ABI.)

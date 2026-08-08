@@ -7,6 +7,37 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The Java client opens a `.rete` from disk lazily — the size ceiling is
+  gone.** `Rete.openFile(Path)`, `ReteEngine.openFile(Path)` and
+  `new ReteSail(Path)` read a local file by *range*, exactly as the existing
+  HTTP path does. The `byte[]` entry points copy the whole image into wasm32
+  linear memory on every call, so they died at roughly 700 MB with
+  `decompression failed: out of memory` — inside wasm, with the JVM heap
+  untouched, which is why no amount of `-Xmx` ever helped. Measured
+  (`--memory=12g`, `-Xmx8g`, compiled engine, peak RSS from the kernel's
+  `VmHWM`, one fresh JVM per figure):
+
+  | file | `byte[]` | `openFile` |
+  | --- | --- | --- |
+  | `mirbase.rete` 39.2 MiB, `info()` | 14.3 s · 738 MB · 100% read | **1.3 s · 557 MB · 6.4%** |
+  | `davidrumsey.rete` 71.3 MiB, `info()` | 30.4 s · 1004 MB · 100% | **1.4 s · 556 MB · 3.9%** |
+  | `cordis.rete` 763.9 MiB, `info()` | **OOM** after 79.6 s · 4212 MB | **1.7 s · 582 MB · 6.0%** |
+  | `hugging-face-full.rete` 2.52 GiB, `info()` | **OOM** in 4.7 ms (`byte[]` limit) | **2.7 s · 1058 MB · 4.5%** |
+
+  Through the RDF4J Sail, `datacite.rete` — **48.6 GiB, 9.83 billion quads**,
+  over HTTP — answers a bounded query from a JVM in 24 s reading 154 MB
+  (0.3‰ of the file). No new reader was written for any of this: the wasm
+  module's one host import, `rete_host_read_range`, was always
+  source-agnostic, so the local path is the remote path with a `FileChannel`
+  under it instead of a socket. (Mirrors PR #200, which gave the browser the
+  same thing with a `Blob` under it.)
+  - Handle operations lost their HTTP-specific names: `info()`,
+    `query(String)`, `graphs()`, `scanInGraph(g,s,p,o)`, `scanQuads(s,p,o)`,
+    `bytesRead()`. The `…Remote` spellings and `bytesFetched()` remain as
+    aliases, and every `byte[]` entry point is untouched — the change is
+    purely additive.
+  - `rete_remote_open` in the wasm ABI is now `rete_ranged_open`, with the old
+    name kept as an alias.
 - **`rete build` reads gzipped inputs, and the memory-bounded external build
   accepts Turtle and TriG.** The dumps that actually need
   `--memory-budget-mb` do not ship as plain N-Triples — they ship as
