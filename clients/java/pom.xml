@@ -82,6 +82,14 @@
         <artifactId>wasm</artifactId>
         <version>${chicory.version}</version>
       </dependency>
+      <!-- Chicory's wasm→JVM-bytecode compiler (Apache-2.0; pulls ASM,
+           BSD-3-Clause). Without it the engine runs on Chicory's interpreter,
+           which is several times slower — see Rete.INTERPRETER_PROPERTY. -->
+      <dependency>
+        <groupId>com.dylibso.chicory</groupId>
+        <artifactId>compiler</artifactId>
+        <version>${chicory.version}</version>
+      </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>

@@ -1,9 +1,12 @@
 package io.github.caviri.rete;
 
+import com.dylibso.chicory.compiler.InterpreterFallback;
+import com.dylibso.chicory.compiler.MachineFactoryCompiler;
 import com.dylibso.chicory.runtime.ExportFunction;
 import com.dylibso.chicory.runtime.HostFunction;
 import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
+import com.dylibso.chicory.runtime.Machine;
 import com.dylibso.chicory.runtime.Memory;
 import com.dylibso.chicory.runtime.WasmFunctionHandle;
 import com.dylibso.chicory.wasm.Parser;
@@ -14,6 +17,7 @@ import com.dylibso.chicory.wasm.types.ValType;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.lang.System.Logger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -22,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 /**
  * A pure-Java client for the <a href="https://caviri.github.io/rete/">rete</a>
@@ -60,15 +65,48 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p><b>Thread-safety:</b> a {@code Rete} instance owns a single wasm linear
  * memory and is <em>not</em> thread-safe. Use one instance per thread (loading
- * is cheap), or guard calls with your own lock.
+ * is cheap after the first one — see below), or guard calls with your own lock.
+ *
+ * <p><b>Execution mode.</b> By default the engine is <em>compiled</em>: Chicory
+ * translates the wasm module to JVM bytecode once per JVM, and the HotSpot JIT
+ * takes it from there. That costs a one-off compile at the first {@link #load()}
+ * / {@link #openRemote(URI)} (roughly a second, paid once and shared by every
+ * later instance) and makes query work several times faster than Chicory's
+ * interpreter. Set the system property {@code rete.chicory.interpreter=true} to
+ * force the interpreter instead — appropriate for a very short-lived process
+ * that does one tiny query, or for a runtime that forbids defining classes at
+ * execution time (GraalVM {@code native-image}, Android). If the compiler is
+ * absent or refuses to run, the client logs a warning and falls back to the
+ * interpreter by itself; it never fails to load because of it.
  */
 public final class Rete implements AutoCloseable {
 
     /** Classpath location of the bundled wasm engine (placed there at build time). */
     private static final String WASM_RESOURCE = "/io/github/caviri/rete/rete_ffi.wasm";
 
+    /** Set to {@code true} to run the engine on Chicory's interpreter. */
+    public static final String INTERPRETER_PROPERTY = "rete.chicory.interpreter";
+
     /** Result-buffer status codes, matching {@code ffi/src/lib.rs}. */
     private static final int STATUS_OK = 0;
+
+    private static final Logger LOG = System.getLogger(Rete.class.getName());
+
+    /**
+     * The parsed engine module. Immutable and reusable: {@code Instance.Builder}
+     * copies every mutable section out of it, so one parse serves every instance
+     * (an RDF4J {@code Sail} opens one per connection).
+     */
+    private static WasmModule cachedModule;
+
+    /**
+     * The compiled machine factory for {@link #cachedModule}, or {@code null}
+     * when running interpreted. {@code null} is a valid resolved value, hence
+     * the separate {@link #machineFactoryResolved} flag.
+     */
+    private static Function<Instance, Machine> cachedMachineFactory;
+
+    private static boolean machineFactoryResolved;
 
     private final Instance instance;
     private final Memory memory;
@@ -119,7 +157,9 @@ public final class Rete implements AutoCloseable {
 
     /**
      * Load the engine for querying <b>in-memory</b> {@code .rete} images. Cheap
-     * enough to call per thread.
+     * enough to call per thread: the module is parsed and compiled once per JVM
+     * and every later instance reuses that work — only the first call in a JVM
+     * pays it.
      *
      * @throws IllegalStateException if the bundled wasm is missing (the JAR was
      *     built without the engine — see the build instructions in the README)
@@ -146,41 +186,98 @@ public final class Rete implements AutoCloseable {
         return rete;
     }
 
-    /** Parse + instantiate the bundled wasm, supplying the host range-read import. */
+    /** Instantiate the bundled wasm, supplying the host range-read import. */
     private static Rete instantiate(RangeFetcher fetcher) {
-        try (InputStream in = Rete.class.getResourceAsStream(WASM_RESOURCE)) {
-            if (in == null) {
-                throw new IllegalStateException(
-                        "bundled rete wasm not found on classpath at " + WASM_RESOURCE
-                                + " — build the wasm engine first (see clients/java/README.md)");
+        WasmModule module = module();
+        // The host side of env.rete_host_read_range(offset:i64, len:i32, dest:i32) -> i32:
+        // fetch the range and copy it into the module's linear memory at `dest`.
+        WasmFunctionHandle readRange =
+                (Instance inst, long... args) -> {
+                    long offset = args[0];
+                    int len = (int) args[1];
+                    int dest = (int) args[2];
+                    byte[] bytes = fetcher.read(offset, len);
+                    inst.memory().write(dest, bytes);
+                    return new long[] {bytes.length};
+                };
+        HostFunction hostRead =
+                new HostFunction(
+                        "env",
+                        "rete_host_read_range",
+                        FunctionType.of(
+                                List.of(ValType.I64, ValType.I32, ValType.I32),
+                                List.of(ValType.I32)),
+                        readRange);
+        Instance.Builder builder =
+                Instance.builder(module)
+                        .withImportValues(ImportValues.builder().addFunction(hostRead).build());
+        Function<Instance, Machine> machineFactory = machineFactory(module);
+        if (machineFactory != null) {
+            builder = builder.withMachineFactory(machineFactory);
+        }
+        return new Rete(builder.build(), fetcher);
+    }
+
+    /** Parse the bundled engine once per JVM; every instance reuses the module. */
+    private static synchronized WasmModule module() {
+        if (cachedModule == null) {
+            try (InputStream in = Rete.class.getResourceAsStream(WASM_RESOURCE)) {
+                if (in == null) {
+                    throw new IllegalStateException(
+                            "bundled rete wasm not found on classpath at " + WASM_RESOURCE
+                                    + " — build the wasm engine first (see clients/java/README.md)");
+                }
+                cachedModule = Parser.parse(in);
+            } catch (IOException e) {
+                throw new UncheckedIOException("failed to read bundled rete wasm", e);
             }
-            WasmModule module = Parser.parse(in);
-            // The host side of env.rete_host_read_range(offset:i64, len:i32, dest:i32) -> i32:
-            // fetch the range and copy it into the module's linear memory at `dest`.
-            WasmFunctionHandle readRange =
-                    (Instance inst, long... args) -> {
-                        long offset = args[0];
-                        int len = (int) args[1];
-                        int dest = (int) args[2];
-                        byte[] bytes = fetcher.read(offset, len);
-                        inst.memory().write(dest, bytes);
-                        return new long[] {bytes.length};
-                    };
-            HostFunction hostRead =
-                    new HostFunction(
-                            "env",
-                            "rete_host_read_range",
-                            FunctionType.of(
-                                    List.of(ValType.I64, ValType.I32, ValType.I32),
-                                    List.of(ValType.I32)),
-                            readRange);
-            Instance instance =
-                    Instance.builder(module)
-                            .withImportValues(ImportValues.builder().addFunction(hostRead).build())
-                            .build();
-            return new Rete(instance, fetcher);
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to read bundled rete wasm", e);
+        }
+        return cachedModule;
+    }
+
+    /**
+     * The single place the execution mode is chosen. Compiles the module to JVM
+     * bytecode once per JVM (the expensive part; the resulting factory is cheap
+     * to apply per instance), or returns {@code null} to run interpreted.
+     */
+    private static synchronized Function<Instance, Machine> machineFactory(WasmModule module) {
+        if (!machineFactoryResolved) {
+            machineFactoryResolved = true;
+            cachedMachineFactory = compile(module);
+        }
+        return cachedMachineFactory;
+    }
+
+    /**
+     * Whether the engine is running compiled. Only meaningful once an instance
+     * has been created (that is when the mode is resolved). Package-private:
+     * the mode is an implementation detail, exposed for the tests that assert
+     * both paths are actually exercised.
+     */
+    static synchronized boolean compiled() {
+        return machineFactoryResolved && cachedMachineFactory != null;
+    }
+
+    private static Function<Instance, Machine> compile(WasmModule module) {
+        if (Boolean.getBoolean(INTERPRETER_PROPERTY)) {
+            return null;
+        }
+        try {
+            return MachineFactoryCompiler.builder(module)
+                    // A wasm feature this compiler cannot emit degrades that one
+                    // function to the interpreter instead of failing the load.
+                    .withInterpreterFallback(InterpreterFallback.WARN)
+                    .compile();
+        } catch (LinkageError | RuntimeException e) {
+            // The compiler was excluded from the classpath, or the runtime
+            // forbids defining classes (GraalVM native-image, Android). The
+            // interpreter still answers every query, just slower.
+            LOG.log(
+                    Logger.Level.WARNING,
+                    "rete: falling back to the Chicory interpreter (queries will be several times"
+                            + " slower); set -D" + INTERPRETER_PROPERTY + "=true to silence this",
+                    e);
+            return null;
         }
     }
 
