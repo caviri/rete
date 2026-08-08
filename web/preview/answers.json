@@ -29130,110 +29130,926 @@
    "index": 0,
    "view": "table",
    "ok": true,
-   "qmeta": "1 row(s) | 270 range req · 138.5 MB of 6186.3 MB fetched · 154.3 MB cached this session · 54632 ms",
-   "count": 1,
+   "qmeta": "39 row(s) | 100 range req · 82.0 MB of 6.04 GB fetched (incl. opening the file) · 70.3 MB cached this session · 28867 ms",
+   "count": 39,
    "unit": "row",
    "columns": [
     {
-     "label": "Star events recorded",
-     "var": "stars"
+     "label": "Who starred it",
+     "var": "user"
+    },
+    {
+     "label": "When (UTC)",
+     "var": "t"
     }
    ],
    "rows": [
     [
      {
-      "text": "0",
+      "text": "https://github.com/jayanthuppara1",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T01:27:34Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://github.com/Hash-2003",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T18:58:05Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://github.com/llyriell",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T19:08:29Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://github.com/cynthiaWangcc",
+      "media": false
+     },
+     {
+      "text": "2026-06-03T02:06:44Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://github.com/GradyLiugy",
+      "media": false
+     },
+     {
+      "text": "2026-06-03T06:18:20Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://github.com/Yalye",
+      "media": false
+     },
+     {
+      "text": "2026-06-04T03:09:05Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://github.com/txm073",
+      "media": false
+     },
+     {
+      "text": "2026-06-04T23:02:52Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://github.com/JiangZhikuan",
+      "media": false
+     },
+     {
+      "text": "2026-06-05T02:38:51Z",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 54674
+   "elapsedMs": 28890
   },
   "gharchive-2026-06:1": {
    "id": "gharchive-2026-06:1",
    "dataset": "gharchive-2026-06",
    "index": 1,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) | 1 range req · 512.0 KB of 6186.3 MB fetched · 156.3 MB cached this session · 1611 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "61 row(s) | 56 range req · 33.5 MB of 6.04 GB fetched · 103.8 MB cached this session · 22294 ms",
+   "count": 61,
    "unit": "row",
-   "columns": [],
-   "rows": [],
+   "columns": [
+    {
+     "label": "Event type",
+     "var": "type"
+    },
+    {
+     "label": "Repository",
+     "var": "repo"
+    },
+    {
+     "label": "When (UTC)",
+     "var": "t"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/GuitarPedal",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T04:02:29Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/GuitarPedal",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T04:32:33Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/GuitarPedal",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T19:55:50Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/GuitarPedal",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T20:29:11Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/GuitarPedal",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T21:42:50Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/GuitarPedal",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T22:04:14Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/GuitarPedal",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T22:11:46Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/GuitarPedal",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T22:25:33Z",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
    "error": "",
-   "elapsedMs": 1638
+   "elapsedMs": 22305
   },
   "gharchive-2026-06:2": {
    "id": "gharchive-2026-06:2",
    "dataset": "gharchive-2026-06",
    "index": 2,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) | 2 range req · 1.0 MB of 6186.3 MB fetched · 159.8 MB cached this session · 2000 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "100 row(s) | 146 range req · 76.0 MB of 6.04 GB fetched · 179.8 MB cached this session · 21752 ms",
+   "count": 100,
    "unit": "row",
-   "columns": [],
-   "rows": [],
+   "columns": [
+    {
+     "label": "Branch pushed",
+     "var": "ref"
+    },
+    {
+     "label": "When (UTC)",
+     "var": "t"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "refs/heads/dev",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T04:37:41Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "refs/heads/dev",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T06:05:28Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "refs/heads/dev",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T06:18:15Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "refs/heads/epenet/20260601-0648",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T06:44:01Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "refs/heads/dev",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T06:53:03Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "refs/heads/dev",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T06:54:16Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "refs/heads/dev",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T06:56:25Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "refs/heads/epenet/20260601-0648",
+      "media": false
+     },
+     {
+      "text": "2026-06-01T06:58:17Z",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
    "error": "",
-   "elapsedMs": 2029
+   "elapsedMs": 21765
   },
   "gharchive-2026-06:3": {
    "id": "gharchive-2026-06:3",
    "dataset": "gharchive-2026-06",
    "index": 3,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) | 0 range req · 0 B of 6186.3 MB fetched — served from cache, 0 new bytes · 183 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "100 row(s) | 315 range req · 331.0 MB of 6.04 GB fetched · 510.8 MB cached this session · 59705 ms",
+   "count": 100,
    "unit": "row",
-   "columns": [],
-   "rows": [],
+   "columns": [
+    {
+     "label": "Issue",
+     "var": "title"
+    },
+    {
+     "label": "Action",
+     "var": "action"
+    },
+    {
+     "label": "When (UTC)",
+     "var": "t"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "Add input visibility hide support to HomeKit TV-class media_players",
+      "media": false
+     },
+     {
+      "text": "created",
+      "media": false
+     },
+     {
+      "text": "2026-06-30T23:13:05Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Fix ESPHome UTF-8 unique id collisions",
+      "media": false
+     },
+     {
+      "text": "created",
+      "media": false
+     },
+     {
+      "text": "2026-06-30T18:40:30Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Matter Device response time slowdown",
+      "media": false
+     },
+     {
+      "text": "created",
+      "media": false
+     },
+     {
+      "text": "2026-06-30T18:13:05Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Zigbee H&T sensors reporting 2 decimals precision after HA update",
+      "media": false
+     },
+     {
+      "text": "labeled",
+      "media": false
+     },
+     {
+      "text": "2026-06-30T07:27:32Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Blinds connected, but no opening/closing/status",
+      "media": false
+     },
+     {
+      "text": "created",
+      "media": false
+     },
+     {
+      "text": "2026-06-30T01:36:21Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Switcher Touch integration fails when enabling device entity",
+      "media": false
+     },
+     {
+      "text": "labeled",
+      "media": false
+     },
+     {
+      "text": "2026-06-29T19:36:43Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "LG WebOS TV - need help with logs",
+      "media": false
+     },
+     {
+      "text": "unlabeled",
+      "media": false
+     },
+     {
+      "text": "2026-06-29T19:11:49Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Docker container under gvisor is not starting, sometimes SIGSEV",
+      "media": false
+     },
+     {
+      "text": "created",
+      "media": false
+     },
+     {
+      "text": "2026-06-29T07:45:49Z",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
    "error": "",
-   "elapsedMs": 214
+   "elapsedMs": 59727
   },
   "gharchive-2026-06:4": {
    "id": "gharchive-2026-06:4",
    "dataset": "gharchive-2026-06",
    "index": 4,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) | 0 range req · 0 B of 6186.3 MB fetched — served from cache, 0 new bytes · 1564 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "19 row(s) | 60 range req · 39.0 MB of 6.04 GB fetched · 549.8 MB cached this session · 25293 ms",
+   "count": 19,
    "unit": "row",
-   "columns": [],
-   "rows": [],
+   "columns": [
+    {
+     "label": "June day",
+     "var": "day"
+    },
+    {
+     "label": "Events",
+     "var": "events"
+    },
+    {
+     "label": "Pushes",
+     "var": "pushes"
+    },
+    {
+     "label": "Branches +",
+     "var": "branchesCreated"
+    },
+    {
+     "label": "Branches −",
+     "var": "branchesDeleted"
+    },
+    {
+     "label": "PR events",
+     "var": "prEvents"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "9",
+      "media": false
+     },
+     {
+      "text": "5",
+      "media": false
+     },
+     {
+      "text": "2",
+      "media": false
+     },
+     {
+      "text": "2",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "10",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "11",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "12",
+      "media": false
+     },
+     {
+      "text": "9",
+      "media": false
+     },
+     {
+      "text": "7",
+      "media": false
+     },
+     {
+      "text": "2",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "13",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "15",
+      "media": false
+     },
+     {
+      "text": "2",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "16",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     },
+     {
+      "text": "0",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "18",
+      "media": false
+     },
+     {
+      "text": "11",
+      "media": false
+     },
+     {
+      "text": "6",
+      "media": false
+     },
+     {
+      "text": "3",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
    "error": "",
-   "elapsedMs": 1581
+   "elapsedMs": 25333
   },
   "gharchive-2026-06:5": {
    "id": "gharchive-2026-06:5",
    "dataset": "gharchive-2026-06",
    "index": 5,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) | 0 range req · 0 B of 6186.3 MB fetched — served from cache, 0 new bytes · 280 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "133 row(s) | 12 range req · 12.5 MB of 6.04 GB fetched · 562.3 MB cached this session · 15071 ms",
+   "count": 133,
    "unit": "row",
-   "columns": [],
-   "rows": [],
+   "columns": [
+    {
+     "label": "When (UTC)",
+     "var": "t"
+    },
+    {
+     "label": "Event",
+     "var": "type"
+    },
+    {
+     "label": "Ref kind",
+     "var": "refType"
+    },
+    {
+     "label": "Ref",
+     "var": "ref"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "2026-06-09T08:08:55Z",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/gharchive#CreateEvent",
+      "media": false
+     },
+     {
+      "text": "branch",
+      "media": false
+     },
+     {
+      "text": "feat/shacl-progressive-docs",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2026-06-09T09:33:18Z",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "refs/heads/feat/shacl-progressive-docs",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2026-06-09T11:19:23Z",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/gharchive#CreateEvent",
+      "media": false
+     },
+     {
+      "text": "branch",
+      "media": false
+     },
+     {
+      "text": "feat/static-playground-console",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2026-06-09T17:48:02Z",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "refs/heads/main",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2026-06-09T17:49:58Z",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/gharchive#PullRequestEvent",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2026-06-10T05:19:17Z",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "refs/heads/main",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2026-06-10T21:36:39Z",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "refs/heads/perf/output-volume",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2026-06-10T22:32:45Z",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "refs/heads/perf/output-volume",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
    "error": "",
-   "elapsedMs": 298
+   "elapsedMs": 15094
   },
   "gharchive-2026-06:6": {
    "id": "gharchive-2026-06:6",
    "dataset": "gharchive-2026-06",
    "index": 6,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) · federated 2 source(s) · 1.0 MB ranged · 7366 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "25 row(s) · federated 2 source(s) · 238.9 MB ranged · 67563 ms",
+   "count": 25,
    "unit": "row",
    "columns": [],
    "rows": [
@@ -29243,11 +30059,11 @@
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "12 row(s)",
       "media": false
      },
      {
-      "text": "0 B · 0 req",
+      "text": "63.5 MB · 87 req",
       "media": false
      }
     ],
@@ -29257,18 +30073,18 @@
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "13 row(s)",
       "media": false
      },
      {
-      "text": "1.0 MB · 2 req",
+      "text": "175.4 MB · 103 req",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 7389
+   "elapsedMs": 67578
   },
   "gharchive:0": {
    "id": "gharchive:0",
@@ -29310,29 +30126,156 @@
    "dataset": "gharchive",
    "index": 1,
    "view": "table",
-   "ok": false,
-   "qmeta": "",
+   "ok": true,
+   "qmeta": "reached this browser's limit",
    "count": null,
    "unit": "",
    "columns": [],
    "rows": [],
-   "error": "page.waitForFunction: Timeout 300000ms exceeded.",
-   "elapsedMs": 300009
+   "banner": "",
+   "error": "",
+   "elapsedMs": 71180
   },
   "gharchive:2": {
    "id": "gharchive:2",
    "dataset": "gharchive",
    "index": 2,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) | 1 range req · 512.0 KB of 16307.9 MB fetched · 42.4 MB cached this session · 11257 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "65 row(s) | 79 range req · 83.0 MB of 15.93 GB fetched · 122.9 MB cached this session · 91458 ms",
+   "count": 65,
    "unit": "row",
-   "columns": [],
-   "rows": [],
+   "columns": [
+    {
+     "label": "Event type",
+     "var": "type"
+    },
+    {
+     "label": "Repository",
+     "var": "repo"
+    },
+    {
+     "label": "When (UTC)",
+     "var": "t"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/linux",
+      "media": false
+     },
+     {
+      "text": "2025-07-01T00:16:03Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/linux",
+      "media": false
+     },
+     {
+      "text": "2025-07-02T17:05:35Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/linux",
+      "media": false
+     },
+     {
+      "text": "2025-07-03T16:28:16Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/linux",
+      "media": false
+     },
+     {
+      "text": "2025-07-03T22:10:29Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/1590A",
+      "media": false
+     },
+     {
+      "text": "2025-07-04T16:29:09Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/linux",
+      "media": false
+     },
+     {
+      "text": "2025-07-05T20:08:02Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/linux",
+      "media": false
+     },
+     {
+      "text": "2025-07-05T23:16:37Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/gharchive#PushEvent",
+      "media": false
+     },
+     {
+      "text": "https://github.com/torvalds/linux",
+      "media": false
+     },
+     {
+      "text": "2025-07-06T19:01:48Z",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
    "error": "",
-   "elapsedMs": 11288
+   "elapsedMs": 91648
   },
   "gharchive:3": {
    "id": "gharchive:3",
@@ -29340,7 +30283,7 @@
    "index": 3,
    "view": "table",
    "ok": true,
-   "qmeta": "100 row(s) | 21 range req · 11.5 MB of 16307.9 MB fetched · 55.4 MB cached this session · 7385 ms",
+   "qmeta": "100 row(s) | 21 range req · 11.5 MB of 15.93 GB fetched · 135.9 MB cached this session · 14421 ms",
    "count": 100,
    "unit": "row",
    "columns": [
@@ -29437,22 +30380,92 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 7410
+   "elapsedMs": 14445
   },
   "gharchive:4": {
    "id": "gharchive:4",
    "dataset": "gharchive",
    "index": 4,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) | 3 range req · 1.5 MB of 16307.9 MB fetched · 59.4 MB cached this session · 2370 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "6 row(s) | 8 range req · 4.5 MB of 15.93 GB fetched · 142.9 MB cached this session · 19971 ms",
+   "count": 6,
    "unit": "row",
-   "columns": [],
-   "rows": [],
+   "columns": [
+    {
+     "label": "Tag",
+     "var": "tag"
+    },
+    {
+     "label": "Released (UTC)",
+     "var": "t"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "2025.7.0b7",
+      "media": false
+     },
+     {
+      "text": "2025-07-01T20:11:21Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2025.7.0b8",
+      "media": false
+     },
+     {
+      "text": "2025-07-02T06:04:32Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2025.7.0b9",
+      "media": false
+     },
+     {
+      "text": "2025-07-02T13:31:14Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2025.7.1",
+      "media": false
+     },
+     {
+      "text": "2025-07-04T20:02:52Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2025.7.3",
+      "media": false
+     },
+     {
+      "text": "2025-07-22T08:30:59Z",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "2025.8.0b1",
+      "media": false
+     },
+     {
+      "text": "2025-07-31T17:02:16Z",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
    "error": "",
-   "elapsedMs": 2397
+   "elapsedMs": 19996
   },
   "gni-bim:0": {
    "id": "gni-bim:0",
@@ -63003,22 +64016,8 @@
    "dataset": "wikidata-xxl",
    "index": 0,
    "view": "table",
-   "ok": false,
-   "qmeta": "",
-   "count": null,
-   "unit": "",
-   "columns": [],
-   "rows": [],
-   "error": "page.waitForFunction: Timeout 120000ms exceeded.",
-   "elapsedMs": 120007
-  },
-  "wikidata-xxl:1": {
-   "id": "wikidata-xxl:1",
-   "dataset": "wikidata-xxl",
-   "index": 1,
-   "view": "table",
    "ok": true,
-   "qmeta": "240 row(s) · federated 6 source(s) · 239.5 MB ranged · 103533 ms",
+   "qmeta": "240 row(s) · federated 6 source(s) · 459.7 MB ranged · 84009 ms",
    "count": 240,
    "unit": "row",
    "columns": [],
@@ -63033,7 +64032,7 @@
       "media": false
      },
      {
-      "text": "66.5 MB · 123 req",
+      "text": "106.3 MB · 179 req",
       "media": false
      }
     ],
@@ -63047,7 +64046,7 @@
       "media": false
      },
      {
-      "text": "36.0 MB · 67 req",
+      "text": "62.4 MB · 106 req",
       "media": false
      }
     ],
@@ -63061,7 +64060,7 @@
       "media": false
      },
      {
-      "text": "41.5 MB · 76 req",
+      "text": "68.6 MB · 119 req",
       "media": false
      }
     ],
@@ -63075,7 +64074,7 @@
       "media": false
      },
      {
-      "text": "30.5 MB · 59 req",
+      "text": "59.1 MB · 104 req",
       "media": false
      }
     ],
@@ -63089,7 +64088,7 @@
       "media": false
      },
      {
-      "text": "27.0 MB · 52 req",
+      "text": "69.1 MB · 128 req",
       "media": false
      }
     ],
@@ -63103,14 +64102,114 @@
       "media": false
      },
      {
-      "text": "38.0 MB · 71 req",
+      "text": "94.2 MB · 170 req",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 103614
+   "elapsedMs": 84061
+  },
+  "wikidata-xxl:1": {
+   "id": "wikidata-xxl:1",
+   "dataset": "wikidata-xxl",
+   "index": 1,
+   "view": "table",
+   "ok": true,
+   "qmeta": "240 row(s) · federated 6 source(s) · 168.0 MB ranged · 37499 ms",
+   "count": 240,
+   "unit": "row",
+   "columns": [],
+   "rows": [
+    [
+     {
+      "text": "wikidata-xxl · this dataset",
+      "media": false
+     },
+     {
+      "text": "40 row(s)",
+      "media": false
+     },
+     {
+      "text": "40.5 MB · 75 req",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "shard 1",
+      "media": false
+     },
+     {
+      "text": "40 row(s)",
+      "media": false
+     },
+     {
+      "text": "27.0 MB · 50 req",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "shard 2",
+      "media": false
+     },
+     {
+      "text": "40 row(s)",
+      "media": false
+     },
+     {
+      "text": "28.0 MB · 54 req",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "shard 3",
+      "media": false
+     },
+     {
+      "text": "40 row(s)",
+      "media": false
+     },
+     {
+      "text": "24.5 MB · 47 req",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "shard 4",
+      "media": false
+     },
+     {
+      "text": "40 row(s)",
+      "media": false
+     },
+     {
+      "text": "23.5 MB · 46 req",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "shard 5",
+      "media": false
+     },
+     {
+      "text": "40 row(s)",
+      "media": false
+     },
+     {
+      "text": "24.5 MB · 48 req",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 37568
   },
   "wikidata-xxl:2": {
    "id": "wikidata-xxl:2",
@@ -63118,8 +64217,8 @@
    "index": 2,
    "view": "table",
    "ok": true,
-   "qmeta": "5 row(s) · federated 6 source(s) · 89.5 MB ranged · 115913 ms",
-   "count": 5,
+   "qmeta": "53 row(s) · federated 6 source(s) · 234.0 MB ranged · 187000 ms",
+   "count": 53,
    "unit": "row",
    "columns": [],
    "rows": [
@@ -63133,7 +64232,7 @@
       "media": false
      },
      {
-      "text": "89.5 MB · 150 req",
+      "text": "40.5 MB · 81 req",
       "media": false
      }
     ],
@@ -63143,7 +64242,11 @@
       "media": false
      },
      {
-      "text": "error — RangeError: Offset is outside the bounds of the DataView at DataView.prototype.getUint32 (<anonymous>) at __reteDoFetch (blob:http://127.0.0.1:8099/bdc7",
+      "text": "3 row(s)",
+      "media": false
+     },
+     {
+      "text": "26.5 MB · 53 req",
       "media": false
      }
     ],
@@ -63153,7 +64256,11 @@
       "media": false
      },
      {
-      "text": "error — Error: a range fetch failed mid-query; refusing to return incomplete results at __wbg_new_50bb5ebeecef71a8 (blob:http://127.0.0.1:8099/bdc7a5f0-ea53-41e",
+      "text": "5 row(s)",
+      "media": false
+     },
+     {
+      "text": "32.0 MB · 63 req",
       "media": false
      }
     ],
@@ -63163,7 +64270,11 @@
       "media": false
      },
      {
-      "text": "error — RangeError: Offset is outside the bounds of the DataView at DataView.prototype.getUint32 (<anonymous>) at __reteDoFetch (blob:http://127.0.0.1:8099/bdc7",
+      "text": "4 row(s)",
+      "media": false
+     },
+     {
+      "text": "35.5 MB · 71 req",
       "media": false
      }
     ],
@@ -63173,7 +64284,11 @@
       "media": false
      },
      {
-      "text": "error — Error: a range fetch failed mid-query; refusing to return incomplete results at __wbg_new_50bb5ebeecef71a8 (blob:http://127.0.0.1:8099/bdc7a5f0-ea53-41e",
+      "text": "6 row(s)",
+      "media": false
+     },
+     {
+      "text": "48.0 MB · 96 req",
       "media": false
      }
     ],
@@ -63183,23 +64298,27 @@
       "media": false
      },
      {
-      "text": "error — RangeError: Offset is outside the bounds of the DataView at DataView.prototype.getUint32 (<anonymous>) at __reteDoFetch (blob:http://127.0.0.1:8099/bdc7",
+      "text": "30 row(s)",
+      "media": false
+     },
+     {
+      "text": "51.5 MB · 103 req",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 115966
+   "elapsedMs": 187022
   },
   "wikidata-xxl:3": {
    "id": "wikidata-xxl:3",
    "dataset": "wikidata-xxl",
    "index": 3,
    "view": "table",
-   "ok": false,
-   "qmeta": "0 row(s) · federated 6 source(s) · 0 B ranged · 7 ms",
-   "count": 0,
+   "ok": true,
+   "qmeta": "300 row(s) · federated 6 source(s) · 6.5 MB ranged · 921 ms",
+   "count": 300,
    "unit": "row",
    "columns": [],
    "rows": [
@@ -63209,7 +64328,11 @@
       "media": false
      },
      {
-      "text": "error — Error: a range fetch failed mid-query; refusing to return incomplete results at __wbg_new_50bb5ebeecef71a8 (blob:http://127.0.0.1:8099/bdc7a5f0-ea53-41e",
+      "text": "50 row(s)",
+      "media": false
+     },
+     {
+      "text": "1.5 MB · 1 req",
       "media": false
      }
     ],
@@ -63219,7 +64342,11 @@
       "media": false
      },
      {
-      "text": "error — RangeError: Offset is outside the bounds of the DataView at DataView.prototype.getUint32 (<anonymous>) at __reteDoFetch (blob:http://127.0.0.1:8099/bdc7",
+      "text": "50 row(s)",
+      "media": false
+     },
+     {
+      "text": "1.0 MB · 1 req",
       "media": false
      }
     ],
@@ -63229,7 +64356,11 @@
       "media": false
      },
      {
-      "text": "error — Error: a range fetch failed mid-query; refusing to return incomplete results at __wbg_new_50bb5ebeecef71a8 (blob:http://127.0.0.1:8099/bdc7a5f0-ea53-41e",
+      "text": "50 row(s)",
+      "media": false
+     },
+     {
+      "text": "1.0 MB · 1 req",
       "media": false
      }
     ],
@@ -63239,7 +64370,11 @@
       "media": false
      },
      {
-      "text": "error — RangeError: Offset is outside the bounds of the DataView at DataView.prototype.getUint32 (<anonymous>) at __reteDoFetch (blob:http://127.0.0.1:8099/bdc7",
+      "text": "50 row(s)",
+      "media": false
+     },
+     {
+      "text": "1.0 MB · 1 req",
       "media": false
      }
     ],
@@ -63249,7 +64384,11 @@
       "media": false
      },
      {
-      "text": "error — Error: a range fetch failed mid-query; refusing to return incomplete results at __wbg_new_50bb5ebeecef71a8 (blob:http://127.0.0.1:8099/bdc7a5f0-ea53-41e",
+      "text": "50 row(s)",
+      "media": false
+     },
+     {
+      "text": "1.0 MB · 1 req",
       "media": false
      }
     ],
@@ -63259,14 +64398,18 @@
       "media": false
      },
      {
-      "text": "error — RangeError: Offset is outside the bounds of the DataView at DataView.prototype.getUint32 (<anonymous>) at __reteDoFetch (blob:http://127.0.0.1:8099/bdc7",
+      "text": "50 row(s)",
+      "media": false
+     },
+     {
+      "text": "1.0 MB · 1 req",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 92
+   "elapsedMs": 956
   },
   "wikidata-zenodo:0": {
    "id": "wikidata-zenodo:0",

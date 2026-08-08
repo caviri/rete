@@ -75,6 +75,16 @@ const READER = flag("reader", "default");
 // card, so the answer preview is a screenshot of the output panel instead.
 const SHOT_VIEWS = new Set(["graph", "map", "time", "tiles", "cards"]);
 
+// The playground states in `#qmeta` when it stopped rather than answered — the
+// tab hit its WebAssembly memory/stack ceiling, the worker was cancelled, or the
+// reader was swapped mid-flight. That is NOT an answer, and recording it as one
+// had two consequences worth naming: `capture` skipped the example on the next
+// resume (it only re-runs entries whose cached record is not ok), and finalize
+// let it OVERWRITE a good committed answer, since a failure may only supersede
+// another failure. `check_catalog_examples.mjs` has always judged these the same
+// way; this is the same list.
+const GAVE_UP = /cancelled|switched readers|browser'?s limit|browser limit/i;
+
 const catalogSrc = fs.readFileSync(path.join(ROOT, "web", "playground-src", "catalog.js"), "utf8");
 const catalogWindow = {};
 new Function("window", catalogSrc)(catalogWindow);
@@ -389,7 +399,8 @@ async function captureGroup(browser, group, progress) {
         await waitForResult(page, TIMEOUT);
         const scraped = await scrape(page);
         const { count, unit } = parseCount(scraped.qmeta, scraped.rows);
-        const ok = !scraped.error && !(count === 0 && !entry.allowEmpty) && !!scraped.qmeta;
+        const ok = !scraped.error && !(count === 0 && !entry.allowEmpty) && !!scraped.qmeta
+          && !GAVE_UP.test(scraped.qmeta);
         record = {
           id: entry.id, dataset: entry.dataset, index: entry.index, view: entry.view,
           ok,

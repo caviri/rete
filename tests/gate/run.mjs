@@ -228,6 +228,29 @@ function g0() {
     record("G0", "full-text index claims match the catalog's declaration", false,
       String(e.stdout || e.stderr || e).slice(-240));
   }
+  // The live example sweep (check_catalog_examples) defaults to scope=embedded,
+  // so the ~60 remote-lazy datasets are never asserted here — their answers are
+  // measured by scripts/preview/capture.mjs and committed to answers.json, and
+  // until now nothing read that file. Nine examples sat recorded at 0 rows.
+  // Offline by construction: committed JSON + committed catalog, no network.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_catalog_answers.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record(
+      "G0",
+      "no catalog example is recorded as answering nothing",
+      ok,
+      ok
+        ? `${verdict.measured} counted + ${verdict.drawings} drawn, ${verdict.allowEmpty} allowEmpty, ${verdict.unmeasured} unmeasured`
+        : out.slice(-240),
+    );
+  } catch (e) {
+    record("G0", "no catalog example is recorded as answering nothing", false,
+      String(e.stdout || e.stderr || e).slice(-240));
+  }
 }
 
 // ---------- servers ----------
