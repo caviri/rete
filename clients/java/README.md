@@ -118,6 +118,55 @@ figure, peak RSS from the kernel's `VmHWM`, compiled engine):
 "fails" is `ReteException: decompression failed: out of memory`, raised inside
 wasm with 8 GiB of JVM heap untouched.
 
+### Streaming a scan — `scanCursor`
+
+`scanQuads(s,p,o)` returns a `List`, which means the **engine builds the whole
+result inside wasm before the first row comes back**. For a narrow pattern that
+is fine. For `(null, null, null)` it is the wall: on `cordis.rete` (26.4 M quads)
+it exhausts wasm32's 4 GiB address space after 71 s having produced nothing.
+
+`scanCursor` pulls bounded batches instead, so time-to-first-row and peak memory
+are set by the batch, not by the graph:
+
+```java
+try (Rete rete = Rete.openFile(Path.of("/data/cordis.rete"));
+     QuadCursor rows = rete.scanCursor(null, null, null)) {
+    while (rows.hasNext()) {
+        String[] quad = rows.next();   // {s, p, o, graph}; graph == null = default
+    }
+}
+```
+
+`scanCursorInGraph(g, s, p, o)` is the graph-scoped form. The batch ramps from 32
+rows and doubles to `-Drete.scan.batch` (default 2048) — small first so a
+consumer that stops after one row pays for 32, growing so a drain runs at full
+speed.
+
+**Close it.** A cursor holds engine-side state until released. Draining it to
+exhaustion, an exception, and `Rete.close()` all release it too; a cursor
+abandoned mid-scan and garbage-collected is queued by a `Cleaner` and released on
+the next engine call from the owning thread. `openCursorCount()` is the leak
+check.
+
+| `cordis.rete` 763.9 MiB, 26.4 M quads | `scanQuads` (list) | `scanCursor` |
+| --- | --- | --- |
+| first row of `(null,null,null)` | **never** — wasm trap after 71.2 s at 2794 MB | **6.4 s · 826 MB** (2.2 s at `-Drete.scan.batch=32`) |
+
+`mirbase.rete` (2.70 M quads) goes from 14.1 s · 4098 MB to **2.0 s · 689 MB**,
+and drains all 2,701,457 rows in 14.2 s inside a 1 GiB heap.
+
+**What streaming does not fix.** The *result* no longer accumulates, but the
+engine's lazily-faulted caches still do: every decoded dictionary chunk and index
+tile a scan touches stays resident for the life of the handle, and wasm32 has
+4 GiB of address space. So a scan that touches enough of a big file still runs
+out — draining `cordis.rete` reaches **17.0 M of its 26.4 M quads** (241 s,
+3581 MB) and then traps. That ceiling is a property of the handle, not of the
+cursor: it lands within 0.2% of the same row at every batch size (17,042,502 at
+32 · 17,041,438 at 2048 · 17,012,078 at 16384). Before, the same scan produced
+**zero** rows and trapped in 71 s. Bounded consumption — `LIMIT n`, a filtered
+pattern, the first few million rows — is what streaming makes safe; an
+unqualified drain of a multi-GB quads file from a 32-bit engine is not.
+
 About 545 MB of every figure in the right-hand column is the floor: a JVM plus
 the one-off Chicory compile of the engine (see
 [Execution mode](#execution-mode-compiled-by-default)). The graph itself costs
@@ -212,6 +261,29 @@ RDF4J does the join/filter/ASK work, calling rete only for triple-pattern scans
 (`getStatements`). rete terms are N-Triples syntax, so `NTriplesUtil` maps both
 directions. Each connection loads its own wasm instance, so connections are
 independent across threads.
+
+Over a `Path`/`URI` Sail those scans **stream**: `getStatements` returns a
+`CloseableIteration` driven by a `QuadCursor`, and `close()` releases the
+engine-side cursor. That is what makes the most trivial exploratory query there
+is answerable —
+
+```sparql
+SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1
+```
+
+— because RDF4J issues it to the Sail as `getStatements(null, null, null)`: the
+`LIMIT` is a `Slice` *above* the triple source, so the Sail never sees it. RDF4J
+then takes one row and closes the iteration. Materializing that scan turned the
+query into a whole-graph read:
+
+| through a `SailRepository` | `SELECT ?s ?p ?o … LIMIT 1` |
+| --- | --- |
+| `mirbase.rete` 39.2 MiB / 2.70 M quads | 14.9 s · 4151 MB → **2.0 s · 670 MB** |
+| `cordis.rete` 763.9 MiB / 26.4 M quads | wasm trap after 72 s → **6.3 s · 825 MB** |
+| **`datacite.rete` 48.6 GiB / 9,834,714,813 quads, over HTTP** | impossible → **27.4 s · 1504 MB** |
+
+The in-memory (`byte[]`) Sail still buffers: the whole image is already resident
+in linear memory there, so a cursor would bound nothing.
 
 **Named graphs** are exposed as RDF4J contexts: `getContextIDs()` lists them, a
 plain pattern is the union of all graphs, `GRAPH <iri> { … }` restricts to one,
@@ -352,3 +424,19 @@ Ranged querying uses a resident handle: `rete_ranged_open(file_len) -> id`, then
 `rete_handle_info(id)`, and `rete_handle_close(id)`. Opening once keeps the
 block cache warm across a query's many scans. (`rete_remote_open` remains as an
 alias of `rete_ranged_open`, for a host built against the older ABI.)
+
+### Streaming cursors (the second piece of state)
+
+- `rete_handle_scan_open(id, s,p,o, g, all_graphs) -> cursor_id`
+- `rete_handle_scan_next(cursor_id, max_rows) -> [count][done][rows…]`
+- `rete_handle_scan_close(cursor_id)`, and `rete_open_cursors()` for the leak
+  check. `rete_handle_close(id)` drops every cursor on that handle.
+
+What survives between `next` calls is deliberately **not** a suspended Rust
+iterator — that would have to borrow the `Rete` stored beside it, a
+self-referential struct whose soundness rests on drop order and on the engine's
+lazily-faulted caches staying write-once. It is a `u64` resume token
+(`(tile index, next a-group)`) plus a graph slot, which `Rete::query_batch` in
+`rete-core` was built to take. So a cursor holds no borrow, an abandoned one
+leaks a few dozen bytes rather than pinning the engine, and closing the handle
+can drop every cursor unconditionally.

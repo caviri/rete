@@ -7,6 +7,58 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **An unbounded scan streams instead of materializing — `SELECT ?s ?p ?o
+  LIMIT 1` works on 9.8 billion quads.** The Java client's scans returned a
+  `List`, so the engine built the *whole* result inside wasm32 linear memory
+  before the first row crossed the boundary. That is not an edge case: RDF4J
+  issues exactly `getStatements(null, null, null)` for `SELECT ?s ?p ?o … LIMIT
+  1`, because the `LIMIT` is a `Slice` above the triple source and the Sail
+  never sees it — verified against RDF4J 5.3.2, which takes one row and closes
+  the iteration. So the most trivial exploratory query a user can type read the
+  whole graph.
+
+  `Rete.scanCursor(s, p, o)` / `scanCursorInGraph(g, s, p, o)` return a
+  `QuadCursor` that pulls bounded batches, and the RDF4J Sail's
+  `getStatements` is driven by one over any `Path`/`URI` source. Measured
+  (`--memory=12g`, `-Xmx8g`, compiled engine, peak RSS from the kernel's
+  `VmHWM`, one fresh JVM per figure) through a real `SailRepository`:
+
+  | file | `SELECT ?s ?p ?o … LIMIT 1` — before | after |
+  | --- | --- | --- |
+  | `mirbase.rete` 39.2 MiB / 2.70 M quads | 14.9 s · 4151 MB | **2.0 s · 670 MB** |
+  | `cordis.rete` 763.9 MiB / 26.4 M quads | wasm trap after 72 s · 2794 MB | **6.3 s · 825 MB** |
+  | **`datacite.rete` 48.6 GiB / 9,834,714,813 quads, over HTTP** | impossible | **27.4 s · 1504 MB** |
+
+  A full drain is unchanged in what it returns — all 2,701,457 quads of
+  `mirbase.rete`, in 14.2 s inside a **1 GiB** heap. It does not make an
+  *unqualified* drain of a multi-GB quads file possible: the engine's
+  lazily-faulted dictionary chunks and index tiles stay resident for the life of
+  the handle, so `cordis.rete` now reaches 17.0 M of its 26.4 M quads before
+  wasm32's 4 GiB address space runs out (against **zero** rows before). That
+  ceiling is the handle's, not the cursor's — it lands within 0.2% of the same
+  row at batch 32, 2048 and 16384.
+  - The engine side is `Rete::query_batch` in `rete-core`, backed by a new
+    `GraphIndex::scan_batch` and `TripleBlock::scan_resume`. The state that
+    survives between calls is one opaque `u64` — `(tile index, next a-group)` —
+    not a suspended iterator, so nothing borrows the `Rete` across the
+    boundary. Batches end on a group boundary and nothing is ever rescanned, so
+    a drain stays O(n). `Rete::query_iter` is the in-process pull twin, and
+    `dump_iter` is now a special case of it.
+  - The batch ramps from 32 rows, doubling to `-Drete.scan.batch` (default
+    2048). Small first because `LIMIT 1` pays for one batch (on `cordis.rete`:
+    2.2 s at 32 rows, 6.4 s at 2048, 11.0 s at 8192); growing because full
+    drain throughput is flat at and above 2048 and 6–15% worse below it.
+  - A cursor is released by `close()`, by exhaustion, by an exception, by
+    `Rete.close()` (which drops every cursor on the file), and — if it is
+    abandoned mid-scan and collected — by a `Cleaner` that queues its id for
+    the owning thread to reap. `Rete.openCursorCount()` is the leak check.
+  - `sizeInternal(context)` counts through the cursor rather than
+    materializing the graph.
+  - New wasm exports: `rete_handle_scan_open` / `_next` / `_close` and
+    `rete_open_cursors`. Purely additive; every existing entry point is
+    unchanged, and the in-memory `byte[]` path still buffers (the image is
+    already resident there, so a cursor would bound nothing).
+
 - **The Java client opens a `.rete` from disk lazily — the size ceiling is
   gone.** `Rete.openFile(Path)`, `ReteEngine.openFile(Path)` and
   `new ReteSail(Path)` read a local file by *range*, exactly as the existing
