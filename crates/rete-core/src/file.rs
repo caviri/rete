@@ -4552,6 +4552,77 @@ mod tests {
         assert!(!lazy.index_incomplete(), "no lazy fetch failed");
     }
 
+    /// Byte-0 / polyglot experiment: a real `.rete` embedded behind a large HTML
+    /// shell (so byte 0 is `<`, not `RETE`) still opens and queries LAZILY through
+    /// an `OffsetReader`, touching only the graph's bytes and never the shell.
+    #[test]
+    fn polyglot_offset_reads_lazily() {
+        use crate::reader::{
+            detect_polyglot_base, CountingReader, OffsetReader, SliceReader, POLYGLOT_DIGITS,
+            POLYGLOT_MARKER,
+        };
+
+        // A real .rete image, hidden behind a 50 KB HTML shell that carries the
+        // polyglot base-offset marker in its first bytes (a browser-ignored
+        // comment). The .rete begins right after the shell.
+        let image = build_image();
+        let mut shell = Vec::new();
+        shell.extend_from_slice(b"<!DOCTYPE html><html><head><!--");
+        shell.extend_from_slice(POLYGLOT_MARKER);
+        let digits_at = shell.len();
+        shell.extend_from_slice(&[b'0'; POLYGLOT_DIGITS]); // patched below
+        shell.extend_from_slice(b"--></head><body>a web page</body></html>\n");
+        shell.resize(50_000, b' '); // >> the .rete, to prove the shell is untouched
+        let base = shell.len() as u64;
+        let digits = format!("{base:0width$}", width = POLYGLOT_DIGITS);
+        shell[digits_at..digits_at + POLYGLOT_DIGITS].copy_from_slice(digits.as_bytes());
+
+        let mut poly = shell;
+        poly.extend_from_slice(&image);
+
+        // byte 0 is a web page, not a .rete...
+        assert_ne!(
+            &poly[0..4],
+            b"RETE",
+            "polyglot must not start with the magic"
+        );
+        // ...but the marker in the first header window points at the embedded .rete.
+        let detected = detect_polyglot_base(&poly[..crate::header::HEADER_LEN]).unwrap();
+        assert_eq!(detected, base);
+
+        // Open it LAZILY through the offset shim and query it.
+        let leaked: &'static [u8] = Box::leak(poly.into_boxed_slice());
+        let counting = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+        let lazy = Rete::open_ranged_lazy(OffsetReader::new(counting.clone(), detected)).unwrap();
+
+        // The polyglot must answer exactly like the plain .rete it embeds.
+        let plain = Rete::open(&image).unwrap();
+        let mut want = plain.query(None, None, None);
+        want.sort();
+        let mut got = lazy.query(None, None, None);
+        got.sort();
+        assert_eq!(
+            got, want,
+            "polyglot lazy query differs from the plain .rete"
+        );
+        assert!(!got.is_empty(), "expected some triples");
+        assert!(!lazy.index_incomplete(), "a lazy fetch failed");
+
+        // It was LAZY: it read fewer bytes than the HTML shell alone, i.e. it
+        // never touched the prefix — only the embedded .rete's own bytes.
+        let read = counting.bytes_read();
+        eprintln!(
+            "polyglot lazy read: HTML shell {base} B + .rete image {} B; \
+             the query touched only {read} B (never the shell).",
+            image.len()
+        );
+        assert!(
+            read < base,
+            "read {read} bytes; the HTML shell alone is {base} — the reader \
+             touched the prefix instead of only the embedded .rete"
+        );
+    }
+
     /// Build a small file whose objects are string literals, **with** a text
     /// index, and return `(image, triples)`. Shared by the text-index tests.
     #[cfg(test)]

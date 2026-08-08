@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+__RETE_BASE_MARKER__
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -134,7 +135,7 @@
     <div class="splash-tag">a <code>.rete</code> graph that opens itself</div>
     <div class="spin"></div>
     <div class="splash-status" id="splash-status">Waking up…</div>
-    <div class="splash-note">One file is loading here — the web page, the query engine, and the entire graph are all inside it. Hang tight while it reads its own bytes.</div>
+    <div class="splash-note">One file is loading here — the web page, the query engine, and the entire graph are all inside it. Hang tight while it finds its own bytes.</div>
   </div>
 </div>
 
@@ -150,7 +151,7 @@
       <h1 id="title">SWISSUbase</h1>
       <p class="desc" id="desc"></p>
       <div class="chips" id="stats"></div>
-      <div class="selfnote"><span class="spark">⚡</span><span>You are looking at a single <code>.rete</code> file. This page, the query engine, and the graph are the <b>same file</b> — it reads its own bytes and queries itself, entirely in your browser. Grab the pure graph with <b>Download .rete</b>.</span></div>
+      <div class="selfnote"><span class="spark">⚡</span><span>You are looking at a single <code>.rete</code> file. This page, the query engine, and the graph are the <b>same file</b> — it opens its own bytes and queries itself, entirely in your browser. <span id="lazynote"></span> Grab the pure graph with <b>Download .rete</b>.</span></div>
     </section>
 
     <div class="grid">
@@ -178,39 +179,18 @@
   </div></footer>
 </div>
 
-<script>__GLUE_JS__</script>
+<script type="__GLUE_TYPE__" id="rete-glue">__GLUE_JS__</script>
 <script>
 const WASM_B64 = "__WASM_B64__";
 __GRAPH_SOURCE_JS__
-const dec = new TextDecoder();
-let graphBytes = null;
+// Above: `openEngine(setStep)` — the ONE thing that differs between the two
+// builds of this page. Polyglot mode returns a lazy, range-reading handle onto
+// this file's own appended tail; embed mode returns an in-memory handle over the
+// base64 graph. Everything below is identical either way.
+let engine = null;
 
-// --- minimal .rete header + card reader (from experiments/plaza/js/rete-card.js) ---
-function parseHeader(b){
-  if (dec.decode(b.subarray(0,4)) !== "RETE") throw new Error("bad magic");
-  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  const u16=o=>dv.getUint16(o,true), u64=o=>Number(dv.getBigUint64(o,true));
-  const version=b[4];
-  if (version>=3){
-    const quadCount=u64(24), termCount=u64(32), sectionCount=u16(44);
-    let metadataOffset=0, metadataLen=0;
-    for(let i=0;i<sectionCount;i++){ const p=64+i*24; if(p+24>b.length)break;
-      const kind=u16(p), off=u64(p+8), len=u64(p+16);
-      if(kind===1){ metadataOffset=off; metadataLen=len; } }
-    return {version,metadataOffset,metadataLen,quadCount,termCount};
-  }
-  return {version,metadataOffset:u64(8),metadataLen:u64(16),quadCount:u64(76),termCount:u64(84)};
-}
-function readCard(b){
-  const h=parseHeader(b);
-  let card=null;
-  if(h.metadataLen>0) card=JSON.parse(dec.decode(b.subarray(h.metadataOffset,h.metadataOffset+h.metadataLen)));
-  return {header:h, card};
-}
 function fmt(n){ if(n==null)return"?"; const u=["","K","M","B"]; let i=0,v=n; while(v>=1000&&i<3){v/=1000;i++;} return (v>=100||i===0?Math.round(v):v.toFixed(1))+u[i]; }
-function fmtBytes(n){ const u=["B","KB","MB","GB"]; let i=0,v=n; while(v>=1024&&i<3){v/=1024;i++;} return (v>=100||i===0?Math.round(v):v.toFixed(1))+" "+u[i]; }
-
-let graph=null;
+function fmtBytes(n){ if(n==null)return"?"; const u=["B","KB","MB","GB"]; let i=0,v=n; while(v>=1024&&i<3){v/=1024;i++;} return (v>=100||i===0?Math.round(v):v.toFixed(1))+" "+u[i]; }
 function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 function cell(v){
   if(v==null) return "";
@@ -235,56 +215,76 @@ function renderTable(r){
   res.innerHTML=h;
   document.getElementById("status").textContent="";
 }
-function run(){
+// Every read the engine makes is a byte range, so the honest thing to show is
+// how few of them a query costs. `stats()` is cumulative; diff it per query.
+function showTraffic(before){
+  const el=document.getElementById("traffic");
+  if(!el) return;
+  const s=engine.stats();
+  if(!s){ el.style.display="none"; return; }   // embed mode: nothing crosses a wire
+  const b=s.bytes-(before?before.bytes:0), r=s.requests-(before?before.requests:0);
+  el.textContent=`this query: ${fmtBytes(b)} in ${r} range request${r===1?"":"s"} · `+
+                 `session total ${fmtBytes(s.bytes)} of a ${fmtBytes(s.fileLength)} graph`;
+}
+async function run(){
   const q=document.getElementById("q").value.trim();
-  if(!q||!graph) return;
+  if(!q||!engine) return;
   const reasoned=/\bscholar:/.test(q);
   document.getElementById("reasonhint").textContent=reasoned?"🧠 reasoning on":"";
   document.getElementById("status").textContent=reasoned?"running with reasoning…":"running…";
-  setTimeout(()=>{ try{
-      const out=reasoned?graph.query_reasoned(q,"json"):graph.query(q,"json");
-      renderTable(JSON.parse(out));
-    }catch(e){ document.getElementById("results").style.display="block";
-      document.getElementById("results").innerHTML=`<div class="err">${esc(e.message||e)}</div>`;
-      document.getElementById("status").textContent="error"; }
-  },10);
+  const before=engine.stats();
+  try{
+    renderTable(await engine.query(q, reasoned));
+    showTraffic(before);
+  }catch(e){
+    document.getElementById("results").style.display="block";
+    document.getElementById("results").innerHTML=`<div class="err">${esc(e.message||e)}</div>`;
+    document.getElementById("status").textContent="error";
+  }
 }
 function label(query){ const l=query.split("\n")[0].replace(/^#\s*/,""); return l.length>2?l:"Query"; }
 
-function downloadRete(){
-  if(!graphBytes) return;
-  const blob=new Blob([graphBytes],{type:"application/octet-stream"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url; a.download="swissubase.rete";
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),4000);
+async function downloadRete(){
+  const btn=document.getElementById("download");
+  const was=btn.innerHTML;
+  btn.innerHTML="⬇ fetching…";
+  try{
+    const bytes=await engine.download();
+    const url=URL.createObjectURL(new Blob([bytes],{type:"application/octet-stream"}));
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=(location.pathname.split("/").pop()||"graph").replace(/\.(rete|html)$/,"")+".rete";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+  } finally { btn.innerHTML=was; }
 }
 
 const setStep=m=>{ const el=document.getElementById("splash-status"); if(el) el.textContent=m; };
 (async function(){
   try{
-    setStep("Starting the query engine…");
-    const wasmBytes=Uint8Array.from(atob(WASM_B64), c=>c.charCodeAt(0));
-    await wasm_bindgen({module_or_path:wasmBytes});
-    setStep("Reading the graph out of this very file…");
-    const bytes=await getGraphBytes();
-    graphBytes=bytes;
+    engine=await openEngine(setStep);
+    window.reteEngine=engine;   // test hook: the byte-accounting harness drives this
     setStep("Opening the graph…");
-    const {header,card}=readCard(bytes);
-    graph=new wasm_bindgen.Graph(bytes);
+    const card=engine.card, info=engine.info;
     if(card){
       if(card.title) document.getElementById("title").textContent=card.title;
       if(card.description) document.getElementById("desc").textContent=card.description;
     }
     document.getElementById("stats").innerHTML=
-      `<span class="chip"><b>${fmt(header.quadCount)}</b> triples</span>`+
-      `<span class="chip"><b>${fmt(header.termCount)}</b> terms</span>`+
-      `<span class="chip">format v${header.version}</span>`+
+      `<span class="chip"><b>${fmt(info.quads)}</b> triples</span>`+
+      `<span class="chip"><b>${fmt(info.terms)}</b> terms</span>`+
+      `<span class="chip">graph ${fmtBytes(engine.fileLen)}</span>`+
       `<span class="chip">${SRC_LABEL}</span>`+
-      `<span class="chip">engine ${Math.round(wasmBytes.length/1e6)} MB wasm</span>`;
-    document.getElementById("dlsize").textContent="("+fmtBytes(bytes.length)+")";
+      `<span class="chip">engine ${Math.round(engine.wasmLen/1e6)} MB wasm</span>`+
+      `<span class="chip" id="traffic"></span>`;
+    if(engine.lazy){
+      document.getElementById("lazynote").innerHTML=
+        `Nothing was downloaded whole: the graph starts at byte <b>${engine.base.toLocaleString()}</b> `+
+        `of this file and each query fetches only the ranges it needs.`;
+    }
+    document.getElementById("dlsize").textContent="("+fmtBytes(engine.fileLen)+")";
     document.getElementById("download").onclick=downloadRete;
+    showTraffic(null);
 
     const qs=(card&&card.example_queries)||[];
     const list=document.getElementById("qlist");
@@ -303,6 +303,10 @@ const setStep=m=>{ const el=document.getElementById("splash-status"); if(el) el.
     });
 
     setStep("Ready!");
+    // Belt and braces: `window.stop()` normally means the appended tail is never
+    // even parsed, but a browser that got further would have it sitting in the
+    // DOM as one inert text node. Drop it (and anything after the scripts).
+    const tail=document.getElementById("rete-tail"); if(tail) tail.remove();
     const scripts=document.getElementsByTagName("script");
     const last=scripts[scripts.length-1];
     while(last && last.nextSibling) last.nextSibling.remove();

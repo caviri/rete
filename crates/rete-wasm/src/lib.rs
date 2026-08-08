@@ -6,9 +6,9 @@ use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
     eval_query_with, eval_select_communities, eval_sparql, project_graph, schema_classes,
     schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
-    ByteRange, CountingReader, DataGraph, Header, QueryOpts, QueryOutput, RangeReader, Rete,
-    ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TermTriple,
-    TripleProvenance, ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
+    ByteRange, CountingReader, DataGraph, Header, OffsetReader, QueryOpts, QueryOutput,
+    RangeReader, Rete, ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView,
+    TermTriple, TripleProvenance, ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
 };
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -296,7 +296,7 @@ pub fn card(bytes: &[u8]) -> Result<Option<String>, JsValue> {
 /// file carries no card. Worker-only (synchronous XHR).
 #[wasm_bindgen]
 pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
-    let reader = XhrRangeReader::open(url)?;
+    let reader = RemoteReader::open(url)?.view();
     let bytes = rete_core::read_metadata_ranged(&reader).map_err(err)?;
     Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
 }
@@ -316,7 +316,7 @@ pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
 /// (synchronous XHR).
 #[wasm_bindgen]
 pub fn card_and_build_url(url: &str) -> Result<String, JsValue> {
-    let reader = XhrRangeReader::open(url)?;
+    let reader = RemoteReader::open(url)?.view();
     let (card, build) = rete_core::read_card_and_build_info_ranged(&reader).map_err(err)?;
     Ok(card_build_envelope(card, build))
 }
@@ -359,7 +359,10 @@ fn card_build_envelope(card: Option<Vec<u8>>, build: Option<Vec<u8>>) -> String 
 /// (synchronous XHR in the sync build).
 #[wasm_bindgen]
 pub fn file_len_url(url: &str) -> Result<String, JsValue> {
-    let reader = XhrRangeReader::open(url)?;
+    // The GRAPH's length: for a polyglot that is the appended `.rete`, not the
+    // web page wrapped around it — "download the whole file" must quote the
+    // bytes a `.rete` consumer would actually take.
+    let reader = RemoteReader::open(url)?;
     Ok(format!(
         r#"{{"schemaVersion":{},"fileLength":{}}}"#,
         JSON_SCHEMA_VERSION,
@@ -851,7 +854,7 @@ pub fn heap_bytes() -> f64 {
 /// **Worker-only** (synchronous range-read XHR).
 #[wasm_bindgen]
 pub struct RemoteGraph {
-    reader: std::sync::Arc<CountingReader<XhrRangeReader>>,
+    reader: RemoteReader,
     rete: Rc<Rete>,
 }
 
@@ -880,15 +883,18 @@ impl RemoteGraph {
         QuadCursor::start(self.rete.clone(), graph)
     }
 
-    /// `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this
-    /// session opened. The worker diffs successive calls to report a single
-    /// query's traffic (a fully cached re-run adds ~0).
+    /// `{ fileLength, bytes, requests, base }` — CUMULATIVE physical fetches
+    /// since this session opened. The worker diffs successive calls to report a
+    /// single query's traffic (a fully cached re-run adds ~0). `fileLength` is
+    /// the **graph's** length and `base` the byte offset it starts at: `0` for an
+    /// ordinary `.rete`, and the size of the HTML shell for a polyglot file.
     pub fn stats(&self) -> String {
         format!(
-            r#"{{"schemaVersion":1,"fileLength":{},"bytes":{},"requests":{}}}"#,
+            r#"{{"schemaVersion":1,"fileLength":{},"bytes":{},"requests":{},"base":{}}}"#,
             self.reader.len(),
             self.reader.bytes_read(),
-            self.reader.requests()
+            self.reader.requests(),
+            self.reader.base
         )
     }
 
@@ -995,7 +1001,7 @@ impl RemoteGraph {
     /// See [`card_url`] — the Dataset Card, over the resident handle's reader
     /// (so the header range it already fetched is served from the block cache).
     pub fn card(&self) -> Result<Option<String>, JsValue> {
-        let bytes = rete_core::read_metadata_ranged(&*self.reader).map_err(err)?;
+        let bytes = rete_core::read_metadata_ranged(&self.reader.view()).map_err(err)?;
         Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
     }
 
@@ -1004,7 +1010,7 @@ impl RemoteGraph {
     /// cache when the header range is already there).
     pub fn card_and_build(&self) -> Result<String, JsValue> {
         let (card, build) =
-            rete_core::read_card_and_build_info_ranged(&*self.reader).map_err(err)?;
+            rete_core::read_card_and_build_info_ranged(&self.reader.view()).map_err(err)?;
         Ok(card_build_envelope(card, build))
     }
 
@@ -1013,7 +1019,7 @@ impl RemoteGraph {
     /// would drag the whole remote file across the wire.
     pub fn schema(&self) -> Result<String, JsValue> {
         use serde_json::json;
-        let (classes, relations) = rete_core::read_schema_summary_ranged(&*self.reader)
+        let (classes, relations) = rete_core::read_schema_summary_ranged(&self.reader.view())
             .map_err(err)?
             .ok_or_else(|| js_error("file has no schema pyramid"))?;
         let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();
@@ -1404,6 +1410,17 @@ fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
 struct XhrRangeReader {
     url: String,
     len: u64,
+    /// The resource's first [`rete_core::HEADER_LEN`] bytes, cached once.
+    ///
+    /// Opening a `.rete` reads this window several times over — the sync length
+    /// probe reads it, [`polyglot_base`](Self::polyglot_base) needs it, and every
+    /// `read_*_ranged` helper starts by reading the header — and the bytes cannot
+    /// change under us: the file is immutable for the session, and a host that
+    /// served different bytes for the same range would already have broken every
+    /// other read. So the first reader to pay for it fills this in and the rest
+    /// are served from memory, which is what keeps the CARD tier at its
+    /// advertised two requests.
+    head: std::sync::OnceLock<Vec<u8>>,
 }
 
 // Asyncify variant only (feature = "asyncify"): one dedicated async import in
@@ -1588,9 +1605,12 @@ impl XhrRangeReader {
             if ok == 0 || len == 0 {
                 return Err(js_error(format!("could not determine length of {url}")));
             }
+            // The async length probe reads the window on the JS side and only
+            // hands back the length, so the first `head_window()` pays for it.
             Ok(Self {
                 url: url.to_string(),
                 len,
+                head: std::sync::OnceLock::new(),
             })
         }
         #[cfg(not(feature = "asyncify"))]
@@ -1602,17 +1622,49 @@ impl XhrRangeReader {
             let mut last = format!("could not determine length of {url}");
             for _ in 0..4 {
                 match Self::probe_len(url) {
-                    Ok(len) => {
+                    Ok((len, head)) => {
+                        let cached = std::sync::OnceLock::new();
+                        if !head.is_empty() {
+                            let _ = cached.set(head);
+                        }
                         return Ok(Self {
                             url: url.to_string(),
                             len,
-                        })
+                            head: cached,
+                        });
                     }
                     Err(e) => last = e,
                 }
             }
             Err(js_error(last))
         }
+    }
+
+    /// The cached first [`rete_core::HEADER_LEN`] bytes, fetching them once if
+    /// nobody has yet. `None` only when the resource cannot be read at all — the
+    /// open that follows reports the real error.
+    fn head_window(&self) -> Option<&[u8]> {
+        if let Some(head) = self.head.get() {
+            return Some(head);
+        }
+        let head = self.fetch_at(0, rete_core::HEADER_LEN as u64).ok()?;
+        let _ = self.head.set(head);
+        self.head.get().map(Vec::as_slice)
+    }
+
+    /// Where the `.rete` starts inside this resource: `0` for an ordinary file,
+    /// and the size of the HTML shell for a **polyglot** — a file that is both a
+    /// web page and a graph, whose first bytes carry a `RETE-BASE:` marker naming
+    /// the offset. Reads only the header window, which the open that follows
+    /// needs anyway and now gets from [`head_window`](Self::head_window).
+    fn polyglot_base(&self) -> u64 {
+        let Some(head) = self.head_window() else {
+            return 0;
+        };
+        if head.starts_with(&rete_core::MAGIC) {
+            return 0;
+        }
+        rete_core::detect_polyglot_base(head).unwrap_or(0)
     }
 
     /// A HEAD length probe: `Content-Length` is CORS-safelisted (readable
@@ -1681,15 +1733,27 @@ impl XhrRangeReader {
     /// HEAD. A 206's `Content-Length` is never believed (it is the size of
     /// the partial body, and taking it as the file size made every later read
     /// "range out of bounds").
+    ///
+    /// Returns the length **and the head window it read** — the caller keeps it
+    /// so polyglot detection costs no second request.
     #[cfg(not(feature = "asyncify"))]
-    fn probe_len(url: &str) -> Result<u64, String> {
+    fn probe_len(url: &str) -> Result<(u64, Vec<u8>), String> {
         let (status, cr_total, body) = Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1)?;
+        // Only a genuine header window is worth keeping (a Range-ignoring host
+        // may have sent the whole file here).
+        let head = |body: &Vec<u8>| {
+            if body.len() <= rete_core::HEADER_LEN {
+                body.clone()
+            } else {
+                body[..rete_core::HEADER_LEN].to_vec()
+            }
+        };
         if status == 200 {
             // Host ignored Range and sent the whole (decoded) body. Range
             // reads are rejected loudly in read_at anyway; report the honest
             // decoded length so the failure names the real problem there.
             if !body.is_empty() {
-                return Ok(body.len() as u64);
+                return Ok((body.len() as u64, head(&body)));
             }
             return Err(format!("probe {url}: 200 with an empty body"));
         }
@@ -1702,7 +1766,7 @@ impl XhrRangeReader {
         if let Ok(header) = rete_core::Header::from_bytes(&body) {
             if let Some(derived) = header.expected_file_len() {
                 if cr_total == Some(derived) {
-                    return Ok(derived); // transport agrees — done, no extra request
+                    return Ok((derived, head(&body))); // transport agrees — no extra request
                 }
                 // Ask the file: its last 4 bytes are the `RETE` footer. A 206
                 // with exactly those bytes proves `derived` addresses real
@@ -1710,7 +1774,7 @@ impl XhrRangeReader {
                 // or the host's ranges don't address the file's bytes.
                 let (ts, _, tail) = Self::ranged_get(url, derived - 4, derived - 1)?;
                 if ts == 206 && tail == rete_core::MAGIC {
-                    return Ok(derived);
+                    return Ok((derived, head(&body)));
                 }
                 return Err(format!(
                     "length probe disagrees with the file: its header derives \
@@ -1736,12 +1800,14 @@ impl XhrRangeReader {
             ));
         }
 
-        // Not a `.rete` header: fall back to the transport's signals.
+        // Not a `.rete` header: fall back to the transport's signals. A POLYGLOT
+        // lands here — its byte 0 is `<`, so the header parse above failed — and the
+        // head we keep is exactly what `polyglot_base` needs to find the graph.
         if let Some(total) = cr_total {
-            return Ok(total);
+            return Ok((total, head(&body)));
         }
         if let Some(len) = Self::head_len(url) {
-            return Ok(len);
+            return Ok((len, head(&body)));
         }
         Err(format!("could not determine length of {url}"))
     }
@@ -1775,10 +1841,59 @@ impl RangeReader for XhrRangeReader {
         }
     }
 
+    /// Reads that land entirely inside the cached header window are answered
+    /// from memory: opening a file re-reads those bytes several times (length
+    /// probe, polyglot marker, then every `read_*_ranged` helper's own header
+    /// read) and they are immutable for the session, so paying for them once is
+    /// the difference between the CARD tier costing two requests and four.
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());
         }
+        if let Some(head) = self.head.get() {
+            if let Some(end) = offset.checked_add(len) {
+                if end <= head.len() as u64 {
+                    return Ok(head[offset as usize..end as usize].to_vec());
+                }
+            }
+        }
+        self.fetch_at(offset, len)
+    }
+
+    /// Synchronous XHR can't run two requests at once on one thread, so the
+    /// engine's sequential faults serialize their round trips. If the page
+    /// installs `globalThis.reteReadMany(url, offsets, lens)` — a fetch-worker
+    /// pool that fetches the ranges in parallel and blocks (via SAB/Atomics)
+    /// until done — use it; it returns one buffer with the spans concatenated
+    /// in order, or `null`/throws if it can't (no cross-origin isolation, a
+    /// non-206, a short read). On `null` we fall back to the sequential reads
+    /// below, which keep the rigorous per-range validation.
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        // Asyncify build: fetch the whole batch concurrently in one suspend.
+        #[cfg(feature = "asyncify")]
+        {
+            self.read_ranges_async(ranges)
+        }
+        #[cfg(not(feature = "asyncify"))]
+        {
+            let (_, _, total) = checked_async_layout(ranges)?;
+            if ranges.len() > 1 {
+                if let Some(buf) = self.read_many_via_pool(ranges) {
+                    if buf.len() == total {
+                        return split_range_response(ranges, buf, total, "globalThis.reteReadMany");
+                    }
+                }
+            }
+            ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
+        }
+    }
+}
+
+/// The raw transport, below the header cache in [`RangeReader::read_at`].
+impl XhrRangeReader {
+    /// One real range request. Never consults the cached header window — this is
+    /// what fills it.
+    fn fetch_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         // Asyncify build: a single read is a 1-range async fetch (suspends).
         #[cfg(feature = "asyncify")]
         {
@@ -1828,34 +1943,6 @@ impl RangeReader for XhrRangeReader {
             // opaque synchronous query (postMessage works mid-sync-call).
             report_progress(buf.len(), &[(offset, len)]);
             Ok(buf)
-        }
-    }
-
-    /// Synchronous XHR can't run two requests at once on one thread, so the
-    /// engine's sequential faults serialize their round trips. If the page
-    /// installs `globalThis.reteReadMany(url, offsets, lens)` — a fetch-worker
-    /// pool that fetches the ranges in parallel and blocks (via SAB/Atomics)
-    /// until done — use it; it returns one buffer with the spans concatenated
-    /// in order, or `null`/throws if it can't (no cross-origin isolation, a
-    /// non-206, a short read). On `null` we fall back to the sequential reads
-    /// below, which keep the rigorous per-range validation.
-    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
-        // Asyncify build: fetch the whole batch concurrently in one suspend.
-        #[cfg(feature = "asyncify")]
-        {
-            self.read_ranges_async(ranges)
-        }
-        #[cfg(not(feature = "asyncify"))]
-        {
-            let (_, _, total) = checked_async_layout(ranges)?;
-            if ranges.len() > 1 {
-                if let Some(buf) = self.read_many_via_pool(ranges) {
-                    if buf.len() == total {
-                        return split_range_response(ranges, buf, total, "globalThis.reteReadMany");
-                    }
-                }
-            }
-            ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
         }
     }
 }
@@ -1994,19 +2081,74 @@ fn auto_block(len: u64) -> u64 {
     mult * DEFAULT_BLOCK
 }
 
-fn open_url(url: &str) -> Result<(std::sync::Arc<CountingReader<XhrRangeReader>>, Rete), JsValue> {
+/// The physical range reader behind a remote open, plus the **base offset** of
+/// the `.rete` inside the resource.
+///
+/// For an ordinary `.rete` the base is `0` and every method is a pass-through.
+/// For a **polyglot** — one object that is simultaneously an HTML page and a
+/// graph, byte 0 being `<` — the base is where the appended `.rete` starts, read
+/// from the `RETE-BASE:` marker the page carries in its first
+/// [`rete_core::HEADER_LEN`] bytes (written by
+/// `experiments/polyglot/build_polyglot.py`). Every graph read then goes through
+/// [`RemoteReader::view`], an [`OffsetReader`] that makes the embedded graph read
+/// as if it began at byte 0 — so a polyglot is range-read exactly as lazily as a
+/// plain file instead of being downloaded whole.
+///
+/// [`len`](Self::len) reports the **graph's** length (the shell excluded), while
+/// `bytes_read`/`requests` stay the true wire cost, shell probe included.
+#[derive(Clone)]
+struct RemoteReader {
+    counting: std::sync::Arc<CountingReader<XhrRangeReader>>,
+    base: u64,
+}
+
+impl RemoteReader {
+    /// Open `url` and resolve its polyglot base — free on the sync build, where
+    /// the length probe has already read the header window.
+    fn open(url: &str) -> Result<Self, JsValue> {
+        let xhr = XhrRangeReader::open(url)?;
+        let base = xhr.polyglot_base();
+        Ok(Self {
+            counting: std::sync::Arc::new(CountingReader::new(xhr)),
+            base,
+        })
+    }
+
+    /// The graph-relative reader: absolute for a plain `.rete`, shifted past the
+    /// HTML shell for a polyglot.
+    fn view(&self) -> OffsetReader<std::sync::Arc<CountingReader<XhrRangeReader>>> {
+        OffsetReader::new(self.counting.clone(), self.base)
+    }
+
+    /// Byte length of the embedded `.rete` (not of the enclosing resource).
+    fn len(&self) -> u64 {
+        self.counting.len().saturating_sub(self.base)
+    }
+
+    fn bytes_read(&self) -> u64 {
+        self.counting.bytes_read()
+    }
+
+    fn requests(&self) -> u64 {
+        self.counting.requests()
+    }
+}
+
+fn open_url(url: &str) -> Result<(RemoteReader, Rete), JsValue> {
     // `reader` counts the PHYSICAL fetches; a read-through block cache above it
     // turns the query's scattered range reads into a few aligned block fetches
     // (and reuses them) — working over any single-range backend (S3, a CDN),
     // not just a multi-range gateway. The block fetches still go through
     // `read_many`, so a multi-range host coalesces them further. The block size
     // is auto-tuned from the file size (known at open, no download).
-    let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
+    let reader = RemoteReader::open(url)?;
     let cached = std::sync::Arc::new(BlockCacheReader::new(
-        reader.clone(),
+        reader.counting.clone(),
         auto_block(reader.len()),
     ));
-    let mut rete = Rete::open_ranged_lazy(cached).map_err(err)?;
+    // The offset shim sits ABOVE the cache so blocks stay aligned to the
+    // resource's absolute offsets (a plain file's base is 0 — a no-op).
+    let mut rete = Rete::open_ranged_lazy(OffsetReader::new(cached, reader.base)).map_err(err)?;
     // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
     rete.set_service_client(Box::new(XhrServiceClient));
     Ok((reader, rete))
@@ -2643,8 +2785,8 @@ pub fn check_schema(bytes: &[u8]) -> Result<String, JsValue> {
 /// "coherent".
 #[wasm_bindgen]
 pub fn check_schema_url(url: &str) -> Result<String, JsValue> {
-    let reader = CountingReader::new(XhrRangeReader::open(url)?);
-    let points = rete_core::read_schema_coherence_ranged(&reader)
+    let reader = RemoteReader::open(url)?;
+    let points = rete_core::read_schema_coherence_ranged(&reader.view())
         .map_err(err)?
         .ok_or_else(|| js_error("file has no schema pyramid"))?;
     Ok(schema_coherence_json(
@@ -2660,8 +2802,8 @@ pub fn check_schema_url(url: &str) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn schema_url(url: &str) -> Result<String, JsValue> {
     use serde_json::json;
-    let reader = CountingReader::new(XhrRangeReader::open(url)?);
-    let (classes, relations) = rete_core::read_schema_summary_ranged(&reader)
+    let reader = RemoteReader::open(url)?;
+    let (classes, relations) = rete_core::read_schema_summary_ranged(&reader.view())
         .map_err(err)?
         .ok_or_else(|| js_error("file has no schema pyramid"))?;
     let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();

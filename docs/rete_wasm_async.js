@@ -1004,9 +1004,11 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
-         * `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this
-         * session opened. The worker diffs successive calls to report a single
-         * query's traffic (a fully cached re-run adds ~0).
+         * `{ fileLength, bytes, requests, base }` — CUMULATIVE physical fetches
+         * since this session opened. The worker diffs successive calls to report a
+         * single query's traffic (a fully cached re-run adds ~0). `fileLength` is
+         * the **graph's** length and `base` the byte offset it starts at: `0` for an
+         * ordinary `.rete`, and the size of the HTML shell for a polyglot file.
          * @returns {string}
          */
         stats() {

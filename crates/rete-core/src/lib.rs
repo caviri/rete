@@ -132,7 +132,10 @@ pub mod range {
         read_card_and_build_info_ranged, read_metadata_ranged, read_schema_coherence_ranged,
         read_schema_summary_ranged, ByteRange, LayoutSegment, SearchView, SummaryView,
     };
-    pub use crate::reader::{CountingReader, RangeReader, SliceReader};
+    pub use crate::reader::{
+        detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader,
+        POLYGLOT_DIGITS, POLYGLOT_MARKER,
+    };
 }
 
 /// Stable integrity and SHACL validation API.
@@ -189,7 +192,10 @@ pub use pyramid::{
 #[doc(hidden)]
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 #[doc(hidden)]
-pub use reader::{CountingReader, RangeReader, SliceReader};
+pub use reader::{
+    detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader, POLYGLOT_DIGITS,
+    POLYGLOT_MARKER,
+};
 #[doc(hidden)]
 pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
 #[doc(hidden)]
