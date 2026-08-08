@@ -1,0 +1,20 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/ustc/ustc.rete",
+  "cite_as": "Universal Short Title Catalogue (USTC), University of St Andrews. https://www.ustc.ac.uk/",
+  "keywords": [
+    "St Andrews",
+    "bibliography",
+    "early modern print",
+    "holdings",
+    "rare books"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/ustc.html"
+  }
+}

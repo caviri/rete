@@ -1,0 +1,26 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/bioexplora/bioexplora.rete",
+  "derived_from": [
+    "https://ipt.gbif.es"
+  ],
+  "keywords": [
+    "3D",
+    "Barcelona",
+    "Darwin Core",
+    "GBIF",
+    "IIIF",
+    "audio",
+    "biodiversity",
+    "natural history"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/ENVI",
+    "https://www.wikidata.org/entity/Q47041"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/bioexplora.html"
+  }
+}

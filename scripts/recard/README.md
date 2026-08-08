@@ -64,6 +64,58 @@ Outputs land under `/work/dev/recard/` (git-ignored): `survey/`, `out/`,
   is no in-place byte swap. Every re-card rewrites the file, which is why the
   data has to be proven unchanged afterwards rather than assumed.
 
+## Carrying is the floor, not the ceiling — `--enrich`
+
+Carrying-and-adding-nothing is the right default for **someone else's** file. The
+`nkod` case is the one that set the rule: it is the Czech national open-data
+catalog's `.rete`, and minting a ROR for its publisher or a DOI for its data
+would put fabricated identity into another party's metadata. There is no way to
+tell from inside the file which is which, so the tool refuses for everything.
+
+But most of the catalog is **this project's own**, and there the same caution only
+preserves blanks. Every one of the 21 files re-carded on 2026-08-06 shipped with
+no `keywords`, no `theme`, no `canonical_url`, no `publisher`, no `derived_from`
+— not because anyone decided against them, but because the fields did not exist
+when the files were built and the re-card carried across exactly what was there.
+
+```bash
+bash scripts/recard/recard.sh --source /work/dev/recard/published/nidm.rete \
+  --out /work/dev/recard/out/nidm/nidm.rete \
+  --enrich /work/scripts/recard/enrich/nidm.json
+```
+
+`--enrich FILE` takes a small JSON document with the **same reserved top level as
+`--card-file`** and lays it over the carried fields: an enriched key wins
+outright (a list is *replaced*, never appended to), a carried key it does not
+mention is untouched. The same document is handed to the gate, which then permits
+**exactly those keys** to differ from the old card — and requires each of them to
+be present in the new one. So the licence to enrich never widens into a licence
+to lose: drop `title` while enriching `keywords` and the run still fails.
+
+`recard_batch.sh --enrich-dir DIR` makes it per-key and opt-in: `DIR/<key>.json`
+if it exists, carry-only otherwise.
+
+The documents for this repo's own datasets are generated, not hand-written —
+`scripts/recard/enrich/generate.mjs` derives them from `web/playground-src/catalog.js`
+(loaded as **code**, not regex'd) and writes one JSON per dataset, so the policy
+is reviewable in one file and the artifacts are diffable. `node
+scripts/recard/enrich/generate.mjs --check` re-derives and fails on drift.
+
+What that generator will and will not derive is the interesting part, and it is
+documented at the top of the file. In short: `canonical_url` from the catalog's
+own published URL; `keywords` from the playground tags **after filtering** —
+licence codes duplicate `license`, and "option-C" / "tiles-in-rete" /
+"semantic-zoom" / "federation" are labels for the *file*, not its subject;
+`theme` only from IRIs resolved against a published scheme before writing (three
+of the first eight Wikidata QIDs guessed from memory turned out to be a different
+concept entirely); `derived_from` only where it says more than `source` already
+does, and only URLs that answered 200. And **not**: `creators` (nobody's ORCID is
+on record and naming a person on 21 published files is a human's call), `doi`
+(none of these files has one — an upstream's DOI is `derived_from` plus
+`cite_as`, not `doi`), or `sparql_endpoint` unless the endpoint answers the
+protocol, answers about *this dataset's own IRIs*, and belongs to the upstream
+publisher. One of twenty-two passed that last test.
+
 ## The two proofs
 
 **The data is unchanged.** Both files are serialized to N-Quads and hashed as
@@ -174,6 +226,23 @@ That is what `--mode stream` runs, and what `--mode auto` picks above
 `--stream-above-mb` (default 192). The staged N-Quads runs **9–15× the `.rete`**,
 so budget the disk before starting a batch: `crossref` would stage well over a
 terabyte, which is a second reason it is out of reach.
+
+**On a dense file, 9–15× is a serious underestimate.** `gbif-birds` is 1.53 GB
+for 333.8 M statements — 4.6 bytes per statement in `.rete`, against 139.5 bytes
+per line as N-Quads. It staged to **43.38 GiB, 30× the file**, in 28 minutes.
+The ratio to plan with is not a multiple of the file: it is
+`statements × ~140 B`, and the `.rete` compression ratio is exactly what makes
+that number unpredictable from the file size. `recard.sh` prints the free space
+on the scratch filesystem before it starts staging, and `--reuse-staged` lets a
+failed build retry without paying for the export twice.
+
+**And 333.8 M statements is past the staged path's ceiling on a 47 GiB machine.**
+The build ran for 80 minutes, wrote the card, and was **OOM-killed at
+VmHWM 43.75 GiB** — ~140 bytes per statement, *below* the 285–340 B/statement
+this table quotes, and still fatal because the file is that large. So the honest
+ceiling is roughly `available RAM / 140 B` ≈ **330 M statements at 47 GiB**, and
+`gbif-birds` sits on it. Anything larger needs the `repyramid --stream` engine
+work described above, not a bigger machine.
 
 ### What does NOT work
 
@@ -372,21 +441,109 @@ query.
 subject under its last type only, and the label query returns 50 rows from a
 class the quotient never mentions.
 
+## What a rebuild does not put back
+
+A rebuild re-derives the file **from its quads**. Everything else the source
+carried has to be asked for, and the N-Quads proof cannot see it going missing:
+it compares the RDF and nothing else. Two sections fall in that gap, and both bit
+this pipeline on real published files before the checks below existed.
+
+**The full-text index.** `repyramid`/`build` write a `TEXT_INDEX` section only
+under `--text-index`. Re-carding without it produces a file whose RDF is
+identical, whose card is better, and whose `CONTAINS` queries have quietly lost
+their index. Five of the twenty-two files in the 2026-08-05 batch carry one —
+`arxiu` (17.3 MB), `bioexplora` (11.6 MB), `albala` (2.85 MB), `plantatlas`
+(1.66 MB), `subtitles` (51.6 KB) — and the first pass dropped every one.
+
+`recard.sh --text-index auto` (the default) now **mirrors the source**: a file
+that has an index keeps one, and the rebuilt index is checked to exist before the
+output is installed. The receipt records `text_index_bytes_before/after`. Pass
+`--text-index no` to drop one deliberately.
+
+**A section this build does not own.** `geoadmin-tiles.rete` carries a 117.6 MB
+PMTiles vector-tile archive as section **kind 7** — which `scripts/embed_tiles.py`
+chose as "the next free kind after `TextIndex(6)`" and which has since become
+`SectionKind::BuildInfo`. So on that file today:
+
+* `rete card` reads the PMTiles blob as a build record, fails to parse it, warns
+  `unreadable build-info section` and carries on;
+* a re-card writes a real 2 KB build record at kind 7 and the tiles are gone —
+  the file drops from 158 MB to 42.6 MB, with the RDF proof still passing;
+* re-attaching them afterwards produces **two** kind-7 sections, and the
+  playground's tile reader (`reteTilesSection`, web/playground-src/app.js) takes
+  the *first* match — the build record — so the map would range-read 2 KB of JSON
+  as a tile archive.
+
+`recard.sh` now refuses to rebuild a file carrying a kind-7 section whose payload
+is not build-info JSON, or any section of an unknown kind above 7, unless
+`--allow-section-loss` says the caller will re-attach it. `embed_tiles.py`
+likewise refuses to add a second kind-7 entry, and `--drop-build-info` resolves it
+the only way that keeps today's published layout working — at the price of the
+file's build record. **The real fix is a kind of its own for tiles**, plus the
+reader change to match; that is engine + web work, not a flag in these scripts.
+
+### The one file that still does not fit, and what actually costs the RAM
+
+`gbif-birds` (1.53 GB, 333.8 M triples, 43.38 GiB staged N-Quads) has now been
+OOM-killed three times on a 47 GiB machine — twice with its pyramid at VmHWM
+~43.7 GiB, and once with `--no-pyramid` at **44.08 GiB**. Dropping the largest
+section moved the ceiling by less than 1%, so the obvious suspect is the wrong
+one.
+
+A 240-sample VmHWM trace says where it goes. The run climbs to **10.8 GiB and
+plateaus there for most of its length** — that is the streaming assembly, and it
+fits comfortably. Then in its last minutes it goes 10.8 → 16.5 → 29.5 → 37.2 →
+43.6 → 44.1 GiB and dies, with `embedded dataset card (58224 bytes of metadata)`
+as its last output. It had finished assembling; what remained was the **card**,
+and with `--no-pyramid` the only expensive thing there is the pass that runs each
+starter query once, cold, against the finished image to measure it.
+
+That pass is not optional for a re-card: it is what stops a card shipping a query
+nobody ran, and `card_tools.py verify` fails a card that arrives without the row
+counts — so `--no-card-costs` would produce a file and then fail the gate.
+`--memory-budget-mb` does not help either, since it implies `--no-pyramid` and
+excludes `--text-index`: it optimizes the 10.8 GiB half that already fits.
+
+The lever is a bigger machine. Keep the 43.38 GiB staged `.nq` for
+`--reuse-staged` — staging it costs 28 minutes and it is the same input whatever
+the build does next.
+
 ## Known limits
 
-* A cardless source has no curated fields to carry; the re-card gives it a
-  derived card only. Titles and licences for those have to come from a
-  hand-written `--card-file`.
+* A cardless source has no curated fields to carry unless `--enrich` supplies
+  them; without it the re-card gives such a file a derived card only.
+  `geoadmin-tiles` was that case — it shipped with no card at all.
 * Sharded datasets are surveyed by their first shard unless `--include-shards`.
   Re-carding a shard set means re-carding every shard.
-* `--pyramid-algo` defaults to `louvain` (matching `repyramid`'s own default),
-  not to whatever the file was originally built with — the build record that
-  would say is exactly what these older files lack. Pass `--pyramid-algo types`
-  where the dataset's recipe used it.
+* **`--pyramid-algo` now defaults to `auto`, because `repyramid`'s own default
+  (`louvain`) is the WRONG answer for most published files.** Nothing in an
+  older file records the algorithm — that is exactly what the missing build
+  record would have said — but the pyramid it produced does: **`pyramid_levels: 1`
+  means `types`**, Louvain produces three to six. `auto` reads that one header
+  field and reproduces it. Of the 22 files in the 2026-08-05 batch, **17 report
+  one level**; only five (`bph`, `chebi-full`, `factgrid-illuminati`, `orkg`,
+  `ustc`) were Louvain-built.
+
+  Getting it wrong is not cosmetic and the N-Quads proof cannot see it, because
+  the pyramid is derived, not data. Rebuilding a `types` file with `louvain`
+  inflated:
+
+  | file | pyramid before | with `louvain` | with `types` | file size |
+  |---|---:|---:|---:|---|
+  | `arxiu` | 725,907 B | 45,738,962 B | 725,907 B | 72.2 MB → 117 MB → **72.3 MB** |
+  | `proteinbase` | 137,553 B | 5,870,665 B | 137,551 B | 10.8 MB → 16.6 MB → **10.8 MB** |
+  | `albala` | 494,307 B | 4,697,734 B | 494,307 B | 11.4 MB → 15.7 MB → **12.8 MB** |
+  | `geoadmin` | 119,248 B | 2,466,224 B | 119,248 B | 40.3 MB → 42.6 MB → **40.3 MB** |
+
+  The right algorithm reproduces the published section to within a handful of
+  bytes (the residue is the pre-dedup count difference), and the re-carded file
+  comes out the same size as the one it replaces. `recard.sh` prints the
+  before/after pyramid size on every run and warns when the rebuilt one is more
+  than 4× the source's — the tell, if you ever override `auto`.
 * The data proof compares N-Quads. It is exact for the RDF, and it is the same
   check `rete export` round-trips are documented against; it does not compare
-  non-graph sections (text index, PMTiles), which a re-card does not carry over
-  unless the corresponding flag is passed.
+  non-graph sections. Those are handled separately — see "What a rebuild does
+  not put back" below.
 * **Curated prose is carried verbatim, stale figures and all** — and that is
   deliberate, because a tool that rewrites a publisher's sentences cannot be
   trusted with the ones it leaves alone. `fedlex`'s description said "66,392,663

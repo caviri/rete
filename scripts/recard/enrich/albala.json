@@ -1,0 +1,20 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/albala/albala.rete",
+  "keywords": [
+    "Colombina",
+    "ISAD",
+    "Seville",
+    "Spain",
+    "archives"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC",
+    "https://www.wikidata.org/entity/Q166118"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/albala.html"
+  }
+}

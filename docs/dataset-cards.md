@@ -992,6 +992,46 @@ surgical by running `verify` twice: once against the original card, expecting
 expecting a clean pass. Two differences on the first run means something moved
 that you did not intend.
 
+### Carrying forward is a floor — filling a blank is not rewriting
+
+"Carry the curated half across verbatim" answers the dangerous question (may a
+tool alter what a publisher wrote?) but not the useful one: **may it fill in
+what nobody ever wrote?** A file built before `keywords`, `theme`,
+`canonical_url`, `publisher` and `derived_from` existed has none of them, and
+carrying-only guarantees it never will. Those are different acts, and only the
+first needs forbidding.
+
+So `recard.sh --enrich FILE` takes a document with this same reserved top level
+and lays it over the carried fields. The gate is handed the *same* document and
+permits exactly the keys it names to differ — and requires every one of them to
+be present afterwards. Enriching `keywords` while dropping `title` still fails.
+
+Two rules make this safe rather than merely convenient:
+
+1. **Only on files you publish.** For someone else's `.rete`, an invented ROR or
+   DOI is fabricated metadata in another party's record, and nothing in the file
+   distinguishes the two cases — so the tool's default stays carry-only and the
+   caller opts in per file.
+2. **Derive, or leave it empty.** Every value must trace to something checkable:
+   the catalog's own published URL, a resolved concept IRI, an upstream that
+   answered. Where nothing supports a field, the honest output is a blank —
+   `creators` needs an ORCID nobody has recorded, and an upstream's DOI belongs
+   in `derived_from` and `cite_as`, never in `doi`, which would claim this file
+   *is* that deposit. `sparql_endpoint` is the sharpest case: it means an
+   endpoint a client can send this dataset's query to, so a project home page in
+   that field is a lie a client can act on. Probing the 22 files of the
+   2026-08-06 batch, one upstream endpoint answered the protocol *and* answered
+   about the file's own IRIs; a second answered the protocol and knew nothing
+   about them, which is exactly the failure a home page would have hidden.
+
+The prose rule is untouched: `description` and `title` still travel through
+unchanged. The one repair that is not a rewrite is a **provable encoding
+defect** — `memoria`'s card stored "MemÃ²ria", the UTF-8 bytes of "Memòria" read
+once as latin-1, and re-decoding them returns the publisher's own string
+exactly. That is recovering what was written, not editing it; it goes through
+`--enrich` like any other change so the gate reports it, and it is worth doing
+only because the bytes prove the intended text.
+
 **A headline count can go down, and that is the fix, not data loss.** An older
 card counted the raw pre-dedup input multiset; a re-card counts what the file
 actually stores. On `lombardi` the published card says 70,719 statements, its

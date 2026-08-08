@@ -1,0 +1,29 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/plantatlas/plantatlas.rete",
+  "keywords": [
+    "DAI",
+    "Darwin Core",
+    "GIA",
+    "GeoSPARQL",
+    "WebP",
+    "archaeobotany",
+    "botany",
+    "fruits",
+    "images",
+    "plants",
+    "reference collection",
+    "seeds",
+    "specimens",
+    "taxonomy"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH",
+    "https://www.wikidata.org/entity/Q636481"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/plantatlas.html"
+  }
+}

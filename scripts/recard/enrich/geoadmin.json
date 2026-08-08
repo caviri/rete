@@ -1,0 +1,23 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/geoadmin/geoadmin.rete",
+  "derived_from": [
+    "https://www.geoboundaries.org",
+    "https://www.naturalearthdata.com"
+  ],
+  "keywords": [
+    "GeoSPARQL",
+    "Natural Earth",
+    "boundaries",
+    "geo"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/REGI",
+    "https://www.wikidata.org/entity/Q56061"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/geoadmin.html"
+  }
+}

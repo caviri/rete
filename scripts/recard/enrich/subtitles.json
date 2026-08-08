@@ -1,0 +1,23 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/subtitles/tears_of_steel.rete",
+  "keywords": [
+    "CJK",
+    "RTL",
+    "Tears of Steel",
+    "film",
+    "multilingual",
+    "subtitles",
+    "temporal",
+    "translation"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC",
+    "https://www.wikidata.org/entity/Q204028"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/subtitles.html"
+  }
+}

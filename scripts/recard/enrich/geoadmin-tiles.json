@@ -1,0 +1,31 @@
+{
+  "title": "geoBoundaries + PMTiles — world administrative boundaries, graph and tiles in one file",
+  "description": "The `geoadmin` GeoSPARQL graph (213 countries, 3,133 regions, 48,362 districts, 1,251 places) with a 117.6 MB PMTiles vector-tile archive embedded in the same `.rete` — one HTTP-range-queryable file that answers SPARQL and serves map tiles. The tiles are built from the full-detail geoBoundaries GeoJSON with tippecanoe (z0-9, four layers), so the map has true per-zoom detail while the graph keeps the ~1 km simplified geometry.",
+  "license": "CC BY 4.0 (geoBoundaries) + CC0 (Natural Earth places)",
+  "source": "https://www.geoboundaries.org",
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/geoadmin-tiles/geoadmin-tiles.rete",
+  "derived_from": [
+    "https://data.graphplaza.com/geoadmin/geoadmin.rete",
+    "https://www.geoboundaries.org",
+    "https://www.naturalearthdata.com"
+  ],
+  "keywords": [
+    "GeoSPARQL",
+    "Natural Earth",
+    "PMTiles",
+    "administrative areas",
+    "boundaries",
+    "geo",
+    "vector tiles"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/REGI",
+    "https://www.wikidata.org/entity/Q56061"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/geoadmin-tiles.html"
+  }
+}

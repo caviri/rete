@@ -1,0 +1,28 @@
+{
+  "license": "Descriptions: Llicència oberta / CC0 (Llei 37/2007); images © holding archives",
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/arxiu/arxiu.rete",
+  "source_date": "2026-07-14",
+  "derived_from": [
+    "https://backend.arxiusenlinia.cultura.gencat.cat/unitat/search/advanced"
+  ],
+  "keywords": [
+    "Arxiu Nacional",
+    "Catalonia",
+    "Generalitat",
+    "WebP",
+    "archives",
+    "manuscripts",
+    "scanned documents",
+    "schema.org"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC",
+    "https://www.wikidata.org/entity/Q166118"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/arxiu.html"
+  }
+}
