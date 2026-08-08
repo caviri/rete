@@ -164,9 +164,12 @@ JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
 `recordSet`: a graph is not a table). `--sha256` supplies the whole-file
 sha256 the Croissant projection's `FileObject` requires — a file cannot carry
 its own, so compute it outside (`sha256sum file.rete`); with it the document
-is validator-clean. Prints `(no dataset card)` for a file
-built without one. `rete info` shows the same catalog beneath the header when a
-card is present.
+is validator-clean. For a file built without one it prints
+`(no dataset card — …)`, still naming what the header alone decides: whether
+the file carries a full-text index (`signals.text_index`, measured from the
+section directory rather than read out of the card — see
+[Dataset Cards](dataset-cards.md#the-full-text-signal-measured-not-stored)).
+`rete info` shows the same catalog beneath the header when a card is present.
 
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).

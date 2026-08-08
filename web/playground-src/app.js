@@ -10771,6 +10771,9 @@ self.onmessage = function (e) {
   let cardJsonText = "";   // raw card text, for Copy/Download (never re-serialized)
   let cardObj = null;
   let cardBuildObj = null; // the kind-7 build record, or null when the file has none
+  // Measured by the reader from the header's section directory, NOT read out of
+  // the card — which is why it is held beside `cardObj` rather than inside it.
+  let cardTextIndex = null;
 
   // Source-aware: a resident graph answers from memory, a remote one goes
   // through the worker (the *_url exports do synchronous range XHR, which a
@@ -10791,7 +10794,10 @@ self.onmessage = function (e) {
       // advisory provenance sitting outside the content hash.
       try { build = JSON.parse(env.build); } catch (e) { build = null; }
     }
-    return { text: env.card || "", build };
+    // `text_index` is NOT part of the card: the reader measured it from the
+    // file's section directory. It rides alongside so the modal can answer
+    // "can I search this?" for any file — including one with no card at all.
+    return { text: env.card || "", build, textIndex: env.text_index || null };
   }
 
   async function fetchCard() {
@@ -10941,7 +10947,24 @@ self.onmessage = function (e) {
     return `<table class="card-tbl card-x-sub">${rows}</table>`;
   }
 
-  function renderCardView(c, build) {
+  // "Can I full-text search this?" as one sentence. `ti` is the envelope's
+  // measured `text_index` — the ONE fact about a .rete that its card does not
+  // store, because the section directory in the header already answers it and a
+  // stored copy could outlive the section (see docs/dataset-cards.md).
+  function textIndexLine(ti) {
+    if (!ti || typeof ti !== "object") return "";
+    if (!ti.present) {
+      return "no — this file carries no TEXT_INDEX section. CONTAINS/regex filters " +
+        "still answer, by full scan.";
+    }
+    const size = typeof ti.bytes === "number" ? ` — ${fmtBytes(ti.bytes)} of index` : "";
+    const table = typeof ti.token_table_bytes === "number"
+      ? `, ${fmtBytes(ti.token_table_bytes)} of it the token table a first search reads`
+      : "";
+    return `yes${size}${table}.`;
+  }
+
+  function renderCardView(c, build, textIndex) {
     const rows = [];
     const list = (k) => (Array.isArray(c[k]) && c[k].length ? c[k] : null);
     rows.push(
@@ -11039,6 +11062,20 @@ self.onmessage = function (e) {
         .filter((k) => Array.isArray(s[k]) && s[k].length)
         .map((k) => `<tr><td>${k.replace(/_/g, " ")}</td><td class="n">${cardInt(s[k].length)}</td></tr>`).join("");
       rows.push(cardSection("Signals", null, `<table class="card-tbl">${simple}${lists}</table>`));
+    }
+
+    // Its OWN section, deliberately not a row inside Signals. Every other
+    // section above is the card's derived profile, present only when a builder
+    // computed one — a browser-built card has none, and rendering an empty
+    // "Signals" for it would claim otherwise. This is not part of that profile:
+    // it was measured from THIS file's section directory while the card was
+    // being fetched, so it is available for every file, carded or not.
+    const tiLine = textIndexLine(textIndex);
+    if (tiLine) {
+      rows.push(cardSection("Full-text search", null,
+        `<table class="card-tbl"><tr><td>Full-text index</td><td>${esc(tiLine)}</td></tr></table>` +
+        `<p class="microcopy">Measured from the file's section directory, not read from the card — ` +
+        `a <code>.rete</code> does not store this about itself.</p>`));
     }
 
     // The card ships the SPARQL, so these are runnable — handing them to the
@@ -11182,7 +11219,7 @@ self.onmessage = function (e) {
             `see the Rendered tab, or <code>rete card --json</code>, which shows it under ` +
             `<code>"build"</code>.</p>`
           : "")
-      : renderCardView(cardObj, cardBuildObj);
+      : renderCardView(cardObj, cardBuildObj, cardTextIndex);
   }
 
   async function openCardModal() {
@@ -11190,7 +11227,7 @@ self.onmessage = function (e) {
     m.classList.remove("hidden");
     $("cardBody").innerHTML = `<p class="microcopy">Reading the card…</p>`;
     $("cardFootNote").textContent = "";
-    cardObj = null; cardJsonText = ""; cardBuildObj = null;
+    cardObj = null; cardJsonText = ""; cardBuildObj = null; cardTextIndex = null;
     let res;
     try {
       res = await fetchCard();
@@ -11199,12 +11236,18 @@ self.onmessage = function (e) {
     }
     if (res.err) { $("cardBody").innerHTML = `<p class="microcopy">${esc(res.err)}</p>`; return; }
     cardBuildObj = res.build || null;
+    cardTextIndex = res.textIndex || null;
     if (!res.text) {
       // Common for the small bundled demo files, which are built without one.
+      const tiLine = textIndexLine(cardTextIndex);
       $("cardBody").innerHTML =
         `<p class="microcopy">This <code>.rete</code> carries no Dataset Card. ` +
         `A card is written at build time (<code>rete build --card card.json</code>); ` +
         `the published datasets in the catalog all have one.</p>` +
+        // …but one question is answerable without a card, because it is decided
+        // by the header's section directory rather than by anything written
+        // into the metadata section.
+        (tiLine ? `<p class="microcopy">Full-text index: ${esc(tiLine)}</p>` : "") +
         // A cardless build writes no build record either, so this is normally
         // silent — but the two sections are independent, and if one is somehow
         // there without the other, saying so beats hiding it.

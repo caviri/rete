@@ -401,12 +401,18 @@ const main = async () => {
   // real one renders rather than merely not crashing.
   const bundled = await open("#dataset=causal&load=bundled");
   await openCard(bundled);
-  const resident = await bundled.evaluate(() => ({
-    title: document.getElementById("cardModalTitle").textContent,
-    body: document.getElementById("cardBody").textContent.slice(0, 2000),
-    stats: [...document.querySelectorAll("#cardBody .card-stat b")].map((e) => e.textContent),
-    foot: document.getElementById("cardFootNote").textContent,
-  }));
+  const resident = await bundled.evaluate(() => {
+    const all = document.getElementById("cardBody").textContent;
+    return {
+      title: document.getElementById("cardModalTitle").textContent,
+      body: all.slice(0, 2000),
+      // The Full-text search section sits well past 2000 chars on a real card,
+      // so its row is picked out of the WHOLE body rather than the excerpt.
+      fullText: (/Full-text index[^]{0,200}/.exec(all) || [""])[0],
+      stats: [...document.querySelectorAll("#cardBody .card-stat b")].map((e) => e.textContent),
+      foot: document.getElementById("cardFootNote").textContent,
+    };
+  });
   if (/carries no Dataset Card/i.test(resident.body)) {
     failures.push("the bundled causal dataset reports no card — embedded datasets are built with one");
   }
@@ -414,6 +420,20 @@ const main = async () => {
   if (!resident.stats.length) failures.push("resident card rendered no counts");
   if (/coalesced range/.test(resident.foot)) failures.push("resident read was reported as a ranged remote read");
   if (!/read from the loaded file/.test(resident.foot)) failures.push(`resident footnote does not say where it read from: "${resident.foot}"`);
+
+  // -- "can I full-text search this?" is ANSWERED, not left to silence --------
+  // #189 repaired a catalog that advertised a full-text index two published
+  // files never carried; the drift was invisible because `FILTER(CONTAINS(…))`
+  // answers either way, by word lookup or by full scan. #190's fix is a
+  // MEASURED signal — read from the header's kind-6 directory entry while the
+  // card is fetched, never stored in the card — so the modal can state it. The
+  // bundled `causal` build has no index, and saying "no" is exactly the part
+  // that used to be missing: an unstated affordance is what let the drift live.
+  if (!resident.fullText) {
+    failures.push("the card modal does not say whether the file can be full-text searched");
+  } else if (!/no TEXT_INDEX section/i.test(resident.fullText)) {
+    failures.push(`the bundled causal build carries no text index and the modal does not say so: "${resident.fullText}"`);
+  }
 
   // ---- a file that genuinely has no card -------------------------------------
   // Still a real case — `rete build` is cardless unless a card flag is passed —
@@ -439,6 +459,12 @@ const main = async () => {
   const none = await cardless.evaluate(() => document.getElementById("cardBody").textContent);
   if (!/carries no Dataset Card/i.test(none)) {
     failures.push(`a cardless file did not say so: "${none.slice(0, 120)}"`);
+  }
+  // …and it must STILL answer the full-text question, because that answer never
+  // lived in the card: it is a section-directory entry in the same 1 KiB header
+  // the reader has already fetched.
+  if (!/Full-text index/i.test(none)) {
+    failures.push(`a cardless file did not say whether it can be searched: "${none.slice(0, 200)}"`);
   }
   bareServer.close();
 

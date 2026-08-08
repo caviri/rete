@@ -277,12 +277,103 @@ pub(crate) struct Signals {
     /// `[minLon, minLat, maxLon, maxLat]` over wgs84 lat/long objects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spatial_bbox: Option<[f64; 4]>,
+    /// Whether the file carries a **full-text (TEXT_INDEX) section**.
+    ///
+    /// Unlike every other signal this one is **not derived from the triples and
+    /// not stored in the card**: it is measured from the file's section
+    /// directory by whoever reads the card, and [`DatasetCard::to_json_bytes`]
+    /// strips it before the bytes are written. See [`TextIndexSignal`] for why.
+    ///
+    /// `None` therefore means **unknown** — a card read out of a saved JSON
+    /// document, with no file to measure — and never "no index".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_index: Option<TextIndexSignal>,
 }
 
 impl Signals {
     /// True when no affordance was detected (lets the whole block be omitted).
     fn is_empty(&self) -> bool {
         *self == Signals::default()
+    }
+}
+
+/// The file's full-text-search affordance: does it carry a **TEXT_INDEX section
+/// (kind 6)**, and what does that index cost?
+///
+/// A `.rete` built with `--text-index` answers `FILTER(CONTAINS(…))` by word
+/// lookup; one built without it answers the *same query with the same rows* by
+/// full scan. The capability is invisible from the results, which is exactly how
+/// the playground catalog came to advertise an index two published files never
+/// carried (#189) — so a file has to be able to state it.
+///
+/// **Measured at read time, never stored.** The ground truth is the section
+/// directory in the 1 KiB header that every card read already fetches, so a
+/// stored copy would be a second source of truth for a fact the first source
+/// answers for free — the same reasoning that keeps a curated `language` field
+/// out of the card. Being a projection rather than a stamp also means every
+/// already-published file reports it today, with no re-card, and that
+/// `rete repyramid --text-index` (which rewrites the file's sections) can never
+/// leave it stale.
+///
+/// **What it deliberately does not carry: a token count.** The number of
+/// distinct indexed words is the first varint of the *decompressed* token
+/// table, so quoting it would mean fetching and inflating the whole table —
+/// 193 MB on the published `causenet-full-typed.rete`. [`token_table_bytes`] is
+/// the same question answered for ≤10 bytes, and is the more useful answer
+/// anyway: it is what a first search actually costs.
+///
+/// [`token_table_bytes`]: TextIndexSignal::token_table_bytes
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TextIndexSignal {
+    /// True iff the file has a kind-6 section. Always written, including as
+    /// `false`: "measured, and there is none" is the fact #189 was missing.
+    pub present: bool,
+    /// Byte length of the whole TEXT_INDEX section — free, straight from the
+    /// header. Worth stating because it can dominate the download:
+    /// `causenet-full-typed.rete` carries 1.88 GB of it, 29% of the file.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub bytes: u64,
+    /// Byte length of the section's leading **token table** — the prefix a
+    /// first search faults, several times smaller than `bytes` (which counts
+    /// the postings blob, fetched one posting at a time). One ≤10-byte range
+    /// read; `None` when there is no index, or its first bytes were unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_table_bytes: Option<u64>,
+}
+
+/// serde helper: omit a `0` byte count (no section to measure).
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
+
+impl TextIndexSignal {
+    /// Measure the signal from a file's header, through the same
+    /// [`rete_core::RangeReader`] the card was read with. Costs nothing beyond
+    /// the header already in hand when there is no index, and one ≤10-byte
+    /// range read when there is — never the index itself.
+    pub(crate) fn probe<R: rete_core::RangeReader + ?Sized>(reader: &R, header: &Header) -> Self {
+        if header.text_index_len == 0 {
+            return TextIndexSignal::default();
+        }
+        TextIndexSignal {
+            present: true,
+            bytes: header.text_index_len,
+            token_table_bytes: rete_core::read_text_index_token_table_len_ranged(reader, header),
+        }
+    }
+
+    /// One line for the human catalog view and the audit report.
+    pub(crate) fn describe(&self) -> String {
+        if !self.present {
+            return "no TEXT_INDEX section — CONTAINS/regex still answer, by full scan".to_string();
+        }
+        match self.token_table_bytes {
+            Some(tt) => format!(
+                "TEXT_INDEX present — {} bytes ({tt} of them the token table a first search reads)",
+                self.bytes
+            ),
+            None => format!("TEXT_INDEX present — {} bytes", self.bytes),
+        }
     }
 }
 
@@ -459,8 +550,35 @@ impl CardArgs {
 
 impl DatasetCard {
     /// Serialize to the JSON bytes stored in the metadata section (compact).
+    ///
+    /// [`Signals::text_index`] is **stripped** on the way out: it is measured
+    /// from the file's section directory at read time, and a copy inside the
+    /// hashed metadata section would be a claim that can outlive the sections it
+    /// describes (`rete repyramid --text-index` rewrites them). Stripping here —
+    /// the single choke point every card-writing command funnels through — is
+    /// what makes "derived, never authored" true of the bytes and not only of
+    /// the intent. (`CardInput` has no `signals` field and rejects unknown keys,
+    /// so a hand-written card file cannot set it either.)
     pub(crate) fn to_json_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("DatasetCard serializes")
+        if self.signals.text_index.is_none() {
+            return serde_json::to_vec(self).expect("DatasetCard serializes");
+        }
+        let mut stored = self.clone();
+        stored.signals.text_index = None;
+        serde_json::to_vec(&stored).expect("DatasetCard serializes")
+    }
+
+    /// Attach the read-time [`TextIndexSignal`], returning whatever the card's
+    /// own bytes claimed before it (normally `None` — the writers strip it).
+    ///
+    /// A `Some(_)` return is drift: a card asserting a full-text index that no
+    /// longer has to be believed, because the file itself was just measured.
+    /// `rete card-audit` reports it.
+    pub(crate) fn observe_text_index(
+        &mut self,
+        measured: TextIndexSignal,
+    ) -> Option<TextIndexSignal> {
+        self.signals.text_index.replace(measured)
     }
 
     /// Parse a card from the metadata-section bytes.
@@ -970,6 +1088,9 @@ fn derive_card_from(
         geo_latlong,
         temporal_extent,
         spatial_bbox,
+        // Measured by the READER from the file's section directory, never
+        // derived from the triples and never written — see `TextIndexSignal`.
+        text_index: None,
     };
 
     let mut card = DatasetCard {
@@ -1250,6 +1371,23 @@ pub(crate) fn load_card_ranged<R: rete_core::RangeReader>(
     }
 }
 
+/// One CARD-tier read of a `.rete`: everything a reader can learn about the
+/// file without touching the dictionary, index or pyramid.
+pub(crate) struct CardRead {
+    /// The 1 KiB header, parsed once and reused (checksum, section directory).
+    pub header: Header,
+    /// The embedded card, with [`Signals::text_index`] already measured.
+    pub card: Option<DatasetCard>,
+    /// The adjacent build-info record, when the file carries one.
+    pub build: Option<super::buildinfo::BuildInfo>,
+    /// What the header says about the file's full-text index — measured, so it
+    /// is an answer even for a file with no card at all.
+    pub text_index: TextIndexSignal,
+    /// What the card's own bytes claimed about the index before the measurement
+    /// replaced it. Normally `None`; `Some(_)` is drift worth reporting.
+    pub stored_text_index: Option<TextIndexSignal>,
+}
+
 /// Read the header, the card, **and** the build-info record in the CARD tier's
 /// budget: the 1 KiB header read plus one coalesced range covering both
 /// adjacent sections (the same adjacency contract as
@@ -1257,14 +1395,14 @@ pub(crate) fn load_card_ranged<R: rete_core::RangeReader>(
 /// fetched exactly once and reused for the checksum). A build-info blob that
 /// fails to parse degrades to `None` with a warning — a newer writer's record
 /// must never make the card unreadable.
-#[allow(clippy::type_complexity)]
+///
+/// The header this already holds also answers whether the file carries a
+/// full-text index, so the [`TextIndexSignal`] is measured here — the one place
+/// every card-reading command funnels through — rather than in each of them. It
+/// adds one ≤10-byte range read, and only when there is an index to measure.
 pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
     reader: &R,
-) -> anyhow::Result<(
-    Header,
-    Option<DatasetCard>,
-    Option<super::buildinfo::BuildInfo>,
-)> {
+) -> anyhow::Result<CardRead> {
     let head = reader.read_at(0, rete_core::HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
     let meta = (header.metadata_offset, header.metadata_len);
@@ -1284,7 +1422,7 @@ pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
         };
         (fetch(meta.0, meta.1)?, fetch(build.0, build.1)?)
     };
-    let card = match m {
+    let mut card = match m {
         None => None,
         Some(bytes) => Some(DatasetCard::from_json_bytes(&bytes)?),
     };
@@ -1297,7 +1435,18 @@ pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
             }
         },
     );
-    Ok((header, card, build))
+    let text_index = TextIndexSignal::probe(reader, &header);
+    let stored_text_index = card
+        .as_mut()
+        .and_then(|c| c.observe_text_index(text_index))
+        .filter(|stored| *stored != text_index);
+    Ok(CardRead {
+        header,
+        card,
+        build,
+        text_index,
+        stored_text_index,
+    })
 }
 
 /// Render a card as a human-readable catalog. `checksum` is the file's content
@@ -1464,6 +1613,13 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
         if s.geo_wkt {
             let _ = writeln!(out, "      geometry   : geo:asWKT present");
         }
+        // Stated in both directions, and last because it is the one signal
+        // measured from the file's sections rather than from its triples. A
+        // card read from a saved JSON document has nothing to measure, so it
+        // says nothing at all rather than guessing "no".
+        if let Some(ti) = &s.text_index {
+            let _ = writeln!(out, "      full text  : {}", ti.describe());
+        }
     }
     if !card.coherence.is_empty() {
         let c = &card.coherence;
@@ -1585,7 +1741,8 @@ pub(crate) fn print_card(
 
 /// `rete card <file> [--json|--format jsonld|croissant]`: print the embedded
 /// dataset card (catalog view), the raw JSON, or an RDF projection. Prints
-/// `(no dataset card)` when absent.
+/// `(no dataset card — …)` when absent, still naming what the header alone
+/// decides (whether the file carries a full-text index).
 pub(crate) fn card_cmd(
     file: &str,
     json: bool,
@@ -1597,12 +1754,15 @@ pub(crate) fn card_cmd(
     // same reads `card-url` does over HTTP, so a 50 GB local file costs KBs to
     // describe.
     let reader = crate::commands::range_source::LocalRangeReader::open(file)?;
-    match load_card_and_build_ranged(&reader)? {
-        (_, None, _) => println!("(no dataset card)"),
-        (header, Some(card), build) => print_card(
-            &card,
-            build.as_ref(),
-            &hex16(&header.content_hash),
+    let read = load_card_and_build_ranged(&reader)?;
+    match &read.card {
+        // A cardless file can still answer the one question the header alone
+        // decides — and staying silent about it is what #189 was about.
+        None => println!("(no dataset card — {})", read.text_index.describe()),
+        Some(card) => print_card(
+            card,
+            read.build.as_ref(),
+            &hex16(&read.header.content_hash),
             file,
             format,
             sha256,
@@ -1636,18 +1796,23 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
         // says a run was bounded.
         anyhow::bail!("--only and --max-mb bound a measurement; add --measure");
     }
-    let (card, build) = read_card_for_audit(path)?;
-    let Some(card) = card else {
+    let read = read_card_for_audit(path)?;
+    let (build, measured, stored_ti) = (read.build, read.text_index, read.stored_text_index);
+    let Some(card) = read.card else {
         if opts.measure || opts.write_costs {
             anyhow::bail!("{path}: no dataset card, so there are no starter queries to measure");
         }
         if opts.json {
             println!(
-                "{{\"path\":{},\"card\":false,\"findings\":[]}}",
-                quote(path)
+                "{{\"path\":{},\"card\":false,\"text_index\":{},\"findings\":[]}}",
+                quote(path),
+                text_index_json(measured, stored_ti)
             );
         } else {
             println!("(no dataset card)");
+            if let Some(ti) = measured {
+                println!("  full text     {}", ti.describe());
+            }
         }
         return Ok(());
     };
@@ -1683,6 +1848,7 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
             "named_graphs": card.named_graph_count,
             "queries": card.queries.len(),
             "truncated": card.truncated,
+            "text_index": text_index_json(measured, stored_ti),
             "measurement": run.as_ref().map(|r| serde_json::json!({
                 "transport": r.transport,
                 "engine": crate::commands::buildinfo::builder_version(),
@@ -1699,6 +1865,22 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
     }
 
     println!("{}  ({} starter queries)", path, card.queries.len());
+    // The full-text verdict leads the report: it is the one line that is true of
+    // the FILE rather than of the card, and it is the question `FILTER(CONTAINS)`
+    // cannot answer for you — the same query returns the same rows either way.
+    match measured {
+        Some(ti) => println!("  full text     {}", ti.describe()),
+        None => println!(
+            "  full text     unknown — a card document has no sections to measure; \
+             pass the .rete itself"
+        ),
+    }
+    if let Some(stored) = stored_ti {
+        println!(
+            "  full text     <- the card's own bytes claim {} — the file disagrees; re-card it",
+            stored.describe()
+        );
+    }
     if let Some(run) = &run {
         // The transport goes ABOVE the numbers, not in a footnote: a byte
         // figure without the thing that fetched the bytes is not a cost.
@@ -1768,6 +1950,28 @@ pub(crate) fn card_audit_cmd(path: &str, opts: &AuditOptions) -> anyhow::Result<
         );
     }
     Ok(())
+}
+
+/// The audit's `text_index` verdict as JSON: the measured signal, `null` when
+/// nothing was measured (a card *document* has no sections), plus the card's own
+/// stale claim under `card_said` when the two disagree. `null` is deliberately
+/// distinguishable from `{"present": false}` — "I could not look" is not "there
+/// is no index".
+fn text_index_json(
+    measured: Option<TextIndexSignal>,
+    stored: Option<TextIndexSignal>,
+) -> serde_json::Value {
+    let Some(measured) = measured else {
+        return serde_json::Value::Null;
+    };
+    let mut v = serde_json::to_value(measured).expect("TextIndexSignal serializes");
+    if let Some(stored) = stored {
+        v.as_object_mut().expect("an object").insert(
+            "card_said".into(),
+            serde_json::to_value(stored).expect("TextIndexSignal serializes"),
+        );
+    }
+    v
 }
 
 /// What `rete card-audit` was asked to do beyond reading the card.
@@ -1989,10 +2193,12 @@ fn write_costs(
     // content is *just* the costs — no invented timestamp, no invented builder,
     // because this tool did not build it.
     let reader = crate::commands::range_source::LocalRangeReader::open(path)?;
-    let mut info = load_card_and_build_ranged(&reader)?.2.unwrap_or(BuildInfo {
-        schema: BUILD_INFO_SCHEMA,
-        ..Default::default()
-    });
+    let mut info = load_card_and_build_ranged(&reader)?
+        .build
+        .unwrap_or(BuildInfo {
+            schema: BUILD_INFO_SCHEMA,
+            ..Default::default()
+        });
     info.query_costs = Some(QueryCosts {
         context: cost_context(&run.transport),
         queries: run.costs.clone(),
@@ -2011,14 +2217,31 @@ fn quote(s: &str) -> String {
 /// accepted and reported as no card, so a survey's saved output can be piped
 /// straight back in. A card document carries no build record; that is what
 /// makes `--measure` need the file.
-type CardAndBuild = (Option<DatasetCard>, Option<super::buildinfo::BuildInfo>);
+///
+/// A `.rete` also yields the measured [`TextIndexSignal`] and any drift between
+/// it and what the card's bytes claimed; a card *document* yields neither —
+/// there is no file to measure, so the audit reports the index as unknown
+/// rather than asserting it from a document that may be years old.
+struct CardForAudit {
+    card: Option<DatasetCard>,
+    build: Option<super::buildinfo::BuildInfo>,
+    /// `None` for a card document (nothing was measured).
+    text_index: Option<TextIndexSignal>,
+    stored_text_index: Option<TextIndexSignal>,
+}
 
-fn read_card_for_audit(path: &str) -> anyhow::Result<CardAndBuild> {
+fn read_card_for_audit(path: &str) -> anyhow::Result<CardForAudit> {
+    let from_file = |read: CardRead| CardForAudit {
+        card: read.card,
+        build: read.build,
+        text_index: Some(read.text_index),
+        stored_text_index: read.stored_text_index,
+    };
     if path.starts_with("http://") || path.starts_with("https://") {
         let reader = rete_core::CountingReader::new(
             crate::commands::range_source::RangedSourceReader::open(path)?,
         );
-        let out = load_card_and_build_ranged(&reader).map(|(_, c, b)| (c, b));
+        let out = load_card_and_build_ranged(&reader).map(from_file);
         eprintln!(
             "fetched {} bytes in {} range request(s)",
             reader.bytes_read(),
@@ -2028,19 +2251,28 @@ fn read_card_for_audit(path: &str) -> anyhow::Result<CardAndBuild> {
     }
     if path.ends_with(".rete") {
         let reader = crate::commands::range_source::LocalRangeReader::open(path)?;
-        return load_card_and_build_ranged(&reader).map(|(_, c, b)| (c, b));
+        return load_card_and_build_ranged(&reader).map(from_file);
     }
     let text = if path == "-" {
         std::io::read_to_string(std::io::stdin())?
     } else {
         std::fs::read_to_string(path)?
     };
+    let none = CardForAudit {
+        card: None,
+        build: None,
+        text_index: None,
+        stored_text_index: None,
+    };
     let Some(start) = text.find('{') else {
-        return Ok((None, None));
+        return Ok(none);
     };
     let card = serde_json::from_str(&text[start..])
         .map_err(|e| anyhow::anyhow!("{path}: not a dataset card document: {e}"))?;
-    Ok((Some(card), None))
+    Ok(CardForAudit {
+        card: Some(card),
+        ..none
+    })
 }
 
 #[cfg(test)]
@@ -2076,6 +2308,72 @@ mod tests {
         let text = String::from_utf8(bytes).unwrap();
         assert!(!text.contains("description"));
         assert!(!text.contains("classes"));
+    }
+
+    /// `signals.text_index` is measured from the file's sections at READ time,
+    /// so the write path must drop it: a stored copy would be a claim that
+    /// survives the sections it describes (a `repyramid --text-index` rewrites
+    /// them), which is the class of drift #189 had to repair by hand.
+    #[test]
+    fn the_text_index_signal_is_stripped_from_the_stored_card() {
+        // `causenet-full-typed.rete`'s real figures.
+        let measured = TextIndexSignal {
+            present: true,
+            bytes: 1_879_287_762,
+            token_table_bytes: Some(193_295_361),
+        };
+        let mut card = DatasetCard {
+            title: Some("Indexed".into()),
+            triple_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(card.observe_text_index(measured), None);
+        assert_eq!(card.signals.text_index, Some(measured));
+
+        let bytes = card.to_json_bytes();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            !text.contains("text_index"),
+            "the signal must not reach the metadata section: {text}"
+        );
+        // Everything else still round-trips, and the reader gets `None` =
+        // "unknown" rather than a fabricated `false`.
+        let back = DatasetCard::from_json_bytes(&bytes).unwrap();
+        assert_eq!(back.title, card.title);
+        assert_eq!(back.signals.text_index, None);
+
+        // Stripping is not mutation: the in-memory card keeps what was measured
+        // so the SAME card can be rendered and serialized in either order.
+        assert_eq!(card.signals.text_index, Some(measured));
+    }
+
+    /// The signal survives the card's own JSON envelope — which is what
+    /// `rete card --json`, the wasm reader and `card-audit`'s document input all
+    /// speak — even though it never reaches the file.
+    #[test]
+    fn the_text_index_signal_round_trips_through_a_card_document() {
+        let mut card = DatasetCard {
+            title: Some("Indexed".into()),
+            ..Default::default()
+        };
+        card.observe_text_index(TextIndexSignal {
+            present: true,
+            bytes: 80,
+            token_table_bytes: Some(68),
+        });
+        let doc = serde_json::to_vec(&card_json(&card)).unwrap();
+        let back: DatasetCard = serde_json::from_slice(&doc).unwrap();
+        assert_eq!(back.signals.text_index, card.signals.text_index);
+
+        // A measured negative serializes as `{"present": false}` — nothing else
+        // is asserted alongside it, and it is NOT the same as the field's
+        // absence, which means "nobody measured".
+        let mut none = DatasetCard::default();
+        none.observe_text_index(TextIndexSignal::default());
+        let text = serde_json::to_string(&card_json(&none)).unwrap();
+        assert!(text.contains(r#""text_index":{"present":false}"#), "{text}");
+        let absent = serde_json::to_string(&card_json(&DatasetCard::default())).unwrap();
+        assert!(!absent.contains("text_index"), "{absent}");
     }
 
     #[test]
@@ -2696,10 +2994,15 @@ mod tests {
             data: image,
             reads: Mutex::new(Vec::new()),
         };
-        let (_, got, build) = load_card_and_build_ranged(&reader).unwrap();
-        let got = got.expect("card present");
+        let read = load_card_and_build_ranged(&reader).unwrap();
+        let got = read.card.expect("card present");
         assert_eq!(got.extra.get("atlas:layer"), Some(&serde_json::json!("84")));
-        assert!(build.is_some(), "build info came out of the same range");
+        assert!(
+            read.build.is_some(),
+            "build info came out of the same range"
+        );
+        // No TEXT_INDEX section: the signal is answered by the header alone.
+        assert_eq!(got.signals.text_index, Some(TextIndexSignal::default()));
 
         let reads = reader.reads.lock().unwrap();
         assert_eq!(
@@ -2708,6 +3011,100 @@ mod tests {
             "CARD tier = header + ONE coalesced range, extra included: {reads:?}"
         );
         assert_eq!(reads[0], (0, rete_core::HEADER_LEN as u64));
+    }
+
+    /// A card whose own bytes claim a full-text index the file does not have is
+    /// the exact drift #189 had to repair by hand, one level down. Our writers
+    /// cannot produce it ([`DatasetCard::to_json_bytes`] strips the field), but a
+    /// third-party writer can — so the reader measures, overrides, and hands the
+    /// stale claim back for `card-audit` to report.
+    #[test]
+    fn a_card_claiming_an_index_the_file_lacks_is_reported_as_drift() {
+        let quads = enriched_fixture();
+        let mut card = derive_card(&quads, 12, 0, CardInput::default());
+        // Serialized the way a FOREIGN writer would — `to_json_bytes` would
+        // strip exactly the field this test needs to smuggle in.
+        card.signals.text_index = Some(TextIndexSignal {
+            present: true,
+            bytes: 999_999,
+            token_table_bytes: Some(1_234),
+        });
+        let blob = serde_json::to_vec(&card).unwrap();
+        assert!(String::from_utf8_lossy(&blob).contains("text_index"));
+
+        let (image, _) =
+            rete_core::ingest::assemble_dataset_with_opts(quads, true, false, None, |_, _| {
+                blob.clone()
+            });
+        let read = load_card_and_build_ranged(&rete_core::SliceReader::new(&image)).unwrap();
+
+        // The file has no kind-6 section, so that is what the card now says…
+        assert_eq!(
+            read.card.unwrap().signals.text_index,
+            Some(TextIndexSignal::default())
+        );
+        // …and the claim it displaced is reported rather than silently dropped.
+        let stale = read.stored_text_index.expect("the drift is reported");
+        assert!(stale.present);
+        assert_eq!(stale.bytes, 999_999);
+        // `card-audit --json` surfaces it under `card_said`, beside the measurement.
+        let doc = text_index_json(Some(read.text_index), read.stored_text_index);
+        assert_eq!(doc["present"], serde_json::json!(false));
+        assert_eq!(doc["card_said"]["present"], serde_json::json!(true));
+    }
+
+    /// The same budget with a TEXT_INDEX present: one extra read, of **≤10
+    /// bytes**, at the section's own offset — the leading length varint and
+    /// nothing else. Measuring a 1.88 GB index must not cost 1.88 GB, nor even
+    /// the token table it measures.
+    #[test]
+    fn measuring_the_text_index_costs_one_tiny_read() {
+        use std::sync::Mutex;
+
+        struct Counting {
+            data: Vec<u8>,
+            reads: Mutex<Vec<(u64, u64)>>,
+        }
+        impl rete_core::RangeReader for Counting {
+            fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+                self.reads.lock().unwrap().push((offset, len));
+                let start = offset as usize;
+                let end = (start + len as usize).min(self.data.len());
+                Ok(self.data[start..end].to_vec())
+            }
+            fn len(&self) -> u64 {
+                self.data.len() as u64
+            }
+        }
+
+        let quads = enriched_fixture();
+        let card = derive_card(&quads, 12, 0, CardInput::default());
+        let (image, _) =
+            rete_core::ingest::assemble_dataset_with_opts(quads, true, true, None, |_, _| {
+                card.to_json_bytes()
+            });
+        let header = Header::from_bytes(&image).unwrap();
+        assert!(header.text_index_len > 0, "the fixture is indexed");
+
+        let reader = Counting {
+            data: image,
+            reads: Mutex::new(Vec::new()),
+        };
+        let read = load_card_and_build_ranged(&reader).unwrap();
+        let signal = read.text_index;
+        assert!(signal.present);
+        assert_eq!(signal.bytes, header.text_index_len);
+        let table = signal.token_table_bytes.expect("token table measured");
+        assert!(table > 0 && table < signal.bytes);
+
+        let reads = reader.reads.lock().unwrap();
+        assert_eq!(reads.len(), 3, "header + card range + the probe: {reads:?}");
+        let (offset, len) = reads[2];
+        assert_eq!(
+            offset, header.text_index_offset,
+            "the probe reads the section's FIRST bytes"
+        );
+        assert!(len <= 10, "a uvarint is at most 10 bytes, not {len}");
     }
 
     /// A stray top-level key in a card file is a LOUD error naming the key —

@@ -674,6 +674,23 @@ the single <code>(posting_off, posting_len)</code> it needs — <code>lookup(wor
 posting, <code>prefix(word)</code> the contiguous run of postings whose tokens share the
 prefix. Multiple query words <strong>AND</strong> by intersecting their sorted posting lists.
 SPARQL never touches this section, so a query open neither fetches nor pays for it.</p>
+<p><strong>Discoverability.</strong> Because a file <em>without</em> the section answers the same
+<code>FILTER(CONTAINS(…))</code> with the same rows — by full scan — the capability cannot
+be inferred from a query result, and a reader must be able to ask the file. It
+can: a kind-<code>6</code> entry in the section directory is present or it is not, in the
+same <code>bytes=0-1023</code> a client already reads. The application layer surfaces that
+as the Dataset Card's <code>signals.text_index</code>
+(<code>{present, bytes, token_table_bytes}</code> — see
+<a href="dataset-cards.html#the-full-text-signal-measured-not-stored">Dataset Cards</a>),
+<strong>measured by the reader from this directory, never written into the metadata
+section</strong>. That is a deliberate exception to how every other card field works,
+and it is what keeps the answer true across <code>repyramid --text-index</code> (which adds
+the section to an existing file) and true for a file carrying no card at all.
+<code>token_table_bytes</code> — the section's leading <code>token_table_len</code> varint plus the
+table it measures, i.e. the prefix a first search fetches — costs one ≤10-byte
+range read at <code>text_index offset</code> and is the honest cost figure; the section
+length alone overstates it several-fold, since the postings blob is never read
+whole.</p>
 <p><strong>Compatibility:</strong> <code>0x05</code> is stable format generation 1 and the compatibility
 baseline for Rete 1.x. Every stable reader from Rete 1.0.0 onward reads <code>0x05</code>.
 Optional sections and flags may extend it without changing its required semantics.

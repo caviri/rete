@@ -1254,9 +1254,12 @@ export function card_and_build(bytes) {
  * cost three requests instead of two, which is why there is one export rather
  * than a second `build_info_url`.
  *
- * JSON envelope: `{"schemaVersion":1,"card":<text|null>,"build":<text|null>}`.
- * Both are the sections' **own bytes** as text, not a re-serialization — the
- * card a client displays is the card the file holds. Worker-only
+ * JSON envelope:
+ * `{"schemaVersion":1,"card":<text|null>,"build":<text|null>,"text_index":{…}}`.
+ * `card` and `build` are the sections' **own bytes** as text, not a
+ * re-serialization — the card a client displays is the card the file holds.
+ * `text_index` is the one thing the file does *not* store about itself and this
+ * reader measures instead (see [`text_index_json`]). Worker-only
  * (synchronous XHR).
  * @param {string} url
  * @returns {string}
