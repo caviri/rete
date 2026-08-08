@@ -42,6 +42,41 @@ def main() -> None:
     if not (NOMOD / "rete_wasm.js").exists():
         die(f"missing WASM build {NOMOD} — run scripts/build_playground.py first")
 
+    # The bundled cards under docs/plaza/data/ are an INPUT, not an output.
+    # They are tracked (see .gitignore's `!/docs/plaza/data/*.rete` un-ignore)
+    # and nothing in the tree — or in the bucket — reproduces them: the R2
+    # objects are older, smaller builds (causal is 5,924 B there against the
+    # 28,652 B card-bearing file here), and history.rete was built from
+    # dev/geo/history.nt, which is gitignored. A rebuild that cannot find
+    # web/<x>.rete must therefore keep what is already committed rather than
+    # regenerate it, so carry the directory across the wipe below.
+    preserved: dict[str, bytes] = {}
+    if (OUT / "data").exists():
+        preserved = {f.name: f.read_bytes() for f in (OUT / "data").glob("*.rete")}
+
+    manifest = json.loads((SRC / "plaza.json").read_text(encoding="utf-8"))
+    bundled = [
+        pathlib.PurePosixPath(ds["rete"]).name
+        for ds in manifest.get("datasets", [])
+        if ds.get("rete", "").startswith("../../web/")
+    ]
+
+    # Pre-flight BEFORE the wipe below, so a tree that cannot produce a complete
+    # gallery is left exactly as it was found rather than half-rebuilt. A tile
+    # with no card file would ship pointing at ../../web/<x>.rete, which
+    # resolves outside the Pages root and 404s — that used to be a printed
+    # warning, which is how a 28 KB card silently became a 6 KB stub.
+    missing = [b for b in bundled if not (WEB / b).exists() and b not in preserved]
+    if missing:
+        die(
+            "no card file for: "
+            + ", ".join(missing)
+            + f"\n  Looked in {WEB}/ (a fresh build) and {OUT / 'data'}/ (the committed cards)."
+            + "\n  Build them into web/ first — or restore docs/plaza/data/ with"
+            + " `git checkout -- docs/plaza/data`. Do NOT fetch them from"
+            + " data.graphplaza.com: the bucket holds older, smaller builds."
+        )
+
     # Fresh output (only ever touches docs/plaza).
     if OUT.exists():
         shutil.rmtree(OUT)
@@ -69,9 +104,11 @@ def main() -> None:
     )
 
     # 4. plaza.json: copy each bundled ../../web/<x>.rete into data/, rewrite the
-    #    `rete` paths, and fix doc links. Remote URLs are left as-is.
-    manifest = json.loads((SRC / "plaza.json").read_text(encoding="utf-8"))
+    #    `rete` paths, and fix doc links. Remote URLs are left as-is. The
+    #    pre-flight above guarantees every bundled card resolves to one of the
+    #    two branches here.
     copied = []
+    kept = []
     for ds in manifest.get("datasets", []):
         rete = ds.get("rete", "")
         if rete.startswith("../../web/"):
@@ -82,7 +119,10 @@ def main() -> None:
                 ds["rete"] = "data/" + base
                 copied.append(base)
             else:
-                print(f"  warning: bundled file missing, leaving header-only: {base}")
+                # No fresh build to copy — keep the committed card verbatim.
+                (OUT / "data" / base).write_bytes(preserved[base])
+                ds["rete"] = "data/" + base
+                kept.append(base)
         for link in ds.get("links", []) or []:
             u = link.get("url", "")
             if u.startswith("../../docs/"):
@@ -113,8 +153,14 @@ def main() -> None:
             print("    " + r)
 
     total = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
-    print(f"build_plaza: wrote {OUT} — {len(copied)} card files copied, {total // 1024} KiB total")
-    print(f"  cards: {', '.join(copied)}")
+    print(
+        f"build_plaza: wrote {OUT} — {len(copied)} card files copied,"
+        f" {len(kept)} kept from the committed set, {total // 1024} KiB total"
+    )
+    if copied:
+        print(f"  copied from web/: {', '.join(copied)}")
+    if kept:
+        print(f"  kept as committed: {', '.join(kept)}")
 
 
 if __name__ == "__main__":
