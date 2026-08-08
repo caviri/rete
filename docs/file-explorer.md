@@ -37,10 +37,12 @@ Builds are attached to a GitHub Release by
 a universal macOS `.dmg` (Apple Silicon + Intel) and a Windows `.msi` /
 `-setup.exe`.
 
-The desktop build drives `rete-core` natively rather than WASM, which buys three
-things the browser cannot give: no 4 GB heap ceiling, real threads, and
-positional reads against a local file — so a multi-gigabyte `.rete` on disk
-faults in rather than being read whole.
+The desktop build drives `rete-core` natively rather than WASM, which buys two
+things the browser cannot give: no 4 GB heap ceiling, and real threads. Lazy
+reads against a local file are no longer one of them — since issue #102 the
+browser opens a dropped `.rete` through the same range reader it uses for a URL,
+slicing the blob instead of issuing HTTP ranges, so a multi-gigabyte file on disk
+faults in there too rather than being read whole.
 
 **They are unsigned.** macOS refuses them on first open ("cannot be opened
 because the developer cannot be verified", or "is damaged"); neither is true —

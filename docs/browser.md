@@ -82,6 +82,46 @@ Binding failures throw JavaScript `Error` objects rather than strings.
 | `check_schema_url(url)` | **worker-only**: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus `remote:{…}` |
 | `reason_construct_url(url, construct)` | **worker-only**: Tier-1 *selective* coherence — reason over just the subgraph a CONSTRUCT selects (only its tiles are fetched), plus `remote:{…}` |
 | `reason_url(url, graph?)` | **worker-only**: Tier-2 *full* coherence over a remote URL (materializes the whole graph), plus `remote:{…}` |
+| `register_local_file(url, blob)` / `forget_local_file(url)` | **worker-only**: map a `rete-local:…` address onto a `File`/`Blob`, so every `*_url` entry point above reads it lazily — see [Local files, read lazily](#local-files-read-lazily) |
+
+### Local files, read lazily
+
+A `File` the user picked can be range-read exactly like a URL. Register the blob
+under an address whose scheme is `rete-local:`, then pass that address to any
+`*_url` function or to `new RemoteGraph(…)`:
+
+```js
+// inside a Web Worker (register_local_file's reads use FileReaderSync)
+wasm_bindgen.register_local_file("rete-local:1/graph.rete", file);
+const g = new wasm_bindgen.RemoteGraph("rete-local:1/graph.rete");
+JSON.parse(g.query("SELECT ?p ?o WHERE { <…/s42> ?p ?o }", "table"));
+g.stats();   // {fileLength, bytes, requests} — how little was actually read
+```
+
+It is the same reader as the HTTP one with a different bottom transport:
+`Blob.slice()` + a synchronous `FileReaderSync` instead of a ranged `GET`. The
+header-window cache, range batching, block cache and polyglot detection all
+apply unchanged, and `stats()` counts blob reads the way it counts requests.
+
+Three things follow from that, and all three matter:
+
+- **Worker-only**, like every other lazy read here — `FileReaderSync` does not
+  exist on the main thread.
+- **Both engine builds work.** A local read never suspends, so the asyncify
+  variant never routes it through `env.rete_fetch_ranges`.
+- **A registration belongs to one wasm instance.** Rebuild the worker (an engine
+  switch, a trap, a memory reclaim) and the map starts empty — re-register the
+  same address before opening again.
+
+`register_local_file` rejects an address that does not begin with `rete-local:`,
+so an ordinary URL can never be silently answered from a blob.
+
+Below ~128 MB the playground still reads a local file whole: that path is faster
+when the query touches everything, and the tabs needing a resident graph
+(Explore, Map, Build) depend on it. Above it, the whole-file read is what kills
+the tab, so lazy is the default. Override with
+`localStorage.localLazyAboveMB` (`0` forces lazy for every local file) — the
+browser's counterpart to the CLI's `RETE_LOCAL_LAZY_ABOVE_MB`.
 
 `query` runs SELECT / ASK / CONSTRUCT / DESCRIBE via `eval_query` and returns a
 single JSON envelope with a `kind` field:

@@ -1469,6 +1469,19 @@ export function file_len_url(url) {
 }
 
 /**
+ * Drop a registration made by [`register_local_file`]. Releases this wasm
+ * instance's reference to the `Blob`; any open handle over it stops working.
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function forget_local_file(url) {
+    const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.forget_local_file(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * The named-graph IRIs of a dataset, as a JSON array.
  * @param {Uint8Array} bytes
  * @returns {string}
@@ -1994,6 +2007,27 @@ export function reason_url(url, graph) {
 }
 
 /**
+ * Register a local `File`/`Blob` under a `rete-local:…` URL, so every `*_url`
+ * entry point can range-read it.
+ *
+ * **Worker-only** (the read uses `FileReaderSync`), and the caller mints the
+ * URL: a worker can be torn down and rebuilt — the playground does that on a
+ * wasm trap, an engine switch, or a phone memory reclaim — and the page must be
+ * able to re-register the same file under the same URL so a resident session
+ * key stays stable. Re-registering an existing URL replaces the blob.
+ * @param {string} url
+ * @param {Blob} blob
+ */
+export function register_local_file(url, blob) {
+    const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.register_local_file(ptr0, len0, blob);
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
+}
+
+/**
  * The ontology profile (the semantic coarse graph), as JSON:
  * `{ "classes": [["<iri>", count], ...],
  *    "relations": [["sClass","pred","oClass", count], ...] }`.
@@ -2501,6 +2535,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(arg0);
             return ret;
         },
+        __wbg_new_a1b9f645bba64f0f: function() { return handleError(function () {
+            const ret = new FileReaderSync();
+            return ret;
+        }, arguments); },
         __wbg_new_d90091b82fdf5b91: function() {
             const ret = new Array();
             return ret;
@@ -2534,6 +2572,10 @@ function __wbg_get_imports() {
         __wbg_randomFillSync_6c25eac9869eb53c: function() { return handleError(function (arg0, arg1) {
             arg0.randomFillSync(arg1);
         }, arguments); },
+        __wbg_readAsArrayBuffer_f1b8da05559618d9: function() { return handleError(function (arg0, arg1) {
+            const ret = arg0.readAsArrayBuffer(arg1);
+            return ret;
+        }, arguments); },
         __wbg_require_b4edbdcf3e2a1ef0: function() { return handleError(function () {
             const ret = module.require;
             return ret;
@@ -2564,6 +2606,14 @@ function __wbg_get_imports() {
         __wbg_set_responseType_cfb49ea8269f8317: function(arg0, arg1) {
             arg0.responseType = __wbindgen_enum_XmlHttpRequestResponseType[arg1];
         },
+        __wbg_size_9970092b88b1094c: function(arg0) {
+            const ret = arg0.size;
+            return ret;
+        },
+        __wbg_slice_02bb778501725738: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = arg0.slice(arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_static_accessor_GLOBAL_9d53f2689e622ca1: function() {
             const ret = typeof global === 'undefined' ? null : global;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);

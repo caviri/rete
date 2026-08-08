@@ -192,12 +192,32 @@
     self._reteLog(e);
     self.postMessage({ type: "progress", id: pId, requests: pReq, bytes: pBytes });
   };
+  // LOCAL files: a File posted in here is a handle, not a copy — structured
+  // clone passes the blob by reference, so nothing is read until the engine asks
+  // for a range. register_local_file maps the rete-local: URL onto it inside
+  // wasm, and from then on every *_url export reads it with Blob.slice() +
+  // FileReaderSync exactly as it reads a remote URL over HTTP range. Every open
+  // handle belongs to a wasm instance, so a rebuilt worker gets the whole set
+  // again with its init message (issue #102).
+  function _registerLocals(list) {
+    if (!list || !list.length) return;
+    // A hand-swapped engine predating #102 has no such export. Say so, rather
+    // than registering nothing and failing later as "no local file registered".
+    if (typeof wasm_bindgen.register_local_file !== "function") {
+      throw new Error("this engine build cannot read a local file lazily (no register_local_file export)");
+    }
+    for (var i = 0; i < list.length; i++) {
+      wasm_bindgen.register_local_file(list[i].url, list[i].file);
+    }
+  }
   self.onmessage = function (e) {
     var m = e.data;
     if (m.type === "init") {
       self.__fetchSrc = m.fetchSrc;   // parallel fetch-worker source (pool)
       self.__poolSize = m.poolSize;   // ?workers=N, or null = auto
-      ready = wasm_bindgen(m.bytes);
+      // The registrations are part of readiness: a query posted straight after
+      // init awaits readiness, so it must not observe a half-registered engine.
+      ready = wasm_bindgen(m.bytes).then(function () { _registerLocals(m.locals); });
       // A wasm instantiate failure (CompileError, or OOM allocating the module's
       // memory on a low-RAM device) MUST be reported — otherwise no "ready" is
       // ever posted and the main thread awaits readiness forever ("querying…", no
@@ -206,6 +226,13 @@
         function () { self.postMessage({ type: "ready" }); },
         function (err) { self.postMessage({ type: "initError", error: (err && err.stack) || String((err && err.message) || err) }); }
       );
+      return;
+    }
+    // A file attached after this worker was built. Chained onto readiness for the
+    // same reason as above.
+    if (m.type === "local") {
+      ready = Promise.resolve(ready).then(function () { _registerLocals([{ url: m.url, file: m.file }]); });
+      ready.catch(function () { /* surfaced by the query that needs it */ });
       return;
     }
     if (m.type === "query") {
@@ -547,6 +574,60 @@ self.onmessage = function (e) {
   let remoteOnProgress = null;
   const remotePending = new Map();
 
+  // --- Local files, read lazily (issue #102) --------------------------------
+  // `rete-local:<n>/<name>` addresses a File the user picked. It is a URL only
+  // in the sense that the reader takes one: the engine recognizes the scheme and
+  // reads the blob with Blob.slice() + FileReaderSync instead of HTTP Range,
+  // which makes a local open cost the same handful of ranges a remote open does
+  // rather than `file.arrayBuffer()` — the whole file in a JS buffer, copied
+  // again into wasm, with every dictionary chunk decoded up front (~6× the file
+  // size resident before the first row, and a hard wall on wasm32).
+  //
+  // The map lives on the MAIN thread because workers are disposable here (a wasm
+  // trap, the async/sync engine switch, a phone memory reclaim all rebuild one)
+  // and the URL must keep addressing the same file across a rebuild.
+  const localFiles = new Map();  // rete-local: URL -> File
+  let localFileSeq = 0;
+  // Below this, a local file still loads WHOLE: the in-memory path is faster
+  // when a query touches everything, and it is what lights up the tabs that need
+  // the entire graph resident (Explore, Map, Build). Above it the whole-file
+  // read is the thing that kills the tab, so lazy wins by default. Overridable
+  // per-browser (`localStorage.localLazyAboveMB`) — 0 forces lazy for every
+  // local file, mirroring the CLI's RETE_LOCAL_LAZY_ABOVE_MB knob.
+  const LOCAL_LAZY_ABOVE_MB_DEFAULT = 128;
+  function localLazyAboveBytes() {
+    let mb = LOCAL_LAZY_ABOVE_MB_DEFAULT;
+    try {
+      const raw = localStorage.getItem("localLazyAboveMB");
+      if (raw !== null && raw !== "" && Number.isFinite(+raw) && +raw >= 0) mb = +raw;
+    } catch (_e) { /* private mode: keep the default */ }
+    return mb * 1024 * 1024;
+  }
+  // Mint the URL, remember the File, and tell a LIVE worker about it. A worker
+  // built later picks it up from its `init` payload instead (ensureRemoteWorker).
+  const LOCAL_URL_SCHEME = "rete-local:";   // matches LOCAL_SCHEME in crates/rete-wasm
+  function registerLocalFile(file) {
+    const url = LOCAL_URL_SCHEME + (++localFileSeq) + "/" + encodeURIComponent(file.name || "file.rete");
+    localFiles.set(url, file);
+    if (remoteWorker) remoteWorker.postMessage({ type: "local", url, file });
+    return url;
+  }
+  // Headless test hook (#102): exactly what the last open cost, in bytes rather
+  // than in the rounded prose #qmeta shows. The gate reads it to prove a local
+  // open reads a few ranges instead of the whole file; the page never does.
+  try {
+    window.__reteOpenFacts = () => ({
+      source: state.activeSource,
+      local: !!(state.remote && state.remote.local),
+      url: state.remote ? state.remote.url : null,
+      inMemoryBytes: state.bytes ? state.bytes.byteLength : 0,
+      lazyAboveBytes: localLazyAboveBytes(),
+      // {fileLength, bytes, requests, openBytes, openRequests, …} — the engine's
+      // own counters for the last query, open included.
+      lastRead: (state.lastResult && state.lastResult.res && state.lastResult.res.remote) || null,
+    });
+  } catch (e) { /* test hook only */ }
+
   // Hard-cancel a running remote query: a synchronous wasm query can't be
   // interrupted cooperatively, so we terminate the worker (it rebuilds on the
   // next query) and reject anything in flight.
@@ -672,7 +753,11 @@ self.onmessage = function (e) {
       const watchdog = setTimeout(() => failWorker(new Error("the engine didn't start in time — please try again")), 30000);
       remoteWorker.postMessage({
         type: "init", bytes: asyncOn ? asyncWasmBytes : b64ToBytes(RETE_WASM_B64),
-        fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount()
+        fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount(),
+        // Every local file this session knows about — a rebuilt worker holds a
+        // FRESH wasm instance, and its registration map starts empty. Files are
+        // posted by reference (structured clone of a Blob copies no bytes).
+        locals: [...localFiles].map(([url, file]) => ({ url, file })),
       });
       return rp;
     });
@@ -795,7 +880,9 @@ self.onmessage = function (e) {
     if (state.activeSource === "file") return "local file";
     if (state.activeSource === "url") return "url";
     if (state.activeSource === "built") return "built in browser";
-    if (state.activeSource === "remote") return "remote (lazy)";
+    // Lazy over a blob in this tab, not over the network — the pill must not
+    // claim "remote" for a file that never left the machine.
+    if (state.activeSource === "remote") return state.remote && state.remote.local ? "local file (lazy)" : "remote (lazy)";
     if (state.activeSource === "cached") return "remote (cached)";
     return "bundled";
   }
@@ -1708,7 +1795,11 @@ self.onmessage = function (e) {
   // worker, no full download. Only the SPARQL tab applies (the other tabs need
   // the whole graph in memory). `datasetKey` ties it to a catalog entry so its
   // example query library shows; a custom URL (no key) gets no library.
-  function enterRemote(url, datasetKey) {
+  // `localFile` is set only by enterLocalFile: the graph is a blob in this tab,
+  // not an address, so the mode is "lazy" in exactly the same sense while
+  // nothing about it is remote — no network, no CORS, no Range support to
+  // require, and no shareable URL (see updateHash).
+  function enterRemote(url, datasetKey, localFile) {
     if (!url) return;
     // Phone: switching to a DIFFERENT remote dataset — tear down the old remote
     // worker so the previous dataset's resident heap (the worker caches a
@@ -1719,7 +1810,7 @@ self.onmessage = function (e) {
     state.urlCache = null; // lazy mode replaces a cached-by-URL identity
     if (state.graph) { state.graph.free(); state.graph = null; }
     resetFed(); // switching to a remote dataset drops federation partners
-    state.remote = { url };
+    state.remote = { url, local: !!localFile, name: localFile ? localFile.name : null };
     state.activeSource = "remote";
     state.namedGraphCount = null; // unknown until the card is read
     state.schema = null;
@@ -1752,9 +1843,16 @@ self.onmessage = function (e) {
     // The source pill already says "remote (lazy)" — don't repeat it here.
     setStatus("queries range-fetch only what they touch");
     const info = entry;
-    $("dsDesc").innerHTML = info ? mdLite(info.description) : "Remote graph, queried lazily over HTTP range: " + esc(url);
+    // A local file is read the same way but over its own bytes — say THAT, not
+    // "over HTTP range", which would be simply untrue and would send someone
+    // hunting a CORS problem that cannot exist.
+    const lazyBlurb = localFile
+      ? "Local file, read lazily from disk — only the byte ranges each query touches are read, nothing is uploaded."
+      : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.";
+    $("dsDesc").innerHTML = info ? mdLite(info.description)
+      : (localFile ? esc(lazyBlurb) : "Remote graph, queried lazily over HTTP range: " + esc(url));
     setDatasetHeader(info ? info.label : remoteFileName(url),
-      info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.",
+      info ? firstSentence(info.description) : lazyBlurb,
       entry ? datasetKey : null);
     if (!entry) upgradeRemoteLabelFromCard(url);
     // The SOURCES chip: resetFed() above repainted it BEFORE state.remote and
@@ -1782,9 +1880,15 @@ self.onmessage = function (e) {
       : "Write a SPARQL query (a bound subject keeps the fetch small). No example library for a custom URL.";
     // data-no-library marks the "no examples" claim so refreshCardExamples can
     // retract it if the file's own Dataset Card turns out to ship queries.
-    $("out").innerHTML = `<div class="note"${hasLib ? "" : ` data-no-library="1"`}>Connected to a remote .rete, queried lazily — ` +
-      `each query fetches only the dictionary chunks and index tiles it touches (the first also ` +
-      `pulls the header and directories). ${lib} Other tabs need a graph loaded into memory.</div>`;
+    $("out").innerHTML = `<div class="note"${hasLib ? "" : ` data-no-library="1"`}>` +
+      (localFile
+        ? `Opened <b>${esc(localFile.name)}</b> (${formatBytes(localFile.size)}) lazily from disk — ` +
+          `each query reads only the dictionary chunks and index tiles it touches (the first also ` +
+          `reads the header and directories). The file is never uploaded and never loaded whole. `
+        : `Connected to a remote .rete, queried lazily — ` +
+          `each query fetches only the dictionary chunks and index tiles it touches (the first also ` +
+          `pulls the header and directories). `) +
+      `${lib} Other tabs need a graph loaded into memory.</div>`;
     // The file's own Dataset Card may carry example queries (the only example
     // source an off-catalog remote has) — read it async, never blocking connect.
     refreshCardExamples();
@@ -2650,6 +2754,11 @@ self.onmessage = function (e) {
 
   async function loadFromFile(file) {
     if (!file) return;
+    // Big local file: open it LAZILY instead of reading it whole. Same reader
+    // the remote path uses, with Blob.slice() where the HTTP Range would be —
+    // so a query fetches the header, the directories and the tiles it touches,
+    // and nothing else. See registerLocalFile / localLazyAboveBytes.
+    if (file.size > localLazyAboveBytes()) { enterLocalFile(file); return; }
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
       // An off-catalog key derived from the FILE, exactly as enterRemote does
@@ -2665,6 +2774,19 @@ self.onmessage = function (e) {
     } catch (e) {
       showError("out", "File load failed: " + e.message);
     }
+  }
+
+  // Open a local file the LAZY way: register the blob, then hand its
+  // `rete-local:` URL to enterRemote — the same connect path a remote .rete
+  // takes, because from the reader's side it IS the same path, only the bottom
+  // transport differs. Nothing is read here; the first range read happens when
+  // the worker opens the file.
+  function enterLocalFile(file) {
+    const url = registerLocalFile(file);
+    state.dataset = String(file.name || "local").replace(/\.rete$/i, "") || "local";
+    state.selectedExample = -1;
+    enterRemote(url, null, file);
+    setStatus(`${file.name} | ${formatBytes(file.size)} | local file, read lazily`);
   }
 
   // The examples panel is catalog-driven (CATALOG.examples[key]) — which used
@@ -3012,7 +3134,9 @@ self.onmessage = function (e) {
   // remote is open so the link reopens the same file.
   function cardExampleLink(ex) {
     const params = new URLSearchParams();
-    const offCatalog = state.activeSource === "remote" && state.remote &&
+    // A `rete-local:` address names a blob in THIS tab; putting it in a link
+    // would promise a file the recipient (or a reload) cannot possibly open.
+    const offCatalog = state.activeSource === "remote" && state.remote && !state.remote.local &&
       state.remote.url !== remoteUrlFor(state.dataset);
     if (offCatalog) params.set("url", state.remote.url);
     else params.set("dataset", state.dataset);
@@ -10570,9 +10694,14 @@ self.onmessage = function (e) {
     // catalog key to name it, and state.dataset still holds whatever was loaded
     // before. Sharing that produced a link to a DIFFERENT dataset than the one
     // on screen; emit the address itself so the link round-trips.
+    // A LOCAL lazy file is deliberately excluded: `rete-local:2/x.rete` addresses
+    // a blob in this tab, so a link carrying it would reopen nothing. It shares
+    // like the whole-file local load always has — the query, not the graph.
+    const localLazy = !!(state.remote && state.remote.local);
     const offCatalog =
       state.activeSource === "remote" &&
       state.remote &&
+      !localLazy &&
       state.remote.url !== remoteUrlFor(state.dataset);
     if (offCatalog) params.set("url", state.remote.url);
     // Cached-by-URL: the same honesty, one mode over — the link must carry the
@@ -10584,7 +10713,7 @@ self.onmessage = function (e) {
     // Record HOW the dataset is loaded so a reload restores the same mode — a
     // remote-lazy graph is not embedded, so without this the deep link couldn't
     // tell it apart from a bundled one and fell back to the default dataset.
-    const load = { remote: "lazy", cached: "cache", bundled: "bundled" }[state.activeSource];
+    const load = localLazy ? null : { remote: "lazy", cached: "cache", bundled: "bundled" }[state.activeSource];
     if (load) params.set("load", load);
     params.set("mode", state.mode);
     const q = $("q").value.trim();

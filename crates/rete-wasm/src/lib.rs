@@ -1471,11 +1471,142 @@ fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
     rete_core::results_envelope_json(out, &versioned_extra)
 }
 
+/// URL scheme naming a `.rete` that is **already in the page** — a `File` the
+/// user picked, or any `Blob` — instead of one on a server.
+///
+/// A local open used to be `file.arrayBuffer()`: the whole file into a JS
+/// `ArrayBuffer`, copied again into wasm linear memory, then `Rete::open`
+/// decoding every dictionary chunk up front. That is ~6× the file size resident
+/// before a single row is answered, which on wasm32 is a hard wall — so a user
+/// could query a 16.8 GB graph over HTTP and not open their own 500 MB file
+/// from disk (issue #102).
+///
+/// The fix is not a second reader. [`XhrRangeReader`] already *is* the lazy
+/// reader — length, header-window cache, batching, block cache, polyglot base,
+/// progress reporting — and only its bottom transport was HTTP-shaped. A URL
+/// with this scheme swaps that transport for `Blob.slice()` +
+/// [`web_sys::FileReaderSync`], so every `*_url` entry point ([`sparql_url`],
+/// [`card_url`], [`schema_url`], [`RemoteGraph`], …) reads a local file exactly
+/// as lazily as a remote one, over the same code.
+///
+/// `FileReaderSync` is genuinely synchronous and exists **only in workers** —
+/// the same constraint sync XHR already imposes on this reader, so it fits the
+/// contract with no new suspension points. That is also why the **asyncify**
+/// build needs nothing extra: a local read never suspends, so it never reaches
+/// `env.rete_fetch_ranges`.
+///
+/// The blob is registered by JS through [`register_local_file`], which owns the
+/// URL→`Blob` map for this wasm instance.
+const LOCAL_SCHEME: &str = "rete-local:";
+
+fn is_local_url(url: &str) -> bool {
+    url.starts_with(LOCAL_SCHEME)
+}
+
+thread_local! {
+    /// URL → `Blob` for this wasm instance. Thread-local because a `Blob` is a
+    /// JS handle and wasm32 is single-threaded here; the experimental `threads`
+    /// build would simply not find a blob registered on another thread, and the
+    /// read fails with the message below rather than silently reading nothing.
+    static LOCAL_BLOBS: std::cell::RefCell<std::collections::HashMap<String, web_sys::Blob>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Register a local `File`/`Blob` under a `rete-local:…` URL, so every `*_url`
+/// entry point can range-read it.
+///
+/// **Worker-only** (the read uses `FileReaderSync`), and the caller mints the
+/// URL: a worker can be torn down and rebuilt — the playground does that on a
+/// wasm trap, an engine switch, or a phone memory reclaim — and the page must be
+/// able to re-register the same file under the same URL so a resident session
+/// key stays stable. Re-registering an existing URL replaces the blob.
+#[wasm_bindgen]
+pub fn register_local_file(url: &str, blob: &web_sys::Blob) -> Result<(), JsValue> {
+    if !is_local_url(url) {
+        return Err(js_error(format!(
+            "a local file URL must start with `{LOCAL_SCHEME}` (got {url})"
+        )));
+    }
+    LOCAL_BLOBS.with(|map| map.borrow_mut().insert(url.to_string(), blob.clone()));
+    Ok(())
+}
+
+/// Drop a registration made by [`register_local_file`]. Releases this wasm
+/// instance's reference to the `Blob`; any open handle over it stops working.
+#[wasm_bindgen]
+pub fn forget_local_file(url: &str) -> bool {
+    LOCAL_BLOBS.with(|map| map.borrow_mut().remove(url).is_some())
+}
+
+fn local_blob(url: &str) -> std::io::Result<web_sys::Blob> {
+    LOCAL_BLOBS
+        .with(|map| map.borrow().get(url).cloned())
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "no local file is registered as {url} — the page must call \
+                 register_local_file(url, file) in THIS worker before opening it"
+            ))
+        })
+}
+
+/// The local transport: one `Blob.slice()` per range, read synchronously.
+///
+/// Batched like the HTTP one (the engine coalesces ranges before it gets here),
+/// but with no round trip to pay for — a slice is a view over bytes the browser
+/// already has on disk, so the only real cost is the copy of what was asked for.
+fn read_local_ranges(url: &str, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+    let (offsets, lens, total) = checked_async_layout(ranges)?;
+    if total == 0 {
+        return Ok(ranges.iter().map(|_| Vec::new()).collect());
+    }
+    let blob = local_blob(url)?;
+    let size = blob.size();
+    let reader = web_sys::FileReaderSync::new().map_err(|e| {
+        std::io::Error::other(format!(
+            "FileReaderSync is unavailable ({e:?}) — a local .rete is read from a Web Worker only, \
+             never the main thread"
+        ))
+    })?;
+    let mut out = Vec::with_capacity(ranges.len());
+    for (&offset, &len) in offsets.iter().zip(&lens) {
+        let start = offset as f64;
+        let end = start + f64::from(len);
+        if end > size {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("range {offset}..{end} is past the end of {url} ({size} bytes)"),
+            ));
+        }
+        let slice = blob
+            .slice_with_f64_and_f64(start, end)
+            .map_err(|e| std::io::Error::other(format!("Blob.slice failed on {url}: {e:?}")))?;
+        let buffer = reader
+            .read_as_array_buffer(&slice)
+            .map_err(|e| std::io::Error::other(format!("FileReaderSync failed on {url}: {e:?}")))?;
+        let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+        if bytes.len() != len as usize {
+            return Err(std::io::Error::other(format!(
+                "short local read: got {} of {len} bytes at offset {offset} from {url}",
+                bytes.len()
+            )));
+        }
+        out.push(bytes);
+    }
+    // One batch is one "request" to the UI, matching what the asyncify HTTP
+    // reader reports for its concurrent batch — so the playground's range
+    // inspector and `stats()` describe local and remote reads on one scale.
+    report_progress(total, ranges);
+    Ok(out)
+}
+
 /// HTTP `Range` reader over **synchronous** XMLHttpRequest — the bridge that
 /// lets the lazily-faulting `Rete::open_ranged_lazy` run in the browser with
 /// the synchronous engine untouched. Browsers permit sync XHR with a binary
 /// response **only inside Web Workers**: call [`sparql_url`] from a worker,
 /// never the main thread (where the browser throws).
+///
+/// Also the **local** reader: a `rete-local:` URL (see [`LOCAL_SCHEME`]) swaps
+/// the transport for `Blob.slice()` + `FileReaderSync` and changes nothing else.
 struct XhrRangeReader {
     url: String,
     len: u64,
@@ -1612,6 +1743,20 @@ mod async_range_tests {
         let error = split_range_response(&[(0, 4)], vec![1, 2, 3, 4], 3, "fixture").unwrap_err();
         assert!(error.to_string().contains("returned 3 of 4 bytes"));
     }
+
+    #[test]
+    fn only_the_local_scheme_routes_to_the_blob_transport() {
+        use super::is_local_url;
+        assert!(is_local_url("rete-local:1/mirbase.rete"));
+        // Everything the reader has ever been given before must stay on HTTP —
+        // a URL that merely CONTAINS the token is not a local file.
+        assert!(!is_local_url("https://example.org/rete-local:1/x.rete"));
+        assert!(!is_local_url(
+            "https://data.graphplaza.com/mirbase/mirbase.rete"
+        ));
+        assert!(!is_local_url("file:///tmp/x.rete"));
+        assert!(!is_local_url(""));
+    }
 }
 
 #[cfg(feature = "asyncify")]
@@ -1661,6 +1806,25 @@ impl XhrRangeReader {
     /// directory pins the exact length (issue #95) — and only falls back to
     /// the transport's numbers for a resource that isn't a `.rete`.
     fn open(url: &str) -> Result<Self, JsValue> {
+        // A LOCAL blob needs no probe at all: its length is a property, not a
+        // network fact, and none of the reasons the HTTP probe exists (a
+        // compressing host, a hidden Content-Range, a 405 on HEAD) can apply.
+        // The header window is faulted on first use like any other range, so
+        // opening a local file costs exactly ONE read before the engine starts.
+        // Placed above both build variants because it is the same either way.
+        if is_local_url(url) {
+            // `Blob.size` is an f64: reject NaN/∞/0 explicitly rather than
+            // letting `as u64` saturate one of them into a plausible length.
+            let len = local_blob(url).map_err(|e| js_error(e.to_string()))?.size();
+            if !len.is_finite() || len < 1.0 {
+                return Err(js_error(format!("{url} is an empty local file")));
+            }
+            return Ok(Self {
+                url: url.to_string(),
+                len: len as u64,
+                head: std::sync::OnceLock::new(),
+            });
+        }
         // Asyncify build: probe the length via the async import — no sync XHR.
         // The JS side (`__reteDoLen` in scripts/build_playground.py) applies
         // this same derive-from-the-header-then-validate-the-footer strategy.
@@ -1892,6 +2056,13 @@ impl RangeReader for XhrRangeReader {
     /// opt-in COI fetch-worker pool (`globalThis.reteReadMany`) is installed.
     /// 16 matches the pool size and the CLI's thread fan-out.
     fn concurrency(&self) -> usize {
+        // A local blob has no round trip to hide, so the planner may probe as
+        // freely as the concurrent HTTP readers do — and a wider batch means
+        // fewer crossings of the wasm↔JS boundary, which is the only real cost
+        // here. Same number as the asyncify reader and the CLI's fan-out.
+        if is_local_url(&self.url) {
+            return 16;
+        }
         #[cfg(feature = "asyncify")]
         {
             16
@@ -1938,6 +2109,10 @@ impl RangeReader for XhrRangeReader {
     /// non-206, a short read). On `null` we fall back to the sequential reads
     /// below, which keep the rigorous per-range validation.
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        // Local: the whole batch is sliced in one call, in either build.
+        if is_local_url(&self.url) {
+            return read_local_ranges(&self.url, ranges);
+        }
         // Asyncify build: fetch the whole batch concurrently in one suspend.
         #[cfg(feature = "asyncify")]
         {
@@ -1963,6 +2138,12 @@ impl XhrRangeReader {
     /// One real range request. Never consults the cached header window — this is
     /// what fills it.
     fn fetch_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        // Local: one `Blob.slice()` + `FileReaderSync`, in either build.
+        if is_local_url(&self.url) {
+            return read_local_ranges(&self.url, &[(offset, len)])?
+                .pop()
+                .ok_or_else(|| std::io::Error::other("local read returned no range"));
+        }
         // Asyncify build: a single read is a 1-range async fetch (suspends).
         #[cfg(feature = "asyncify")]
         {
