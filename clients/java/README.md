@@ -12,6 +12,10 @@ The same Rust engine the native CLI and the browser use is compiled to a small,
 - **No `wasm-bindgen` / JS glue.** The wasm boundary is a plain C ABI over
   linear memory (see [`ffi/src/lib.rs`](ffi/src/lib.rs)), so a JVM wasm runtime
   can call it directly.
+- **Compiled, not interpreted.** Chicory translates the engine to JVM bytecode
+  once per JVM and HotSpot JITs it from there — see
+  [Execution mode](#execution-mode-compiled-by-default) for the numbers and the
+  escape hatch.
 
 This mirrors the design of the [browser client](../js) and the
 [Python client](../python): `clients/` consumes `crates/`, one thin binding per
@@ -63,7 +67,8 @@ Engine errors (bad file, SPARQL parse/eval failure, invalid RDF) are raised as
 `ReteException`, carrying the engine's own message.
 
 A `Rete` instance owns a single wasm linear memory and is **not** thread-safe —
-use one per thread (loading is cheap) or guard calls with a lock.
+use one per thread (loading is cheap after the first, see
+[Execution mode](#execution-mode-compiled-by-default)) or guard calls with a lock.
 
 ### Remote (lazy) querying
 
@@ -83,6 +88,72 @@ try (Rete rete = Rete.openRemote(URI.create("https://data.example.org/dataset.re
 The resource must support HTTP range requests (206 / `Content-Range`). The
 open cost (header + dictionary) is paid once into a resident handle whose block
 cache stays warm across queries.
+
+### Execution mode: compiled by default
+
+Chicory can either **interpret** the wasm module or **compile** it to JVM
+bytecode. This client compiles, via
+[`com.dylibso.chicory:compiler`](https://chicory.dev) — the module is translated
+once per JVM (and the parsed module cached with it), so every later `Rete.load()`
+/ `openRemote()` in that JVM is nearly free, and HotSpot JITs the generated
+classes from there.
+
+Measured in this repo's own Java image (`--memory=12g`, `-Xmx8g`, one fresh JVM
+per figure, peak RSS from the kernel's `VmHWM`), two calls per op:
+
+| file | op | interpreted | compiled | |
+| --- | --- | --- | --- | --- |
+| `mirbase.rete` 39.2 MiB, 2.70 M quads | `info()` | 84.1 s / 79.8 s · 1332 MB | **12.8 s / 12.6 s · 839 MB** | 6.6× faster, 1.6× less RSS |
+| | `query()` `LIMIT 100` | 82.0 s / 81.8 s · 1581 MB | **12.9 s / 13.0 s · 840 MB** | 6.3× faster, 1.9× less RSS |
+| `davidrumsey.rete` 71.3 MiB, 5.00 M quads | `info()` | 162.7 s / 157.7 s · 2953 MB | **28.9 s / 28.6 s · 961 MB** | 5.6× faster, 3.1× less RSS |
+| | `query()` `LIMIT 100` | 150.5 s / 150.9 s · 1776 MB | **28.8 s / 28.7 s · 1140 MB** | 5.2× faster, 1.6× less RSS |
+
+(Interpreted figures are the best of two runs — the interpreter's wall time
+varies by up to ±30% under load, while the compiled figures repeat within 2%.)
+
+**The startup cost is real and is not hidden here.** Compiling the 1.56 MiB
+engine takes about **0.8 s**, once per JVM: the first `Rete.load()` goes from
+~0.5 s (parse only) to ~1.3 s (parse + compile), and resident memory after that
+load goes from ~250 MB to ~555 MB. A process that loads the engine and does
+nothing is therefore *worse off*. A process that touches a real file is ahead
+after the first call.
+
+Caching the parsed module alongside the compiled code also fixes a second cost:
+on `main` every additional `Rete.load()` re-parsed the wasm at **224–292 ms**
+each — which an RDF4J `Sail` pays *per connection*. It is now **1–7 ms**.
+
+To force the interpreter, set the system property:
+
+```sh
+java -Drete.chicory.interpreter=true -jar your-app.jar
+```
+
+That is the right call in three cases:
+
+- a **short-lived process** that opens one small file, runs one small query and
+  exits — the one-off compile can cost more than it saves;
+- a runtime that **forbids defining classes at execution time** — GraalVM
+  `native-image` (closed-world) or Android (no JVM bytecode loader). For those,
+  Chicory's build-time compiler (`chicory-compiler-maven-plugin`) is the real
+  answer; this client does not use it yet;
+- **excluding the dependency** to slim the classpath. Dropping
+  `com.dylibso.chicory:compiler` still works — `Rete` logs one warning and falls
+  back to the interpreter rather than failing to load.
+
+Cost of shipping it: `+510 KiB` of dependency JARs (`compiler` plus ASM), no
+change to the `rete-client` artifact itself, and no new licence obligations —
+`compiler` is Apache-2.0, ASM is BSD-3-Clause.
+
+### What this does *not* fix
+
+Compiling makes the same work faster; it does not change how much work there is.
+Local calls still copy the entire file into wasm linear memory **on every call**,
+and every scan is materialized twice (a wasm `Vec`, then a JVM `List`), so the
+local API is still bounded by `byte[]`/`Integer.MAX_VALUE` on one side and the
+4 GiB `wasm32` linear memory on the other. `cordis.rete` (763.9 MiB) still dies
+in `info()` with `decompression failed: out of memory` — inside linear memory,
+with 8 GiB of heap unused — compiled exactly as it did interpreted, only sooner.
+See [issue #115](https://github.com/caviri/rete/issues/115), which stays open.
 
 ## `rete-rdf4j` usage
 

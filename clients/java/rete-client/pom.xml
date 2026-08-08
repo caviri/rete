@@ -28,6 +28,14 @@
       <groupId>com.dylibso.chicory</groupId>
       <artifactId>wasm</artifactId>
     </dependency>
+    <!-- Compiles the engine to JVM bytecode at load time instead of
+         interpreting it. Not optional: the interpreter is several times slower,
+         so a default install should get the fast path. Excluding this artifact
+         still works — Rete falls back to the interpreter with a warning. -->
+    <dependency>
+      <groupId>com.dylibso.chicory</groupId>
+      <artifactId>compiler</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -35,4 +43,32 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <!-- The execution mode is resolved once per JVM, so the interpreter
+           branch needs a second, separate test JVM. This keeps the documented
+           escape hatch (-Drete.chicory.interpreter=true) covered by CI. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>interpreter</id>
+            <phase>test</phase>
+            <goals><goal>test</goal></goals>
+            <configuration>
+              <includes><include>**/ExecutionModeTest.java</include></includes>
+              <systemPropertyVariables>
+                <rete.chicory.interpreter>true</rete.chicory.interpreter>
+              </systemPropertyVariables>
+              <!-- Surefire reuses one report directory per module; give this
+                   run its own so it does not overwrite the default run's. -->
+              <reportsDirectory>${project.build.directory}/surefire-reports-interpreter</reportsDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>
