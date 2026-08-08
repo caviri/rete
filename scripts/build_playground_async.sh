@@ -40,6 +40,17 @@ rustup target list --toolchain "$ASYNCIFY_TOOLCHAIN" --installed \
     exit 1
   }
 
+# A target dir of its own — never one a host build has used (see
+# scripts/wasm_target_dir.sh), and a different one from the plain builds', since
+# this is a different configuration entirely: nightly, RUSTFLAGS, -Z build-std.
+# One purpose per dir is what keeps that file's contamination check meaningful.
+# Byte-neutral, measured: this build alone in an empty dir reproduces CI's
+# uploaded rete_wasm_bg.wasm exactly (10,408,069 B, 2c20d2ca…), so it does not
+# depend on the plain builds having run in the same dir first, the way CI's
+# single-dir layout would otherwise let it.
+source scripts/wasm_target_dir.sh   # cwd is the repository root (the cd above)
+export CARGO_TARGET_DIR="$RETE_WASM_ASYNC_TARGET_DIR"
+
 export RUSTFLAGS="-Ctarget-feature=-reference-types"   # NOT -multivalue (see above)
 rustup run "$ASYNCIFY_TOOLCHAIN" wasm-pack build crates/rete-wasm \
   --target no-modules --out-dir ../../web/pkg-nomodules-async \

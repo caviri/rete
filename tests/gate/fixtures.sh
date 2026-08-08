@@ -61,6 +61,11 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 2
   }
   echo "── gate fixtures: no cargo on PATH → building in the dev container ──"
+  # Compose resolves the project name from $COMPOSE_PROJECT_NAME, else from
+  # `name: rete` in compose.yaml — so from a git WORKTREE this writes into the
+  # same rete_cargo-target volume as every other checkout. Export
+  # COMPOSE_PROJECT_NAME per worktree (compose.yaml, tests/gate/README.md).
+  echo "   compose project: ${COMPOSE_PROJECT_NAME:-rete (shared by every worktree)}"
   export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
   exec docker compose run --rm -T -e RETE_FIXTURES_IN_DOCKER=1 dev \
     bash tests/gate/fixtures.sh "$@"

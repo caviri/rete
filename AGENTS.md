@@ -50,13 +50,43 @@ docker compose run --rm dev cargo build -p rete-bench
 docker compose run --rm dev bash scripts/smoke.sh
 ```
 
-For browser bindings:
+### Regenerating the browser artifacts
+
+`scripts/build_wasm.sh` is **the** producer of every browser artifact — the two
+plain wasm packages, the Asyncify one, `docs/engine/`, `docs/playground.html`,
+the explorer pages and `docs/wasm-build.json`. CI's `wasm` job reruns this exact
+script and byte-diffs the tracked ones, so run the script, not the individual
+`wasm-pack` lines it contains:
 
 ```sh
-docker compose run --rm wasm wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
-docker compose run --rm wasm wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
-docker compose run --rm dev uv run python scripts/build_playground.py
+docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
 ```
+
+(`RETE_SOURCE_REVISION` is only needed from a git worktree, whose `.git` file
+points at a host path the container cannot follow.)
+
+Three things used to make that byte diff go red, all presenting as the same
+`Binary files … differ`. Two are now handled by the script; the third is the
+check doing its job:
+
+- **A shared `CARGO_TARGET_DIR`.** A wasm built in a target dir another build has
+  used was reported to come out the same size with a handful of differing bytes
+  — the binary moved, not changed (35adffeb). It does not reproduce on demand,
+  which is exactly why it is not left to you to remember: the script derives its
+  own `…/wasm32` and `…/wasm32-asyncify` dirs from whatever `CARGO_TARGET_DIR` is
+  in force, and refuses to build in one that has host output in it. See
+  `scripts/wasm_target_dir.sh` for what was and was not reproduced. Do not invoke
+  `wasm-pack` by hand — that is the one way back into this.
+- **The build stamp.** `RETE_BUILD_STAMP` is written into `docs/playground.html`
+  and defaults to the `[workspace.package]` version, which is exactly what CI
+  stamps. Set it only for a release or a preview; the script warns when an
+  explicit value differs from the version.
+- **Genuinely stale artifacts.** Regenerate and commit them, separately from the
+  source change. CI uploads its own byte-exact `wasm-build-<sha>` artifact even
+  when the job fails, so a repair never needs a local rebuild.
+
+When the diff does go red, CI runs `scripts/wasm_parity_triage.py`, which reads
+the bytes and says which of the three it is. It runs locally too.
 
 ### The regression gate
 
