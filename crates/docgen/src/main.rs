@@ -337,8 +337,8 @@ fn render_markdown(md: &str) -> String {
 /// writing `docs/*.md` sees working on github.com and will naturally copy: the
 /// heading's *text* (markup dropped — `` `code` ``, links and emphasis
 /// contribute what they read as, not how they are written), lowercased, with
-/// everything that is not alphanumeric, space or hyphen removed and spaces
-/// turned into hyphens. Repeats of one slug get a `-1`, `-2`, … suffix.
+/// everything that is not alphanumeric, underscore, space or hyphen removed and
+/// spaces turned into hyphens. Repeats of one slug get a `-1`, `-2`, … suffix.
 ///
 /// An explicit `{#id}` (ENABLE_HEADING_ATTRIBUTES) is the author's own and is
 /// kept verbatim — only recorded so a later heading cannot silently take it.
@@ -381,6 +381,14 @@ fn slug(text: &str) -> String {
     for ch in text.chars() {
         if ch.is_alphanumeric() {
             out.extend(ch.to_lowercase());
+        } else if ch == '_' {
+            // `_` survives on github.com — its slugger strips punctuation with a
+            // class that runs `[`-`^` then `` ` ``, jumping over `_` (0x5F). A
+            // spec full of `TEXT_INDEX`-style identifiers depends on it: dropping
+            // it would mint `...-textindex-...` for a heading whose GitHub anchor
+            // is `...-text_index-...`, and every link an author tested on GitHub
+            // would 404 in the built site.
+            out.push('_');
         } else if ch == '-' || ch.is_whitespace() {
             // Runs are kept, not collapsed: `--limit <n>` slugs to `---limit-n`,
             // exactly as it does on github.com.
@@ -1220,6 +1228,26 @@ mod tests {
             html.contains(r#"<h3 id="74-the-schema-pyramid-v2">"#),
             "{html}"
         );
+    }
+
+    /// `_` is not punctuation to GitHub's slugger, and `docs/SPEC.md` is full of
+    /// `TEXT_INDEX`-shaped identifiers. Stripping it mints `-textindex-` for an
+    /// anchor github.com calls `-text_index-`, so a link an author verified on
+    /// GitHub dies in the built page — the exact trap this asserts against.
+    #[test]
+    fn underscores_survive_the_slug() {
+        let html = render_markdown(
+            "### 6.3 Full-text index (TEXT_INDEX section, optional)\n\n\
+             ## RETE_BLOCK_KB\n\n\
+             ## The `__init__` hook\n",
+        );
+        assert!(
+            html.contains(r#"<h3 id="63-full-text-index-text_index-section-optional">"#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<h2 id="rete_block_kb">"#), "{html}");
+        // A run of underscores is kept whole, like a run of hyphens.
+        assert!(html.contains(r#"<h2 id="the-__init__-hook">"#), "{html}");
     }
 
     /// A heading is slugged from what it *reads* as, not from its markup.

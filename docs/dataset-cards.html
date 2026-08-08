@@ -440,7 +440,7 @@ broken lexically), so building the same input twice yields a <strong>byte-identi
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching <code>rete progressive</code>.</p>
 <h3 id="the-full-text-signal-measured-not-stored">The full-text signal: measured, not stored</h3>
-<p>A <code>.rete</code> carries an optional <strong>TEXT_INDEX section</strong> (kind <code>6</code>, <a href="SPEC.html#63-full-text-index-textindex-section-optional">SPEC §6.3</a>),
+<p>A <code>.rete</code> carries an optional <strong>TEXT_INDEX section</strong> (kind <code>6</code>, <a href="SPEC.html#63-full-text-index-text_index-section-optional">SPEC §6.3</a>),
 opt-in via <code>rete build --text-index</code> / <code>rete repyramid --text-index</code>. A file
 that has one answers <code>FILTER(CONTAINS(…))</code> by word lookup; a file that does not
 answers <strong>the same query with the same rows</strong> by full scan. The capability is
