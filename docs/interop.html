@@ -423,7 +423,17 @@ rete build dump.nq -o out.rete
 <ul>
 <li>Hundreds of millions of triples are routine builds (data.bnf.fr: 716 M;
 one 726 M-triple file). If RAM is the constraint, <code>rete build --memory-budget-mb</code> runs the chunked external build — same byte-identical
-file, bounded memory.</li>
+file, bounded memory. It takes the dump <strong>in the form it ships</strong>: N-Triples,
+N-Quads, Turtle or TriG, gzipped or not, decompressed while streaming. So a
+public <code>dump.ttl.gz</code> needs no conversion pass and no room for the expanded
+copy, which is usually the larger of the two costs — SemOpenAlex measures
+146.8 N-Quads bytes per triple, so its 8.5 GiB author dump would land as
+~400 GB of <code>.nt</code> before a single triple were indexed.</li>
+<li>If the dump keeps its data in <strong>named graphs</strong> — TriG exports, Wikibase and
+GraphDB dumps — add <code>--collapse-graphs</code>. In SPARQL the default graph is not
+the union of the named ones, so without it <code>?s ?p ?o</code> answers nothing and the
+pyramid comes out empty; it is also what makes the input eligible for the
+default-graph-only external build.</li>
 <li>Add <code>--text-index</code> at build time if you want <a href="cli.html">full-text search</a>
 over the migrated data, and a <a href="dataset-cards.html">Dataset Card</a> so the file
 explains itself.</li>

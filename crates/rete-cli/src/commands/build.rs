@@ -177,34 +177,115 @@ fn attach_build_record(
     Ok(out)
 }
 
-/// Read an input source: a file path, or `-` for stdin.
-fn read_input(path: &str) -> anyhow::Result<String> {
-    if path == "-" {
-        use std::io::Read;
-        let mut s = String::new();
-        std::io::stdin().read_to_string(&mut s)?;
-        Ok(s)
-    } else {
-        Ok(std::fs::read_to_string(path)?)
+/// Open an input for streaming — a file path, or `-` for stdin — **transparently
+/// gunzipped**. Detection is by content, not name: a gzip member starts with the
+/// two magic bytes `1f 8b`, so `dump.ttl.gz`, a `.gz` that was renamed, and a
+/// piped `gzip -dc` stream all do the right thing. `MultiGzDecoder` (not
+/// `GzDecoder`) so a concatenation of members — what `cat *.gz` produces, and
+/// what several public dumps ship as — reads through to the end instead of
+/// stopping silently after the first member.
+fn open_reader(path: &str) -> anyhow::Result<Box<dyn std::io::BufRead>> {
+    Ok(open_reader_counted(path, None)?.0)
+}
+
+/// Counts the bytes pulled from an input — and, given a `limit`, reports EOF once
+/// that many have been read. It sits **under** any gzip decoder, so the count is
+/// of the file as it exists on disk: the same units as `fs::metadata().len()`,
+/// which is what `estimate --sample-mb` extrapolates against. Counting the
+/// decompressed side instead would make a sampled ratio silently wrong by the
+/// compression factor.
+struct CountedRead<R> {
+    inner: R,
+    counter: std::rc::Rc<std::cell::Cell<u64>>,
+    limit: Option<u64>,
+}
+
+impl<R: std::io::Read> std::io::Read for CountedRead<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.limit.is_some_and(|l| self.counter.get() >= l) {
+            return Ok(0);
+        }
+        let n = self.inner.read(buf)?;
+        self.counter.set(self.counter.get() + n as u64);
+        Ok(n)
     }
 }
 
+/// How many input bytes a reader from [`open_reader_counted`] has consumed —
+/// shared with the caller so it can watch progress against a sampling limit.
+pub(crate) type ByteCounter = std::rc::Rc<std::cell::Cell<u64>>;
+
+/// [`open_reader`] plus a live byte counter (and an optional early-EOF limit).
+pub(crate) fn open_reader_counted(
+    path: &str,
+    limit: Option<u64>,
+) -> anyhow::Result<(Box<dyn std::io::BufRead>, ByteCounter)> {
+    use std::io::BufRead;
+    let inner: Box<dyn std::io::Read> = if path == "-" {
+        Box::new(std::io::stdin())
+    } else {
+        Box::new(std::fs::File::open(path).map_err(|e| anyhow::anyhow!("{path}: {e}"))?)
+    };
+    let counter = std::rc::Rc::new(std::cell::Cell::new(0u64));
+    let counted = CountedRead {
+        inner,
+        counter: counter.clone(),
+        limit,
+    };
+    let mut buf = std::io::BufReader::with_capacity(1 << 20, counted);
+    let gzipped = {
+        let head = buf.fill_buf().map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+        head.len() >= 2 && head[0] == 0x1f && head[1] == 0x8b
+    };
+    if gzipped {
+        Ok((
+            Box::new(std::io::BufReader::with_capacity(
+                1 << 20,
+                flate2::read::MultiGzDecoder::new(buf),
+            )),
+            counter,
+        ))
+    } else {
+        Ok((Box::new(buf), counter))
+    }
+}
+
+/// Read an input source whole: a file path, or `-` for stdin. Gunzips
+/// transparently, like [`open_reader`].
+fn read_input(path: &str) -> anyhow::Result<String> {
+    use std::io::Read;
+    let mut s = String::new();
+    open_reader(path)?
+        .read_to_string(&mut s)
+        .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+    Ok(s)
+}
+
 /// The parser to use for an input: explicit `--format` wins, else by extension,
-/// else (no extension / stdin) N-Triples.
+/// else (no extension / stdin) N-Triples. A trailing `.gz` is stripped before
+/// the extension is read, so `authors.ttl.gz` is Turtle — the compression is
+/// detected from the bytes ([`open_reader`]), never from the name.
 pub(crate) fn input_format(path: &str, override_fmt: Option<&str>) -> &'static str {
     if let Some(f) = override_fmt {
         return match f {
             "nq" => "nq",
             "ttl" => "ttl",
+            "trig" => "trig",
             "rdfxml" | "rdf" | "owl" | "xml" => "rdfxml",
             _ => "nt",
         };
     }
-    let p = path.to_ascii_lowercase();
+    let lower = path.to_ascii_lowercase();
+    let p = lower
+        .strip_suffix(".gz")
+        .or_else(|| lower.strip_suffix(".gzip"))
+        .unwrap_or(lower.as_str());
     if p.ends_with(".nq") || p.ends_with(".nquads") {
         "nq"
     } else if p.ends_with(".ttl") || p.ends_with(".turtle") {
         "ttl"
+    } else if p.ends_with(".trig") {
+        "trig"
     } else if p.ends_with(".rdf") || p.ends_with(".owl") || p.ends_with(".rdfxml") {
         // RDF/XML — the common OWL serialization (an `rdf:RDF` root). `.xml` is left
         // to default to N-Triples since it's ambiguous; pass `--format rdfxml` for it.
@@ -234,15 +315,14 @@ fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<i
         let fmt = input_format(input, format);
         // Stream N-Triples / N-Quads files line by line so the whole file text is
         // never resident — the big-build memory win. Pre-size from the file length
-        // (~64 B/line) to avoid Vec doublings. stdin and Turtle take the text path
-        // (oxttl needs the whole input).
+        // (~64 B/line) to avoid Vec doublings; for a compressed input that hint is
+        // the *compressed* length, which under-shoots harmlessly. stdin and the
+        // structured syntaxes take the text path below.
         let parsed = if input != "-" && (fmt == "nt" || fmt == "nq") {
-            let file = std::fs::File::open(input).map_err(|e| anyhow::anyhow!("{input}: {e}"))?;
-            let cap = file
-                .metadata()
+            let cap = std::fs::metadata(input)
                 .map(|m| (m.len() / 64) as usize)
                 .unwrap_or(0);
-            ingest::parse_reader(std::io::BufReader::new(file), fmt, cap)
+            ingest::parse_reader(open_reader(input)?, fmt, cap)
                 .map_err(|e| anyhow::anyhow!("{input}: {e}"))?
         } else {
             let text = read_input(input)?;
@@ -304,6 +384,7 @@ pub(crate) fn build(
     pyramid_algo: rete_core::PyramidAlgo,
     text_index: bool,
     type_predicate: Option<&str>,
+    collapse_graphs: bool,
     card_args: CardArgs,
     no_card_costs: bool,
 ) -> anyhow::Result<()> {
@@ -315,6 +396,13 @@ pub(crate) fn build(
     // graph. Output is byte-identical to the in-memory path. `--materialize` /
     // `--reason` need the whole quad set resident (to run the reasoner) and stdin
     // can't be re-read, so those fall through to the in-memory path below.
+    //
+    // **Turtle and TriG cannot take this path, even though they now stream.**
+    // The assembler parses the input TWICE — once to observe every term, once to
+    // encode — and oxttl labels anonymous blank nodes (`[ … ]`, collections) with
+    // a fresh random id on each parse. The second pass would therefore present
+    // terms the first pass never observed. The external build reads its input
+    // exactly once, so it has no such constraint and does accept them.
     let streamable = !materialize
         && !reason
         && inputs
@@ -335,9 +423,14 @@ pub(crate) fn build(
         // two-pass assembler invokes it once to observe terms, once to encode.
         let stream = |visit: &mut dyn FnMut(ingest::RawQuad)| -> Result<(), ingest::IngestError> {
             for (path, fmt) in &inputs_fmt {
-                let file = std::fs::File::open(path)
+                let rd = open_reader(path)
                     .map_err(|e| ingest::IngestError::Io(format!("{path}: {e}")))?;
-                ingest::stream_reader(std::io::BufReader::new(file), fmt, visit)?;
+                if collapse_graphs {
+                    let mut flatten = |q: ingest::RawQuad| visit((q.0, q.1, q.2, None));
+                    ingest::stream_reader(rd, fmt, &mut flatten)?;
+                } else {
+                    ingest::stream_reader(rd, fmt, visit)?;
+                }
             }
             Ok(())
         };
@@ -395,6 +488,14 @@ pub(crate) fn build(
 
     // 1. Parse every input into quads (triples → default graph, `None`).
     let mut quads = parse_inputs(inputs, format)?;
+    // 1a. `--collapse-graphs`: drop the graph term so everything lands in the
+    // default graph. Done before reasoning, which only sees the default graph —
+    // so collapsing a named-graph dump is also what makes it reasonable over.
+    if collapse_graphs {
+        for q in quads.iter_mut() {
+            q.3 = None;
+        }
+    }
 
     // 1b. Reason over the default graph once if either flag needs it: `--materialize`
     // folds the inferred triples in (deduped later by the index builder, so they ship
@@ -496,10 +597,11 @@ pub(crate) fn build(
 /// budget in RAM regardless of graph size (`rete_core::extbuild`). Output is
 /// byte-identical to a standard `--no-pyramid` build of the same input.
 ///
-/// v1 constraints (explicit errors): N-Triples/N-Quads *files* only (the input
-/// is streamed once; stdin/Turtle can't be), default graph only, no pyramid, no
-/// text index, no reasoning. `--card` embeds curated fields + counts (the
-/// derived profile lists need unbounded RAM, so they are omitted here).
+/// Constraints (explicit errors): default graph only — pass `--collapse-graphs`
+/// for an input whose data lives in named graphs — no pyramid, no text index, no
+/// reasoning. `--card` embeds curated fields + counts (the derived profile lists
+/// need unbounded RAM, so they are omitted here). Every input syntax streams,
+/// including gzipped ones, so the source never has to be decompressed to disk.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_external_cmd(
     inputs: &[String],
@@ -510,6 +612,7 @@ pub(crate) fn build_external_cmd(
     materialize: bool,
     reason: bool,
     text_index: bool,
+    collapse_graphs: bool,
     card_args: CardArgs,
 ) -> anyhow::Result<()> {
     if materialize || reason {
@@ -532,16 +635,20 @@ pub(crate) fn build_external_cmd(
     if uses_stdin && (inputs.len() != 1 || format.is_none()) {
         anyhow::bail!(
             "--memory-budget-mb with stdin: `-` must be the only input and \
-             requires an explicit --format nt|nq"
+             requires an explicit --format nt|nq|ttl|trig"
         );
     }
+    // Every syntax except RDF/XML streams from a reader, so the external build
+    // accepts them all — `.ttl.gz` and `.trig.gz` included, decompressed on the
+    // fly. RDF/XML is the one holdout (its reader parser is not incremental
+    // enough to be worth the surprise on a multi-GB input).
     if let Some((bad, fmt)) = inputs_fmt
         .iter()
-        .find(|(i, f)| *i != "-" && !matches!(*f, "nt" | "nq"))
+        .find(|(i, f)| *i != "-" && !matches!(*f, "nt" | "nq" | "ttl" | "trig"))
     {
         anyhow::bail!(
-            "--memory-budget-mb streams N-Triples/N-Quads only ({bad} is {fmt}); \
-             convert Turtle/RDF-XML inputs to .nt first"
+            "--memory-budget-mb streams N-Triples/N-Quads/Turtle/TriG only \
+             ({bad} is {fmt}); convert RDF/XML inputs to .ttl or .nt first"
         );
     }
 
@@ -572,30 +679,22 @@ pub(crate) fn build_external_cmd(
                 let mut err: Option<rete_core::extbuild::ExtBuildError> = None;
                 let mut on_quad = |q: ingest::RawQuad| {
                     if err.is_none() {
+                        let q = if collapse_graphs {
+                            (q.0, q.1, q.2, None)
+                        } else {
+                            q
+                        };
                         if let Err(e) = visit(q) {
                             err = Some(e);
                         }
                     }
                 };
-                let res = if *path == "-" {
-                    let stdin = std::io::stdin();
-                    ingest::stream_reader(
-                        std::io::BufReader::with_capacity(1 << 20, stdin.lock()),
-                        fmt,
-                        &mut on_quad,
-                    )
-                } else {
-                    let file = std::fs::File::open(path).map_err(|e| {
-                        rete_core::extbuild::ExtBuildError::Ingest(ingest::IngestError::Io(
-                            format!("{path}: {e}"),
-                        ))
-                    })?;
-                    ingest::stream_reader(
-                        std::io::BufReader::with_capacity(1 << 20, file),
-                        fmt,
-                        &mut on_quad,
-                    )
-                };
+                let rd = open_reader(path).map_err(|e| {
+                    rete_core::extbuild::ExtBuildError::Ingest(ingest::IngestError::Io(
+                        e.to_string(),
+                    ))
+                })?;
+                let res = ingest::stream_reader(rd, fmt, &mut on_quad);
                 if let Some(e) = err {
                     return Err(e);
                 }
@@ -769,6 +868,7 @@ mod tests {
             rete_core::PyramidAlgo::Louvain,
             false,
             None,
+            false,
             CardArgs {
                 enabled: true,
                 title: Some("measured".into()),
@@ -956,6 +1056,7 @@ mod tests {
                 rete_core::PyramidAlgo::Louvain,
                 false,
                 None,
+                false,
                 CardArgs {
                     enabled: true,
                     title: Some("BI test".into()),
@@ -1050,6 +1151,7 @@ mod tests {
             rete_core::PyramidAlgo::Louvain,
             false,
             None,
+            false,
             CardArgs::default(),
             false,
         )
@@ -1085,6 +1187,7 @@ mod tests {
             rete_core::PyramidAlgo::Louvain,
             false,
             None,
+            false,
             CardArgs::default(),
             false,
         )
@@ -1106,6 +1209,7 @@ mod tests {
             rete_core::PyramidAlgo::Louvain,
             false,
             None,
+            false,
             CardArgs::default(),
             false,
         )

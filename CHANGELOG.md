@@ -5,6 +5,38 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **`rete build` reads gzipped inputs, and the memory-bounded external build
+  accepts Turtle and TriG.** The dumps that actually need
+  `--memory-budget-mb` do not ship as plain N-Triples — they ship as
+  `dump.ttl.gz` / `dump.trig.gz`. Converting one first is not a formality: at
+  the 146.8 N-Quads bytes per triple measured on SemOpenAlex, its 8.5 GiB
+  author dump expands to roughly 400 GB of scratch — an order of magnitude
+  more disk than the source, spent to avoid spending RAM. Now every accepted
+  syntax streams from the reader (`ingest::stream_reader` grew Turtle, TriG and
+  RDF/XML arms over `oxttl`/`oxrdfxml`'s reader parsers), and compression is
+  detected from the bytes — `1f 8b` — rather than the file name, so a renamed
+  `.gz` and a piped stream behave the same. `MultiGzDecoder` reads concatenated
+  members through to the end instead of stopping silently after the first.
+  RDF/XML remains excluded from the external build.
+  - **`--collapse-graphs`** folds every named graph into the default graph.
+    Dumps that put all their data inside named graphs — TriG exports like
+    SemOpenAlex, most Wikibase and GraphDB dumps — otherwise answer
+    `?s ?p ?o` with nothing and build an empty pyramid, because in SPARQL the
+    default graph is not the union of the named ones. It is also what makes
+    such an input eligible for the default-graph-only external build.
+  - `rete estimate` takes the same inputs (previously N-Triples/N-Quads only),
+    so "will this fit?" can be asked about the file as downloaded. Its
+    `--sample-mb` is now enforced by a counting reader **under** the gzip
+    decoder, which both makes sampling work for syntaxes whose statements span
+    lines and keeps the extrapolation in the same units as the file's size on
+    disk.
+  - Verified on the real thing: SemOpenAlex `sources`, read straight from its
+    57.5 MB `.trig.gz` under a 256 MiB budget (27 chunks, 14,820,651 triples),
+    is **byte-identical** to the in-RAM `--no-pyramid` build of the same graph
+    — and finished in 36 s against 56 s.
+
 ### Fixed
 
 - **The embedded Dataset Card reports the size of the file, not the size of the
