@@ -68,16 +68,34 @@ generated — don't hand-edit it.
 
 ### Playground / explorer pages — inlined WASM
 
-`docs/playground.html` and the explorer pages are built by
-`scripts/build_playground.py`, which inlines the compiled WASM engine:
+`docs/playground.html` and the explorer pages inline the compiled WASM engine.
+Because the blob is large and the build is not part of the Rust workspace, these
+pages are committed rather than produced in CI. Regenerate the whole set —
+engine, pages, `docs/engine/`, `docs/wasm-build.json` — with the one producer:
 
 ```sh
-uv run python scripts/build_playground.py
+docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
 ```
 
-Because the WASM blob is large and the build is not part of the Rust workspace,
-these pages are committed rather than produced in CI. Treat them like the doc
-HTML: regenerate with the script and commit on their own, never by hand.
+CI's `wasm` job reruns that same script and **byte-diffs** its tracked output, so
+the artifacts you commit have to be what it produces. Two ways that used to fail
+for reasons other than staleness are now handled by the script itself, and it is
+worth knowing they exist:
+
+* it builds the wasm in a **dedicated `CARGO_TARGET_DIR`** (`…/wasm32`,
+  `…/wasm32-asyncify`), never the one your `cargo test` run used — a wasm binary
+  built in a shared target dir was once observed to come out the same size with a
+  handful of differing bytes (`scripts/wasm_target_dir.sh` has the details,
+  including what did and did not reproduce);
+* it defaults **`RETE_BUILD_STAMP`** to the `[workspace.package]` version, the
+  string CI stamps into the page. Set it by hand only for a release.
+
+When the byte diff does go red, CI runs `python3 -P scripts/wasm_parity_triage.py`
+on the result: it reports whether the artifacts are genuinely stale, mis-stamped,
+or merely moved, and what to run. Use it locally the same way.
+
+Treat the output like the doc HTML: regenerate with the script and commit on its
+own, never by hand.
 
 ## The regression gate
 

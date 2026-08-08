@@ -44,6 +44,21 @@ and network (the lazy checks read the live R2 datasets).
 The gate's local Range servers bind OS-assigned ports, so gates from separate
 worktrees can run concurrently without one suite reading another checkout.
 
+### From a git worktree: name the Compose project
+
+`fixtures.sh` shells out to `docker compose run --rm dev` whenever cargo is not
+on PATH — which is the normal host case — and `compose.yaml` pins the project
+name to `rete`. Every worktree therefore builds into the **same**
+`rete_cargo-target` volume: two checkouts running the gate at once fight over
+one `/target`, and each leaves build output the other picks up. Give the
+worktree its own project, and its own volumes come with it:
+
+```sh
+export COMPOSE_PROJECT_NAME=my-worktree     # -> my-worktree_cargo-target
+```
+
+The ports are already handled (see above); this is the other half.
+
 ## From a fresh clone
 
 `gate.sh` needs two things a clone does not carry, both build output:
@@ -157,12 +172,25 @@ live-R2 matrix.
 ## After an engine (crates/) change — checklist
 
 1. `cargo test --release -p rete-core` (Docker, `CARGO_TARGET_DIR=/work/target-star`).
-2. Rebuild the sync wasm (`wasm-pack`, web/pkg + web/pkg-nomodules).
-3. Rebuild the **async** wasm: `scripts/build_playground_async.sh`
-   (`build_playground.py` only *copies* `web/pkg-nomodules-async/` — an engine
-   change silently leaves the async variant stale otherwise).
-4. `python scripts/build_playground.py`.
-5. `bash tests/gate/gate.sh` → green → commit.
+2. Rebuild **everything browser-facing** with the one producer:
+
+   ```sh
+   docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
+   ```
+
+   It runs both sync `wasm-pack` builds, the **async** one — which
+   `build_playground.py` only *copies*, so an engine change silently leaves it
+   stale if you skip it — `build_playground.py`, `docs/engine/`, the gate
+   fixtures and `docs/wasm-build.json`, in that order. It also does two things
+   the hand-run `wasm-pack` lines do not: build into wasm-only target dirs
+   (`scripts/wasm_target_dir.sh`) and stamp the page with the workspace version.
+   CI reruns the same script and byte-diffs its tracked output.
+3. `bash tests/gate/gate.sh` → green → commit.
+
+If that byte diff goes red, `python3 -P scripts/wasm_parity_triage.py` reads the
+bytes and says which of the three it is — genuinely stale artifacts, a wrong
+build stamp, or a wasm that merely moved in a shared target dir. CI runs it for
+you on failure and uploads its own byte-exact artifacts either way.
 
 ## After a playground (web/) change
 

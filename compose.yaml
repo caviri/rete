@@ -1,4 +1,14 @@
 name: rete
+# Fixed, so the volumes below are shared by every invocation from this checkout
+# — and, less obviously, by every OTHER worktree of the repository: they all
+# resolve to the same `rete_cargo-target` and build into the same /target.
+# Working in a second checkout (or running two gates at once)? Give it its own
+# project and its own volumes come with it:
+#
+#     export COMPOSE_PROJECT_NAME=my-worktree
+#
+# tests/gate/fixtures.sh shells out to `docker compose run --rm dev`, so this
+# applies to `bash tests/gate/gate.sh` too. See tests/gate/README.md.
 
 x-rete-dev: &rete-dev
   build:
