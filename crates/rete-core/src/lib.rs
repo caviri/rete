@@ -90,7 +90,8 @@ pub mod format {
     pub use crate::ingest::{
         assemble_dataset, assemble_dataset_with, assemble_dataset_with_opts,
         assemble_dataset_with_opts_algo, parse, parse_quads, parse_rdfxml, parse_statements,
-        parse_turtle, BuildStats, IngestError, RawQuad, RawTriple,
+        parse_turtle, BuildStats, DeferredMetadata, FinalCounts, IngestError, IntoMetadata,
+        RawQuad, RawTriple,
     };
 }
 
