@@ -178,16 +178,17 @@ jobs:
       - run: docker load --input /tmp/rete-dev.tar
       - name: Rebuild every browser artifact from this commit
         run: |
-          # The stamp is the workspace version, READ from Cargo.toml — it used to
-          # be hard-coded (`0.3.0`), which silently turns every release into a
-          # parity failure the moment the version moves: CI rebuilds stamping the
-          # old version and the committed page carries the new one.
-          BUILD_STAMP=$(python3 -c "import re,pathlib; print(re.search(r'(?ms)^\[workspace\.package\].*?^version = \"([^\"]+)\"', pathlib.Path('Cargo.toml').read_text()).group(1))")
-          echo "build stamp: $BUILD_STAMP"
+          # No RETE_BUILD_STAMP here on purpose. The stamp is the workspace
+          # version read from Cargo.toml, and build_wasm.sh now derives exactly
+          # that when none is given — so the value CI stamps and the value a
+          # local regeneration stamps are the same by construction rather than
+          # by two copies of one regex agreeing. (It was hard-coded `0.3.0` here
+          # once, which turns every version bump into a parity failure; then it
+          # was computed here, which left the script defaulting to the source
+          # SHA and cost #199 a CI cycle.)
           docker run --rm --user root \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -e CARGO_TARGET_DIR=/work/target -e GITHUB_SHA="$GITHUB_SHA" \
-            -e RETE_BUILD_STAMP="$BUILD_STAMP" \
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/build_wasm.sh'
       - name: Verify provenance and generated browser files
@@ -197,10 +198,23 @@ jobs:
           # diff on them was a silent no-op) and docs/rete_wasm.js/_bg.wasm
           # never existed. docs/engine is refreshed by build_wasm.sh now, so
           # the ESM copy the standalone docs pages import is guarded too.
-          git diff --exit-code -- \
-            docs/playground.html docs/engine \
-            docs/explore-100mb.html web/explore-100mb.html \
-            docs/rete_wasm_async.js docs/rete_wasm_async.wasm
+          # web/explore-100mb.html was listed here and is gitignored too
+          # (.gitignore:17), so it was the same silent no-op; build_playground.py
+          # writes the identical string to both copies and the docs/ one — the
+          # published one — is diffed, so nothing is lost by not pretending.
+          GUARDED="docs/playground.html docs/engine docs/explore-100mb.html docs/rete_wasm_async.js docs/rete_wasm_async.wasm"
+          if git diff --quiet -- $GUARDED; then
+            echo "browser artifacts: byte-identical to this commit."
+            exit 0
+          fi
+          # A failure here used to be `Binary files … differ` and nothing else,
+          # and three unrelated mistakes produce exactly that line: stale
+          # artifacts, a wrong RETE_BUILD_STAMP, and a shared CARGO_TARGET_DIR.
+          # Three agents lost a CI cycle to it in one day, each diagnosing a
+          # different one. Name which happened.
+          git diff --stat -- $GUARDED
+          python3 -P scripts/wasm_parity_triage.py $GUARDED
+          exit 1
       - name: Preserve exact browser build
         # always(): keep the rebuilt artifacts even when the parity diff
         # fails, so a stale-artifact commit can be repaired from CI's own

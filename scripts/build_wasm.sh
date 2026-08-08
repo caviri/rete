@@ -37,13 +37,51 @@ if [[ -z "${RETE_SOURCE_REVISION:-}" ]]; then
   fi
 fi
 export RETE_SOURCE_REVISION
-export RETE_BUILD_STAMP="${RETE_BUILD_STAMP:-$RETE_SOURCE_REVISION}"
+
+# The build stamp lands in docs/playground.html (the topbar badge and
+# window.RETE_BUILD), which is TRACKED and byte-diffed by CI's parity job. The
+# workspace version is what belongs there, and CI passes no stamp at all — it
+# reruns this script — so this default IS the value CI's rebuild carries. One
+# derivation, which is the point: ci.yml used to compute it separately, and a
+# separate correct value is what let the wrong default here go unnoticed.
+#
+# It used to default to $RETE_SOURCE_REVISION. Getting past the worktree guard
+# above requires passing RETE_SOURCE_REVISION, and passing only that stamped the
+# page with a 40-character SHA where CI writes `0.3.2`: two lines of diff, one
+# env var, one wasted CI cycle (#199). An explicit RETE_BUILD_STAMP still wins,
+# because two workflows set one deliberately and neither commits the page —
+# release.yml stamps the release version, and the PR-preview job stamps the
+# 12-character head SHA.
+RETE_WORKSPACE_VERSION="$(python3 -P -c "import re,pathlib;print(re.search(r'(?ms)^\[workspace\.package\].*?^version = \"([^\"]+)\"', pathlib.Path('Cargo.toml').read_text()).group(1))")"
+if [[ -z "${RETE_BUILD_STAMP:-}" ]]; then
+  RETE_BUILD_STAMP="$RETE_WORKSPACE_VERSION"
+  RETE_BUILD_STAMP_NOTE="default: the workspace version, the string CI stamps"
+elif [[ "$RETE_BUILD_STAMP" == "$RETE_WORKSPACE_VERSION" ]]; then
+  RETE_BUILD_STAMP_NOTE="explicit, and equal to the workspace version"
+else
+  RETE_BUILD_STAMP_NOTE="EXPLICIT, and NOT the workspace version $RETE_WORKSPACE_VERSION
+                 -> docs/playground.html will NOT match CI's parity rebuild.
+                 Right for a release or a PR preview, neither of which commits
+                 the page. Otherwise unset RETE_BUILD_STAMP and let it default."
+fi
+export RETE_BUILD_STAMP
+
+# The wasm builds get target dirs of their own — never one shared with a host
+# build. Full reasoning in the file itself.
+source scripts/wasm_target_dir.sh
+
+echo ">> source revision : $RETE_SOURCE_REVISION"
+echo ">> build stamp     : $RETE_BUILD_STAMP  ($RETE_BUILD_STAMP_NOTE)"
+echo ">> wasm target dir : $RETE_WASM_TARGET_DIR"
+echo ">> asyncify tgt dir: $RETE_WASM_ASYNC_TARGET_DIR"
 
 # Binaryen v108 is intentionally retained for the reference-types-disabled
 # Asyncify pass. It corrupts modern wasm-bindgen externref tables, so regular
 # builds explicitly skip wasm-opt. Rust's release profile still optimizes them.
-wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg --no-opt
-wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
+CARGO_TARGET_DIR="$RETE_WASM_TARGET_DIR" \
+  wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg --no-opt
+CARGO_TARGET_DIR="$RETE_WASM_TARGET_DIR" \
+  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
 # docs/engine/ is the tracked ESM copy the standalone docs pages import
 # (anatomy/bim-pair/building). It used to be a hand-copy with no producer —
 # refresh it here so the CI parity diff below can actually guard it.
@@ -90,6 +128,9 @@ for path in paths:
 manifest = {
     "schemaVersion": 1,
     "gitCommit": os.environ["RETE_SOURCE_REVISION"],
+    # The string stamped into docs/playground.html. Recorded because getting it
+    # wrong is invisible until CI byte-diffs the page (#199).
+    "buildStamp": os.environ["RETE_BUILD_STAMP"],
     "toolchain": {
         "rust": version("rustc", "--version"),
         "nightly": version(
