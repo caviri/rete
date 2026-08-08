@@ -1,9 +1,14 @@
 package io.github.caviri.rete.rdf4j;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.caviri.rete.Rete;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.function.Supplier;
 import org.eclipse.rdf4j.common.iteration.CloseableIteration;
 import org.eclipse.rdf4j.common.iteration.CloseableIteratorIteration;
 import org.eclipse.rdf4j.model.IRI;
@@ -36,38 +41,39 @@ import org.eclipse.rdf4j.sail.helpers.AbstractSailConnection;
  */
 class ReteSailConnection extends AbstractSailConnection {
 
-    private final boolean remote;
-    private final byte[] image; // null when remote
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    private final boolean ranged;
+    private final byte[] image; // null when ranged
     private final ValueFactory vf;
     private final Rete engine;
 
     ReteSailConnection(ReteSail sail) {
         super(sail);
         this.vf = sail.getValueFactory();
-        this.remote = sail.isRemote();
-        if (remote) {
-            this.image = null;
-            this.engine = Rete.openRemote(sail.url());
-        } else {
-            this.image = sail.image();
-            this.engine = Rete.load();
-        }
+        this.ranged = sail.isRanged();
+        this.image = ranged ? null : sail.image();
+        this.engine = sail.openEngine();
     }
 
-    // Local vs remote dispatch — the rest of the connection is source-agnostic.
+    // Image vs ranged dispatch — the rest of the connection is source-agnostic.
 
     private java.util.List<String[]> scanQuads(String s, String p, String o) {
-        return remote ? engine.scanQuadsRemote(s, p, o) : engine.scanQuads(image, s, p, o);
+        return ranged ? engine.scanQuads(s, p, o) : engine.scanQuads(image, s, p, o);
     }
 
     private java.util.List<String[]> scanInGraph(String graph, String s, String p, String o) {
-        return remote
-                ? engine.scanInGraphRemote(graph, s, p, o)
+        return ranged
+                ? engine.scanInGraph(graph, s, p, o)
                 : engine.scanInGraph(image, graph, s, p, o);
     }
 
     private List<String> graphList() {
-        return remote ? engine.graphsRemote() : engine.graphs(image);
+        return ranged ? engine.graphs() : engine.graphs(image);
+    }
+
+    private String infoJson() {
+        return ranged ? engine.info() : engine.info(image);
     }
 
     // --- the two load-bearing methods -------------------------------------
@@ -75,7 +81,7 @@ class ReteSailConnection extends AbstractSailConnection {
     @Override
     protected CloseableIteration<? extends Statement> getStatementsInternal(
             Resource subj, IRI pred, Value obj, boolean includeInferred, Resource... contexts) {
-        return new CloseableIteratorIteration<>(statements(subj, pred, obj, contexts).iterator());
+        return new CloseableIteratorIteration<>(cursor(subj, pred, obj, contexts));
     }
 
     @Override
@@ -92,37 +98,85 @@ class ReteSailConnection extends AbstractSailConnection {
     }
 
     /**
-     * Scan a triple pattern into RDF4J Statements, honouring RDF4J's context
-     * semantics: <b>no contexts</b> means every graph (the union — each
-     * statement carries its own graph), a <b>null</b> context is the default
-     * graph, and a <b>Resource</b> context is that named graph. Bound
-     * subject/predicate/object are rendered to N-Triples for the engine; graph
-     * IRIs are the plain string rete stores.
+     * Scan a triple pattern, honouring RDF4J's context semantics: <b>no
+     * contexts</b> means every graph (the union — each statement carries its own
+     * graph), a <b>null</b> context is the default graph, and a <b>Resource</b>
+     * context is that named graph. Bound subject/predicate/object are rendered to
+     * N-Triples for the engine; graph IRIs are the plain string rete stores.
+     *
+     * <p>Returns a cursor, not a list: a match becomes a {@link Statement} only
+     * when the consumer asks for it, and when several contexts are named, a
+     * context is scanned only once the previous one is exhausted. So the
+     * connection never holds every {@code Statement} of a scan at once — which
+     * for a join over a large graph is the difference between a bounded heap and
+     * an {@code OutOfMemoryError}. (The engine still materializes its own side of
+     * one scan; a streaming cursor across the wasm boundary is issue #115's
+     * remaining item.)
      */
-    private List<Statement> statements(Resource subj, IRI pred, Value obj, Resource... contexts) {
+    private Iterator<Statement> cursor(Resource subj, IRI pred, Value obj, Resource... contexts) {
         String s = subj == null ? null : NTriplesUtil.toNTriplesString(subj);
         String p = pred == null ? null : NTriplesUtil.toNTriplesString(pred);
         String o = obj == null ? null : NTriplesUtil.toNTriplesString(obj);
-        List<Statement> out = new ArrayList<>();
-        try {
-            if (contexts == null || contexts.length == 0) {
-                for (String[] q : scanQuads(s, p, o)) {
-                    out.add(statement(q[0], q[1], q[2], q[3]));
-                }
-            } else {
-                for (Resource ctx : contexts) {
-                    // Graph identifiers are N-Triples terms (as rete stores them),
-                    // the same encoding as s/p/o — not a plain IRI string.
-                    String graph = ctx == null ? null : NTriplesUtil.toNTriplesString(ctx);
-                    for (String[] t : scanInGraph(graph, s, p, o)) {
-                        out.add(statement(t[0], t[1], t[2], graph));
-                    }
-                }
-            }
-        } catch (RuntimeException e) {
-            throw new SailException(e);
+        if (contexts == null || contexts.length == 0) {
+            return new StatementCursor(s, p, o, null);
         }
-        return out;
+        // Graph identifiers are N-Triples terms (as rete stores them), the same
+        // encoding as s/p/o — not a plain IRI string.
+        List<String> graphs = new ArrayList<>(contexts.length);
+        for (Resource ctx : contexts) {
+            graphs.add(ctx == null ? null : NTriplesUtil.toNTriplesString(ctx));
+        }
+        return new StatementCursor(s, p, o, graphs);
+    }
+
+    /**
+     * One scan at a time, one {@code Statement} at a time. With {@code graphs ==
+     * null} it is the all-graphs quad scan and each row carries its own graph;
+     * otherwise it walks the named contexts in order, scanning each lazily.
+     */
+    private final class StatementCursor implements Iterator<Statement> {
+        private final String s;
+        private final String p;
+        private final String o;
+        private final Iterator<String> graphs; // null = all-graphs quad scan
+        private Iterator<String[]> rows;
+        private String graph;
+
+        StatementCursor(String s, String p, String o, List<String> graphs) {
+            this.s = s;
+            this.p = p;
+            this.o = o;
+            this.graphs = graphs == null ? null : graphs.iterator();
+            this.rows = graphs == null ? scan(() -> scanQuads(s, p, o)) : Collections.emptyIterator();
+        }
+
+        @Override
+        public boolean hasNext() {
+            while (!rows.hasNext() && graphs != null && graphs.hasNext()) {
+                graph = graphs.next();
+                String g = graph;
+                rows = scan(() -> scanInGraph(g, s, p, o));
+            }
+            return rows.hasNext();
+        }
+
+        @Override
+        public Statement next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            String[] r = rows.next();
+            // Quad rows carry the graph in slot 3; graph-scoped rows are triples.
+            return statement(r[0], r[1], r[2], graphs == null ? r[3] : graph);
+        }
+
+        private Iterator<String[]> scan(Supplier<List<String[]>> run) {
+            try {
+                return run.get().iterator();
+            } catch (RuntimeException e) {
+                throw new SailException(e);
+            }
+        }
     }
 
     /**
@@ -144,7 +198,7 @@ class ReteSailConnection extends AbstractSailConnection {
         @Override
         public CloseableIteration<? extends Statement> getStatements(
                 Resource subj, IRI pred, Value obj, Resource... contexts) {
-            return new CloseableIteratorIteration<>(statements(subj, pred, obj, contexts).iterator());
+            return new CloseableIteratorIteration<>(cursor(subj, pred, obj, contexts));
         }
 
         @Override
@@ -172,17 +226,32 @@ class ReteSailConnection extends AbstractSailConnection {
 
     @Override
     protected long sizeInternal(Resource... contexts) {
-        // v1: counts via a full scan (cheap for embedded files; a header/index
-        // count is a follow-up). No contexts = every graph; else the named ones.
+        // No contexts = every statement in the dataset, which the header already
+        // knows. This used to materialize the entire graph — every quad through
+        // the wasm boundary and into a List — to count it, so `size()` on a large
+        // file was an OOM rather than a slow answer. Reading the header is two
+        // range reads on a lazily opened file, whatever its size.
         if (contexts == null || contexts.length == 0) {
-            return scanQuads(null, null, null).size();
+            return quadCount();
         }
+        // Named contexts: still a scan, because the header counts the dataset,
+        // not each graph. Bounded by the size of the graphs actually asked for.
         long total = 0;
         for (Resource ctx : contexts) {
             String graph = ctx == null ? null : NTriplesUtil.toNTriplesString(ctx);
             total += scanInGraph(graph, null, null, null).size();
         }
         return total;
+    }
+
+    /** The dataset's total quad count, from the {@code .rete} header summary. */
+    private long quadCount() {
+        String json = infoJson();
+        try {
+            return JSON.readTree(json).get("quads").asLong();
+        } catch (JsonProcessingException | RuntimeException e) {
+            throw new SailException("could not read the quad count from the header: " + json, e);
+        }
     }
 
     // --- transactions: no-ops (read-only, no write set) --------------------

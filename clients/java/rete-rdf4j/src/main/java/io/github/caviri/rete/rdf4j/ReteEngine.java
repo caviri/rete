@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.caviri.rete.Rete;
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.eclipse.rdf4j.model.IRI;
@@ -45,18 +46,30 @@ public final class ReteEngine implements AutoCloseable {
 
     private final ValueFactory vf = SimpleValueFactory.getInstance();
     private final Rete engine;
-    private final byte[] image; // null when remote
-    private final boolean remote;
+    private final byte[] image; // null when ranged
+    private final boolean ranged;
 
-    private ReteEngine(Rete engine, byte[] image, boolean remote) {
+    private ReteEngine(Rete engine, byte[] image, boolean ranged) {
         this.engine = engine;
         this.image = image;
-        this.remote = remote;
+        this.ranged = ranged;
     }
 
-    /** Open over an in-memory {@code .rete} image. */
+    /**
+     * Open over an in-memory {@code .rete} image. Copies the image into wasm
+     * memory on every call — prefer {@link #openFile(Path)} for a large file.
+     */
     public static ReteEngine open(byte[] reteImage) {
         return new ReteEngine(Rete.load(), reteImage, false);
+    }
+
+    /**
+     * Open a {@code .rete} on disk for lazy, range-read querying (see
+     * {@link Rete#openFile}). The file is never read whole, so its size is not a
+     * limit.
+     */
+    public static ReteEngine openFile(Path path) {
+        return new ReteEngine(Rete.openFile(path), null, true);
     }
 
     /** Open a remote {@code .rete} for lazy, range-read querying (see {@link Rete#openRemote}). */
@@ -107,7 +120,7 @@ public final class ReteEngine implements AutoCloseable {
 
     /** The dataset's named graphs, as RDF4J resources. */
     public List<Resource> graphs() {
-        List<String> raw = remote ? engine.graphsRemote() : engine.graphs(image);
+        List<String> raw = ranged ? engine.graphs() : engine.graphs(image);
         List<Resource> out = new ArrayList<>(raw.size());
         for (String g : raw) {
             out.add((Resource) NTriplesUtil.parseValue(g, vf));
@@ -122,7 +135,7 @@ public final class ReteEngine implements AutoCloseable {
 
     /** Evaluate through rete's engine and parse the result envelope. */
     private JsonNode envelope(String sparql) {
-        String json = remote ? engine.queryRemote(sparql) : engine.query(image, sparql);
+        String json = ranged ? engine.query(sparql) : engine.query(image, sparql);
         try {
             return JSON.readTree(json);
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {

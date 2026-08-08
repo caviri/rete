@@ -1,6 +1,8 @@
 package io.github.caviri.rete.rdf4j;
 
+import io.github.caviri.rete.Rete;
 import java.net.URI;
+import java.nio.file.Path;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.sail.SailConnection;
@@ -24,25 +26,50 @@ import org.eclipse.rdf4j.sail.helpers.AbstractSail;
  * }
  * }</pre>
  *
- * <p><b>Scope:</b> read-only. Works over an in-memory image <em>or</em> a remote
- * URL — {@code new ReteSail(uri)} queries a {@code .rete} over HTTP with lazy
- * range reads (only the bytes each query touches are fetched). Each
- * {@link SailConnection} owns its own wasm instance (for a remote Sail, a
- * resident handle whose block cache stays warm across the connection's scans),
- * so connections are independent across threads.
+ * <p><b>Scope:</b> read-only. Three sources, in increasing order of what they
+ * can handle:
+ *
+ * <ul>
+ *   <li>{@code new ReteSail(byte[])} — an in-memory image. Every connection
+ *       copies it into wasm linear memory per scan, so this is for small files
+ *       only; above a few hundred megabytes it fails with {@code out of memory}
+ *       no matter how much JVM heap there is.</li>
+ *   <li>{@code new ReteSail(Path)} — a file on disk, read <b>lazily by range</b>
+ *       through a {@code FileChannel}. Nothing but the blocks a query touches
+ *       enters memory, so file size stops being a limit.</li>
+ *   <li>{@code new ReteSail(URI)} — the same, over HTTP {@code Range} requests
+ *       (206 / {@code Content-Range}).</li>
+ * </ul>
+ *
+ * <p>Each {@link SailConnection} owns its own wasm instance — for a {@code Path}
+ * or {@code URI} Sail, a resident handle whose block cache stays warm across the
+ * connection's scans — so connections are independent across threads.
  */
 public class ReteSail extends AbstractSail {
 
-    private final byte[] image; // null when remote
-    private final URI url; // null when local
+    private final byte[] image; // null unless constructed from bytes
+    private final URI url; // null unless constructed from a URI
+    private final Path path; // null unless constructed from a Path
     private final ValueFactory valueFactory = SimpleValueFactory.getInstance();
 
     /**
      * Wrap an in-memory {@code .rete} image. The array is copied defensively.
+     * Prefer {@link #ReteSail(Path)} for anything large — see the class notes.
      */
     public ReteSail(byte[] reteImage) {
         this.image = reteImage.clone();
         this.url = null;
+        this.path = null;
+    }
+
+    /**
+     * Query a {@code .rete} on disk with lazy range reads: the file is not read
+     * into memory, only the byte ranges each query touches are.
+     */
+    public ReteSail(Path path) {
+        this.image = null;
+        this.url = null;
+        this.path = path;
     }
 
     /**
@@ -52,20 +79,28 @@ public class ReteSail extends AbstractSail {
     public ReteSail(URI url) {
         this.image = null;
         this.url = url;
+        this.path = null;
     }
 
-    /** The wrapped image (local Sail), or {@code null} when remote. */
+    /** The wrapped image, or {@code null} for a range-read Sail. */
     byte[] image() {
         return image;
     }
 
-    /** The remote URL (remote Sail), or {@code null} when local. */
-    URI url() {
-        return url;
+    /** Open the engine this Sail's source calls for. */
+    Rete openEngine() {
+        if (url != null) {
+            return Rete.openRemote(url);
+        }
+        if (path != null) {
+            return Rete.openFile(path);
+        }
+        return Rete.load();
     }
 
-    boolean isRemote() {
-        return url != null;
+    /** Whether this Sail reads its source by range (rather than from an image). */
+    boolean isRanged() {
+        return url != null || path != null;
     }
 
     @Override
