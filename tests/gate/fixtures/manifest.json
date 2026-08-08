@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "producer": "tests/gate/fixtures.sh",
+  "outDir": "tests/gate/.cache",
+  "note": [
+    "The gate's .rete fixtures, as RECIPE + ASSERTED PROPERTIES.",
+    "",
+    "Every fixture is derived from a tracked source in this directory, by exactly",
+    "one producer (tests/gate/fixtures.sh). The `assert` block is what each",
+    "consuming check silently depends on; it is verified against the file the",
+    "recipe just produced, so a fixture that came out wrong fails NAMING ITSELF",
+    "instead of reddening the check that reads it.",
+    "",
+    "`curatedFields` is the capability tripwire. A rete-cli older than",
+    "b7652657 (PR #161, 2026-08-04) accepts a card file carrying these keys,",
+    "exits 0, prints a plausible 'embedded dataset card (N bytes)' line — and",
+    "writes NONE of them, plus no build record. The fixture looks fine and",
+    "check_card_modal fails as if the playground were broken.",
+    "",
+    "`buildRecord` is false for cardless builds by design: rete build attaches",
+    "the kind-7 section only to a card-carrying image, so a cardless file stays",
+    "byte-identical to pre-build-info output (crates/rete-cli/src/commands/build.rs,",
+    "attach_build_record)."
+  ],
+  "fixtures": [
+    {
+      "out": "worldcup2026.rete",
+      "source": "worldcup2026.nt",
+      "cardFile": null,
+      "usedBy": [
+        "run.mjs G1 — the async wasm + Asyncify driver's lazy query",
+        "check_card_modal.mjs — the CARDLESS case: the modal must say a file carries no card"
+      ],
+      "assert": {
+        "quads": 7,
+        "namedGraphs": 0,
+        "card": false,
+        "buildRecord": false,
+        "curatedFields": []
+      },
+      "whyTheseProperties": [
+        "card:false is load-bearing. check_card_modal serves this file and asserts",
+        "the modal reports 'carries no Dataset Card'. The published R2 dataset of",
+        "the same NAME (data.graphplaza.com/worldcup2026/worldcup2026.rete) is a",
+        "different graph — 16,184 triples and a full card — so substituting it",
+        "fails that check with 'a cardless file did not say so'. Build it; never",
+        "download it."
+      ]
+    },
+    {
+      "out": "card-fixture.rete",
+      "source": "worldcup2026.nt",
+      "cardFile": "card-fixture.card.json",
+      "usedBy": [
+        "check_card_modal.mjs — the carded remote path + the Markdown description",
+        "check_card_examples.mjs — the file's own card queries as examples",
+        "check_len_probe_hostile.mjs — a carded file behind a hostile length probe"
+      ],
+      "assert": {
+        "quads": 7,
+        "namedGraphs": 0,
+        "card": true,
+        "buildRecord": true,
+        "cardTitle": "Gate Card Fixture",
+        "curatedFields": [],
+        "absentCuratedFields": [
+          "version",
+          "creators",
+          "publisher",
+          "canonical_url",
+          "sparql_endpoint",
+          "source_date",
+          "derived_from",
+          "doi",
+          "cite_as",
+          "keywords",
+          "theme",
+          "extra"
+        ]
+      },
+      "whyTheseProperties": [
+        "This is the NEGATIVE half of the pair. check_card_modal asserts that a",
+        "card without these fields renders them as ABSENT — no empty row that",
+        "reads like a measurement. If a future edit adds one of them here, that",
+        "assertion silently stops testing anything."
+      ]
+    },
+    {
+      "out": "card-full.rete",
+      "source": "worldcup2026.nt",
+      "cardFile": "card-full.card.json",
+      "usedBy": ["check_card_modal.mjs — every curated field rendered, plus the build record"],
+      "assert": {
+        "quads": 7,
+        "namedGraphs": 0,
+        "card": true,
+        "buildRecord": true,
+        "buildRecordBuilderPrefix": "rete-cli",
+        "buildRecordHasQueryCosts": true,
+        "cardTitle": "Gate Full Card Fixture",
+        "curatedFields": [
+          "version",
+          "creators",
+          "publisher",
+          "canonical_url",
+          "sparql_endpoint",
+          "source_date",
+          "derived_from",
+          "doi",
+          "cite_as",
+          "keywords",
+          "theme",
+          "extra"
+        ]
+      },
+      "whyTheseProperties": [
+        "The POSITIVE half of the pair, and the capability probe's own target:",
+        "these twelve fields plus the build record are exactly what a pre-#161",
+        "rete-cli drops without a word."
+      ]
+    },
+    {
+      "out": "named-graphs-only.rete",
+      "source": "named-graphs-only.nq",
+      "cardFile": "named-graphs-only.card.json",
+      "usedBy": [
+        "check_default_graph_hint.mjs — the carded remote empty-default-graph explainer",
+        "check_union_graphs.mjs — 0 rows standard, 6 rows with the union toggle",
+        "check_deeplink_view_state.mjs — union round-trip with differing results",
+        "check_card_examples.mjs — off-catalog remote card examples"
+      ],
+      "assert": {
+        "quads": 6,
+        "namedGraphs": 3,
+        "defaultGraphTriples": 0,
+        "card": true,
+        "buildRecord": true,
+        "curatedFields": []
+      },
+      "whyTheseProperties": [
+        "The nkod.rete shape: every quad in a named graph, so the default graph is",
+        "empty. namedGraphs and defaultGraphTriples are what the explainer reads."
+      ]
+    },
+    {
+      "out": "named-graphs-only-nocard.rete",
+      "source": "named-graphs-only.nq",
+      "cardFile": null,
+      "usedBy": [
+        "check_default_graph_hint.mjs — the CARDLESS remote path, where the explainer must fall back to two ASKs"
+      ],
+      "assert": {
+        "quads": 6,
+        "namedGraphs": 3,
+        "defaultGraphTriples": 0,
+        "card": false,
+        "buildRecord": false,
+        "curatedFields": []
+      },
+      "whyTheseProperties": [
+        "Paired with named-graphs-only.rete: same quads, no card. If this one ever",
+        "acquires a card the check stops exercising the fallback it exists for."
+      ]
+    }
+  ]
+}

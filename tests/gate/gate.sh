@@ -12,19 +12,53 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 ROOT="$(git rev-parse --show-toplevel)"
 mkdir -p "$ROOT/tests/gate/.cache"
 
-# Fixture for the node async-wasm harness (cached; ~270 KB from R2). Use -f so an
-# HTTP error / captive-portal page is a curl FAILURE (not a 0-exit that writes an
-# HTML error body into the cache), --retry for transient blips, and validate the
-# magic bytes ("RETE") + a sane size before trusting a cached copy — otherwise a
-# poisoned fixture would persist across runs and red the gate forever.
-FIX="$ROOT/tests/gate/.cache/worldcup2026.rete"
-valid_fixture() { [ -f "$FIX" ] && [ "$(stat -c%s "$FIX" 2>/dev/null || echo 0)" -gt 1000 ] && [ "$(head -c 4 "$FIX")" = "RETE" ]; }
-if ! valid_fixture; then
-  echo "fetching gate fixture worldcup2026.rete…"
-  rm -f "$FIX"
-  curl -fsSL --retry 3 --retry-delay 2 "https://data.graphplaza.com/worldcup2026/worldcup2026.rete" -o "$FIX" || { echo "ERROR: could not fetch the gate fixture (network?). G1 will report missing."; rm -f "$FIX"; }
-  if [ -f "$FIX" ] && ! valid_fixture; then echo "ERROR: fetched fixture is not a valid .rete (poisoned response); removing."; rm -f "$FIX"; fi
+# --- preflight 1: the gitignored engine artifacts ------------------------------
+# web/pkg* is build output, so a fresh clone has none of it — and the two G0
+# checks that read it then fail as "generated WASM API contract: ENOENT" and
+# "async wasm present: missing", which read like engine defects. Three separate
+# agents diagnosed that from scratch. Say it once, up front, with the command.
+missing=0
+need() { # need <file> <what reads it> <command that builds it>
+  # `if`, not `[ … ] && …`: under `set -e` a failing test as the last command of
+  # an && list aborts the script, so the second missing artifact would never be
+  # reported — and reporting all of them at once is the entire point here.
+  if [ ! -f "$ROOT/$1" ]; then
+    if [ "$missing" -eq 0 ]; then
+      echo "GATE PREFLIGHT FAILED — the compiled engine is missing (build output, gitignored):" >&2
+    fi
+    missing=1
+    printf '  %s\n      read by : %s\n      build it: %s\n' "$1" "$2" "$3" >&2
+  fi
+}
+need web/pkg-nomodules/rete_wasm.js \
+  "G0 check_wasm_api (the documented WASM export surface)" \
+  "docker compose run --rm wasm"
+need web/pkg-nomodules/rete_wasm_bg.wasm \
+  "G0 check_wasm_api (the documented WASM export surface)" \
+  "docker compose run --rm wasm"
+need web/pkg-nomodules-async/rete_wasm_bg.wasm \
+  "G0 async-wasm freshness, G1 asyncify_e2e" \
+  "docker compose run --rm wasm-async"
+if [ "$missing" -ne 0 ]; then
+  echo "Then re-run: bash tests/gate/gate.sh" >&2
+  exit 2
 fi
+
+# --- preflight 2: the .rete fixtures ------------------------------------------
+# ONE producer, shared with scripts/build_wasm.sh and CI: tests/gate/fixtures.sh
+# builds every fixture from its tracked source and verifies it against
+# tests/gate/fixtures/manifest.json before a single check runs.
+#
+# This used to be a curl of https://data.graphplaza.com/worldcup2026/worldcup2026.rete
+# whenever tests/gate/.cache/worldcup2026.rete was missing. That published file
+# is a DIFFERENT graph from the fixture of the same name — 16,184 triples and a
+# full Dataset Card, against a 7-triple cardless build — and check_card_modal
+# asserts cardless (checks/check_card_modal.mjs:422,441). So a fresh clone got
+# "a cardless file did not say so" and could never go green from gate.sh alone.
+# The fixture is built from tests/gate/fixtures/worldcup2026.nt now; nothing is
+# downloaded. (The live-R2 G2 checks still read the published datasets — that is
+# a deliberate integration test, and it is not this file.)
+bash "$ROOT/tests/gate/fixtures.sh"
 
 # First run: install the playwright npm package next to the checks (the image
 # ships the BROWSERS but not a global npm package; ESM import resolves from here).

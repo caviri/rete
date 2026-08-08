@@ -58,6 +58,28 @@ docker compose run --rm wasm wasm-pack build crates/rete-wasm --target no-module
 docker compose run --rm dev uv run python scripts/build_playground.py
 ```
 
+### The regression gate
+
+No commit to playground or engine files without a green `bash tests/gate/gate.sh`
+(full docs: `tests/gate/README.md`).
+
+From a fresh clone it needs two things a clone does not carry, both build output:
+
+- **`web/pkg*`** — gitignored. `gate.sh` stops up front and names the command
+  (`docker compose run --rm wasm`) rather than letting the G0 checks that read
+  it fail as if the engine were broken.
+- **the `.rete` fixtures under `tests/gate/.cache/`** — built for you by
+  `tests/gate/fixtures.sh`, which `gate.sh`, `scripts/build_wasm.sh` and CI all
+  call. It is **the** producer; do not add a sixth `cargo run … build` line
+  somewhere else. Add a fixture by adding a source + a recipe entry to
+  `tests/gate/fixtures/manifest.json`, which also records the properties its
+  checks depend on (carded/cardless, counts, curated card fields) so a fixture
+  that came out wrong fails naming itself.
+
+Nothing in the gate downloads a fixture. If a check needs a file with particular
+properties, build it from a tracked source — a published dataset that merely
+shares a name is a different graph and will drift under you.
+
 ## Documentation
 
 - Edit Markdown in `docs/*.md`; then run `cargo run -q -p docgen` and commit the

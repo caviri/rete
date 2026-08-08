@@ -79,6 +79,26 @@ Because the WASM blob is large and the build is not part of the Rust workspace,
 these pages are committed rather than produced in CI. Treat them like the doc
 HTML: regenerate with the script and commit on their own, never by hand.
 
+## The regression gate
+
+```sh
+bash tests/gate/gate.sh          # full matrix — green before you commit
+bash tests/gate/gate.sh fast     # static + node engine harness
+```
+
+Details in `tests/gate/README.md`. Two notes for a fresh clone, because both are
+gitignored build output rather than repository content:
+
+- `web/pkg*` (the compiled engine) is not in the clone. `gate.sh` checks for it
+  first and stops with the command that builds it, so a missing engine does not
+  arrive disguised as two failing G0 checks.
+- The `.rete` fixtures are **built, never downloaded**, by the one producer
+  `tests/gate/fixtures.sh` — shared by `gate.sh`, `scripts/build_wasm.sh` and CI.
+  `tests/gate/fixtures/manifest.json` holds each fixture's recipe *and* the
+  properties its checks rely on, and the producer verifies the result against
+  them, so a wrong fixture fails naming itself instead of reddening an unrelated
+  check.
+
 ## Commit hygiene
 
 - Source/logic, authored docs (`.md`), and generated artifacts (`.html`,

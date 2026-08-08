@@ -33,6 +33,29 @@ function record(tier, name, ok, note = "") {
 
 // ---------- G0 static ----------
 function g0() {
+  // FIRST: are the .rete fixtures the ones the recipe produced? Every tier
+  // below reads them, and a substituted one used to surface as a failure in
+  // whichever check happened to notice — check_card_modal blaming the
+  // playground for a downloaded file. Ask the question where the answer names
+  // the fixture.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_fixture_provenance.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record(
+      "G0",
+      "gate fixtures match their recipe (tests/gate/fixtures/manifest.json)",
+      ok,
+      ok ? `${verdict.fixtures} fixtures, built by ${(verdict.builders || []).join(", ") || "(unknown)"}` : out.slice(-300),
+    );
+  } catch (e) {
+    // stderr first: _expect.mjs puts the compact one-line summary there, and it
+    // is the line that names the fixture and the command that repairs it.
+    record("G0", "gate fixtures match their recipe (tests/gate/fixtures/manifest.json)", false,
+      String(e.stderr || e.stdout || e).slice(-300));
+  }
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/test_catalog_matrix.mjs`, {
       encoding: "utf8",
@@ -272,7 +295,7 @@ function lastJson(out) {
 // ---------- G1 node async harness ----------
 async function g1(port) {
   const fixture = `${ROOT}/tests/gate/.cache/worldcup2026.rete`;
-  if (!fs.existsSync(fixture)) { record("G1", "async wasm harness", false, "fixture missing (gate.sh downloads it)"); return; }
+  if (!fs.existsSync(fixture)) { record("G1", "async wasm harness", false, "fixture missing — run `bash tests/gate/fixtures.sh`"); return; }
   const q = [
     "PREFIX wc: <https://w3id.org/rete/worldcup#>",
     "PREFIX sc: <http://schema.org/>",

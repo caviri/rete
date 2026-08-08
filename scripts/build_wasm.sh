@@ -19,11 +19,20 @@ command -v wasm-opt >/dev/null || {
 if [[ -z "${RETE_SOURCE_REVISION:-}" ]]; then
   if [[ -n "${GITHUB_SHA:-}" ]]; then
     RETE_SOURCE_REVISION="$GITHUB_SHA"
-  elif RETE_SOURCE_REVISION="$(git rev-parse HEAD 2>/dev/null)"; then
+  # `-c safe.directory=*`: the checkout is a bind mount, so inside the container
+  # /work is owned by a uid git does not recognize and it refuses the repository
+  # as "dubious ownership" — which made `docker compose run --rm wasm` fail on a
+  # FRESH CLONE with "cannot resolve the source revision", a message about the
+  # wrong thing entirely. Scoped to this one read-only command rather than
+  # written into the container's global config.
+  elif RETE_SOURCE_REVISION="$(git -c safe.directory='*' rev-parse HEAD 2>/dev/null)"; then
     :
   else
-    echo "cannot resolve the source revision inside this worktree mount" >&2
-    echo "pass: docker compose run -e RETE_SOURCE_REVISION=<sha> --rm wasm" >&2
+    # What is left is a real git WORKTREE: its .git is a file pointing at a host
+    # path the container cannot see, so no ownership exception can help.
+    echo "cannot resolve the source revision: /work is a git worktree whose .git file" >&2
+    echo "points outside the mount (or is not a repository at all)." >&2
+    echo "pass: docker compose run -e RETE_SOURCE_REVISION=\$(git rev-parse HEAD) --rm wasm" >&2
     exit 1
   fi
 fi
@@ -43,28 +52,13 @@ cp web/pkg/rete_wasm.js web/pkg/rete_wasm_bg.wasm docs/engine/
 bash scripts/build_playground_async.sh
 uv run python scripts/stage_playground_datasets.py
 uv run python scripts/build_playground.py
-mkdir -p tests/gate/.cache
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt -o tests/gate/.cache/worldcup2026.rete
-# Same triples, but WITH a Dataset Card — the card modal check needs a file that
-# actually carries one (the bundled demo datasets do not).
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt \
-  --card-file tests/gate/fixtures/card-fixture.card.json -o tests/gate/.cache/card-fixture.rete
-# The same triples with a card carrying EVERY curated field (keywords, theme,
-# creators/publisher with ORCID+ROR, the extra bag, …). Paired with the card
-# above — which has none of them — it is what lets the card-modal check assert
-# that a missing field renders as ABSENT rather than as an empty row.
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/worldcup2026.nt \
-  --card-file tests/gate/fixtures/card-full.card.json -o tests/gate/.cache/card-full.rete
-# A file whose default graph is EMPTY (every quad in a named graph), with a card
-# reporting triple_count 0 / named_graph_count 3 — the nkod.rete shape. The
-# empty-default-graph explainer check reads the remote path's fact from it.
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/named-graphs-only.nq \
-  --card-file tests/gate/fixtures/named-graphs-only.card.json -o tests/gate/.cache/named-graphs-only.rete
-# The same quads WITHOUT a card: the cardless remote path, where the
-# empty-default-graph explainer must fall back to asking the file itself
-# (two first-match ASKs) instead of staying silent.
-cargo run -q --release -p rete-cli -- build tests/gate/fixtures/named-graphs-only.nq \
-  -o tests/gate/.cache/named-graphs-only-nocard.rete
+# The gate's .rete fixtures. This used to be five inline `cargo run` lines here,
+# five more in .github/workflows/ci.yml, and a curl in tests/gate/gate.sh — three
+# producers of the same five files, which is how they drifted. One producer now,
+# with the recipe and the asserted properties of each fixture in
+# tests/gate/fixtures/manifest.json, and a capability check on the rete-cli that
+# writes them (a stale binary silently drops every curated card field).
+bash tests/gate/fixtures.sh
 
 python3 -P - <<'PY'
 import hashlib
