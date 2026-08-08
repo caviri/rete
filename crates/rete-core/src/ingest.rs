@@ -427,9 +427,11 @@ pub fn assemble_dataset(quads: Vec<RawQuad>, metadata: &[u8]) -> (Vec<u8>, Build
 }
 
 /// Like [`assemble_dataset`], but the metadata payload is derived from the
-/// [`BuildStats`] right before serialization — for metadata that embeds counts
-/// only known after the dictionary and indexes are built (the Dataset Card).
-/// Returning an empty `Vec` is byte-identical to a metadata-free build.
+/// [`BuildStats`] and the source quads while they are still resident — for
+/// metadata that describes the graph (the Dataset Card). Returning an empty
+/// `Vec` is byte-identical to a metadata-free build; return a
+/// [`DeferredMetadata`] for a payload that must also carry the file's
+/// deduplicated counts, which exist only once the indexes are built.
 pub fn assemble_dataset_with<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
