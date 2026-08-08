@@ -310,30 +310,84 @@ pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
 /// cost three requests instead of two, which is why there is one export rather
 /// than a second `build_info_url`.
 ///
-/// JSON envelope: `{"schemaVersion":1,"card":<text|null>,"build":<text|null>}`.
-/// Both are the sections' **own bytes** as text, not a re-serialization — the
-/// card a client displays is the card the file holds. Worker-only
+/// JSON envelope:
+/// `{"schemaVersion":1,"card":<text|null>,"build":<text|null>,"text_index":{…}}`.
+/// `card` and `build` are the sections' **own bytes** as text, not a
+/// re-serialization — the card a client displays is the card the file holds.
+/// `text_index` is the one thing the file does *not* store about itself and this
+/// reader measures instead (see the private `text_index_json`). Worker-only
 /// (synchronous XHR).
 #[wasm_bindgen]
 pub fn card_and_build_url(url: &str) -> Result<String, JsValue> {
+    // The polyglot-aware view: base 0 for a plain .rete, shifted past the HTML
+    // shell for a polyglot — so the card of an embedded graph is read with the
+    // same two requests as a standalone file's.
     let reader = RemoteReader::open(url)?.view();
-    let (card, build) = rete_core::read_card_and_build_info_ranged(&reader).map_err(err)?;
-    Ok(card_build_envelope(card, build))
+    card_build_from(&reader)
 }
 
 /// [`card_and_build_url`] for an image already in memory — no I/O at all.
 #[wasm_bindgen]
 pub fn card_and_build(bytes: &[u8]) -> Result<String, JsValue> {
-    let (card, build) =
-        rete_core::read_card_and_build_info_ranged(&SliceReader::new(bytes)).map_err(err)?;
-    Ok(card_build_envelope(card, build))
+    card_build_from(&SliceReader::new(bytes))
 }
 
-/// The `{card, build}` envelope both readers return. Absent sections are
-/// `null`, never `""` or `{}`: a file built before build-info existed has no
+/// The shared body of the two: header (which the card read needs anyway), the
+/// coalesced card + build-info range, and the measured text-index signal — so
+/// the CARD tier stays at one header read plus one coalesced range, plus the
+/// ≤10-byte probe only when there is an index to measure.
+fn card_build_from<R: RangeReader>(reader: &R) -> Result<String, JsValue> {
+    let (header, card, build) =
+        rete_core::read_card_and_build_info_with_header(reader).map_err(err)?;
+    let token_table = rete_core::read_text_index_token_table_len_ranged(reader, &header);
+    Ok(card_build_envelope(
+        card,
+        build,
+        text_index_json(&header, token_table),
+    ))
+}
+
+/// Whether a `.rete` carries a **full-text (TEXT_INDEX) section**, measured from
+/// the section directory in the 1 KiB header the caller has just read:
+/// `{"present":bool,"bytes":N,"token_table_bytes":N}` (the last two only when
+/// there is an index).
+///
+/// This is not in the card, and deliberately so. A file built with
+/// `--text-index` answers `FILTER(CONTAINS(…))` by word lookup; one built
+/// without it answers the *same query with the same rows* by full scan, so the
+/// capability is invisible from the results — and a stored flag would be a claim
+/// that can outlive the section it describes. Measuring costs the header (already
+/// fetched) plus one ≤10-byte range read for the token-table length: the figure
+/// a first search actually pays, several times smaller than the whole section.
+///
+/// `token_table_bytes` is omitted when it was not measured — absent means
+/// "not measured here", never "zero".
+fn text_index_json(header: &Header, token_table_bytes: Option<u64>) -> serde_json::Value {
+    if header.text_index_len == 0 {
+        return serde_json::json!({ "present": false });
+    }
+    let mut v = serde_json::json!({
+        "present": true,
+        "bytes": header.text_index_len,
+    });
+    if let Some(tt) = token_table_bytes {
+        v.as_object_mut()
+            .expect("an object")
+            .insert("token_table_bytes".into(), serde_json::json!(tt));
+    }
+    v
+}
+
+/// The `{card, build, text_index}` envelope both readers return. Absent sections
+/// are `null`, never `""` or `{}`: a file built before build-info existed has no
 /// build record, and a reader must be able to tell that from one that recorded
-/// nothing.
-fn card_build_envelope(card: Option<Vec<u8>>, build: Option<Vec<u8>>) -> String {
+/// nothing. `text_index` is always an object — it is measured, so there is
+/// always an answer, including for a file with no card at all.
+fn card_build_envelope(
+    card: Option<Vec<u8>>,
+    build: Option<Vec<u8>>,
+    text_index: serde_json::Value,
+) -> String {
     let text = |b: Option<Vec<u8>>| match b {
         Some(b) if !b.is_empty() => {
             serde_json::Value::String(String::from_utf8_lossy(&b).into_owned())
@@ -344,6 +398,7 @@ fn card_build_envelope(card: Option<Vec<u8>>, build: Option<Vec<u8>>) -> String 
         "schemaVersion": JSON_SCHEMA_VERSION,
         "card": text(card),
         "build": text(build),
+        "text_index": text_index,
     })
     .to_string()
 }
@@ -564,9 +619,14 @@ impl Graph {
             .metadata()
             .filter(|b| !b.is_empty())
             .map(|b| b.to_vec());
+        // A resident open already decoded the whole TEXT_INDEX section, so both
+        // figures are free here.
+        let text_index =
+            text_index_json(self.rete.header(), self.rete.text_index_token_table_len());
         card_build_envelope(
             card,
             self.build_info.as_ref().map(|s| s.as_bytes().to_vec()),
+            text_index,
         )
     }
 
@@ -1011,7 +1071,13 @@ impl RemoteGraph {
     pub fn card_and_build(&self) -> Result<String, JsValue> {
         let (card, build) =
             rete_core::read_card_and_build_info_ranged(&self.reader.view()).map_err(err)?;
-        Ok(card_build_envelope(card, build))
+        // Header-only, deliberately: `token_table_bytes` would cost a range read
+        // (see [`RemoteGraph::text_index_token_table_len`]), and this call must
+        // stay IO-free beyond the card range so the asyncify driver does not
+        // have to suspend inside it. A caller that wants the figure asks for it
+        // through that export, which the glue does drive.
+        let text_index = text_index_json(self.rete.header(), None);
+        Ok(card_build_envelope(card, build, text_index))
     }
 
     /// See [`schema_url`] — the **baked** schema pyramid over the resident

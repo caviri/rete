@@ -103,6 +103,7 @@ newlines.
 | `class_links` | derived | The **effective schema**: `(s_class, predicate, o_class, count)` rows — the class-to-class quotient (same as `rete schema` / `schema_summary`, with `(literal)`/`(untyped)` sentinels). |
 | `top_hubs`, `in_hubs` | derived | Top subjects by out-degree and top non-literal objects by in-degree. |
 | `signals` | derived | Detected **affordances**: `label_predicate`, `base_iri`, `default_lang`, ranked `time_predicates` / `numeric_predicates`, present `link_predicates`, `geo_wkt` / `geo_latlong`, `temporal_extent`, `spatial_bbox` (CRS84 lon/lat). |
+| `signals.text_index` | **measured** | Whether the file carries a **full-text (TEXT_INDEX) section** — `{present, bytes, token_table_bytes}`. The one card field derived from the file's *sections* rather than its triples, and the one that is never written into the file. See [The full-text signal](#the-full-text-signal-measured-not-stored). |
 | `queries` | derived | The auto-generated, **tiered starter-query library** (see below). |
 | `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). |
 | `top_n` | derived | The cap the profile lists were derived under — the number `truncated` was hinting at without stating. |
@@ -115,6 +116,68 @@ list is **capped** and **deterministically ordered** (count-descending, ties
 broken lexically), so building the same input twice yields a **byte-identical**
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching `rete progressive`.
+
+### The full-text signal: measured, not stored
+
+A `.rete` carries an optional **TEXT_INDEX section** (kind `6`, [SPEC §6.3](SPEC.md#63-full-text-index-textindex-section-optional)),
+opt-in via `rete build --text-index` / `rete repyramid --text-index`. A file
+that has one answers `FILTER(CONTAINS(…))` by word lookup; a file that does not
+answers **the same query with the same rows** by full scan. The capability is
+therefore invisible from the results — which is exactly how the playground
+catalog came to advertise an index for two published datasets whose files never
+carried one, and to ship the catalog's largest index (1.88 GB, 29% of
+`causenet-full-typed.rete`) without telling anyone.
+
+So the card states it, in both directions:
+
+```json
+"signals": { "text_index": { "present": true, "bytes": 1879287762, "token_table_bytes": 193295361 } }
+"signals": { "text_index": { "present": false } }
+```
+
+(Those are the real figures for the published `causenet-full-typed.rete`, read
+by `rete card-url` in **43,671 bytes across 3 range requests** — the 1 KiB
+header, the 42,637-byte card, and a 10-byte probe — against a 6.39 GB file.)
+
+| value | means |
+|---|---|
+| `{"present": true, …}` | measured — the file has a kind-6 section |
+| `{"present": false}` | measured — it has none |
+| **field absent** | **unknown** — nobody measured (a card read out of a saved JSON document, with no file behind it). Never read this as "no index". |
+
+**It is measured by the reader, not written by the builder.** Every other
+derived field is computed once at build time and stored; this one is not stored
+at all. Three reasons:
+
+1. **The ground truth is already in the bytes every card read fetches.** The
+   section directory lives in the 1 KiB header, and `rete card` parses it for
+   the content hash anyway. A stored copy would be a second source of truth for
+   a question the first source answers for free — the same reasoning that keeps
+   a curated `language` field out of the card (see
+   [the rule](#first-class-field-or-the-bag-the-rule)).
+2. **A stored flag can outlive the section it describes.** `rete repyramid
+   --text-index` rewrites a file's sections; `rete repyramid` without `--card`
+   drops the card entirely. A measured signal simply becomes true, and is right
+   for a file with no card at all — where `rete card` prints
+   `(no dataset card — TEXT_INDEX present — …)` rather than nothing.
+3. **No re-card.** Every already-published `.rete` reports it today. A stamped
+   field would have reached the catalog only after each file was rebuilt.
+
+**Why byte counts and not a token count.** `bytes` is the whole section — worth
+stating because it can dominate a download (1.88 GB, 29% of
+`causenet-full-typed.rete`). `token_table_bytes` is its leading token table,
+which is what a *first search* actually fetches; the postings blob behind it is
+read one posting at a time and never whole. On that same file the two differ by
+**9.7×** (1.88 GB against 193 MB), so quoting `bytes` alone would badly
+overstate the price of pressing Search — which is why the playground's full-text
+panel already shows both. The **number of indexed tokens** is deliberately
+absent: it is the first varint of the *decompressed* token table, so reporting
+it would mean fetching and inflating all 193 MB — not a card-tier fact.
+`token_table_bytes` answers the same question for one ≤10-byte range read.
+
+`rete card-audit` reports the measured signal for any `.rete`, local or remote,
+and flags a card whose own bytes disagree with the file's sections. Given a card
+*document* it reports `unknown` — there is nothing to measure.
 
 ### Where to get `theme` IRIs
 

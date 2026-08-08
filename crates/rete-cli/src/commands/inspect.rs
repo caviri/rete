@@ -16,7 +16,12 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     let head = rete_core::RangeReader::read_at(&reader, 0, rete_core::HEADER_LEN as u64)?;
     let header = rete_core::Header::from_bytes(&head)?;
     println!("{header:#?}");
-    if let Some(card) = crate::commands::card::load_card_ranged(&reader)? {
+    // The section directory the header just printed is also where "can I
+    // full-text search this?" is decided; fold that into the card the same way
+    // `rete card` does, so both surfaces answer it identically.
+    let text_index = crate::commands::card::TextIndexSignal::probe(&reader, &header);
+    if let Some(mut card) = crate::commands::card::load_card_ranged(&reader)? {
+        card.observe_text_index(text_index);
         println!();
         println!(
             "{}",

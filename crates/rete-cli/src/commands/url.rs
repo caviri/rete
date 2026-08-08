@@ -31,14 +31,15 @@ pub(crate) fn card_url(
     let format = card::CardFormat::resolve(json, format)?;
     let reader = CountingReader::new(RangedSourceReader::open(url)?);
     let total = reader.len();
-    match card::load_card_and_build_ranged(&reader)? {
-        (_, None, _) => println!("(no dataset card)"),
-        (header, Some(dataset_card), build) => {
+    let read = card::load_card_and_build_ranged(&reader)?;
+    match &read.card {
+        None => println!("(no dataset card — {})", read.text_index.describe()),
+        Some(dataset_card) => {
             // The content hash is carried in the header we already fetched.
-            let checksum = card::hex16(&header.content_hash);
+            let checksum = card::hex16(&read.header.content_hash);
             card::print_card(
-                &dataset_card,
-                build.as_ref(),
+                dataset_card,
+                read.build.as_ref(),
                 &checksum,
                 url,
                 format,

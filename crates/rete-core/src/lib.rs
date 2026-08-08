@@ -129,8 +129,9 @@ pub mod query {
 pub mod range {
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
-        read_card_and_build_info_ranged, read_metadata_ranged, read_schema_coherence_ranged,
-        read_schema_summary_ranged, ByteRange, LayoutSegment, SearchView, SummaryView,
+        read_card_and_build_info_ranged, read_card_and_build_info_with_header,
+        read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged,
+        read_text_index_token_table_len_ranged, ByteRange, LayoutSegment, SearchView, SummaryView,
     };
     pub use crate::reader::{
         detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader,
@@ -167,11 +168,13 @@ pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]
 pub use file::{
     attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with,
-    plan_build_info, read_build_info, read_card_and_build_info_ranged, read_metadata_ranged,
-    read_schema_coherence_ranged, read_schema_summary_ranged, replace_metadata, schema_classes,
-    schema_coherence, schema_summary, verify, write_dataset, write_dataset_with_metadata,
-    write_file, BuildInfoPlan, ByteRange, LayoutSegment, Rete, SearchView, SummaryView, TermTriple,
-    TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_TILE_BUDGET, RDF_TYPE,
+    plan_build_info, read_build_info, read_card_and_build_info_ranged,
+    read_card_and_build_info_with_header, read_metadata_ranged, read_schema_coherence_ranged,
+    read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata,
+    schema_classes, schema_coherence, schema_summary, verify, write_dataset,
+    write_dataset_with_metadata, write_file, BuildInfoPlan, ByteRange, LayoutSegment, Rete,
+    SearchView, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
+    DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 #[doc(hidden)]
 pub use header::{

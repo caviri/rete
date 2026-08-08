@@ -34,6 +34,21 @@ A full-text index is opt-in at build time and `FILTER(CONTAINS(…))` answers wi
 or without one — by word lookup or by full scan — so an undeclared index is
 invisible in both directions until something compares the header to the catalog.
 
+To read the truth off any file before you write the flag, ask the file:
+
+```sh
+rete card-url https://data.graphplaza.com/<key>/<key>.rete --json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["signals"]["text_index"])'
+# {'bytes': 1879287762, 'present': True, 'token_table_bytes': 193295361}
+```
+
+`signals.text_index` is **measured** from the section directory by the reader,
+not stored in the card ([Dataset Cards](../../../docs/dataset-cards.md#the-full-text-signal-measured-not-stored)),
+so it is right for every published file today and cannot go stale. The catalog
+flag stays a separate, hand-written **declaration** on purpose: it is the claim
+the two checks above hold the bucket to, and a flag derived from the bytes could
+not detect the bytes changing.
+
 ## 2. `datasetMeta`
 
 ```js

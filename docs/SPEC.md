@@ -384,6 +384,24 @@ posting, `prefix(word)` the contiguous run of postings whose tokens share the
 prefix. Multiple query words **AND** by intersecting their sorted posting lists.
 SPARQL never touches this section, so a query open neither fetches nor pays for it.
 
+**Discoverability.** Because a file *without* the section answers the same
+`FILTER(CONTAINS(…))` with the same rows — by full scan — the capability cannot
+be inferred from a query result, and a reader must be able to ask the file. It
+can: a kind-`6` entry in the section directory is present or it is not, in the
+same `bytes=0-1023` a client already reads. The application layer surfaces that
+as the Dataset Card's `signals.text_index`
+(`{present, bytes, token_table_bytes}` — see
+[Dataset Cards](dataset-cards.md#the-full-text-signal-measured-not-stored)),
+**measured by the reader from this directory, never written into the metadata
+section**. That is a deliberate exception to how every other card field works,
+and it is what keeps the answer true across `repyramid --text-index` (which adds
+the section to an existing file) and true for a file carrying no card at all.
+`token_table_bytes` — the section's leading `token_table_len` varint plus the
+table it measures, i.e. the prefix a first search fetches — costs one ≤10-byte
+range read at `text_index offset` and is the honest cost figure; the section
+length alone overstates it several-fold, since the postings blob is never read
+whole.
+
 **Compatibility:** `0x05` is stable format generation 1 and the compatibility
 baseline for Rete 1.x. Every stable reader from Rete 1.0.0 onward reads `0x05`.
 Optional sections and flags may extend it without changing its required semantics.

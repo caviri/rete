@@ -475,9 +475,12 @@ JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
 <code>recordSet</code>: a graph is not a table). <code>--sha256</code> supplies the whole-file
 sha256 the Croissant projection's <code>FileObject</code> requires — a file cannot carry
 its own, so compute it outside (<code>sha256sum file.rete</code>); with it the document
-is validator-clean. Prints <code>(no dataset card)</code> for a file
-built without one. <code>rete info</code> shows the same catalog beneath the header when a
-card is present.</p>
+is validator-clean. For a file built without one it prints
+<code>(no dataset card — …)</code>, still naming what the header alone decides: whether
+the file carries a full-text index (<code>signals.text_index</code>, measured from the
+section directory rather than read out of the card — see
+<a href="dataset-cards.html#the-full-text-signal-measured-not-stored">Dataset Cards</a>).
+<code>rete info</code> shows the same catalog beneath the header when a card is present.</p>
 <h3 id="rete-graphs-file"><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
 <h3 id="rete-export-file---format-nqttljsonld"><code>rete export &lt;file&gt; [--format nq|ttl|jsonld]</code></h3>

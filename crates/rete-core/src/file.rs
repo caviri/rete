@@ -1699,6 +1699,23 @@ pub fn read_metadata_ranged<R: RangeReader>(reader: &R) -> Result<Option<Vec<u8>
 pub fn read_card_and_build_info_ranged<R: RangeReader>(
     reader: &R,
 ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
+    read_card_and_build_info_with_header(reader).map(|(_, m, b)| (m, b))
+}
+
+/// [`read_card_and_build_info_ranged`], also returning the parsed [`Header`] it
+/// had to read anyway.
+///
+/// The header is not a bonus: it carries the content hash and the section
+/// directory — including whether the file has a TEXT_INDEX section, which the
+/// card does not state (see
+/// [`read_text_index_token_table_len_ranged`]). A caller that wants both and
+/// used the tuple-only form would issue a **second** 1 KiB request for bytes it
+/// already had, turning the CARD tier's documented "one header + one coalesced
+/// range" into three requests.
+#[allow(clippy::type_complexity)]
+pub fn read_card_and_build_info_with_header<R: RangeReader>(
+    reader: &R,
+) -> Result<(Header, Option<Vec<u8>>, Option<Vec<u8>>), FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
     let meta = (header.metadata_offset, header.metadata_len);
@@ -1707,7 +1724,7 @@ pub fn read_card_and_build_info_ranged<R: RangeReader>(
         // Adjacent (the layout this crate writes): one read spans both.
         let both = reader.read_at(meta.0, meta.1 + build.1)?;
         let (m, b) = both.split_at(meta.1 as usize);
-        return Ok((Some(m.to_vec()), Some(b.to_vec())));
+        return Ok((header, Some(m.to_vec()), Some(b.to_vec())));
     }
     let fetch = |off: u64, len: u64| -> Result<Option<Vec<u8>>, FileError> {
         if len == 0 {
@@ -1715,7 +1732,7 @@ pub fn read_card_and_build_info_ranged<R: RangeReader>(
         }
         Ok(Some(reader.read_at(off, len)?))
     };
-    Ok((fetch(meta.0, meta.1)?, fetch(build.0, build.1)?))
+    Ok((header, fetch(meta.0, meta.1)?, fetch(build.0, build.1)?))
 }
 
 /// The build-info section of a whole file image, or `None` if absent. The
@@ -2050,6 +2067,28 @@ fn resident_text_index_slot(section: Option<&[u8]>, codec: u8) -> Result<TextInd
         ),
         token_table_len: crate::text_index::TextIndex::postings_base(section).map(|b| b as u64),
     })
+}
+
+/// Byte length of the TEXT_INDEX section's leading **token table**, from a
+/// header a caller has already parsed — the prefix range a first
+/// [`Rete::text_search`] fetches, and the honest figure to quote as its cost
+/// (`header.text_index_len` counts the postings blob too and overstates it
+/// several-fold). `None` when the file carries no text index, or its first
+/// bytes could not be read.
+///
+/// Costs **one range read of ≤10 bytes** — the section's leading length varint
+/// and nothing else, never the table it measures. This is the free-standing
+/// companion to [`Rete::text_index_token_table_len`], for readers that hold a
+/// [`Header`] and a [`RangeReader`] but never open the file (the CARD tier:
+/// `rete card`, `rete card-url`).
+pub fn read_text_index_token_table_len_ranged<R: RangeReader + ?Sized>(
+    reader: &R,
+    header: &Header,
+) -> Option<u64> {
+    if header.text_index_len == 0 {
+        return None;
+    }
+    read_token_table_len(reader, header.text_index_offset, header.text_index_len)
 }
 
 /// Byte length of the TEXT_INDEX section's leading token table — its length

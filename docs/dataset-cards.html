@@ -426,6 +426,7 @@ newlines.</p>
 <tr><td><code>class_links</code></td><td>derived</td><td>The <strong>effective schema</strong>: <code>(s_class, predicate, o_class, count)</code> rows — the class-to-class quotient (same as <code>rete schema</code> / <code>schema_summary</code>, with <code>(literal)</code>/<code>(untyped)</code> sentinels).</td></tr>
 <tr><td><code>top_hubs</code>, <code>in_hubs</code></td><td>derived</td><td>Top subjects by out-degree and top non-literal objects by in-degree.</td></tr>
 <tr><td><code>signals</code></td><td>derived</td><td>Detected <strong>affordances</strong>: <code>label_predicate</code>, <code>base_iri</code>, <code>default_lang</code>, ranked <code>time_predicates</code> / <code>numeric_predicates</code>, present <code>link_predicates</code>, <code>geo_wkt</code> / <code>geo_latlong</code>, <code>temporal_extent</code>, <code>spatial_bbox</code> (CRS84 lon/lat).</td></tr>
+<tr><td><code>signals.text_index</code></td><td><strong>measured</strong></td><td>Whether the file carries a <strong>full-text (TEXT_INDEX) section</strong> — <code>{present, bytes, token_table_bytes}</code>. The one card field derived from the file's <em>sections</em> rather than its triples, and the one that is never written into the file. See <a href="#the-full-text-signal-measured-not-stored">The full-text signal</a>.</td></tr>
 <tr><td><code>queries</code></td><td>derived</td><td>The auto-generated, <strong>tiered starter-query library</strong> (see below).</td></tr>
 <tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial).</td></tr>
 <tr><td><code>top_n</code></td><td>derived</td><td>The cap the profile lists were derived under — the number <code>truncated</code> was hinting at without stating.</td></tr>
@@ -438,6 +439,58 @@ list is <strong>capped</strong> and <strong>deterministically ordered</strong> (
 broken lexically), so building the same input twice yields a <strong>byte-identical</strong>
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching <code>rete progressive</code>.</p>
+<h3 id="the-full-text-signal-measured-not-stored">The full-text signal: measured, not stored</h3>
+<p>A <code>.rete</code> carries an optional <strong>TEXT_INDEX section</strong> (kind <code>6</code>, <a href="SPEC.html#63-full-text-index-textindex-section-optional">SPEC §6.3</a>),
+opt-in via <code>rete build --text-index</code> / <code>rete repyramid --text-index</code>. A file
+that has one answers <code>FILTER(CONTAINS(…))</code> by word lookup; a file that does not
+answers <strong>the same query with the same rows</strong> by full scan. The capability is
+therefore invisible from the results — which is exactly how the playground
+catalog came to advertise an index for two published datasets whose files never
+carried one, and to ship the catalog's largest index (1.88 GB, 29% of
+<code>causenet-full-typed.rete</code>) without telling anyone.</p>
+<p>So the card states it, in both directions:</p>
+<pre><code class="language-json">"signals": { "text_index": { "present": true, "bytes": 1879287762, "token_table_bytes": 193295361 } }
+"signals": { "text_index": { "present": false } }
+</code></pre>
+<p>(Those are the real figures for the published <code>causenet-full-typed.rete</code>, read
+by <code>rete card-url</code> in <strong>43,671 bytes across 3 range requests</strong> — the 1 KiB
+header, the 42,637-byte card, and a 10-byte probe — against a 6.39 GB file.)</p>
+<table><thead><tr><th>value</th><th>means</th></tr></thead><tbody>
+<tr><td><code>{"present": true, …}</code></td><td>measured — the file has a kind-6 section</td></tr>
+<tr><td><code>{"present": false}</code></td><td>measured — it has none</td></tr>
+<tr><td><strong>field absent</strong></td><td><strong>unknown</strong> — nobody measured (a card read out of a saved JSON document, with no file behind it). Never read this as "no index".</td></tr>
+</tbody></table>
+<p><strong>It is measured by the reader, not written by the builder.</strong> Every other
+derived field is computed once at build time and stored; this one is not stored
+at all. Three reasons:</p>
+<ol>
+<li><strong>The ground truth is already in the bytes every card read fetches.</strong> The
+section directory lives in the 1 KiB header, and <code>rete card</code> parses it for
+the content hash anyway. A stored copy would be a second source of truth for
+a question the first source answers for free — the same reasoning that keeps
+a curated <code>language</code> field out of the card (see
+<a href="#first-class-field-or-the-bag-the-rule">the rule</a>).</li>
+<li><strong>A stored flag can outlive the section it describes.</strong> <code>rete repyramid --text-index</code> rewrites a file's sections; <code>rete repyramid</code> without <code>--card</code>
+drops the card entirely. A measured signal simply becomes true, and is right
+for a file with no card at all — where <code>rete card</code> prints
+<code>(no dataset card — TEXT_INDEX present — …)</code> rather than nothing.</li>
+<li><strong>No re-card.</strong> Every already-published <code>.rete</code> reports it today. A stamped
+field would have reached the catalog only after each file was rebuilt.</li>
+</ol>
+<p><strong>Why byte counts and not a token count.</strong> <code>bytes</code> is the whole section — worth
+stating because it can dominate a download (1.88 GB, 29% of
+<code>causenet-full-typed.rete</code>). <code>token_table_bytes</code> is its leading token table,
+which is what a <em>first search</em> actually fetches; the postings blob behind it is
+read one posting at a time and never whole. On that same file the two differ by
+<strong>9.7×</strong> (1.88 GB against 193 MB), so quoting <code>bytes</code> alone would badly
+overstate the price of pressing Search — which is why the playground's full-text
+panel already shows both. The <strong>number of indexed tokens</strong> is deliberately
+absent: it is the first varint of the <em>decompressed</em> token table, so reporting
+it would mean fetching and inflating all 193 MB — not a card-tier fact.
+<code>token_table_bytes</code> answers the same question for one ≤10-byte range read.</p>
+<p><code>rete card-audit</code> reports the measured signal for any <code>.rete</code>, local or remote,
+and flags a card whose own bytes disagree with the file's sections. Given a card
+<em>document</em> it reports <code>unknown</code> — there is nothing to measure.</p>
 <h3 id="where-to-get-theme-iris">Where to get <code>theme</code> IRIs</h3>
 <p><code>theme</code> rejects free text, which is only helpful if you know where an IRI
 comes from. Pick a <strong>published concept scheme</strong> and copy the concept's IRI —
