@@ -143,6 +143,28 @@ enum Command {
         /// the output file). Needs free space on the order of the input size.
         #[arg(long = "tmp-dir")]
         tmp_dir: Option<String>,
+        /// How many index permutations to store: `6` (default) or `3`.
+        ///
+        /// `6` stores SPO, POS, OSP, SOP, PSO and OPS. `3` stores only SPO,
+        /// POS and OSP — the orders that decide *routing*. Those three tie the
+        /// longest bound prefix on all eight triple-pattern shapes, so a
+        /// 3-permutation file answers every query with the same rows, from the
+        /// same tiles. What it gives up is the sort-merge join: SOP/PSO/OPS
+        /// exist only to hand a join two streams already sorted on the join
+        /// key, and without them the planner falls back to its hash/probe path
+        /// for the three (bound-set, join-column) shapes they covered — most
+        /// visibly `?s :p ?o . ?s :q ?o2`, the subject star.
+        ///
+        /// The three orders are typically ~40% of a built file. Measure your
+        /// own workload before choosing: `rete cost` reports bytes and requests
+        /// for a query against either build.
+        ///
+        /// **A 3-permutation file is not readable by a Rete older than this
+        /// one** — it errors on the index container's section count rather
+        /// than answering wrongly, but it does error. Keep the default for
+        /// anything published.
+        #[arg(long = "permutations", value_parser = ["3", "6"], default_value = "6")]
+        permutations: String,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
     /// RDF-XML, without building. Reports counts, or fails with a parse error.
@@ -949,7 +971,12 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             no_card_costs,
             memory_budget_mb,
             tmp_dir,
+            permutations,
         } => {
+            let perms = match permutations.as_str() {
+                "3" => rete_core::PermSet::CORE,
+                _ => rete_core::PermSet::ALL,
+            };
             let card_args = commands::card::CardArgs {
                 enabled: card,
                 file: card_file,
@@ -971,6 +998,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     text_index,
                     collapse_graphs,
                     card_args,
+                    perms,
                 )
             } else {
                 commands::build::build(
@@ -986,6 +1014,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     collapse_graphs,
                     card_args,
                     no_card_costs,
+                    perms,
                 )
             }
         }

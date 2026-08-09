@@ -62,6 +62,23 @@ on graphs too large for the single-threaded Louvain build (it falls back to
 Louvain when the graph is untyped). All of these are opt-in; without them the
 output is byte-identical to a plain build.
 
+`--permutations 3|6` (default **6**) chooses how many index permutations to
+store. `6` writes SPO, POS, OSP, SOP, PSO and OPS; `3` writes only SPO, POS and
+OSP — the orders that decide *routing*. Those three tie the longest bound prefix
+on all eight triple-pattern shapes, so a 3-permutation file answers **every query
+with the same rows, from the same tiles**; what it gives up is the sort-merge
+join, on the three (bound-set, join-column) shapes SOP/PSO/OPS existed for —
+most visibly `?s <p1> ?o1 . ?s <p2> ?o2`, two bound predicates sharing a subject.
+The three orders are 36.8%–50.5% of a built file
+([BENCHMARK.md](BENCHMARK.md#the-merge-join-permutations-cost-vs-benefit)), and
+the file records its own set in the header, so `rete info` / `rete stats` and the
+card's `signals.permutations` all report it.
+
+**A 3-permutation file is not readable by a Rete older than this one** — it
+refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
+rather than answering wrongly, but it does refuse. Keep the default for anything
+published; see [compatibility.md](compatibility.md).
+
 ### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--pyramid-algo louvain|types] [--text-index] [--card …]`
 Rebuild a file's pyramid **in place**, reading the triples straight from the
 existing `.rete` — no `export | build` N-Quads round-trip. Use it to add a schema

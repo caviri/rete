@@ -141,7 +141,8 @@ are not readable and must be rebuilt from RDF source.
 | 43 | 1 | block codec id (e.g. zstd) |
 | 44 | 2 | section count (entries in the directory) |
 | 46 | 4 | schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, fetched at `pyramid_meta_offset + pyramid_meta_len − this` for an index/dictionary/summary-free schema-coherence read |
-| 50 | 14 | reserved (zero) |
+| 50 | 1 | **index permutation mask** (§6): bit *i* = permutation *i* of `SPO, POS, OSP, SOP, PSO, OPS` is stored. `0` means **all six** — the canonical spelling, so a full build is byte-identical to every file written before this byte was defined. A mask must contain SPO+POS+OSP (`0b000111`); anything else is rejected at header parse |
+| 51 | 13 | reserved (zero) |
 
 **Section directory (bytes 64…, `section_count` entries of 24 bytes):**
 
@@ -250,14 +251,34 @@ fetches just the run(s) covering the IDs/terms a query touches.
 
 ## 6. Triples / quads
 
-- Stored as integer triples in all **six permutations**: **SPO, POS, OSP, SOP,
-  PSO, OPS** (stable format `0x05`; experimental `0x03` stored only the first three).
-  Three suffice to
-  *match* any of the eight triple-pattern shapes; the full six additionally sort
-  the triples on **every** prefix of columns, so for any bound prefix and any free
-  column there is a permutation that routes on the prefix **and** streams sorted on
-  that column — the precondition a **sort-merge join** needs (both inputs co-sorted
-  on the join key). The cost is ~2× the index payload.
+- Stored as integer triples in **SPO, POS, OSP** and, by default, also **SOP,
+  PSO, OPS** (stable format `0x05`; experimental `0x03` stored only the first
+  three). Which orders a file carries is recorded in the header's **permutation
+  mask** (byte 50; `0` = all six) and is fixed at build time by
+  `rete build --permutations 3|6`. **The default is six.**
+  - The first three *match* any of the eight triple-pattern shapes, and they do
+    so at the **same longest bound prefix** the full six achieve on every one of
+    those eight — enumerated in `index.rs`'s `perm_routing_never_leaves_core`.
+    So routing, the tiles fetched, and the rows returned are identical either
+    way; the choice is invisible from a query's results.
+  - The full six additionally sort the triples on **every** prefix of columns, so
+    for any bound prefix and any free column there is a permutation that routes
+    on the prefix **and** streams sorted on that column — the precondition a
+    **sort-merge join** needs (both inputs co-sorted on the join key). Exactly
+    three of the twelve (bound-set, join-column) shapes lose that stream with
+    three permutations: subject-bound sorted on object, predicate-bound sorted on
+    subject, object-bound sorted on predicate. The planner then declines the
+    merge seed and hash-joins, which is a slower plan, never a wrong one.
+  - The cost is ~2× the index payload: measured at **36.2%** of a built
+    literal-heavy file (`davidrumsey`, 4.57 M triples) and **50.5%** of a
+    short-term-heavy one (`tree-city-inventory`, 3.15 M triples).
+  - **A file with fewer than six permutations is not readable by a Rete that
+    predates the mask.** Such a reader passes six to the index container's
+    section-count check and gets `malformed container: expected 6 permutation
+    sections` (resident) or `unexpected container section count` (ranged), exit
+    1, on every command that touches the index — a loud refusal, not a wrong
+    answer. Its `info`, `verify` and `card-url` still work, because they read
+    only the header and the metadata section.
 - Each permutation is encoded as an **adjacency / bitmap-triples** structure
   (HDT-style): for SPO, a sorted list of subjects, each with its predicate
   list, each with its object list, delta-encoded.

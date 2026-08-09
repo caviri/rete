@@ -426,7 +426,8 @@ newlines.</p>
 <tr><td><code>class_links</code></td><td>derived</td><td>The <strong>effective schema</strong>: <code>(s_class, predicate, o_class, count)</code> rows — the class-to-class quotient (same as <code>rete schema</code> / <code>schema_summary</code>, with <code>(literal)</code>/<code>(untyped)</code> sentinels).</td></tr>
 <tr><td><code>top_hubs</code>, <code>in_hubs</code></td><td>derived</td><td>Top subjects by out-degree and top non-literal objects by in-degree.</td></tr>
 <tr><td><code>signals</code></td><td>derived</td><td>Detected <strong>affordances</strong>: <code>label_predicate</code>, <code>base_iri</code>, <code>default_lang</code>, ranked <code>time_predicates</code> / <code>numeric_predicates</code>, present <code>link_predicates</code>, <code>geo_wkt</code> / <code>geo_latlong</code>, <code>temporal_extent</code>, <code>spatial_bbox</code> (CRS84 lon/lat).</td></tr>
-<tr><td><code>signals.text_index</code></td><td><strong>measured</strong></td><td>Whether the file carries a <strong>full-text (TEXT_INDEX) section</strong> — <code>{present, bytes, token_table_bytes}</code>. The one card field derived from the file's <em>sections</em> rather than its triples, and the one that is never written into the file. See <a href="#the-full-text-signal-measured-not-stored">The full-text signal</a>.</td></tr>
+<tr><td><code>signals.text_index</code></td><td><strong>measured</strong></td><td>Whether the file carries a <strong>full-text (TEXT_INDEX) section</strong> — <code>{present, bytes, token_table_bytes}</code>. Derived from the file's <em>sections</em> rather than its triples, and never written into the file. See <a href="#the-full-text-signal-measured-not-stored">The full-text signal</a>.</td></tr>
+<tr><td><code>signals.permutations</code></td><td><strong>measured</strong></td><td>Which <strong>index permutations</strong> the file stores — <code>{count, names, merge_join}</code>. Also derived, from the header's permutation mask, and also never written. See <a href="#the-permutation-signal-measured-not-stored">The permutation signal</a>.</td></tr>
 <tr><td><code>queries</code></td><td>derived</td><td>The auto-generated, <strong>tiered starter-query library</strong> (see below).</td></tr>
 <tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial).</td></tr>
 <tr><td><code>top_n</code></td><td>derived</td><td>The cap the profile lists were derived under — the number <code>truncated</code> was hinting at without stating.</td></tr>
@@ -491,6 +492,37 @@ it would mean fetching and inflating all 193 MB — not a card-tier fact.
 <p><code>rete card-audit</code> reports the measured signal for any <code>.rete</code>, local or remote,
 and flags a card whose own bytes disagree with the file's sections. Given a card
 <em>document</em> it reports <code>unknown</code> — there is nothing to measure.</p>
+<h3 id="the-permutation-signal-measured-not-stored">The permutation signal: measured, not stored</h3>
+<p>A <code>.rete</code> stores its triples in six orders of <code>(s, p, o)</code> by default —
+<code>SPO, POS, OSP, SOP, PSO, OPS</code>. <code>rete build --permutations 3</code> keeps only the
+first three. The first three decide <strong>routing</strong>: they tie the longest bound
+prefix on all eight triple-pattern shapes, so a three-permutation file answers
+every query with the same rows, fetched from the same tiles. The other three
+exist to hand a <strong>sort-merge join</strong> two streams already sorted on the join key;
+without them the planner declines the merge seed and hash-joins instead.</p>
+<p>So, exactly like a missing full-text index, the difference <strong>cannot be seen in
+any result</strong> — and it is not small: measured on two datasets built both ways,
+<code>SOP + PSO + OPS</code> are <strong>36.2%</strong> of <code>davidrumsey</code> (54.8 MB → 35.0 MB) and
+<strong>50.5%</strong> of <code>tree-city-inventory</code> (19.4 MB → 9.6 MB).</p>
+<pre><code class="language-json">"signals": { "permutations": { "count": 6, "names": ["SPO","POS","OSP","SOP","PSO","OPS"], "merge_join": true } }
+"signals": { "permutations": { "count": 3, "names": ["SPO","POS","OSP"], "merge_join": false } }
+</code></pre>
+<table><thead><tr><th>value</th><th>means</th></tr></thead><tbody>
+<tr><td><code>{"count": 6, "merge_join": true, …}</code></td><td>measured — the file carries the merge-join orders</td></tr>
+<tr><td><code>{"count": 3, "merge_join": false, …}</code></td><td>measured — it carries only the routing three</td></tr>
+<tr><td><strong>field absent</strong></td><td><strong>unknown</strong> — nobody measured (a card read out of a saved JSON document). Never read this as "six".</td></tr>
+</tbody></table>
+<p><strong>Measured, never stored</strong>, for the same three reasons as <code>text_index</code> — and one
+that is sharper here. Which permutations a file carries is a fact about <em>its own
+bytes</em>, sitting in the 1 KiB header (byte 50; <code>0</code> means all six, which is why
+every file written before the mask existed reports six today, with no re-card).
+A stored copy would be an <strong>authored claim about the file's own layout</strong> — the
+single class of statement a file can always check for itself, for free. The
+measurement costs <strong>no range read at all</strong>: the header is already in hand.</p>
+<p><code>names</code> is written out rather than implied by <code>count</code> because the mask is a set,
+and a future build may keep a different three.</p>
+<p>Beyond the card, <code>rete info</code> and <code>rete stats</code> report it directly, so a file with
+no card still answers the question.</p>
 <h3 id="where-to-get-theme-iris">Where to get <code>theme</code> IRIs</h3>
 <p><code>theme</code> rejects free text, which is only helpful if you know where an IRI
 comes from. Pick a <strong>published concept scheme</strong> and copy the concept's IRI —

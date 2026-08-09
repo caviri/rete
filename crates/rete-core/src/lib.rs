@@ -89,9 +89,9 @@ pub mod format {
     };
     pub use crate::ingest::{
         assemble_dataset, assemble_dataset_with, assemble_dataset_with_opts,
-        assemble_dataset_with_opts_algo, parse, parse_quads, parse_rdfxml, parse_statements,
-        parse_turtle, BuildStats, DeferredMetadata, FinalCounts, IngestError, IntoMetadata,
-        RawQuad, RawTriple,
+        assemble_dataset_with_opts_algo, assemble_dataset_with_perms, parse, parse_quads,
+        parse_rdfxml, parse_statements, parse_turtle, BuildStats, DeferredMetadata, FinalCounts,
+        IngestError, IntoMetadata, RawQuad, RawTriple,
     };
 }
 
@@ -182,7 +182,7 @@ pub use header::{
     MIN_STABLE_READ_VERSION,
 };
 #[doc(hidden)]
-pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};
+pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSet};
 #[doc(hidden)]
 pub use meta::{
     CharSet, ClassNode, ClassRelation, CommunityDescriptor, LabelEntry, LevelLinks, LevelRollup,

@@ -7,6 +7,62 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The three merge-join permutations are optional — `rete build
+  --permutations 3`, and the file says which it has.** SOP, PSO and OPS exist
+  only to hand a sort-merge join a co-sorted stream; SPO, POS and OSP are what
+  decide *routing*, and they tie the longest bound prefix on **all eight**
+  triple-pattern shapes (enumerated by `perm_routing_never_leaves_core`). So a
+  three-permutation file answers every query with the same rows, from the same
+  tiles — measured across two datasets' own catalog example queries, 16 query
+  pairs, zero row-count disagreements — while dropping **36.8%** of
+  `davidrumsey` (58.7 MB → 37.1 MB) and **50.5%** of `tree-city-inventory`
+  (19.4 MB → 9.6 MB).
+
+  **The default is still six.** This ships the mechanism and the measurement,
+  not a change of policy.
+
+  What it costs is the merge join, on exactly three of the twelve (bound-set,
+  join-column) shapes: subject-bound sorted on object, predicate-bound sorted on
+  subject, object-bound sorted on predicate. Over HTTP, cold, that is worth
+  **+75.0%** on `tree-city-inventory`'s "commonest trees in Geneva", **+31.5%**
+  on its species-diversity query and **+11.7%** on its tallest-trees query —
+  while *fetching fewer bytes*, so the loss is join CPU, not I/O. The other
+  thirteen query pairs are within ±10%, and `davidrumsey` — whose stars are wide
+  rather than deep — shows no loss at all. Build time barely moves on the in-RAM
+  path (the permutations are built in parallel), but the memory-bounded external
+  builder sorts them one at a time and gets **13.5%** / **11.9%** faster; peak
+  RSS falls 7.2% / 14.7%.
+
+  `GraphIndex::best_permutation_in` and `permutation_sorted_on_in` consult the
+  file's set instead of assuming six, and the latter now refuses a co-sorted
+  stream that would cost *routing* — a no-op with six permutations (the co-sorted
+  order always ties the best prefix there) and what stops a lean file from buying
+  sort order with a whole-section scan.
+
+  **A three-permutation file is not readable by an older Rete**, and that is the
+  point: `decode_index_container` and the ranged
+  `locate_container_section_ranged` both check the index container's section
+  count, so an older reader fails with `malformed container: expected 6
+  permutation sections` / `unexpected container section count` and exit 1 on
+  every command that touches the index — never a short answer. (Issue #206
+  predicted the opposite, "an old reader would return zero rows"; the receipt is
+  in `docs/compatibility.md`.) `rete info`, `rete verify` and `rete card-url`
+  still work, because they read only the header and the metadata section.
+
+  The set is recorded in the header's previously-reserved byte 50 as a 6-bit
+  mask, where **`0` means all six** — so a default build is byte-identical to
+  every file written before the byte was defined, and no format-version bump is
+  involved. It flows through the in-RAM builder, the two-pass streaming builder
+  and the memory-bounded external builder (byte-identical outputs); `repyramid`
+  preserves its input's set and `merge` writes the union of its inputs'.
+
+  Surfaced as `signals.permutations` — `{count, names, merge_join}` — on the
+  Dataset Card, plus `rete info` and `rete stats`. Following
+  `signals.text_index`, it is **derived at read time and never stored**: which
+  permutations a file carries is a fact about its own bytes, so a stored copy
+  would be an authored claim about the file's own layout. It costs no range read
+  at all — the mask is in the 1 KiB header every card read already fetches.
+
 - **An unbounded scan streams instead of materializing — `SELECT ?s ?p ?o
   LIMIT 1` works on 9.8 billion quads.** The Java client's scans returned a
   `List`, so the engine built the *whole* result inside wasm32 linear memory

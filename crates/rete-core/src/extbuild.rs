@@ -82,6 +82,11 @@ pub struct ExternalBuildOptions {
     /// must not make two builds of identical data hash differently. Empty =
     /// no section (byte-identical to a pre-build-info file).
     pub build_info: Vec<u8>,
+    /// Which permutations to sort and write ([`crate::index::PermSet::ALL`] by
+    /// default). Each one is a full external sort of every triple plus its own
+    /// section on disk, so this is the single biggest lever on both build time
+    /// and file size that does not touch the data.
+    pub perms: crate::index::PermSet,
 }
 
 impl Default for ExternalBuildOptions {
@@ -91,6 +96,7 @@ impl Default for ExternalBuildOptions {
             tmp_dir: None,
             metadata: Box::new(|_| Vec::new()),
             build_info: Vec::new(),
+            perms: crate::index::PermSet::ALL,
         }
     }
 }
@@ -199,9 +205,9 @@ where
     let codec = crate::file::writer_codec();
     // A run holds R triples resident twice over during sort (Vec + sort scratch).
     let run_len = ((budget / 2) / 24).clamp(1 << 16, u32::MAX as u64) as usize;
-    let mut perm_sections: Vec<SectionFile> = Vec::with_capacity(6);
+    let mut perm_sections: Vec<SectionFile> = Vec::with_capacity(opts.perms.len());
     let mut deduped_count: Option<u64> = None;
-    for perm in crate::index::ALL_PERMS {
+    for perm in opts.perms.iter() {
         let (section, n) = build_permutation_section(&tmp, &global_tri, perm, run_len, codec)?;
         // every permutation dedups the same multiset — counts must agree
         if let Some(prev) = deduped_count {
@@ -243,6 +249,7 @@ where
         &perm_sections,
         quad_count,
         codec,
+        opts.perms,
     )?;
     stats.pyramid_levels = 0;
     Ok(stats)
@@ -1283,6 +1290,7 @@ impl StreamingTiler {
 /// Stream `header | metadata | dict container | index container | footer` to
 /// `output`, hashing the payload sections incrementally (same part order as
 /// `write_dataset_from_parts`), then patch the finished header at offset 0.
+#[allow(clippy::too_many_arguments)]
 fn write_final_file(
     output: &Path,
     metadata: &[u8],
@@ -1291,6 +1299,7 @@ fn write_final_file(
     perm_sections: &[SectionFile],
     quad_count: u64,
     codec: u8,
+    perms: crate::index::PermSet,
 ) -> Result<(), ExtBuildError> {
     use crate::header::{Header, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN};
 
@@ -1390,6 +1399,7 @@ fn write_final_file(
         dict_codec: codec,
         block_codec: codec,
         pyramid_levels: 0,
+        perms,
         quad_count,
         term_count: dict.term_count,
         content_hash: hash,
@@ -1503,6 +1513,7 @@ mod tests {
                 tmp_dir: Some(dir.clone()),
                 metadata: Box::new(|_| Vec::new()),
                 build_info: Vec::new(),
+                perms: crate::index::PermSet::ALL,
             },
         )
         .unwrap();
@@ -1536,6 +1547,7 @@ mod tests {
                 tmp_dir: Some(dir.clone()),
                 metadata: Box::new(|_| Vec::new()),
                 build_info: info.clone(),
+                perms: crate::index::PermSet::ALL,
             },
         )
         .unwrap();
@@ -1671,7 +1683,17 @@ mod tests {
             count = Some(n);
             sections.push(sec);
         }
-        write_final_file(&out, &[], &[], &merged, &sections, count.unwrap(), codec).unwrap();
+        write_final_file(
+            &out,
+            &[],
+            &[],
+            &merged,
+            &sections,
+            count.unwrap(),
+            codec,
+            crate::index::PermSet::ALL,
+        )
+        .unwrap();
 
         let bytes = std::fs::read(&out).unwrap();
         assert_eq!(statements as usize, quads.len());
@@ -1774,7 +1796,17 @@ mod tests {
             eprintln!("resume: {} done", perm.name());
             sections.push(s);
         }
-        write_final_file(&out, &metadata, &[], &merged, &sections, quad_count, codec).unwrap();
+        write_final_file(
+            &out,
+            &metadata,
+            &[],
+            &merged,
+            &sections,
+            quad_count,
+            codec,
+            crate::index::PermSet::ALL,
+        )
+        .unwrap();
         eprintln!("resume: wrote {}", out.display());
         std::mem::forget(tmp); // keep the spill until the file is verified
     }
@@ -1800,6 +1832,7 @@ mod tests {
                 tmp_dir: Some(dir.clone()),
                 metadata: Box::new(|_| Vec::new()),
                 build_info: Vec::new(),
+                perms: crate::index::PermSet::ALL,
             },
         )
         .unwrap_err();

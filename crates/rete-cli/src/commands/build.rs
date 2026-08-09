@@ -387,6 +387,7 @@ pub(crate) fn build(
     collapse_graphs: bool,
     card_args: CardArgs,
     no_card_costs: bool,
+    perms: rete_core::PermSet,
 ) -> anyhow::Result<()> {
     // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
     // reasoning is requested, assemble by STREAMING the inputs twice instead of
@@ -434,12 +435,13 @@ pub(crate) fn build(
             }
             Ok(())
         };
-        let (bytes, stats) = ingest::assemble_dataset_streaming_algo(
+        let (bytes, stats) = ingest::assemble_dataset_streaming_with_perms(
             stream,
             !no_pyramid,
             text_index,
             type_predicate,
             pyramid_algo,
+            perms,
             |stats, dict, triples| match curated {
                 Some(curated) => {
                     // Derive NOW (the dictionary and id-triples are resident and
@@ -544,12 +546,13 @@ pub(crate) fn build(
         None
     };
     let card_requested = curated.is_some();
-    let (bytes, stats) = ingest::assemble_dataset_with_opts_algo(
+    let (bytes, stats) = ingest::assemble_dataset_with_perms(
         quads,
         !no_pyramid,
         text_index,
         type_predicate,
         pyramid_algo,
+        perms,
         |stats, quads| match curated {
             Some(curated) => {
                 let mut dataset_card = card::derive_card(
@@ -614,6 +617,7 @@ pub(crate) fn build_external_cmd(
     text_index: bool,
     collapse_graphs: bool,
     card_args: CardArgs,
+    perms: rete_core::PermSet,
 ) -> anyhow::Result<()> {
     if materialize || reason {
         anyhow::bail!(
@@ -720,6 +724,7 @@ pub(crate) fn build_external_cmd(
                 None => Vec::new(),
             }),
             build_info,
+            perms,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -760,6 +765,19 @@ pub(crate) fn repyramid(
 ) -> anyhow::Result<()> {
     let bytes = std::fs::read(input)?;
     let rete = rete_core::Rete::open(&bytes)?;
+    // Rebuilding must not silently CHANGE what the file carries: a three-
+    // permutation input stays three-permutation, a six stays six. `repyramid`
+    // has no `--permutations` of its own for the same reason it has no
+    // `--no-pyramid` — it re-assembles an existing file, it does not re-decide
+    // how it was built. Rebuild from source to change the set.
+    let perms = rete.header().perms;
+    if perms != rete_core::PermSet::ALL {
+        eprintln!(
+            "preserving the input's {} permutation(s): {}",
+            perms.len(),
+            perms.names().join(", ")
+        );
+    }
     // The decoded graph owns its sections, so the raw file image is done — free
     // it before building so the (large) assembly has the headroom.
     drop(bytes);
@@ -785,12 +803,13 @@ pub(crate) fn repyramid(
         None
     };
     let card_requested = curated.is_some();
-    let (out_bytes, stats) = ingest::assemble_dataset_with_opts_algo(
+    let (out_bytes, stats) = ingest::assemble_dataset_with_perms(
         quads,
         true,
         text_index,
         type_predicate,
         pyramid_algo,
+        perms,
         |stats, quads| match curated {
             Some(curated) => {
                 let card = card::derive_card(
@@ -875,6 +894,7 @@ mod tests {
                 ..Default::default()
             },
             !measure,
+            rete_core::PermSet::ALL,
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1063,6 +1083,7 @@ mod tests {
                     ..Default::default()
                 },
                 false,
+                rete_core::PermSet::ALL,
             )
             .unwrap();
             std::fs::read(out).unwrap()
@@ -1154,6 +1175,7 @@ mod tests {
             false,
             CardArgs::default(),
             false,
+            rete_core::PermSet::ALL,
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1190,6 +1212,7 @@ mod tests {
             false,
             CardArgs::default(),
             false,
+            rete_core::PermSet::ALL,
         )
         .unwrap();
 
@@ -1212,6 +1235,7 @@ mod tests {
             false,
             CardArgs::default(),
             false,
+            rete_core::PermSet::ALL,
         )
         .unwrap();
         let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();

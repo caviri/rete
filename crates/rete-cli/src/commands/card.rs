@@ -288,6 +288,12 @@ pub(crate) struct Signals {
     /// document, with no file to measure — and never "no index".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_index: Option<TextIndexSignal>,
+    /// Which **index permutations** the file stores. Like
+    /// [`Signals::text_index`], measured from the file at read time and
+    /// stripped before the card's bytes are written; `None` means unknown (a
+    /// card document with no file behind it), never "the default".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permutations: Option<PermutationsSignal>,
 }
 
 impl Signals {
@@ -344,6 +350,71 @@ pub(crate) struct TextIndexSignal {
 /// serde helper: omit a `0` byte count (no section to measure).
 fn is_zero_u64(v: &u64) -> bool {
     *v == 0
+}
+
+/// The file's **index permutation set**: how many orders of `(s, p, o)` it
+/// stores, and therefore whether its planner can run a sort-merge join.
+///
+/// `rete build --permutations 3` writes SPO, POS and OSP only. Those three tie
+/// the longest bound prefix on all eight triple-pattern shapes, so the file
+/// answers **every query with the same rows, routed to the same tiles** — the
+/// difference is invisible from the results, exactly like a missing
+/// full-text index (#189). What it gives up is the merge join: SOP/PSO/OPS
+/// exist only to hand a join two streams already sorted on the join key, and
+/// they are typically ~40% of a built file. A consumer choosing between two
+/// mirrors of one dataset, or deciding whether a join-heavy workload will hold
+/// up, has to be able to see which it has.
+///
+/// **Measured at read time, never stored**, for the reasons [`TextIndexSignal`]
+/// spells out and one more that is specific to this signal: which permutations
+/// a file carries is a fact about its *bytes*. A stored copy would be an
+/// authored claim about the file's own layout — the one class of statement the
+/// file can always check for itself, in the 1 KiB header every card read has
+/// already fetched. This costs **no extra read at all**.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PermutationsSignal {
+    /// How many permutations are stored: 3 or 6 today.
+    pub count: u8,
+    /// Their names in section order, e.g. `["SPO", "POS", "OSP"]`. Written out
+    /// rather than implied by `count`, because the mask is a set and a future
+    /// build may keep a different three.
+    pub names: Vec<String>,
+    /// Whether the file carries the merge-join orders (SOP, PSO, OPS) — i.e.
+    /// whether a two-pattern join sharing a same-role variable can be answered
+    /// by a linear two-pointer merge instead of a hash join.
+    pub merge_join: bool,
+}
+
+impl PermutationsSignal {
+    /// Read it straight off the parsed header — the mask is one byte at `[50]`,
+    /// and `0` there means all six (every file written before the mask
+    /// existed). No range read of any kind.
+    pub(crate) fn probe(header: &Header) -> Self {
+        let perms = header.perms;
+        PermutationsSignal {
+            count: perms.len() as u8,
+            names: perms.names().into_iter().map(str::to_string).collect(),
+            merge_join: perms.has_merge_orders(),
+        }
+    }
+
+    /// One line for the human catalog view and the audit report.
+    pub(crate) fn describe(&self) -> String {
+        if self.merge_join {
+            format!(
+                "{} index permutations ({}) — sort-merge joins available",
+                self.count,
+                self.names.join("/")
+            )
+        } else {
+            format!(
+                "{} index permutations ({}) — same rows, same routing; \
+                 no sort-merge join (hash/probe answers instead)",
+                self.count,
+                self.names.join("/")
+            )
+        }
+    }
 }
 
 impl TextIndexSignal {
@@ -560,11 +631,12 @@ impl DatasetCard {
     /// the intent. (`CardInput` has no `signals` field and rejects unknown keys,
     /// so a hand-written card file cannot set it either.)
     pub(crate) fn to_json_bytes(&self) -> Vec<u8> {
-        if self.signals.text_index.is_none() {
+        if self.signals.text_index.is_none() && self.signals.permutations.is_none() {
             return serde_json::to_vec(self).expect("DatasetCard serializes");
         }
         let mut stored = self.clone();
         stored.signals.text_index = None;
+        stored.signals.permutations = None;
         serde_json::to_vec(&stored).expect("DatasetCard serializes")
     }
 
@@ -579,6 +651,17 @@ impl DatasetCard {
         measured: TextIndexSignal,
     ) -> Option<TextIndexSignal> {
         self.signals.text_index.replace(measured)
+    }
+
+    /// Attach the read-time [`PermutationsSignal`]. Same contract as
+    /// [`observe_text_index`](Self::observe_text_index): a `Some(_)` return is
+    /// a card whose bytes claimed a permutation set, which the writers strip
+    /// and `CardInput` cannot author.
+    pub(crate) fn observe_permutations(
+        &mut self,
+        measured: PermutationsSignal,
+    ) -> Option<PermutationsSignal> {
+        self.signals.permutations.replace(measured)
     }
 
     /// Parse a card from the metadata-section bytes.
@@ -1088,9 +1171,11 @@ fn derive_card_from(
         geo_latlong,
         temporal_extent,
         spatial_bbox,
-        // Measured by the READER from the file's section directory, never
-        // derived from the triples and never written — see `TextIndexSignal`.
+        // Measured by the READER from the file's header/section directory,
+        // never derived from the triples and never written — see
+        // `TextIndexSignal` and `PermutationsSignal`.
         text_index: None,
+        permutations: None,
     };
 
     let mut card = DatasetCard {
@@ -1386,6 +1471,10 @@ pub(crate) struct CardRead {
     /// What the card's own bytes claimed about the index before the measurement
     /// replaced it. Normally `None`; `Some(_)` is drift worth reporting.
     pub stored_text_index: Option<TextIndexSignal>,
+    /// Which index permutations the file stores — read off the header byte the
+    /// CARD tier already holds, so it costs nothing and answers for a cardless
+    /// file too.
+    pub permutations: PermutationsSignal,
 }
 
 /// Read the header, the card, **and** the build-info record in the CARD tier's
@@ -1440,12 +1529,17 @@ pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
         .as_mut()
         .and_then(|c| c.observe_text_index(text_index))
         .filter(|stored| *stored != text_index);
+    let permutations = PermutationsSignal::probe(&header);
+    if let Some(c) = card.as_mut() {
+        c.observe_permutations(permutations.clone());
+    }
     Ok(CardRead {
         header,
         card,
         build,
         text_index,
         stored_text_index,
+        permutations,
     })
 }
 
@@ -1620,6 +1714,9 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
         if let Some(ti) = &s.text_index {
             let _ = writeln!(out, "      full text  : {}", ti.describe());
         }
+        if let Some(p) = &s.permutations {
+            let _ = writeln!(out, "      index      : {}", p.describe());
+        }
     }
     if !card.coherence.is_empty() {
         let c = &card.coherence;
@@ -1758,7 +1855,11 @@ pub(crate) fn card_cmd(
     match &read.card {
         // A cardless file can still answer the one question the header alone
         // decides — and staying silent about it is what #189 was about.
-        None => println!("(no dataset card — {})", read.text_index.describe()),
+        None => println!(
+            "(no dataset card — {}; {})",
+            read.text_index.describe(),
+            read.permutations.describe()
+        ),
         Some(card) => print_card(
             card,
             read.build.as_ref(),
@@ -2308,6 +2409,93 @@ mod tests {
         let text = String::from_utf8(bytes).unwrap();
         assert!(!text.contains("description"));
         assert!(!text.contains("classes"));
+    }
+
+    /// `signals.permutations` is measured from the header's permutation mask at
+    /// READ time. It must never reach the metadata section: a card that
+    /// *claimed* a permutation set would be an authored statement about the
+    /// file's own bytes — the one class of claim the file always answers for
+    /// itself, for free, in the 1 KiB header every card read already fetched.
+    #[test]
+    fn the_permutation_signal_is_stripped_from_the_stored_card() {
+        let measured = PermutationsSignal {
+            count: 3,
+            names: vec!["SPO".into(), "POS".into(), "OSP".into()],
+            merge_join: false,
+        };
+        let mut card = DatasetCard {
+            title: Some("Lean".into()),
+            triple_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(card.observe_permutations(measured.clone()), None);
+        assert_eq!(card.signals.permutations, Some(measured.clone()));
+
+        let bytes = card.to_json_bytes();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            !text.contains("permutations"),
+            "the signal must not reach the metadata section: {text}"
+        );
+        let back = DatasetCard::from_json_bytes(&bytes).unwrap();
+        assert_eq!(back.signals.permutations, None, "unknown, not `six`");
+        assert_eq!(back.title, card.title);
+
+        // And a curated card document cannot author it: `CardInput` is
+        // `deny_unknown_fields` and has no `signals` field at all.
+        let authored = r#"{"title":"x","signals":{"permutations":{"count":6}}}"#;
+        assert!(
+            serde_json::from_str::<CardInput>(authored).is_err(),
+            "a hand-written card must not be able to assert a permutation set"
+        );
+    }
+
+    /// The signal is derived from the header, so it answers for a file with no
+    /// card at all — and says six for every file written before the mask
+    /// existed, whose byte 50 is zero.
+    #[test]
+    fn the_permutation_signal_is_derived_from_the_header() {
+        let quads = vec![
+            q("<http://ex/a>", "<http://ex/p>", "<http://ex/b>"),
+            q("<http://ex/b>", "<http://ex/p>", "<http://ex/c>"),
+        ];
+        let (six, _) = rete_core::ingest::assemble_dataset_with_perms(
+            quads.clone(),
+            false,
+            false,
+            None,
+            rete_core::PyramidAlgo::Louvain,
+            rete_core::PermSet::ALL,
+            |_, _| Vec::new(),
+        );
+        let (three, _) = rete_core::ingest::assemble_dataset_with_perms(
+            quads,
+            false,
+            false,
+            None,
+            rete_core::PyramidAlgo::Louvain,
+            rete_core::PermSet::CORE,
+            |_, _| Vec::new(),
+        );
+        // Byte 50 is the mask; `0` is the canonical spelling of "all six", so a
+        // default build stays byte-identical to every file written before it.
+        assert_eq!(six[50], 0);
+        assert_eq!(three[50], 0b0000_0111);
+
+        let h6 = rete_core::Header::from_bytes(&six).unwrap();
+        let h3 = rete_core::Header::from_bytes(&three).unwrap();
+        let s6 = PermutationsSignal::probe(&h6);
+        let s3 = PermutationsSignal::probe(&h3);
+        assert_eq!(s6.count, 6);
+        assert!(s6.merge_join);
+        assert_eq!(s3.count, 3);
+        assert!(!s3.merge_join);
+        assert_eq!(s3.names, vec!["SPO", "POS", "OSP"]);
+        assert!(s3.describe().contains("no sort-merge join"));
+        // The lean file is smaller, and it is the index that shrank.
+        assert!(three.len() < six.len(), "{} vs {}", three.len(), six.len());
+        assert_eq!(h3.dictionary_len, h6.dictionary_len);
+        assert!(h3.root_dir_len < h6.root_dir_len);
     }
 
     /// `signals.text_index` is measured from the file's sections at READ time,

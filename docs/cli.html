@@ -390,6 +390,21 @@ by <code>rdf:type</code> instead — deterministic, self-naming communities that
 on graphs too large for the single-threaded Louvain build (it falls back to
 Louvain when the graph is untyped). All of these are opt-in; without them the
 output is byte-identical to a plain build.</p>
+<p><code>--permutations 3|6</code> (default <strong>6</strong>) chooses how many index permutations to
+store. <code>6</code> writes SPO, POS, OSP, SOP, PSO and OPS; <code>3</code> writes only SPO, POS and
+OSP — the orders that decide <em>routing</em>. Those three tie the longest bound prefix
+on all eight triple-pattern shapes, so a 3-permutation file answers <strong>every query
+with the same rows, from the same tiles</strong>; what it gives up is the sort-merge
+join, on the three (bound-set, join-column) shapes SOP/PSO/OPS existed for —
+most visibly <code>?s &lt;p1&gt; ?o1 . ?s &lt;p2&gt; ?o2</code>, two bound predicates sharing a subject.
+The three orders are 36.8%–50.5% of a built file
+(<a href="BENCHMARK.html#the-merge-join-permutations-cost-vs-benefit">BENCHMARK.md</a>), and
+the file records its own set in the header, so <code>rete info</code> / <code>rete stats</code> and the
+card's <code>signals.permutations</code> all report it.</p>
+<p><strong>A 3-permutation file is not readable by a Rete older than this one</strong> — it
+refuses loudly (<code>malformed container: expected 6 permutation sections</code>, exit 1)
+rather than answering wrongly, but it does refuse. Keep the default for anything
+published; see <a href="compatibility.html">compatibility.md</a>.</p>
 <h3 id="rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-"><code>rete repyramid &lt;file&gt; -o &lt;out.rete&gt; [--type-predicate &lt;IRI&gt;] [--pyramid-algo louvain|types] [--text-index] [--card …]</code></h3>
 <p>Rebuild a file's pyramid <strong>in place</strong>, reading the triples straight from the
 existing <code>.rete</code> — no <code>export | build</code> N-Quads round-trip. Use it to add a schema
