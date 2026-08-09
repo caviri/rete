@@ -1,39 +1,93 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">An RDF triple: subject — predicate → object</title>
-  <rect width="720" height="300" fill="#ffffff"/>
-  <text x="360" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">An RDF triple: subject — predicate → object</text>
-  <text x="360" y="54" text-anchor="middle" font-size="12.5" fill="#5b6570">resources are rounded nodes; literals are rectangles</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 396" role="img" aria-labelledby="t">
+  <title id="t">One RDF triple is one fact, written subject then predicate then object. The first example, Alice knows Bob, ends on a resource — another node in the graph, drawn as a rounded pill. The second, Alice age "30", ends on a literal — a plain value that nothing points out of, drawn as a square box. The predicate is itself a resource with an IRI, so a graph is nothing but many triples sharing nodes.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onchip{fill:var(--on-chip);font-size:14px;font-weight:700}
+    .flow{stroke:var(--muted);stroke-width:1.8;fill:none}
+    /* colour utilities must beat the base text{fill} rule, so they come last */
+    .dataink{fill:var(--data-ink)}
+  </style>
 
   <defs>
     <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--muted)"/>
     </marker>
   </defs>
 
-  <!-- Row 1: resource object -->
-  <rect x="80" y="92" width="150" height="56" rx="28" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="155" y="126" text-anchor="middle" font-size="15" font-weight="700" fill="#1b3a8a">:Alice</text>
+  <rect x="1" y="1" width="558" height="394" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <rect x="490" y="92" width="150" height="56" rx="28" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="565" y="126" text-anchor="middle" font-size="15" font-weight="700" fill="#1b3a8a">:Bob</text>
+  <text class="title" x="26" y="40">One triple is one fact</text>
+  <text class="deck" x="26" y="62">resources are rounded pills · literals are square boxes</text>
 
-  <path d="M232,120 L486,120" stroke="#5b6570" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
-  <text x="360" y="110" text-anchor="middle" font-size="13.5" font-weight="600" fill="#2a6df4">:knows</text>
+  <!-- ============ object is a resource ============ -->
+  <text class="sect" x="26" y="104">the object is a resource — another node</text>
 
-  <text x="155" y="172" text-anchor="middle" font-size="11" fill="#5b6570">subject</text>
-  <text x="360" y="172" text-anchor="middle" font-size="11" fill="#5b6570">predicate</text>
-  <text x="565" y="172" text-anchor="middle" font-size="11" fill="#5b6570">object (resource)</text>
+  <rect x="26" y="116" width="126" height="44" rx="22" fill="var(--data)"/>
+  <text class="mono onchip" x="89" y="144" text-anchor="middle">:Alice</text>
 
-  <!-- Row 2: literal object -->
-  <rect x="80" y="196" width="150" height="56" rx="28" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="155" y="230" text-anchor="middle" font-size="15" font-weight="700" fill="#1b3a8a">:Alice</text>
+  <rect x="404" y="116" width="130" height="44" rx="22" fill="var(--data)"/>
+  <text class="mono onchip" x="469" y="144" text-anchor="middle">:Bob</text>
 
-  <rect x="490" y="196" width="150" height="56" rx="8" fill="#f5f7f9" stroke="#5b6570"/>
-  <text x="565" y="230" text-anchor="middle" font-size="15" font-weight="700" fill="#1b1f24">"30"</text>
+  <path class="flow" d="M158,138 L396,138" marker-end="url(#a)"/>
+  <text class="mono body dataink" x="278" y="130" text-anchor="middle" font-weight="700">:knows</text>
 
-  <path d="M232,224 L486,224" stroke="#5b6570" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
-  <text x="360" y="214" text-anchor="middle" font-size="13.5" font-weight="600" fill="#2a6df4">:age</text>
-  <text x="565" y="276" text-anchor="middle" font-size="11" fill="#5b6570">object (literal)</text>
+  <text class="ann" x="89"  y="180" text-anchor="middle">subject</text>
+  <text class="ann" x="278" y="180" text-anchor="middle">predicate</text>
+  <text class="ann" x="469" y="180" text-anchor="middle">object · a resource</text>
 
-  <text x="360" y="294" text-anchor="middle" font-size="12.5" fill="#5b6570">Every edge is one fact (a triple). A graph is just many triples sharing nodes.</text>
+  <!-- ============ object is a literal ============ -->
+  <text class="sect" x="26" y="222">the object is a literal — a value, not a node</text>
+
+  <rect x="26" y="234" width="126" height="44" rx="22" fill="var(--data)"/>
+  <text class="mono onchip" x="89" y="262" text-anchor="middle">:Alice</text>
+
+  <rect x="404" y="234" width="130" height="44" rx="7" fill="var(--panel)" stroke="var(--line)"/>
+  <text class="mono body" x="469" y="262" text-anchor="middle" font-weight="700">"30"</text>
+
+  <path class="flow" d="M158,256 L396,256" marker-end="url(#a)"/>
+  <text class="mono body dataink" x="278" y="248" text-anchor="middle" font-weight="700">:age</text>
+
+  <text class="ann" x="89"  y="298" text-anchor="middle">subject</text>
+  <text class="ann" x="278" y="298" text-anchor="middle">predicate</text>
+  <text class="ann" x="469" y="298" text-anchor="middle">object · a literal</text>
+
+  <text class="ann" x="26" y="330">Nothing points out of a literal — that is what makes it an end of the graph.</text>
+
+  <!-- takeaway -->
+  <rect x="26" y="344" width="508" height="38" rx="12" fill="var(--panel)" stroke="var(--data)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body dataink" x="40" y="368" font-weight="700">:knows</text>
+  <text class="body" x="94" y="368">is a resource too — a graph is many triples sharing nodes</text>
 </svg>

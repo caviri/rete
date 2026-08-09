@@ -20,7 +20,7 @@ one with a "**+ Add source**" button, each source range-queried lazily.
 ## Why federation works at the term level
 
 <figure class="fig-right">
-  <img src="img/federation.svg" alt="A SPARQL query goes to a router that does predicate routing, fans out to three .rete files each with its own dictionary, then results are merged at the term level into a row set.">
+  <img src="img/federation.svg" alt="How rete federate answers one SPARQL query from several .rete files. The router first reads each file's predicate set from its summary — a few hundred bytes, never the triple index — and skips any file whose predicates cannot match the query. The surviving files each run the query with the ordinary single-file engine and return term-level rows. Those rows are then unioned and deduplicated. The merge has to happen on strings because every file has its own dictionary, so the integer ID 42 in one file has nothing to do with ID 42 in another.">
   <figcaption>Each file keeps its own dictionary; the router sends each pattern only to files holding its predicate, then results merge at the term level.</figcaption>
 </figure>
 

@@ -1,7 +1,7 @@
 # Topic modeling over communities (LDA)
 
 <figure class="fig-right">
-  <img src="img/topics.svg" alt="Three structural node communities feed into an LDA topic model, which emits a topic card of keywords for each community.">
+  <img src="img/topics.svg" alt="Three structural communities found by Louvain in the 9-paper examples/papers.nt graph feed an LDA topic model, which returns three topics of keywords: topic 0 is network, neural, improves, query; topic 1 is using, study, model, tree; topic 2 is protein, gene, genome, dna. Assigning each community its dominant topic, communities 0 and 1 both land on topic 0 and community 2 on topic 2, so topic 1 is claimed by no community — with only three documents LDA cannot separate the machine-learning cluster from the database one. Communities come from link topology; topics come from the text on the nodes, and the two only partly agree.">
   <figcaption>Communities are <em>structural</em> (link topology); topics are <em>latent themes</em> in the text on their nodes. LDA labels each community with its dominant theme.</figcaption>
 </figure>
 

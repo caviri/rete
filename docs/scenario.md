@@ -84,9 +84,9 @@ rete query-url https://my-bucket.s3.amazonaws.com/deps.rete \
 
 ### Overview first, without downloading the index
 
-<img src="img/progressive-fetch.svg" alt="A client issues three small range requests for the header, dictionary, and pyramid summary; the large index block is greyed out and never fetched.">
+<img src="img/progressive-fetch.svg" alt="The overview-first path: a client makes three byte-range reads — the 1024-byte header at bytes 0 to 1023, then the dictionary, then the pyramid summary — and computes the coarse community graph without ever fetching the permutation indexes. Drawn to scale on the published davidrumsey.rete, 74.8 MB: the three reads total 17.4 MB, 23.3 percent of the file, while the permutation indexes alone are 42.6 MB, 56.9 percent, and are never requested. The share depends on how large the dictionary is relative to the rest of the file.">
 
-*The overview path: header + dictionary + summary in three range reads (~25% of the file); the triple index stays on the server.*
+*The overview path: header + dictionary + summary in three range reads — 23.3% of `davidrumsey.rete`; the triple index stays on the server.*
 
 ```sh
 rete summary-url https://my-bucket.s3.amazonaws.com/deps.rete   # community quotient graph

@@ -1,6 +1,6 @@
 //! Range-reading abstraction (SPEC.md §9).
 //!
-//! A client doesn't need the whole file: it reads the 128-byte header, learns
+//! A client doesn't need the whole file: it reads the 1 KiB header, learns
 //! where each section lives, then fetches only those byte ranges. [`RangeReader`]
 //! is the seam — back it with a local file, an in-memory slice, or an HTTP
 //! `Range` client. [`CountingReader`] wraps any reader to measure how few bytes

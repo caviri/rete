@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/img/logo.svg" alt="rete — a queryable RDF graph in a single file" width="520">
+  <img src="docs/img/logo.svg" alt="rete — a queryable RDF graph in a single file, no server" width="520">
 </p>
 
 <p align="center">
@@ -76,7 +76,7 @@ WebAssembly, so a **browser can query the file directly with no backend**.
 > graphs + SPARQL**.
 
 <p align="center">
-  <img src="docs/img/lazy-open.svg" alt="Any client — a browser, a notebook, the CLI — sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred. A COUNT over 9.83 billion triples runs inside a 2 GiB container." width="680">
+  <img src="docs/img/lazy-open.svg" alt="How lazy opening works. Any client — a browser, a notebook, the CLI, a server — sends HTTP byte-range reads to one .rete file that stays where it is, on a bucket or on local disk. Only the 1 KiB header, the few dictionary chunks and the few index tiles a query actually touches are fetched; the rest of the file is never transferred, and a block cache of at most 256 MiB keeps hot blocks resident. Measured on the 52 GB datacite.rete, 9.83 billion triples: a COUNT returns 779,399 rows in 4 seconds inside a 2 GiB container, because aggregation streams and nothing is ever read whole." width="680">
 </p>
 
 - **No server.** The file *is* the database. Publish once to static hosting.
@@ -161,7 +161,7 @@ shipping the answer *inside the file*, read over a couple of HTTP range requests
   (not just the `is-a` tree), as a *non-exclusive* graph.
 
 <p align="center">
-  <img src="docs/img/semantic-zoom.svg" alt="A four-band pyramid: the abstract level (Agent ×4) at the narrow top widens to leaf classes at the base — Level 0 Agent, Level 1 Person and Organisation, Level 2 Scientist and Artist, Level 3 Astronomer. A footer notes it is read index-free from the file over HTTP." width="560">
+  <img src="docs/img/semantic-zoom.svg" alt="A four-level schema pyramid over the six-class subClassOf hierarchy in a small people graph. Level 0 is Agent times 4; level 1 is Person times 3 and Organisation times 1; level 2 is Scientist times 2, Artist times 1 and Organisation times 1; level 3, the leaves, is Astronomer times 2, Artist times 1 and Organisation times 1. Every level re-partitions the same four instances, so the counts conserve, and rete summary --level k reads any one level without touching the triple index. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none." width="560">
 </p>
 
 ```text
@@ -393,7 +393,7 @@ every section, so a client reads only what it needs (and new sections are just n
 directory entries).
 
 <p align="center">
-  <img src="docs/img/rete-anatomy.svg" alt="Anatomy of a .rete file, shown on the real dblp.rete: a 1 KiB header with the section directory, the 731-byte dataset card, the front-coded dictionary (418 MB, 18%), six permutation indexes in ~64 KiB tiles with per-tile synopses (1.85 GB, 82%), the pyramid summary, and the trailing RETE magic a truncated download cannot fake." width="760">
+  <img src="docs/img/rete-anatomy.svg" alt="Anatomy of a .rete file, drawn to scale on the real dblp.rete — 2.27 GB, 179,328,188 triples, 64,276,736 terms. A 1 KiB header carries a 64-byte core and a directory of 24-byte entries; then a 731-byte dataset card, the front-coded dictionary (413 MB, 18.2%), and six permutation indexes cut into roughly 64 KiB tiles with a per-tile min/max synopsis (1.85 GB, 81.8%). The file ends in a 4-byte RETE magic that a truncated download cannot fake. This specimen has no pyramid, named graphs, text index or build info — those section kinds are optional, and the directory simply does not list them." width="760">
 </p>
 
 *The anatomy on a real specimen ([dblp.rete](https://data.graphplaza.com/dblp/dblp.rete), 179 M triples) — in the spirit of the classic Parquet file-layout figure.*

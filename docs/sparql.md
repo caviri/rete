@@ -15,7 +15,7 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 [GeoSPARQL (geometry + time)](geosparql.html).
 
 <figure class="fig-right">
-  <img src="img/bgp-join.svg" alt="Two triple patterns sharing the variable ?f are joined on it, producing a binding table with columns for the bound variables.">
+  <img src="img/bgp-join.svg" alt="A basic graph pattern is a join on a shared variable. The pattern ?p :knows ?f and the pattern ?f :age ?age both mention ?f, so the engine joins them on it: it walks each pattern through a permutation index and intersects the two streams on ?f. The result is a binding table with one column per variable — ?p, ?f and ?age — here :ann :bob 31 and :ann :cleo 27.">
   <figcaption>A basic graph pattern is a join on shared variables: patterns that share <code>?f</code> are intersected via the permutation indexes.</figcaption>
 </figure>
 

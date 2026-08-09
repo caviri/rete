@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 606" role="img" aria-labelledby="t">
+  <title id="t">Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .meas{font-size:14px;font-weight:700}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onchip{fill:var(--on-chip);font-size:13px;font-weight:700}
+    .coldchip{fill:var(--cold);stroke:var(--line)}
+    .coldtx{fill:var(--coldfg);font-size:13px;font-weight:700}
+    .var{fill:var(--muted)}
+  </style>
+
+  <rect x="1" y="1" width="558" height="604" rx="14" fill="var(--surface)" stroke="var(--line)"/>
+
+  <text class="title" x="26" y="40">Three indexes answer every pattern</text>
+  <text class="deck" x="26" y="62">the other three route nothing — and they are the bigger half of the index</text>
+
+  <!-- specimen chip -->
+  <rect x="26" y="76" width="216" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/>
+  <text class="mono body" x="40" y="95" font-weight="700">tree-city-inventory.rete</text>
+  <text class="ann" x="254" y="95">3,145,739 triples · built --no-pyramid</text>
+
+  <!-- ============ routing ============ -->
+  <text class="sect" x="26" y="140">Routing — each of the 8 triple patterns lands on one</text>
+
+  <!-- SPO -->
+  <rect x="26" y="152" width="62" height="26" rx="7" fill="var(--data)"/>
+  <text class="mono onchip" x="57" y="170" text-anchor="middle">SPO</text>
+  <text class="mono body" x="100" y="170">
+    <tspan class="var">?s ?p ?o</tspan><tspan class="var"> · </tspan><tspan>s</tspan><tspan class="var"> ?p ?o</tspan><tspan class="var"> · </tspan><tspan>s p</tspan><tspan class="var"> ?o</tspan><tspan class="var"> · </tspan><tspan>s p o</tspan>
+  </text>
+
+  <!-- POS -->
+  <rect x="26" y="190" width="62" height="26" rx="7" fill="var(--data)"/>
+  <text class="mono onchip" x="57" y="208" text-anchor="middle">POS</text>
+  <text class="mono body" x="100" y="208">
+    <tspan class="var">?s </tspan><tspan>p</tspan><tspan class="var"> ?o</tspan><tspan class="var"> · </tspan><tspan class="var">?s </tspan><tspan>p o</tspan>
+  </text>
+
+  <!-- OSP -->
+  <rect x="26" y="228" width="62" height="26" rx="7" fill="var(--data)"/>
+  <text class="mono onchip" x="57" y="246" text-anchor="middle">OSP</text>
+  <text class="mono body" x="100" y="246">
+    <tspan class="var">?s ?p </tspan><tspan>o</tspan><tspan class="var"> · </tspan><tspan>s</tspan><tspan class="var"> ?p </tspan><tspan>o</tspan>
+  </text>
+
+  <text class="ann" x="26" y="278">Ties break toward SPO, then POS, then OSP — so all 8 stay inside these three.</text>
+
+  <!-- ============ the optional three ============ -->
+  <text class="sect" x="26" y="318">The other three — a sort order, not a route</text>
+
+  <rect x="26" y="330" width="62" height="26" rx="7" class="coldchip"/>
+  <text class="mono coldtx" x="57" y="348" text-anchor="middle">SOP</text>
+  <rect x="96" y="330" width="62" height="26" rx="7" class="coldchip"/>
+  <text class="mono coldtx" x="127" y="348" text-anchor="middle">PSO</text>
+  <rect x="166" y="330" width="62" height="26" rx="7" class="coldchip"/>
+  <text class="mono coldtx" x="197" y="348" text-anchor="middle">OPS</text>
+
+  <text class="body" x="246" y="342">One job: hand a merge join a stream</text>
+  <text class="body" x="246" y="360">already sorted on the join column.</text>
+  <text class="ann" x="26" y="384">Without them a merge declines and the engine falls back to hash join — correct, not free.</text>
+
+  <!-- ============ cost ============ -->
+  <text class="sect" x="26" y="426">What they cost — the index section, measured</text>
+
+  <!-- proportional bar: 440px total = 17,342,587 B -->
+  <rect x="60" y="440" width="191" height="26" rx="4" fill="var(--data)"/>
+  <rect x="251" y="440" width="249" height="26" rx="4" class="coldchip" stroke-dasharray="5 4"/>
+  <text class="mono onchip" x="155" y="458" text-anchor="middle">SPO POS OSP</text>
+  <text class="mono coldtx" x="375" y="458" text-anchor="middle">SOP PSO OPS</text>
+
+  <text class="meas u-dataink" x="60" y="490">7.52 MB</text>
+  <text class="ann" x="126" y="490">routes everything</text>
+  <text class="meas" x="500" y="490" text-anchor="end">9.82 MB</text>
+  <text class="ann" x="434" y="490" text-anchor="end">routes nothing</text>
+
+  <text class="body" x="26" y="524">The half you can drop is the bigger half: <tspan font-weight="700">SOP·PSO·OPS compress worse</tspan></text>
+  <text class="body" x="26" y="542">than the three sorted on a subject or predicate prefix.</text>
+
+  <!-- takeaway -->
+  <rect x="26" y="556" width="508" height="34" rx="12" fill="var(--panel)" stroke="var(--meta)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body u-metaink" x="40" y="578" font-weight="700">rete build --permutations 3</text>
+  <text class="body" x="228" y="578">drops <tspan font-weight="700">50.5% of this file</tspan> — 36.8% of a literal-heavy one</text>
+</svg>

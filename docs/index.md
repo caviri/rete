@@ -13,7 +13,7 @@ queries the file directly with no backend.
 
 Think **Parquet / SQLite-over-HTTP / PMTiles**, but for RDF + SPARQL.
 
-<img src="img/lazy-open.svg" alt="Any client — a browser, a notebook, the CLI — sends byte-range reads to one .rete file on a bucket or on local disk. Only the header, the few dictionary chunks, and the few index tiles the query touches are fetched (shown blue); a small block cache keeps hot tiles; everything grey is never transferred.">
+<img src="img/lazy-open.svg" alt="How lazy opening works. Any client — a browser, a notebook, the CLI, a server — sends HTTP byte-range reads to one .rete file that stays where it is, on a bucket or on local disk. Only the 1 KiB header, the few dictionary chunks and the few index tiles a query actually touches are fetched; the rest of the file is never transferred, and a block cache of at most 256 MiB keeps hot blocks resident. Measured on the 52 GB datacite.rete, 9.83 billion triples: a COUNT returns 779,399 rows in 4 seconds inside a 2 GiB container, because aggregation streams and nothing is ever read whole.">
 
 *Lazy opening: the file stays where it is — on a bucket or on disk — and a query fetches only the bytes it touches. Aggregation streams, so even a `COUNT` over 9.83 billion triples fits in 2 GiB.*
 
@@ -22,8 +22,9 @@ Think **Parquet / SQLite-over-HTTP / PMTiles**, but for RDF + SPARQL.
 - **No database server.** The file *is* the database. Publish once to static
   hosting; clients query by URL.
 - **Bounded, progressive reads.** A query touches a handful of byte ranges, never
-  a linear scan. The coarse "overview" graph can be fetched first (≈25 % of a
-  file, 3 ranges) before drilling into detail — PMTiles-style zoom, for graphs.
+  a linear scan. The coarse "overview" graph can be fetched first (3 ranges —
+  23.3 % of `davidrumsey.rete`, and the share tracks how big the dictionary is)
+  before drilling into detail — PMTiles-style zoom, for graphs.
 - **Real SPARQL.** SELECT / ASK / CONSTRUCT / DESCRIBE over BGPs, joins, OPTIONAL,
   UNION, MINUS, FILTER, VALUES, property paths, GROUP BY / aggregates, and named
   graphs — evaluated against the file.
@@ -32,7 +33,7 @@ Think **Parquet / SQLite-over-HTTP / PMTiles**, but for RDF + SPARQL.
 - **Safe on untrusted input.** A truncated or corrupt file from an arbitrary URL
   yields an error, never a panic (fuzz-tested).
 
-<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
+<img src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
 
 *The pyramid: read a coarse summary first, then drill into detail only where a query needs it.*
 
