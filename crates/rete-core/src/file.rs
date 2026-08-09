@@ -2847,7 +2847,7 @@ impl Rete {
         };
         let mut out = vec![seg(
             "header",
-            "header (fixed 1024 bytes)".into(),
+            "header (fixed 128 bytes)".into(),
             0,
             crate::header::HEADER_LEN as u64,
         )];
