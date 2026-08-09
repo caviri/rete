@@ -15,9 +15,11 @@ billion-triple scale.
 
 A `.rete` is three things (see the format-internals notes):
 1. a **dictionary** — every IRI/literal interned **once** to an integer id;
-2. **6 permutation indexes** (SPO/POS/OSP/SOP/PSO/OPS) that store **id-triples**, not
-   the string values (that is why 6 orderings of ~10 B triples fit in tens of GB, not
-   terabytes — they are ids, not repeated values);
+2. **permutation indexes** that store **id-triples**, not the string values (that is
+   why 6 orderings of ~10 B triples fit in tens of GB, not terabytes — they are ids,
+   not repeated values). Six by default (SPO/POS/OSP/SOP/PSO/OPS); a file built with
+   `rete build --permutations 3` carries only SPO/POS/OSP, which route every pattern
+   identically — `rete info` / `rete stats` report which set a file has;
 3. a **summary/pyramid** (class histogram + community super-edges).
 
 So answering a query = resolve the bound terms to ids (a few dictionary lookups) →

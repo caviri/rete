@@ -178,6 +178,31 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Format generation 1 was never "introduced by Rete 1.0.0" — there is no
+  1.0.0.** `SPEC.md` §4.1, its compatibility statement, `compatibility.md`,
+  `README.md` and the `CURRENT_FORMAT_VERSION` doc comment all attributed
+  `0x05` to a release that does not exist, and told readers that files
+  "produced before Rete 1.0.0" (i.e. every published file) are experimental
+  artifacts. `0x05` was frozen on 2026-07-14 and first released in **0.3.0**;
+  the experimental generations `0x01`–`0x04` are what predate the freeze. The
+  generation number counts *format* generations and is independent of the
+  release version — it is the Rust/CLI/WASM APIs that are waiting on 1.0.0.
+  `compatibility.md` now also states the corollary that cost #124 a silent
+  wrong answer: `0x05` does not pin reader capability, because #68 changed
+  writer semantics inside the generation nine days after it froze. (#206)
+
+- **The six permutations are no longer described as fixed.** After
+  `--permutations 3`, `architecture.md`, `getting-started.md`, `SPEC.md` §2/§9,
+  the skills and the file-explorer pages said the format stores six, and
+  `BENCHMARK.md` credited the extra three with something they never did: SPO,
+  POS and OSP already resolve *any* triple pattern to a contiguous scan at the
+  same longest bound prefix — SOP/PSO/OPS only supply a co-sorted stream for a
+  sort-merge join, and routing has never selected one. `cli.md` gains the
+  `repyramid` (preserves) and `merge` (union) rules, and a `rete merge` section
+  it never had. `SPEC.md` and `dataset-cards.md` also carried a superseded
+  `davidrumsey` measurement (36.2%, 4.57 M triples) against the repro'd
+  benchmark table (36.8%, 5,001,983 triples).
+
 - **Generated heading anchors keep their underscores, like GitHub's.** `docgen`
   slugs a heading into the id github.com would mint for it — that is the entire
   point of the convention, since an author writes and tests in-page links on

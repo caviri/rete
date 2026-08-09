@@ -405,6 +405,13 @@ card's <code>signals.permutations</code> all report it.</p>
 refuses loudly (<code>malformed container: expected 6 permutation sections</code>, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see <a href="compatibility.html">compatibility.md</a>.</p>
+<p>The flag exists on <code>build</code> only. The two commands that re-assemble an existing
+file do not re-decide how it was built: <a href="#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-"><code>repyramid</code></a>
+<strong>preserves its input's set</strong> (and says so on stderr when that set is not the
+default six), and <a href="#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-"><code>merge</code></a>
+writes the <strong>union</strong> of its inputs' sets — one full shard is enough to keep the
+merge-join orders its queries relied on. To change a file's set, rebuild it from
+its RDF source.</p>
 <h3 id="rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-"><code>rete repyramid &lt;file&gt; -o &lt;out.rete&gt; [--type-predicate &lt;IRI&gt;] [--pyramid-algo louvain|types] [--text-index] [--card …]</code></h3>
 <p>Rebuild a file's pyramid <strong>in place</strong>, reading the triples straight from the
 existing <code>.rete</code> — no <code>export | build</code> N-Quads round-trip. Use it to add a schema
@@ -427,6 +434,33 @@ rete repyramid old.rete -o new.rete --text-index    # add full-text search to an
 rete card old.rete --json &gt; old-card.json
 python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
 rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
+</code></pre>
+<p><code>repyramid</code> <strong>preserves its input's permutation set</strong>: a 3-permutation file stays
+3-permutation, a 6 stays 6, and it prints the preserved set on stderr when it is
+not the default six. It re-assembles an existing file rather than re-deciding how
+it was built, so it has no <code>--permutations</code> of its own — rebuild from source to
+change the set.</p>
+<h3 id="rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-"><code>rete merge &lt;inputs…&gt; -o &lt;out.rete&gt; [--memory-budget-mb N] [--tmp-dir dir] [--card …]</code></h3>
+<p>Fold several <code>.rete</code> files into one without going back through text — the way to
+consolidate a sharded dataset when the original RDF is gone or expensive to
+re-emit. It reads the <strong>shards</strong> (dictionary-encoded and compressed, roughly a
+quarter of the RDF bytes), so it skips the conversion and the parse.</p>
+<p>It does <strong>not</strong> skip the sorting. The dictionary is HDT-style (<code>shared</code> /
+subject-only / object-only) and IDs are assigned per section, so a term that is
+subject-only in one shard and object-only in another becomes <em>shared</em> in the
+merge and changes ID section: the shards' orderings do not survive the remap and
+every permutation is rebuilt. Memory is bounded at both ends: each input is
+opened lazily and streamed rather than loaded, and the quads feed the same
+memory-bounded external builder <code>rete build --memory-budget-mb</code> uses, which
+chunks and spills under this command's own <code>--memory-budget-mb</code> (default 4096)
+into <code>--tmp-dir</code>. Default graph only — it checks every input's header up front
+and fails in a second rather than hours in. Card flags match <code>rete build</code>.</p>
+<p>The merged file carries the <strong>union</strong> of its inputs' permutation sets — an
+all-lean merge stays lean, and one six-permutation input is enough to keep the
+merge-join orders. Like <code>repyramid</code>, it has no <code>--permutations</code> flag: it
+consolidates shards, it does not re-decide how they were built.</p>
+<pre><code class="language-sh">rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
+  --card --card-file curated.json
 </code></pre>
 <h2 id="validating">Validating</h2>
 <h3 id="rete-validate-inputs---format-ntnqttl"><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>

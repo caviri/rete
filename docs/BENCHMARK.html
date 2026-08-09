@@ -351,12 +351,16 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 </tbody></table>
 <p><code>.rete</code> is ~2.3× the size of <code>gzip</code> while being <em>queryable in place and over HTTP
 ranges</em> (gzip answers no query without a full download + scan). Stable format generation 1
-it stores all <strong>six</strong> permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) — each triple
+stores <strong>six</strong> permutation indexes by default (SPO/POS/OSP/SOP/PSO/OPS) — each triple
 stored 6× — plus the dictionary and the small pyramid summary; that is what roughly
-doubled the file versus the earlier three-permutation v0.3 (715,959 bytes), and the
-payoff is that <em>any</em> triple pattern — not just the three canonical leads — resolves
-to a contiguous scan with its bound components leading, which also unlocks
-sort-merge joins. Per-community tiles remain out of the default file because they
+doubled the file versus the earlier three-permutation v0.3 (715,959 bytes). The
+payoff is <strong>sort-merge joins</strong>, not routing: SPO/POS/OSP already resolve <em>any</em>
+triple pattern to a contiguous scan with its bound components leading, at the same
+longest bound prefix the full six achieve, and the extra three only supply a
+stream already sorted on the join key. <code>rete build --permutations 3</code> drops them
+and gets the smaller file back — measured
+<a href="#the-merge-join-permutations-cost-vs-benefit">below</a>.
+Per-community tiles remain out of the default file because they
 duplicate every triple; exact single-pattern range routing fetches one selected
 permutation payload instead of the whole index container, while physical
 community-tile directories are the next storage step.</p>
@@ -690,7 +694,7 @@ probes mid-join once the running intermediate is small (so a
 star/snowflake's trailing <code>?x rdf:type C</code> checks cost a few lookups,
 not a full-extent scan), and never seeds a join from a class
 enumeration — together cutting the LUBM snowflakes Q4 ~14x and Q7
-~12x. The index stores all six permutations (stable format generation 1), so any
+~12x. The index stores all six permutations (the default), so any
 join key can be streamed pre-sorted for a sort-merge join; at these
 sizes the hash/probe joins already win, so the merge path is neutral
 here — it pays off at much larger scale, for ~2x the index payload.</li>

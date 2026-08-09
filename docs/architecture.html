@@ -362,10 +362,12 @@ inputs and outputs rather than reimplement engine logic.</p>
 <li>Parse RDF input into default-graph triples and optional named-graph quads.</li>
 <li>Intern terms in the dictionary so query-time matching works on compact integer
 IDs instead of repeated strings.</li>
-<li>Build six permutation indexes over the default graph: SPO, POS, OSP, SOP,
-PSO, and OPS. Three suffice to match any pattern shape; the full six let any
-join key be streamed pre-sorted, enabling sort-merge joins (stable format
-generation 1).</li>
+<li>Build the permutation indexes over the default graph — by default six: SPO,
+POS, OSP, SOP, PSO, and OPS. The first three suffice to match any pattern
+shape at the same longest bound prefix, and are always written; the other
+three let any join key be streamed pre-sorted, enabling sort-merge joins.
+<code>rete build --permutations 3</code> drops them, and the header's permutation mask
+records which set the file carries (<a href="SPEC.html#41-header-1024-bytes-little-endian">SPEC §4.1</a>).</li>
 <li>Compute the pyramid summary: community hierarchy, super-edges, predicate
 totals, class/type summaries, and named-graph metadata.</li>
 <li>Optionally attach dataset-card metadata into the reserved metadata section.</li>
@@ -408,7 +410,7 @@ much of the file to load:</p>
 <table><thead><tr><th>Section</th><th>Purpose</th></tr></thead><tbody>
 <tr><td>Header</td><td>Magic/version, content hash, counts, and the section directory</td></tr>
 <tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
-<tr><td>Indexes</td><td>Compressed triple blocks in all six (SPO/POS/OSP/SOP/PSO/OPS) orders</td></tr>
+<tr><td>Indexes</td><td>Compressed triple blocks in the file's permutation orders — six by default (SPO/POS/OSP/SOP/PSO/OPS), three (SPO/POS/OSP) with <code>build --permutations 3</code></td></tr>
 <tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (query_stats, entity shapes, label index)</td></tr>
 <tr><td>Text index</td><td>Optional <code>--text-index</code> section: word → subjects, for full-text (<code>--contains</code>) search</td></tr>
 <tr><td>Metadata</td><td>Optional dataset-card JSON/catalog data</td></tr>
@@ -477,8 +479,10 @@ triple-pattern path as <code>Rete::query</code>, then attaches:</p>
 <li>the matched terms and dictionary IDs,</li>
 <li>the graph scope (<code>default</code> today for the local triple-pattern command),</li>
 <li>the resolved ID-space pattern,</li>
-<li>the selected permutation (one of the six: <code>SPO</code>, <code>POS</code>, <code>OSP</code>, <code>SOP</code>, <code>PSO</code>,
-<code>OPS</code>) and section index,</li>
+<li>the selected permutation and its section index — routing always picks one of
+<code>SPO</code>, <code>POS</code>, <code>OSP</code>, which tie the longest bound prefix on all eight pattern
+shapes; <code>SOP</code>, <code>PSO</code>, <code>OPS</code> are never <em>routed</em> to, they only feed a sort-merge
+join a pre-sorted stream,</li>
 <li>the header byte ranges for dictionary, index container, selected permutation
 payload, and pyramid metadata.</li>
 </ul>
@@ -515,9 +519,9 @@ are exact from the summary and skip the full index:</p>
 routable as one triple pattern, or still needs the full index. <code>rete progressive</code> exposes the summary-safe path directly and returns metadata such as
 byte counts, request counts, and whether the index was read.</p>
 <p>The first exact routed refinement is implemented for single default-graph triple
-patterns: the reader resolves constants from the dictionary, chooses the best of
-the six (SPO/POS/OSP/SOP/PSO/OPS) permutations, follows the container length
-prefixes, and fetches only that permutation payload. The next architectural step is physical community-tile
+patterns: the reader resolves constants from the dictionary, chooses the
+best-routing permutation (always one of SPO/POS/OSP), follows the container
+length prefixes, and fetches only that permutation payload. The next architectural step is physical community-tile
 directories: use the pyramid to fetch only relevant community ranges instead of
 even a whole permutation section.</p>
 <h2 id="range-reads">Range Reads</h2>

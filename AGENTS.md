@@ -170,6 +170,21 @@ source it as `set -a; . <(tr -d '\r' < .env); set +a` (a stray `\r` corrupts the
 signature header); run the scripts with `python3 -P` (a `dev/inspect.py` shadows stdlib
 `inspect`).
 
+**`--permutations` is a per-dataset decision, and its default is not yours to move.**
+`rete build --permutations 3|6` chooses whether the file carries the three
+merge-join orders (SOP/PSO/OPS) on top of the three routing ones. **The default is
+6.** A 3-permutation file returns the same rows from the same tiles for every
+query — but it is refused outright by any reader older than the mask, so it must
+never be the silent outcome of an unrelated change. Do not flip the default, a
+build script's default, or a skill's recommended invocation without an explicit
+decision recorded in the PR (the measurement and the standing recommendation are
+in `docs/BENCHMARK.md` and issue #206). Rebuilding one dataset lean is a choice
+about that dataset's consumers — the file records its own set, so nothing else
+has to change, and it is **not** the first step of a corpus-wide migration:
+re-publishing the estate lean would strand every bundled engine that is not
+rebuilt in lockstep, and two of the largest published files have no local source
+to rebuild from at all.
+
 **R2 rules of the road:**
 - **CORS is required and MUST ExposeHeaders `Content-Range`** — rete's open probe reads
   the total file length from `Content-Range: bytes 0-0/N`; without exposing it the file

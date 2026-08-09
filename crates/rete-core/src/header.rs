@@ -19,15 +19,23 @@ pub const MAGIC: [u8; 4] = *b"RETE";
 
 /// Current format generation written by this crate.
 ///
-/// `0x05` is stable format generation 1, introduced by Rete 1.0.0. It retains
-/// the six index permutations and 1 KiB section-directory layout finalized in
-/// the last experimental generation.
+/// `0x05` is stable format generation 1, frozen on 2026-07-14 and first
+/// released in Rete 0.3.0. It retains the six-wide index-permutation addressing
+/// and the 1 KiB section-directory layout finalized in the last experimental
+/// generation; *which* of those six a given file stores is [`Header::perms`]
+/// (byte 50), not the generation.
+///
+/// The generation number is not a release version — there is no Rete 1.0.0, and
+/// it is the Rust/CLI/WASM APIs, not the format, that are waiting on one. Nor
+/// does it pin reader capability: writer semantics changed inside `0x05` nine
+/// days after the freeze (#68 split oversized index groups across tiles), so a
+/// `0x05` file can need a reader newer than the one that froze `0x05`.
 pub const CURRENT_FORMAT_VERSION: u8 = 0x05;
 
 /// Oldest stable format generation accepted by this reader.
 ///
-/// Files written before Rete 1.0.0 used experimental generations `0x01` through
-/// `0x04` and must be rebuilt from their RDF source.
+/// Files written before the generation-1 freeze used experimental generations
+/// `0x01` through `0x04` and must be rebuilt from their RDF source.
 pub const MIN_STABLE_READ_VERSION: u8 = 0x05;
 
 /// Fixed header size in bytes.

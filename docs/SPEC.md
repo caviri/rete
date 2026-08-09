@@ -56,9 +56,11 @@ Three transformations make it range-queryable:
 
 1. **Dictionary encoding** — every IRI / literal / blank node ⇒ a dense integer
    ID. Triples become integer triples; the dictionary is stored once, compressed.
-2. **Permutation indexes** — store the integer triples sorted in all six orders
-   (SPO, POS, OSP, SOP, PSO, OPS) so *any* triple pattern resolves to a contiguous
-   scan with its bound components leading.
+2. **Permutation indexes** — store the integer triples sorted in six orders by
+   default (SPO, POS, OSP, SOP, PSO, OPS) so *any* triple pattern resolves to a
+   contiguous scan with its bound components leading. Three of them (SPO, POS,
+   OSP) carry that routing on their own and are always present; the other three
+   are optional (§6) and buy sort-merge joins.
 3. **Pyramid (community summarization)** — partition nodes into a hierarchy of
    communities. Level 0 is a *quotient graph* (communities as supernodes, with
    aggregated edges). Each deeper level expands supernodes into their members.
@@ -121,9 +123,16 @@ The header is a fixed **64-byte core** followed by a **typed section directory**
 up to 40 entries of 24 bytes each `(kind, flags, offset, length)` — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
 room to grow without a layout reshape. Format byte `0x05` is **stable format
-generation 1**, introduced by Rete 1.0.0. It uses six index permutations and this
-1024-byte section-directory header. Experimental formats `0x01` through `0x04`
-are not readable and must be rebuilt from RDF source.
+generation 1**, frozen on 2026-07-14 and first released in Rete **0.3.0**. It
+fixes this 1024-byte section-directory header and the six-wide permutation
+addressing — *how many* of those six a given file actually stores is its
+**permutation mask** (byte 50, §6), not its generation. Experimental formats
+`0x01` through `0x04` are not readable and must be rebuilt from RDF source.
+
+> There is no Rete 1.0.0. The generation number counts *format* generations and
+> is independent of the release version (the workspace is 0.3.x); the Rust, CLI
+> and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
+> [Compatibility](compatibility.md#stable-rete-file-compatibility).
 
 **Core (bytes 0..64):**
 
@@ -269,9 +278,11 @@ fetches just the run(s) covering the IDs/terms a query touches.
     three permutations: subject-bound sorted on object, predicate-bound sorted on
     subject, object-bound sorted on predicate. The planner then declines the
     merge seed and hash-joins, which is a slower plan, never a wrong one.
-  - The cost is ~2× the index payload: measured at **36.2%** of a built
-    literal-heavy file (`davidrumsey`, 4.57 M triples) and **50.5%** of a
-    short-term-heavy one (`tree-city-inventory`, 3.15 M triples).
+  - The cost is ~2× the index payload: measured at **36.8%** of a built
+    literal-heavy file (`davidrumsey`, 5.00 M triples) and **50.5%** of a
+    short-term-heavy one (`tree-city-inventory`, 3.15 M triples) — the two
+    builds tabulated in
+    [BENCHMARK.md](BENCHMARK.md#the-merge-join-permutations-cost-vs-benefit).
   - **A file with fewer than six permutations is not readable by a Rete that
     predates the mask.** Such a reader passes six to the index container's
     section-count check and gets `malformed container: expected 6 permutation
@@ -424,7 +435,9 @@ length alone overstates it several-fold, since the postings blob is never read
 whole.
 
 **Compatibility:** `0x05` is stable format generation 1 and the compatibility
-baseline for Rete 1.x. Every stable reader from Rete 1.0.0 onward reads `0x05`.
+baseline every later generation must keep reading. Every stable reader from Rete
+**0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen in
+the 0.3 line and the release version is a separate number.
 Optional sections and flags may extend it without changing its required semantics.
 A required layout change uses a new format byte, keeps `0x05` read support, and
 ships with a documented rebuild or migration path. Experimental formats `0x01`
@@ -613,7 +626,7 @@ separate directory/footer round-trip is needed:
      - optionally emit result provenance: matched IDs/terms, graph scope, chosen
        permutation, and the dictionary/index/payload/pyramid byte ranges
 2c. Routed single-pattern path → GET dictionary, resolve constants, choose the
-    best of the six permutations, then follow the index container's length
+    best of the file's permutations, then follow the index container's length
     prefixes and fetch only that one permutation payload. Unknown bound terms
     skip the index entirely and return an empty result.
 ```

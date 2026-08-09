@@ -340,11 +340,13 @@ Working end-to-end — the single-file format, dictionary + permutation indexes,
 community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
 lazy HTTP-range queries (with per-tile synopses that prune a routed tile before
 fetching it), and the browser/WASM engine. **Stable file-format generation 1**
-(header byte `0x05`) is the compatibility baseline for Rete 1.x: stable readers
-keep reading it, and an incompatible future layout must retain generation-1 read
-support plus a documented migration path. Pre-1.0 experimental `.rete` files
-must be rebuilt from RDF source. The Rust, CLI, and WASM APIs are release
-candidates until 1.0.0 final. SPARQL evaluation is exact for supported shapes
+(header byte `0x05`, frozen 2026-07-14 and first released in 0.3.0) is the
+compatibility baseline every later generation must keep: stable readers keep
+reading it, and an incompatible future layout must retain generation-1 read
+support plus a documented migration path. The experimental generations `0x01`–`0x04`
+predate that freeze and must be rebuilt from RDF source. The generation number is
+not the release version — the Rust, CLI, and WASM APIs are the surfaces that
+carry no semver promise until 1.0.0. SPARQL evaluation is exact for supported shapes
 (no implicit OWL/RDFS query-time entailment); cross-file federation is
 UNION-fan-out, while SPARQL 1.1 `SERVICE` calls external endpoints from inside a
 query.

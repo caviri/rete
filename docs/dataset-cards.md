@@ -192,7 +192,7 @@ without them the planner declines the merge seed and hash-joins instead.
 
 So, exactly like a missing full-text index, the difference **cannot be seen in
 any result** — and it is not small: measured on two datasets built both ways,
-`SOP + PSO + OPS` are **36.2%** of `davidrumsey` (54.8 MB → 35.0 MB) and
+`SOP + PSO + OPS` are **36.8%** of `davidrumsey` (58.7 MB → 37.1 MB) and
 **50.5%** of `tree-city-inventory` (19.4 MB → 9.6 MB).
 
 ```json
