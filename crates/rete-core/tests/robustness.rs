@@ -145,7 +145,8 @@ fn truncation_never_panics() {
 fn corruption_never_panics() {
     let image = valid_image();
     let probes: [u8; 5] = [0x00, 0x01, 0xff, 0x7f, 0x80];
-    // Header is 128 bytes; step through the whole file but densely cover it.
+    // Header is 1024 bytes (HEADER_LEN); step through the whole file but
+    // densely cover it.
     for i in 0..image.len() {
         for &v in &probes {
             let mut bad = image.clone();

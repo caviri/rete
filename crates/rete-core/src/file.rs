@@ -3,7 +3,7 @@
 //! v0 layout:
 //!
 //! ```text
-//! [0..128)   header
+//! [0..1024)  header ([`crate::header::HEADER_LEN`])
 //! [dict]     dictionary container: 4 front-coded sections
 //! [index]    permutation container: 6 triple blocks (SPO/POS/OSP/SOP/PSO/OPS)
 //! [pyramid]  summary meta (and, in future, tile directories)
@@ -2845,9 +2845,14 @@ impl Rete {
             offset,
             len,
         };
+        // The size in the label is DERIVED from the constant that defines the
+        // span, never typed out: this line read "fixed 128 bytes" — the
+        // pre-v0.3 header size — while emitting a 1024-byte span, and it is
+        // what the file explorer shows a reader inspecting a real file.
+        // `layout_header_label_matches_its_span` pins the two together.
         let mut out = vec![seg(
             "header",
-            "header (fixed 128 bytes)".into(),
+            format!("header (fixed {} bytes)", crate::header::HEADER_LEN),
             0,
             crate::header::HEADER_LEN as u64,
         )];
@@ -7203,5 +7208,87 @@ mod tests {
         eprintln!("scan_iter matches = {n}");
         let hi_res = rete.query(None, Some(&p_iri), Some(&o_iri));
         eprintln!("high-level query matches = {}", hi_res.len());
+    }
+
+    /// The header segment's LABEL and the span it describes must agree. They
+    /// did not from v0.3 (which grew the header to 1 KiB) until this test: the
+    /// label still said "fixed 128 bytes", the pre-v0.3 size, while the segment
+    /// covered `HEADER_LEN` = 1024 — and that label is exactly what the file
+    /// explorer shows someone inspecting a real file. Reading the size back out
+    /// of the string is the point: it fails if anyone retypes the number
+    /// instead of deriving it from `HEADER_LEN`.
+    #[test]
+    fn layout_header_label_matches_its_span() {
+        let mut db = DictionaryBuilder::new();
+        let mut triples = Vec::new();
+        for i in 0..24u32 {
+            let (s, p, o) = (
+                format!("<http://ex/s{}>", i % 5),
+                format!("<http://ex/p{}>", i % 3),
+                format!("<http://ex/o{i}>"),
+            );
+            db.observe(&s, &p, &o);
+            triples.push((s, p, o));
+        }
+        let dict = db.build();
+        let ids: Vec<(u32, u32, u32)> = triples
+            .iter()
+            .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
+            .collect();
+        let index = GraphIndexBuilder::from_triples(ids).build();
+        let image = write_dataset_with_metadata(
+            &dict,
+            &index,
+            &[],
+            false,
+            &[],
+            0,
+            br#"{"name":"layout-label-fixture"}"#,
+            &[],
+        );
+        let rete = Rete::open(&image).unwrap();
+
+        let layout = rete.file_layout();
+        let header = layout
+            .iter()
+            .find(|s| s.kind == "header")
+            .expect("every layout starts with a header segment");
+
+        assert_eq!(
+            header.offset, 0,
+            "the header is the first thing in the file"
+        );
+        assert_eq!(
+            header.len, HEADER_LEN as u64,
+            "the header segment must span exactly HEADER_LEN"
+        );
+
+        // Pull the number back out of the human-readable label and hold it to
+        // the span. A hard-coded literal that drifts from HEADER_LEN dies here.
+        let digits: String = header
+            .label
+            .chars()
+            .skip_while(|c| !c.is_ascii_digit())
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        assert!(
+            !digits.is_empty(),
+            "header label {:?} states no size at all",
+            header.label
+        );
+        assert_eq!(
+            digits.parse::<u64>().unwrap(),
+            header.len,
+            "header label {:?} disagrees with the {}-byte span it describes",
+            header.label,
+            header.len
+        );
+
+        // The layout must also stay sorted and start at byte zero, which is
+        // what makes "the first segment is the header" meaningful.
+        assert!(
+            layout.windows(2).all(|w| w[0].offset <= w[1].offset),
+            "file_layout must return segments sorted by offset"
+        );
     }
 }
