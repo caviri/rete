@@ -13,6 +13,43 @@ a **1 GB Wikidata slice**) stay on their URL and are **range-read lazily**: a
 query fetches only the byte ranges it touches, and a counter shows exactly how
 few bytes crossed the wire.
 
+## What it looks like
+
+Five views of the same page. Every one is a live query against a file that stays
+on its URL — the links reproduce each shot.
+
+[![The playground querying opencitations.rete: a ten-line SPARQL SELECT that pins a journal by title and walks oc:partOf to its papers, a counter reading 25 row(s), 161 range req, 189.4 MB of 33.39 GB fetched, and a results table of DOIs, titles and years.](img/playground-sparql.png)](playground.html#dataset=opencitations&load=lazy&ex=2)
+
+**SPARQL against 5.18 billion triples.** `opencitations.rete` is one 33.4 GB file
+on object storage; 25 rows cost **161 range requests and 189 MB**, opening the
+file included. The rest is never transferred.
+
+[![The playground querying plantatlas.rete: a results table whose third column renders each specimen's WebP photograph inline, captioned 'WEBP · 1448×1024', with the counter reading 40 row(s), 1 range req, 256.0 KB of 9.8 MB fetched, 157 ms.](img/playground-media.png)](playground.html#dataset=plantatlas&load=lazy&ex=0)
+
+**The pictures are in the graph.** Those photographs are `xsd:base64Binary` WebP
+literals stored inside the `.rete` and rendered into the cell — 40 rows and
+their pictures for **one range request and 256 KB**. IIIF, PDF, audio, video and
+`.glb` cells work the same way; see
+[Media & SQL companions](media-companions.md).
+
+[![The Dataset Card modal over davidrumsey.rete: title, licence CC BY-NC-SA 3.0, source link, stat tiles reading 5,001,984 triples and 1,906,259 terms, expandable vocabulary/predicate/class sections, and a footer reading '58.5 KB, read in one header + one coalesced range'.](img/playground-card.png)](playground.html#dataset=davidrumsey&load=lazy)
+
+**The file describes itself.** The [Dataset Card](dataset-cards.md) is read
+straight off the header — **58.5 KB in one coalesced range request**, index
+untouched. See [🏷 Card](#card) below.
+
+[![The Map output over gbif-birds.rete: 3,000 red sighting dots for the family Accipitridae over Iberia and the western Alps on a pale Carto Light basemap, with a Basemap picker above it.](img/playground-map.png)](playground.html#dataset=gbif-birds&load=lazy&ex=10)
+
+**GeoSPARQL, drawn.** 3,000 raptor sightings out of a 334 M-triple, 1.43 GB GBIF
+graph, put on a basemap — `geo:asWKT` detected in the result. See
+[Output views](#output-views) and [GeoSPARQL](geosparql.md).
+
+[![The Explore view over davidrumsey.rete: chips per rdf:type class (AtlasMap 71311, TextPage 26340, View 15666 …) above an entity table whose columns are creator, date, description, isPartOf and publisher.](img/playground-explore.png)](playground.html#dataset=davidrumsey&load=lazy&mode=explore)
+
+**Browse it like an archive.** [Explore](#beyond-sparql-the-other-modes) turns each `rdf:type` class
+into a table — entities as rows, properties as columns — so an unfamiliar graph
+is navigable before you know a predicate in it.
+
 ## Pick a dataset
 
 The dataset picker groups the catalog by theme (heritage, science, reference,
