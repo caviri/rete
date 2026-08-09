@@ -17,7 +17,7 @@
   <a href="https://github.com/caviri/rete/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/caviri/rete/ci.yml?branch=main&label=CI" alt="CI status"></a>
   <a href="scripts/coverage.sh"><img src="https://img.shields.io/badge/coverage%20floors-core%20%E2%89%A5%2090%25%20%C2%B7%20cli%20%E2%89%A5%2075%25-informational" alt="CI-enforced line-coverage floors: rete-core at least 90%, rete-cli at least 75%"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
-  <a href="https://doi.org/10.5281/zenodo.21546288"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21546288.svg" alt="DOI: 10.5281/zenodo.21546288"></a>
+  <a href="https://doi.org/10.5281/zenodo.21546287"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21546287.svg" alt="DOI: 10.5281/zenodo.21546287"></a>
 </p>
 
 <p align="center">
@@ -34,11 +34,11 @@
 </p>
 
 > [!IMPORTANT]
-> **Pre-1.0 — expect breaking changes.** rete is **0.3.2**, and until **1.0.0**
-> *both* the public API and the `.rete` file format may change in ways that break
-> what you built on them. See
-> [compatibility](https://caviri.github.io/rete/compatibility.html) for the
-> details.
+> **Pre-1.0 — expect breaking API changes.** rete is **0.3.2**, and until
+> **1.0.0** the public Rust, CLI and WASM APIs may change in ways that break what
+> you built on them. Files are the exception: a `.rete` you publish today stays
+> readable by every later release. See
+> [compatibility](https://caviri.github.io/rete/compatibility.html) for details.
 
 ---
 
@@ -408,7 +408,9 @@ fetching it), and the browser/WASM engine. **Stable file-format generation 1**
 (header byte `0x05`, frozen 2026-07-14 and first released in 0.3.0) is the
 compatibility baseline every later generation must keep: stable readers keep
 reading it, and an incompatible future layout must retain generation-1 read
-support plus a documented migration path. The experimental generations `0x01`–`0x04`
+support plus a documented migration path. **No flag-day rebuild is reserved
+before 1.0.0** — the format may still gain a generation, but not at the cost of
+the files you already published. The experimental generations `0x01`–`0x04`
 predate that freeze and must be rebuilt from RDF source. The generation number is
 not the release version — the Rust, CLI, and WASM APIs are the surfaces that
 carry no semver promise until 1.0.0. SPARQL evaluation is exact for supported shapes

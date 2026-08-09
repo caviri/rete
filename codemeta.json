@@ -1,7 +1,7 @@
 {
   "@context": "https://w3id.org/codemeta/3.0",
   "@type": "SoftwareSourceCode",
-  "identifier": "https://doi.org/10.5281/zenodo.21546288",
+  "identifier": "https://doi.org/10.5281/zenodo.21546287",
   "name": "rete",
   "description": "rete is a cloud-native, range-queryable RDF graph file format and engine. A `.rete` file is a single immutable artifact that answers SPARQL by HTTP range reads, so a multi-gigabyte graph is queryable from static hosting — in the browser, from the CLI, or from Python, JavaScript, R, Java and Blender — with no server and no database. An embedded Dataset Card makes each file self-describing in two small range requests at any size.",
   "version": "0.3.2",

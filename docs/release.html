@@ -688,11 +688,13 @@ platform tag disagrees with what <code>docs/python.md</code> promises, uploads i
 <code>sync_versions.py --check</code> keeps that URL's version honest; only this step makes
 it resolve.</p>
 <h2 id="compatibility-statement">Compatibility statement</h2>
-<p>Pre-1.0 <code>.rete</code> bytes were explicitly unstable. Rebuild every dataset from its
-source RDF with the 0.3 toolchain; do not rename an older file and assume it is
-compatible. Files produced by 0.3.0 may still need one final rebuild if review
-changes the format before 1.0.0. The durable compatibility promise starts at
-1.0.0.</p>
+<p>The experimental generations <code>0x01</code>–<code>0x04</code> that predate this release are not
+readable: rebuild those datasets from their source RDF with the 0.3 toolchain,
+and do not rename an older file and assume it is compatible. That is the last
+forced rebuild. <strong>Generation-1 files (<code>0x05</code>) stay readable</strong> — no flag-day
+rebuild is reserved before 1.0.0. A later generation may still be added; it must
+keep generation-1 read support and ship a documented migration path. See
+<a href="compatibility.html#stable-rete-file-compatibility">compatibility</a>.</p>
 <p>The Rust crates declare Rust 1.87 as their minimum supported version. The
 public Rust, CLI, and WASM surfaces carry no semantic-versioning promise while
 the crates are 0.x; semver applies from 1.0.0 onward.</p>
