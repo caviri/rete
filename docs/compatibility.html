@@ -588,8 +588,12 @@ first released in Rete <strong>0.3.0</strong>. Files carrying the experimental g
 stable Rete reader from 0.3.0 onward reads format <code>0x05</code>. Newer readers may
 add optional sections and flags that preserve <code>0x05</code> semantics. A required layout
 change uses a new format byte, retains <code>0x05</code> read support, and ships with a
-documented rebuild or migration path. Older readers may reject a newer format
-cleanly; silent misinterpretation is never permitted.</p>
+documented migration path. Older readers may reject a newer format cleanly;
+silent misinterpretation is never permitted.</p>
+<p><strong>Generation-1 files stay readable, and no flag-day rebuild is reserved before
+1.0.0.</strong> Read that for exactly what it says: the promise is about <em>files</em>, not
+about the format standing still. A generation <code>0x06</code> remains possible — what it
+may not do is invalidate a <code>0x05</code> file you have already published.</p>
 <p><strong>The generation number is not a release version.</strong> There is no Rete 1.0.0: the
 workspace is 0.3.x, and it is the <em>Rust, CLI and WASM APIs</em> that carry no semver
 promise until 1.0.0 (<a href="release.html">release.md</a>) — the file format froze earlier

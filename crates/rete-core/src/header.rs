@@ -35,7 +35,12 @@ pub const CURRENT_FORMAT_VERSION: u8 = 0x05;
 /// Oldest stable format generation accepted by this reader.
 ///
 /// Files written before the generation-1 freeze used experimental generations
-/// `0x01` through `0x04` and must be rebuilt from their RDF source.
+/// `0x01` through `0x04` and must be rebuilt from their RDF source. That was the
+/// last forced rebuild: **generation-1 files stay readable, and no flag-day
+/// rebuild is reserved before 1.0.0.** A later generation may still be added —
+/// it raises [`CURRENT_FORMAT_VERSION`] and leaves this constant at `0x05`,
+/// keeping generation-1 read support with a documented migration path. The
+/// promise is about files, not about the format standing still.
 pub const MIN_STABLE_READ_VERSION: u8 = 0x05;
 
 /// Fixed header size in bytes.

@@ -176,7 +176,40 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
     is **byte-identical** to the in-RAM `--no-pyramid` build of the same graph
     — and finished in 36 s against 56 s.
 
+### Changed
+
+- **The reserved "one final rebuild" before 1.0.0 is dropped — generation-1
+  `.rete` files stay readable.** `docs/release.md` reserved the right to
+  invalidate 0.3.0-era files "if review changes the format before 1.0.0" while
+  `README.md` promised generation-1 read support indefinitely, and a publisher
+  deciding whether to ship a dataset could reasonably have acted on either.
+  `README.md`, `docs/compatibility.md`, `docs/release.md` and the
+  `MIN_STABLE_READ_VERSION` doc comment now all say the same thing:
+  **generation-1 files stay readable, and no flag-day rebuild is reserved before
+  1.0.0.**
+
+  What is given up is the right to *invalidate* existing files — not the right
+  to change the format. A generation `0x06` remains possible; it would raise
+  `CURRENT_FORMAT_VERSION`, keep `0x05` read support and ship a documented
+  migration path. What made the reservation safe to drop: `0x05` has not moved
+  since it froze on 2026-07-14; the one change that looked like it needed a
+  break — dropping the three merge-join permutations, 40.2% of the published
+  corpus — shipped *inside* `0x05` above, because an old reader refuses a lean
+  file loudly instead of mis-reading it; #198's recommended fix needs no bump
+  either; and a flag-day rebuild is not available in any case, since
+  `crossref.rete` (60.2 GB) and `databnf-full` can no longer be rebuilt from
+  source. (#214)
+
 ### Fixed
+
+- **`CITATION.cff` recorded a version DOI under a comment promising a concept
+  DOI.** The comment said the value "resolves to the latest archived release
+  rather than pinning one"; the value, `10.5281/zenodo.21546288`, is v0.3.0's
+  own DOI, so every citation copied out of this repository would have pinned
+  v0.3.0 forever. Zenodo's API for that record reports `conceptrecid: 21546287`
+  and `conceptdoi: 10.5281/zenodo.21546287`, and the concept DOI currently
+  resolves to the 0.3.2 archive. Corrected in `CITATION.cff`, `codemeta.json`
+  (which mirrors it) and the README's DOI badge. (#213)
 
 - **Format generation 1 was never "introduced by Rete 1.0.0" — there is no
   1.0.0.** `SPEC.md` §4.1, its compatibility statement, `compatibility.md`,
