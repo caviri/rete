@@ -387,9 +387,11 @@ base and publishes the merged state as a fresh <code>.rete</code> snapshot (see
 <ol>
 <li><strong>Dictionary encoding</strong> — every IRI / literal / blank node ⇒ a dense integer
 ID. Triples become integer triples; the dictionary is stored once, compressed.</li>
-<li><strong>Permutation indexes</strong> — store the integer triples sorted in all six orders
-(SPO, POS, OSP, SOP, PSO, OPS) so <em>any</em> triple pattern resolves to a contiguous
-scan with its bound components leading.</li>
+<li><strong>Permutation indexes</strong> — store the integer triples sorted in six orders by
+default (SPO, POS, OSP, SOP, PSO, OPS) so <em>any</em> triple pattern resolves to a
+contiguous scan with its bound components leading. Three of them (SPO, POS,
+OSP) carry that routing on their own and are always present; the other three
+are optional (§6) and buy sort-merge joins.</li>
 <li><strong>Pyramid (community summarization)</strong> — partition nodes into a hierarchy of
 communities. Level 0 is a <em>quotient graph</em> (communities as supernodes, with
 aggregated edges). Each deeper level expands supernodes into their members.</li>
@@ -441,9 +443,17 @@ the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</
 up to 40 entries of 24 bytes each <code>(kind, flags, offset, length)</code> — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
 room to grow without a layout reshape. Format byte <code>0x05</code> is <strong>stable format
-generation 1</strong>, introduced by Rete 1.0.0. It uses six index permutations and this
-1024-byte section-directory header. Experimental formats <code>0x01</code> through <code>0x04</code>
-are not readable and must be rebuilt from RDF source.</p>
+generation 1</strong>, frozen on 2026-07-14 and first released in Rete <strong>0.3.0</strong>. It
+fixes this 1024-byte section-directory header and the six-wide permutation
+addressing — <em>how many</em> of those six a given file actually stores is its
+<strong>permutation mask</strong> (byte 50, §6), not its generation. Experimental formats
+<code>0x01</code> through <code>0x04</code> are not readable and must be rebuilt from RDF source.</p>
+<blockquote>
+<p>There is no Rete 1.0.0. The generation number counts <em>format</em> generations and
+is independent of the release version (the workspace is 0.3.x); the Rust, CLI
+and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
+<a href="compatibility.html#stable-rete-file-compatibility">Compatibility</a>.</p>
+</blockquote>
 <p><strong>Core (bytes 0..64):</strong></p>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
@@ -582,9 +592,11 @@ three of the twelve (bound-set, join-column) shapes lose that stream with
 three permutations: subject-bound sorted on object, predicate-bound sorted on
 subject, object-bound sorted on predicate. The planner then declines the
 merge seed and hash-joins, which is a slower plan, never a wrong one.</li>
-<li>The cost is ~2× the index payload: measured at <strong>36.2%</strong> of a built
-literal-heavy file (<code>davidrumsey</code>, 4.57 M triples) and <strong>50.5%</strong> of a
-short-term-heavy one (<code>tree-city-inventory</code>, 3.15 M triples).</li>
+<li>The cost is ~2× the index payload: measured at <strong>36.8%</strong> of a built
+literal-heavy file (<code>davidrumsey</code>, 5.00 M triples) and <strong>50.5%</strong> of a
+short-term-heavy one (<code>tree-city-inventory</code>, 3.15 M triples) — the two
+builds tabulated in
+<a href="BENCHMARK.html#the-merge-join-permutations-cost-vs-benefit">BENCHMARK.md</a>.</li>
 <li><strong>A file with fewer than six permutations is not readable by a Rete that
 predates the mask.</strong> Such a reader passes six to the index container's
 section-count check and gets <code>malformed container: expected 6 permutation sections</code> (resident) or <code>unexpected container section count</code> (ranged), exit
@@ -715,7 +727,9 @@ range read at <code>text_index offset</code> and is the honest cost figure; the 
 length alone overstates it several-fold, since the postings blob is never read
 whole.</p>
 <p><strong>Compatibility:</strong> <code>0x05</code> is stable format generation 1 and the compatibility
-baseline for Rete 1.x. Every stable reader from Rete 1.0.0 onward reads <code>0x05</code>.
+baseline every later generation must keep reading. Every stable reader from Rete
+<strong>0.3.0</strong> onward reads <code>0x05</code> — there is no 1.0.0; the generation was frozen in
+the 0.3 line and the release version is a separate number.
 Optional sections and flags may extend it without changing its required semantics.
 A required layout change uses a new format byte, keeps <code>0x05</code> read support, and
 ships with a documented rebuild or migration path. Experimental formats <code>0x01</code>
@@ -891,7 +905,7 @@ separate directory/footer round-trip is needed:</p>
      - optionally emit result provenance: matched IDs/terms, graph scope, chosen
        permutation, and the dictionary/index/payload/pyramid byte ranges
 2c. Routed single-pattern path → GET dictionary, resolve constants, choose the
-    best of the six permutations, then follow the index container's length
+    best of the file's permutations, then follow the index container's length
     prefixes and fetch only that one permutation payload. Unknown bound terms
     skip the index entirely and return an empty result.
 </code></pre>

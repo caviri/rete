@@ -502,7 +502,7 @@ exist to hand a <strong>sort-merge join</strong> two streams already sorted on t
 without them the planner declines the merge seed and hash-joins instead.</p>
 <p>So, exactly like a missing full-text index, the difference <strong>cannot be seen in
 any result</strong> — and it is not small: measured on two datasets built both ways,
-<code>SOP + PSO + OPS</code> are <strong>36.2%</strong> of <code>davidrumsey</code> (54.8 MB → 35.0 MB) and
+<code>SOP + PSO + OPS</code> are <strong>36.8%</strong> of <code>davidrumsey</code> (58.7 MB → 37.1 MB) and
 <strong>50.5%</strong> of <code>tree-city-inventory</code> (19.4 MB → 9.6 MB).</p>
 <pre><code class="language-json">"signals": { "permutations": { "count": 6, "names": ["SPO","POS","OSP","SOP","PSO","OPS"], "merge_join": true } }
 "signals": { "permutations": { "count": 3, "names": ["SPO","POS","OSP"], "merge_join": false } }

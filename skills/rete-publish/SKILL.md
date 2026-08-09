@@ -25,6 +25,15 @@ build companions -> upload to R2 -> register catalog -> rebuild -> verify -> bac
 
 Both modes are mirrored in R2 so users can cache or lazy-load the graph.
 
+**Publish six-permutation files.** `rete build --permutations 3` produces a valid
+`0x05` file that every *current* reader answers identically — but a reader older
+than the permutation mask refuses it outright (`malformed container: expected 6
+permutation sections`, exit 1) on every path that returns rows. The playground,
+the single-file explorers, the clients and every third-party copy of the engine
+are exactly such a fleet. Six is the build default; keep it for anything that
+gets a public URL, and treat `--permutations 3` as a per-dataset choice for
+consumers you control. `rete info <file>` reports the set before you upload.
+
 ## 1. Build optional SQL companions
 
 The Explore tab can compare rete with DuckDB and SQLite over the same data:

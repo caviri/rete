@@ -7,7 +7,7 @@ and Windows.
 SPARQL is the wall most people hit; folders are the one interface everybody
 already knows. Nothing here is a new engine feature — it projects what a `.rete`
 already carries (the 1 KB section directory, the baked schema pyramid, the
-Dataset Card, six permutation indexes) onto a metaphor a non-specialist can walk
+Dataset Card, its permutation indexes) onto a metaphor a non-specialist can walk
 into.
 
 > **Status: experiment.** It lives in `experiments/rete-file-explorer/` and is not

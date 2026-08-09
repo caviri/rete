@@ -16,12 +16,16 @@ Synthetic social graph, **139,093 triples** (20k people in ~200 communities,
 
 `.rete` is ~2.3× the size of `gzip` while being *queryable in place and over HTTP
 ranges* (gzip answers no query without a full download + scan). Stable format generation 1
-it stores all **six** permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) — each triple
+stores **six** permutation indexes by default (SPO/POS/OSP/SOP/PSO/OPS) — each triple
 stored 6× — plus the dictionary and the small pyramid summary; that is what roughly
-doubled the file versus the earlier three-permutation v0.3 (715,959 bytes), and the
-payoff is that *any* triple pattern — not just the three canonical leads — resolves
-to a contiguous scan with its bound components leading, which also unlocks
-sort-merge joins. Per-community tiles remain out of the default file because they
+doubled the file versus the earlier three-permutation v0.3 (715,959 bytes). The
+payoff is **sort-merge joins**, not routing: SPO/POS/OSP already resolve *any*
+triple pattern to a contiguous scan with its bound components leading, at the same
+longest bound prefix the full six achieve, and the extra three only supply a
+stream already sorted on the join key. `rete build --permutations 3` drops them
+and gets the smaller file back — measured
+[below](#the-merge-join-permutations-cost-vs-benefit).
+Per-community tiles remain out of the default file because they
 duplicate every triple; exact single-pattern range routing fetches one selected
 permutation payload instead of the whole index container, while physical
 community-tile directories are the next storage step.
@@ -423,7 +427,7 @@ Reading the times honestly:
   star/snowflake's trailing `?x rdf:type C` checks cost a few lookups,
   not a full-extent scan), and never seeds a join from a class
   enumeration — together cutting the LUBM snowflakes Q4 ~14x and Q7
-  ~12x. The index stores all six permutations (stable format generation 1), so any
+  ~12x. The index stores all six permutations (the default), so any
   join key can be streamed pre-sorted for a sort-merge join; at these
   sizes the hash/probe joins already win, so the merge path is neutral
   here — it pays off at much larger scale, for ~2x the index payload.

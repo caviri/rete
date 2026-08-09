@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Compatibility & Cypher · rete docs</title>
-  <meta name="description" content="Format byte 0x05 is stable format generation 1, introduced by Rete 1.0.0. Files produced before Rete 1.0.0 are experimental artifacts and must be rebuilt." />
+  <meta name="description" content="Format byte 0x05 is stable format generation 1, frozen on 2026-07-14 and first released in Rete 0.3.0. Files carrying the experimental generations 0x01–0x04 predate that freeze and must be rebuilt…" />
   <link rel="canonical" href="https://caviri.github.io/rete/compatibility.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Compatibility &amp; Cypher · rete docs" />
-  <meta property="og:description" content="Format byte 0x05 is stable format generation 1, introduced by Rete 1.0.0. Files produced before Rete 1.0.0 are experimental artifacts and must be rebuilt." />
+  <meta property="og:description" content="Format byte 0x05 is stable format generation 1, frozen on 2026-07-14 and first released in Rete 0.3.0. Files carrying the experimental generations 0x01–0x04 predate that freeze and must be rebuilt…" />
   <meta property="og:url" content="https://caviri.github.io/rete/compatibility.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/compatibility.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Compatibility &amp; Cypher · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Compatibility &amp; Cypher · rete docs" />
-  <meta name="twitter:description" content="Format byte 0x05 is stable format generation 1, introduced by Rete 1.0.0. Files produced before Rete 1.0.0 are experimental artifacts and must be rebuilt." />
+  <meta name="twitter:description" content="Format byte 0x05 is stable format generation 1, frozen on 2026-07-14 and first released in Rete 0.3.0. Files carrying the experimental generations 0x01–0x04 predate that freeze and must be rebuilt…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/compatibility.png" />
   <meta name="rete:section" content="Guides" />
   <script>
@@ -339,13 +339,35 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
       <article class="content">
 <h1 id="compatibility-validation--interop">Compatibility, validation &amp; interop</h1>
 <h2 id="stable-rete-file-compatibility">Stable <code>.rete</code> file compatibility</h2>
-<p>Format byte <code>0x05</code> is stable format generation 1, introduced by Rete 1.0.0.
-Files produced before Rete 1.0.0 are experimental artifacts and must be rebuilt.
-Every stable Rete reader from 1.0.0 onward reads format <code>0x05</code>. Newer readers may
+<p>Format byte <code>0x05</code> is stable format generation 1, frozen on <strong>2026-07-14</strong> and
+first released in Rete <strong>0.3.0</strong>. Files carrying the experimental generations
+<code>0x01</code>–<code>0x04</code> predate that freeze and must be rebuilt from RDF source. Every
+stable Rete reader from 0.3.0 onward reads format <code>0x05</code>. Newer readers may
 add optional sections and flags that preserve <code>0x05</code> semantics. A required layout
 change uses a new format byte, retains <code>0x05</code> read support, and ships with a
 documented rebuild or migration path. Older readers may reject a newer format
 cleanly; silent misinterpretation is never permitted.</p>
+<p><strong>The generation number is not a release version.</strong> There is no Rete 1.0.0: the
+workspace is 0.3.x, and it is the <em>Rust, CLI and WASM APIs</em> that carry no semver
+promise until 1.0.0 (<a href="release.html">release.md</a>) — the file format froze earlier
+and independently. Two consequences worth stating, because both have bitten:</p>
+<ul>
+<li><strong><code>0x05</code> does not pin reader capability.</strong> Nine days after the freeze,
+<a href="https://github.com/caviri/rete/pull/68">#68</a> changed what the <em>writer</em> emits
+within <code>0x05</code> — a single index group larger than the tile budget is now split
+across consecutive tiles — with no generation bump, because the reader change
+was backward compatible in one direction only. A reader older than #68 returns
+<strong>silently incomplete</strong> results on a file that contains split groups, which is
+<a href="https://github.com/caviri/rete/issues/124">#124</a>. "It's <code>0x05</code>" therefore
+means "the layout is generation 1", not "any generation-1 reader is safe";
+read published files with a current reader, and rebuild every bundled engine
+(playground WASM, the single-file explorer pages, the clients) before
+publishing a file written by a newer writer.</li>
+<li><strong>A <code>min_reader_version</code> byte would have said that in the file</strong>, and cannot be
+retrofitted into <code>0x05</code>. It is item B of
+<a href="https://github.com/caviri/rete/issues/206">#206</a>, the standing survey of what
+a future generation break should batch together.</li>
+</ul>
 <h3 id="--permutations-3-a-0x05-file-older-readers-refuse"><code>--permutations 3</code>: a <code>0x05</code> file older readers refuse</h3>
 <p><code>rete build --permutations 3</code> writes SPO, POS and OSP and omits the three
 merge-join orders (SOP, PSO, OPS). <strong>The default is six and this section is the
@@ -369,6 +391,19 @@ count before reading a payload, so the refusal is the same on a local file, a
 lazily range-read one, and every <code>*-url</code> command. <code>rete info</code>, <code>rete verify</code> and
 <code>rete card-url</code> still succeed, because they read only the header and the metadata
 section and never claim to have read the index.</p>
+<blockquote>
+<p><strong>Guarantee.</strong> A reader that does not understand the permutation mask never
+returns a row from a file that carries fewer than six permutations. Nothing is
+written empty: a lean file's index container holds <strong>three sections, not six</strong>,
+and both decoders compare that count against the six they expect <em>before</em>
+touching a payload. Verified by reading a 3-permutation file with an unmodified
+<code>rete</code> built from the previous <code>main</code>: <code>stats</code>, <code>sparql</code>, <code>export</code>, <code>why</code>,
+<code>query-url</code>, <code>sparql-url</code>, <code>cost</code> and a forced-resident open
+(<code>RETE_LOCAL_LAZY_ABOVE_MB=0</code>) each printed one of the two errors above and
+exited 1. That is what makes <code>--permutations 3</code> safe to ship without a
+format-generation bump. (A <em>current</em> reader accepts the file; it compares the
+section count against the header's mask instead, and says <code>index container section count does not match the header permutation mask</code> if they disagree.)</p>
+</blockquote>
 <p>That is the good failure — loud, immediate, non-zero exit — and it is the
 opposite of <a href="https://github.com/caviri/rete/issues/124">#124</a>, where a stale
 reader returned 65,384 rows where 508,116 were correct. It is <em>not</em> forward

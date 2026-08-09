@@ -79,6 +79,14 @@ refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see [compatibility.md](compatibility.md).
 
+The flag exists on `build` only. The two commands that re-assemble an existing
+file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-)
+**preserves its input's set** (and says so on stderr when that set is not the
+default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-)
+writes the **union** of its inputs' sets — one full shard is enough to keep the
+merge-join orders its queries relied on. To change a file's set, rebuild it from
+its RDF source.
+
 ### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--pyramid-algo louvain|types] [--text-index] [--card …]`
 Rebuild a file's pyramid **in place**, reading the triples straight from the
 existing `.rete` — no `export | build` N-Quads round-trip. Use it to add a schema
@@ -104,6 +112,39 @@ rete repyramid old.rete -o new.rete --text-index    # add full-text search to an
 rete card old.rete --json > old-card.json
 python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
 rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
+```
+
+`repyramid` **preserves its input's permutation set**: a 3-permutation file stays
+3-permutation, a 6 stays 6, and it prints the preserved set on stderr when it is
+not the default six. It re-assembles an existing file rather than re-deciding how
+it was built, so it has no `--permutations` of its own — rebuild from source to
+change the set.
+
+### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …]`
+Fold several `.rete` files into one without going back through text — the way to
+consolidate a sharded dataset when the original RDF is gone or expensive to
+re-emit. It reads the **shards** (dictionary-encoded and compressed, roughly a
+quarter of the RDF bytes), so it skips the conversion and the parse.
+
+It does **not** skip the sorting. The dictionary is HDT-style (`shared` /
+subject-only / object-only) and IDs are assigned per section, so a term that is
+subject-only in one shard and object-only in another becomes *shared* in the
+merge and changes ID section: the shards' orderings do not survive the remap and
+every permutation is rebuilt. Memory is bounded at both ends: each input is
+opened lazily and streamed rather than loaded, and the quads feed the same
+memory-bounded external builder `rete build --memory-budget-mb` uses, which
+chunks and spills under this command's own `--memory-budget-mb` (default 4096)
+into `--tmp-dir`. Default graph only — it checks every input's header up front
+and fails in a second rather than hours in. Card flags match `rete build`.
+
+The merged file carries the **union** of its inputs' permutation sets — an
+all-lean merge stays lean, and one six-permutation input is enough to keep the
+merge-join orders. Like `repyramid`, it has no `--permutations` flag: it
+consolidates shards, it does not re-decide how they were built.
+
+```sh
+rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
+  --card --card-file curated.json
 ```
 
 ## Validating

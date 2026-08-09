@@ -65,8 +65,8 @@ docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
 (`RETE_SOURCE_REVISION` is only needed from a git worktree, whose `.git` file
 points at a host path the container cannot follow.)
 
-Three things used to make that byte diff go red, all presenting as the same
-`Binary files … differ`. Two are now handled by the script; the third is the
+Four things make that byte diff go red, all presenting as the same
+`Binary files … differ`. Two are handled by the script; the other two are the
 check doing its job:
 
 - **A shared `CARGO_TARGET_DIR`.** A wasm built in a target dir another build has
@@ -84,9 +84,23 @@ check doing its job:
 - **Genuinely stale artifacts.** Regenerate and commit them, separately from the
   source change. CI uploads its own byte-exact `wasm-build-<sha>` artifact even
   when the job fails, so a repair never needs a local rebuild.
+- **Source lines moved above panicking code.** rustc bakes `line!()` into the
+  binary — each panic site carries a `core::panic::Location` of
+  `(file ptr, path len, line, col)` — so adding or removing *lines* shifts those
+  constants and the artifacts are genuinely stale. **A doc-comment-only edit does
+  this**: it never reaches codegen, but it occupies lines. #208 added 8 lines of
+  doc comment above `Header::from_bytes` and moved exactly two bytes in
+  `rete_wasm_bg.wasm` — the low byte of two `line` fields, 305→313 and 307→315.
+  This looks identical to the target-dir signature (same size, a handful of
+  bytes) and was misread as one; the triage now tells them apart by which field
+  of the record moved. Rebuild and commit — nothing is wrong with your target dir.
 
 When the diff does go red, CI runs `scripts/wasm_parity_triage.py`, which reads
-the bytes and says which of the three it is. It runs locally too.
+the bytes and says which of the four it is. It runs locally too — though not
+from inside the dev container when your checkout is a git *worktree*: `git diff`
+cannot resolve the `.git` file there and the script reports "no diff" rather
+than failing, the same constraint that makes `RETE_SOURCE_REVISION` necessary
+above. Run it on the host, or against a normal clone.
 
 ### The regression gate
 
@@ -169,6 +183,21 @@ migration tooling is in `dev/` (gitignored): `gen_migration.py`, `migrate_to_r2.
 source it as `set -a; . <(tr -d '\r' < .env); set +a` (a stray `\r` corrupts the SigV4
 signature header); run the scripts with `python3 -P` (a `dev/inspect.py` shadows stdlib
 `inspect`).
+
+**`--permutations` is a per-dataset decision, and its default is not yours to move.**
+`rete build --permutations 3|6` chooses whether the file carries the three
+merge-join orders (SOP/PSO/OPS) on top of the three routing ones. **The default is
+6.** A 3-permutation file returns the same rows from the same tiles for every
+query — but it is refused outright by any reader older than the mask, so it must
+never be the silent outcome of an unrelated change. Do not flip the default, a
+build script's default, or a skill's recommended invocation without an explicit
+decision recorded in the PR (the measurement and the standing recommendation are
+in `docs/BENCHMARK.md` and issue #206). Rebuilding one dataset lean is a choice
+about that dataset's consumers — the file records its own set, so nothing else
+has to change, and it is **not** the first step of a corpus-wide migration:
+re-publishing the estate lean would strand every bundled engine that is not
+rebuilt in lockstep, and two of the largest published files have no local source
+to rebuild from at all.
 
 **R2 rules of the road:**
 - **CORS is required and MUST ExposeHeaders `Content-Range`** — rete's open probe reads

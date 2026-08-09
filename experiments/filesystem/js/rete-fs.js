@@ -29,7 +29,7 @@ const SECTION_ENTRY_LEN = 24;
 const SECTION_KINDS = {
   1: { name: "METADATA", blurb: "The Dataset Card: the file's own description, in JSON." },
   2: { name: "DICTIONARY", blurb: "Front-coded term table. Every IRI and literal, stored once." },
-  3: { name: "INDEX", blurb: "The six permutation streams (SPO/POS/OSP/SOP/PSO/OPS), tiled." },
+  3: { name: "INDEX", blurb: "The permutation streams (SPO/POS/OSP, plus SOP/PSO/OPS unless the file was built lean), tiled." },
   4: { name: "PYRAMID META", blurb: "Community summary + the baked schema this browser reads." },
   5: { name: "NAMED GRAPHS", blurb: "Per-graph permutation containers, sharing the dictionary." },
   6: { name: "TEXT INDEX", blurb: "Token table + posting lists for word/CONTAINS search." },
