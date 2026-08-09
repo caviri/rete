@@ -1,50 +1,95 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 330" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">Reading the schema pyramid over HTTP: a range client fetches only the header, dictionary, and pyramid-meta ranges to get the whole leveled type legend. The large triple index is never fetched.</title>
-  <rect width="720" height="330" fill="#ffffff"/>
-  <text x="360" y="30" text-anchor="middle" font-size="19" font-weight="700" fill="#1b1f24">Index-free: what summary-url fetches</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 486" role="img" aria-labelledby="t">
+  <title id="t">What rete summary-url pulls over HTTP: three range requests and no more. First the 1024-byte header, whose section directory gives every other section's offset and length; then the dictionary, for the term strings; then the pyramid, section kind 4, which carries every level, the subClassOf DAG and the per-community descriptors. The triple index — the triples themselves, in every permutation — is never requested and stays on the server.</title>
+  <!-- shared kit for the five semantic-zoom figures: class box = .cls + .clstx, instance = .inst r5.5,
+       title y40 / deck y62 / chip y76 / first section label y140, 26px margins. Keep them identical. -->
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .meas{font-size:14px;font-weight:700}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onchip{fill:var(--on-chip);font-size:13px;font-weight:700}
+    .cold{fill:var(--cold);stroke:var(--line)}
+    .coldtx{fill:var(--coldfg);font-size:13px}
+  </style>
 
-  <!-- Client -->
-  <rect x="280" y="52" width="160" height="40" rx="8" fill="#0f1620"/>
-  <text x="360" y="77" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">range client (HTTP)</text>
+  <rect x="1" y="1" width="558" height="484" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <defs>
-    <marker id="dn" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#2a6df4"/>
-    </marker>
-  </defs>
+  <text class="title" x="26" y="40">What <tspan class="mono">summary-url</tspan> fetches</text>
+  <text class="deck" x="26" y="62">three ranges — and the triple index is not one of them</text>
 
-  <!-- Fetch arrows to the three small sections -->
-  <g stroke="#2a6df4" stroke-width="1.8" fill="none" marker-end="url(#dn)">
-    <path d="M310,92 L90,168"/>
-    <path d="M345,92 L235,168"/>
-    <path d="M430,92 L600,168"/>
-  </g>
+  <!-- the actor, in the specimen-chip slot -->
+  <rect x="26" y="76" width="100" height="28" rx="14" fill="var(--ink)"/>
+  <text class="body u-onink" x="40" y="95" font-weight="700">range client</text>
+  <text class="ann" x="138" y="95">one HTTPS GET per section</text>
 
-  <!-- On-disk section strip -->
-  <g font-size="12.5" font-weight="700">
-    <!-- HEADER -->
-    <rect x="40" y="172" width="100" height="56" rx="7" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="90" y="197" text-anchor="middle" fill="#0f2347">HEADER</text>
-    <text x="90" y="214" text-anchor="middle" font-size="10" font-weight="400" fill="#5b6570">128 B</text>
+  <!-- ============ the three fetched sections ============ -->
+  <text class="sect" x="26" y="140">three range requests</text>
 
-    <!-- DICTIONARY -->
-    <rect x="148" y="172" width="150" height="56" rx="7" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="223" y="197" text-anchor="middle" fill="#0f2347">DICTIONARY</text>
-    <text x="223" y="214" text-anchor="middle" font-size="10" font-weight="400" fill="#5b6570">term labels</text>
+  <!-- 1. header -->
+  <rect x="26" y="152" width="140" height="30" rx="7" fill="var(--meta)"/>
+  <text class="onchip" x="96" y="172" text-anchor="middle">HEADER</text>
+  <text class="body" x="180" y="172">the section directory</text>
+  <text class="meas u-metaink" x="534" y="172" text-anchor="end">1,024 B</text>
+  <text class="ann" x="26" y="196"><tspan class="mono">bytes=0-1023</tspan> — the first read a client ever makes; it locates the rest</text>
 
-    <!-- INDEX (skipped) -->
-    <rect x="306" y="172" width="230" height="56" rx="7" fill="#f5f7f9" stroke="#cdd7e2" stroke-dasharray="5 4"/>
-    <text x="421" y="195" text-anchor="middle" fill="#9aa4af">TRIPLE INDEX</text>
-    <text x="421" y="213" text-anchor="middle" font-size="11" font-weight="700" fill="#c0392b">✗ never fetched</text>
+  <!-- 2. dictionary -->
+  <rect x="26" y="212" width="140" height="30" rx="7" fill="var(--data)"/>
+  <text class="onchip" x="96" y="232" text-anchor="middle">DICTIONARY</text>
+  <text class="body" x="180" y="232">term labels for the class IRIs</text>
+  <text class="ann" x="26" y="256">one range — the header already said where it starts and how long it is</text>
 
-    <!-- PYRAMID-META (accent, fetched) -->
-    <rect x="544" y="172" width="136" height="56" rx="7" fill="#2a6df4"/>
-    <text x="612" y="195" text-anchor="middle" fill="#ffffff">PYRAMID-META</text>
-    <text x="612" y="213" text-anchor="middle" font-size="10" font-weight="400" fill="#cfe0fb">summary + schema pyramid</text>
-  </g>
+  <!-- 3. pyramid -->
+  <rect x="26" y="272" width="140" height="30" rx="7" fill="var(--meta)"/>
+  <text class="onchip" x="96" y="292" text-anchor="middle">PYRAMID</text>
+  <text class="body" x="180" y="292">levels, the subClassOf DAG, descriptors</text>
+  <text class="ann" x="26" y="316">section kind 4 — optional; written only when the graph has types</text>
 
-  <!-- Caption -->
-  <rect x="40" y="252" width="640" height="56" rx="8" fill="#f5f7f9" stroke="#e4e8ec"/>
-  <text x="360" y="275" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1b1f24">the whole leveled legend in ~a few KB · 3 range requests · the index stays on the server</text>
-  <text x="360" y="294" text-anchor="middle" font-size="11" fill="#5b6570">bytes-on-the-wire scale with the number of classes, not the size of the graph</text>
+  <!-- ============ the one it never asks for ============ -->
+  <text class="sect" x="26" y="352">not requested</text>
+
+  <rect class="cold" x="26" y="364" width="140" height="30" rx="7" stroke-dasharray="5 4"/>
+  <text class="coldtx" x="96" y="384" text-anchor="middle" font-weight="700">TRIPLE INDEX</text>
+  <text class="coldtx" x="180" y="384">the triples, in every permutation</text>
+  <text class="ann" x="26" y="408">never opened by <tspan class="mono">summary-url</tspan> — it stays on the server</text>
+
+  <!-- takeaway -->
+  <rect x="26" y="426" width="508" height="34" rx="12" fill="var(--panel)" stroke="var(--meta)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body u-metaink" x="40" y="448" font-weight="700">rete summary-url</text>
+  <text class="body" x="180" y="448">3 range requests, none of them the index</text>
 </svg>

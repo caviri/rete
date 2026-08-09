@@ -71,7 +71,7 @@ examples below run without the alias (or substitute `cargo run -p rete-cli --`).
 ## Building a `.rete` file
 
 <figure class="fig-right">
-  <img src="img/build-pipeline.svg" alt="A pipeline: .nt, .ttl and .nq inputs feed into 'rete build', which produces one social.rete file containing a dictionary, indexes and a pyramid, ready to put on an HTTP host or URL.">
+  <img src="img/build-pipeline.svg" alt="Building a .rete file: source triples in N-Triples, Turtle, N-Quads, RDF/XML or OWL are compiled by rete build — which sorts, dedupes, front-codes the dictionary and writes the permutation indexes — into one immutable file holding a dictionary, permutation indexes and a dataset card, plus an optional community pyramid that many published files do not have. The result goes on any HTTP host that answers Range requests: a bucket, a static site, a CDN. There is no server and no database to run.">
   <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
 </figure>
 

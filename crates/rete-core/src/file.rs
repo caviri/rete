@@ -1786,7 +1786,7 @@ pub fn schema_classes(rete: &Rete) -> Vec<(String, u32)> {
 }
 
 /// Fetch **only** the metadata section (the opaque Dataset Card blob) via a
-/// [`RangeReader`]: read the 128-byte header, then the metadata byte range â€”
+/// [`RangeReader`]: read the 1 KiB header, then the metadata byte range â€”
 /// nothing else. This is the index-free CARD tier of the exploration model: a
 /// remote/S3 client learns the dataset's self-description in **two small range
 /// requests**, never touching the dictionary, index, or pyramid. Returns `None`
@@ -2847,7 +2847,7 @@ impl Rete {
         };
         let mut out = vec![seg(
             "header",
-            "header (fixed 128 bytes)".into(),
+            "header (fixed 1024 bytes)".into(),
             0,
             crate::header::HEADER_LEN as u64,
         )];

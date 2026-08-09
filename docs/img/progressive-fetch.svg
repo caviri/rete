@@ -1,51 +1,115 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">overview-first fetch: three small range requests pull header, dictionary and summary; the large index is never fetched</title>
-  <rect width="720" height="420" fill="#ffffff"/>
-  <text x="360" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">Overview first — 3 range reads, ~25% of the file</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 508" role="img" aria-labelledby="t">
+  <title id="t">The overview-first path: a client makes three byte-range reads — the 1024-byte header at bytes 0 to 1023, then the dictionary, then the pyramid summary — and computes the coarse community graph without ever fetching the permutation indexes. Drawn to scale on the published davidrumsey.rete, 74.8 MB: the three reads total 17.4 MB, 23.3 percent of the file, while the permutation indexes alone are 42.6 MB, 56.9 percent, and are never requested. The share depends on how large the dictionary is relative to the rest of the file.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onchip{fill:var(--on-chip);font-size:13px}
+    .cold{fill:var(--cold);stroke:var(--line)}
+    .coldtx{fill:var(--coldfg);font-size:13px}
+    .lead{stroke:var(--muted);stroke-width:1;fill:none;stroke-dasharray:4 3}
+    .get{stroke:var(--data);stroke-width:1.8;fill:none}
+  </style>
 
   <defs>
-    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#2a6df4"/>
+    <marker id="d" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--data)"/>
     </marker>
   </defs>
 
-  <!-- Client -->
-  <rect x="40" y="150" width="150" height="110" rx="10" fill="#0f1620"/>
-  <text x="115" y="195" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Client</text>
-  <text x="115" y="216" text-anchor="middle" font-size="11.5" fill="#c9d4e0">browser / CLI</text>
-  <text x="115" y="234" text-anchor="middle" font-size="11.5" fill="#c9d4e0">summary-url</text>
+  <rect x="1" y="1" width="558" height="506" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <!-- File column on right -->
-  <text x="555" y="64" text-anchor="middle" font-size="13" font-weight="700" fill="#1b1f24">file.rete on any HTTP host</text>
+  <text class="title" x="26" y="40">Overview first — three range reads</text>
+  <text class="deck" x="26" y="62">the coarse community graph, without the triple index</text>
 
-  <!-- HEADER (fetched) -->
-  <rect x="450" y="76" width="210" height="34" rx="5" fill="#2a6df4"/>
-  <text x="465" y="98" font-size="12.5" font-weight="700" fill="#ffffff">HEADER  (128 B)</text>
+  <rect x="26" y="76" width="164" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/>
+  <text class="mono body" x="40" y="95" font-weight="700">davidrumsey.rete</text>
+  <text class="ann" x="202" y="95">74.8 MB · 5,001,983 triples</text>
 
-  <!-- DICTIONARY (fetched) -->
-  <rect x="450" y="116" width="210" height="48" rx="5" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="465" y="145" font-size="12.5" font-weight="700" fill="#1b3a8a">DICTIONARY</text>
+  <text class="sect" x="26" y="128">a client asks for three ranges</text>
+  <text class="sect" x="330" y="128">the file, drawn to scale</text>
 
-  <!-- INDEX (greyed, never fetched) -->
-  <rect x="450" y="170" width="210" height="120" rx="5" fill="#f5f7f9" stroke="#e4e8ec" stroke-dasharray="5 4"/>
-  <text x="555" y="226" text-anchor="middle" font-size="13" font-weight="700" fill="#a3adb8">INDEX (SPO/POS/OSP)</text>
-  <text x="555" y="248" text-anchor="middle" font-size="12" fill="#a3adb8">never fetched</text>
+  <!-- ============ the file column, proportional ============ -->
+  <rect x="330" y="138" width="204" height="5"   fill="var(--meta)"/>
+  <rect x="330" y="143" width="204" height="53"  rx="4" fill="var(--data)"/>
+  <rect x="330" y="196" width="204" height="140" rx="4" class="cold" stroke-dasharray="5 4"/>
+  <rect x="330" y="336" width="204" height="5"   fill="var(--meta)"/>
+  <rect x="330" y="341" width="204" height="48"  rx="4" class="cold"/>
 
-  <!-- SUMMARY (fetched) -->
-  <rect x="450" y="296" width="210" height="48" rx="5" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="465" y="325" font-size="12.5" font-weight="700" fill="#1b3a8a">PYRAMID SUMMARY</text>
+  <text class="mono onchip" x="432" y="166" text-anchor="middle" font-weight="700">DICTIONARY</text>
+  <text class="mono onchip" x="432" y="184" text-anchor="middle">16.1 MB · 21.5%</text>
 
-  <!-- Range request arrows -->
-  <g stroke="#2a6df4" stroke-width="1.8" fill="none">
-    <path d="M196,168 C320,120 360,96 444,93" marker-end="url(#a)"/>
-    <path d="M196,188 C330,160 360,142 444,140" marker-end="url(#a)"/>
-    <path d="M196,228 C330,300 360,320 444,320" marker-end="url(#a)"/>
-  </g>
-  <g font-size="11.5" font-weight="600" fill="#2a6df4">
-    <text x="250" y="118">1 · Range bytes=0-127</text>
-    <text x="250" y="168">2 · Range: dictionary</text>
-    <text x="250" y="296">3 · Range: summary</text>
-  </g>
+  <text class="mono coldtx" x="432" y="252" text-anchor="middle" font-weight="700">PERMUTATION INDEXES</text>
+  <text class="mono coldtx" x="432" y="274" text-anchor="middle">never fetched</text>
+  <text class="mono coldtx" x="432" y="296" text-anchor="middle">42.6 MB · 56.9%</text>
 
-  <text x="360" y="392" text-anchor="middle" font-size="12.5" fill="#5b6570">The client computes the coarse community graph from ~25% of the file — the big index stays on the server.</text>
+  <text class="mono coldtx" x="432" y="362" text-anchor="middle">text index</text>
+  <text class="mono coldtx" x="432" y="380" text-anchor="middle">14.7 MB · not needed</text>
+
+  <!-- ============ the three reads ============ -->
+  <text class="body" x="26" y="147">1 ·</text>
+  <text class="mono body" x="54" y="147">bytes=0-1023</text>
+  <text class="ann" x="148" y="147">header + directory</text>
+  <path class="get" d="M278,141 H322" marker-end="url(#d)"/>
+
+  <text class="body" x="26" y="175">2 ·</text>
+  <text class="mono body" x="54" y="175">the dictionary</text>
+  <text class="ann" x="165" y="175">16.1 MB</text>
+  <path class="get" d="M278,170 H322" marker-end="url(#d)"/>
+
+  <text class="body" x="26" y="343">3 ·</text>
+  <text class="mono body" x="54" y="343">the summary</text>
+  <text class="ann" x="143" y="343">pyramid · 1.3 MB</text>
+  <path class="get" d="M278,338 H322" marker-end="url(#d)"/>
+
+  <!-- ============ what is never asked for ============ -->
+  <text class="sect" x="26" y="232">never asked for</text>
+  <text class="ann" x="26" y="254">The permutation indexes are 56.9% of this</text>
+  <text class="ann" x="26" y="272">file. The overview path does not route a</text>
+  <text class="ann" x="26" y="290">single triple pattern, so they never move.</text>
+  <path class="lead" d="M298,266 H328"/>
+
+  <text class="ann" x="26" y="406">The header is 0.08% of this file — drawn thicker here so it is visible.</text>
+
+  <!-- ============ takeaway ============ -->
+  <rect x="26" y="424" width="508" height="58" rx="12" fill="var(--panel)" stroke="var(--data)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body u-dataink" x="40" y="448" font-weight="700">rete summary-url</text>
+  <text class="body" x="165" y="448">— 3 reads, 17.4 MB, 23.3% of this file.</text>
+  <text class="ann" x="40" y="468">The share depends on the dictionary's size; the index is never in it.</text>
 </svg>

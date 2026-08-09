@@ -44,7 +44,7 @@ contradictions such as an individual that belongs to two disjoint classes.
 > gate, not a certified entailment regime.
 
 <figure class="fig-right">
-  <img src="img/reasoning.svg" alt="Asserted triples plus a subClassOf+type rule produce an inferred type triple (dashed); a disjointWith axiom plus conflicting types produce a red 'incoherent' flag.">
+  <img src="img/reasoning.svg" alt="Two things a reasoner does to a .rete file. Above: two asserted triples — Cat is a subClassOf Animal, and Felix has type Cat — meet the RDFS rule subClassOf plus type gives type, and forward chaining writes the entailed triple Felix has type Animal, which nobody stated. Below: adding the axiom Animal is disjointWith Plant and the assertion Felix has type Plant makes the same closure contradict itself, and rete reason reports it as an incoherent point and exits non-zero, so it works as a CI gate.">
   <figcaption>Forward-chaining materializes entailed triples (dashed); disjointness and domain clashes surface as <strong>incoherent points</strong>.</figcaption>
 </figure>
 

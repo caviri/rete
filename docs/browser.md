@@ -286,9 +286,9 @@ const rows = JSON.parse(query_sparql(bytes,
 
 ## Progressive loading (overview without the index)
 
-<img src="img/progressive-fetch.svg" alt="A client issues three small range requests for the header, dictionary, and pyramid summary; the large index block is greyed out and never fetched.">
+<img src="img/progressive-fetch.svg" alt="The overview-first path: a client makes three byte-range reads — the 1024-byte header at bytes 0 to 1023, then the dictionary, then the pyramid summary — and computes the coarse community graph without ever fetching the permutation indexes. Drawn to scale on the published davidrumsey.rete, 74.8 MB: the three reads total 17.4 MB, 23.3 percent of the file, while the permutation indexes alone are 42.6 MB, 56.9 percent, and are never requested. The share depends on how large the dictionary is relative to the rest of the file.">
 
-*Three small range requests (header + dictionary + summary, ~25% of the file) build the coarse graph; the large triple index is never downloaded.*
+*Three small range requests — header + dictionary + summary — build the coarse graph. On the published `davidrumsey.rete` that is 17.4 MB of 74.8 MB (23.3%); the 42.6 MB of permutation indexes are never downloaded.*
 
 `header_ranges` + `summary_overview` implement the "overview first" path in the
 browser: read the 1 KB header (bytes `0..1024`), learn where the dictionary and
@@ -317,7 +317,7 @@ const overview = JSON.parse(summary_overview(buf)); // index never fetched
 
 This is the same path as `rete summary-url` natively. It's verified end-to-end in
 `rete-wasm`'s Node test: with the index region zero-filled, the overview still
-computes — typically ~25 % of the file fetched in 3 ranges.
+computes — 3 ranges, and 23.3 % of the file on `davidrumsey.rete`.
 
 `progressive_query` uses the same summary-only path for query answering. It is
 intentionally conservative and returns an error unless the query is exactly one

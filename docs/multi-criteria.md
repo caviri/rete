@@ -1,7 +1,7 @@
 # Multi-criteria community splitting
 
 <figure class="fig-right">
-  <img src="img/multi-criteria.svg" alt="The same six nodes shown twice: partitioned by :cites into one set of clusters on the left, and by :hasTopic into a different set of clusters on the right.">
+  <img src="img/multi-criteria.svg" alt="The same six nodes A to F, partitioned twice. Grouped by the :cites relation they fall into community 0 with A, B and C and community 1 with D, E and F. Grouped by :hasTopic the same six regroup into community 0 with A, D and F and community 1 with B, C and E. Node A shares a community with B and C under one criterion and with D and F under the other, so &quot;what community is A in&quot; has no single answer — there is one partition per criterion.">
   <figcaption>The same nodes regroup depending on which relation (or attribute) you partition by — there is no single "correct" community.</figcaption>
 </figure>
 

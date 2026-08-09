@@ -1,42 +1,96 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 250" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">How lazy querying works: the browser sends HTTP Range requests to a remote .rete file on a bucket and fetches only the dictionary chunks and index tiles a query touches; most of the file is never transferred.</title>
-  <rect width="460" height="250" fill="#ffffff"/>
-  <text x="230" y="26" text-anchor="middle" font-size="16" font-weight="700" fill="#1b1f24">Lazy querying — fetch only the bytes a query touches</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 458" role="img" aria-labelledby="t">
+  <title id="t">Lazy querying: the browser sends HTTP byte-range reads to a .rete file on a bucket, and only the header, the handful of dictionary chunks and the handful of roughly 64 KiB index tiles the query touches are transferred — every other block stays on the host. Measured on the published davidrumsey.rete, 74.8 MB and 5,001,983 triples, a lazy query open costs 65 requests and 407 KB, 0.54 percent of the file, so a 100 MB or a 1 GB graph stays interactive.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onink{fill:var(--surface);font-size:13px}
+    .cold{fill:var(--cold);stroke:var(--line)}
+    .wtx{font-size:13px;font-weight:700;fill:var(--data-ink)}
+  </style>
 
   <defs>
-    <marker id="rq" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#2a6df4"/></marker>
-    <marker id="rs" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#16a34a"/></marker>
+    <marker id="d" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--data)"/>
+    </marker>
   </defs>
 
-  <!-- Browser -->
-  <rect x="24" y="92" width="150" height="86" rx="9" fill="#0f1620"/>
-  <rect x="24" y="92" width="150" height="20" rx="9" fill="#2a3340"/>
-  <circle cx="36" cy="102" r="3" fill="#ff5f57"/><circle cx="46" cy="102" r="3" fill="#febc2e"/><circle cx="56" cy="102" r="3" fill="#28c840"/>
-  <text x="99" y="138" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">Browser</text>
-  <text x="99" y="158" text-anchor="middle" font-size="10.5" fill="#9fb3c8">a SPARQL query</text>
+  <rect x="1" y="1" width="558" height="456" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <!-- request / response arrows -->
-  <line x1="178" y1="118" x2="296" y2="92"  stroke="#2a6df4" stroke-width="1.7" marker-end="url(#rq)"/>
-  <text x="232" y="98" text-anchor="middle" font-size="9.5" font-weight="700" fill="#2a6df4">Range: bytes=…</text>
-  <line x1="296" y1="200" x2="178" y2="168" stroke="#16a34a" stroke-width="1.7" marker-end="url(#rs)"/>
-  <text x="232" y="196" text-anchor="middle" font-size="9.5" font-weight="700" fill="#16a34a">206 — just those tiles</text>
+  <text class="title" x="26" y="40">Only the tiles a query touches</text>
+  <text class="deck" x="26" y="62">the browser sends byte-range reads; the rest of the file never moves</text>
 
-  <!-- Remote .rete file as a stack of tiles -->
-  <text x="372" y="44" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1b1f24">remote .rete on a bucket</text>
-  <g>
-    <!-- most tiles grey (not fetched), a few blue (fetched) -->
-    <rect x="320" y="52" width="104" height="15" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
-    <rect x="320" y="70" width="104" height="15" rx="3" fill="#2a6df4"/>
-    <rect x="320" y="88" width="104" height="15" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
-    <rect x="320" y="106" width="104" height="15" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
-    <rect x="320" y="124" width="104" height="15" rx="3" fill="#2a6df4"/>
-    <rect x="320" y="142" width="104" height="15" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
-    <rect x="320" y="160" width="104" height="15" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
-    <rect x="320" y="178" width="104" height="15" rx="3" fill="#2a6df4"/>
-    <rect x="320" y="196" width="104" height="15" rx="3" fill="#eef3ff" stroke="#cdd7e2"/>
+  <rect x="26" y="96" width="150" height="34" rx="7" fill="var(--ink)"/>
+  <text class="mono onink" x="42" y="118">browser · CLI</text>
+  <path d="M184,113 H228" stroke="var(--data)" stroke-width="1.8" fill="none" marker-end="url(#d)"/>
+  <text class="mono wtx" x="238" y="118">GET · Range: bytes=…</text>
+
+  <text class="sect" x="26" y="162">one .rete file — each square is one ~64 KiB block</text>
+
+  <g class="cold">
+    <rect x="26" y="174" width="18" height="16" rx="4"/><rect x="50" y="174" width="18" height="16" rx="4"/><rect x="74" y="174" width="18" height="16" rx="4"/><rect x="98" y="174" width="18" height="16" rx="4"/><rect x="122" y="174" width="18" height="16" rx="4"/><rect x="146" y="174" width="18" height="16" rx="4"/><rect x="170" y="174" width="18" height="16" rx="4"/><rect x="194" y="174" width="18" height="16" rx="4"/><rect x="218" y="174" width="18" height="16" rx="4"/><rect x="242" y="174" width="18" height="16" rx="4"/><rect x="266" y="174" width="18" height="16" rx="4"/><rect x="290" y="174" width="18" height="16" rx="4"/><rect x="314" y="174" width="18" height="16" rx="4"/><rect x="338" y="174" width="18" height="16" rx="4"/><rect x="362" y="174" width="18" height="16" rx="4"/><rect x="386" y="174" width="18" height="16" rx="4"/><rect x="410" y="174" width="18" height="16" rx="4"/><rect x="434" y="174" width="18" height="16" rx="4"/><rect x="458" y="174" width="18" height="16" rx="4"/><rect x="482" y="174" width="18" height="16" rx="4"/><rect x="506" y="174" width="18" height="16" rx="4"/>
+    <rect x="26" y="196" width="18" height="16" rx="4"/><rect x="50" y="196" width="18" height="16" rx="4"/><rect x="74" y="196" width="18" height="16" rx="4"/><rect x="98" y="196" width="18" height="16" rx="4"/><rect x="122" y="196" width="18" height="16" rx="4"/><rect x="146" y="196" width="18" height="16" rx="4"/><rect x="170" y="196" width="18" height="16" rx="4"/><rect x="194" y="196" width="18" height="16" rx="4"/><rect x="218" y="196" width="18" height="16" rx="4"/><rect x="242" y="196" width="18" height="16" rx="4"/><rect x="266" y="196" width="18" height="16" rx="4"/><rect x="290" y="196" width="18" height="16" rx="4"/><rect x="314" y="196" width="18" height="16" rx="4"/><rect x="338" y="196" width="18" height="16" rx="4"/><rect x="362" y="196" width="18" height="16" rx="4"/><rect x="386" y="196" width="18" height="16" rx="4"/><rect x="410" y="196" width="18" height="16" rx="4"/><rect x="434" y="196" width="18" height="16" rx="4"/><rect x="458" y="196" width="18" height="16" rx="4"/><rect x="482" y="196" width="18" height="16" rx="4"/><rect x="506" y="196" width="18" height="16" rx="4"/>
+    <rect x="26" y="218" width="18" height="16" rx="4"/><rect x="50" y="218" width="18" height="16" rx="4"/><rect x="74" y="218" width="18" height="16" rx="4"/><rect x="98" y="218" width="18" height="16" rx="4"/><rect x="122" y="218" width="18" height="16" rx="4"/><rect x="146" y="218" width="18" height="16" rx="4"/><rect x="170" y="218" width="18" height="16" rx="4"/><rect x="194" y="218" width="18" height="16" rx="4"/><rect x="218" y="218" width="18" height="16" rx="4"/><rect x="242" y="218" width="18" height="16" rx="4"/><rect x="266" y="218" width="18" height="16" rx="4"/><rect x="290" y="218" width="18" height="16" rx="4"/><rect x="314" y="218" width="18" height="16" rx="4"/><rect x="338" y="218" width="18" height="16" rx="4"/><rect x="362" y="218" width="18" height="16" rx="4"/><rect x="386" y="218" width="18" height="16" rx="4"/><rect x="410" y="218" width="18" height="16" rx="4"/><rect x="434" y="218" width="18" height="16" rx="4"/><rect x="458" y="218" width="18" height="16" rx="4"/><rect x="482" y="218" width="18" height="16" rx="4"/><rect x="506" y="218" width="18" height="16" rx="4"/>
+    <rect x="26" y="240" width="18" height="16" rx="4"/><rect x="50" y="240" width="18" height="16" rx="4"/><rect x="74" y="240" width="18" height="16" rx="4"/><rect x="98" y="240" width="18" height="16" rx="4"/><rect x="122" y="240" width="18" height="16" rx="4"/><rect x="146" y="240" width="18" height="16" rx="4"/><rect x="170" y="240" width="18" height="16" rx="4"/><rect x="194" y="240" width="18" height="16" rx="4"/><rect x="218" y="240" width="18" height="16" rx="4"/><rect x="242" y="240" width="18" height="16" rx="4"/><rect x="266" y="240" width="18" height="16" rx="4"/><rect x="290" y="240" width="18" height="16" rx="4"/><rect x="314" y="240" width="18" height="16" rx="4"/><rect x="338" y="240" width="18" height="16" rx="4"/><rect x="362" y="240" width="18" height="16" rx="4"/><rect x="386" y="240" width="18" height="16" rx="4"/><rect x="410" y="240" width="18" height="16" rx="4"/><rect x="434" y="240" width="18" height="16" rx="4"/><rect x="458" y="240" width="18" height="16" rx="4"/><rect x="482" y="240" width="18" height="16" rx="4"/><rect x="506" y="240" width="18" height="16" rx="4"/>
+    <rect x="26" y="262" width="18" height="16" rx="4"/><rect x="50" y="262" width="18" height="16" rx="4"/><rect x="74" y="262" width="18" height="16" rx="4"/><rect x="98" y="262" width="18" height="16" rx="4"/><rect x="122" y="262" width="18" height="16" rx="4"/><rect x="146" y="262" width="18" height="16" rx="4"/><rect x="170" y="262" width="18" height="16" rx="4"/><rect x="194" y="262" width="18" height="16" rx="4"/><rect x="218" y="262" width="18" height="16" rx="4"/><rect x="242" y="262" width="18" height="16" rx="4"/><rect x="266" y="262" width="18" height="16" rx="4"/><rect x="290" y="262" width="18" height="16" rx="4"/><rect x="314" y="262" width="18" height="16" rx="4"/><rect x="338" y="262" width="18" height="16" rx="4"/><rect x="362" y="262" width="18" height="16" rx="4"/><rect x="386" y="262" width="18" height="16" rx="4"/><rect x="410" y="262" width="18" height="16" rx="4"/><rect x="434" y="262" width="18" height="16" rx="4"/><rect x="458" y="262" width="18" height="16" rx="4"/><rect x="482" y="262" width="18" height="16" rx="4"/><rect x="506" y="262" width="18" height="16" rx="4"/>
   </g>
-  <text x="372" y="227" text-anchor="middle" font-size="10" fill="#5b6570">blue = fetched · grey = never transferred</text>
+  <rect x="26" y="174" width="18" height="16" rx="4" fill="var(--meta)"/>
+  <g fill="var(--data)">
+    <rect x="146" y="196" width="18" height="16" rx="4"/>
+    <rect x="338" y="196" width="18" height="16" rx="4"/>
+    <rect x="194" y="240" width="18" height="16" rx="4"/>
+    <rect x="218" y="240" width="18" height="16" rx="4"/>
+    <rect x="410" y="262" width="18" height="16" rx="4"/>
+  </g>
 
-  <!-- caption -->
-  <text x="230" y="246" text-anchor="middle" font-size="11" font-weight="700" fill="#1b1f24">a 100 MB / 1 GB graph stays interactive — only a few MB cross the wire per query</text>
+  <rect x="26" y="298" width="18" height="16" rx="4" fill="var(--data)"/>
+  <text class="body" x="52" y="311">fetched</text>
+  <rect x="112" y="298" width="18" height="16" rx="4" fill="var(--meta)"/>
+  <text class="body" x="138" y="311">header + card</text>
+  <rect x="240" y="298" width="18" height="16" rx="4" class="cold"/>
+  <text class="body" x="266" y="311">never transferred</text>
+
+  <text class="ann" x="26" y="342">On the published davidrumsey.rete — 74.8 MB, 5,001,983 triples —</text>
+  <text class="ann" x="26" y="362">a lazy query open costs 65 requests and 407 KB.</text>
+
+  <rect x="26" y="378" width="508" height="54" rx="12" fill="var(--panel)" stroke="var(--data)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body u-dataink" x="40" y="402" font-weight="700">0.54%</text>
+  <text class="body" x="88" y="402">of the file crosses the wire for a query.</text>
+  <text class="body" x="40" y="422">A 100 MB or a 1 GB graph stays just as interactive.</text>
 </svg>

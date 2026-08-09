@@ -8,7 +8,7 @@ you'll know the landscape and exactly what you can ask a `.rete` file.
 ## What is a graph (a.k.a. a network)?
 
 <figure class="fig-right">
-  <img src="img/graph-vs-table.svg" alt="The same facts shown as a relational table of rows on the left and as a node-link graph on the right, joined by a 'same facts' arrow.">
+  <img src="img/graph-vs-table.svg" alt="The same three facts drawn twice. On the left a friendship table with a person and knows column and three rows: Alice knows Bob, Bob knows Carol, Carol knows Alice. On the right the identical facts as a graph — three nodes joined by three :knows arrows in a cycle. The table stores rows, so following a chain means a join per hop; the graph stores each relationship itself, so the same question is a traversal.">
   <figcaption>The same facts as rows vs. as a graph. A graph stores the relationships directly, so "who is connected to whom" is a traversal, not a join.</figcaption>
 </figure>
 
@@ -41,7 +41,7 @@ There are two dominant ways to *write down* a graph. They model the same dots an
 lines, but differently.
 
 <figure class="fig-right">
-  <img src="img/triple.svg" alt="An RDF triple drawn as a node-link: a subject node connected by a labeled predicate arrow to an object node, with a second example pointing to a literal value.">
+  <img src="img/triple.svg" alt="One RDF triple is one fact, written subject then predicate then object. The first example, Alice knows Bob, ends on a resource — another node in the graph, drawn as a rounded pill. The second, Alice age &quot;30&quot;, ends on a literal — a plain value that nothing points out of, drawn as a square box. The predicate is itself a resource with an IRI, so a graph is nothing but many triples sharing nodes.">
   <figcaption>One triple = one fact: <code>subject —predicate→ object</code>. Resources are rounded nodes; literals are boxes. A graph is many triples sharing nodes.</figcaption>
 </figure>
 
@@ -162,7 +162,7 @@ community summary at the top, drilling down to full triples at the base. You rea
 the overview first (a few small byte ranges) and zoom in only where a query needs
 it — overview-first, like map tiles for graphs.
 
-<img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
+<img src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
 
 ```sh
 rete summary deps.rete   # structural overview (Louvain community quotient graph)

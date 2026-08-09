@@ -646,9 +646,12 @@ actually emit). The
 header is the directory: it carries the absolute offset+length of every section, so a
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.</p>
-<img src="img/file-layout.svg" alt="On-disk layout: a 1 KB HEADER pointing to DICTIONARY, INDEX, PYRAMID META, optional NAMED GRAPHS, and a FOOTER with the RETE magic.">
-<img src="img/rete-anatomy.svg" alt="The same layout on a real specimen, dblp.rete: 1 KiB header with the section directory, 731-byte card, front-coded dictionary (418 MB, 18%), six tiled permutation indexes with per-tile synopses (1.85 GB, 82%), pyramid summary, and the trailing RETE magic.">
-<p><em>The layout on a real specimen (<code>dblp.rete</code>, 179 M triples): the dictionary and the six permutation indexes carry nearly all the bytes; everything a reader needs to route a query — header, directory, card — fits in the first two range requests.</em></p>
+<img src="img/file-layout.svg" alt="The section directory inside a .rete header, drawn to scale on the published davidrumsey.rete. The header is 1024 bytes: a 64-byte core, then up to 40 directory entries of 24 bytes each starting at byte 64, then zero padding — this file uses 6 entries, so most of the header is spare room. One entry is a 2-byte kind, a 2-byte flags field, 4 reserved bytes, an 8-byte offset and an 8-byte length. The seven typed kinds are dataset card, dictionary, index, pyramid, named graphs, text index and build info; this file has all but named graphs and build info. One GET of bytes 0 to 1023 therefore locates every section in the file.">
+<p><em>The header is the directory, on a real specimen. Entry <code>i</code> lives at <code>64 + i×24</code>;
+a kind the reader does not recognise is kept verbatim, so a new writer cannot
+break an old reader.</em></p>
+<img src="img/rete-anatomy.svg" alt="Anatomy of a .rete file, drawn to scale on the real dblp.rete — 2.27 GB, 179,328,188 triples, 64,276,736 terms. A 1 KiB header carries a 64-byte core and a directory of 24-byte entries; then a 731-byte dataset card, the front-coded dictionary (413 MB, 18.2%), and six permutation indexes cut into roughly 64 KiB tiles with a per-tile min/max synopsis (1.85 GB, 81.8%). The file ends in a 4-byte RETE magic that a truncated download cannot fake. This specimen has no pyramid, named graphs, text index or build info — those section kinds are optional, and the directory simply does not list them.">
+<p><em>The layout on a real specimen (<code>dblp.rete</code>, 179 M triples): the dictionary and the six permutation indexes carry nearly all the bytes; everything a reader needs to route a query — header, directory, card — fits in the first two range requests. This file carries none of the four optional sections, and the figure says so.</em></p>
 <p><em>The header is the directory: a single 1 KB read carries the offset and length of every section. The ASCII below is the precise reference.</em></p>
 <pre><code>┌──────────────────────────────────────────────────────────────┐
 │ HEADER            fixed-size, 1024 bytes, read first.          │
@@ -755,7 +758,7 @@ ones alike; treat its contents as advisory provenance, not integrity-protected
 data.</p>
 <hr />
 <h2 id="5-dictionary">5. Dictionary</h2>
-<img src="img/dictionary-roles.svg" alt="The dictionary's four front-coded sections: SHARED terms (both subject and object), SUBJECTS-only, OBJECTS-only, and PREDICATES, with role-ordered IDs.">
+<img src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
 <p><em>Four front-coded sections with role-ordered IDs: a term's ID range reveals whether it is a subject, object, or predicate.</em></p>
 <ul>
 <li>
@@ -815,6 +818,11 @@ that run comparing each materialized term; return its ID or <code>None</code>.</
 fetches just the run(s) covering the IDs/terms a query touches.</p>
 <hr />
 <h2 id="6-triples--quads">6. Triples / quads</h2>
+<img src="img/index-permutations.svg" alt="Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.">
+<p><em>Which pattern reaches which index, and what the other three actually buy. The
+routing three are measured on <code>tree-city-inventory</code>; the optional three are the
+bigger half, because a sort order that does not lead with a subject or predicate
+prefix compresses worse.</em></p>
 <ul>
 <li>Stored as integer triples in <strong>SPO, POS, OSP</strong> and, by default, also <strong>SOP,
 PSO, OPS</strong> (stable format <code>0x05</code>; experimental <code>0x03</code> stored only the first
@@ -980,7 +988,7 @@ through <code>0x04</code> are a clean break and must be rebuilt from RDF source.
 <hr />
 <h2 id="7-the-pyramid--community-summarization">7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>
-<img src="img/pyramid.svg" alt="The pyramid: a coarse community summary (a few super-nodes) at the top, communities in the middle, and the full triple graph at the base; clients read the top first and descend only where needed.">
+<img src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
 <p><em>Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.</em></p>
 <h3 id="71-build-time">7.1 Build time</h3>
 <ol>
@@ -1152,6 +1160,10 @@ separate directory/footer round-trip is needed:</p>
     prefixes and fetch only that one permutation payload. Unknown bound terms
     skip the index entirely and return an empty result.
 </code></pre>
+<img src="img/remote-open-cost.svg" alt="What a cold remote open costs, measured with rete cost on the published davidrumsey.rete — 74.8 MB, 5,001,983 triples. Each track is the whole file; the solid part is what crosses the wire. Reading the dataset card costs 2 requests and 61 KB, 0.08 percent. Opening lazily for a query costs 65 requests and 407 KB, 0.54 percent, because only tile directories are read. But routing one triple pattern costs 2 requests and 16.1 MB, 21.5 percent, and the overview costs 3 requests and 17.4 MB, 23.3 percent — both because resolving a term to an id pulls the whole dictionary, whose chunk directory stores every chunk's first term verbatim. Reading the file whole costs 74.7 MB, 99.9 percent.">
+<p><em>The same file, five ways in. The lazy path is 0.54% of the file; the two paths
+that must resolve a constant term to an id pay for the whole dictionary, whose
+chunk directory still stores every chunk's first term verbatim (#198).</em></p>
 <p>A full open touches ≤4 ranges (header, dict, index, pyramid-meta); the overview
 path touches 3 and skips the index entirely. The routed single-pattern path reads
 the selected permutation payload instead of the whole index container. These

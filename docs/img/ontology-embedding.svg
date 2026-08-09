@@ -1,46 +1,99 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">How the ontology is embedded in a .rete file: the subClassOf DAG, the per-level type and relation rollups, and the per-community descriptors live in the pyramid-meta section; the leaf class-relation graph lives in the card (metadata) section. Both are read over HTTP without the triple index.</title>
-  <rect width="720" height="420" fill="#ffffff"/>
-  <text x="360" y="30" text-anchor="middle" font-size="19" font-weight="700" fill="#1b1f24">Where the ontology lives in the file</text>
-  <text x="360" y="50" text-anchor="middle" font-size="12" fill="#5b6570">two index-free sections — fetched over HTTP without the triple index</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 576" role="img" aria-labelledby="t">
+  <title id="t">Where a .rete file keeps its ontology, on the published davidrumsey.rete — 74.8 MB across 6 sections. The dataset card, section kind 1, holds class_links (the leaf class-to-predicate-to-class graph), the class, predicate and datatype histograms, and the starter queries; rete card-url reads it. The pyramid, section kind 4, holds the subClassOf DAG with each class's parents and depth, the per-level type and relation rollups, and the community super-edges and descriptors; rete summary-url reads it, and it is absent whenever the graph has no rdf:type. The triple index, section kind 3, is never opened to read any of this.</title>
+  <!-- shared kit for the five semantic-zoom figures: class box = .cls + .clstx, instance = .inst r5.5,
+       title y40 / deck y62 / chip y76 / first section label y140, 26px margins. Keep them identical. -->
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .cls{fill:var(--panel);stroke:var(--meta)}
+    .cold{fill:var(--cold);stroke:var(--line)}
+    .coldtx{fill:var(--coldfg);font-size:13px}
+  </style>
 
-  <!-- METADATA / CARD section -->
-  <rect x="40" y="72" width="300" height="150" rx="9" fill="#f5f7f9" stroke="#e4e8ec"/>
-  <text x="56" y="95" font-size="13.5" font-weight="700" fill="#1b1f24">METADATA — the Dataset Card</text>
-  <g font-size="11.5" fill="#0f2347">
-    <rect x="56" y="106" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="68" y="125">class_links — leaf class→pred→class graph</text>
-    <rect x="56" y="142" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="68" y="161">classes · predicates · datatypes histograms</text>
-    <rect x="56" y="178" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="68" y="197">signals · starter queries</text>
-  </g>
-  <text x="190" y="216" text-anchor="middle" font-size="10.5" fill="#5b6570">read by card-url</text>
+  <rect x="1" y="1" width="558" height="574" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <!-- PYRAMID-META section -->
-  <rect x="380" y="72" width="300" height="222" rx="9" fill="#f5f7f9" stroke="#e4e8ec"/>
-  <text x="396" y="95" font-size="13.5" font-weight="700" fill="#1b1f24">PYRAMID-META — the schema pyramid</text>
-  <g font-size="11.5" fill="#0f2347">
-    <rect x="396" y="106" width="268" height="30" rx="6" fill="#dfeaff" stroke="#2a6df4"/>
-    <text x="408" y="125" font-weight="700">subClassOf DAG (non-exclusive, with depth)</text>
-    <rect x="396" y="142" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="408" y="161">type histogram — per level (rolled up)</text>
-    <rect x="396" y="178" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="408" y="197">class-relation graph — per level (lateral)</text>
-    <rect x="396" y="214" width="268" height="30" rx="6" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="408" y="233">community super-edges + descriptors</text>
-  </g>
-  <text x="530" y="266" text-anchor="middle" font-size="10.5" fill="#5b6570">read by summary-url / SummaryView</text>
+  <text class="title" x="26" y="40">Where the ontology lives in the file</text>
+  <text class="deck" x="26" y="62">three structures, derived at build time, read without the index</text>
 
-  <!-- string table note -->
-  <text x="530" y="284" text-anchor="middle" font-size="10" fill="#5b6570">(class + predicate IRIs in a self-contained string table — no dictionary needed)</text>
+  <!-- specimen chip -->
+  <rect x="26" y="76" width="134" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/>
+  <text class="mono body" x="40" y="95" font-weight="700">davidrumsey.rete</text>
+  <text class="ann" x="172" y="95">74.8 MB · 6 sections</text>
 
-  <!-- The triple index, untouched -->
-  <rect x="40" y="312" width="640" height="44" rx="8" fill="#ffffff" stroke="#cdd7e2" stroke-dasharray="5 4"/>
-  <text x="360" y="334" text-anchor="middle" font-size="12.5" fill="#9aa4af">TRIPLE INDEX — holds every triple</text>
-  <text x="360" y="349" text-anchor="middle" font-size="11" font-weight="700" fill="#c0392b">not needed to read the ontology · stays on the server</text>
+  <!-- ============ kind 1 — the dataset card ============ -->
+  <text class="sect" x="26" y="140">Dataset Card — section kind 1</text>
+  <rect x="26" y="150" width="508" height="126" rx="12" fill="var(--panel)" stroke="var(--line)"/>
 
-  <!-- caption -->
-  <text x="360" y="384" text-anchor="middle" font-size="12" font-weight="700" fill="#1b1f24">three orthogonal structures: is-a (DAG) · relates-to (relations) · co-occurrence (communities)</text>
-  <text x="360" y="403" text-anchor="middle" font-size="11" fill="#5b6570">all derived once at build time, all read in a handful of HTTP range requests</text>
+  <rect class="cls" x="42" y="160" width="476" height="28" rx="7"/>
+  <text class="body" x="56" y="179"><tspan class="mono" font-weight="700">class_links</tspan> — the leaf class→pred→class graph</text>
+
+  <rect class="cls" x="42" y="194" width="476" height="28" rx="7"/>
+  <text class="body" x="56" y="213">class · predicate · datatype histograms</text>
+
+  <rect class="cls" x="42" y="228" width="476" height="28" rx="7"/>
+  <text class="body" x="56" y="247">signals · starter queries</text>
+
+  <text class="ann" x="42" y="268"><tspan class="mono">read by rete card-url</tspan></text>
+
+  <!-- ============ kind 4 — the pyramid ============ -->
+  <text class="sect" x="26" y="304">Pyramid — section kind 4, optional</text>
+  <rect x="26" y="314" width="508" height="126" rx="12" fill="var(--panel)" stroke="var(--line)"/>
+
+  <rect class="cls" x="42" y="324" width="476" height="28" rx="7"/>
+  <text class="body" x="56" y="343">subClassOf DAG — every class's parents and depth</text>
+
+  <rect class="cls" x="42" y="358" width="476" height="28" rx="7"/>
+  <text class="body" x="56" y="377">type + relation rollup — one per level</text>
+
+  <rect class="cls" x="42" y="392" width="476" height="28" rx="7"/>
+  <text class="body" x="56" y="411">community super-edges + descriptors</text>
+
+  <text class="ann" x="42" y="432"><tspan class="mono">read by rete summary-url</tspan> — absent when the graph has no rdf:type</text>
+
+  <!-- ============ kind 3 — never opened ============ -->
+  <rect class="cold" x="26" y="456" width="508" height="46" rx="7" stroke-dasharray="5 4"/>
+  <text class="coldtx" x="280" y="478" text-anchor="middle" font-weight="700">Triple index — section kind 3</text>
+  <text class="coldtx" x="280" y="496" text-anchor="middle">never opened to read any of the above</text>
+
+  <!-- takeaway -->
+  <rect x="26" y="516" width="508" height="34" rx="12" fill="var(--panel)" stroke="var(--meta)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body u-metaink" x="40" y="538" font-weight="700">rete card-url · rete summary-url</text>
+  <text class="body" x="266" y="538">the ontology, no index</text>
 </svg>

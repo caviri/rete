@@ -1,71 +1,111 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">Same data, two shapes: rows versus a graph</title>
-  <rect width="760" height="360" fill="#ffffff"/>
-  <text x="380" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">Same data, two shapes: rows vs. a graph</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 380" role="img" aria-labelledby="t">
+  <title id="t">The same three facts drawn twice. On the left a friendship table with a person and knows column and three rows: Alice knows Bob, Bob knows Carol, Carol knows Alice. On the right the identical facts as a graph — three nodes joined by three :knows arrows in a cycle. The table stores rows, so following a chain means a join per hop; the graph stores each relationship itself, so the same question is a traversal.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onchip{fill:var(--on-chip);font-size:13px;font-weight:700}
+    .cell{fill:var(--panel);stroke:var(--line)}
+    .flow{stroke:var(--muted);stroke-width:1.8;fill:none}
+    /* colour utilities must beat the base text{fill} rule, so they come last */
+    .onink{fill:var(--surface)}
+    .dataink{fill:var(--data-ink)}
+  </style>
 
   <defs>
     <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--muted)"/>
     </marker>
   </defs>
 
-  <!-- LEFT: relational table -->
-  <text x="160" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#1b1f24">table: friendship</text>
+  <rect x="1" y="1" width="558" height="378" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <!-- header row -->
-  <rect x="50" y="92" width="110" height="38" fill="#0f1620"/>
-  <rect x="160" y="92" width="110" height="38" fill="#0f1620"/>
-  <text x="105" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">person</text>
-  <text x="215" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">knows</text>
+  <text class="title" x="26" y="40">The same facts, as rows and as a graph</text>
+  <text class="deck" x="26" y="62">three rows on the left, the identical three facts on the right</text>
 
-  <!-- data rows -->
-  <g font-size="13" fill="#1b1f24">
-    <rect x="50" y="130" width="110" height="38" fill="#ffffff" stroke="#e4e8ec"/>
-    <rect x="160" y="130" width="110" height="38" fill="#ffffff" stroke="#e4e8ec"/>
-    <text x="105" y="154" text-anchor="middle">Alice</text>
-    <text x="215" y="154" text-anchor="middle">Bob</text>
+  <!-- ============ table ============ -->
+  <text class="mono sect" x="26" y="104">table · friendship</text>
 
-    <rect x="50" y="168" width="110" height="38" fill="#f5f7f9" stroke="#e4e8ec"/>
-    <rect x="160" y="168" width="110" height="38" fill="#f5f7f9" stroke="#e4e8ec"/>
-    <text x="105" y="192" text-anchor="middle">Bob</text>
-    <text x="215" y="192" text-anchor="middle">Carol</text>
+  <rect x="26"  y="114" width="98" height="32" fill="var(--ink)"/>
+  <rect x="124" y="114" width="98" height="32" fill="var(--ink)"/>
+  <text class="body onink" x="75"  y="135" text-anchor="middle" font-weight="700">person</text>
+  <text class="body onink" x="173" y="135" text-anchor="middle" font-weight="700">knows</text>
 
-    <rect x="50" y="206" width="110" height="38" fill="#ffffff" stroke="#e4e8ec"/>
-    <rect x="160" y="206" width="110" height="38" fill="#ffffff" stroke="#e4e8ec"/>
-    <text x="105" y="230" text-anchor="middle">Carol</text>
-    <text x="215" y="230" text-anchor="middle">Alice</text>
+  <g class="body">
+    <rect class="cell" x="26"  y="146" width="98" height="32"/>
+    <rect class="cell" x="124" y="146" width="98" height="32"/>
+    <text x="75"  y="167" text-anchor="middle">Alice</text>
+    <text x="173" y="167" text-anchor="middle">Bob</text>
+
+    <rect class="cell" x="26"  y="178" width="98" height="32"/>
+    <rect class="cell" x="124" y="178" width="98" height="32"/>
+    <text x="75"  y="199" text-anchor="middle">Bob</text>
+    <text x="173" y="199" text-anchor="middle">Carol</text>
+
+    <rect class="cell" x="26"  y="210" width="98" height="32"/>
+    <rect class="cell" x="124" y="210" width="98" height="32"/>
+    <text x="75"  y="231" text-anchor="middle">Carol</text>
+    <text x="173" y="231" text-anchor="middle">Alice</text>
   </g>
 
-  <!-- CENTER: same facts arrow -->
-  <path d="M300,168 L440,168" stroke="#5b6570" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
-  <text x="370" y="158" text-anchor="middle" font-size="12.5" font-weight="600" fill="#2a6df4">same facts</text>
+  <!-- ============ same facts ============ -->
+  <text class="ann" x="262" y="172" text-anchor="middle">same facts</text>
+  <path class="flow" d="M232,190 L292,190" marker-end="url(#a)"/>
 
-  <!-- RIGHT: node-link graph -->
-  <text x="600" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#1b1f24">graph: relationships</text>
+  <!-- ============ graph ============ -->
+  <text class="mono sect" x="418" y="104" text-anchor="middle">graph · relationships</text>
 
-  <!-- nodes -->
-  <g>
-    <rect x="540" y="100" width="120" height="48" rx="24" fill="#dce8ff" stroke="#2a6df4"/>
-    <text x="600" y="130" text-anchor="middle" font-size="14" font-weight="700" fill="#1b3a8a">:Alice</text>
-
-    <rect x="640" y="220" width="120" height="48" rx="24" fill="#dce8ff" stroke="#2a6df4"/>
-    <text x="700" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#1b3a8a">:Bob</text>
-
-    <rect x="460" y="220" width="120" height="48" rx="24" fill="#dce8ff" stroke="#2a6df4"/>
-    <text x="520" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#1b3a8a">:Carol</text>
+  <g class="flow">
+    <path d="M452,164 L478,210" marker-end="url(#a)"/>
+    <path d="M444,232 L394,232" marker-end="url(#a)"/>
+    <path d="M362,212 L388,166" marker-end="url(#a)"/>
   </g>
 
-  <!-- edges -->
-  <g stroke="#5b6570" stroke-width="1.5" fill="none">
-    <path d="M624,150 L686,216" marker-end="url(#a)"/>
-    <path d="M636,244 L584,244" marker-end="url(#a)"/>
-    <path d="M512,218 L576,152" marker-end="url(#a)"/>
-  </g>
-  <g font-size="11.5" font-weight="600" fill="#2a6df4">
-    <text x="678" y="186" text-anchor="middle">:knows</text>
-    <text x="610" y="236" text-anchor="middle">:knows</text>
-    <text x="524" y="186" text-anchor="middle">:knows</text>
-  </g>
+  <rect x="376" y="130" width="84" height="32" rx="16" fill="var(--data)"/>
+  <text class="mono onchip" x="418" y="151" text-anchor="middle">:Alice</text>
 
-  <text x="380" y="332" text-anchor="middle" font-size="12.5" fill="#5b6570">Tables store rows; a graph stores relationships directly — so "who is connected to whom" is a traversal, not a join.</text>
+  <rect x="304" y="216" width="84" height="32" rx="16" fill="var(--data)"/>
+  <text class="mono onchip" x="346" y="237" text-anchor="middle">:Carol</text>
+
+  <rect x="448" y="216" width="84" height="32" rx="16" fill="var(--data)"/>
+  <text class="mono onchip" x="490" y="237" text-anchor="middle">:Bob</text>
+
+  <text class="mono ann dataink" x="419" y="224" text-anchor="middle" font-weight="700">:knows</text>
+  <text class="ann" x="418" y="274" text-anchor="middle">every arrow here is :knows</text>
+
+  <!-- takeaway -->
+  <rect x="26" y="292" width="508" height="58" rx="12" fill="var(--panel)" stroke="var(--data)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="body" x="40" y="316">A table stores rows; a graph stores the relationship itself.</text>
+  <text class="body" x="40" y="336">So "who is reachable from Alice" is a traversal, not a join per hop.</text>
 </svg>

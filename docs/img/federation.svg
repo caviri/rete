@@ -1,70 +1,107 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 400" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">federated query over several .rete files: a query goes to a predicate-routing router, which fans patterns out to three .rete files, whose results are union-merged by term into rows</title>
-  <rect width="820" height="400" fill="#ffffff"/>
-  <text x="410" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">Federated query over several .rete files</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 532" role="img" aria-labelledby="t">
+  <title id="t">How rete federate answers one SPARQL query from several .rete files. The router first reads each file's predicate set from its summary — a few hundred bytes, never the triple index — and skips any file whose predicates cannot match the query. The surviving files each run the query with the ordinary single-file engine and return term-level rows. Those rows are then unioned and deduplicated. The merge has to happen on strings because every file has its own dictionary, so the integer ID 42 in one file has nothing to do with ID 42 in another.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onchip{fill:var(--on-chip);font-size:13px}
+    .box{fill:var(--panel);stroke:var(--line)}
+    .flow{stroke:var(--muted);stroke-width:1.8;fill:none}
+    /* colour utilities must beat the base text{fill} rule, so they come last */
+    .onink{fill:var(--surface)}
+    .dataink{fill:var(--data-ink)}
+  </style>
 
   <defs>
     <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--muted)"/>
     </marker>
   </defs>
 
-  <!-- Query box -->
-  <rect x="40" y="70" width="220" height="64" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="58" y="98" font-family="ui-monospace,SFMono-Regular,monospace" font-size="12.5" font-weight="700" fill="#1b3a8a">SELECT ...</text>
-  <text x="58" y="118" font-family="ui-monospace,SFMono-Regular,monospace" font-size="12.5" font-weight="700" fill="#3a5a9a">WHERE { ... }</text>
+  <rect x="1" y="1" width="558" height="530" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <!-- Router box -->
-  <rect x="320" y="62" width="200" height="80" rx="8" fill="#0f1620"/>
-  <text x="420" y="98" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">router</text>
-  <text x="420" y="118" text-anchor="middle" font-size="11.5" fill="#c9d4e0">(predicate routing)</text>
+  <text class="title" x="26" y="40">Federation merges terms, not IDs</text>
+  <text class="deck" x="26" y="62">every file has its own dictionary, so the integer IDs cannot be combined</text>
 
-  <!-- Query -> Router -->
-  <g stroke="#5b6570" stroke-width="1.5" fill="none">
-    <path d="M260,102 L314,102" marker-end="url(#a)"/>
-  </g>
+  <!-- ============ query ============ -->
+  <text class="sect" x="26" y="104">one query</text>
+  <rect class="box" x="26" y="114" width="508" height="36" rx="7"/>
+  <text class="mono body" x="42" y="137">SELECT ?s ?o WHERE { ?s :cites ?o }</text>
 
-  <!-- Three file boxes -->
-  <rect x="600" y="48" width="190" height="48" rx="8" fill="#2a6df4"/>
-  <text x="618" y="70" font-family="ui-monospace,SFMono-Regular,monospace" font-size="12.5" font-weight="700" fill="#ffffff">cites-2021.rete</text>
-  <text x="618" y="88" font-size="11" fill="#dce8ff">own dictionary</text>
+  <path class="flow" d="M280,150 L280,166" marker-end="url(#a)"/>
 
-  <rect x="600" y="106" width="190" height="48" rx="8" fill="#2a6df4"/>
-  <text x="618" y="128" font-family="ui-monospace,SFMono-Regular,monospace" font-size="12.5" font-weight="700" fill="#ffffff">cites-2023.rete</text>
-  <text x="618" y="146" font-size="11" fill="#dce8ff">own dictionary</text>
+  <!-- ============ router ============ -->
+  <rect x="26" y="170" width="508" height="40" rx="7" fill="var(--ink)"/>
+  <text class="body onink" x="280" y="195" text-anchor="middle" font-weight="700">router · predicate routing</text>
 
-  <rect x="600" y="164" width="190" height="48" rx="8" fill="#2a6df4"/>
-  <text x="618" y="186" font-family="ui-monospace,SFMono-Regular,monospace" font-size="12.5" font-weight="700" fill="#ffffff">cites-2025.rete</text>
-  <text x="618" y="204" font-size="11" fill="#dce8ff">own dictionary</text>
+  <text class="ann" x="26" y="232">Routing reads only each file's summary — the triple index is never touched.</text>
 
-  <!-- Router -> files (fan out) -->
-  <g stroke="#5b6570" stroke-width="1.5" fill="none">
-    <path d="M520,92 C560,80 565,72 594,72" marker-end="url(#a)"/>
-    <path d="M520,102 C560,110 565,128 594,130" marker-end="url(#a)"/>
-    <path d="M520,112 C558,150 565,186 594,188" marker-end="url(#a)"/>
-  </g>
+  <path class="flow" d="M107,240 L107,256" marker-end="url(#a)"/>
+  <path class="flow" d="M280,240 L280,256" marker-end="url(#a)"/>
+  <path class="flow" d="M453,240 L453,256" marker-end="url(#a)"/>
 
-  <!-- Union merge box -->
-  <rect x="310" y="262" width="220" height="60" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="420" y="290" text-anchor="middle" font-size="14" font-weight="700" fill="#1b3a8a">union merge</text>
-  <text x="420" y="309" text-anchor="middle" font-size="11.5" fill="#3a5a9a">(by term)</text>
+  <!-- ============ three files ============ -->
+  <rect x="26"  y="260" width="162" height="58" rx="7" fill="var(--data)"/>
+  <text class="mono onchip" x="107" y="284" text-anchor="middle" font-weight="700">cites-2021.rete</text>
+  <text class="onchip" x="107" y="304" text-anchor="middle">own dictionary</text>
 
-  <!-- files -> union merge (converge) -->
-  <g stroke="#5b6570" stroke-width="1.5" fill="none">
-    <path d="M620,96 C600,200 540,250 500,260" marker-end="url(#a)"/>
-    <path d="M640,154 C620,210 540,250 470,260" marker-end="url(#a)"/>
-    <path d="M660,212 C640,250 500,256 445,260" marker-end="url(#a)"/>
-  </g>
+  <rect x="199" y="260" width="162" height="58" rx="7" fill="var(--data)"/>
+  <text class="mono onchip" x="280" y="284" text-anchor="middle" font-weight="700">cites-2023.rete</text>
+  <text class="onchip" x="280" y="304" text-anchor="middle">own dictionary</text>
 
-  <!-- Results box -->
-  <rect x="40" y="262" width="160" height="60" rx="8" fill="#0f1620"/>
-  <text x="120" y="298" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">rows</text>
+  <rect x="372" y="260" width="162" height="58" rx="7" fill="var(--data)"/>
+  <text class="mono onchip" x="453" y="284" text-anchor="middle" font-weight="700">cites-2025.rete</text>
+  <text class="onchip" x="453" y="304" text-anchor="middle">own dictionary</text>
 
-  <!-- union merge -> rows -->
-  <g stroke="#5b6570" stroke-width="1.5" fill="none">
-    <path d="M310,292 L206,292" marker-end="url(#a)"/>
-  </g>
+  <text class="ann" x="280" y="340" text-anchor="middle">each survivor runs the query with the ordinary single-file engine</text>
 
-  <text x="410" y="356" text-anchor="middle" font-size="12.5" fill="#5b6570">Each file keeps its own dictionary; the router sends each pattern only to files that hold its</text>
-  <text x="410" y="376" text-anchor="middle" font-size="12.5" fill="#5b6570">predicate, then results are merged at the term level.</text>
+  <path class="flow" d="M107,348 L107,364" marker-end="url(#a)"/>
+  <path class="flow" d="M280,348 L280,364" marker-end="url(#a)"/>
+  <path class="flow" d="M453,348 L453,364" marker-end="url(#a)"/>
+
+  <!-- ============ union merge ============ -->
+  <rect class="box" x="26" y="368" width="508" height="46" rx="7"/>
+  <text class="body" x="280" y="391" text-anchor="middle" font-weight="700">union merge</text>
+  <text class="ann"  x="280" y="409" text-anchor="middle">on the term strings, then deduped</text>
+
+  <path class="flow" d="M280,414 L280,430" marker-end="url(#a)"/>
+
+  <rect x="210" y="434" width="140" height="34" rx="7" fill="var(--ink)"/>
+  <text class="body onink" x="280" y="456" text-anchor="middle" font-weight="700">rows</text>
+
+  <!-- takeaway -->
+  <rect x="26" y="482" width="508" height="38" rx="12" fill="var(--panel)" stroke="var(--data)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body dataink" x="40" y="506" font-weight="700">ID 42</text>
+  <text class="body" x="90" y="506">means nothing across files — so the merge happens on strings</text>
 </svg>

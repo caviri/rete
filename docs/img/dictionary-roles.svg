@@ -1,42 +1,99 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">dictionary: four front-coded sections — shared, subjects, objects, predicates — with role-ordered IDs</title>
-  <rect width="720" height="360" fill="#ffffff"/>
-  <text x="360" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">Dictionary — four front-coded sections</text>
-  <text x="360" y="54" text-anchor="middle" font-size="12.5" fill="#5b6570">IDs are role-ordered so a term's position (subject / object / predicate) is known from its ID range.</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 574" role="img" aria-labelledby="t">
+  <title id="t">The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onchip{fill:var(--on-chip);font-size:13px}
+    .sec{fill:var(--panel);stroke:var(--data)}
+  </style>
 
-  <!-- SHARED -->
-  <rect x="48" y="80" width="280" height="100" rx="8" fill="#2a6df4"/>
-  <text x="64" y="106" font-size="14" font-weight="700" fill="#ffffff">SHARED</text>
-  <text x="64" y="126" font-size="11.5" fill="#dce8ff">terms used as both subject &amp; object</text>
-  <text x="64" y="160" font-size="11.5" fill="#dce8ff">IDs 1..S — same id in S and O position</text>
-
-  <!-- SUBJECTS -->
-  <rect x="48" y="196" width="280" height="64" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="64" y="222" font-size="14" font-weight="700" fill="#1b3a8a">SUBJECTS-only</text>
-  <text x="64" y="242" font-size="11.5" fill="#3a5a9a">subject IDs continue S+1..</text>
-
-  <!-- OBJECTS -->
-  <rect x="392" y="196" width="280" height="64" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="408" y="222" font-size="14" font-weight="700" fill="#1b3a8a">OBJECTS-only</text>
-  <text x="408" y="242" font-size="11.5" fill="#3a5a9a">incl. literals · object IDs S+1..</text>
-
-  <!-- PREDICATES -->
-  <rect x="392" y="80" width="280" height="100" rx="8" fill="#0f1620"/>
-  <text x="408" y="106" font-size="14" font-weight="700" fill="#ffffff">PREDICATES</text>
-  <text x="408" y="126" font-size="11.5" fill="#c9d4e0">independent ID space</text>
-  <text x="408" y="160" font-size="11.5" fill="#c9d4e0">(graph IRIs live in NAMED GRAPHS)</text>
-
-  <!-- shared feeds both subjects and objects -->
   <defs>
     <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--muted)"/>
     </marker>
   </defs>
-  <g stroke="#5b6570" stroke-width="1.5" fill="none">
-    <path d="M150,180 L150,192" marker-end="url(#a)"/>
-    <path d="M260,180 C320,188 440,188 470,192" marker-end="url(#a)"/>
-  </g>
 
-  <text x="360" y="300" text-anchor="middle" font-size="12.5" fill="#5b6570">Each section is sorted, deduped, front-coded, and restart-indexed for O(log n) term ↔ id lookup.</text>
-  <text x="360" y="320" text-anchor="middle" font-size="12.5" fill="#5b6570">Restart points double as range-fetch / compression boundaries.</text>
+  <rect x="1" y="1" width="558" height="572" rx="14" fill="var(--surface)" stroke="var(--line)"/>
+
+  <text class="title" x="26" y="40">The dictionary is four sections</text>
+  <text class="deck" x="26" y="62">a term's ID range tells you its role — there is no second lookup</text>
+
+  <!-- ============ the shared span ============ -->
+  <text class="sect" x="26" y="100">one ID space, shared by subject and object position</text>
+
+  <rect x="26" y="112" width="508" height="62" rx="7" fill="var(--data)"/>
+  <text class="mono onchip" x="42" y="139" font-size="15" font-weight="700">SHARED</text>
+  <text class="onchip" x="42" y="160">terms used as both subject and object</text>
+  <text class="mono onchip" x="518" y="139" text-anchor="end" font-weight="700">IDs 1…S</text>
+  <text class="onchip" x="518" y="160" text-anchor="end">same ID in both positions</text>
+
+  <path d="M148,176 V188" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+  <path d="M412,176 V188" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+
+  <rect class="sec" x="26" y="192" width="244" height="84" rx="7"/>
+  <text class="mono body u-dataink" x="42" y="216" font-weight="700">SUBJECTS-only</text>
+  <text class="body" x="42" y="238">IDs continue at S+1</text>
+  <text class="ann" x="42" y="258">IRIs and blank nodes</text>
+
+  <rect class="sec" x="290" y="192" width="244" height="84" rx="7"/>
+  <text class="mono body u-dataink" x="306" y="216" font-weight="700">OBJECTS-only</text>
+  <text class="body" x="306" y="238">IDs continue at S+1</text>
+  <text class="ann" x="306" y="258">IRIs, blank nodes, literals</text>
+
+  <text class="body" x="26" y="300">A shared term has one ID that means the same thing in either position.</text>
+
+  <!-- ============ predicates ============ -->
+  <text class="sect" x="26" y="338">predicates — a separate ID space</text>
+
+  <rect class="sec" x="26" y="350" width="508" height="62" rx="7"/>
+  <text class="mono body u-dataink" x="42" y="374" font-weight="700">PREDICATES</text>
+  <text class="ann" x="518" y="374" text-anchor="end">never shared with S or O</text>
+  <text class="body" x="42" y="396">its own IDs from 1 — graph IRIs live in the named-graphs section</text>
+
+  <!-- ============ inside a section ============ -->
+  <text class="sect" x="26" y="436">inside every section</text>
+  <text class="body" x="26" y="456">sorted · deduped · front-coded against the previous term</text>
+  <text class="body" x="26" y="476">a restart point every 16 terms stores the full term — O(log n) term ↔ ID</text>
+  <text class="body" x="26" y="496">chunked at ~64 KiB, so one lookup faults in one chunk, not the section</text>
+
+  <rect x="26" y="514" width="508" height="34" rx="12" fill="var(--panel)" stroke="var(--data)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body u-dataink" x="40" y="536" font-weight="700">role from the ID alone</text>
+  <text class="body" x="196" y="536">— no extra lookup, no extra bytes</text>
 </svg>

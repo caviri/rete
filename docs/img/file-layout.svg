@@ -1,53 +1,140 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 470" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">rete on-disk file layout: a 1 KB header that holds the offset of every section</title>
-  <rect width="720" height="470" fill="#ffffff"/>
-  <text x="360" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">On-disk layout — the header is the directory</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 584" role="img" aria-labelledby="t">
+  <title id="t">The section directory inside a .rete header, drawn to scale on the published davidrumsey.rete. The header is 1024 bytes: a 64-byte core, then up to 40 directory entries of 24 bytes each starting at byte 64, then zero padding — this file uses 6 entries, so most of the header is spare room. One entry is a 2-byte kind, a 2-byte flags field, 4 reserved bytes, an 8-byte offset and an 8-byte length. The seven typed kinds are dataset card, dictionary, index, pyramid, named graphs, text index and build info; this file has all but named graphs and build info. One GET of bytes 0 to 1023 therefore locates every section in the file.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .cold{fill:var(--cold);stroke:var(--line)}
+    .coldtx{fill:var(--coldfg);font-size:13px}
+    .lead{stroke:var(--muted);stroke-width:1;fill:none;stroke-dasharray:4 3}
+  </style>
 
-  <defs>
-    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#2a6df4"/>
-    </marker>
-  </defs>
+  <rect x="1" y="1" width="558" height="582" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <!-- HEADER block (accent) -->
-  <rect x="360" y="56" width="300" height="48" rx="6" fill="#2a6df4"/>
-  <text x="510" y="80" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">HEADER</text>
-  <text x="510" y="96" text-anchor="middle" font-size="11.5" fill="#dce8ff">fixed 1 KB · read first · a typed directory of every section's offset+length</text>
+  <text class="title" x="26" y="40">The header is the directory</text>
+  <text class="deck" x="26" y="62">one 1 KiB read locates every section — there is nothing else to chase</text>
 
-  <!-- Section blocks -->
-  <g font-size="13.5" font-weight="600">
-    <rect x="360" y="124" width="300" height="44" rx="6" fill="#f5f7f9" stroke="#e4e8ec"/>
-    <text x="376" y="151" fill="#1b1f24">DICTIONARY</text>
-    <text x="644" y="151" text-anchor="end" font-size="11" font-weight="400" fill="#5b6570">front-coded · 4 sections</text>
+  <rect x="26" y="76" width="164" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/>
+  <text class="mono body" x="40" y="95" font-weight="700">davidrumsey.rete</text>
+  <text class="ann" x="202" y="95">74.8 MB · 6 sections</text>
 
-    <rect x="360" y="176" width="300" height="44" rx="6" fill="#f5f7f9" stroke="#e4e8ec"/>
-    <text x="376" y="203" fill="#1b1f24">INDEX</text>
-    <text x="644" y="203" text-anchor="end" font-size="11" font-weight="400" fill="#5b6570">SPO / POS / OSP</text>
+  <!-- ============ the header, to scale ============ -->
+  <text class="sect" x="26" y="140">the header — <tspan class="mono">bytes 0–1023</tspan>, drawn to scale</text>
+  <rect x="26"    y="150" width="30"    height="18" rx="4" fill="var(--meta)" opacity="0.55"/>
+  <!-- the six directory entries, each 24 B = 11.25 px, drawn discretely -->
+  <g fill="var(--meta)">
+    <rect x="56.0"  y="150" width="10.25" height="18" rx="3"/>
+    <rect x="67.25" y="150" width="10.25" height="18" rx="3"/>
+    <rect x="78.5"  y="150" width="10.25" height="18" rx="3"/>
+    <rect x="89.75" y="150" width="10.25" height="18" rx="3"/>
+    <rect x="101.0" y="150" width="10.25" height="18" rx="3"/>
+    <rect x="112.25" y="150" width="10.25" height="18" rx="3"/>
+  </g>
+  <rect x="123.5" y="150" width="382.5" height="18" rx="4" class="cold"/>
+  <path class="lead" d="M41 168 v12"/>
+  <path class="lead" d="M112 168 v26"/>
+  <path class="lead" d="M315 168 v12"/>
+  <text class="ann" x="26"  y="196">core 64 B</text>
+  <text class="ann" x="315" y="196" text-anchor="middle">zero pad — room for 40 sections in all</text>
+  <text class="ann" x="104" y="212">6 entries · 24 B each</text>
 
-    <rect x="360" y="228" width="300" height="44" rx="6" fill="#f5f7f9" stroke="#e4e8ec"/>
-    <text x="376" y="255" fill="#1b1f24">PYRAMID META</text>
-    <text x="644" y="255" text-anchor="end" font-size="11" font-weight="400" fill="#5b6570">community summary</text>
-
-    <rect x="360" y="280" width="300" height="44" rx="6" fill="#f5f7f9" stroke="#e4e8ec" stroke-dasharray="4 3"/>
-    <text x="376" y="307" fill="#1b1f24">NAMED GRAPHS</text>
-    <text x="644" y="307" text-anchor="end" font-size="11" font-weight="400" fill="#5b6570">optional · quads</text>
-
-    <rect x="360" y="332" width="300" height="44" rx="6" fill="#0f1620"/>
-    <text x="376" y="359" fill="#ffffff">FOOTER</text>
-    <text x="644" y="359" text-anchor="end" font-size="11" font-weight="400" fill="#c9d4e0">4-byte RETE magic</text>
+  <!-- ============ one entry, to scale ============ -->
+  <text class="sect" x="26" y="252">one entry — <tspan class="mono">24 bytes</tspan> at <tspan class="mono">64 + i × 24</tspan></text>
+  <rect x="26"  y="262" width="40"  height="18" rx="4" fill="var(--meta)"/>
+  <rect x="66"  y="262" width="40"  height="18" rx="4" fill="var(--meta)" opacity="0.55"/>
+  <rect x="106" y="262" width="80"  height="18" rx="4" class="cold"/>
+  <rect x="186" y="262" width="160" height="18" rx="4" fill="var(--meta)"/>
+  <rect x="346" y="262" width="160" height="18" rx="4" fill="var(--meta)"/>
+  <g class="mono" font-size="13">
+    <text class="u-metaink" x="46"  y="298" text-anchor="middle">kind</text>
+    <text class="u-metaink" x="86"  y="298" text-anchor="middle">flags</text>
+    <text class="u-coldfg" x="146" y="298" text-anchor="middle">rsvd</text>
+    <text class="u-metaink" x="266" y="298" text-anchor="middle">offset u64</text>
+    <text class="u-metaink" x="426" y="298" text-anchor="middle">length u64</text>
   </g>
 
-  <!-- Arrows from header to each section -->
-  <g stroke="#2a6df4" stroke-width="1.6" fill="none">
-    <path d="M360,92 C300,100 300,140 354,146" marker-end="url(#a)"/>
-    <path d="M360,96 C260,110 250,190 354,198" marker-end="url(#a)"/>
-    <path d="M360,100 C230,118 215,242 354,250" marker-end="url(#a)"/>
-    <path d="M360,102 C205,126 195,294 354,302" marker-end="url(#a)"/>
-    <path d="M360,104 C185,134 180,346 354,354" marker-end="url(#a)"/>
+  <!-- ============ what this file's directory says ============ -->
+  <text class="sect" x="26" y="338">what this file's directory says</text>
+  <g class="mono" font-size="13">
+    <text class="ann" x="26"  y="358">kind</text>
+    <text class="ann" x="66"  y="358">section</text>
+    <text class="ann" x="392" y="358" text-anchor="end">offset</text>
+    <text class="ann" x="534" y="358" text-anchor="end">length</text>
+
+    <text class="u-metaink" x="26" y="380">1</text>
+    <text x="66" y="380">dataset card</text>
+    <text x="392" y="380" text-anchor="end">1,024</text>
+    <text x="534" y="380" text-anchor="end">59,921</text>
+
+    <text class="u-dataink" x="26" y="400">2</text>
+    <text x="66" y="400">dictionary</text>
+    <text x="392" y="400" text-anchor="end">60,945</text>
+    <text x="534" y="400" text-anchor="end">16,069,891</text>
+
+    <text class="u-dataink" x="26" y="420">3</text>
+    <text x="66" y="420">index</text>
+    <text x="392" y="420" text-anchor="end">16,130,836</text>
+    <text x="534" y="420" text-anchor="end">42,598,021</text>
+
+    <text class="u-metaink" x="26" y="440">4</text>
+    <text x="66" y="440">pyramid</text>
+    <text x="392" y="440" text-anchor="end">58,728,857</text>
+    <text x="534" y="440" text-anchor="end">1,332,512</text>
+
+    <text class="coldtx" x="26" y="460">5</text>
+    <text class="coldtx" x="66" y="460">named graphs</text>
+    <text class="coldtx" x="534" y="460" text-anchor="end">not in this file</text>
+
+    <text class="u-dataink" x="26" y="480">6</text>
+    <text x="66" y="480">text index</text>
+    <text x="392" y="480" text-anchor="end">60,061,369</text>
+    <text x="534" y="480" text-anchor="end">14,741,877</text>
+
+    <text class="coldtx" x="26" y="500">7</text>
+    <text class="coldtx" x="66" y="500">build info</text>
+    <text class="coldtx" x="534" y="500" text-anchor="end">not in this file</text>
   </g>
 
-  <text x="170" y="420" text-anchor="middle" font-size="12.5" font-weight="600" fill="#2a6df4">one 1 KB read</text>
-  <text x="170" y="438" text-anchor="middle" font-size="12.5" font-weight="600" fill="#2a6df4">locates everything</text>
+  <text class="ann" x="26" y="524">A kind a reader does not know is kept verbatim — a new writer cannot break an old reader.</text>
 
-  <text x="510" y="424" text-anchor="middle" font-size="12.5" fill="#5b6570">No separate directory to chase — every offset+length lives in the header.</text>
+  <!-- takeaway -->
+  <rect x="26" y="536" width="508" height="34" rx="12" fill="var(--panel)" stroke="var(--meta)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body u-metaink" x="40" y="558" font-weight="700">GET bytes=0-1023</text>
+  <text class="body" x="170" y="558">— and the client knows where everything is</text>
 </svg>
