@@ -495,7 +495,12 @@ SELECT ?title (COUNT(?citing) AS ?citations) WHERE {
       let fetched = 0, reqs = 0;
       const get = async (o, l) => { fetched += l; reqs++; return range(o, l); };
 
-      const header = await get(0, 128);
+      // rete_core::HEADER_LEN. `header_ranges` calls Header::from_bytes, which
+      // rejects anything shorter outright ("buffer too small: need 1024 bytes"),
+      // so the 128 this used to fetch — the pre-v0.3 header size — failed this
+      // button on every file. Keep in step with HEADER_LEN if the format grows.
+      const HEADER_LEN = 1024;
+      const header = await get(0, HEADER_LEN);
       const r = JSON.parse(header_ranges(header));
       const sparse = new Uint8Array(total);
       sparse.set(header, 0);
