@@ -349,6 +349,31 @@ embedded in the page; the big ones (up to a <strong>117 M-triple library graph</
 a <strong>1 GB Wikidata slice</strong>) stay on their URL and are <strong>range-read lazily</strong>: a
 query fetches only the byte ranges it touches, and a counter shows exactly how
 few bytes crossed the wire.</p>
+<h2 id="what-it-looks-like">What it looks like</h2>
+<p>Five views of the same page. Every one is a live query against a file that stays
+on its URL — the links reproduce each shot.</p>
+<p><a href="playground.html#dataset=opencitations&amp;load=lazy&amp;ex=2"><img src="img/playground-sparql.png" alt="The playground querying opencitations.rete: a ten-line SPARQL SELECT that pins a journal by title and walks oc:partOf to its papers, a counter reading 25 row(s), 161 range req, 189.4 MB of 33.39 GB fetched, and a results table of DOIs, titles and years." /></a></p>
+<p><strong>SPARQL against 5.18 billion triples.</strong> <code>opencitations.rete</code> is one 33.4 GB file
+on object storage; 25 rows cost <strong>161 range requests and 189 MB</strong>, opening the
+file included. The rest is never transferred.</p>
+<p><a href="playground.html#dataset=plantatlas&amp;load=lazy&amp;ex=0"><img src="img/playground-media.png" alt="The playground querying plantatlas.rete: a results table whose third column renders each specimen&#39;s WebP photograph inline, captioned &#39;WEBP · 1448×1024&#39;, with the counter reading 40 row(s), 1 range req, 256.0 KB of 9.8 MB fetched, 157 ms." /></a></p>
+<p><strong>The pictures are in the graph.</strong> Those photographs are <code>xsd:base64Binary</code> WebP
+literals stored inside the <code>.rete</code> and rendered into the cell — 40 rows and
+their pictures for <strong>one range request and 256 KB</strong>. IIIF, PDF, audio, video and
+<code>.glb</code> cells work the same way; see
+<a href="media-companions.html">Media &amp; SQL companions</a>.</p>
+<p><a href="playground.html#dataset=davidrumsey&amp;load=lazy"><img src="img/playground-card.png" alt="The Dataset Card modal over davidrumsey.rete: title, licence CC BY-NC-SA 3.0, source link, stat tiles reading 5,001,984 triples and 1,906,259 terms, expandable vocabulary/predicate/class sections, and a footer reading &#39;58.5 KB, read in one header + one coalesced range&#39;." /></a></p>
+<p><strong>The file describes itself.</strong> The <a href="dataset-cards.html">Dataset Card</a> is read
+straight off the header — <strong>58.5 KB in one coalesced range request</strong>, index
+untouched. See <a href="#card">🏷 Card</a> below.</p>
+<p><a href="playground.html#dataset=gbif-birds&amp;load=lazy&amp;ex=10"><img src="img/playground-map.png" alt="The Map output over gbif-birds.rete: 3,000 red sighting dots for the family Accipitridae over Iberia and the western Alps on a pale Carto Light basemap, with a Basemap picker above it." /></a></p>
+<p><strong>GeoSPARQL, drawn.</strong> 3,000 raptor sightings out of a 334 M-triple, 1.43 GB GBIF
+graph, put on a basemap — <code>geo:asWKT</code> detected in the result. See
+<a href="#output-views">Output views</a> and <a href="geosparql.html">GeoSPARQL</a>.</p>
+<p><a href="playground.html#dataset=davidrumsey&amp;load=lazy&amp;mode=explore"><img src="img/playground-explore.png" alt="The Explore view over davidrumsey.rete: chips per rdf:type class (AtlasMap 71311, TextPage 26340, View 15666 …) above an entity table whose columns are creator, date, description, isPartOf and publisher." /></a></p>
+<p><strong>Browse it like an archive.</strong> <a href="#beyond-sparql-the-other-modes">Explore</a> turns each <code>rdf:type</code> class
+into a table — entities as rows, properties as columns — so an unfamiliar graph
+is navigable before you know a predicate in it.</p>
 <h2 id="pick-a-dataset">Pick a dataset</h2>
 <p>The dataset picker groups the catalog by theme (heritage, science, reference,
 demos). Each entry shows its size, license, and a description; picking one

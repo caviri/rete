@@ -14,10 +14,49 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/caviri/rete/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/caviri/rete/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="scripts/coverage.sh"><img src="https://img.shields.io/badge/coverage%20floors-core%20%E2%89%A5%2090%25%20%C2%B7%20cli%20%E2%89%A5%2075%25-informational" alt="CI-enforced line-coverage floors: rete-core at least 90%, rete-cli at least 75%"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+  <a href="https://doi.org/10.5281/zenodo.21546288"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21546288.svg" alt="DOI: 10.5281/zenodo.21546288"></a>
+</p>
+
+<p align="center">
+  <a href="https://crates.io/crates/rete-cli"><img src="https://img.shields.io/crates/v/rete-cli?label=crates.io%20rete-cli&logo=rust&logoColor=white" alt="rete-cli on crates.io"></a>
+  <a href="https://pypi.org/project/rete-graph/"><img src="https://img.shields.io/pypi/v/rete-graph?label=PyPI%20rete-graph&logo=pypi&logoColor=white" alt="rete-graph on PyPI"></a>
+  <a href="https://www.npmjs.com/package/rete-graph"><img src="https://img.shields.io/npm/v/rete-graph?label=npm%20rete-graph&logo=npm&logoColor=white" alt="rete-graph on npm"></a>
+  <a href="https://data.graphplaza.com/mcpb/rete.mcpb"><img src="https://img.shields.io/badge/Claude%20Desktop-rete.mcpb-2b7a5b" alt="rete.mcpb — Claude Desktop extension"></a>
+</p>
+
+<p align="center">
   <a href="https://caviri.github.io/rete/jupyterlite/lab/index.html?path=graph-data-science.ipynb"><img src="https://img.shields.io/badge/JupyterLite-in--browser-F37626?logo=jupyter&logoColor=white" alt="Open in JupyterLite"></a>
   <a href="https://colab.research.google.com/github/caviri/rete/blob/main/clients/python/examples/graph-data-science.ipynb"><img src="https://img.shields.io/badge/Colab-open-F9AB00?logo=googlecolab&logoColor=white" alt="Open in Colab"></a>
   <a href="https://mybinder.org/v2/gh/caviri/rete/main?labpath=clients%2Fpython%2Fexamples%2Fgraph-data-science.ipynb"><img src="https://img.shields.io/badge/Binder-launch-579ACA?logo=jupyter&logoColor=white" alt="Launch Binder"></a>
 </p>
+
+> [!IMPORTANT]
+> **Pre-1.0 — expect breaking changes.** rete is **0.3.2**, and until **1.0.0**
+> *both* the public API and the `.rete` file format may change in ways that break
+> what you built on them.
+>
+> - **APIs.** The Rust, CLI and WASM surfaces carry **no semantic-versioning
+>   promise while the crates are 0.x**; semver applies from 1.0.0 onward. The
+>   language clients track the engine's `MAJOR.MINOR`.
+> - **Format.** The generation byte `0x05` — *stable format generation 1* — was
+>   frozen on **2026-07-14** and has not moved since; the experimental
+>   generations `0x01`–`0x04` predate that freeze and must be rebuilt from RDF
+>   source today. That freeze is a track record, not yet a guarantee: the
+>   [release notes](https://caviri.github.io/rete/release.html) reserve **one
+>   final rebuild** if review changes the format before 1.0.0, and the durable
+>   compatibility promise starts there. The generation byte does not by itself
+>   pin *reader* capability either: a `0x05` file written with
+>   `--permutations 3` is refused outright by a reader that predates the
+>   permutation mask.
+>
+> [Compatibility](https://caviri.github.io/rete/compatibility.html) and the
+> [release notes](https://caviri.github.io/rete/release.html) are the sources of
+> truth; nothing above is a caveat about *answers* — see
+> [conformance](https://caviri.github.io/rete/conformance.html) for what the
+> engine is tested against.
 
 ---
 
@@ -73,15 +112,15 @@ WebAssembly, so a **browser can query the file directly with no backend**.
 
 One engine, every runtime — every client opens local files *and* remote URLs
 through the same lazy range reader and returns parsed SPARQL results (all
-client versions track the engine's 0.3.0 line):
+client versions track the engine's 0.3.x line):
 
 | Client | Get it | Notes |
 |---|---|---|
 | **Python** [![PyPI](https://img.shields.io/pypi/v/rete-graph?label=rete-graph)](https://pypi.org/project/rete-graph/) | `pip install rete-graph` | CPython ≥ 3.9 wheels for Linux/macOS/Windows **plus Pyodide** (JupyterLite, marimo WASM) · [docs](https://caviri.github.io/rete/python.html) · [tutorial](https://caviri.github.io/rete/python-build-tutorial.html) |
 | **JavaScript** [![npm](https://img.shields.io/npm/v/rete-graph?label=rete-graph)](https://www.npmjs.com/package/rete-graph) | `npm install rete-graph` — or one `<script>` tag: `cdn.jsdelivr.net/npm/rete-graph@0.3.0/dist/rete-graph.min.js` | Node ≥ 18 + browsers; TypeScript types included · [docs](https://caviri.github.io/rete/javascript.html) |
-| **Java** | `mvn -f clients/java install` (Maven Central pending) | pure JVM — the engine as wasm on Chicory, plus an RDF4J `Sail` binding · [readme](clients/java/README.md) |
-| **R** | `remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)` (needs Rust; CRAN/R-universe pending) | R ≥ 4.2; SPARQL results as data frames · [docs](https://caviri.github.io/rete/r.html) |
-| **Rust** | `rete-core` / `rete-cli` in this repo (crates.io release pending) | native + wasm · [Rust API](https://caviri.github.io/rete/rust-api.html) · [CLI reference](https://caviri.github.io/rete/cli.html) |
+| **Rust** [![crates.io](https://img.shields.io/crates/v/rete-cli?label=rete-cli)](https://crates.io/crates/rete-cli) | `cargo install rete-cli --locked`, or `rete-core` as a library | native + wasm · [Rust API](https://caviri.github.io/rete/rust-api.html) · [CLI reference](https://caviri.github.io/rete/cli.html) · [docs.rs](https://docs.rs/rete-core) |
+| **Java** | `mvn -f clients/java install` — **not published to Maven Central yet**, so there is no coordinate to depend on | pure JVM — the engine as wasm on Chicory, plus an RDF4J `Sail` binding · [readme](clients/java/README.md) |
+| **R** | `remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)` (needs Rust) — **not on CRAN or R-universe** | R ≥ 4.2; SPARQL results as data frames · [docs](https://caviri.github.io/rete/r.html) |
 | **Browser, zero install** | [playground](https://caviri.github.io/rete/playground.html) · [SPARQL IDE](https://caviri.github.io/rete/yasgui.html) | query any `.rete` URL with no install at all |
 | **Claude Desktop** | [**⬇ rete.mcpb**](https://data.graphplaza.com/mcpb/rete.mcpb) — double-click it (or take the checksummed copy from [Releases](https://github.com/caviri/rete/releases)) | one-click [MCP Bundle](https://github.com/modelcontextprotocol/mcpb): the engine runs locally, so your own graphs stay on your machine and work offline · [docs](https://caviri.github.io/rete/agents.html) |
 | **Blender** | add-on zip from [Releases](https://github.com/caviri/rete/releases) | SPARQL results as 3D scenes; bundles the Python wheels · [docs](https://caviri.github.io/rete/blender.html) |
@@ -273,6 +312,48 @@ explain triple-pattern provenance — all offline. Two focused demos:
 - **[Historical atlas](https://caviri.github.io/rete/atlas.html)** — GeoSPARQL +
   time over a `.rete`, with 80+ map overlays (battles, castles, treaties, …).
 
+### What it looks like
+
+Every shot below is the same single HTML page, querying a file that stays on its
+URL. Each links to the deep link that reproduces it.
+
+[![The rete playground querying opencitations.rete: a ten-line SPARQL SELECT that pins a journal by title, walks oc:partOf to its papers and adds two OPTIONAL identifier blocks; under it the counter reads 25 row(s), 161 range req, 189.4 MB of 33.39 GB fetched; below that a results table of DOIs, titles and years.](docs/img/playground-sparql.png)](https://caviri.github.io/rete/playground.html#dataset=opencitations&load=lazy&ex=2)
+
+**SPARQL against 5.18 billion triples, from a browser tab.** `opencitations.rete`
+is one 33.4 GB file on object storage. The line under the toolbar is the whole
+point: 25 rows came back after **161 range requests and 189 MB** — including
+opening the file. The other 33 GB were never transferred, and there is no server
+on the other end.
+
+[![The rete playground querying plantatlas.rete: a three-column results table — Scientific name (Triticum turgidum ssp. durum, Triticum aestivum …), Plant part (Package labelling, Compound fruit …) and Photo, where each Photo cell is a rendered WebP photograph of the specimen captioned 'WEBP · 1448×1024' with an 'Open image' link; the counter above reads 40 row(s), 1 range req, 256.0 KB of 9.8 MB fetched, 157 ms.](docs/img/playground-media.png)](https://caviri.github.io/rete/playground.html#dataset=plantatlas&load=lazy&ex=0)
+
+**The pictures are in the graph.** Those photographs are `xsd:base64Binary`
+WebP literals stored *inside* the `.rete`, rendered straight into the result
+cell — no image host, no second request, nothing to rot. Forty rows and their
+pictures cost **one range request and 256 KB** of a 9.8 MB file. The same
+renderers handle IIIF manifests, PDFs, audio, video and `.glb` 3D models.
+
+[![The playground's Dataset Card modal over davidrumsey.rete: title 'David Rumsey Historical Map Collection', a description, licence CC BY-NC-SA 3.0, a source link, and four stat tiles reading 5,001,984 triples, 1,906,259 terms, 0 named graphs, format generation 5; below them expandable Vocabularies (8), Predicates (53), Classes (83), Datatypes (4) and Languages (1) sections, and a footer reading '58.5 KB, read in one header + one coalesced range'.](docs/img/playground-card.png)](https://caviri.github.io/rete/playground.html#dataset=davidrumsey&load=lazy)
+
+**The file describes itself.** Every `.rete` can carry a
+[Dataset Card](https://caviri.github.io/rete/dataset-cards.html) — licence,
+counts, vocabularies, classes, and runnable starter queries. Read straight off
+the header: **58.5 KB in one coalesced range request**, without touching the
+triple index, on a 5 M-triple file or a 5 B-triple one alike.
+
+[![The playground's Map output over gbif-birds.rete: 3,000 red sighting dots for the family Accipitridae blanketing Iberia and clustering in the western Alps, drawn on a pale Carto Light basemap of western Europe, with a Basemap picker and an 'Explore full map' button above it.](docs/img/playground-map.png)](https://caviri.github.io/rete/playground.html#dataset=gbif-birds&load=lazy&ex=10)
+
+**GeoSPARQL, drawn.** 3,000 raptor sightings selected out of a **334 M-triple,
+1.43 GB** GBIF graph and put on a basemap — `geo:asWKT` literals detected in the
+result and rendered as a map view. This run answers entirely from the session's
+86 MB block cache, which is what makes panning around a remote graph feel local.
+
+[![The playground's Explore view over davidrumsey.rete: chips for each rdf:type class (AtlasMap 71311, TextPage 26340, View 15666, Publication 10772, SeparateMap 6759, …) above an entity table whose rows are AtlasMaps and whose columns are creator, date, description, isPartOf and publisher — Collot, Lucas, Melish, dates 1796–1823.](docs/img/playground-explore.png)](https://caviri.github.io/rete/playground.html#dataset=davidrumsey&load=lazy&mode=explore)
+
+**Browse it like an archive, without writing SPARQL.** Explore turns each
+`rdf:type` class into a table — entities as rows, their properties as columns —
+so an unfamiliar graph is navigable before you know a single predicate in it.
+
 ## How fast?
 
 Real **OpenCitations** citation network (539,246 sanitized triples from the
@@ -334,8 +415,10 @@ regenerated with `cargo run -p docgen`).
 
 ## Status
 
-**v0.3.0** — the 0.3.0 engine line, shipped to PyPI and npm with every client
-in lockstep; crates.io release pending (see [CHANGELOG](CHANGELOG.md)).
+**v0.3.2** — the 0.3.x engine line, shipped to crates.io (`rete-core`,
+`rete-cli`, `rete-wasm`, `rete-graph`), PyPI and npm with every client in
+lockstep (see [CHANGELOG](CHANGELOG.md)). The Java client and the R package are
+built from this repo and are not on Maven Central or CRAN.
 Working end-to-end — the single-file format, dictionary + permutation indexes, the
 community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
 lazy HTTP-range queries (with per-tile synopses that prune a routed tile before
