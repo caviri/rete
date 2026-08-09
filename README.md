@@ -36,27 +36,9 @@
 > [!IMPORTANT]
 > **Pre-1.0 — expect breaking changes.** rete is **0.3.2**, and until **1.0.0**
 > *both* the public API and the `.rete` file format may change in ways that break
-> what you built on them.
->
-> - **APIs.** The Rust, CLI and WASM surfaces carry **no semantic-versioning
->   promise while the crates are 0.x**; semver applies from 1.0.0 onward. The
->   language clients track the engine's `MAJOR.MINOR`.
-> - **Format.** The generation byte `0x05` — *stable format generation 1* — was
->   frozen on **2026-07-14** and has not moved since; the experimental
->   generations `0x01`–`0x04` predate that freeze and must be rebuilt from RDF
->   source today. That freeze is a track record, not yet a guarantee: the
->   [release notes](https://caviri.github.io/rete/release.html) reserve **one
->   final rebuild** if review changes the format before 1.0.0, and the durable
->   compatibility promise starts there. The generation byte does not by itself
->   pin *reader* capability either: a `0x05` file written with
->   `--permutations 3` is refused outright by a reader that predates the
->   permutation mask.
->
-> [Compatibility](https://caviri.github.io/rete/compatibility.html) and the
-> [release notes](https://caviri.github.io/rete/release.html) are the sources of
-> truth; nothing above is a caveat about *answers* — see
-> [conformance](https://caviri.github.io/rete/conformance.html) for what the
-> engine is tested against.
+> what you built on them. See
+> [compatibility](https://caviri.github.io/rete/compatibility.html) for the
+> details.
 
 ---
 
