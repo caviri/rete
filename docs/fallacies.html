@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Experiment: graphs from speech · rete docs</title>
   <meta name="description" content="An agent connected to the rete MCP server can now author knowledge graphs, not just read them: search existing vocabularies, draft an ontology, lint it until clean, build a real .rete, and validate…" />
@@ -24,12 +24,18 @@
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
-     otherwise prefers-color-scheme decides. */
+     otherwise prefers-color-scheme decides.
+
+     `js-chrome` is set in the same breath, and it is what lets the narrow
+     layout replace the sidebar with the top/bottom bars and the drawer: with
+     JavaScript off the class never lands, the mobile chrome stays inert, and
+     the reader gets the plain stacked sidebar that has always been there. */
   (function () {
     try {
       var t = localStorage.getItem("theme");
       if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
     } catch (e) {}
+    document.documentElement.className += " js-chrome";
   })();
   </script>
   <style>
@@ -253,15 +259,252 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .content { padding-top:2rem; }
   .content h1 { font-size:2.15rem; }
   footer { padding-left:1.15rem; padding-right:1.15rem; }
+  /* Wide tables scroll inside their own box from here down, not just below
+     520px: it keeps the PAGE from scrolling sideways on a tablet, and it is
+     what the swipe handler looks for when deciding whether a horizontal drag
+     belongs to the table under the finger or to the page. */
+  .content table { display:block; overflow-x:auto; }
+  /* A single unbreakable token in INLINE code — `CARGO_UNSTABLE_BUILD_STD=std,
+     panic_abort,…`, `dev/perms/{build_bench.sh,…}` — used to push the document
+     wider than the screen, and a phone's answer to that is to zoom the whole
+     page out: BENCHMARK, SPEC, clients-dev and sparql all rendered 20-30%
+     smaller than they should on a 390px phone because of one token. Let those
+     wrap. Code BLOCKS are untouched — they are `width:max-content` inside a
+     scrollable `pre` and never overflow their line box. */
+  .content code { overflow-wrap:break-word; }
+  .content pre code { overflow-wrap:normal; }
 }
 @media (max-width:520px) {
   .sidebar ul { columns:1; }
-  .content table { display:block; overflow-x:auto; }
   .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior:auto; }
+}
+
+.mbar,.mnav,.mdrawer,.mscrim,.mprog { display:none; }
+
+@media (max-width:780px) {
+  :root { --mbar-h:52px; --mnav-h:56px; }
+
+  /* The sidebar is only retired when the head script has confirmed JavaScript
+     — see the `js-chrome` note there. Without it, nothing below applies and
+     the page keeps the stacked sidebar it has always had. */
+  html.js-chrome .sidebar { display:none; }
+  html.js-chrome body {
+    padding-top:var(--mbar-h);
+    padding-bottom:calc(var(--mnav-h) + env(safe-area-inset-bottom));
+  }
+  html.js-chrome .page {
+    padding-left:max(1.15rem, env(safe-area-inset-left));
+    padding-right:max(1.15rem, env(safe-area-inset-right));
+  }
+  html.js-chrome .content { padding-top:1.4rem; }
+  /* Anchor targets must clear the fixed bar, or every in-page jump lands with
+     its heading hidden underneath it. */
+  html.js-chrome .content h1,
+  html.js-chrome .content h2,
+  html.js-chrome .content h3 { scroll-margin-top:calc(var(--mbar-h) + 12px); }
+  html.drawer-open, html.drawer-open body { overflow:hidden; }
+  /* `hidden` stays the one truth for "closed" — for assistive tech as much
+     as for paint — so it has to outrank the display rules below. */
+  html.js-chrome .mdrawer[hidden],html.js-chrome .mscrim[hidden] { display:none; }
+
+  /* ── reading position ─────────────────────────────────────────────────
+     Two pixels at the very top of the viewport, above the bar in z-order so
+     it survives the bar sliding away. "How much of this is left" is the one
+     piece of state a phone reader cannot see for themselves — the scrollbar
+     that answers it on a desktop does not exist here. */
+  html.js-chrome .mprog {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:901; height:2px;
+    background:transparent; pointer-events:none;
+  }
+  .mprog i { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
+
+  /* ── top bar ──────────────────────────────────────────────────────────
+     Identity (where am I in the site?) plus the two controls worth a
+     permanent tap target. It hides on scroll-down and comes back on
+     scroll-up, so the 52px is only spent when the reader is not reading. */
+  html.js-chrome .mbar {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:900; height:var(--mbar-h);
+    align-items:center; gap:.3rem;
+    padding-left:max(.3rem, env(safe-area-inset-left));
+    padding-right:max(.3rem, env(safe-area-inset-right));
+    background:var(--side); border-bottom:1px solid var(--border); color:var(--side-fg);
+    transition:transform .18s ease;
+  }
+  html.js-chrome .mbar.up { transform:translateY(-100%); }
+  .mbar-btn {
+    flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+    width:42px; height:42px; padding:0; font:inherit; font-size:1.05rem;
+    color:var(--side-fg); background:transparent; border:0; border-radius:9px; cursor:pointer;
+  }
+  .mbar-btn:active { background:rgba(20,125,105,.14); }
+  .mbar-btn:focus-visible,.mnav a:focus-visible,.mnav button:focus-visible,
+  .mdrawer a:focus-visible,.mdrawer button:focus-visible {
+    outline:2px solid var(--accent); outline-offset:-2px;
+  }
+  .mbar-id { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:center; line-height:1.18; }
+  .mbar-sec {
+    font-size:.66rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mbar-sec a { color:var(--iri); text-decoration:none; font-family:Georgia,"Times New Roman",serif; font-size:1.05em; letter-spacing:0; text-transform:none; }
+  .mbar-title {
+    font-size:.92rem; font-weight:700; color:var(--fg);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  /* ── bottom bar ───────────────────────────────────────────────────────
+     Thumb country. Previous / next carry the neighbour's real title (a bare
+     arrow tells you nothing about whether to press it) and the middle opens
+     the drawer — the same control as the top-left one, put where a thumb
+     already is. These two links are also the accessible equivalent of the
+     swipe: the gesture only ever follows them. */
+  html.js-chrome .mnav {
+    display:grid; position:fixed; inset:auto 0 0 0; z-index:900;
+    grid-template-columns:1fr auto 1fr; align-items:stretch;
+    min-height:var(--mnav-h);
+    padding-bottom:env(safe-area-inset-bottom);
+    padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);
+    background:var(--side); border-top:1px solid var(--border);
+    box-shadow:0 -6px 18px rgba(20,40,33,.06);
+  }
+  .mnav-side {
+    display:flex; flex-direction:column; justify-content:center; gap:.1rem;
+    min-width:0; padding:.42rem .6rem; text-decoration:none; color:var(--side-fg);
+  }
+  .mnav-next { align-items:flex-end; text-align:right; }
+  .mnav-side:active { background:rgba(20,125,105,.1); }
+  .mnav-side.is-off { color:var(--muted); opacity:.45; }
+  .mnav-dir {
+    font-size:.6rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mnav-t {
+    font-size:.79rem; font-weight:600; line-height:1.2; max-width:100%;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mnav-toc {
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.1rem;
+    padding:.3rem .7rem; margin:.42rem 0; font:inherit; font-size:.62rem; font-weight:800;
+    letter-spacing:.05em; text-transform:uppercase; cursor:pointer;
+    color:var(--accent-deep); background:var(--panel);
+    border:1px solid var(--border); border-radius:10px;
+  }
+  .mnav-toc:active { background:var(--tint); }
+
+  /* ── the drawer ───────────────────────────────────────────────────────
+     A sheet over the page, not a block above it: the reader asks for it and
+     it goes away again. Two tabs, because the two questions are different —
+     "where am I inside this page" and "what else is there". */
+  html.js-chrome .mscrim {
+    display:block; position:fixed; inset:0; z-index:1050; background:rgba(12,20,17,.5);
+    opacity:0; transition:opacity .2s ease; touch-action:none;
+  }
+  html.js-chrome .mscrim.open { opacity:1; }
+  html.js-chrome .mdrawer {
+    display:flex; position:fixed; inset:0 auto 0 0; z-index:1100;
+    width:min(88vw,390px); flex-direction:column;
+    padding-left:env(safe-area-inset-left);
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--panel); color:var(--fg);
+    border-right:1px solid var(--border); box-shadow:var(--shadow);
+    transform:translateX(-100%); transition:transform .22s ease;
+  }
+  html.js-chrome .mdrawer.open { transform:none; }
+  .mdrawer-head {
+    display:flex; align-items:flex-start; gap:.5rem; flex:0 0 auto;
+    padding:.85rem .5rem .7rem .95rem; border-bottom:1px solid var(--border); background:var(--side);
+  }
+  .mdrawer-who { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:.15rem; }
+  .mdrawer-eyebrow {
+    font-size:.63rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer-title {
+    font-family:Georgia,"Times New Roman",serif; font-size:1.12rem; font-weight:700; line-height:1.2; color:var(--fg);
+  }
+  .mdrawer-x {
+    flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:.1rem;
+    padding:.35rem .5rem; font:inherit; font-size:.58rem; font-weight:800; letter-spacing:.06em;
+    text-transform:uppercase; cursor:pointer;
+    color:var(--side-fg); background:var(--panel); border:1px solid var(--border); border-radius:9px;
+  }
+  .mdrawer-x:active { background:var(--tint); }
+  .mdrawer-tabs { display:flex; flex:0 0 auto; gap:.35rem; padding:.55rem .7rem; border-bottom:1px solid var(--border); }
+  .mdrawer-tabs button {
+    flex:1 1 0; padding:.44rem .5rem; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer;
+    color:var(--muted); background:transparent; border:1px solid var(--border); border-radius:999px;
+  }
+  .mdrawer-tabs button[aria-selected="true"] {
+    color:var(--on-accent); background:var(--accent); border-color:var(--accent);
+  }
+  .mdrawer-body { flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  .mdrawer-panel { padding:.6rem .7rem 1.4rem; }
+  .mdrawer-panel:focus { outline:none; }
+  .mdrawer-empty { color:var(--muted); font-size:.85rem; padding:.5rem .35rem; }
+  /* The panels hold clones of the two lists the page already built — the
+     rail's "on this page" TOC (heading ids and all) and the sidebar's nav —
+     so they can never disagree with them. These rules restyle the clones. */
+  .mdrawer ul { list-style:none; margin:0; padding:0; }
+  .mdrawer li { margin:.05rem 0; }
+  .mdrawer a {
+    display:block; padding:.5rem .6rem; border-left:3px solid transparent; border-radius:0 7px 7px 0;
+    color:var(--fg); text-decoration:none; font-size:.9rem; line-height:1.3;
+  }
+  .mdrawer a:active { background:rgba(20,125,105,.1); }
+  .mdrawer a.active { background:var(--tint); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; }
+  .mdrawer .toc-sub a { padding-left:1.5rem; font-size:.84rem; color:var(--muted); }
+  .mdrawer li.nav-h {
+    margin:1rem 0 .2rem; padding:0 .6rem; font-size:.63rem; font-weight:800;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer li.nav-h:first-child { margin-top:.1rem; }
+  .mdrawer .nav-group summary {
+    display:flex; align-items:center; padding:.5rem .6rem; font-size:.9rem; line-height:1.3;
+    list-style:none; cursor:pointer;
+  }
+  .mdrawer .nav-group summary::-webkit-details-marker { display:none; }
+  .mdrawer .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+  .mdrawer .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+  .mdrawer .nav-group summary a { display:inline; padding:0; border:0; border-radius:0; background:none; font-size:inherit; }
+  .mdrawer .nav-sub { margin:.1rem 0 .3rem .6rem; padding-left:.5rem; border-left:1px solid var(--border); }
+  .mdrawer .nav-sub a { font-size:.82rem; padding:.36rem .6rem; color:var(--muted); }
+
+  /* The page turn: a short slide out before the browser fetches the next
+     document. It is the only motion the gesture adds, and it does not run at
+     all under prefers-reduced-motion. */
+  html.page-out-left main,html.page-out-right main {
+    transition:transform .13s ease-in, opacity .13s ease-in; opacity:.3;
+  }
+  html.page-out-left main { transform:translateX(-7%); }
+  html.page-out-right main { transform:translateX(7%); }
+}
+
+/* Every selector here has to outrank its `html.js-chrome …` counterpart above,
+   or the transitions it is switching off simply stay on. */
+@media (max-width:780px) and (prefers-reduced-motion: reduce) {
+  html.js-chrome .mbar,
+  html.js-chrome .mdrawer,
+  html.js-chrome .mscrim,
+  html.js-chrome .mprog i { transition:none; }
+  html.js-chrome.page-out-left main,
+  html.js-chrome.page-out-right main { transition:none; transform:none; opacity:1; }
 }
 </style>
 </head>
 <body>
+  <div class="mprog" aria-hidden="true"><i id="mprogBar"></i></div>
+  <header class="mbar" id="mbar">
+    <button type="button" class="mbar-btn" id="mbarMenu" aria-controls="mdrawer" aria-expanded="false"
+      aria-label="Contents — this page's sections and every other page">
+      <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <span class="mbar-id">
+      <span class="mbar-sec"><a href="index.html">rete</a> · Clients</span>
+      <span class="mbar-title">Experiment: graphs from speech</span>
+    </span>
+    <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
+  </header>
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
@@ -331,8 +574,8 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
-    <button type="button" class="theme-toggle" id="themeToggle"
-      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel">System</span></button>
+    <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
+      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel" data-theme-label>System</span></button>
   </nav>
   <main>
     <div class="page">
@@ -529,6 +772,35 @@ ask for <code>include_base64</code> to keep the file, or graduate it through the
     </div>
     <footer>Generated from <code>docs/fallacies.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
+  <nav class="mnav" id="mnav" aria-label="Page navigation">
+    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="agent-frameworks.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">LangChain &amp; Pydantic AI</span></a>
+    <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
+      <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Contents</span>
+    </button>
+    <a class="mnav-side mnav-next" id="navNext" rel="next" href="dataset-cards.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Dataset Cards</span></a>
+  </nav>
+  <div class="mscrim" id="mscrim" hidden></div>
+  <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
+    <div class="mdrawer-head">
+      <div class="mdrawer-who">
+        <span class="mdrawer-eyebrow">Clients · 39 of 55</span>
+        <span class="mdrawer-title" id="mdrawerTitle">Experiment: graphs from speech</span>
+      </div>
+      <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">
+        <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Close</span>
+      </button>
+    </div>
+    <div class="mdrawer-tabs" role="tablist" aria-label="Contents">
+      <button type="button" role="tab" id="tabHere" aria-controls="panelHere" aria-selected="true">On this page</button>
+      <button type="button" role="tab" id="tabAll" aria-controls="panelAll" aria-selected="false" tabindex="-1">All pages</button>
+    </div>
+    <div class="mdrawer-body">
+      <div class="mdrawer-panel" id="panelHere" role="tabpanel" aria-labelledby="tabHere" tabindex="0"></div>
+      <div class="mdrawer-panel" id="panelAll" role="tabpanel" aria-labelledby="tabAll" tabindex="0" hidden></div>
+    </div>
+  </aside>
   <script>
 (function () {
   function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
@@ -772,10 +1044,12 @@ ask for <code>include_base64</code> to keep the file, or graduate it through the
 // prefers-color-scheme decides; explicit choices persist under the SAME
 // localStorage key ("theme") the playground uses, so the preference follows
 // the reader across the whole site.
+// There are two of these now — the sidebar's on a wide screen, the top bar's on
+// a phone — so the cycle is bound to every [data-theme-cycle] button rather than
+// to one id, and both stay in step because they read the same localStorage key.
 (function () {
-  var btn = document.getElementById("themeToggle");
-  var label = document.getElementById("themeToggleLabel");
-  if (!btn || !label) return;
+  var btns = [].slice.call(document.querySelectorAll("[data-theme-cycle]"));
+  if (!btns.length) return;
   function current() {
     try {
       var t = localStorage.getItem("theme");
@@ -784,19 +1058,264 @@ ask for <code>include_base64</code> to keep the file, or graduate it through the
   }
   function render() {
     var t = current();
-    label.textContent = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    var name = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    btns.forEach(function (b) {
+      var label = b.querySelector("[data-theme-label]");
+      if (label) label.textContent = name;
+      else b.setAttribute("aria-label", "Theme: " + name + " — tap to cycle System, Light, Dark");
+    });
   }
-  btn.addEventListener("click", function () {
-    var next = { system: "light", light: "dark", dark: "system" }[current()];
-    try {
-      if (next === "system") localStorage.removeItem("theme");
-      else localStorage.setItem("theme", next);
-    } catch (e) {}
-    if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
-    else delete document.documentElement.dataset.theme;
-    render();
+  btns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      var next = { system: "light", light: "dark", dark: "system" }[current()];
+      try {
+        if (next === "system") localStorage.removeItem("theme");
+        else localStorage.setItem("theme", next);
+      } catch (e) {}
+      if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
+      else delete document.documentElement.dataset.theme;
+      render();
+    });
   });
   render();
+})();
+</script>
+  <script>
+(function () {
+  var NARROW = window.matchMedia("(max-width: 780px)");
+  var CALM = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var bar = document.getElementById("mbar");
+    var drawer = document.getElementById("mdrawer");
+    var scrim = document.getElementById("mscrim");
+    if (!bar || !drawer || !scrim) return;
+    var progress = document.getElementById("mprogBar");
+    var prevLink = document.getElementById("navPrev");
+    var nextLink = document.getElementById("navNext");
+    var closeBtn = document.getElementById("mdrawerClose");
+    var panels = { here: document.getElementById("panelHere"), all: document.getElementById("panelAll") };
+    var tabs = { here: document.getElementById("tabHere"), all: document.getElementById("tabAll") };
+    var openers = [document.getElementById("mbarMenu"), document.getElementById("mnavToc")]
+      .filter(function (b) { return !!b; });
+
+    /* ---- 1. fill the drawer ------------------------------------------------
+       Both panels are CLONES of lists this page already has: the rail's "on
+       this page" TOC (built by the block above from the heading ids docgen
+       mints server-side) and the sidebar's section nav. Cloning means the
+       drawer cannot drift out of step with either, and neither list carries an
+       `id`, so nothing is duplicated in the document. */
+    var pageToc = document.querySelector("#toc ul");
+    if (pageToc) {
+      panels.here.appendChild(pageToc.cloneNode(true));
+    } else {
+      panels.here.innerHTML = '<p class="mdrawer-empty">This page is short enough to have no sections — try "All pages".</p>';
+    }
+    var siteNav = document.querySelector(".sidebar > ul");
+    if (siteNav) panels.all.appendChild(siteNav.cloneNode(true));
+
+    function selectTab(which) {
+      Object.keys(tabs).forEach(function (k) {
+        var on = k === which;
+        if (tabs[k]) {
+          tabs[k].setAttribute("aria-selected", on ? "true" : "false");
+          tabs[k].tabIndex = on ? 0 : -1;
+        }
+        if (panels[k]) panels[k].hidden = !on;
+      });
+    }
+    function defaultTab() { return pageToc ? "here" : "all"; }
+    selectTab(defaultTab());
+    Object.keys(tabs).forEach(function (k) {
+      if (tabs[k]) tabs[k].addEventListener("click", function () { selectTab(k); tabs[k].focus(); });
+    });
+    var tablist = drawer.querySelector(".mdrawer-tabs");
+    if (tablist) {
+      tablist.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        var to = tabs.here.getAttribute("aria-selected") === "true" ? "all" : "here";
+        selectTab(to); tabs[to].focus();
+      });
+    }
+    // Jumping to a heading closes the sheet — otherwise it covers what you just
+    // asked to see.
+    panels.here.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a") : null;
+      if (a) close();
+    });
+
+    /* ---- 2. open / close, with a focus trap -------------------------------- */
+    var lastFocus = null, closeTimer = null;
+    function focusable() {
+      return [].slice.call(drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+        .filter(function (el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
+    }
+    function isOpen() { return document.documentElement.classList.contains("drawer-open"); }
+    function open() {
+      if (isOpen()) return;
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+      lastFocus = document.activeElement;
+      drawer.hidden = false; scrim.hidden = false;
+      document.documentElement.classList.add("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "true"); });
+      syncActive();
+      // Two frames: the element has to have been laid out in its off-screen
+      // state before the class that slides it in can animate.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { drawer.classList.add("open"); scrim.classList.add("open"); });
+      });
+      if (closeBtn) closeBtn.focus();
+    }
+    function close() {
+      if (!isOpen()) return;
+      drawer.classList.remove("open"); scrim.classList.remove("open");
+      document.documentElement.classList.remove("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+      closeTimer = setTimeout(function () {
+        drawer.hidden = true; scrim.hidden = true; closeTimer = null;
+      }, CALM.matches ? 0 : 240);
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+      lastFocus = null;
+    }
+    openers.forEach(function (b) { b.addEventListener("click", open); });
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    scrim.addEventListener("click", close);
+    document.addEventListener("keydown", function (e) {
+      if (!isOpen()) return;
+      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key !== "Tab") return;
+      var items = focusable();
+      if (!items.length) return;
+      var first = items[0], last = items[items.length - 1];
+      if (!drawer.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    // The desktop scroll-spy keeps `.active` on the rail's TOC; mirror it onto
+    // the clone when the sheet opens, so "you are here" is right without a
+    // second listener running all the way down every page.
+    function syncActive() {
+      var live = document.querySelector("#toc a.active");
+      var want = live ? live.getAttribute("href") : null;
+      panels.here.querySelectorAll("a").forEach(function (a) {
+        a.classList.toggle("active", a.getAttribute("href") === want);
+      });
+    }
+
+    /* ---- 3. reading position + hide-on-scroll ------------------------------
+       The bar is 52px of a 640px-tall screen. Giving it back while the reader
+       is actually reading, and returning it the moment they reach for it, is
+       the whole justification for spending those pixels. Under
+       prefers-reduced-motion it simply never moves. */
+    var lastY = window.pageYOffset || 0, queued = false;
+    function onScroll() {
+      var y = Math.max(0, window.pageYOffset || 0);
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      if (progress) progress.style.width = (max > 40 ? Math.min(100, (y / max) * 100) : 0) + "%";
+      if (CALM.matches || !NARROW.matches || isOpen()) bar.classList.remove("up");
+      else if (y < 96) bar.classList.remove("up");
+      else if (y - lastY > 6) bar.classList.add("up");
+      else if (lastY - y > 6) bar.classList.remove("up");
+      lastY = y;
+      queued = false;
+    }
+    window.addEventListener("scroll", function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(onScroll);
+    }, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    onScroll();
+
+    /* ---- 4. swipe left / right between pages -------------------------------
+       Prev and next are the two links in the bottom bar; the gesture is only a
+       shortcut to them, never the only way to get anywhere. */
+    function go(href, back) {
+      if (!href) return;
+      if (CALM.matches) { window.location.href = href; return; }
+      document.documentElement.classList.add(back ? "page-out-right" : "page-out-left");
+      setTimeout(function () { window.location.href = href; }, 130);
+    }
+    // Coming back through the bfcache must not restore the faded-out state.
+    window.addEventListener("pageshow", function () {
+      document.documentElement.classList.remove("page-out-left", "page-out-right");
+    });
+
+    // The nearest ancestor that the finger could be scrolling sideways. Only
+    // boxes that OVERFLOW and are allowed to scroll count: `overflow-x:hidden`
+    // clips its content but the user cannot pan it, so a swipe there is ours.
+    function hscroller(node) {
+      for (var el = node; el && el !== document.body; el = el.parentElement) {
+        if (el.nodeType !== 1) continue;
+        if (el.scrollWidth - el.clientWidth > 2) {
+          var ox = window.getComputedStyle(el).overflowX;
+          if (ox === "auto" || ox === "scroll") return el;
+        }
+      }
+      return null;
+    }
+
+    var swipe = null;
+    document.addEventListener("touchstart", function (e) {
+      swipe = null;
+      if (!NARROW.matches || isOpen() || e.touches.length !== 1) return;
+      var t = e.touches[0], el = e.target;
+      // Never compete with the chrome itself, a form field, or the lightbox.
+      if (el && el.closest && el.closest("input,textarea,select,[contenteditable],.mbar,.mnav,.mdrawer,.mscrim,.lightbox")) return;
+      var sc = hscroller(el);
+      swipe = {
+        x: t.clientX, y: t.clientY, t: Date.now(), axis: 0, sc: sc,
+        left: sc ? sc.scrollLeft : 0,
+        room: sc ? sc.scrollWidth - sc.clientWidth : 0
+      };
+    }, { passive: true });
+
+    document.addEventListener("touchmove", function (e) {
+      if (!swipe) return;
+      if (e.touches.length !== 1) { swipe = null; return; }   // pinch / second finger
+      var t = e.touches[0];
+      var dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+      if (!swipe.axis && Math.abs(dx) + Math.abs(dy) > 12) {
+        // Lock the axis on the FIRST real movement. A drag that began as
+        // vertical reading scroll can never become a page turn later on,
+        // however far sideways it wanders before the finger lifts.
+        swipe.axis = Math.abs(dx) > Math.abs(dy) * 1.4 ? 1 : -1;
+      }
+      if (swipe.axis === -1) swipe = null;
+    }, { passive: true });
+
+    document.addEventListener("touchcancel", function () { swipe = null; }, { passive: true });
+
+    document.addEventListener("touchend", function (e) {
+      var s = swipe; swipe = null;
+      if (!s || s.axis !== 1 || !e.changedTouches || !e.changedTouches.length) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - s.x, dy = t.clientY - s.y, dt = Math.max(1, Date.now() - s.t);
+      if (Math.abs(dx) < Math.max(72, window.innerWidth * 0.12)) return;  // far enough
+      if (Math.abs(dx) < Math.abs(dy) * 2) return;                        // dominantly horizontal
+      if (dt > 900) return;                                               // a drag, not a rest
+      // Fast flick, or a slow but unmistakably long pull.
+      if (Math.abs(dx) / dt < 0.25 && Math.abs(dx) < window.innerWidth * 0.28) return;
+      var back = dx > 0;                       // finger to the right = go back
+      if (s.sc) {
+        // The gesture started inside a table / code block / diagram that can
+        // pan. Two ways it can still belong to that box, and both forfeit the
+        // page turn: it MOVED under the finger, or it has room left to move
+        // the way the finger is going.
+        //
+        // The 2px on the first test is not slack, it is a real observation: a
+        // block pinned at its right edge reports scrollLeft one pixel below the
+        // maximum once the browser settles the fractional part, and an exact
+        // comparison reads that as a pan and cancels the turn forever. A pan
+        // worth respecting moves hundreds of pixels.
+        if (Math.abs(s.sc.scrollLeft - s.left) > 2) return;
+        if (back ? s.left > 1 : s.left < s.room - 1) return;
+      }
+      var link = back ? prevLink : nextLink;
+      go(link && link.getAttribute("href"), back);
+    }, { passive: true });
+  });
 })();
 </script>
 </body>
