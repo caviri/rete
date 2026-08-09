@@ -18,7 +18,7 @@ use crate::dictionary::Dictionary;
 use crate::header::{
     Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC,
 };
-use crate::index::{GraphIndex, IndexPermutation, Pattern, NUM_PERMS};
+use crate::index::{GraphIndex, IndexPermutation, Pattern, PermSet, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph, PyramidAlgo};
 use crate::reader::RangeReader;
@@ -1150,6 +1150,12 @@ fn tile_file_ranges(
 ) -> [Vec<(u32, u32, ByteRange)>; NUM_PERMS] {
     let mut out: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
     for (section, range) in out.iter_mut().zip(section_ranges) {
+        // A permutation the file does not carry has a zeroed range. Its
+        // `offset - container_offset` underflows, and before this guard it
+        // panicked the whole `open_ranged` path on the first lean file.
+        if range.len == 0 || range.offset < container_offset {
+            continue;
+        }
         let start = (range.offset - container_offset) as usize;
         let Some(payload) = index_bytes.get(start..start + range.len as usize) else {
             continue;
@@ -1188,18 +1194,31 @@ fn decode_tiled_section(payload: &[u8], codec: u8) -> Result<Vec<(u32, u32, Vec<
         .collect()
 }
 
-/// Decode the index container: six raw tiled section payloads (one per
-/// permutation), each tile compressed individually.
-fn decode_index_container(bytes: &[u8], codec: u8) -> Result<GraphIndex, FileError> {
+/// Decode the index container: one raw tiled section payload per permutation
+/// the file carries (`perms`, from the header — [`PermSet::ALL`] for every file
+/// written before the mask existed), each tile compressed individually.
+///
+/// The section count is checked against `perms.len()`, so a file whose header
+/// and container disagree is rejected rather than silently short-read. A reader
+/// that does not know about lean files at all reaches the same conclusion by a
+/// different route: it passes six, the container says three, and this errors —
+/// which is why a lean file cannot be misread as an empty one.
+fn decode_index_container(
+    bytes: &[u8],
+    codec: u8,
+    perms: PermSet,
+) -> Result<GraphIndex, FileError> {
     let mut isecs = decode_container(bytes, CODEC_NONE)?;
-    if isecs.len() != NUM_PERMS {
-        return Err(FileError::Container("expected 6 permutation sections"));
+    if isecs.len() != perms.len() {
+        return Err(FileError::Container(
+            "index container section count does not match the header permutation mask",
+        ));
     }
     let mut sections: [Vec<(u32, u32, Vec<u8>)>; NUM_PERMS] = Default::default();
-    for (i, sec) in isecs.iter_mut().enumerate() {
-        sections[i] = decode_tiled_section(sec, codec)?;
+    for (perm, sec) in perms.iter().zip(isecs.iter_mut()) {
+        sections[perm.section_index()] = decode_tiled_section(sec, codec)?;
     }
-    Ok(GraphIndex::from_tiles(sections))
+    Ok(GraphIndex::from_tiles(sections, perms))
 }
 
 fn container_section_payload_ranges(
@@ -1246,11 +1265,14 @@ fn container_section_payload_ranges(
 fn decode_index_section_ranges(
     bytes: &[u8],
     container_offset: u64,
+    perms: PermSet,
 ) -> Result<[ByteRange; NUM_PERMS], FileError> {
-    let ranges = container_section_payload_ranges(bytes, container_offset, NUM_PERMS)?;
-    ranges
-        .try_into()
-        .map_err(|_| FileError::Container("expected 6 permutation blocks"))
+    let ranges = container_section_payload_ranges(bytes, container_offset, perms.len())?;
+    let mut out = [ByteRange { offset: 0, len: 0 }; NUM_PERMS];
+    for (perm, range) in perms.iter().zip(ranges) {
+        out[perm.section_index()] = range;
+    }
+    Ok(out)
 }
 
 fn read_uvarint_at<R: RangeReader>(
@@ -1324,6 +1346,7 @@ fn open_index_container_lazy(
     block_codec: u8,
     has_synopsis: bool,
     read_concurrency: usize,
+    perms: PermSet,
 ) -> Result<
     (
         GraphIndex,
@@ -1336,13 +1359,14 @@ fn open_index_container_lazy(
     let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
     #[allow(clippy::type_complexity)]
     let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; NUM_PERMS] = Default::default();
-    for si in 0..NUM_PERMS {
+    for (pos, perm) in perms.iter().enumerate() {
+        let si = perm.section_index();
         let section = locate_container_section_ranged(
             reader,
             container.offset,
             container.len,
-            si,
-            NUM_PERMS as u64,
+            pos,
+            perms.len() as u64,
         )?;
         index_section_ranges[si] = section;
         let dir = read_tile_directory_ranged(reader, section)?;
@@ -1396,7 +1420,8 @@ fn open_index_container_lazy(
         let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
         blobs.iter().map(|b| decompress(codec, b).ok()).collect()
     });
-    let mut index = GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
+    let mut index =
+        GraphIndex::from_remote_directories(directories, perms, loader).with_bulk_loader(bulk);
     // Per-tile encoded lengths (from the directory) feed the join planner's
     // fatness gates — free here, unavailable later without a fetch.
     index.set_tile_lens(std::array::from_fn(|si| {
@@ -1425,12 +1450,18 @@ pub fn write_file(
     write_dataset(dict, index, &[], has_quads, pyramid_meta, pyramid_levels)
 }
 
-/// Encode an index container (v0.2): three raw tiled section payloads, tiles
-/// compressed individually with `codec`.
+/// Encode an index container (v0.2): one raw tiled section payload per
+/// permutation the index carries, in [`crate::index::ALL_PERMS`] order, tiles
+/// compressed individually with `codec`. A three-permutation index writes three
+/// sections — not six with three empty, which would be indistinguishable from
+/// an empty graph to a reader that does not check the header mask.
 fn encode_index_container(index: &GraphIndex, codec: u8) -> Vec<u8> {
-    let payloads = index
-        .tile_sections()
-        .map(|tiles| encode_tiled_section(tiles, codec));
+    let sections = index.tile_sections();
+    let payloads: Vec<Vec<u8>> = index
+        .perms()
+        .iter()
+        .map(|perm| encode_tiled_section(sections[perm.section_index()], codec))
+        .collect();
     let refs: Vec<&[u8]> = payloads.iter().map(|p| p.as_slice()).collect();
     encode_container(&refs, CODEC_NONE)
 }
@@ -1449,7 +1480,11 @@ fn encode_named_graphs(named: &[(String, GraphIndex)], codec: u8) -> Vec<u8> {
     out
 }
 
-fn decode_named_graphs(bytes: &[u8], codec: u8) -> Result<Vec<(String, GraphIndex)>, FileError> {
+fn decode_named_graphs(
+    bytes: &[u8],
+    codec: u8,
+    perms: PermSet,
+) -> Result<Vec<(String, GraphIndex)>, FileError> {
     let (n, mut pos) = read_uvarint(bytes).ok_or(FileError::Container("truncated graph count"))?;
     // Bounds-checked slice within this (already bounded) section. Lengths read
     // below are untrusted, so every range is validated before indexing.
@@ -1471,7 +1506,7 @@ fn decode_named_graphs(bytes: &[u8], codec: u8) -> Result<Vec<(String, GraphInde
             .ok_or(FileError::Container("truncated container len"))?;
         pos += u2;
         let cend = bound(pos, clen)?;
-        let index = decode_index_container(&bytes[pos..cend], codec)?;
+        let index = decode_index_container(&bytes[pos..cend], codec, perms)?;
         out.push((iri, index));
         pos = cend;
     }
@@ -1642,6 +1677,10 @@ pub(crate) fn write_dataset_from_parts(
         dict_codec: codec,
         block_codec: codec,
         pyramid_levels,
+        // Every container in the file — default graph and named graphs alike —
+        // is written from an index built with the same set, so the mask is a
+        // file-level fact and the default index is its source of truth.
+        perms: default_index.perms(),
         quad_count: default_index.triple_count() as u64
             + named
                 .iter()
@@ -2276,6 +2315,9 @@ struct LazyNamedGraphs {
     codec: u8,
     has_synopsis: bool,
     read_concurrency: usize,
+    /// The file's permutation set — every graph container in a file carries
+    /// the same one, so it comes from the header rather than per graph.
+    perms: PermSet,
     /// `(count, slab table)` — set once the leading count varint is read.
     /// Slabs allocate on first touch; boxed slices never move, so `&` handed
     /// out to entries stay valid for `&self`'s lifetime with no unsafe.
@@ -2292,6 +2334,7 @@ impl LazyNamedGraphs {
         codec: u8,
         has_synopsis: bool,
         read_concurrency: usize,
+        perms: PermSet,
     ) -> Self {
         LazyNamedGraphs {
             reader,
@@ -2299,6 +2342,7 @@ impl LazyNamedGraphs {
             codec,
             has_synopsis,
             read_concurrency,
+            perms,
             dir: std::sync::OnceLock::new(),
             walk: std::sync::Mutex::new(NamedWalk::default()),
             failed: std::sync::atomic::AtomicBool::new(false),
@@ -2529,7 +2573,7 @@ impl LazyNamedGraphs {
     fn open_graph(&self, range: ByteRange) -> Option<GraphIndex> {
         if range.len <= NAMED_GRAPH_RESIDENT_MAX {
             let bytes = self.container_bytes(range)?;
-            match decode_index_container(&bytes, self.codec) {
+            match decode_index_container(&bytes, self.codec, self.perms) {
                 Ok(g) => Some(g),
                 Err(_) => {
                     self.fail();
@@ -2543,6 +2587,7 @@ impl LazyNamedGraphs {
                 self.codec,
                 self.has_synopsis,
                 self.read_concurrency,
+                self.perms,
             ) {
                 Ok((g, _, _)) => Some(g),
                 Err(_) => {
@@ -2700,9 +2745,9 @@ impl Rete {
         )?;
 
         let index_bytes = region(header.root_dir_offset, header.root_dir_len)?;
-        let index = decode_index_container(index_bytes, header.block_codec)?;
+        let index = decode_index_container(index_bytes, header.block_codec, header.perms)?;
         let index_section_ranges =
-            decode_index_section_ranges(index_bytes, header.root_dir_offset)?;
+            decode_index_section_ranges(index_bytes, header.root_dir_offset, header.perms)?;
 
         let pyramid = PyramidSlot::Resident(if header.pyramid_meta_len > 0 {
             Some(
@@ -2728,6 +2773,7 @@ impl Rete {
             decode_named_graphs(
                 region(header.named_graphs_offset, header.named_graphs_len)?,
                 header.block_codec,
+                header.perms,
             )?
         } else {
             Vec::new()
@@ -3433,9 +3479,9 @@ impl Rete {
         let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
 
         let index_bytes = reader.read_at(header.root_dir_offset, header.root_dir_len)?;
-        let index = decode_index_container(&index_bytes, header.block_codec)?;
+        let index = decode_index_container(&index_bytes, header.block_codec, header.perms)?;
         let index_section_ranges =
-            decode_index_section_ranges(&index_bytes, header.root_dir_offset)?;
+            decode_index_section_ranges(&index_bytes, header.root_dir_offset, header.perms)?;
 
         let pyramid = PyramidSlot::Resident(if header.pyramid_meta_len > 0 {
             let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
@@ -3458,7 +3504,7 @@ impl Rete {
 
         let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
-            decode_named_graphs(&nb, header.block_codec)?
+            decode_named_graphs(&nb, header.block_codec, header.perms)?
         } else {
             Vec::new()
         });
@@ -3522,6 +3568,7 @@ impl Rete {
             header.block_codec,
             header.has_tile_synopsis(),
             read_concurrency,
+            header.perms,
         )?;
 
         // The pyramid meta is large on real graphs (tens of MB) and SPARQL never
@@ -3551,6 +3598,7 @@ impl Rete {
                 header.block_codec,
                 header.has_tile_synopsis(),
                 read_concurrency,
+                header.perms,
             ))
         } else {
             NamedGraphsSlot::Resident(Vec::new())
@@ -3638,7 +3686,7 @@ impl Rete {
             None => return Vec::new(),
         };
 
-        let index_permutation = GraphIndex::best_permutation(pattern);
+        let index_permutation = GraphIndex::best_permutation_in(self.header.perms, pattern);
         let dictionary_range = ByteRange {
             offset: self.header.dictionary_offset,
             len: self.header.dictionary_len,
@@ -3853,13 +3901,16 @@ fn route_pattern<R: RangeReader>(
     let Some(pattern) = resolve_query_pattern(&dict, s, p, o) else {
         return Ok(None);
     };
-    let permutation = GraphIndex::best_permutation(pattern);
+    let permutation = GraphIndex::best_permutation_in(header.perms, pattern);
     let section = locate_container_section_ranged(
         reader,
         header.root_dir_offset,
         header.root_dir_len,
-        permutation.section_index(),
-        NUM_PERMS as u64,
+        header
+            .perms
+            .position(permutation)
+            .ok_or(FileError::Container("routed to an absent permutation"))?,
+        header.perms.len() as u64,
     )?;
     Ok(Some(RoutedPattern {
         dict,
@@ -4562,6 +4613,114 @@ mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
     use crate::index::GraphIndexBuilder;
+
+    /// A three-permutation file must survive every opener — resident, ranged,
+    /// ranged-lazy — and answer every pattern shape with the rows the
+    /// six-permutation twin gives, including through a named graph's own
+    /// container. The mask is a file-level fact, so getting it to the named
+    /// graphs' decoder is a separate thing that can be forgotten.
+    #[test]
+    fn three_permutation_file_round_trips_every_open_path() {
+        use crate::index::PermSet;
+        use crate::reader::SliceReader;
+
+        let build = |perms: PermSet| {
+            let mut db = crate::DictionaryBuilder::new();
+            let mut triples = Vec::new();
+            for i in 0..60u32 {
+                let (s, p, o) = (
+                    format!("<http://ex/s{}>", i % 11),
+                    format!("<http://ex/p{}>", i % 3),
+                    format!("<http://ex/o{}>", i % 7),
+                );
+                db.observe(&s, &p, &o);
+                triples.push((s, p, o));
+            }
+            let dict = db.build();
+            let ids: Vec<(u32, u32, u32)> = triples
+                .iter()
+                .map(|(s, p, o)| dict.encode(s, p, o).unwrap())
+                .collect();
+            let def = GraphIndexBuilder::from_triples(ids.clone())
+                .with_tile_budget(96)
+                .with_perms(perms)
+                .build();
+            let named = GraphIndexBuilder::from_triples(ids)
+                .with_tile_budget(96)
+                .with_perms(perms)
+                .build();
+            write_dataset(
+                &dict,
+                &def,
+                &[("<http://ex/g>".to_string(), named)],
+                true,
+                &[],
+                0,
+            )
+        };
+
+        let six = build(PermSet::ALL);
+        let three = build(PermSet::CORE);
+        assert!(three.len() < six.len());
+        assert_eq!(Header::from_bytes(&three).unwrap().perms, PermSet::CORE);
+        assert_eq!(Header::from_bytes(&six).unwrap().perms, PermSet::ALL);
+
+        let shapes: Vec<(Option<&str>, Option<&str>, Option<&str>)> = vec![
+            (None, None, None),
+            (Some("<http://ex/s3>"), None, None),
+            (None, Some("<http://ex/p1>"), None),
+            (None, None, Some("<http://ex/o5>")),
+            (Some("<http://ex/s3>"), Some("<http://ex/p1>"), None),
+            (Some("<http://ex/s3>"), None, Some("<http://ex/o5>")),
+            (None, Some("<http://ex/p1>"), Some("<http://ex/o5>")),
+            (
+                Some("<http://ex/s3>"),
+                Some("<http://ex/p1>"),
+                Some("<http://ex/o5>"),
+            ),
+        ];
+
+        for (image, tag) in [(&six, "six"), (&three, "three")] {
+            let resident = Rete::open(image).unwrap();
+            let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
+            let ranged = Rete::open_ranged(&SliceReader::new(leaked)).unwrap();
+            let lazy = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+            for (s, p, o) in &shapes {
+                let want: Vec<_> = {
+                    let mut v = Rete::open(&six).unwrap().query(*s, *p, *o);
+                    v.sort();
+                    v
+                };
+                for (got, path) in [
+                    (resident.query(*s, *p, *o), "resident"),
+                    (ranged.query(*s, *p, *o), "ranged"),
+                    (lazy.query(*s, *p, *o), "lazy"),
+                ] {
+                    let mut got = got;
+                    got.sort();
+                    assert_eq!(got, want, "{tag}/{path} disagreed on {:?}", (s, p, o));
+                }
+                // The named graph's container carries the same mask.
+                let mut g = resident.query_in_graph(Some("<http://ex/g>"), *s, *p, *o);
+                g.sort();
+                assert_eq!(g, want, "{tag}/named disagreed on {:?}", (s, p, o));
+            }
+        }
+
+        // And the single-pattern ROUTED read (the `query-url` path) locates its
+        // section by container position, not by the format's fixed six-wide
+        // slot — the one place the two indexes differ.
+        let leaked: &'static [u8] = Box::leak(three.clone().into_boxed_slice());
+        let reader = SliceReader::new(leaked);
+        let routed = Rete::query_ranged(&reader, None, None, Some("<http://ex/o5>")).unwrap();
+        let mut want = Rete::open(&six)
+            .unwrap()
+            .query(None, None, Some("<http://ex/o5>"));
+        want.sort();
+        let mut got = routed;
+        got.sort();
+        assert_eq!(got, want, "routed single-pattern read on a lean file");
+    }
 
     #[test]
     fn read_coalesced_merges_within_gap_and_splits_beyond() {
@@ -6136,6 +6295,7 @@ mod tests {
             header.block_codec,
             header.has_tile_synopsis(),
             1,
+            header.perms,
         )
         .unwrap();
         let mut want = rete

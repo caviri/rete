@@ -558,6 +558,31 @@ pub fn assemble_dataset_with_opts_algo<M: IntoMetadata>(
     algo: PyramidAlgo,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
+    assemble_dataset_with_perms(
+        quads,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        algo,
+        crate::index::PermSet::ALL,
+        metadata,
+    )
+}
+
+/// Like [`assemble_dataset_with_opts_algo`], but writes only the permutations in
+/// `perms` (`rete build --permutations 3`). Every other byte of the file is
+/// unchanged; [`crate::index::PermSet::ALL`] reproduces the default build
+/// exactly, down to the header byte.
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_dataset_with_perms<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    with_pyramid: bool,
+    with_text_index: bool,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    perms: crate::index::PermSet,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
 
     let mut db = DictionaryBuilder::new();
@@ -602,6 +627,7 @@ pub fn assemble_dataset_with_opts_algo<M: IntoMetadata>(
         with_text_index,
         type_override,
         algo,
+        perms,
         pending,
         stats,
     )
@@ -645,11 +671,37 @@ where
 /// (the streaming, low-RAM build path for `rete build --pyramid-algo …`).
 #[allow(clippy::too_many_arguments)]
 pub fn assemble_dataset_streaming_algo<S, M: IntoMetadata>(
+    stream: S,
+    with_pyramid: bool,
+    with_text_index: bool,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
+) -> Result<(Vec<u8>, BuildStats), IngestError>
+where
+    S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
+{
+    assemble_dataset_streaming_with_perms(
+        stream,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        algo,
+        crate::index::PermSet::ALL,
+        metadata,
+    )
+}
+
+/// Like [`assemble_dataset_streaming_algo`], but writes only the permutations in
+/// `perms` — the two-pass low-RAM twin of [`assemble_dataset_with_perms`].
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_dataset_streaming_with_perms<S, M: IntoMetadata>(
     mut stream: S,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
+    perms: crate::index::PermSet,
     metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
 where
@@ -691,6 +743,7 @@ where
         with_text_index,
         type_override,
         algo,
+        perms,
         pending,
         stats,
     ))
@@ -709,6 +762,7 @@ fn finish_assembly<M: IntoMetadata>(
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
+    perms: crate::index::PermSet,
     pending: M,
     mut stats: BuildStats,
 ) -> (Vec<u8>, BuildStats) {
@@ -754,7 +808,7 @@ fn finish_assembly<M: IntoMetadata>(
     // byte-identical to `build`.
     let build_index = |triples: Vec<(u32, u32, u32)>| -> crate::GraphIndex {
         let n = triples.len();
-        let b = GraphIndexBuilder::from_triples(triples);
+        let b = GraphIndexBuilder::from_triples(triples).with_perms(perms);
         if n > LOWMEM_TRIPLE_THRESHOLD {
             b.build_seq()
         } else {

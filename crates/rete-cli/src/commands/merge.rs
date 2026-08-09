@@ -111,8 +111,15 @@ pub(crate) fn merge_cmd(
     // first named quad reaches it — which on a multi-gigabyte shard is hours in.
     // Every input's graph list is in its header, so check all of them up front
     // and fail in a second instead.
+    // The merged file carries the UNION of its inputs' permutation sets: an
+    // all-lean merge stays lean, and one full input is enough to keep the
+    // merge-join orders that input's queries relied on. `merge` has no
+    // `--permutations` of its own — it consolidates shards, it does not
+    // re-decide how they were built.
+    let mut perms_bits = rete_core::PermSet::CORE.bits();
     for path in inputs {
         let rete = crate::commands::range_source::open_local(path)?;
+        perms_bits |= rete.header().perms.bits();
         let names = rete.graph_names();
         if !names.is_empty() {
             anyhow::bail!(
@@ -145,7 +152,14 @@ pub(crate) fn merge_cmd(
         Vec::new()
     };
 
+    let perms = rete_core::PermSet::from_bits(perms_bits).map_err(|e| anyhow::anyhow!("{e}"))?;
     eprintln!("merge: {} input file(s) -> {output}", inputs.len());
+    if perms != rete_core::PermSet::ALL {
+        eprintln!(
+            "merge: every input is {}-permutation; the merged file will be too",
+            perms.len()
+        );
+    }
     let out_path = Path::new(output).to_path_buf();
     let stats = rete_core::extbuild::build_external(
         |visit| {
@@ -189,6 +203,7 @@ pub(crate) fn merge_cmd(
                 None => Vec::new(),
             }),
             build_info,
+            perms,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;

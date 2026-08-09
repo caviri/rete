@@ -194,6 +194,102 @@ with `--no-pyramid` when you only serve **selective queries at scale** (smaller 
 [Semantic zoom guide](semantic-zoom.md) for the schema-pyramid side of this. Repro:
 `dev/bench_pyramid_value.sh` (bytes) and `dev/bench_pyramid_time.sh` (time).
 
+## The merge-join permutations: cost vs benefit
+
+`rete build --permutations 3` writes SPO, POS and OSP and drops SOP, PSO and OPS.
+Those three exist only to hand a **sort-merge join** two streams already sorted on
+the join key; the first three decide *routing*, and they tie the longest bound
+prefix on all eight triple-pattern shapes — so a 3-permutation file answers every
+query with the same rows, from the same tiles. **The default is six.**
+
+Two datasets, each built both ways from its local source, `--no-pyramid` (the
+shape 89% of published bytes have — they came from the external builder, which
+writes none). `tree-city-inventory` is short-term-heavy: its dictionary is 11% of
+the file. `davidrumsey` is literal-heavy: 27%. That ratio is what decides the
+saving, and the published corpus sits between them.
+
+**Bytes** — per-permutation section sizes, from the container framing:
+
+| | tree-city-inventory (3,145,739 triples) | davidrumsey (5,001,983 triples) |
+|---|--:|--:|
+| file, 6 perms | 19,438,115 | 58,668,940 |
+| file, 3 perms | **9,614,592** | **37,066,408** |
+| dictionary (identical) | 2,094,500 | 16,069,891 |
+| index, 6 perms | 17,342,587 | 42,598,021 |
+| SPO / POS / OSP | 2,611,552 / 2,390,646 / 2,516,853 | 7,798,227 / 7,457,171 / 5,740,078 |
+| SOP / PSO / OPS | 4,990,582 / 2,744,291 / 2,088,639 | 8,492,255 / 7,804,244 / 5,306,021 |
+| **SOP+PSO+OPS as a share of the file** | **50.5%** | **36.8%** |
+
+**Build** — wall time and true peak RSS (`/proc/<pid>/status` `VmHWM`, polled;
+`getrusage(RUSAGE_CHILDREN).ru_maxrss` is the max over *all* reaped children and
+reported 707 MB against a true 96 MB):
+
+| build path | dataset | 6 perms | 3 perms | Δ time | Δ peak RSS |
+|---|---|--:|--:|--:|--:|
+| in-RAM (two-pass streaming) | tree-city | 10,342 ms · 641 MiB | 10,254 ms · 595 MiB | −0.9% | −7.2% |
+| in-RAM (two-pass streaming) | davidrumsey | 17,037 ms · 938 MiB | 16,708 ms · 800 MiB | −1.9% | −14.7% |
+| `--memory-budget-mb 2048` | tree-city | 15,069 ms · 1,351 MiB | 13,031 ms · 1,341 MiB | **−13.5%** | −0.8% |
+| `--memory-budget-mb 2048` | davidrumsey | 26,700 ms · 1,658 MiB | 23,510 ms · 1,647 MiB | **−11.9%** | −0.6% |
+
+The in-RAM builder permutes, sorts and tiles all six **in parallel**, so halving
+the work barely moves the wall clock — it moves the RAM. The external builder
+sorts them one at a time, so there the time saving is real. Both paths write
+byte-identical files.
+
+**Query** — each dataset's **own catalog example queries**, plus two constructed
+two-pattern joins, run cold over HTTP against a local Range server (a fresh
+`rete sparql-url` per measurement, median of 3):
+
+| dataset | query | rows | 6 perms | 3 perms | Δ bytes | Δ time |
+|---|---|--:|--:|--:|--:|--:|
+| tree-city | The commonest trees in Geneva | 20 | 228 ms · 1,350,179 B · 19 req | 399 ms · 1,160,448 B · 15 req | −14.1% | **+75.0%** |
+| tree-city | Which municipality has the most species diversity | 20 | 468 ms · 1,481,251 B | 616 ms · 1,291,520 B | −12.8% | **+31.5%** |
+| tree-city | The tallest trees in the canton | 25 | 554 ms · 1,940,003 B | 619 ms · 1,488,128 B | −23.3% | **+11.7%** |
+| tree-city | Champion trees, and the tallest of each species | 15 | 180 ms · 1,546,787 B | 163 ms · 1,357,056 B | −12.3% | −9.1% |
+| tree-city | Map the giant sequoias | 300 | 610 ms · 5,020,195 B | 613 ms · 4,830,464 B | −3.8% | +0.5% |
+| tree-city | *constructed*: subject-shared join (needs PSO) | 1 | 198 ms · 1,153,571 B | 190 ms · 963,840 B | −16.4% | −4.2% |
+| tree-city | *constructed*: object-shared join (needs POS — kept) | 1 | 284 ms · 1,415,715 B | 266 ms · 1,225,984 B | −13.4% | −6.1% |
+| davidrumsey | Old maps around Lake Geneva | 67 | 948 ms · 8,664,972 B | 895 ms · 8,492,712 B | −2.0% | −5.6% |
+| davidrumsey | The largest scans: 100,000+ pixel monsters | 40 | 1,360 ms · 7,092,108 B | 1,446 ms · 6,854,312 B | −3.4% | +6.3% |
+| davidrumsey | Atlases: claimed map count vs what's in the graph | 25 | 578 ms · 5,650,316 B | 589 ms · 5,478,056 B | −3.0% | +2.0% |
+| davidrumsey | Wall maps over two meters wide | 40 | 907 ms · 13,907,852 B | 843 ms · 13,604,520 B | −2.2% | −7.1% |
+| davidrumsey | Celestial maps, oldest first, with images | 60 | 617 ms · 5,322,636 B | 664 ms · 5,019,304 B | −5.7% | +7.7% |
+| davidrumsey | The IIIF stack: manifest, mirror + a built image URL | 40 | 374 ms · 6,109,068 B | 378 ms · 5,936,808 B | −2.8% | +1.0% |
+| davidrumsey | One spatial pattern, six place fields (Japan) | 0 | 386 ms · 2,176,908 B | 367 ms · 2,004,648 B | −7.9% | −4.9% |
+| davidrumsey | *constructed*: subject-shared join (needs PSO) | 1 | 255 ms · 1,914,764 B | 250 ms · 1,742,504 B | −9.0% | −2.0% |
+| davidrumsey | *constructed*: object-shared join (needs POS — kept) | 1 | 204 ms · 1,652,620 B | 184 ms · 1,480,360 B | −10.4% | −9.8% |
+
+**Every one of the 16 pairs returned the same row count.**
+
+What the numbers say:
+
+- **The merge join is worth something, and it is concentrated.** Three of the
+  sixteen queries — all `tree-city`, all the same shape — regress by 75%, 32% and
+  12%. The other thirteen are within ±10%, i.e. noise. There is no middle: a
+  query either loses its merge seed or does not notice.
+- **The loss is CPU, not I/O.** Every regressing query *fetched fewer bytes and
+  made fewer requests* on the lean file. The hash table is what costs, so the
+  gap would widen with faster storage and narrow over a slow link.
+- **The shape that loses it is `?s <p1> ?o1 . ?s <p2> ?o2`** — two bound
+  predicates sharing a subject. That needs a `P*S` order, and PSO is one of the
+  three dropped. The object-shared twin needs POS, which is kept, and does not
+  move. Exactly three of the twelve (bound-set, join-column) shapes lose their
+  co-sorted stream; the other nine are unaffected.
+- **A lean file always fetches less**, 2.0%–23.3% here — the tile directories of
+  three absent sections are never read at open.
+- **Nothing else changes.** Same rows, same routing, same tiles; the difference
+  is a join strategy and ~40% of the bytes.
+
+**Rule of thumb:** keep the default six for anything published, and for anything
+whose workload joins two bound predicates on a shared subject. Consider
+`--permutations 3` for a lookup-and-follow workload — resolve an id, read its
+properties, follow a link — where the file is index-dominated and the storage or
+the transfer is what hurts. Measure first: `rete cost` reports the byte and
+request cost of a real query against either build.
+
+Repro: `dev/perms/{build_bench.sh,query_bench.py,sections.py,rangeserver.py}`
+(gitignored; sources are `data/tree-city-inventory/` and `data/davidrumsey-maps/`).
+
 ## Coherence checking: tier costs
 
 How much of a remote `.rete` each coherence check actually fetches, as the graph

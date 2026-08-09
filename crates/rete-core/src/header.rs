@@ -135,6 +135,8 @@ pub enum HeaderError {
     UnsupportedVersion { found: u8, min: u8, max: u8 },
     #[error("section count {0} overruns the header frame")]
     BadSectionCount(usize),
+    #[error("unusable index permutation mask {mask:#04x}: {why}")]
+    BadPermMask { mask: u8, why: &'static str },
 }
 
 /// Decoded file header. All multi-byte fields are little-endian on disk. The
@@ -177,6 +179,18 @@ pub struct Header {
     /// an opaque per-build record that is **not** covered by the content hash.
     pub build_info_offset: u64,
     pub build_info_len: u64,
+    /// Which index permutations the file's index containers carry
+    /// ([`crate::index::PermSet`]).
+    ///
+    /// On disk this is one byte at `[50]`, inside the reserved core span, and
+    /// **`0` means all six** — so every file written before the mask existed
+    /// decodes as [`PermSet::ALL`] and a full six-permutation build stays
+    /// byte-identical to what it always was. A lean file writes its mask
+    /// (`0b000_0111` for SPO+POS+OSP), and its index container then holds three
+    /// sections rather than six, which is what an older reader trips over.
+    ///
+    /// [`PermSet::ALL`]: crate::index::PermSet::ALL
+    pub perms: crate::index::PermSet,
     /// Directory entries whose [`SectionKind`] this build doesn't recognize,
     /// preserved verbatim. Empty for a file this crate wrote.
     pub extra_sections: Vec<Section>,
@@ -199,7 +213,14 @@ impl Header {
         b[43] = self.block_codec;
         // [44..46) section_count written below.
         b[46..50].copy_from_slice(&self.schema_meta_len.to_le_bytes());
-        // [50..64) reserved.
+        // [50] permutation mask; 0 = all six, so a full build is byte-identical
+        // to every file written before the field existed.
+        b[50] = if self.perms == crate::index::PermSet::ALL {
+            0
+        } else {
+            self.perms.bits()
+        };
+        // [51..64) reserved.
 
         // --- section directory ---
         // The five always-present sections (verbatim, so the named offsets
@@ -290,6 +311,13 @@ impl Header {
             return Err(HeaderError::BadSectionCount(section_count));
         }
 
+        let perms = if b[50] == 0 {
+            crate::index::PermSet::ALL
+        } else {
+            crate::index::PermSet::from_bits(b[50])
+                .map_err(|why| HeaderError::BadPermMask { mask: b[50], why })?
+        };
+
         let mut h = Header {
             version: b[4],
             flags: b[5],
@@ -310,6 +338,7 @@ impl Header {
             named_graphs_offset: 0,
             named_graphs_len: 0,
             schema_meta_len: u32_at(46),
+            perms,
             text_index_offset: 0,
             text_index_len: 0,
             build_info_offset: 0,
@@ -499,6 +528,7 @@ mod tests {
             dict_codec: 1,
             block_codec: 2,
             pyramid_levels: 3,
+            perms: crate::index::PermSet::ALL,
             quad_count: 5,
             term_count: 9,
             content_hash: [7u8; 16],

@@ -346,6 +346,37 @@ add optional sections and flags that preserve <code>0x05</code> semantics. A req
 change uses a new format byte, retains <code>0x05</code> read support, and ships with a
 documented rebuild or migration path. Older readers may reject a newer format
 cleanly; silent misinterpretation is never permitted.</p>
+<h3 id="--permutations-3-a-0x05-file-older-readers-refuse"><code>--permutations 3</code>: a <code>0x05</code> file older readers refuse</h3>
+<p><code>rete build --permutations 3</code> writes SPO, POS and OSP and omits the three
+merge-join orders (SOP, PSO, OPS). <strong>The default is six and this section is the
+reason to think before changing it.</strong></p>
+<p>The file is still format <code>0x05</code> — no layout moved, no section was added, the
+header's byte 50 simply carries the permutation mask instead of zero. A reader
+that knows the mask answers every query on it with the same rows, from the same
+tiles, as it would on the six-permutation twin. A reader that predates the mask
+<strong>refuses it</strong>:</p>
+<pre><code>$ rete stats three.rete          # a Rete built before the mask existed
+Error: malformed container: expected 6 permutation sections
+$ echo $?
+1
+$ rete sparql-url http://…/three.rete 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }'
+Error: malformed container: unexpected container section count
+$ echo $?
+1
+</code></pre>
+<p>Both the resident decoder and the ranged one check the index container's section
+count before reading a payload, so the refusal is the same on a local file, a
+lazily range-read one, and every <code>*-url</code> command. <code>rete info</code>, <code>rete verify</code> and
+<code>rete card-url</code> still succeed, because they read only the header and the metadata
+section and never claim to have read the index.</p>
+<p>That is the good failure — loud, immediate, non-zero exit — and it is the
+opposite of <a href="https://github.com/caviri/rete/issues/124">#124</a>, where a stale
+reader returned 65,384 rows where 508,116 were correct. It is <em>not</em> forward
+compatibility: a lean file cannot be published to a fleet of older readers and
+be expected to work. Keep the default for anything published, and treat
+<code>--permutations 3</code> as a choice about a specific consumer that you control.</p>
+<p>Which set a file carries is visible without downloading it: <code>rete info</code>, <code>rete stats</code> and the Dataset Card's <code>signals.permutations</code> all report it, derived from
+the header byte rather than stored — see <a href="dataset-cards.html">dataset-cards.md</a>.</p>
 <h2 id="is-it-compatible-with-rdf">Is it compatible with RDF?</h2>
 <p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
 format <em>for</em> RDF, built on the standard Rust RDF stack

@@ -10,6 +10,46 @@ change uses a new format byte, retains `0x05` read support, and ships with a
 documented rebuild or migration path. Older readers may reject a newer format
 cleanly; silent misinterpretation is never permitted.
 
+### `--permutations 3`: a `0x05` file older readers refuse
+
+`rete build --permutations 3` writes SPO, POS and OSP and omits the three
+merge-join orders (SOP, PSO, OPS). **The default is six and this section is the
+reason to think before changing it.**
+
+The file is still format `0x05` — no layout moved, no section was added, the
+header's byte 50 simply carries the permutation mask instead of zero. A reader
+that knows the mask answers every query on it with the same rows, from the same
+tiles, as it would on the six-permutation twin. A reader that predates the mask
+**refuses it**:
+
+```
+$ rete stats three.rete          # a Rete built before the mask existed
+Error: malformed container: expected 6 permutation sections
+$ echo $?
+1
+$ rete sparql-url http://…/three.rete 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }'
+Error: malformed container: unexpected container section count
+$ echo $?
+1
+```
+
+Both the resident decoder and the ranged one check the index container's section
+count before reading a payload, so the refusal is the same on a local file, a
+lazily range-read one, and every `*-url` command. `rete info`, `rete verify` and
+`rete card-url` still succeed, because they read only the header and the metadata
+section and never claim to have read the index.
+
+That is the good failure — loud, immediate, non-zero exit — and it is the
+opposite of [#124](https://github.com/caviri/rete/issues/124), where a stale
+reader returned 65,384 rows where 508,116 were correct. It is *not* forward
+compatibility: a lean file cannot be published to a fleet of older readers and
+be expected to work. Keep the default for anything published, and treat
+`--permutations 3` as a choice about a specific consumer that you control.
+
+Which set a file carries is visible without downloading it: `rete info`, `rete
+stats` and the Dataset Card's `signals.permutations` all report it, derived from
+the header byte rather than stored — see [dataset-cards.md](dataset-cards.md).
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query

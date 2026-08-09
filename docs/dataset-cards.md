@@ -103,7 +103,8 @@ newlines.
 | `class_links` | derived | The **effective schema**: `(s_class, predicate, o_class, count)` rows — the class-to-class quotient (same as `rete schema` / `schema_summary`, with `(literal)`/`(untyped)` sentinels). |
 | `top_hubs`, `in_hubs` | derived | Top subjects by out-degree and top non-literal objects by in-degree. |
 | `signals` | derived | Detected **affordances**: `label_predicate`, `base_iri`, `default_lang`, ranked `time_predicates` / `numeric_predicates`, present `link_predicates`, `geo_wkt` / `geo_latlong`, `temporal_extent`, `spatial_bbox` (CRS84 lon/lat). |
-| `signals.text_index` | **measured** | Whether the file carries a **full-text (TEXT_INDEX) section** — `{present, bytes, token_table_bytes}`. The one card field derived from the file's *sections* rather than its triples, and the one that is never written into the file. See [The full-text signal](#the-full-text-signal-measured-not-stored). |
+| `signals.text_index` | **measured** | Whether the file carries a **full-text (TEXT_INDEX) section** — `{present, bytes, token_table_bytes}`. Derived from the file's *sections* rather than its triples, and never written into the file. See [The full-text signal](#the-full-text-signal-measured-not-stored). |
+| `signals.permutations` | **measured** | Which **index permutations** the file stores — `{count, names, merge_join}`. Also derived, from the header's permutation mask, and also never written. See [The permutation signal](#the-permutation-signal-measured-not-stored). |
 | `queries` | derived | The auto-generated, **tiered starter-query library** (see below). |
 | `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). |
 | `top_n` | derived | The cap the profile lists were derived under — the number `truncated` was hinting at without stating. |
@@ -178,6 +179,46 @@ it would mean fetching and inflating all 193 MB — not a card-tier fact.
 `rete card-audit` reports the measured signal for any `.rete`, local or remote,
 and flags a card whose own bytes disagree with the file's sections. Given a card
 *document* it reports `unknown` — there is nothing to measure.
+
+### The permutation signal: measured, not stored
+
+A `.rete` stores its triples in six orders of `(s, p, o)` by default —
+`SPO, POS, OSP, SOP, PSO, OPS`. `rete build --permutations 3` keeps only the
+first three. The first three decide **routing**: they tie the longest bound
+prefix on all eight triple-pattern shapes, so a three-permutation file answers
+every query with the same rows, fetched from the same tiles. The other three
+exist to hand a **sort-merge join** two streams already sorted on the join key;
+without them the planner declines the merge seed and hash-joins instead.
+
+So, exactly like a missing full-text index, the difference **cannot be seen in
+any result** — and it is not small: measured on two datasets built both ways,
+`SOP + PSO + OPS` are **36.2%** of `davidrumsey` (54.8 MB → 35.0 MB) and
+**50.5%** of `tree-city-inventory` (19.4 MB → 9.6 MB).
+
+```json
+"signals": { "permutations": { "count": 6, "names": ["SPO","POS","OSP","SOP","PSO","OPS"], "merge_join": true } }
+"signals": { "permutations": { "count": 3, "names": ["SPO","POS","OSP"], "merge_join": false } }
+```
+
+| value | means |
+|---|---|
+| `{"count": 6, "merge_join": true, …}` | measured — the file carries the merge-join orders |
+| `{"count": 3, "merge_join": false, …}` | measured — it carries only the routing three |
+| **field absent** | **unknown** — nobody measured (a card read out of a saved JSON document). Never read this as "six". |
+
+**Measured, never stored**, for the same three reasons as `text_index` — and one
+that is sharper here. Which permutations a file carries is a fact about *its own
+bytes*, sitting in the 1 KiB header (byte 50; `0` means all six, which is why
+every file written before the mask existed reports six today, with no re-card).
+A stored copy would be an **authored claim about the file's own layout** — the
+single class of statement a file can always check for itself, for free. The
+measurement costs **no range read at all**: the header is already in hand.
+
+`names` is written out rather than implied by `count` because the mask is a set,
+and a future build may keep a different three.
+
+Beyond the card, `rete info` and `rete stats` report it directly, so a file with
+no card still answers the question.
 
 ### Where to get `theme` IRIs
 

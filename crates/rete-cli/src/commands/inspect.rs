@@ -20,8 +20,14 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     // full-text search this?" is decided; fold that into the card the same way
     // `rete card` does, so both surfaces answer it identically.
     let text_index = crate::commands::card::TextIndexSignal::probe(&reader, &header);
+    // Same for "can this file merge-join?": it is the header's permutation mask
+    // (byte 50, `0` = all six), so it is free here and true of the bytes rather
+    // than of anything the card claims.
+    let permutations = crate::commands::card::PermutationsSignal::probe(&header);
+    println!("permutations: {}", permutations.describe());
     if let Some(mut card) = crate::commands::card::load_card_ranged(&reader)? {
         card.observe_text_index(text_index);
+        card.observe_permutations(permutations);
         println!();
         println!(
             "{}",
@@ -49,6 +55,16 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
     if h.has_tile_synopsis() {
         println!("  tile synopsis         : yes (range readers prune tiles by a bound secondary)");
     }
+    println!(
+        "  index permutations    : {} ({}){}",
+        h.perms.len(),
+        h.perms.names().join("/"),
+        if h.perms.has_merge_orders() {
+            ""
+        } else {
+            " — no sort-merge join"
+        }
+    );
     println!(
         "  compression           : {}",
         if h.block_codec == CODEC_ZSTD {
