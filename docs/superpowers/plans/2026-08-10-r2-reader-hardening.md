@@ -330,7 +330,7 @@
 - Create: `scripts/cold-r2-workloads/boe.json`
 - Create: `scripts/cold-r2-workloads/chebi-full.json`
 
-- [ ] **Step 1: Add failing workload parsing and compatibility tests**
+- [x] **Step 1: Add failing workload parsing and compatibility tests**
 
   Add tests for a strict JSON workload loader. The accepted schema is:
 
@@ -348,7 +348,7 @@
 
   Assert rejection of missing/unknown fields, empty names/SPARQL/source/ETag, non-positive length, an empty query list, and duplicate query names. Add a subprocess test showing `--workload custom.json` executes exactly `query_count × mode_count × samples` processes, includes the workload name in every JSONL record, pins the custom server's length/ETag before and after, and hashes output consistently. Retain the existing `--source` Chemotion test and its nine-record expectation to prove backward compatibility. Assert `--source` and `--workload` are mutually exclusive and exactly one is required.
 
-- [ ] **Step 2: Run the benchmark tests and observe RED**
+- [x] **Step 2: Run the benchmark tests and observe RED**
 
   ```powershell
   docker compose run --rm dev uv run python scripts/test_bench_cold_r2.py -v
@@ -356,7 +356,7 @@
 
   Expected failure: `load_workload`, `Workload`, and `--workload` do not exist.
 
-- [ ] **Step 3: Implement `Workload` and CLI selection**
+- [x] **Step 3: Implement `Workload` and CLI selection**
 
   Add:
 
@@ -388,7 +388,7 @@
 
   With `--source`, construct a copy of `CHEMOTION_WORKLOAD` using that URL. With `--workload`, use its URL, pins, and query list. Add `"workload": workload.name` to SOURCE metadata and every sample record. Preserve threshold modes, rotating order, executable hashes, exclusive output creation, before/after pin checks, physical transfer parsing, and fresh-process semantics.
 
-- [ ] **Step 4: Add BOE and ChEBI Full workload files**
+- [x] **Step 4: Add BOE and ChEBI Full workload files**
 
   Pin the observed R2 identities:
 
@@ -399,7 +399,7 @@
 
   Give BOE two deterministic queries (one bound-subject lookup and one aggregate). Give ChEBI Full one deterministic selective query, because its role is to verify the above-threshold path rather than reward a full scan. Every `SELECT ... LIMIT` must use a complete `ORDER BY` before `LIMIT` so eager and lazy modes cannot return different legal subsets. Validate the queries once with the current candidate binary before using them for timed samples.
 
-- [ ] **Step 5: Run GREEN and smoke the CLI help**
+- [x] **Step 5: Run GREEN and smoke the CLI help**
 
   ```powershell
   docker compose run --rm dev uv run python scripts/test_bench_cold_r2.py -v
@@ -408,7 +408,7 @@
   docker compose run --rm dev uv run python -m json.tool scripts/cold-r2-workloads/chebi-full.json
   ```
 
-- [ ] **Step 6: Review and commit Task 4**
+- [x] **Step 6: Review and commit Task 4**
 
   Verify workload parsing cannot silently ignore a misspelled pin/query field, legacy Chemotion invocation remains valid, and all sample records carry enough identity to prevent cross-dataset aggregation.
 

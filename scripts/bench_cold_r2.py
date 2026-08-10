@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark cold native CLI reads against the pinned Chemotion R2 object."""
+"""Benchmark cold native CLI reads against a strictly pinned R2 workload."""
 
 import argparse
 import hashlib
@@ -35,7 +35,7 @@ SELECT ?name ?formula ?smiles WHERE {
         """PREFIX chebi: <http://purl.obolibrary.org/obo/chebi/>
 SELECT ?formula (COUNT(?m) AS ?molecules) WHERE {
   ?m chebi:formula ?formula
-} GROUP BY ?formula ORDER BY DESC(?molecules) LIMIT 20""",
+} GROUP BY ?formula ORDER BY DESC(?molecules) ?formula LIMIT 20""",
     ),
     (
         "path",
@@ -45,6 +45,96 @@ SELECT ?name WHERE {
 } ORDER BY ?name LIMIT 200""",
     ),
 )
+
+
+@dataclass(frozen=True)
+class Workload:
+    name: str
+    source: str
+    expected_length: int
+    expected_etag: str
+    queries: tuple[tuple[str, str], ...]
+
+
+CHEMOTION_WORKLOAD = Workload(
+    name="chemotion",
+    source="",
+    expected_length=EXPECTED_LENGTH,
+    expected_etag=EXPECTED_ETAG,
+    queries=QUERIES,
+)
+
+
+def require_exact_fields(value, expected, context):
+    if not isinstance(value, dict):
+        raise ValueError(f"{context} must be a JSON object")
+    actual = set(value)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        unknown = sorted(actual - expected)
+        raise ValueError(
+            f"invalid {context} fields: missing={missing}, unknown={unknown}"
+        )
+
+
+def require_nonblank_string(value, context):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{context} must be a non-blank string")
+    return value
+
+
+def reject_duplicate_json_fields(pairs):
+    value = {}
+    for key, member in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON field: {key!r}")
+        value[key] = member
+    return value
+
+
+def load_workload(path: pathlib.Path) -> Workload:
+    payload = json.loads(
+        path.read_text(encoding="utf-8"),
+        object_pairs_hook=reject_duplicate_json_fields,
+    )
+    require_exact_fields(
+        payload,
+        {"name", "source", "expected_length", "expected_etag", "queries"},
+        "workload",
+    )
+    name = require_nonblank_string(payload["name"], "workload name")
+    source = require_nonblank_string(payload["source"], "workload source")
+    expected_etag = require_nonblank_string(
+        payload["expected_etag"], "workload expected_etag"
+    )
+    expected_length = payload["expected_length"]
+    if (
+        not isinstance(expected_length, int)
+        or isinstance(expected_length, bool)
+        or expected_length <= 0
+    ):
+        raise ValueError("workload expected_length must be a positive integer")
+    query_values = payload["queries"]
+    if not isinstance(query_values, list) or not query_values:
+        raise ValueError("workload queries must be a non-empty array")
+    queries = []
+    query_names = set()
+    for index, query in enumerate(query_values):
+        context = f"workload query {index}"
+        require_exact_fields(query, {"name", "sparql"}, context)
+        query_name = require_nonblank_string(query["name"], f"{context} name")
+        sparql = require_nonblank_string(query["sparql"], f"{context} sparql")
+        if query_name in query_names:
+            raise ValueError(f"duplicate query name: {query_name!r}")
+        query_names.add(query_name)
+        queries.append((query_name, sparql))
+    return Workload(
+        name=name,
+        source=source,
+        expected_length=expected_length,
+        expected_etag=expected_etag,
+        queries=tuple(queries),
+    )
 
 
 @dataclass(frozen=True)
@@ -117,12 +207,13 @@ def head_metadata(source):
     return length, etag
 
 
-def require_pinned_metadata(source, phase):
-    length, etag = head_metadata(source)
-    if length != EXPECTED_LENGTH or etag != EXPECTED_ETAG:
+def require_pinned_metadata(workload, phase):
+    length, etag = head_metadata(workload.source)
+    if length != workload.expected_length or etag != workload.expected_etag:
         raise RuntimeError(
             f"{phase} HEAD metadata changed: got length={length}, etag={etag!r}; "
-            f"expected length={EXPECTED_LENGTH}, etag={EXPECTED_ETAG!r}"
+            f"expected length={workload.expected_length}, "
+            f"etag={workload.expected_etag!r}"
         )
     return length, etag
 
@@ -219,7 +310,9 @@ def parse_arguments():
     parser.add_argument("--candidate", required=True)
     parser.add_argument("--thresholds", type=parse_thresholds)
     parser.add_argument("--samples", type=int, default=15)
-    parser.add_argument("--source", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--source")
+    source.add_argument("--workload", type=pathlib.Path)
     parser.add_argument("--out", type=pathlib.Path, required=True)
     arguments = parser.parse_args()
     if arguments.samples <= 0:
@@ -229,6 +322,16 @@ def parse_arguments():
 
 def main():
     arguments = parse_arguments()
+    if arguments.workload is not None:
+        workload = load_workload(arguments.workload)
+    else:
+        workload = Workload(
+            name=CHEMOTION_WORKLOAD.name,
+            source=arguments.source,
+            expected_length=CHEMOTION_WORKLOAD.expected_length,
+            expected_etag=CHEMOTION_WORKLOAD.expected_etag,
+            queries=CHEMOTION_WORKLOAD.queries,
+        )
     modes = build_modes(arguments)
     for mode in modes:
         if not mode.executable.is_file():
@@ -236,11 +339,16 @@ def main():
         if not os.access(mode.executable, os.X_OK):
             raise RuntimeError(f"executable is not executable: {mode.executable}")
 
-    length, etag = require_pinned_metadata(arguments.source, "before")
+    length, etag = require_pinned_metadata(workload, "before")
     print(
         "SOURCE "
         + json.dumps(
-            {"source": arguments.source, "length": length, "etag": etag},
+            {
+                "workload": workload.name,
+                "source": workload.source,
+                "length": length,
+                "etag": etag,
+            },
             sort_keys=True,
         ),
         flush=True,
@@ -259,17 +367,18 @@ def main():
     expected_hashes = {}
     arguments.out.parent.mkdir(parents=True, exist_ok=True)
     with arguments.out.open("x", encoding="utf-8") as output:
-        for label, query in QUERIES:
+        for label, query in workload.queries:
             for run in range(1, arguments.samples + 1):
                 for mode in rotating_order(modes, run):
                     wall_ms, byte_count, get_count, peak_rss_kib, stdout = run_one(
-                        mode, arguments.source, query
+                        mode, workload.source, query
                     )
                     result_hash = hashlib.sha256(stdout).hexdigest()
                     expected = expected_hashes.get(label)
                     if expected is None:
                         expected_hashes[label] = result_hash
                     record = {
+                        "workload": workload.name,
                         "query": label,
                         "mode": mode.name,
                         "run": run,
@@ -291,18 +400,23 @@ def main():
                             f"produced {result_hash}, expected {expected}"
                         )
 
-    after = require_pinned_metadata(arguments.source, "after")
+    after = require_pinned_metadata(workload, "after")
     if after != (length, etag):
         raise RuntimeError(f"source metadata changed during benchmark: {after!r}")
 
-    for label, _query in QUERIES:
+    for label, _query in workload.queries:
         for mode in modes:
             sample = [
                 record
                 for record in records
                 if record["query"] == label and record["mode"] == mode.name
             ]
-            summary = {"query": label, "mode": mode.name, **summarize(sample)}
+            summary = {
+                "workload": workload.name,
+                "query": label,
+                "mode": mode.name,
+                **summarize(sample),
+            }
             print("SUMMARY " + json.dumps(summary, sort_keys=True), flush=True)
 
 
