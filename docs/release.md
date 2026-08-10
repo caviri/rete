@@ -139,11 +139,12 @@ it resolve.
 
 The experimental generations `0x01`–`0x04` that predate this release are not
 readable: rebuild those datasets from their source RDF with the 0.3 toolchain,
-and do not rename an older file and assume it is compatible. That is the last
-forced rebuild. **Generation-1 files (`0x05`) stay readable** — no flag-day
-rebuild is reserved before 1.0.0. A later generation may still be added; it must
-keep generation-1 read support and ship a documented migration path. See
-[compatibility](compatibility.md#stable-rete-file-compatibility).
+and do not rename an older file and assume it is compatible. Generation 1
+(`0x05`) has not moved since it froze on 2026-07-14, but **no
+backwards-compatibility promise is made before 1.0.0**: the format may still
+change in ways that require rebuilding files produced by the 0.3 line. Keep the
+RDF source you built from. The durable compatibility promise starts at 1.0.0.
+See [compatibility](compatibility.md#stable-rete-file-compatibility).
 
 The Rust crates declare Rust 1.87 as their minimum supported version. The
 public Rust, CLI, and WASM surfaces carry no semantic-versioning promise while

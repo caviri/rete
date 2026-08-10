@@ -647,8 +647,9 @@ permutations and the dictionary/permutation sorts already use all cores via
 counts, codecs) plus a <strong>typed section directory</strong> of <code>(kind, offset, length)</code>
 entries that point at every other section. New top-level sections are added as new
 directory entries, so the format has headroom without a layout break (stable
-generation 1, header byte <code>0x05</code>). Stable Rete 1.x readers accept this generation;
-pre-1.0 experimental files must be rebuilt. Readers validate the header, then decide how
+generation 1, header byte <code>0x05</code>). Every stable reader from 0.3.0 onward accepts
+this generation; the experimental generations <code>0x01</code>–<code>0x04</code> predate it and must be
+rebuilt from RDF source. Readers validate the header, then decide how
 much of the file to load:</p>
 <table><thead><tr><th>Section</th><th>Purpose</th></tr></thead><tbody>
 <tr><td>Header</td><td>Magic/version, content hash, counts, and the section directory</td></tr>

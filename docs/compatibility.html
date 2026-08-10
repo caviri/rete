@@ -587,17 +587,19 @@ first released in Rete <strong>0.3.0</strong>. Files carrying the experimental g
 <code>0x01</code>–<code>0x04</code> predate that freeze and must be rebuilt from RDF source. Every
 stable Rete reader from 0.3.0 onward reads format <code>0x05</code>. Newer readers may
 add optional sections and flags that preserve <code>0x05</code> semantics. A required layout
-change uses a new format byte, retains <code>0x05</code> read support, and ships with a
-documented migration path. Older readers may reject a newer format cleanly;
+change uses a new format byte. Older readers may reject a newer format cleanly;
 silent misinterpretation is never permitted.</p>
-<p><strong>Generation-1 files stay readable, and no flag-day rebuild is reserved before
-1.0.0.</strong> Read that for exactly what it says: the promise is about <em>files</em>, not
-about the format standing still. A generation <code>0x06</code> remains possible — what it
-may not do is invalidate a <code>0x05</code> file you have already published.</p>
+<blockquote>
+<p><strong>No backwards-compatibility promise before 1.0.0.</strong> rete reserves the right to
+change the <code>.rete</code> format while it is pre-1.0, <strong>including in ways that require
+rebuilding a file you have already published</strong>. <code>0x05</code> has not moved since it
+froze on 2026-07-14 — that is a track record, not a guarantee. Keep the RDF
+source you built from; the durable compatibility promise starts at 1.0.0.</p>
+</blockquote>
 <p><strong>The generation number is not a release version.</strong> There is no Rete 1.0.0: the
-workspace is 0.3.x, and it is the <em>Rust, CLI and WASM APIs</em> that carry no semver
-promise until 1.0.0 (<a href="release.html">release.md</a>) — the file format froze earlier
-and independently. Two consequences worth stating, because both have bitten:</p>
+workspace is 0.3.x, and the file format froze earlier and independently of any
+release version (<a href="release.html">release.md</a>). Two consequences worth stating,
+because both have bitten:</p>
 <ul>
 <li><strong><code>0x05</code> does not pin reader capability.</strong> Nine days after the freeze,
 <a href="https://github.com/caviri/rete/pull/68">#68</a> changed what the <em>writer</em> emits

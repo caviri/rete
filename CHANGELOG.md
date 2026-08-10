@@ -225,27 +225,24 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
-- **The reserved "one final rebuild" before 1.0.0 is dropped — generation-1
-  `.rete` files stay readable.** `docs/release.md` reserved the right to
-  invalidate 0.3.0-era files "if review changes the format before 1.0.0" while
-  `README.md` promised generation-1 read support indefinitely, and a publisher
-  deciding whether to ship a dataset could reasonably have acted on either.
-  `README.md`, `docs/compatibility.md`, `docs/release.md` and the
-  `MIN_STABLE_READ_VERSION` doc comment now all say the same thing:
-  **generation-1 files stay readable, and no flag-day rebuild is reserved before
-  1.0.0.**
+- **No backwards-compatibility promise before 1.0.0 — the one made earlier in
+  this cycle is withdrawn.** Earlier in this same unreleased cycle the project
+  promised that "generation-1 files stay readable, and no flag-day rebuild is
+  reserved before 1.0.0" (#217, closing #214). **That promise is withdrawn.**
+  rete is pre-1.0 and commits to no `.rete` backwards compatibility yet: the
+  format may change, including in ways that require rebuilding a file you have
+  already published. `README.md`, `docs/SPEC.md`, `docs/compatibility.md`,
+  `docs/release.md`, `docs/index.md` and the `MIN_STABLE_READ_VERSION` doc
+  comment now say that and nothing stronger. The durable compatibility promise
+  starts at 1.0.0.
 
-  What is given up is the right to *invalidate* existing files — not the right
-  to change the format. A generation `0x06` remains possible; it would raise
-  `CURRENT_FORMAT_VERSION`, keep `0x05` read support and ship a documented
-  migration path. What made the reservation safe to drop: `0x05` has not moved
-  since it froze on 2026-07-14; the one change that looked like it needed a
-  break — dropping the three merge-join permutations, 40.2% of the published
-  corpus — shipped *inside* `0x05` above, because an old reader refuses a lean
-  file loudly instead of mis-reading it; #198's recommended fix needs no bump
-  either; and a flag-day rebuild is not available in any case, since
-  `crossref.rete` (60.2 GB) and `databnf-full` can no longer be rebuilt from
-  source. (#214)
+  What is *not* withdrawn is the fact underneath it, because it was never the
+  promise: stable format generation 1 (`0x05`) froze on 2026-07-14, first shipped
+  in **0.3.0** — there is no Rete 1.0.0 — and has not moved since. That is a
+  track record, not a guarantee. Nor does it pin reader capability: #68 changed
+  writer semantics *inside* `0x05` nine days after the freeze, which is why a
+  stale reader can return silently incomplete rows (#124). Read published files
+  with a current reader, and keep the RDF source you built from. (#214)
 
 ### Fixed
 

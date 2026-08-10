@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Format specification · rete docs</title>
-  <meta name="description" content="Status: Stable format generation 1, implemented (header byte 0x05; Rete 1.x compatibility baseline) · File extension: .rete · Header magic: RETE" />
+  <meta name="description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
   <link rel="canonical" href="https://caviri.github.io/rete/SPEC.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Format specification · rete docs" />
-  <meta property="og:description" content="Status: Stable format generation 1, implemented (header byte 0x05; Rete 1.x compatibility baseline) · File extension: .rete · Header magic: RETE" />
+  <meta property="og:description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
   <meta property="og:url" content="https://caviri.github.io/rete/SPEC.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Format specification · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Format specification · rete docs" />
-  <meta name="twitter:description" content="Status: Stable format generation 1, implemented (header byte 0x05; Rete 1.x compatibility baseline) · File extension: .rete · Header magic: RETE" />
+  <meta name="twitter:description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -581,7 +581,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1 id="rete--a-cloud-native-range-queryable-rdf-graph-file">Rete — a cloud-native, range-queryable RDF graph file</h1>
-<p><strong>Status:</strong> Stable format generation <strong>1</strong>, implemented (header byte <code>0x05</code>; Rete 1.x compatibility baseline) · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
+<p><strong>Status:</strong> Stable format generation <strong>1</strong>, implemented (header byte <code>0x05</code>, frozen 2026-07-14; no compatibility promise before 1.0.0) · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
 <blockquote>
 <p>One file. Put it on S3, GitHub, or any HTTP server that honors <code>Range</code>.
 Give a client the URL. Run SPARQL. No database server.</p>
@@ -977,14 +977,14 @@ table it measures, i.e. the prefix a first search fetches — costs one ≤10-by
 range read at <code>text_index offset</code> and is the honest cost figure; the section
 length alone overstates it several-fold, since the postings blob is never read
 whole.</p>
-<p><strong>Compatibility:</strong> <code>0x05</code> is stable format generation 1 and the compatibility
-baseline every later generation must keep reading. Every stable reader from Rete
-<strong>0.3.0</strong> onward reads <code>0x05</code> — there is no 1.0.0; the generation was frozen in
-the 0.3 line and the release version is a separate number.
+<p><strong>Compatibility:</strong> <code>0x05</code> is stable format generation 1. Every stable reader from
+Rete <strong>0.3.0</strong> onward reads <code>0x05</code> — there is no 1.0.0; the generation was frozen
+in the 0.3 line and the release version is a separate number.
 Optional sections and flags may extend it without changing its required semantics.
-A required layout change uses a new format byte, keeps <code>0x05</code> read support, and
-ships with a documented rebuild or migration path. Experimental formats <code>0x01</code>
-through <code>0x04</code> are a clean break and must be rebuilt from RDF source.</p>
+A required layout change uses a new format byte. <strong>No backwards-compatibility
+promise is made before 1.0.0:</strong> a later generation may drop <code>0x05</code> read support
+and force a rebuild from RDF source. Experimental formats <code>0x01</code> through <code>0x04</code>
+are already such a break and must be rebuilt from RDF source.</p>
 <hr />
 <h2 id="7-the-pyramid--community-summarization">7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>
