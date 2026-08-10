@@ -149,7 +149,6 @@ impl Graph {
     fn fresh_verdict(&self) {
         self.rete.reset_load_failures();
     }
-
 }
 
 #[pymethods]
@@ -247,14 +246,8 @@ impl Graph {
     ) -> PyResult<DumpBatch> {
         self.fresh_verdict();
         let out = py.allow_threads(|| {
-            self.rete.query_batch(
-                graph,
-                subject,
-                predicate,
-                object,
-                cursor,
-                max_quads.max(1),
-            )
+            self.rete
+                .query_batch(graph, subject, predicate, object, cursor, max_quads.max(1))
         });
         // A batch computed over a half-fetched index/dictionary would silently
         // drop quads from the dump; refuse it like every other entry point.
