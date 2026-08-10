@@ -7,6 +7,53 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **Filtered dumps prune the file, not the rows (#117)** — `rete export
+  --graph/--subject/--predicate/--object`, `dump({predicate})` in the JS client,
+  `iter_quads(predicate=…)` in Python. A dump
+  scoped to one graph, one predicate, one subject or one object now goes through
+  the same routed access path a query does: `GraphIndex::scan_iter` picks the
+  permutation with the longest bound prefix, binary-searches its tile directory
+  down to the tiles that can match, and drops the rest by their recorded
+  synopsis **without fetching them**. Previously the only way to get a slice out
+  of a dump was to dump the graph and throw away what did not match, in the
+  consumer.
+
+  Measured on the published `cordis.rete` (801 MB, a 417 MB dictionary, 26.4M
+  quads, six named graphs), opened lazily through a counting range reader, peak
+  RSS from `/proc/<pid>/status` `VmHWM`:
+
+  | dump | before | after |
+  |---|--:|--:|
+  | one predicate (337,811 of 9.97M rows) | 375.8 MB · 1797 req · 2105.8 MB · 12.8 s | **16.0 MB · 17 req · 182.5 MB · 0.42 s** |
+  | a rarer predicate (40,761 rows) | 375.8 MB · 1797 req · 2105.7 MB · 12.8 s | **15.5 MB · 16 req · 155.3 MB · 0.22 s** |
+  | one subject (15 rows) | 375.8 MB · 1797 req · 2105.8 MB · 12.8 s | **3.0 MB · 21 req · 114.3 MB · 0.02 s** |
+  | one object (2 rows) | 375.8 MB · 1797 req · 2105.8 MB · 12.8 s | **2.4 MB · 15 req · 114.9 MB · 0.01 s** |
+
+  **Where it does not help, stated plainly.** The index is pruned; the
+  dictionary is not. A predicate whose objects are long abstracts went
+  260.7 MB → 213.4 MB — 1.2x, not 23x — because resolving the rows it keeps
+  still faults the chunks their literals live in. An **unfiltered** dump is
+  unchanged by construction (452.5 MB, 2423 MB peak, both before and after):
+  that is the floor, and the resident dictionary sets it, since a faulted
+  chunk is a `OnceCell` nothing evicts. Two ceilings sit above all of it —
+  that one, and the chunk-directory read a lazy open pays before any dump work
+  (up to 32.7% of a literal-heavy file, #198).
+
+  Every one of the eight bound/unbound shapes routes inside `PermSet::CORE`
+  (`{SPO, POS, OSP}`), so a file built with `--permutations 3` prunes
+  identically — same tiles, same rows, no fallback path. A filtered dump streams
+  in the *routed* permutation's order, so it is the same set as the unfiltered
+  dump filtered but not the same order.
+
+- **`rete cost --dump` previews what a dump will fetch, before it starts
+  (#117).** The dump twin of the query cost preview, in the same report shape.
+  The index figure is **computed from the tile directories**, not sampled — it
+  names the permutation, how many of the section's tiles the filter admits and
+  their exact encoded bytes, without fetching a tile — and the dictionary
+  section length is reported as an honest ceiling rather than guessed at. New
+  `GraphIndex::scan_plan` / `Rete::dump_plan` expose the same plan to any
+  consumer.
+
 - **The three merge-join permutations are optional — `rete build
   --permutations 3`, and the file says which it has.** SOP, PSO and OPS exist
   only to hand a sort-merge join a co-sorted stream; SPO, POS and OSP are what

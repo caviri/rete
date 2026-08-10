@@ -3163,6 +3163,16 @@ impl Rete {
     /// A bound term the dictionary does not know, or an absent graph IRI, yields
     /// nothing without touching the index.
     ///
+    /// # Order
+    ///
+    /// Rows arrive in the **routed permutation's** order, which is the price of
+    /// routing at all. Unfiltered (and subject-bound) that is SPO — canonical
+    /// `(s, p, o)`, unchanged from [`dump_each`](Self::dump_each). A bound
+    /// predicate routes to POS and streams `(p, o, s)`; a bound object routes to
+    /// OSP. The *set* is identical to the unfiltered dump filtered; the order is
+    /// not, so a consumer that needs canonical order must sort. N-Quads, the
+    /// format `rete export` writes, is order-independent.
+    ///
     /// [`PermSet::CORE`]: crate::index::PermSet::CORE
     pub fn dump_filtered_each<F: FnMut(&str, &str, &str)>(
         &self,

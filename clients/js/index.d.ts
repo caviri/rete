@@ -44,6 +44,10 @@ export interface DumpOptions {
    *
    * A clean IRI (`"http://ex/p"`), an N-Triples token (`'"x"@en'`, `"_:b"`), or
    * a `Term`. A term the file's dictionary does not contain yields nothing.
+   *
+   * Order follows the permutation the scan routes to, so a filtered dump is the
+   * same *set* as the unfiltered one filtered but not the same order: a bound
+   * predicate streams predicate-then-object-then-subject. Sort if you need one.
    */
   subject?: string | Term | null;
   predicate?: string | Term | null;
