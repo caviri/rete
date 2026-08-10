@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>R — rete · rete docs</title>
-  <meta name="description" content="rete is the R client for .rete files: native bindings (extendr) to the same Rust engine behind the CLI, the Python client, and the browser playground." />
+  <meta name="description" content="Welcome to rete for R! This package provides native R bindings (via extendr) to the same powerful Rust engine that drives the CLI, the Python client, and the browser playground." />
   <link rel="canonical" href="https://caviri.github.io/rete/r.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="R — rete · rete docs" />
-  <meta property="og:description" content="rete is the R client for .rete files: native bindings (extendr) to the same Rust engine behind the CLI, the Python client, and the browser playground." />
+  <meta property="og:description" content="Welcome to rete for R! This package provides native R bindings (via extendr) to the same powerful Rust engine that drives the CLI, the Python client, and the browser playground." />
   <meta property="og:url" content="https://caviri.github.io/rete/r.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/r.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="R — rete · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="R — rete · rete docs" />
-  <meta name="twitter:description" content="rete is the R client for .rete files: native bindings (extendr) to the same Rust engine behind the CLI, the Python client, and the browser playground." />
+  <meta name="twitter:description" content="Welcome to rete for R! This package provides native R bindings (via extendr) to the same powerful Rust engine that drives the CLI, the Python client, and the browser playground." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/r.png" />
   <meta name="rete:section" content="Clients" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -338,118 +336,131 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>R API</h1>
-<p><code>rete</code> is the R client for <code>.rete</code> files: native bindings (extendr) to the
-same Rust engine behind the <a href="cli.html">CLI</a>, the
-<a href="python.html">Python client</a>, and the
-<a href="playground-guide.html">browser playground</a>. It opens a graph from a <strong>local
-path, an HTTP(S) URL, or a raw vector</strong> and queries it with SPARQL, returning
-ordinary data frames — remote files are read lazily over HTTP <code>Range</code>
-requests, so a selective query over a multi-GB file fetches kilobytes, never
-the file.</p>
-<pre><code class="language-r"># Straight from GitHub — needs Rust ≥ 1.87 on PATH (https://rustup.rs):
+<p>Welcome to <code>rete</code> for R! This package provides native R bindings (via extendr) to the same powerful Rust engine that drives the <a href="cli.html">CLI</a>, the <a href="python.html">Python client</a>, and the <a href="playground-guide.html">browser playground</a>.</p>
+<p>With this client, you can open a graph from a <strong>local file, an HTTP(S) URL, or a raw vector</strong> in memory and query it using SPARQL. Best of all, results are returned as <strong>standard R data frames</strong>.</p>
+<p>Because remote files are read lazily using HTTP <code>Range</code> requests, running a selective query over a multi-gigabyte file only downloads a few kilobytes—never the entire file!</p>
+<h2>Installation</h2>
+<p>Currently, the package is installed directly from GitHub.</p>
+<p><strong>Prerequisites:</strong> You must have Rust ≥ 1.87 installed on your system (get it from <a href="https://rustup.rs">rustup.rs</a>).</p>
+<pre><code class="language-r"># Install from the main branch
 install.packages("remotes")
 remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)
 
-# A specific branch, tag, or commit:
+# Or, install from a specific branch, tag, or commit:
 remotes::install_github("caviri/rete@main", subdir = "clients/r", build = FALSE)
 </code></pre>
-<p>One command fetches the repository, compiles the bundled Rust engine
-(a few minutes the first time), and installs the package — no clone needed.
-After install, <code>vignette("rete")</code> opens an offline tour that mirrors this
-page, and <code>?rete_open</code>, <code>?rete_query</code>, <code>?rete_build</code> are the reference
-pages.
-<code>build = FALSE</code> matters: the package lives in a monorepo and its Rust crate
-references the engine at the repository root, so it must install from the
-full source tree rather than a pre-built subdir tarball (that also rules out
-<code>pak::pak("caviri/rete/clients/r")</code> for now). Binary installs via
-R-universe/CRAN (no Rust required) are planned; GitHub is the install path
-today.</p>
-<h2>Open a graph and query it</h2>
+<blockquote>
+<p><strong>Why <code>build = FALSE</code>?</strong>
+The R package lives inside a monorepo and its Rust crate references the core engine at the repository root. <code>build = FALSE</code> ensures it installs from the full source tree rather than a disconnected subdirectory tarball.
+<em>(Note: Binary installs via R-universe/CRAN that won't require Rust are planned for the future!)</em></p>
+</blockquote>
+<p>Once installed, you can open the offline tutorial using <code>vignette("rete")</code> or check the reference pages (<code>?rete_open</code>, <code>?rete_query</code>, <code>?rete_build</code>).</p>
+<h2>1. Open a Graph and Query It</h2>
+<p>Opening a graph is straightforward, whether it's local or remote.</p>
 <pre><code class="language-r">library(rete)
 
-g &lt;- rete_open("https://data.graphplaza.com/boe/boe.rete")   # remote, lazy
-g &lt;- rete_open("data/example.rete")                          # local file, lazy too
-g &lt;- rete_open(file_image)                                   # raw vector, eager
+# Open lazily from a remote URL (fetches only what it needs)
+g &lt;- rete_open("https://data.graphplaza.com/boe/boe.rete")   
 
-rete_query(g, "
+# Open lazily from a local file
+g &lt;- rete_open("data/example.rete")                          
+
+# Open eagerly from a raw vector in memory
+g &lt;- rete_open(file_image)                                   
+
+# Run a SPARQL query
+results &lt;- rete_query(g, "
   SELECT ?title WHERE {
     ?law &lt;http://data.europa.eu/eli/ontology#title&gt; ?title
   } LIMIT 5
 ")
 </code></pre>
-<p><code>rete_query()</code> returns what an R user expects:</p>
+<h3>Understanding Results</h3>
+<p><code>rete_query()</code> automatically converts SPARQL results into familiar R structures:</p>
 <ul>
-<li><strong>SELECT</strong> → a <code>data.frame</code>, one column per variable. IRI brackets are
-stripped; <code>xsd:integer</code> family literals become integers (doubles on
-overflow), <code>xsd:decimal</code>/<code>double</code>/<code>float</code> become doubles, <code>xsd:boolean</code>
-becomes logical; everything else stays character.</li>
-<li><strong>ASK</strong> → a logical scalar.</li>
-<li><strong>CONSTRUCT / DESCRIBE</strong> → a <code>data.frame</code> with <code>subject</code>, <code>predicate</code>,
-<code>object</code>.</li>
+<li><strong><code>SELECT</code></strong>: Returns a <code>data.frame</code> with one column per variable.
+<ul>
+<li>IRI brackets are stripped.</li>
+<li><code>xsd:integer</code> family literals become R integers (or doubles on overflow).</li>
+<li><code>xsd:decimal</code>, <code>double</code>, and <code>float</code> become R doubles.</li>
+<li><code>xsd:boolean</code> becomes R logicals.</li>
+<li>Everything else remains character data.</li>
 </ul>
-<p><code>rete_query_raw()</code> returns the engine's JSON envelope parsed to a list, with
-terms in full N-Triples token fidelity (<code>&lt;iri&gt;</code>, <code>"lit"^^&lt;datatype&gt;</code>,
-<code>_:bnode</code>) — reach for it when the coercions above are too helpful.</p>
-<p>Both opens are <strong>lazy</strong>: the header, dictionary directory, and index tile
-directories load up front; tile payloads fault in per query and stay cached
-on the handle, so repeated queries get faster. The host serving a remote file
-must answer <code>Range</code> requests with <code>206 Partial Content</code> (any S3/R2/CDN/GitHub
-URL does — see <a href="hosting.html">Hosting your .rete</a>); anything else is a loud
-error, never a silently wrong slice.</p>
-<pre><code class="language-r">rete_stats(g)
+</li>
+<li><strong><code>ASK</code></strong>: Returns a logical scalar (<code>TRUE</code> or <code>FALSE</code>).</li>
+<li><strong><code>CONSTRUCT</code> / <code>DESCRIBE</code></strong>: Returns a <code>data.frame</code> with three columns: <code>subject</code>, <code>predicate</code>, and <code>object</code>.</li>
+</ul>
+<p>Need the raw, uncoerced data? Use <code>rete_query_raw()</code> to get the engine's JSON envelope parsed into an R list, preserving full N-Triples tokens (like <code>&lt;iri&gt;</code>, <code>"lit"^^&lt;datatype&gt;</code>, <code>_:bnode</code>).</p>
+<h3>The Magic of Lazy Loading</h3>
+<p>Both <code>rete_open(url)</code> and <code>rete_open(path)</code> are <strong>lazy</strong>.</p>
+<ul>
+<li>The file header, dictionary directory, and index tile directories are loaded upfront.</li>
+<li>Tile payloads are fetched exactly when your query needs them and are cached on the graph handle, making subsequent queries blazing fast.</li>
+</ul>
+<blockquote>
+<p><strong>Host Requirements:</strong> To query a remote file, the host must support HTTP <code>Range</code> requests and return <code>206 Partial Content</code> (standard for S3, R2, CDNs, and GitHub). If it doesn't, the client will immediately throw an error rather than silently reading the wrong data. See <a href="hosting.html">Hosting your .rete</a>.</p>
+</blockquote>
+<p>You can check your network efficiency at any time:</p>
+<pre><code class="language-r"># Check physical traffic since the graph was opened
+rete_stats(g)
 #&gt; $fileLength  … $bytes  … $requests
 </code></pre>
-<p><code>rete_stats()</code> reports the physical traffic since open — the number that
-makes the lazy story visible: a selective query over a multi-hundred-MB
-remote file typically fetches well under 1% of it.</p>
-<h2>Reasoning</h2>
+<p><em>(Typically, a query over a multi-hundred MB remote file fetches well under 1% of its total size!)</em></p>
+<h2>2. Reasoning (OWL 2 QL)</h2>
+<p>Turn on OWL 2 QL entailment simply by adding <code>reason = TRUE</code>.</p>
 <pre><code class="language-r">rete_query(g, query, reason = TRUE)
 </code></pre>
-<p><code>reason = TRUE</code> answers with OWL 2 QL entailment, computed by query rewriting
-over the ontology embedded in the file — no materialization, so it works on
-remote files too. See <a href="reasoning.html">Reasoning</a>.</p>
-<h2>Explore a file you did not build</h2>
-<pre><code class="language-r">rete_info(g)            # quads, terms, pyramid levels, named graphs
-rete_card(g)            # the embedded Dataset Card as a list (or NULL)
-rete_examples(g)        # starter queries the card carries, as a data.frame
-rete_schema(g)          # class + predicate profile, two data.frames
-rete_prefix_search(g, "Mad")        # label autocomplete
-rete_text_search(g, "madrid ley")   # full-text (needs a text-indexed file)
-rete_content_hash(g)    # blake3-16 hex
+<p>Because reasoning is computed dynamically via <strong>query rewriting</strong> over the file's embedded ontology, it requires no upfront materialization. This means it works seamlessly and instantly over remote files too. See <a href="reasoning.html">Reasoning</a> for details.</p>
+<h2>3. Explore a Graph</h2>
+<p>Even if you didn't build the <code>.rete</code> file, you can easily inspect its contents, metadata, and schema:</p>
+<pre><code class="language-r">rete_info(g)                        # Overview: quads, terms, pyramid levels, named graphs
+rete_card(g)                        # The embedded Dataset Card as an R list (or NULL)
+rete_examples(g)                    # Starter queries included in the card, as a data.frame
+rete_schema(g)                      # Class and predicate profiles (returns two data.frames)
+rete_prefix_search(g, "Mad")        # Fast autocomplete for labels starting with "Mad"
+rete_text_search(g, "madrid ley")   # Full-text search (requires a file built with text-index)
+rete_content_hash(g)                # The blake3-16 hex hash of the file
 </code></pre>
-<p><code>rete_card()</code> and <code>rete_examples()</code> fetch only the metadata section's byte
-range on lazy opens — reading a remote file's card costs a few requests.
-Every <code>sparql</code> entry in <code>rete_examples()</code> runs as-is:</p>
+<blockquote>
+<p><strong>Fast Metadata:</strong> Functions like <code>rete_card()</code> and <code>rete_examples()</code> only fetch the metadata byte range. Reading them from a remote file costs just a few tiny network requests.</p>
+</blockquote>
+<p>You can even run the embedded starter queries directly:</p>
 <pre><code class="language-r">ex &lt;- rete_examples(g)
 rete_query(g, ex$sparql[[1]])
 </code></pre>
-<h2>Build a .rete from R</h2>
-<pre><code class="language-r">nt &lt;- '
+<h2>4. Build a <code>.rete</code> File from R</h2>
+<p>You can build a <code>.rete</code> file completely in memory using R strings. This is perfect for testing, small graphs, and data pipelines.</p>
+<pre><code class="language-r"># Define some raw RDF text
+nt &lt;- '
 &lt;urn:x:alice&gt; &lt;http://xmlns.com/foaf/0.1/knows&gt; &lt;urn:x:bob&gt; .
 &lt;urn:x:alice&gt; &lt;http://xmlns.com/foaf/0.1/name&gt; "Alice" .
 '
+
+# Build the .rete image
 img &lt;- rete_build(nt,
-  format = "nt",                       # nt | nq | ttl | rdfxml
+  format = "nt",                       # Options: "nt", "nq", "ttl", "rdfxml"
   card = list(
     title = "Tiny demo",
     description = "Two triples about Alice",
     license = "CC0-1.0"
   ),
-  pyramid = "louvain",                 # louvain | types | none
-  text_index = TRUE
+  pyramid = "louvain",                 # Community detection: "louvain", "types", or "none"
+  text_index = TRUE                    # Enable full-text search
 )
-writeBin(img, "demo.rete")             # or query it in place:
+
+# Save it to disk...
+writeBin(img, "demo.rete")             
+
+# ...or query it directly in memory!
 rete_query(rete_open(img), "SELECT ?n WHERE { ?s &lt;http://xmlns.com/foaf/0.1/name&gt; ?n }")
 </code></pre>
-<p>Counts (<code>triple_count</code>, <code>term_count</code>, …) are stamped into the card
-automatically. In-memory assembly suits tests and small graphs; for large
-datasets use the <a href="cli.html"><code>rete build</code> CLI</a>, which streams and compresses.</p>
-<h2>The same file everywhere</h2>
-<p>A <code>.rete</code> built anywhere is readable everywhere: this client, the
-<a href="python.html">Python client</a>, the <a href="javascript.html">JavaScript client</a>, the
-<a href="cli.html">CLI</a>, and the <a href="playground-guide.html">playground</a> all read the same
-bytes over the same range-read discipline — publish one file on any static
-host and every runtime gets it lazily.</p>
+<p>When you build a graph, statistics like <code>triple_count</code> and <code>term_count</code> are automatically injected into the Dataset Card.</p>
+<blockquote>
+<p><strong>For Big Data:</strong> In-memory building is great for small graphs. For massive datasets, we recommend using the <a href="cli.html"><code>rete build</code> CLI</a>, which streams from disk and uses advanced compression.</p>
+</blockquote>
+<h2>Write Once, Query Everywhere</h2>
+<p>The true power of the <code>.rete</code> format is its portability. A <code>.rete</code> file built in R can be read exactly the same way by the <a href="python.html">Python client</a>, the <a href="javascript.html">JavaScript client</a>, the <a href="cli.html">CLI</a>, and the <a href="playground-guide.html">browser playground</a>.</p>
+<p>Publish a single file to any static host, and every environment can query it lazily!</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

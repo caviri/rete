@@ -1,105 +1,60 @@
-# Federated queries across several `.rete` files
+# Federated Queries (Multi-File SPARQL)
 
-`rete federate` runs **one SPARQL query across many `.rete` sources** — local
-file paths and/or `http(s)://` URLs, mixed freely — and merges the results. It is
-the answer to "my data is sharded into several files; query them as one."
+The `rete federate` command allows you to run **a single SPARQL query across multiple `.rete` files** simultaneously. It seamlessly merges results from local files and remote `http(s)://` URLs. 
+
+This is perfect when your dataset is sharded across multiple files and you want to query them as if they were one large graph.
 
 ```sh
-rete federate <source…> --query "<SPARQL>" [--json] [--no-route]
+# Basic usage
+rete federate <source1> <source2>... --query "<SPARQL>" [--json] [--no-route]
 ```
 
-This is an honest **prototype**: it does *union* federation, not distributed
-joins. Read [Limitations](#limitations) before relying on it. (Federating with
-a **live SPARQL endpoint** from *inside* a query is a different feature — the
-SPARQL 1.1 `SERVICE` clause, covered in [SPARQL support](sparql.md).)
-
-The same union+routing federation is also available **in the browser** — the
-[playground](#in-the-playground) turns the SPARQL console into a multi-source
-one with a "**+ Add source**" button, each source range-queried lazily.
-
-## Why federation works at the term level
+> [!WARNING]
+> **Limitations:** This is a union-based federation tool, not a distributed join engine. Read the [Limitations](#limitations) carefully. (If you want to federate a query to a live endpoint *from inside* your SPARQL query, use the `SERVICE` clause instead).
 
 <figure class="fig-right">
   <img src="img/federation.svg" alt="A SPARQL query goes to a router that does predicate routing, fans out to three .rete files each with its own dictionary, then results are merged at the term level into a row set.">
   <figcaption>Each file keeps its own dictionary; the router sends each pattern only to files holding its predicate, then results merge at the term level.</figcaption>
 </figure>
 
-Every `.rete` file carries its **own dictionary** — the integer IDs that encode
-terms are local to one file. ID `42` in `cites-2021.rete` and ID `42` in
-`cites-2024.rete` are unrelated. So you **cannot** merge files by combining their
-integer indexes.
+## How it Works (Term-Level Merging)
 
-Federation therefore works at the **term (string) level**: the query is
-evaluated independently on each file with the existing single-file engine, and
-the **term-level result rows are merged**. This is exactly correct for
-**sharded datasets where each file independently yields complete result rows** —
-the citation data below, sharded by citing year, is precisely this shape: each
-`cites` edge (and its `date`/`type`) lives wholly within one year-shard, so each
-shard produces whole, self-contained answer rows.
+Because each `.rete` file has its own internal dictionary of integer IDs (meaning ID `42` in file A is completely different from ID `42` in file B), Rete **cannot** merge index files directly.
 
-## Merge semantics
+Instead, federation works at the **term (string) level**:
+1. The query runs independently on each file.
+2. The results are converted to strings.
+3. The resulting rows are merged.
 
-| Query form  | Merge across sources                              |
-|-------------|---------------------------------------------------|
-| `SELECT`    | **Union** of solution rows, **deduped** (identical rows collapse), stable order (source order, then within-source order). |
-| `ASK`       | **Logical OR** — true if any source matches.      |
-| `CONSTRUCT` | **Union** of constructed triples, **deduped**.    |
+This approach is highly effective for datasets sharded by time or category.
 
-Dedup is over the projected variables for `SELECT *` it is over all bound
-variables. A row that appears in two shards (e.g. a node that cites the target
-and shows up in two files) is reported once.
+## Merge Behavior
 
-## Routing / pruning (default on)
+| Query Form  | How Results are Merged |
+|-------------|------------------------|
+| **`SELECT`**| **Union** of solution rows. Rows are deduplicated (identical rows collapse). |
+| **`ASK`**   | **Logical OR** (Returns `true` if *any* source matches). |
+| **`CONSTRUCT`**| **Union** of constructed triples, deduplicated. |
 
-Before evaluating, `federate` reads each source's **predicate set** cheaply from
-its pyramid **summary** — the (large) triple **index is never touched** (the same
-"summary first" path used by `rete predicates` and `rete summary-url`). It also
-extracts the **concrete predicate IRIs** the query constrains on (from the parsed
-query's basic graph patterns and property paths). A source whose predicate set is
-**disjoint** from the query's predicates **cannot contribute a row** and is
-**skipped**.
+## Smart Routing & Pruning
 
-- `--no-route` disables pruning and queries **every** source.
-- A query that pins **no** concrete predicate (every pattern uses a variable
-  predicate, e.g. `?s ?p ?o`) cannot be routed — all sources are queried.
-- A source with no summary cannot be inspected, so it is **never** pruned.
+By default, Rete acts smart to save time and bandwidth. Before evaluating a query, `federate` cheaply reads the summary of each source file to find out what **predicates** it contains. 
 
-For local files routing reads a few hundred bytes per source; for URLs it issues
-a handful of HTTP **range** requests (header + dictionary + summary) — never the
-whole file.
+If your query asks for `foaf:knows` but a source file's summary shows it doesn't contain that predicate, Rete completely skips (prunes) that file without ever downloading its index.
 
-Per-source diagnostics (rows contributed + time), the queried-vs-pruned tally,
-and the list of pruned sources are written to **stderr** the merged results go to
-stdout.
+- **`--no-route`**: Disables this smart pruning and forces Rete to query every file.
+- If your query contains only variable predicates (e.g., `?s ?p ?o`), Rete cannot prune and will query every file.
+- Files without a summary are never pruned.
 
 ## Limitations
 
-This is a deliberately honest prototype — it is correct for sharded data and
-clear about what it does **not** do.
+- **No Cross-File Joins**: A query that needs a triple from File A joined with a triple from File B will **not** find a result. Each file is queried in absolute isolation.
+- **Aggregates are Per-Source**: A federated `SELECT (COUNT(*) AS ?n)` will return *one count per source file*, not a combined global sum.
+- **`LIMIT` is Per-Source**: `LIMIT 5` across 2 files will return up to **10** rows (5 from each).
 
-- **Union only, no cross-file joins.** A solution that needs a triple from file A
-  joined with a triple from file B (e.g. `?x` from one shard joined to `?y` from
-  another) will **not** be found. Each shard is queried in isolation. Cross-file
-  joins need a term-level federated BGP engine that ships intermediate bindings
-  between sources — future work.
-- **Aggregates and `LIMIT` are per source, then unioned.** A federated
-  `SELECT (COUNT(*) AS ?n)` returns **one count per source** (unioned), not a
-  global sum and `LIMIT 5` over two shards can return up to **10** rows (5 from
-  each). This keeps the prototype honest rather than silently wrong. Sum / cap
-  client-side, or wait for a future `--reduce` that folds per-source aggregates.
-- **`GROUP BY`** is likewise evaluated per source then unioned, so the same group
-  key can appear once per shard.
+## Real-World Example: OpenCitations Shards
 
-## Real example — OpenCitations, sharded by citing year
-
-The repo ships a real dataset: citations **of the AlphaFold paper**
-(`<https://doi.org/10.1038/s41586-021-03819-2>`), sharded by citing year into
-`data/opencitations/cites-<year>.rete`. Each shard uses
-`<http://purl.org/spar/cito/cites>`, `<http://purl.org/dc/terms/date>`, and
-`rdf:type`. (Regenerate with `python3 scripts/fetch_opencitations.py`, then
-`for f in data/opencitations/*.nt; do rete build "$f" -o "${f%.nt}.rete"; done`.)
-
-### Federated SELECT across two year-shards
+Imagine you have two files containing citations of the AlphaFold paper, sharded by year (`cites-2021.rete` and `cites-2024.rete`).
 
 ```sh
 rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
@@ -108,141 +63,45 @@ rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.r
                      <https://doi.org/10.1038/s41586-021-03819-2> } LIMIT 5'
 ```
 
-```
+Output:
+```text
   data/opencitations/cites-2021.rete: 5 row(s) in 3.6ms
   data/opencitations/cites-2024.rete: 5 row(s) in 15.6ms
 10 solution(s)
 federated 2 source(s): 2 queried, 0 pruned (routing on); 10 merged result(s)
-?citing=<https://doi.org/10.1001/jama.2021.15728>
-?citing=<https://doi.org/10.1002/2211-5463.13301>
-?citing=<https://doi.org/10.1002/2211-5463.13316>
-?citing=<https://doi.org/10.1002/advs.202102592>
-?citing=<https://doi.org/10.1002/advs.202103807>
-?citing=<https://doi.org/10.1001/jamadermatol.2024.1126>
-?citing=<https://doi.org/10.1001/jamaophthalmol.2024.3829>
-?citing=<https://doi.org/10.1002/1873-3468.14811>
-?citing=<https://doi.org/10.1002/1873-3468.14823>
-?citing=<https://doi.org/10.1002/1873-3468.14836>
+...
 ```
 
-Note the **per-source `LIMIT`** caveat in action: `LIMIT 5` yielded 5 rows from
-*each* shard, so the union holds 10. The first five are 2021 citers, the last
-five 2024 citers.
+Notice that because of the `LIMIT 5`, Rete returned 5 rows from *each* shard, resulting in 10 total merged rows.
 
-### Routing in action — a predicate-disjoint shard is pruned
+### Pruning in Action
 
-Add a source that uses a different predicate (here a shard whose only predicate
-is `rdfs:label`, not `cito:cites`). The `cites` query prunes it without ever
-reading its index:
+If we throw an unrelated file into the mix (`other-demo.rete`) that doesn't contain the `cito:cites` predicate, Rete will safely ignore it:
 
-```sh
-rete federate data/opencitations/cites-2021.rete other-demo.rete data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE {
-             ?citing <http://purl.org/spar/cito/cites>
-                     <https://doi.org/10.1038/s41586-021-03819-2> } LIMIT 3'
-```
-
-```
-  data/opencitations/cites-2021.rete: 3 row(s) in 3.4ms
-  data/opencitations/cites-2024.rete: 3 row(s) in 15.8ms
-6 solution(s)
+```text
 federated 3 source(s): 2 queried, 1 pruned (routing on); 6 merged result(s)
   pruned (predicate-disjoint): other-demo.rete
-…
 ```
 
-`--no-route` would instead query all three (the label-only shard contributing 0
-rows). For year-shards that all share `cito:cites`, routing keeps every shard —
-pruning helps when sources are **heterogeneous** (different predicates per file),
-which is the common federation case.
+### Mixing Local Files and Web URLs
 
-### ASK federation (logical OR)
-
-```sh
-rete federate data/opencitations/cites-2017.rete data/opencitations/cites-2024.rete \
-  --query 'ASK { ?x <http://purl.org/spar/cito/cites>
-                    <https://doi.org/10.1038/s41586-021-03819-2> }'
-# → true   (at least one shard has a citation)
-```
-
-### URL sources
-
-Sources may be `http(s)://` URLs of `.rete` files hosted on R2, S3, or any
-direct origin that honors HTTP **Range** requests — mix them with local paths freely:
+You can freely mix local files with `.rete` files hosted on the internet. Rete uses efficient HTTP Range requests to only download what it needs.
 
 ```sh
 rete federate \
   https://data.graphplaza.com/worldcup2026/worldcup2026.rete \
   data/opencitations/cites-2024.rete \
-  --query 'SELECT ?citing WHERE { ?citing <http://purl.org/spar/cito/cites>
-                                          <https://doi.org/10.1038/s41586-021-03819-2> }'
+  --query 'SELECT ?citing WHERE { ... }'
 ```
 
-Each URL is opened with range reads (header → dictionary → index → pyramid),
-never a full download both routing and evaluation fetch only the bytes they need.
-The release catalog pins its public R2 objects in `web/datasets.lock.json`; the
-catalog audit also verifies that every shard is stable format generation 1 and
-exposes `Content-Range` to browser CORS callers.
+## Federation in the Playground
 
-## In the playground
+You can federate data right in your browser via the [Playground](playground.html). 
 
-The [playground](playground.html) brings the same federation to the browser:
-**federation is a kind of SPARQL**, so it lives in the SPARQL console rather than
-a separate mode. Under the query editor a **Sources** strip shows the current
-dataset; a **+ Add source** button federates with another source three ways:
+Just click the **+ Add source** button under the query editor. You can add datasets from the catalog, paste a URL to a remote `.rete` file, or even point to a live SPARQL endpoint.
 
-- **From catalog** — any registered dataset (a remote one is range-queried
-  lazily; a bundled one is queried in memory);
-- **.rete link** — a pasted remote URL, range-queried lazily;
-- **SPARQL endpoint** — a live endpoint (`SELECT` / `ASK`) over the SPARQL
-  protocol, subject to the endpoint's CORS policy.
+When you run a query with multiple sources active, the playground intelligently fans the query out, merges the results, and displays a live progress counter. 
 
-Running with **two or more sources** fans the same query out to each and merges
-with the exact CLI semantics above — `SELECT` union+dedup, `ASK` OR, `CONSTRUCT`
-triple-union — and a per-source banner reports the rows and bytes each source
-contributed. Each source keeps its own lazy reader, so two remote `.rete` files
-are read independently and lazily into one merge; it is orchestrated in the
-playground's JS over the existing single-source query paths, so no extra engine
-code runs. An example can pre-load its partner with one click. A **live line ticks
-during the query** — `N/M sources answered · range requests · MB · elapsed` — so a
-long multi-source fan-out isn't a silent spinner.
-
-### Beyond union — cross-source joins and sharded datasets
-
-The playground goes past the CLI's union: it also does a **term-level cross-source
-JOIN** — one BGP split across sources and joined on the shared variables — so the
-"cross-file join is not found" limit above is a *CLI* limit, not a playground one.
-Each triple pattern is routed to a source by its predicate (and by where its
-subject was bound), each source answers its own sub-pattern with the join keys
-already narrowed down, and the partial rows are joined in the browser. Queries
-that can't be split this way (OPTIONAL / UNION / aggregates / property paths)
-fall back to the union path. So e.g. USTC editions ⋈ the Embassy books they
-cite, joined on the book IRI, returns real joined rows across the two files.
-
-A **sharded dataset** is registered as one logical graph with a `shards: [url0, url1,
-…]` list in the catalog; the playground treats `url0` as the primary and the rest as
-intrinsic federation partners, so **every query auto-fans across all shards** (union)
-and the rows merge — you query it like one dataset (a "⛓ N shards" chip shows in the
-Sources strip). This is how a graph too big to build as a single file — e.g. a 600 M-
-triple Wikidata split into six independent `--no-pyramid` shards — is served and queried
-as one. The path to a bigger graph is just more shards.
-
-**Worked example — resolve five terms across two ontologies.** The bundled
-`chebi-full` (the complete ChEBI ontology, 8.83 M triples) and `chemotion` (a
-chemistry ELN graph merged with CHMO + RXNO) share `CHEBI_*` IRIs plus
-`rdfs:label`/`rdfs:subClassOf`, but neither resolves every label. Pick either
-dataset, open its **Federation** example (it adds the other as a second source),
-and run:
-
-```sparql
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX obo:  <http://purl.obolibrary.org/obo/>
-SELECT ?term ?label WHERE {
-  VALUES ?term { obo:CHEBI_15377 obo:CHEBI_27732 obo:CHMO_0000228 obo:BFO_0000015 obo:CHEBI_23367 }
-  ?term rdfs:label ?label
-}
-```
-
-`chebi-full` answers `water` / `caffeine` / `molecular entity`; `chemotion`
-answers `spectroscopy` / `process`; the union resolves all five. The result line
-shows the per-source split — no single file has all the answers.
+> [!TIP]
+> **Cross-Source Joins in the Playground!**
+> Unlike the CLI, the playground *can* perform **term-level cross-source JOINs** in the browser! It splits Basic Graph Patterns across sources and joins the partial rows in memory.

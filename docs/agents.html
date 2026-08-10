@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Agents — MCP, plugin & skills · rete docs</title>
-  <meta name="description" content="rete has three agent-facing surfaces, all built on the same idea: a .rete file is self-describing (card, schema, example queries travel inside the file), so an agent can go from &quot;what datasets…" />
+  <meta name="description" content="Because .rete files are entirely self-describing (containing their own schemas, summaries, and example queries), AI agents can discover datasets, write perfect SPARQL queries, and analyze data…" />
   <link rel="canonical" href="https://caviri.github.io/rete/agents.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Agents — MCP, plugin &amp; skills · rete docs" />
-  <meta property="og:description" content="rete has three agent-facing surfaces, all built on the same idea: a .rete file is self-describing (card, schema, example queries travel inside the file), so an agent can go from &quot;what datasets…" />
+  <meta property="og:description" content="Because .rete files are entirely self-describing (containing their own schemas, summaries, and example queries), AI agents can discover datasets, write perfect SPARQL queries, and analyze data…" />
   <meta property="og:url" content="https://caviri.github.io/rete/agents.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/agents.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Agents — MCP, plugin &amp; skills · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Agents — MCP, plugin &amp; skills · rete docs" />
-  <meta name="twitter:description" content="rete has three agent-facing surfaces, all built on the same idea: a .rete file is self-describing (card, schema, example queries travel inside the file), so an agent can go from &quot;what datasets…" />
+  <meta name="twitter:description" content="Because .rete files are entirely self-describing (containing their own schemas, summaries, and example queries), AI agents can discover datasets, write perfect SPARQL queries, and analyze data…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/agents.png" />
   <meta name="rete:section" content="Clients" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html" class="active">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -337,188 +335,78 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Agentic interfaces — MCP, plugin &amp; skills</h1>
-<p>rete has three agent-facing surfaces, all built on the same idea: a <code>.rete</code>
-file is <strong>self-describing</strong> (card, schema, example queries travel inside the
-file), so an agent can go from "what datasets exist?" to a correct SPARQL
-query — and to validated, media-rich answers — without any out-of-band
-documentation.</p>
-<table><thead><tr><th>Surface</th><th>What it is</th><th>For</th></tr></thead><tbody>
-<tr><td><strong>MCP server</strong></td><td><code>https://katospiegel-rete.hf.space/mcp/</code> — 18 tools over the published catalog and any <code>.rete</code> URL</td><td>ChatGPT, Claude, any MCP client</td></tr>
-<tr><td><strong>Desktop extension</strong></td><td><code>rete.mcpb</code> — the whole engine as a one-click local install</td><td>Claude Desktop, incl. private graphs and offline work</td></tr>
-<tr><td><strong>Claude Code plugin</strong></td><td>this repo, installable as a plugin + marketplace</td><td>Claude Code users: MCP + skills in two commands</td></tr>
-<tr><td><strong>Skills</strong></td><td>four repo-aware playbooks under <code>skills/</code></td><td>Claude Code; also readable as human docs</td></tr>
+<h1>Agentic Interfaces: MCP, Plugins, &amp; Skills</h1>
+<p>Because <code>.rete</code> files are entirely <strong>self-describing</strong> (containing their own schemas, summaries, and example queries), AI agents can discover datasets, write perfect SPARQL queries, and analyze data <em>without any external documentation</em>.</p>
+<p>We expose this power through three robust agentic surfaces:</p>
+<table><thead><tr><th>Surface</th><th>What it is</th><th>Target Audience</th></tr></thead><tbody>
+<tr><td><strong>MCP Server</strong></td><td>A hosted endpoint with 18 specialized tools covering the published catalog and any <code>.rete</code> URL.</td><td>ChatGPT, Claude, and general MCP clients.</td></tr>
+<tr><td><strong>Desktop Extension</strong></td><td>(<code>rete.mcpb</code>) A local, single-click install of the engine for querying private graphs offline.</td><td>Claude Desktop users.</td></tr>
+<tr><td><strong>Claude Code Plugin</strong></td><td>An installable plugin that wires up MCP tools and agent "skills" instantly.</td><td>CLI Developers using Claude Code.</td></tr>
+<tr><td><strong>Agent Skills</strong></td><td>Four repo-aware Markdown playbooks teaching agents how to work with Rete.</td><td>AI Agents (and humans!).</td></tr>
 </tbody></table>
-<h2>The MCP server</h2>
-<p>One streamable-HTTP endpoint, stateless, <strong>no authentication, no API key</strong>
-(the model lives in the client — the server only serves graphs):</p>
-<pre><code>https://katospiegel-rete.hf.space/mcp/
-</code></pre>
-<p>The tools, grouped by what an agent does with them:</p>
-<table><thead><tr><th>Group</th><th>Tools</th></tr></thead><tbody>
-<tr><td>Discover</td><td><code>list_datasets</code> · <code>dataset_card</code> · <code>dataset_schema</code> · <code>example_queries</code></td></tr>
-<tr><td>Query</td><td><code>sparql_query</code> (SELECT/ASK/CONSTRUCT/DESCRIBE, <code>reason=true</code> for OWL 2 QL, any catalog key <strong>or any <code>.rete</code> URL</strong>) · <code>find_entities</code> · <code>describe_entity</code></td></tr>
-<tr><td>Validate</td><td><code>validate_query</code> (deterministic SPARQL lint: parse, prefixes, features, vocabulary probes vs a dataset, ontology/subclass checks) · <code>validate_shacl</code> (lazy over shape targets) · <code>shacl_shapes</code> (curated shapes)</td></tr>
-<tr><td><strong>Author</strong></td><td><code>suggest_vocabulary</code> (search LOV before minting IRIs) · <code>check_ontology</code> (parse + lint battery + reasoner smoke) · <code>build_rete</code> (RDF text → a served, immediately-queryable <code>.rete</code>) · <code>causal_diagram</code> (extracted claims → Mermaid + Graphviz SVG + a CauseNet-aligned graph) — see the <a href="fallacies.html">conversation experiments</a></td></tr>
-<tr><td>Media</td><td><code>embed_media</code> (URLs → base64 data URIs, images recompressed to WebP) · <code>media_preview</code> (representative image of a PDF / video frame / IIIF / HTML page)</td></tr>
-<tr><td>ChatGPT connector contract</td><td><code>search</code> · <code>fetch</code></td></tr>
-</tbody></table>
-<p>Every answer carries <code>stats</code> — the bytes physically fetched — so laziness
-stays observable. The server instructions teach the intended workflow
-(card → schema → examples → query), and reads are disk-cached server-side.</p>
-<h3>Connect from ChatGPT</h3>
-<p>Two integration levels:</p>
-<ol>
-<li><strong>Developer mode (all 18 tools).</strong> Settings → <em>Apps &amp; Connectors</em> →
-enable <em>Developer mode</em> (under advanced settings) → <em>Create</em> a
-connector: any name, MCP server URL
-<code>https://katospiegel-rete.hf.space/mcp/</code>, authentication <strong>None</strong>.
-Enable it per-chat from the composer's tools menu.</li>
-<li><strong>As a regular connector (search + deep research).</strong> The server
-implements ChatGPT's <code>search</code>/<code>fetch</code> contract, so it also works as a
-plain connector: <code>search</code> matches datasets and entities, <code>fetch</code> returns
-the card/schema/examples or everything about one entity.</li>
-</ol>
-<p><strong>Gotcha (hard-won):</strong> ChatGPT snapshots the tool list when the connector
-is created and does not refresh it on its own. After the server gains
-tools, <em>refresh</em> the connector (or delete and re-add it) and start a new
-chat — otherwise you keep the old tool list.</p>
-<h3>Connect from Claude</h3>
+<hr />
+<h2>1. The Hosted MCP Server</h2>
+<p>We host a stateless, streamable-HTTP server. <strong>No authentication or API keys required.</strong></p>
+<p><strong>Endpoint:</strong> <code>https://katospiegel-rete.hf.space/mcp/</code></p>
+<h3>The Toolkit</h3>
+<p>The server exposes 18 tools designed for autonomous discovery and analysis:</p>
 <ul>
-<li>
-<p><strong>Claude.ai (web/desktop):</strong> Settings → <em>Connectors</em> → <em>Add custom
-connector</em> → the <code>/mcp/</code> URL, no auth. Available on paid plans.</p>
-</li>
-<li>
-<p><strong>Claude Code — the plugin way (recommended):</strong> see below; installing
-the plugin wires the MCP automatically.</p>
-</li>
-<li>
-<p><strong>Claude Code — MCP only:</strong></p>
-<pre><code class="language-sh">claude mcp add --transport http rete-graphs https://katospiegel-rete.hf.space/mcp/
-</code></pre>
-</li>
+<li><strong>Discover:</strong> <code>list_datasets</code>, <code>dataset_card</code>, <code>dataset_schema</code>, <code>example_queries</code>.</li>
+<li><strong>Query:</strong> <code>sparql_query</code> (Run SELECT/ASK/CONSTRUCT on any URL! Supports OWL 2 QL), <code>find_entities</code>, <code>describe_entity</code>.</li>
+<li><strong>Validate:</strong> <code>validate_query</code> (A deterministic SPARQL linter), <code>validate_shacl</code>, <code>shacl_shapes</code>.</li>
+<li><strong>Author:</strong> <code>suggest_vocabulary</code> (LOV search), <code>check_ontology</code>, <code>build_rete</code> (Build a <code>.rete</code> file instantly), <code>causal_diagram</code>.</li>
+<li><strong>Media:</strong> <code>embed_media</code>, <code>media_preview</code>.</li>
 </ul>
-<h3>Connect from any other MCP client</h3>
-<p>Generic config (Cursor, Windsurf, custom hosts — field names vary
-slightly per client):</p>
-<pre><code class="language-json">{
-  "mcpServers": {
-    "rete-graphs": {
-      "type": "http",
-      "url": "https://katospiegel-rete.hf.space/mcp/"
-    }
-  }
-}
-</code></pre>
-<h3>Programmatic agents</h3>
-<p>An agent framework can reach a graph two ways: through this MCP server, or by
-calling the <code>rete-graph</code> library <strong>in process</strong>, so the tools run against a
-local path or a URL with no server in between —
-<a href="agent-frameworks.html">LangChain &amp; Pydantic AI</a> is the tutorial for both,
-with runnable scripts.</p>
-<p>Verified with <a href="https://ai.pydantic.dev">pydantic-ai</a> (2.x) — the full
-tool loop over this server:</p>
+<p><em>Every response includes network statistics (<code>bytes</code> fetched) so the agent is always aware of the lazy-loading efficiency.</em></p>
+<h3>How to Connect</h3>
+<p><strong>From ChatGPT (Developer Mode):</strong>
+Go to Settings → Apps &amp; Connectors → Enable <em>Developer mode</em>. Create a connector pointing to the URL above. (Auth: None).
+<em>Gotcha:</em> ChatGPT snapshots the tool list at creation. If we add new tools, you must recreate the connector!</p>
+<p><strong>From Claude (Web/Desktop):</strong>
+Go to Settings → Connectors → Add custom connector → Paste the URL.</p>
+<p><strong>Using Agent Frameworks (Python):</strong>
+You can connect programmatic agents like Pydantic AI directly to the server:</p>
 <pre><code class="language-python">from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
+# Give Claude full access to the Rete ecosystem!
 agent = Agent("anthropic:claude-sonnet-5",
               toolsets=[MCPToolset("https://katospiegel-rete.hf.space/mcp/")])
-async with agent:
-    result = await agent.run("Which datasets cover Spanish law? Query one of them.")
 </code></pre>
-<p>And with the <a href="https://gofastmcp.com">FastMCP</a> client for direct calls:</p>
-<pre><code class="language-python">from fastmcp import Client
-
-async with Client("https://katospiegel-rete.hf.space/mcp/") as c:
-    tools = await c.list_tools()
-    result = await c.call_tool("sparql_query", {
-        "dataset": "boe",
-        "query": "SELECT (COUNT(?s) AS ?n) WHERE { ?s a &lt;http://data.europa.eu/eli/ontology#LegalResource&gt; }",
-    })
-</code></pre>
-<p>No MCP at all? The same surface is plain REST (<code>/api/…</code>, OpenAPI at
-<a href="https://katospiegel-rete.hf.space/docs"><code>/docs</code></a>) and every dataset is a
-standard <a href="interop.html">SPARQL 1.1 Protocol endpoint</a>
-(<code>/sparql/&lt;key&gt;</code> or <code>/sparql/&lt;any-.rete-URL&gt;</code>).</p>
-<h2>The desktop extension (<code>rete.mcpb</code>)</h2>
-<p>The MCP server above is a <em>hosted</em> surface: it queries the published
-catalog, and your own graphs are not on it. The
-<a href="https://github.com/modelcontextprotocol/mcpb">MCP Bundle</a> inverts that —
-it installs the <strong>whole engine on the user's machine</strong>, so Claude Desktop
-can query private <code>.rete</code> files with no network at all, and reach the
-published catalog directly over HTTP Range with no server in between.</p>
-<p>The format makes this unusually easy. MCPB's own guidance notes that Python
-bundles cannot portably ship compiled dependencies and that binary bundles
-need a build per platform; the rete engine is Rust <strong>already compiled to
-architecture-neutral wasm</strong>, so the extension is a plain <code>node</code> bundle — one
-JS file plus one <code>.wasm</code>, 1.3 MB packed — that runs unchanged on macOS,
-Windows and Linux with the Node runtime Claude Desktop ships.</p>
-<p>Nine tools, mirroring the hosted server's read surface plus local authoring:
-<code>list_datasets</code>, <code>dataset_card</code>, <code>dataset_schema</code>, <code>example_queries</code>,
-<code>sparql_query</code>, <code>find_entities</code>, <code>describe_entity</code>, <code>validate_shacl</code>,
-<code>build_rete</code>. Every <code>dataset</code> argument takes a local file name, a catalog
-key, or an <code>https://</code> URL to any published <code>.rete</code>.</p>
-<p>The decisive property is that <strong>local files are read lazily too</strong> — the same
-byte-range path as a remote graph, via the JS client's <code>file://</code> reader — so
-a multi-gigabyte graph on disk answers a selective query in megabytes and is
-never loaded into memory.</p>
-<h3>Try it now</h3>
-<p><strong>⬇ <a href="https://data.graphplaza.com/mcpb/rete.mcpb">Download rete.mcpb</a></strong> (1.4 MB)
-— then double-click it, or drag it into Claude Desktop.</p>
-<p>That link always serves the current build; a pinned copy of each version sits
-beside it (for example
-<a href="https://data.graphplaza.com/mcpb/rete-0.3.0.mcpb"><code>rete-0.3.0.mcpb</code></a>). Every
-tagged release additionally attaches <code>rete-&lt;version&gt;.mcpb</code> to the
-<a href="https://github.com/caviri/rete/releases">releases page</a>, built by the release
-workflow with a SHA-256 checksum and build provenance — take that copy if you
-want to verify what you are installing before you run it.</p>
-<pre><code class="language-sh"># or build it yourself — Docker only, no node needed
-cd clients/mcpb &amp;&amp; ./build.sh --test
-</code></pre>
-<p>At install time you choose which folders to expose. Leaving that empty is a
-fine way to start: the published catalog still works and the extension can read
-nothing on disk. Then ask Claude <em>"list the rete datasets, then show me the
-classes in the BOE graph"</em>. To query your own graphs, point it at a folder
-holding <code>.rete</code> files — reads and writes stay confined to the folders you
-granted, compared on real paths so a symlink cannot escape. See
-<code>clients/mcpb/README.md</code> for the build and test details.</p>
-<h2>The Claude Code plugin</h2>
-<p>The repo doubles as a plugin <strong>and</strong> its own marketplace:</p>
-<pre><code>/plugin marketplace add caviri/rete
+<hr />
+<h2>2. The Desktop Extension (<code>rete.mcpb</code>)</h2>
+<p>Want to let Claude Desktop query your private, local <code>.rete</code> files without uploading them? Use the MCP Bundle extension!</p>
+<p>It installs the <strong>entire WebAssembly engine on your machine</strong>. It accesses local files using the exact same lazy byte-range reader it uses for remote HTTP files, meaning Claude can analyze a 10 GB file instantly without exhausting your RAM.</p>
+<p><strong><a href="https://data.graphplaza.com/mcpb/rete.mcpb">⬇ Download rete.mcpb</a></strong> (1.4 MB)</p>
+<ol>
+<li>Download the file.</li>
+<li>Drag it into Claude Desktop.</li>
+<li>Choose which local folders Claude is allowed to access. (Leave blank to only allow remote public datasets).</li>
+</ol>
+<hr />
+<h2>3. The Claude Code Plugin &amp; Skills</h2>
+<p>If you use Claude Code in the terminal, this repository doubles as a plugin and a marketplace!</p>
+<p>Install it to instantly wire up the MCP server and specialized agent skills:</p>
+<pre><code class="language-sh">/plugin marketplace add caviri/rete
 /plugin install rete-graph@rete
 </code></pre>
-<p>Installing wires up, in one step:</p>
+<h3>The AI Skills</h3>
+<p>The plugin loads four specialized playbooks (located in <code>skills/</code>) that teach Claude how to execute complex Rete workflows:</p>
 <ul>
-<li>the <strong>MCP server</strong> above (18 tools available in every session), and</li>
-<li>the four <strong>skills</strong>, namespaced as <code>/rete-graph:&lt;skill&gt;</code>.</li>
+<li><strong><code>rete-catalog</code>:</strong> Guides the agent to discover, validate, and federate existing published datasets.</li>
+<li><strong><code>rete-clients</code>:</strong> Helps the agent wire Rete into new Python/JS/Rust projects with working code snippets.</li>
+<li><strong><code>rete-from-graph</code>:</strong> Teaches the agent to convert raw RDF data into a highly compressed <code>.rete</code> file.</li>
+<li><strong><code>rete-publish</code>:</strong> Teaches the agent the exact workflow for publishing a <code>.rete</code> file to the web.</li>
 </ul>
-<p>Versioning follows git — every push to <code>main</code> is a new plugin version, so
-updates arrive without manual bumps. To try it without installing:
-<code>claude --plugin-dir &lt;checkout&gt;</code>.</p>
-<h2>The skills</h2>
-<p>Four repo-aware playbooks (in <a href="https://github.com/caviri/rete/tree/main/skills"><code>skills/</code></a>,
-loaded automatically by the plugin):</p>
-<table><thead><tr><th>Skill</th><th>Use it when</th></tr></thead><tbody>
-<tr><td><code>rete-catalog</code></td><td>"use an existing published dataset" — discover, read card/schema/examples, open from any client, download-and-verify, federate</td></tr>
-<tr><td><code>rete-clients</code></td><td>"wire rete into a new project" — Python / Pyodide / JS / script-tag / wasm / Rust setup with verified first-query snippets</td></tr>
-<tr><td><code>rete-from-graph</code></td><td>"turn this dataset/graph/ontology/endpoint into a <code>.rete</code>" — source → N-Triples → <code>rete build</code> → verify, with tested converter utilities</td></tr>
-<tr><td><code>rete-publish</code></td><td>"make this <code>.rete</code> explorable in the playground" — companions → bucket → catalog → rebuild → verify</td></tr>
-</tbody></table>
-<p>Each is a <code>SKILL.md</code> with reference docs and working scripts — they read
-fine as human documentation too.</p>
-<h2>What an agent session looks like</h2>
-<p>A typical flow, entirely inside one chat, no rete-specific prompt
-engineering:</p>
+<hr />
+<h2>4. What an Agent Session Looks Like</h2>
+<p>Because of Rete's self-describing architecture, a typical autonomous AI session requires zero prompting from you:</p>
 <ol>
-<li><code>list_datasets</code> → picks <code>boe</code> (Spanish consolidated legislation).</li>
-<li><code>dataset_schema("boe")</code> → copies the exact ELI IRIs.</li>
-<li><code>example_queries("boe")</code> → adapts the citation-network example.</li>
-<li><code>sparql_query</code> with <code>reason=true</code> → counts norms including subclass
-entailment.</li>
-<li><code>validate_shacl</code> → checks an integrity contract over the result set.</li>
-<li><code>media_preview</code> on a IIIF manifest or PDF the query surfaced →
-<code>embed_media</code> → a self-contained HTML report with the evidence inlined.</li>
+<li><strong>Agent:</strong> Runs <code>list_datasets</code> and finds <code>boe</code> (Spanish legislation).</li>
+<li><strong>Agent:</strong> Runs <code>dataset_schema("boe")</code> to understand the exact classes and IRIs used in the file.</li>
+<li><strong>Agent:</strong> Runs <code>example_queries("boe")</code> to study how human authors query the dataset.</li>
+<li><strong>Agent:</strong> Crafts a perfect <code>sparql_query</code> using <code>reason=true</code> to count regulations (leveraging subclass entailment).</li>
+<li><strong>Agent:</strong> Uses <code>embed_media</code> to generate a self-contained HTML report featuring embedded PDF references pulled straight from the query!</li>
 </ol>
 
       </article>

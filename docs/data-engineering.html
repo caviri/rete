@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Tables, VKG & big builds · rete docs</title>
-  <meta name="description" content="Data-engineering companions to the .rete file: lossless tabular exports of the same graph, the virtual-knowledge-graph alternative, and recipes for pulling genuinely large real datasets." />
+  <meta name="description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, or ingest genuinely massive datasets." />
   <link rel="canonical" href="https://caviri.github.io/rete/data-engineering.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Tables, VKG &amp; big builds · rete docs" />
-  <meta property="og:description" content="Data-engineering companions to the .rete file: lossless tabular exports of the same graph, the virtual-knowledge-graph alternative, and recipes for pulling genuinely large real datasets." />
+  <meta property="og:description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, or ingest genuinely massive datasets." />
   <meta property="og:url" content="https://caviri.github.io/rete/data-engineering.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/data-engineering.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Tables, VKG &amp; big builds · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Tables, VKG &amp; big builds · rete docs" />
-  <meta name="twitter:description" content="Data-engineering companions to the .rete file: lossless tabular exports of the same graph, the virtual-knowledge-graph alternative, and recipes for pulling genuinely large real datasets." />
+  <meta name="twitter:description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, or ingest genuinely massive datasets." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/data-engineering.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -337,152 +335,59 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Tables, VKG &amp; big builds</h1>
-<p>Data-engineering companions to the <code>.rete</code> file: lossless tabular exports of
-the same graph, the virtual-knowledge-graph alternative, and recipes for
-pulling genuinely large real datasets. This page is development-facing — for
-building a first file and querying it, start at
-<a href="getting-started.html">Getting started</a>.</p>
-<h2>Lossless entity tables (the best of both worlds)</h2>
-<p><code>scripts/rdf_to_entity_tables.py</code> is the <em>lossless</em> counterpart: it keeps the
-readable one-table-per-type shape <strong>without dropping anything</strong>. Each class
-table has the frequent properties as named <code>LIST</code> columns (occupation,
-citizenship, date of birth…) plus three things that make it complete: a
-<code>types</code> column (all <code>P31</code> values, so a multi-typed entity lives in exactly one
-table, never duplicated), an <code>extra</code> <code>MAP(predicate → objects)</code> column that
-catches every other property (rare ones, all the multilingual labels), and an
-<code>_untyped</code> residual table for subjects with no type. Object values are stored
-as N-Triples term tokens (<code>&lt;iri&gt;</code>, <code>"lit"</code>, <code>"lit"@en</code>), so IRIs, literals and
-language tags round-trip. Explode <code>types</code> + every column + <code>extra</code> across all
-tables and you get back <strong>exactly</strong> the triples — <code>--verify</code> checks that
-(reconstructed == input). It can emit Parquet, a DuckDB file, and a SQLite file
-(list/map columns as JSON text) in one run:</p>
-<pre><code class="language-sh">uv run python scripts/rdf_to_entity_tables.py --parts 1 --limit 12000000 --props 24 \
-  --min-entities 50 -o data/ent --duckdb data/ent.duckdb --sqlite data/ent.sqlite --verify
+<h1>Data Engineering &amp; Tables</h1>
+<p>This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, or ingest genuinely massive datasets.</p>
+<p><em>(If you just want to build your first file and query it, start at <a href="getting-started.html">Getting Started</a>.)</em></p>
+<h2>1. Lossless Entity Tables (The Best of Both Worlds)</h2>
+<p>The script <code>scripts/rdf_to_entity_tables.py</code> converts an RDF graph into a readable, one-table-per-type format <strong>without losing any data</strong>.</p>
+<p>It outputs files as <strong>Parquet</strong>, <strong>DuckDB</strong>, and <strong>SQLite</strong> simultaneously.</p>
+<h3>How it achieves losslessness:</h3>
+<ul>
+<li>Standard properties (like birth date, occupation) become named <code>LIST</code> columns.</li>
+<li>A <code>types</code> column tracks all types assigned to the entity, ensuring entities are never duplicated across tables.</li>
+<li>An <code>extra</code> column (a map of predicate → objects) catches rare or multilingual properties.</li>
+<li>An <code>_untyped</code> residual table catches subjects with no type.</li>
+<li>Object values are stored as N-Triples strings (<code>&lt;iri&gt;</code>, <code>"literal"@en</code>), preserving datatypes perfectly.</li>
+</ul>
+<p><strong>Command Example:</strong></p>
+<pre><code class="language-sh">uv run python scripts/rdf_to_entity_tables.py \
+  --parts 1 --limit 12000000 --props 24 --min-entities 50 \
+  -o data/ent --duckdb data/ent.duckdb --sqlite data/ent.sqlite --verify
 </code></pre>
-<p><code>--props</code> only changes how many properties get their own column vs. land in
-<code>extra</code> — it never affects losslessness. The <code>_manifest.parquet</code> records each
-class's column → predicate map so reconstruction is mechanical, and N-Triples
-is the interchange hub (<code>rete export</code> ↔ <code>rete build</code> ↔ these tables).</p>
-<p>It works on <strong>any</strong> RDF, not just the Wikidata Parquet source: pass <code>--nt &lt;file&gt;</code> to read N-Triples directly (objects, language tags and datatypes
-round-trip verbatim) and <code>--type-predicate &lt;iri&gt;</code> to group by something other
-than Wikidata's <code>P31</code> — e.g. <code>rdf:type</code> for OBO ontologies. This is how the
-<code>chebi-full</code> companions are built from the same <code>chebi.nt</code> as the <code>.rete</code>:</p>
-<pre><code class="language-sh">uv run python scripts/rdf_to_entity_tables.py --nt chebi.nt \
-  --type-predicate "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" \
-  --props 24 --min-entities 50 -o data/chebi-tables \
-  --duckdb data/chebi.duckdb --sqlite data/chebi.sqlite --verify
-</code></pre>
-<h2>Companion: columnar property tables (Parquet, split by type)</h2>
-<p>To compare the <code>.rete</code> graph against a columnar layout,
-<code>scripts/rdf_to_property_tables.py</code> denormalizes the same Wikidata triples into
-<strong>one Parquet table per entity type</strong> (the classic RDF "property table"): rows
-are entities, grouped by <code>wdt:P31</code> (instance-of); columns are that class's most
-common structured properties, multi-valued as <code>LIST(VARCHAR)</code>; an English
-<code>label</code> column is added and the labelling/description predicates are excluded
-so the columns are the real properties. It runs entirely in DuckDB from the
-source Parquet:</p>
+<p><em>(The <code>--verify</code> flag automatically reconstructs the graph and checks it against the input to prove 100% losslessness).</em></p>
+<h2>2. Property Tables (Columnar Comparison)</h2>
+<p>To compare how Rete performs against standard columnar layouts, you can use <code>scripts/rdf_to_property_tables.py</code>. This denormalizes Wikidata triples into <strong>one Parquet table per entity type</strong> (rows are entities, columns are properties).</p>
 <pre><code class="language-sh">pip install --break-system-packages duckdb
 uv run python scripts/rdf_to_property_tables.py --parts 10 --limit 120000000 -o data/wd-tables
-# -&gt; data/wd-tables/Q5.parquet (human), Q16521.parquet (taxon), … + _manifest.parquet
 </code></pre>
-<p>Each class table is independently queryable (<code>SELECT … FROM 'Q5.parquet'</code>), the
-<code>_manifest.parquet</code> maps class IRI → label/entity-count/file and each column id
-back to its predicate, and a single DuckDB over the set is just views:
-<code>CREATE VIEW human AS SELECT * FROM 'data/wd-tables/Q5.parquet'</code>. Match the
-<code>.rete</code> slice by passing the same <code>--parts</code>/<code>--limit</code>. This is a property-table
-companion for benchmarking storage/query tech against the graph format — not a
-lossless graph encoding (sparse properties become NULLs, heterogeneous classes
-get wide; that's the point of the comparison).</p>
-<h2>Alternative approach: a <em>virtual</em> knowledge graph over the companions</h2>
-<p>The companions above are materialized the rete way: triples → a <code>.rete</code> (the
-graph) <strong>plus</strong> tabular exports you query with SQL. The playground's Explore tab
-already queries those exports <strong>lazily over <code>httpfs</code></strong> — DuckDB-WASM / SQLite-WASM
-fetch only the Parquet row-groups a query touches, the <em>same</em> range-read transport
-the <code>.rete</code> uses — so you can compare the same class across the rete engine and
-the columnar engines side by side.</p>
-<p>A different school of thought skips materialization entirely. A <strong>Virtual
-Knowledge Graph</strong> (VKG / OBDA) — e.g. <a href="https://ontop-vkg.org/">Ontop</a> over DuckDB —
-keeps the Parquet as the source of truth and answers <strong>SPARQL by rewriting it to
-SQL</strong> at query time through declarative <strong>R2RML mappings</strong>; no RDF file is ever
-built (<a href="https://ontopic.ai/en/tech-notes/create-virtual-knowledge-graphs-from-parquet-files/">tech note</a>).
-The two are complementary; the trade is materialized-vs-virtual:</p>
-<table><thead><tr><th></th><th>rete (this project)</th><th>Virtual KG (Ontop + DuckDB)</th></tr></thead><tbody>
-<tr><td>RDF</td><td><strong>materialized</strong> into a graph-native <code>.rete</code></td><td><strong>virtual</strong> — never materialized</td></tr>
-<tr><td>Source of truth</td><td>the <code>.rete</code> file</td><td>the Parquet</td></tr>
-<tr><td>SPARQL</td><td>answered directly over <code>.rete</code> (range reads)</td><td>rewritten to SQL over Parquet via mappings</td></tr>
-<tr><td>Parquet's role</td><td>a tabular <strong>companion/export</strong></td><td><strong>the</strong> data</td></tr>
-<tr><td>Trade-off</td><td>a build step; self-contained &amp; graph-native (pyramid, communities, reachability, SHACL, coherence, provenance)</td><td>a mapping + a SPARQL→SQL engine at query time; always fresh, no ingestion</td></tr>
+<blockquote>
+<p>[!NOTE]
+This export is <strong>not lossless</strong>. Sparse properties become NULLs, and complex objects may be dropped. It is purely designed as a benchmarking companion to compare graph engines against columnar engines.</p>
+</blockquote>
+<h2>3. Virtual Knowledge Graphs (VKG)</h2>
+<p>When you generate the Parquet companions above, Rete also generates a <code>_manifest.parquet</code> file mapping every column back to its RDF predicate.</p>
+<p>This manifest is exactly the <strong>R2RML mapping</strong> needed to power a <strong>Virtual Knowledge Graph (VKG)</strong> (like <a href="https://ontop-vkg.org/">Ontop</a>).
+Instead of materializing the <code>.rete</code> graph, a VKG keeps the data in Parquet and rewrites SPARQL queries into SQL on-the-fly.</p>
+<table><thead><tr><th>Feature</th><th>Rete (Materialized)</th><th>Virtual KG (Ontop + DuckDB)</th></tr></thead><tbody>
+<tr><td><strong>Data Format</strong></td><td>Materialized into a <code>.rete</code> file</td><td>Remains as raw Parquet</td></tr>
+<tr><td><strong>SPARQL Engine</strong></td><td>Native <code>.rete</code> evaluation</td><td>Rewritten to SQL via mappings</td></tr>
+<tr><td><strong>Pros/Cons</strong></td><td>Graph-native, fast lookups, built-in reasoning &amp; SHACL. Requires a build step.</td><td>Always fresh, no ingest required. Lacks graph-native features like path traversal.</td></tr>
 </tbody></table>
-<p>Both lean on the <strong>same lazy transport</strong> — Parquet's footer + row groups are
-range-friendly the way the <code>.rete</code> header + tiles are — so the honest comparison
-isn't "lazy vs eager" but a <strong>graph-native materialized file</strong> vs a <strong>virtual
-SPARQL view over a columnar source</strong>.</p>
-<p>And rete's companions are already <strong>VKG-ready</strong>: the <code>_manifest.parquet</code> beside
-each one records the column → predicate map (and class IRI → table) — <em>exactly the
-R2RML mapping a VKG needs, generated for free</em>. So because the companions are
-range-readable R2 objects, a VKG can <code>ATTACH</code> them in place: a single Ontop/DuckDB
-endpoint over <em>every</em> Parquet in the R2 collection — driven by the manifests — is a
-virtual knowledge graph over all published companions with no full download and
-no <code>.rete</code>: the federated,
-virtual mirror of rete's materialized file. (Materializing the same thing is also
-mechanical: the entity tables are lossless, so reconstruct each → merge, or build
-per-dataset <code>.rete</code> and <code>rete federate</code> across them.)</p>
-<p><strong>Benchmark candidate (TODO):</strong> rete's range-read SPARQL on a <code>.rete</code> vs an
-Ontop-over-DuckDB VKG on the equivalent Parquet — same queries, same HTTP-range
-hosting — measuring bytes fetched, latency, and which graph operations (pyramid /
-reachability / SHACL / coherence) the VKG can't answer cheaply.</p>
-<h2>A real-world graph: a Wikidata biology slice</h2>
-<p>For a genuinely large, real dataset, <code>scripts/fetch_wikidata_bio.py</code> pulls a
-life-sciences slice from the <a href="https://query.wikidata.org">Wikidata Query Service</a>:
-genes, the proteins they encode, the diseases they associate with, drugs that
-treat those diseases, and a disease subclass hierarchy — one connected graph,
-every entity labelled in English. It runs a handful of bounded <code>CONSTRUCT</code>
-queries (each well under the WDQS timeout) and merges them as N-Triples.</p>
-<pre><code class="language-sh">uv run python scripts/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
+<p>Both approaches use the same lazy HTTP-range fetching, so you can easily run both architectures side-by-side using the same storage bucket!</p>
+<h2>4. Fetching Real Data (Wikidata)</h2>
+<p>If you want to pull large chunks of real data, we provide two scripts:</p>
+<h3>Slicing a Biology Graph via WDQS</h3>
+<p><code>scripts/fetch_wikidata_bio.py</code> pulls a highly connected life-sciences slice from the live Wikidata Query Service (genes, proteins, diseases, and drugs).</p>
+<pre><code class="language-sh"># Pull ~40,000 triples
+uv run python scripts/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
 rete build data/wikidata-bio.nt -o bio.rete
-rete stats bio.rete        # ~40k triples, ~27k terms, hundreds of communities
 </code></pre>
-<p>A <code>--limit 4000</code> run is roughly 40,000 triples (≈2,800 genes, ≈4,000 proteins,
-≈3,600 diseases) — the community pyramid finds hundreds of organism/disease
-clusters, and it exercises every surface: typed-class queries, label joins, the
-disease hierarchy via <code>wdt:P279</code>, and HTTP range queries over a real graph.
-<code>--taxon Q83310</code> fetches mouse instead of human; <code>--limit</code> trades size against
-WDQS time. Output lands in <code>data/</code> (git-ignored, like all fetched datasets —
-the script is tracked, the bytes are regenerated on demand). Be a good WDQS
-citizen: it is rate-limited, so fetch a slice, not a firehose.</p>
-<h2>Real Wikidata at gigabyte scale (Parquet)</h2>
-<p>The Query Service is for slices, not bulk. For a genuinely large, real
-linked-data graph, <code>scripts/wikidata_parquet_to_nt.py</code> reads the full Wikidata
-"truthy" dump from the
-<a href="https://huggingface.co/datasets/piebro/wikidata-extraction"><code>piebro/wikidata-extraction</code></a>
-Parquet conversion on Hugging Face (~80 partitions, <code>subject/predicate/object/ language</code> columns) with DuckDB — <code>httpfs</code> streams the remote files, so a bounded
-slice needs no full download — and writes N-Triples.</p>
-<pre><code class="language-sh">pip install --break-system-packages duckdb
-uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
+<h3>Gigabyte-Scale Parsing from Dump</h3>
+<p>WDQS is too slow for massive pulls. <code>scripts/wikidata_parquet_to_nt.py</code> reads directly from the multi-gigabyte Wikidata Parquet dumps on Hugging Face using DuckDB.</p>
+<pre><code class="language-sh">uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt
 rete build data/wd.nt -o wd.rete
 </code></pre>
-<p>The source Parquet drops literal datatypes, so the converter <strong>recovers them</strong>
-(<code>--datatypes</code>, default <code>auto</code>): it resolves each property's datatype from a
-local cache or one WDQS <code>wikibase:propertyType</code> query (~13.5k properties,
-cached for reuse) and re-types each literal — dates <code>xsd:dateTime</code>, quantities
-<code>xsd:decimal</code>, coordinates <code>geo:wktLiteral</code>; strings stay plain, monolingual
-text keeps its language tag, entity values are IRIs. If that map is
-unavailable (e.g. WDQS rate-limited), it falls back to an <strong>offline heuristic</strong>
-that types the unambiguous values — ISO timestamps and WKT geometries — leaving
-numbers plain (a bare number is indistinguishable from a numeric external-id
-without the map). <code>--datatypes heuristic</code> forces the offline path; <code>none</code> emits
-plain literals. Once typed, the engine's <code>DATATYPE(?o)</code> / <code>LANG(?o)</code> filters
-can select by datatype.</p>
-<p>Measured on the dev container, the full <code>--limit 12000000</code> (~1 GB) run:
-converting streams in <strong>~24 s</strong> (1.25 GB N-Triples, datatypes recovered) and
-builds in <strong>~52 s</strong> to a <strong>110 MB <code>.rete</code></strong> — 5 pyramid levels, ~115k
-communities — with typed literals intact (<code>"1830-10-04T00:00:00Z"^^xsd:dateTime</code>,
-<code>"Point(5.47 49.50)"^^geo:wktLiteral</code>) and a selective lookup answering in
-under a second. The slice is a real cross-section of <em>all</em> of Wikidata (people,
-places, works, taxa, …); for a curated biology-only graph use the WDQS fetcher
-above. <code>--parts N</code> draws from N whole partitions; <code>--local-dir</code> reads partitions
-you have already downloaded.</p>
+<p>The script intelligently <strong>recovers datatypes</strong> that were stripped from the Parquet dump, ensuring dates become <code>xsd:dateTime</code> and coordinates become <code>geo:wktLiteral</code>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

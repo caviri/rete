@@ -1,197 +1,128 @@
-# Graph data, for dummies
+# Graph Data, For Dummies
 
-A gentle, practical tour of graph/network data formats and standards — with one
-question running through every section: **what kinds of questions does this let
-me ask?** If you've never touched RDF, SPARQL, or Neo4j, start here. By the end
-you'll know the landscape and exactly what you can ask a `.rete` file.
+Welcome! This is a gentle, practical tour of graph data formats. We will focus on one running question: **what kinds of questions does this let me ask?**
 
-## What is a graph (a.k.a. a network)?
+If you have never touched RDF, SPARQL, or Neo4j before, this is the perfect place to start. By the end, you'll know exactly what a `.rete` file is and what you can do with it.
+
+## What is a Graph?
 
 <figure class="fig-right">
   <img src="img/graph-vs-table.svg" alt="The same facts shown as a relational table of rows on the left and as a node-link graph on the right, joined by a 'same facts' arrow.">
   <figcaption>The same facts as rows vs. as a graph. A graph stores the relationships directly, so "who is connected to whom" is a traversal, not a join.</figcaption>
 </figure>
 
-A graph is just two ingredients:
+A graph (also known as a network) is made of just two ingredients:
+- **Nodes**: The *things* (e.g., a person, a software package, a disease).
+- **Edges**: The *relationships* between things (e.g., Alice *knows* Bob; `app` *dependsOn* `logging`).
 
-- **Nodes** — the *things* (a person, a software package, a disease, a web page).
-- **Edges** — the *relationships* between things (Alice *knows* Bob; `web`
-  *dependsOn* `logging`; smoking *causes* cancer).
+That's it. Whether it's a social network, an org chart, or a knowledge base, they all share this shape: dots connected by lines. 
 
-That's it. A social network, a software dependency tree, a knowledge base
-(Wikipedia-as-data), an org chart, a causal model — all the same shape: dots and
-lines. The reason this shape is worth a whole family of tools is the *kind of
-question it answers naturally*, the kind that's painful in a spreadsheet or a
-table:
+### Why Use a Graph?
+Graphs are built to answer questions that are extremely painful to answer using standard spreadsheets or SQL tables:
+- **Direct Connections:** "Who is directly connected to X?" 
+- **Reachability & Paths:** "Is there *any* path from A to B, no matter how long?" (e.g., "Does our app eventually rely on a vulnerable library?")
+- **Structure & Clusters:** "What communities exist in this data?"
 
-- **Connection:** "Who/what is directly connected to X?" (Alice's friends; the
-  direct dependencies of `app`.)
-- **Reachability / paths:** "Is there *any* path from A to B, however long?"
-  (Does `app` transitively depend on the vulnerable `log4x`?)
-- **Structure / clusters:** "What groups or communities exist? What's the big
-  picture before I zoom in?"
+**Rule of thumb:** Tables are great for finding "all rows where age > 30". Graphs are great for exploring "everything reachable from here."
 
-Tables are great at "all rows where age > 30". Graphs are great at "everything
-reachable from here by following relationships." Hold onto that distinction — it
-explains everything below.
+## The Two Families: RDF vs. Labeled Property Graphs
 
-## Two big families: RDF vs. Labeled Property Graphs
-
-There are two dominant ways to *write down* a graph. They model the same dots and
-lines, but differently.
+There are two dominant ways to write down graph data.
 
 <figure class="fig-right">
   <img src="img/triple.svg" alt="An RDF triple drawn as a node-link: a subject node connected by a labeled predicate arrow to an object node, with a second example pointing to a literal value.">
   <figcaption>One triple = one fact: <code>subject —predicate→ object</code>. Resources are rounded nodes; literals are boxes. A graph is many triples sharing nodes.</figcaption>
 </figure>
 
-**RDF (Resource Description Framework)** breaks the world into **triples** —
-short statements of the form `(subject, predicate, object)`:
-
-```
+### 1. RDF (Resource Description Framework)
+RDF breaks the world down into **triples**—short statements consisting of a `(subject, predicate, object)`:
+```text
 <Alice>  <knows>  <Bob>
 <Alice>  <age>    "30"
 ```
+In RDF, everything (even the relationship name itself) is a first-class resource with a global identifier (a URL). It is the W3C standard for sharing data across the web.
 
-Everything — including the relationship name (`knows`) — is a first-class
-*resource* with a global identifier (an IRI, essentially a URL). It's the W3C web
-standard for sharing data between systems.
-
-**Labeled Property Graphs (LPG)**, the Neo4j model, instead give nodes and edges
-**labels** and bags of **key/value properties**:
-
-```
+### 2. Labeled Property Graphs (LPG)
+LPGs (used by databases like Neo4j) give nodes and edges **labels** and key-value **properties**:
+```text
 (:Person {name:"Alice", age:30}) -[:KNOWS {since:2019}]-> (:Person {name:"Bob"})
 ```
+The superpower of LPGs is that edges can hold properties (like `since:2019`). Plain RDF requires extra modeling to do this.
 
-Note that the *edge itself* carries a property (`since:2019`) — that's the LPG
-superpower and the main thing plain RDF can't do without extra modeling.
-
-| | RDF (triples) | Labeled Property Graph |
+| Feature | RDF (Triples) | Labeled Property Graph (LPG) |
 |---|---|---|
-| Atom of data | A statement `(s, p, o)` | A node or edge with properties |
-| Identity | Global IRIs (web-wide) | Local node/edge ids |
-| Edges carry data? | Not directly (needs reification / RDF-star) | Yes — properties on edges |
-| Schema & meaning | RDFS/OWL (formal, inferable) | Conventions, mostly app-defined |
-| Query language | SPARQL (a W3C standard) | Cypher / GQL |
-| Best at | Sharing, merging, inference across sources | Rich edges, app-local traversal |
+| **Atom of data** | A simple statement `(s, p, o)` | A node or edge with properties |
+| **Identity** | Global URLs (web-wide sharing) | Local IDs (app-specific) |
+| **Edge data?** | Not directly | Yes |
+| **Query Language** | **SPARQL** (W3C standard) | Cypher / GQL |
+| **Best at** | Merging data, inference, sharing | Rich edges, app-local traversals |
 
-**`rete` is RDF.** It is a storage + query format *for* RDF — not a new model.
-It can also translate a small, read-only **subset of Cypher** into SPARQL so LPG
-folks can ask familiar `MATCH … RETURN` questions; see
-[Compatibility & interop](compatibility.md).
+> **Note:** `rete` is built for **RDF**. It uses standard RDF data models and standard SPARQL queries. (However, it can translate simple Cypher read queries into SPARQL for compatibility).
 
-## The standards, plainly
+## The Graph Standards Ecosystem
 
-The RDF world is a stack of standards, each answering a different *kind* of
-question. Here's the whole map on one page — and what `rete` does with each.
+The RDF world involves several W3C standards. Here is how `rete` uses them:
 
-| Standard | What it's for | A question it helps answer | In `rete`? |
-|---|---|---|---|
-| **RDF** | The data model: triples/quads | "What facts do I have?" | ✅ core — it's RDF |
-| **RDFS** | Lightweight schema: class/property hierarchies | "If `Dog` is a `subClassOf Animal`, is Rex an Animal?" | ✅ via [`rete reason`](reasoning.md) |
-| **OWL** | Rich schema + meaning: disjointness, identity, transitivity | "Are these two facts logically *contradictory*?" | ⚠️ prototype OWL **RL** subset, not full OWL DL — [reasoning](reasoning.md) |
-| **SPARQL** | The query language for RDF | "Find everyone Alice transitively knows." | ✅ [SPARQL support](sparql.md) |
-| **SHACL / ShEx** | Shapes/validation: does data match a required shape? | "Does every `Person` have exactly one email?" | ✅ SHACL Core via [`rete shacl`](shacl.md); ShEx not implemented |
-| **N-Triples / N-Quads** | Plainest serialization (one statement per line) | "How do I hand my triples to a tool, losslessly?" | ✅ build input + N-Quads export |
-| **Turtle** | Human-friendly RDF text format | "Can I read/write this by hand?" | ✅ build input + export (default graph) |
-| **JSON-LD** | RDF as JSON, for web APIs | "Can I consume this in a JS app?" | ✅ expanded JSON-LD export (default graph) |
-| **Cypher / GQL** | The property-graph query language(s) | "`MATCH (a)-[:KNOWS]->(b) RETURN b`" | ⚠️ read-only Cypher *subset*, translated to SPARQL — [compatibility](compatibility.md) |
+- **RDF (Data Model):** Answers "What facts do I have?" ✅ (`rete`'s core format).
+- **RDFS (Lightweight Schema):** Answers "If Dog is an Animal, is Rex an Animal?" ✅ (Supported via `rete reason`).
+- **SPARQL (Query Language):** Answers "Find everyone Alice transitively knows." ✅ (Supported).
+- **SHACL (Validation):** Answers "Does every Person have exactly one email?" ✅ (Supported via `rete shacl`).
+- **N-Triples / Turtle / JSON-LD (Formats):** Answers "How do I save this to disk?" ✅ (Supported for building and exporting).
 
-Two honest caveats up front: SHACL support targets **SHACL Core** rather than
-SHACL-SPARQL, SHACL-AF, or ShEx, and the reasoner is a **documented OWL RL
-subset**, not a full OWL DL engine. A `.rete` file itself is immutable by design
-— there is no in-place SPARQL Update; for a *living* graph, [`rete serve`](cli.md)
-runs a small live endpoint that accepts SPARQL Update into a journal while the
-base file stays untouched.
+## What Questions Can You Ask `rete`?
 
-## What kinds of questions can you actually ask `rete`?
+Here is a practical guide to the kinds of questions you can ask your data using `rete`'s CLI. *(Examples assume a built graph named `deps.rete`)*.
 
-This is the heart of it. Below: a plain-English question → the kind of query it
-is → the concrete `rete` command. (Examples use the bundled dependency graph,
-`examples/deps.nt`; build it once with `rete build examples/deps.nt -o deps.rete`.)
-
-| You want to ask… | Kind of query | Command |
-|---|---|---|
-| "What facts have this predicate?" (a point lookup) | Triple pattern | `rete query` |
-| "Find a 2-hop chain / a join across edges" | Basic Graph Pattern (BGP) | `rete bgp` |
-| "What transitively depends on / reaches X?" | Property path (`+`/`*`) | `rete sparql` |
-| "How many edges per node? Top-N by count?" | Aggregation (`GROUP BY`) | `rete sparql` |
-| "What *kinds* of things exist and how do they relate?" | Schema / class summary | `rete schema` |
-| "Give me the big picture first, cheaply" | Pyramid overview | `rete summary` |
-| "Is my data logically *coherent*?" | Reasoning / coherence | `rete reason` |
-
-A few of these spelled out:
-
-**Fact lookup** — match a single triple pattern; omitted positions are wildcards:
-
+### 1. Point Lookups (Triple Patterns)
+"What facts share this exact relationship?"
 ```sh
+# Omitting the subject and object turns them into wildcards
 rete query deps.rete --predicate '<http://ex/hasVulnerability>'
 ```
 
-**Join (BGP)** — chain triple patterns sharing a variable (here, a 2-hop path):
-
+### 2. Multi-Hop Joins (Basic Graph Patterns)
+"Find me a 2-hop chain."
 ```sh
+# ?x, ?y, and ?z are variables. We want to find A -> B -> C chains.
 rete bgp deps.rete "?x <http://ex/dependsOn> ?y . ?y <http://ex/dependsOn> ?z"
 ```
 
-**Reachability / transitive** — the question tables can't answer. The `+` is a
-*property path*: follow `dependsOn` one-or-more times.
-
+### 3. Reachability (Property Paths)
+"What transitively depends on X?" (This is what tables struggle with!)
 ```sh
+# The '+' symbol tells SPARQL to follow the edge one or more times
 rete sparql deps.rete "PREFIX e: <http://ex/> SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 ```
 
-**Aggregation / counting** — group and count, e.g. each package's out-degree:
-
+### 4. Aggregations
+"How many dependencies does each package have, ordered by most to least?"
 ```sh
 rete sparql deps.rete \
   "PREFIX e: <http://ex/> SELECT ?p (COUNT(?d) AS ?deps) WHERE { ?p e:dependsOn ?d } GROUP BY ?p ORDER BY DESC(?deps)"
 ```
 
-**"What kinds of things, and how do they relate?"** — the dataset's effective
-schema (classes by `rdf:type`, plus the class→predicate→class relations), without
-reading the triple index:
-
-```sh
-rete schema deps.rete
-```
-
-**"Give me the big picture first."** `rete` stores a **pyramid**: a coarse
-community summary at the top, drilling down to full triples at the base. You read
-the overview first (a few small byte ranges) and zoom in only where a query needs
-it — overview-first, like map tiles for graphs.
+### 5. Big Picture overviews
+"What kinds of things exist here, and how do they relate?"
 
 <img src="img/pyramid.svg" alt="The rete pyramid: a coarse community summary at the top, communities in the middle, and full triples at the base; a client reads the top first and drills down only where needed.">
 
+`rete` builds a **pyramid index** of your data so you can get high-level summaries instantly, without reading millions of rows.
 ```sh
-rete summary deps.rete   # structural overview (Louvain community quotient graph)
+rete schema deps.rete     # Shows the dataset's logical schema
+rete summary deps.rete    # Shows the structural overview
 ```
 
-**"Is my data coherent?"** — not "is it well-formed" but "does it logically
-contradict itself?" The prototype OWL RL / RDFS reasoner materializes entailments
-(e.g. subclass and transitive-property closures) and flags **incoherent points**
-like an individual typed as two `owl:disjointWith` classes. It exits non-zero on
-incoherence, so it doubles as a CI gate.
-
+### 6. Logical Coherence
+"Does my data logically contradict itself?"
 ```sh
+# Flags incoherent points (e.g., an item belonging to two mutually exclusive classes)
 rete reason deps.rete
 ```
 
-(Want plain "is this file valid RDF / not corrupt?" instead? That's `rete
-validate` on the source and `rete verify` on the built file — see
-[compatibility](compatibility.md).)
+## Where `rete` Fits In
 
-## Where `rete` fits
+`rete` is a **format and query layer** that completely eliminates the database server. 
+You publish a single, immutable `.rete` file to a URL (like S3 or GitHub), and clients query it directly over the network. They fetch only the byte ranges they need to answer the question.
 
-`rete` is a **format + query** layer for RDF that you can drop on a plain URL: no
-database server, no query endpoint. Publish one immutable `.rete` file to S3, a
-CDN, or a GitHub raw URL, and clients answer the questions above by fetching only
-the byte ranges each query needs — overview (the pyramid) first, detail on
-demand. The model is standard RDF; the queries are standard SPARQL.
-
-Ready to ask your own questions?
-
-- **[Getting started](getting-started.md)** — install, build a file, run a query.
-- **[Real-world scenario](scenario.md)** — publish a queryable SBOM to a URL and
-  answer "what does this CVE impact?" over plain HTTP.
+**Ready to start?**
+- Head to **[Getting Started](getting-started.md)** to build your first graph.

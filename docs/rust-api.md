@@ -1,71 +1,68 @@
 # Rust API
 
-`rete-core` is the embeddable Rust implementation of the `.rete` format. Its
-supported surface is organized into five facade modules, which become the
-SemVer-stable API at `1.0.0`:
+Welcome to the `rete-core` Rust API! This crate provides the embeddable Rust implementation of the `.rete` format.
 
-| Module | Supported purpose |
-|---|---|
-| [`format`](https://docs.rs/rete-core/latest/rete_core/format/) | Parse RDF, build or open a `.rete`, inspect its header, and verify the container |
-| [`query`](https://docs.rs/rete-core/latest/rete_core/query/) | Evaluate SPARQL and graph patterns, format results, and configure federation |
-| [`range`](https://docs.rs/rete-core/latest/rete_core/range/) | Implement byte-range readers and open summary data without loading the full file |
-| [`validation`](https://docs.rs/rete-core/latest/rete_core/validation/) | Validate an eager graph or a `.rete` index with SHACL |
-| [`reasoning`](https://docs.rs/rete-core/latest/rete_core/reasoning/) | Run the supported RDFS/OWL rules and inspect schema coherence |
+To keep things simple and stable, the API is organized into **five core facade modules**. These will form the SemVer-stable API when we reach `1.0.0`.
 
-Use those module paths in application code. The crate retains some hidden root
-exports and implementation namespaces for the other workspace crates, but they
-are not part of the 1.x compatibility contract and may change without a major
-release.
+### The Five Core Modules
 
-## Add the dependency
+- **[`format`](https://docs.rs/rete-core/latest/rete_core/format/)**: Your starting point. Use it to parse RDF, build or open a `.rete` file, inspect headers, and verify the container.
+- **[`query`](https://docs.rs/rete-core/latest/rete_core/query/)**: The engine room. Evaluate SPARQL queries and graph patterns, format your results, and configure federation.
+- **[`range`](https://docs.rs/rete-core/latest/rete_core/range/)**: For the network-savvy. Implement byte-range readers and open summary data lazily without downloading the entire file.
+- **[`validation`](https://docs.rs/rete-core/latest/rete_core/validation/)**: Ensure data quality. Validate an eager graph or a `.rete` index against SHACL shapes.
+- **[`reasoning`](https://docs.rs/rete-core/latest/rete_core/reasoning/)**: Add logic. Run supported RDFS/OWL rules and inspect your schema's coherence.
 
-Until the 1.0.0 release, pin the exact 0.x version:
+> **Tip:** Always use these five module paths in your application code. While the crate contains hidden exports for internal workspace use, they are not part of the stable 1.x contract and might change.
+
+## Getting Started
+
+### 1. Add the Dependency
+
+Until the `1.0.0` release, we recommend pinning the exact `0.x` version in your `Cargo.toml`:
 
 ```toml
 [dependencies]
 rete-core = "=0.3.0"
 ```
 
-The default feature set supports compressed `.rete` files. Optional parallel or
-browser-thread features remain experimental; they do not change the five facade
-module names.
+The default feature set handles compressed `.rete` files out of the box. (Note: Optional parallel or browser-thread features are experimental but won't change the five facade module names).
 
-## Build, open, and query
+### 2. Build, Open, and Query
 
-The in-memory path is useful for applications that already have RDF text or a
-complete file image:
+If you already have RDF text or a complete file image in memory, here's how you can quickly build, open, and run a query:
 
 ```rust
 use rete_core::format::{assemble_dataset, parse_statements, Rete};
 use rete_core::query::{eval_query, QueryOutput};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Parse your RDF data
     let rdf = "<urn:alice> <urn:knows> <urn:bob> .";
     let quads = parse_statements(rdf, "nt")?;
+    
+    // 2. Assemble it into a .rete format
     let (bytes, stats) = assemble_dataset(quads, br#"{"source":"example"}"#);
     assert_eq!(stats.statements, 1);
 
+    // 3. Open the graph and run a SPARQL query
     let graph = Rete::open(&bytes)?;
     match eval_query(&graph, "SELECT ?o WHERE { <urn:alice> <urn:knows> ?o }")? {
         QueryOutput::Select(vars, rows) => {
             assert_eq!(vars, ["o"]);
             assert_eq!(rows.len(), 1);
         }
-        _ => unreachable!("the query is SELECT"),
+        _ => unreachable!("The query is SELECT"),
     }
+    
     Ok(())
 }
 ```
 
-`QueryOutput`, public error enums, and other result-shape enums are
-non-exhaustive. Always keep a wildcard arm when matching them; new variants can
-then be added in a compatible 1.x release.
+> **Note on Enums:** Result-shape enums like `QueryOutput` and public error enums are **non-exhaustive**. Always include a wildcard (`_ => ...`) arm when matching against them to ensure your code remains compatible with future 1.x releases.
 
-## Read by byte range
+### 3. Read by Byte Range
 
-Implement `RangeReader` for a local file, object-store client, or HTTP client.
-Every range must either return exactly the requested bytes or an error; offsets
-from an untrusted remote file must not be used as unchecked slice indexes.
+If you're reading large files locally or over the network, you don't need to load everything at once. Implement the `RangeReader` trait for your storage backend (local file, S3, HTTP, etc.).
 
 ```rust
 use rete_core::range::{RangeReader, SliceReader, SummaryView};
@@ -73,21 +70,21 @@ use rete_core::range::{RangeReader, SliceReader, SummaryView};
 fn inspect_summary(bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let reader = SliceReader::new(bytes);
     let _file_len = reader.len();
+    
+    // Lazily open the summary view without reading the full index
     if let Some(summary) = SummaryView::open_ranged(&reader)? {
-        println!("{} communities", summary.community_count());
+        println!("Found {} communities!", summary.community_count());
     }
+    
     Ok(())
 }
 ```
 
-Remote readers should preserve HTTP `Range` semantics. See [Hosting your
-`.rete`](hosting.md) for required CORS response headers and [WASM & JavaScript
-API](browser.md) for the browser-specific reader.
+**Network Readers:** When implementing remote readers, ensure they preserve standard HTTP `Range` semantics. For browser specifics, check out the [WASM & JavaScript API](browser.md), and for CORS requirements, see [Hosting your `.rete`](hosting.md).
 
-## Validate and reason
+### 4. Validate and Reason
 
-SHACL can operate directly against a `.rete` index, so a lazy remote graph only
-fetches ranges used by the shapes:
+Need to ensure your data follows specific rules? You can run SHACL validation directly against a `.rete` index. Because it's lazy, a remote graph will only fetch the byte ranges required by the shapes!
 
 ```rust
 use rete_core::format::Rete;
@@ -96,26 +93,23 @@ use rete_core::validation::{validate_shacl, ReteGraph, ShaclShapes};
 fn validate(bytes: &[u8], shapes_turtle: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let rete = Rete::open(bytes)?;
     let shapes = ShaclShapes::parse_turtle(shapes_turtle)?;
+    
+    // Validate the graph against the parsed shapes
     let report = validate_shacl(&ReteGraph::new(&rete), &shapes);
+    
     Ok(report.conforms)
 }
 ```
 
-The reasoning facade exposes the documented ruleset and both eager reasoning
-and reasoned query entry points. It is deliberately a bounded RDFS/OWL profile,
-not a complete OWL reasoner; see [Reasoning & coherence](reasoning.md) for the
-supported entailments and inconsistency checks.
+For logic and schemas, the `reasoning` facade provides both eager reasoning and reasoned query entry points. It implements a focused RDFS/OWL profile (not full OWL DL) — see [Reasoning & coherence](reasoning.md) for details on supported entailments.
 
-## Compatibility policy
+## Compatibility Policy
 
-- `.rete` format compatibility and Rust API compatibility are versioned
-  independently. The format byte and read window live in `format`.
-- The five facade modules follow SemVer from `1.0.0` onward; while the crates
-  are 0.x any release may change them. Hidden modules and experimental
-  feature-gated APIs are excluded even after 1.0.0.
-- Public errors and result shapes are non-exhaustive. Treat unfamiliar variants
-  as unsupported input or output rather than panicking.
-- Rustdoc is built with warnings denied, and release CI compares the facade with
-  the previous release using `cargo-semver-checks`.
+We take stability seriously. Here is what you can expect:
 
-For the byte-level contract, read the [format specification](SPEC.md).
+- **Format vs. API:** The `.rete` file format and the Rust API are versioned independently. The format byte and read window are managed in the `format` module.
+- **SemVer:** The five facade modules will strictly follow Semantic Versioning starting from `1.0.0`. Hidden modules and experimental APIs are exempt from this guarantee.
+- **Non-Exhaustive Types:** Public errors and result enums are non-exhaustive. Treat unfamiliar variants as unsupported rather than panicking.
+- **Safety Checks:** We build rustdocs with warnings denied and use `cargo-semver-checks` in our CI to catch accidental breaking changes.
+
+For the byte-level contract, refer to the [format specification](SPEC.md).

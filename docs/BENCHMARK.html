@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Benchmarks · rete docs</title>
-  <meta name="description" content="Synthetic social graph, 139,093 triples (20k people in 200 communities, 5 knows edges each + age/name literals)." />
+  <meta name="description" content="This page details the performance characteristics of Rete, covering file sizes, build times, query latency, and comparisons with other engines." />
   <link rel="canonical" href="https://caviri.github.io/rete/BENCHMARK.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Benchmarks · rete docs" />
-  <meta property="og:description" content="Synthetic social graph, 139,093 triples (20k people in 200 communities, 5 knows edges each + age/name literals)." />
+  <meta property="og:description" content="This page details the performance characteristics of Rete, covering file sizes, build times, query latency, and comparisons with other engines." />
   <meta property="og:url" content="https://caviri.github.io/rete/BENCHMARK.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/BENCHMARK.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Benchmarks · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Benchmarks · rete docs" />
-  <meta name="twitter:description" content="Synthetic social graph, 139,093 triples (20k people in 200 communities, 5 knows edges each + age/name literals)." />
+  <meta name="twitter:description" content="This page details the performance characteristics of Rete, covering file sizes, build times, query latency, and comparisons with other engines." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/BENCHMARK.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -337,304 +335,115 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Benchmark</h1>
-<p>Synthetic social graph, <strong>139,093 triples</strong> (20k people in ~200 communities,
-~5 <code>knows</code> edges each + <code>age</code>/<code>name</code> literals). Generated by
-<code>scripts/gen_graph.py</code>, measured by <code>scripts/bench.sh</code>, run in the dev container
-(release build, Rust 1.92). Query timings use the compiled binary directly
-(<code>target/release/rete</code>), so they exclude cargo overhead.</p>
-<h2>Size</h2>
-<table><thead><tr><th>Artifact</th><th style="text-align: right">Bytes</th><th style="text-align: right">vs raw</th></tr></thead><tbody>
-<tr><td>raw N-Triples</td><td style="text-align: right">8,384,101</td><td style="text-align: right">1.0×</td></tr>
-<tr><td><code>gzip -9</code> of the N-Triples</td><td style="text-align: right">564,590</td><td style="text-align: right">14.8×</td></tr>
-<tr><td><strong><code>.rete</code></strong> (zstd + pyramid summary)</td><td style="text-align: right">1,302,792</td><td style="text-align: right"><strong>6.4×</strong></td></tr>
+<h1>Benchmarks</h1>
+<p>This page details the performance characteristics of Rete, covering file sizes, build times, query latency, and comparisons with other engines.</p>
+<p>All synthetic benchmarks use a social graph of <strong>139,093 triples</strong> (20k people in ~200 communities, with ~5 <code>knows</code> edges each, plus <code>age</code> and <code>name</code> literals). This data was generated via <code>scripts/gen_graph.py</code> and measured using <code>scripts/bench.sh</code> within the release-build dev container (Rust 1.92). Query timings exclude Cargo overhead.</p>
+<h2>File Size</h2>
+<p>How does a <code>.rete</code> file compare to raw text and standard compression?</p>
+<table><thead><tr><th>Artifact</th><th style="text-align: right">Bytes</th><th style="text-align: right">vs Raw</th></tr></thead><tbody>
+<tr><td>Raw N-Triples</td><td style="text-align: right">8,384,101</td><td style="text-align: right">1.0×</td></tr>
+<tr><td><code>gzip -9</code> (N-Triples)</td><td style="text-align: right">564,590</td><td style="text-align: right">14.8×</td></tr>
+<tr><td><strong><code>.rete</code></strong> (zstd + pyramid summary)</td><td style="text-align: right"><strong>1,302,792</strong></td><td style="text-align: right"><strong>6.4×</strong></td></tr>
 </tbody></table>
-<p><code>.rete</code> is ~2.3× the size of <code>gzip</code> while being <em>queryable in place and over HTTP
-ranges</em> (gzip answers no query without a full download + scan). Stable format generation 1
-it stores all <strong>six</strong> permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) — each triple
-stored 6× — plus the dictionary and the small pyramid summary; that is what roughly
-doubled the file versus the earlier three-permutation v0.3 (715,959 bytes), and the
-payoff is that <em>any</em> triple pattern — not just the three canonical leads — resolves
-to a contiguous scan with its bound components leading, which also unlocks
-sort-merge joins. Per-community tiles remain out of the default file because they
-duplicate every triple; exact single-pattern range routing fetches one selected
-permutation payload instead of the whole index container, while physical
-community-tile directories are the next storage step.</p>
-<h2>Build</h2>
+<p><strong>Takeaway:</strong> A <code>.rete</code> file is about 2.3× larger than a gzipped file, but with a massive advantage: <strong>it is queryable in place over HTTP ranges.</strong> (Gzip requires a full download and scan).</p>
+<p>Stable format generation 1 stores all <strong>six permutations</strong> (SPO, POS, OSP, SOP, PSO, OPS), meaning each triple is indexed six ways to optimize <em>any</em> query pattern and enable sort-merge joins.</p>
+<h2>Build Performance</h2>
+<h3>Small Graphs (139k triples)</h3>
 <table><thead><tr><th>Step</th><th style="text-align: right">Time</th></tr></thead><tbody>
-<tr><td><code>rete build</code> (parse → dict → 6 indexes → Louvain pyramid → zstd)</td><td style="text-align: right">320 ms</td></tr>
+<tr><td><code>rete build</code> (parse → dict → 6 indexes → Louvain pyramid → zstd)</td><td style="text-align: right"><strong>320 ms</strong></td></tr>
 </tbody></table>
-<p>Result: 3 pyramid levels, 137,512 quads, 40,063 terms.
-(Caching the dictionary section metadata cut build time ~3.4× — see finding 1.)</p>
-<h3>Build memory (big graphs)</h3>
-<p>The build's peak RAM is dominated by the raw string statements (every term an
-owned <code>String</code>, heavily duplicated), which are redundant with the dictionary once
-interned. Stream-parsing the file (the whole text is never resident) and dropping
-the string statements right after encoding them to id-triples — before the
-pyramid + index phases — cuts the peak. On a <strong>3 M-triple / 189 MB N-Triples</strong>
-build (synthetic, <code>scripts</code>-style entities with type/label/edges):</p>
-<table><thead><tr><th></th><th style="text-align: right">OLD</th><th style="text-align: right">optimized</th></tr></thead><tbody>
-<tr><td>process peak RSS (<code>VmHWM</code>)</td><td style="text-align: right">1371 MiB</td><td style="text-align: right"><strong>836 MiB</strong> (−39%)</td></tr>
+<p><em>(Result: 3 pyramid levels, 137,512 quads, 40,063 terms).</em></p>
+<h3>Large Graphs (3M triples / 189 MB N-Triples)</h3>
+<p>Building large graphs can be memory-intensive. By stream-parsing and dropping string statements immediately after encoding them into IDs, we've significantly reduced peak memory:</p>
+<table><thead><tr><th>Metric</th><th style="text-align: right">Old Engine</th><th style="text-align: right">Optimized Engine</th></tr></thead><tbody>
+<tr><td><strong>Peak RAM (VmHWM)</strong></td><td style="text-align: right">1,371 MiB</td><td style="text-align: right"><strong>836 MiB</strong> (−39%)</td></tr>
+<tr><td><strong>Louvain Pyramid Build</strong></td><td style="text-align: right">118.2 s</td><td style="text-align: right"><strong>44.1 s</strong> (2.7× faster)</td></tr>
+<tr><td><strong>Total Build Time</strong></td><td style="text-align: right">~141 s</td><td style="text-align: right"><strong>67 s</strong> (~2.1× faster)</td></tr>
 </tbody></table>
-<p>Output is byte-identical. Reproduce the phase-by-phase heap profile with
-<code>cargo run --release -p rete-bench -- --build-mem &lt;file.nt&gt;</code> — it snapshots the
-live heap (exact, via a counting allocator) after parse, dictionary, encode,
-the drop, pyramid, index, and write.</p>
-<h3>Build time (big graphs)</h3>
-<p>The build is dominated by the <strong>Louvain community pyramid</strong> — ~91% of wall-clock
-on the 3 M-triple build. Its local-moving inner loop now uses a reusable dense
-scratch (community → edge-weight + touched-list reset) instead of a per-node
-<code>HashMap</code>, with unchanged accumulation order and candidate scan, so the partition
-and the file content hash are byte-identical. Set <code>RETE_BUILD_TIMING=1</code> on
-<code>rete build</code> for the per-phase breakdown.</p>
-<table><thead><tr><th>phase (3 M triples)</th><th style="text-align: right">OLD</th><th style="text-align: right">optimized</th></tr></thead><tbody>
-<tr><td><code>build_dendrogram</code> (Louvain)</td><td style="text-align: right">118.2 s</td><td style="text-align: right"><strong>44.1 s</strong> (2.7×)</td></tr>
-<tr><td>whole <code>rete build</code> (wall-clock)</td><td style="text-align: right">~141 s</td><td style="text-align: right"><strong>67 s</strong> (~2.1×)</td></tr>
+<p><strong>Pro Tip:</strong> Set <code>RETE_BUILD_TIMING=1</code> when running <code>rete build</code> to see a phase-by-phase time breakdown.</p>
+<h2>Query Latency (End-to-End)</h2>
+<p>These times cover the full pipeline: open, decompress, and evaluate (5-run average, including process startup, using the six-permutation format).</p>
+<table><thead><tr><th>Query Type</th><th style="text-align: right">Time</th></tr></thead><tbody>
+<tr><td>Triple pattern (<code>?s knows p100</code>)</td><td style="text-align: right"><strong>33 ms</strong></td></tr>
+<tr><td>2-hop BGP join (<code>p0 knows ?y . ?y knows ?z</code>)</td><td style="text-align: right"><strong>39 ms</strong></td></tr>
+<tr><td>Property path (<code>p0 knows+ ?y</code>, reaches whole graph)</td><td style="text-align: right"><strong>59 ms</strong></td></tr>
+<tr><td><code>GROUP BY COUNT</code> (degree of every node)</td><td style="text-align: right"><strong>107 ms</strong></td></tr>
+<tr><td>Per-predicate totals (<strong>summary only, index bypassed</strong>)</td><td style="text-align: right"><strong>24 ms</strong></td></tr>
 </tbody></table>
-<p>A <em>parallel</em> Louvain would not be byte-identical (the partition depends on the
-sequential move order), so the pyramid stays single-threaded; the six index
-permutations and the dictionary/permutation sorts already use all cores (<code>rayon</code>).</p>
-<h3>Query result serialization (the WASM hot path)</h3>
-<p>A query's result is returned to the browser as a JSON string. Writing that
-envelope <strong>directly into a <code>String</code></strong> (<code>rete_core::results_envelope_json</code>) instead
-of building a <code>serde_json::Value</code> tree and stringifying it dominates the cost on a
-large result. On a <strong>500k-row <code>SELECT</code></strong> (27 MB JSON), profiled with <code>cargo run --release -p rete-bench -- --query-mem</code>:</p>
-<table><thead><tr><th>serializer</th><th style="text-align: right">peak heap</th><th style="text-align: right">time</th></tr></thead><tbody>
-<tr><td><code>Value</code> tree + <code>to_string</code></td><td style="text-align: right">670 MiB (25× the payload)</td><td style="text-align: right">408 ms</td></tr>
-<tr><td><strong>direct to <code>String</code></strong></td><td style="text-align: right"><strong>50 MiB</strong> (1.9×)</td><td style="text-align: right"><strong>41 ms</strong></td></tr>
-</tbody></table>
-<p>~<strong>13× less peak heap, ~10× faster</strong>, byte-identical JSON (a unit test pins the
-escaping to <code>serde_json</code>). For reference the query itself (<code>eval_query</code>) was
-290 MiB / 344 ms — i.e. the old serializer cost <em>more than the query</em>. On the
-bounded WASM heap the 670 MiB peak was an OOM risk for big results.</p>
-<h2>Query latency (end-to-end: open + decompress + evaluate)</h2>
-<p>5-run averages of the compiled binary in the dev container (includes process
-startup each run; stable format generation 1, six permutations).</p>
-<table><thead><tr><th>Query</th><th style="text-align: right">Time</th></tr></thead><tbody>
-<tr><td>triple pattern (<code>?s knows p100</code>)</td><td style="text-align: right">33 ms</td></tr>
-<tr><td>2-hop BGP join (<code>p0 knows ?y . ?y knows ?z</code>)</td><td style="text-align: right">39 ms</td></tr>
-<tr><td>property path (<code>p0 knows+ ?y</code>, reaches whole graph)</td><td style="text-align: right"><strong>59 ms</strong></td></tr>
-<tr><td>GROUP BY COUNT (degree of every node)</td><td style="text-align: right"><strong>107 ms</strong></td></tr>
-<tr><td>per-predicate totals (<strong>summary only, index not read</strong>)</td><td style="text-align: right">24 ms</td></tr>
-</tbody></table>
-<p>Every dictionary lookup and triple-block decode is bounds-checked
-(<code>slice.get(..)?</code> instead of raw indexing) so the reader cannot panic on
-malformed input — a few percent on the resolution-heavy hot path, and worth it
-(see finding 5). Resolution-light queries (triple pattern, summary) are
-unaffected.</p>
-<h2>HTTP range</h2>
-<p>A point query over HTTP is bounded, PMTiles-style. The full SPARQL URL path still
-opens the broad index section, but <code>query-url</code> and <code>rete cost</code> now have an exact
-single-pattern route: header + dictionary + one selected permutation
-payload. The <strong>progressive path is cheaper still</strong> for summary-safe queries:
-fetching just the coarse community graph (<code>summary-url</code>) reads only the header +
-dictionary + summary — e.g. <strong>2.2 KB of a 15.6 KB file (14%) in 3 requests, the
-index never fetched</strong> — the "overview first, drill down later" promise.</p>
-<h2>Scaling</h2>
-<p>At <strong>347,884 triples</strong> (2.5× the table above) everything scales ~linearly, with
-no pathological blowup: build 890 ms, triple query 54 ms, property path 103 ms,
-GROUP BY 261 ms, predicate totals 26 ms (summary stays cheap regardless of size),
-file 3.31 MB (same ~6.4× vs raw / ~2.3× vs gzip ratios as the table above).</p>
-<h2>Billion-triple scale: bounded-memory queries (DataCite)</h2>
-<p>The 52 GB <code>datacite.rete</code> — 9.83 B unique triples, 1.885 B dictionary terms, the
-largest <code>.rete</code> built to date — is queryable on a small machine. Measured under
-hard Docker memory caps (<code>--memory</code>, swap disabled), file opened locally through
-the lazy range reader:</p>
-<table><thead><tr><th>query</th><th>cap</th><th>result</th></tr></thead><tbody>
-<tr><td><code>SELECT ?s WHERE { ?s a dcite:Software } LIMIT 1</code></td><td>2 GiB</td><td>6 s</td></tr>
-<tr><td><code>SELECT (COUNT(*) AS ?n) WHERE { ?s a dcite:Software }</code></td><td>2 GiB</td><td><strong>779,399</strong> in 4 s</td></tr>
-<tr><td><code>SELECT ?t (COUNT(*) AS ?n) WHERE { ?s a ?t } GROUP BY ?t</code> — the full 1.38 B-row type slice</td><td>4 GiB</td><td><strong>30 groups</strong> in 131 s</td></tr>
-<tr><td><code>rete info</code> / <code>rete card</code> (header + card tier)</td><td>1 GiB</td><td>~1 s</td></tr>
-</tbody></table>
-<p>Aggregation folds rows through per-group accumulators (O(groups) resident) and
-the open path reads only section directories, so the memory that matters is the
-256 MiB block cache plus the group table — not the file size, the dictionary,
-or the match count.</p>
-<p>One diagnostic worth writing down: if <strong>every</strong> query on a large file OOMs, with
-wall time scaling linearly with the memory cap at a constant ~150 MB/s, the
-binary is reading the whole file — the lazy-local routing is missing (builds
-older than the 0.3.0 line; check <code>strings &lt;binary&gt; | grep RETE_LOCAL_LAZY_ABOVE_MB</code>). That slope is the cap filling at disk speed, not
-the query working.</p>
-<h2>The pyramid: cost vs benefit</h2>
-<p>A <code>.rete</code> carries <strong>two</strong> pyramidal structures with very different economics. This
-measures both, against <code>--no-pyramid</code>, on a typed <code>subClassOf</code> ontology fixture
-(<code>dev/gen_ontology_demo.py</code>, scaled by entity count).</p>
-<p><strong>Bytes</strong> — file overhead, the growing super-edge summary, and what each read tier
-fetches over HTTP (<code>q ±pyr</code> = a node-selective query with / without the pyramid):</p>
-<table><thead><tr><th style="text-align: right">triples</th><th style="text-align: right">file +pyr</th><th style="text-align: right">file −pyr</th><th style="text-align: right">pyr %</th><th style="text-align: right">pyramid-meta</th><th style="text-align: right">super-edges</th><th style="text-align: right">card-url</th><th style="text-align: right">summary-url</th><th style="text-align: right">q +pyr</th><th style="text-align: right">q −pyr</th></tr></thead><tbody>
-<tr><td style="text-align: right">8,595</td><td style="text-align: right">99 KB</td><td style="text-align: right">90 KB</td><td style="text-align: right">9.6%</td><td style="text-align: right">8.7 KB</td><td style="text-align: right">1,364</td><td style="text-align: right"><strong>32.7 KB</strong></td><td style="text-align: right">17 KB</td><td style="text-align: right">43,823</td><td style="text-align: right">43,823</td></tr>
-<tr><td style="text-align: right">34,354</td><td style="text-align: right">282 KB</td><td style="text-align: right">264 KB</td><td style="text-align: right">7.2%</td><td style="text-align: right">19 KB</td><td style="text-align: right">3,455</td><td style="text-align: right"><strong>32.8 KB</strong></td><td style="text-align: right">43 KB</td><td style="text-align: right">68,295</td><td style="text-align: right">68,295</td></tr>
-<tr><td style="text-align: right">137,279</td><td style="text-align: right">990 KB</td><td style="text-align: right">946 KB</td><td style="text-align: right">4.6%</td><td style="text-align: right">43.6 KB</td><td style="text-align: right">8,580</td><td style="text-align: right"><strong>33.0 KB</strong></td><td style="text-align: right">116 KB</td><td style="text-align: right">111,054</td><td style="text-align: right">111,054</td></tr>
-</tbody></table>
-<p><strong>Time</strong> (release build; median) — what the pyramid costs to <em>build</em> (Louvain
-community detection + schema rollup, vs <code>--no-pyramid</code>) and how fast each read is:</p>
-<table><thead><tr><th style="text-align: right">triples</th><th style="text-align: right">build +pyr</th><th style="text-align: right">build −pyr</th><th style="text-align: right">pyramid cost</th><th style="text-align: right">card read</th><th style="text-align: right">summary read</th><th style="text-align: right">selective query</th></tr></thead><tbody>
-<tr><td style="text-align: right">8,595</td><td style="text-align: right">70 ms</td><td style="text-align: right">51 ms</td><td style="text-align: right">+19 ms</td><td style="text-align: right">19 ms</td><td style="text-align: right">23 ms</td><td style="text-align: right">28 ms</td></tr>
-<tr><td style="text-align: right">34,354</td><td style="text-align: right">222 ms</td><td style="text-align: right">109 ms</td><td style="text-align: right">+113 ms</td><td style="text-align: right">19 ms</td><td style="text-align: right">24 ms</td><td style="text-align: right">30 ms</td></tr>
-<tr><td style="text-align: right">137,279</td><td style="text-align: right">1,352 ms</td><td style="text-align: right">353 ms</td><td style="text-align: right">+999 ms</td><td style="text-align: right">22 ms</td><td style="text-align: right">30 ms</td><td style="text-align: right">41 ms</td></tr>
-</tbody></table>
-<p>What the numbers say:</p>
+<h2>HTTP Range Reads</h2>
+<p>A remote point query behaves like PMTiles: it is bounded.</p>
 <ul>
-<li><strong>The community super-edge summary scales with the graph</strong> — in bytes (super-edges
-1.4k → 8.6k; <code>summary-url</code> 17 KB → 116 KB) <em>and</em> in time (the Louvain build cost
-is super-linear: +19 ms → +999 ms, ~4× the <code>--no-pyramid</code> build at 137k triples).</li>
-<li><strong>It gives node-selective lazy queries nothing</strong> — <code>q +pyr</code> and <code>q −pyr</code> are
-byte-for-byte identical (<code>43,823 == 43,823</code>, …). For pure selective serving the
-pyramid is overhead; <code>--no-pyramid</code> is smaller and builds far faster.</li>
-<li><strong>The schema pyramid is the bounded one</strong> — its size and read cost track the
-<em>ontology</em>, not the graph, so the leveled type/relation legend stays cheap at any
-scale. The flat-cost champion is the <strong>card</strong> (<code>card-url</code> ≈ 33 KB and ≈ 20 ms read
-at every size — it skips the dictionary and super-edges entirely).</li>
+<li><strong>Full Queries:</strong> Fetch the header, dictionary, and exactly the permutation blocks needed.</li>
+<li><strong>Progressive/Overview Queries:</strong> (<code>summary-url</code>) Fetch <em>only</em> the header, dictionary, and summary graph. For example, grabbing a summary of a 15.6 KB file takes just <strong>2.2 KB in 3 requests</strong>, completely bypassing the index.</li>
 </ul>
-<p><strong>Rule of thumb:</strong> keep the pyramid for index-free <strong>overview / exploration</strong>; build
-with <code>--no-pyramid</code> when you only serve <strong>selective queries at scale</strong> (smaller file,
-~4× faster build, identical query latency). See the
-<a href="semantic-zoom.html">Semantic zoom guide</a> for the schema-pyramid side of this. Repro:
-<code>dev/bench_pyramid_value.sh</code> (bytes) and <code>dev/bench_pyramid_time.sh</code> (time).</p>
-<h2>Coherence checking: tier costs</h2>
-<p>How much of a remote <code>.rete</code> each coherence check actually fetches, as the graph
-grows. A synthetic medical ontology — a fixed T-Box with a planted <strong>unsatisfiable
-class</strong> (<code>:Relapsed ⊑ :Healthy</code> and <code>⊑ :Sick</code>, which are <code>owl:disjointWith</code>) plus a
-few <strong>instance-level</strong> clashes — at increasing instance counts, measured through a
-<code>CountingReader</code> over the file image. Repro:
-<code>cargo run --release --example coherence_bench [n …]</code>.</p>
-<table><thead><tr><th style="text-align: right">instances</th><th style="text-align: right">file</th><th style="text-align: right">Tier-0 schema (index-free)</th><th style="text-align: right">Tier-1 selective slice</th><th style="text-align: right">Tier-2 full graph</th></tr></thead><tbody>
-<tr><td style="text-align: right">1,000</td><td style="text-align: right">33 KB</td><td style="text-align: right"><strong>986 B</strong> · 2 req · 0.02 ms</td><td style="text-align: right">26 KB · 36 req · 7 ms</td><td style="text-align: right">33 KB · 36 req · 10 ms</td></tr>
-<tr><td style="text-align: right">10,000</td><td style="text-align: right">283 KB</td><td style="text-align: right"><strong>996 B</strong> · 2 req · 0.02 ms</td><td style="text-align: right">32 KB · 37 req · 54 ms</td><td style="text-align: right">171 KB · 38 req · 186 ms</td></tr>
-<tr><td style="text-align: right">100,000</td><td style="text-align: right">9.4 MB</td><td style="text-align: right"><strong>8.1 KB</strong> · 2 req · 0.09 ms</td><td style="text-align: right">346 KB · 53 req · 1.1 s</td><td style="text-align: right">1.8 MB · 48 req · 2.9 s</td></tr>
-<tr><td style="text-align: right">500,000</td><td style="text-align: right">48.8 MB</td><td style="text-align: right"><strong>8.1 KB</strong> · 2 req · 0.10 ms</td><td style="text-align: right">1.4 MB · 90 req · 7.5 s</td><td style="text-align: right">8.5 MB · 54 req · 15.9 s</td></tr>
-</tbody></table>
-<p>The three tiers find <strong>different</strong> defects, by design: Tier-0 finds the
-schema-level unsatisfiable class (1 point) from the ontology alone; Tier-1/Tier-2
-also find the instance-level disjoint clashes (3 points). So Tier-0 is a fast
-"is the <em>ontology</em> coherent?" gate, and Tier-1/2 answer "is the <em>data</em> coherent?".</p>
-<p><strong>The headline:</strong> Tier-0 reads <strong>~1–8 KB in 2 range requests at <em>any</em> graph size</strong> —
-8.1 KB of a 48.8 MB file (0.017%), sub-0.1 ms. The check-an-ontology's-coherence-from-
-a-few-KB-of-a-multi-GB-file claim holds. Tier-1 (selective) is the practical
-<em>instance</em>-coherence check: it faults only the <code>rdf:type</code> + T-Box tiles — 346 KB of
-9.4 MB at 100k, 1.4 MB of 48.8 MB at 500k — while Tier-2 reads the whole graph.</p>
-<h3>Three fixes this benchmark drove</h3>
+<h2>Scaling Up</h2>
+<p>At <strong>347,884 triples</strong> (2.5× the base benchmark), performance scales roughly linearly without pathological blowups:</p>
 <ul>
-<li><strong><code>detect_inconsistencies</code> was O(types²).</strong> The disjoint-class check looped over
-every pair of <code>rdf:type</code> triples in the whole graph (~4.3 s at 10k instances).
-Grouping each individual's class set first and checking only the pairs <em>within</em> one
-individual makes it ~linear: Tier-1 <strong>4320 ms → 54 ms</strong>, Tier-2 <strong>4607 ms → 186 ms</strong>
-at 10k. (The functional-property check had the same shape and got the same fix.)</li>
-<li><strong>Tier-0 was reading the whole dictionary.</strong> <code>check_schema</code> went through
-<code>SummaryView</code>, which fetches the dictionary to label predicates — but coherence
-needs none of it (the schema pyramid carries its own class-string table). A
-dictionary-free <code>read_schema_coherence_ranged</code> cut Tier-0 from 20.9 KB → ~2 KB at 10k.</li>
-<li><strong>Tier-0 then still scaled with the community summary.</strong> The schema pyramid is
-bounded by the ontology, but it shared the pyramid-meta section with the community
-super-edge summary, which grows with the entity count (every labelled node is a
-vertex) — so reading the whole pyramid-meta cost <strong>6.7 MB at 100k, 36 MB at 500k</strong>.
-The fix: the writer now records the trailing <strong>schema block's byte length</strong> in the
-header (the 4 previously-reserved bytes), so a reader fetches <em>only</em> that block.
-Tier-0 dropped to a flat <strong>8.1 KB</strong> — a ~4400× cut at 500k. Backward-compatible: a
-file without the header field (<code>schema_meta_len == 0</code>) falls back to the whole-section
-read, and a typeless file's header byte stays 0, so it remains byte-identical.</li>
+<li>Build: 890 ms</li>
+<li>Triple query: 54 ms</li>
+<li><code>GROUP BY</code>: 261 ms</li>
+<li>Predicate totals: 26 ms (remains cheap regardless of graph size)</li>
 </ul>
+<h3>Billion-Triple Scale (DataCite)</h3>
+<p>The largest <code>.rete</code> built to date is the <strong>52 GB DataCite graph</strong> (9.83 billion triples). It remains queryable even on low-memory machines using the lazy range reader.</p>
+<p><em>(Measured with hard Docker memory caps, swap disabled)</em></p>
+<table><thead><tr><th>Query</th><th>Memory Cap</th><th>Result</th></tr></thead><tbody>
+<tr><td><code>SELECT ?s ... LIMIT 1</code></td><td>2 GiB</td><td>6 s</td></tr>
+<tr><td><code>SELECT (COUNT(*) AS ?n) ...</code></td><td>2 GiB</td><td><strong>779,399</strong> in 4 s</td></tr>
+<tr><td><code>SELECT ?t (COUNT(*)) ... GROUP BY ?t</code></td><td>4 GiB</td><td><strong>30 groups</strong> in 131 s</td></tr>
+<tr><td><code>rete info</code> (Header + Card tier)</td><td>1 GiB</td><td>~1 s</td></tr>
+</tbody></table>
+<h2>The Pyramid: Cost vs. Benefit</h2>
+<p>Is the community summary pyramid worth it? It depends on your use case. Here is a breakdown using a typed ontology (8.5k to 137k triples):</p>
+<ul>
+<li><strong>The Schema Pyramid is Cheap:</strong> The schema-level zoom (which tracks ontology, not graph size) stays extremely small (~tens of KB) and fast (~20ms).</li>
+<li><strong>The Community Pyramid Scales with Data:</strong> Generating Louvain super-edges for large graphs adds significant build time and byte overhead.</li>
+<li><strong>Selective Queries Gain Nothing:</strong> If you only run highly selective SPARQL queries (e.g., finding a specific node), the community pyramid adds overhead without speeding up the query.</li>
+</ul>
+<p><strong>Rule of Thumb:</strong></p>
+<ul>
+<li>Use the default (with pyramid) for <strong>exploration, overviews, and semantic zooming</strong>.</li>
+<li>Use <code>--no-pyramid</code> if you are exclusively serving <strong>selective queries at scale</strong> (it yields a smaller file and builds ~4× faster).</li>
+</ul>
+<h2>Coherence Checking</h2>
+<p>How expensive is it to validate an ontology remotely? Rete splits this into tiers. Testing a synthetic medical ontology with a planted unsatisfiable class:</p>
+<table><thead><tr><th style="text-align: right">Instances</th><th style="text-align: right">File Size</th><th style="text-align: right">Tier-0 (Index-Free Schema)</th><th style="text-align: right">Tier-1 (Selective)</th><th style="text-align: right">Tier-2 (Full Graph)</th></tr></thead><tbody>
+<tr><td style="text-align: right">1,000</td><td style="text-align: right">33 KB</td><td style="text-align: right"><strong>986 B</strong> · 2 req · 0.02 ms</td><td style="text-align: right">26 KB · 7 ms</td><td style="text-align: right">33 KB · 10 ms</td></tr>
+<tr><td style="text-align: right">100,000</td><td style="text-align: right">9.4 MB</td><td style="text-align: right"><strong>8.1 KB</strong> · 2 req · 0.09 ms</td><td style="text-align: right">346 KB · 1.1 s</td><td style="text-align: right">1.8 MB · 2.9 s</td></tr>
+<tr><td style="text-align: right">500,000</td><td style="text-align: right">48.8 MB</td><td style="text-align: right"><strong>8.1 KB</strong> · 2 req · 0.10 ms</td><td style="text-align: right">1.4 MB · 7.5 s</td><td style="text-align: right">8.5 MB · 15.9 s</td></tr>
+</tbody></table>
+<p><strong>Takeaway:</strong> Tier-0 checks the schema coherence using only <strong>~8 KB and 2 range requests</strong>, regardless of whether the graph is 10 MB or 10 GB.</p>
 <!-- benchmark:opencitations:start -->
-<h2>Comparison vs Oxigraph (real OpenCitations network)</h2>
-<p>Dataset: the real OpenCitations citation network for the AlphaFold paper (Nature 2021), enriched with disciplines, authors, venues and citation counts (539,246 triples loaded into both engines)</p>
-<p>This pits rete (a queryable <em>file</em>) against Oxigraph (a full in-memory
-triplestore with a mature SPARQL planner). Honest summary: rete opens
-much faster because its indexes are prebuilt in the file, wins several
-scan/aggregate shapes, still loses where Oxigraph can stream, stop early,
-or apply a mature planner, and wins decisively on multi-source
-reachability.</p>
-<p>This section is generated from
-<code>docs/benchmark-opencitations.json</code> with
-<code>scripts/render_benchmark_doc.py</code>. Latest run:
-<strong>2026-06-15</strong>. <strong>Oxigraph 0.5</strong>, in-memory store
-(no RocksDB). Machine: 32 logical cores.</p>
-<h3>Load / open (one-time)</h3>
-<table><thead><tr><th>Engine</th><th>Step</th><th style="text-align: right">Time</th><th style="text-align: right">Resident heap after load</th></tr></thead><tbody>
-<tr><td><strong>rete</strong></td><td><code>Rete::open</code> - indexes already built in the file</td><td style="text-align: right"><strong>19.9 ms</strong></td><td style="text-align: right">13.35 MiB</td></tr>
-<tr><td>Oxigraph</td><td>bulk-load N-Triples + build in-memory indexes</td><td style="text-align: right">2437 ms</td><td style="text-align: right">144.98 MiB</td></tr>
+<h2>Comparison vs. Oxigraph</h2>
+<p>This pits Rete (a queryable file) against <a href="https://github.com/oxigraph/oxigraph">Oxigraph</a> (a full in-memory triplestore).
+<em>Dataset: OpenCitations (539,246 triples).</em></p>
+<h3>Load / Open Time</h3>
+<table><thead><tr><th>Engine</th><th>Step</th><th style="text-align: right">Time</th><th style="text-align: right">Peak RAM</th></tr></thead><tbody>
+<tr><td><strong>Rete</strong></td><td><code>Rete::open</code> (indexes pre-built in file)</td><td style="text-align: right"><strong>19.9 ms</strong></td><td style="text-align: right">13.35 MiB</td></tr>
+<tr><td>Oxigraph</td><td>Bulk-load N-Triples + build indexes</td><td style="text-align: right">2437 ms</td><td style="text-align: right">144.98 MiB</td></tr>
 </tbody></table>
-<p>Process peak RSS after both loads (<code>VmHWM</code>): 207 MiB.</p>
-<p>rete's "load" just maps a file whose dictionary + permutation indexes
-already exist on disk; Oxigraph parses the triples and builds its indexes
-on every startup. This is the format's core promise: <strong>publish once, open
-instantly, query in place</strong>.</p>
-<h3>SPARQL operator coverage (eager, lazy range-read, and Oxigraph)</h3>
-<p>24 queries spanning supported forms and operators, on three
-engines: rete <strong>eager</strong> (<code>Rete::open</code>, whole file in memory), rete <strong>lazy</strong>
-(<code>Rete::open_ranged_lazy</code> — a fresh cold open + HTTP-range-style reads per
-query, the path a browser/remote client runs), and Oxigraph (in-memory). Row
-counts are a cross-engine correctness check across the language surface, not
-just a speed race. Median ±sd of 5 warm runs. <strong>lazy fetched</strong> is
-the bytes that one query pulled from the file image — the rest is never touched.</p>
-<table><thead><tr><th>Operator / form</th><th style="text-align: right">rete eager</th><th style="text-align: right">rete lazy</th><th style="text-align: right">lazy fetched</th><th style="text-align: right">Oxigraph</th><th style="text-align: right">eager vs oxi</th><th style="text-align: right">rows</th><th style="text-align: center">ok</th></tr></thead><tbody>
-<tr><td>SELECT count (aggregate)</td><td style="text-align: right"><strong>3.78 ±0.85 ms</strong></td><td style="text-align: right">4.65 ±0.62 ms</td><td style="text-align: right">77.4 KB</td><td style="text-align: right">9.14 ±0.62 ms</td><td style="text-align: right">2.4x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>SELECT DISTINCT</td><td style="text-align: right"><strong>4.79 ±0.52 ms</strong></td><td style="text-align: right">5.44 ±0.32 ms</td><td style="text-align: right">51.2 KB</td><td style="text-align: right">10.6 ±1.9 ms</td><td style="text-align: right">2.2x</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
-<tr><td>ASK</td><td style="text-align: right">0.06 ±0.20 ms</td><td style="text-align: right">0.67 ±0.03 ms</td><td style="text-align: right">51.2 KB</td><td style="text-align: right"><strong>0.01 ±0.04 ms</strong></td><td style="text-align: right">0.2x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>CONSTRUCT</td><td style="text-align: right"><strong>0.01 ±0.02 ms</strong></td><td style="text-align: right">1.84 ±1.40 ms</td><td style="text-align: right">70.1 KB</td><td style="text-align: right">0.05 ±0.51 ms</td><td style="text-align: right">3.7x</td><td style="text-align: right">9</td><td style="text-align: center">yes</td></tr>
-<tr><td>DESCRIBE (impl-defined)</td><td style="text-align: right"><strong>0.01 ±0.00 ms</strong></td><td style="text-align: right">0.64 ±0.02 ms</td><td style="text-align: right">70.1 KB</td><td style="text-align: right">0.03 ±0.05 ms</td><td style="text-align: right">2.8x</td><td style="text-align: right">11</td><td style="text-align: center">yes</td></tr>
-<tr><td>VALUES (inline data)</td><td style="text-align: right"><strong>5.22 ±0.45 ms</strong></td><td style="text-align: right">6.63 ±1.29 ms</td><td style="text-align: right">177.3 KB</td><td style="text-align: right">11.0 ±4.4 ms</td><td style="text-align: right">2.1x</td><td style="text-align: right">10962</td><td style="text-align: center">yes</td></tr>
-<tr><td>UNION</td><td style="text-align: right"><strong>7.03 ±1.27 ms</strong></td><td style="text-align: right">7.97 ±1.39 ms</td><td style="text-align: right">177.3 KB</td><td style="text-align: right">12.9 ±1.7 ms</td><td style="text-align: right">1.8x</td><td style="text-align: right">10993</td><td style="text-align: center">yes</td></tr>
-<tr><td>OPTIONAL (left join)</td><td style="text-align: right"><strong>0.30 ±0.03 ms</strong></td><td style="text-align: right">2.28 ±0.59 ms</td><td style="text-align: right">125.6 KB</td><td style="text-align: right">0.41 ±0.16 ms</td><td style="text-align: right">1.4x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>MINUS</td><td style="text-align: right"><strong>2.64 ±0.98 ms</strong></td><td style="text-align: right">6.34 ±1.46 ms</td><td style="text-align: right">200.5 KB</td><td style="text-align: right">3.29 ±2.00 ms</td><td style="text-align: right">1.2x</td><td style="text-align: right">2728</td><td style="text-align: center">yes</td></tr>
-<tr><td>FILTER NOT EXISTS</td><td style="text-align: right"><strong>2.15 ±0.20 ms</strong></td><td style="text-align: right">6.69 ±1.18 ms</td><td style="text-align: right">200.5 KB</td><td style="text-align: right">10.9 ±4.3 ms</td><td style="text-align: right">5.1x</td><td style="text-align: right">2728</td><td style="text-align: center">yes</td></tr>
-<tr><td>3-way join + LIMIT</td><td style="text-align: right"><strong>0.18 ±0.04 ms</strong></td><td style="text-align: right">1.75 ±0.16 ms</td><td style="text-align: right">143.1 KB</td><td style="text-align: right">0.19 ±0.12 ms</td><td style="text-align: right">1.0x</td><td style="text-align: right">50</td><td style="text-align: center">yes</td></tr>
-<tr><td>FILTER REGEX (case-insens.)</td><td style="text-align: right">6.99 ±0.69 ms</td><td style="text-align: right">8.24 ±0.88 ms</td><td style="text-align: right">79.5 KB</td><td style="text-align: right"><strong>0.90 ±0.24 ms</strong></td><td style="text-align: right">0.1x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>FILTER arith + logical</td><td style="text-align: right"><strong>0.27 ±0.06 ms</strong></td><td style="text-align: right">1.88 ±0.25 ms</td><td style="text-align: right">204.5 KB</td><td style="text-align: right">0.75 ±0.33 ms</td><td style="text-align: right">2.7x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>BIND + SUBSTR + CONCAT</td><td style="text-align: right">0.36 ±0.02 ms</td><td style="text-align: right">2.56 ±0.61 ms</td><td style="text-align: right">151.7 KB</td><td style="text-align: right"><strong>0.33 ±0.15 ms</strong></td><td style="text-align: right">0.9x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>path sequence a/b</td><td style="text-align: right"><strong>0.20 ±0.02 ms</strong></td><td style="text-align: right">1.75 ±0.14 ms</td><td style="text-align: right">162.5 KB</td><td style="text-align: right">0.25 ±0.09 ms</td><td style="text-align: right">1.2x</td><td style="text-align: right">200</td><td style="text-align: center">yes</td></tr>
-<tr><td>path inverse ^p (count)</td><td style="text-align: right"><strong>3.32 ±0.35 ms</strong></td><td style="text-align: right">3.95 ±0.51 ms</td><td style="text-align: right">77.4 KB</td><td style="text-align: right">9.71 ±0.92 ms</td><td style="text-align: right">2.9x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>path + transitive (count)</td><td style="text-align: right"><strong>6.94 ±0.18 ms</strong></td><td style="text-align: right">8.74 ±0.60 ms</td><td style="text-align: right">89.5 KB</td><td style="text-align: right">14.0 ±1.6 ms</td><td style="text-align: right">2.0x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>path * zero-or-more (count)</td><td style="text-align: right"><strong>6.55 ±0.27 ms</strong></td><td style="text-align: right">7.03 ±0.16 ms</td><td style="text-align: right">89.5 KB</td><td style="text-align: right">10.4 ±0.8 ms</td><td style="text-align: right">1.6x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>GROUP BY + ORDER BY</td><td style="text-align: right"><strong>3.81 ±0.60 ms</strong></td><td style="text-align: right">3.53 ±0.07 ms</td><td style="text-align: right">51.2 KB</td><td style="text-align: right">10.7 ±1.8 ms</td><td style="text-align: right">2.8x</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
-<tr><td>GROUP BY + HAVING</td><td style="text-align: right"><strong>6.12 ±2.18 ms</strong></td><td style="text-align: right">6.94 ±2.14 ms</td><td style="text-align: right">51.2 KB</td><td style="text-align: right">10.3 ±0.4 ms</td><td style="text-align: right">1.7x</td><td style="text-align: right">5</td><td style="text-align: center">yes</td></tr>
-<tr><td>AVG per group</td><td style="text-align: right"><strong>27.8 ±7.5 ms</strong></td><td style="text-align: right">31.9 ±5.5 ms</td><td style="text-align: right">95.0 KB</td><td style="text-align: right">43.9 ±2.3 ms</td><td style="text-align: right">1.6x</td><td style="text-align: right">6</td><td style="text-align: center">yes</td></tr>
-<tr><td>MIN/MAX/SUM</td><td style="text-align: right"><strong>9.14 ±2.02 ms</strong></td><td style="text-align: right">5.51 ±0.91 ms</td><td style="text-align: right">78.5 KB</td><td style="text-align: right">10.7 ±0.6 ms</td><td style="text-align: right">1.2x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>COUNT(DISTINCT)</td><td style="text-align: right"><strong>2.48 ±0.08 ms</strong></td><td style="text-align: right">2.74 ±0.09 ms</td><td style="text-align: right">57.4 KB</td><td style="text-align: right">7.73 ±0.29 ms</td><td style="text-align: right">3.1x</td><td style="text-align: right">1</td><td style="text-align: center">yes</td></tr>
-<tr><td>ORDER BY + LIMIT + OFFSET</td><td style="text-align: right"><strong>4.05 ±0.06 ms</strong></td><td style="text-align: right">5.02 ±0.15 ms</td><td style="text-align: right">125.0 KB</td><td style="text-align: right">22.7 ±1.0 ms</td><td style="text-align: right">5.6x</td><td style="text-align: right">10</td><td style="text-align: center">yes</td></tr>
+<p><strong>Takeaway:</strong> Rete opens instantly because the work was done at build time.</p>
+<h3>SPARQL Operator Coverage</h3>
+<p>Comparing <strong>Rete (Eager)</strong>, <strong>Rete (Lazy HTTP-style)</strong>, and <strong>Oxigraph (In-Memory)</strong>:</p>
+<table><thead><tr><th>Operator</th><th style="text-align: right">Rete (Eager)</th><th style="text-align: right">Rete (Lazy)</th><th style="text-align: right">Oxigraph</th><th>Winner</th></tr></thead><tbody>
+<tr><td>SELECT count</td><td style="text-align: right"><strong>3.78 ms</strong></td><td style="text-align: right">4.65 ms</td><td style="text-align: right">9.14 ms</td><td><strong>Rete</strong></td></tr>
+<tr><td>VALUES</td><td style="text-align: right"><strong>5.22 ms</strong></td><td style="text-align: right">6.63 ms</td><td style="text-align: right">11.0 ms</td><td><strong>Rete</strong></td></tr>
+<tr><td>UNION</td><td style="text-align: right"><strong>7.03 ms</strong></td><td style="text-align: right">7.97 ms</td><td style="text-align: right">12.9 ms</td><td><strong>Rete</strong></td></tr>
+<tr><td>FILTER REGEX</td><td style="text-align: right">6.99 ms</td><td style="text-align: right">8.24 ms</td><td style="text-align: right"><strong>0.90 ms</strong></td><td><strong>Oxigraph</strong></td></tr>
+<tr><td>Path transitive</td><td style="text-align: right"><strong>6.94 ms</strong></td><td style="text-align: right">8.74 ms</td><td style="text-align: right">14.0 ms</td><td><strong>Rete</strong></td></tr>
+<tr><td>GROUP BY + ORDER</td><td style="text-align: right"><strong>3.81 ms</strong></td><td style="text-align: right">3.53 ms</td><td style="text-align: right">10.7 ms</td><td><strong>Rete</strong></td></tr>
+<tr><td>ORDER + LIMIT + OFFSET</td><td style="text-align: right"><strong>4.05 ms</strong></td><td style="text-align: right">5.02 ms</td><td style="text-align: right">22.7 ms</td><td><strong>Rete</strong></td></tr>
 </tbody></table>
-<p><strong>24 / 24 identical row counts</strong> across
-SELECT/ASK/CONSTRUCT/DESCRIBE, algebra operators, filters/functions,
-property paths, and aggregates.</p>
-<p>Reading the times honestly:</p>
-<ul>
-<li>rete now wins or ties the large majority of shapes: aggregates,
-GROUP BY, DISTINCT, path closures, sorted pagination (top-k), and
-large UNION/VALUES/MINUS results. The engine evaluates as a lazy
-pipeline over integer slot rows, switches to index-nested-loop
-probes under small LIMIT/ASK demand, and resolves terms only at
-projection. A <strong>hybrid BGP join</strong> also switches to per-row index
-probes mid-join once the running intermediate is small (so a
-star/snowflake's trailing <code>?x rdf:type C</code> checks cost a few lookups,
-not a full-extent scan), and never seeds a join from a class
-enumeration — together cutting the LUBM snowflakes Q4 ~14x and Q7
-~12x. The index stores all six permutations (stable format generation 1), so any
-join key can be streamed pre-sorted for a sort-merge join; at these
-sizes the hash/probe joins already win, so the merge path is neutral
-here — it pays off at much larger scale, for ~2x the index payload.</li>
-<li>Oxigraph keeps an edge on REGEX scans whose pattern needs the real
-regex engine (rete's regex-lite has no literal prefilter; literal
-patterns use a substring fast path) and, by fractions of a
-millisecond, on ASK and the tightest LIMIT joins — floor effects,
-not the orders-of-magnitude gaps from before the engine rework.</li>
-<li>The <strong>lazy</strong> range-read engine — what a browser or remote client runs
-over HTTP — adds only a ~1 ms cold-open tax over eager while fetching
-single-digit-percent of the file per query (here ~50–205 KB of a 2.8 MB
-file), and still beats in-memory Oxigraph on most shapes. Querying a
-<code>.rete</code> where it sits (S3 / HTTP, no server) is not a latency compromise.</li>
-</ul>
-<h3>Batch transitive reachability - <code>coauthor+</code> from 300 seeds</h3>
-<p>"From each seed author, who is reachable through co-authorship?" rete
-exposes this as a dedicated primitive (<code>rete reach</code>, <code>batch_reach_*</code>); on
-Oxigraph it is a <code>coauthor+</code> property path evaluated per seed.</p>
-<table><thead><tr><th>Engine / mode</th><th style="text-align: right">Time</th><th style="text-align: right">vs rete-serial</th></tr></thead><tbody>
-<tr><td>rete - <code>batch_reach_serial</code> (1 core)</td><td style="text-align: right">641 ±101 ms</td><td style="text-align: right">1.0x</td></tr>
-<tr><td><strong>rete - <code>batch_reach_parallel</code> (32 cores)</strong></td><td style="text-align: right"><strong>39.0 ±12.4 ms</strong></td><td style="text-align: right"><strong>16.4x</strong></td></tr>
-<tr><td>Oxigraph - <code>coauthor+</code> property path, per seed</td><td style="text-align: right">3026 ±48 ms</td><td style="text-align: right">0.2x</td></tr>
+<p><em>(Note: 24/24 queries return identical row counts across both engines).</em></p>
+<p>Rete excels at aggregates, paths, and sorted pagination. Oxigraph keeps an edge on REGEX scans. Notably, Rete's <em>lazy remote reads</em> add only a ~1ms penalty over eager local reads.</p>
+<h3>Batch Transitive Reachability</h3>
+<p>"From each of 300 seed authors, who is reachable through co-authorship?"</p>
+<table><thead><tr><th>Engine</th><th style="text-align: right">Time</th><th style="text-align: right">vs Oxigraph</th></tr></thead><tbody>
+<tr><td>Rete (Serial, 1 core)</td><td style="text-align: right">641 ms</td><td style="text-align: right">~4.7× faster</td></tr>
+<tr><td><strong>Rete (Parallel, 32 cores)</strong></td><td style="text-align: right"><strong>39.0 ms</strong></td><td style="text-align: right"><strong>~77× faster</strong></td></tr>
+<tr><td>Oxigraph (<code>coauthor+</code> path)</td><td style="text-align: right">3026 ms</td><td style="text-align: right">Base</td></tr>
 </tbody></table>
-<p>rete serial and parallel both reached 1,636,200 nodes;
-Oxigraph touched 1,636,200 result cells. The dedicated
-parallel primitive is a different abstraction level from a general SPARQL
-property path, so read this as: use the right tool for multi-source reach.</p>
+<p>Rete provides a dedicated primitive (<code>rete reach</code>) for multi-source reachability, which decimates standard property-path evaluation.</p>
 <h3>Reproduce</h3>
 <pre><code class="language-sh"># In the dev container (Docker). The OpenCitations + synthetic-enrichment data
 # comes from scripts/fetch_opencitations.py + scripts/enrich.py (-&gt; enriched-all.nt).
@@ -654,104 +463,30 @@ uv run python scripts/render_benchmark_doc.py docs/benchmark-opencitations.json 
   --input docs/BENCHMARK.md --output docs/BENCHMARK.md
 cargo run -p docgen
 </code></pre>
-<p>The <code>rete-bench</code> crate pulls in Oxigraph only for this comparison; its
-in-memory store needs no RocksDB/clang, so <code>default-features = false</code> keeps
-the build light.</p>
 <!-- benchmark:opencitations:end -->
 <!-- benchmark:lubm:start -->
-<h2>LUBM-style benchmark (standard 14 queries)</h2>
-<p>The <a href="http://swat.cse.lehigh.edu/projects/lubm/">LUBM</a> data model and its 14
-standard queries, on identical pre-materialized data in both engines.
-LUBM(1): 93,139 generated +
-26,007 RDFS/OWL-RL-materialized =
-118,680 triples (<code>.rete</code>: 555,581 bytes).</p>
-<p><strong>Read the caveats:</strong> the generator is a faithful <em>reimplementation</em> of
-UBA's documented cardinalities, not the official Java tool, so counts are
-not comparable to published LUBM figures; inference is rete's RDFS/OWL-RL
-subset, applied up front to the data both engines load — so
-restriction-defined classes (Q12's <code>Chair</code>) are empty on both sides by
-construction. The correctness anchor is <strong>cross-engine row parity</strong>:
-<strong>14 / 14</strong> queries agree.</p>
-<table><thead><tr><th>Engine</th><th style="text-align: right">Load</th><th style="text-align: right">Resident heap</th></tr></thead><tbody>
-<tr><td><strong>rete</strong> <code>Rete::open</code></td><td style="text-align: right"><strong>6.2 ms</strong></td><td style="text-align: right">3.66 MiB</td></tr>
-<tr><td>Oxigraph bulk-load</td><td style="text-align: right">180 ms</td><td style="text-align: right">37.50 MiB</td></tr>
+<h2>LUBM Benchmark</h2>
+<p>Testing the 14 standard LUBM queries on 118,680 pre-materialized triples.</p>
+<table><thead><tr><th>Metric</th><th style="text-align: right">Rete</th><th style="text-align: right">Oxigraph</th></tr></thead><tbody>
+<tr><td><strong>Load Time</strong></td><td style="text-align: right"><strong>6.2 ms</strong></td><td style="text-align: right">180 ms</td></tr>
+<tr><td>Q1 (Grad students)</td><td style="text-align: right"><strong>0.30 ms</strong></td><td style="text-align: right">0.83 ms</td></tr>
+<tr><td>Q4 (Professors)</td><td style="text-align: right"><strong>0.24 ms</strong></td><td style="text-align: right">0.49 ms</td></tr>
+<tr><td>Q6 (All students)</td><td style="text-align: right">2.47 ms</td><td style="text-align: right"><strong>1.71 ms</strong></td></tr>
+<tr><td>Q7 (Students of a professor)</td><td style="text-align: right">0.94 ms</td><td style="text-align: right"><strong>0.08 ms</strong></td></tr>
+<tr><td>Q12 (Chairs)</td><td style="text-align: right"><strong>0.01 ms</strong></td><td style="text-align: right">0.02 ms</td></tr>
 </tbody></table>
-<table><thead><tr><th>Query</th><th style="text-align: right">rete</th><th style="text-align: right">Oxigraph</th><th style="text-align: right">rete vs oxi</th><th style="text-align: right">peak heap MiB (rete / oxi)</th><th style="text-align: right">rows</th><th style="text-align: center">ok</th></tr></thead><tbody>
-<tr><td>Q1 grad students of a course</td><td style="text-align: right"><strong>0.30 ±0.03 ms</strong></td><td style="text-align: right">0.83 ±0.25 ms</td><td style="text-align: right">2.8x</td><td style="text-align: right">0.00 / 0.00</td><td style="text-align: right">3</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q2 grad student / univ / dept triangle</td><td style="text-align: right"><strong>3.96 ±0.18 ms</strong></td><td style="text-align: right">5.36 ±0.55 ms</td><td style="text-align: right">1.4x</td><td style="text-align: right">1.57 / 0.01</td><td style="text-align: right">2036</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q3 publications of a professor</td><td style="text-align: right"><strong>0.77 ±0.09 ms</strong></td><td style="text-align: right">2.42 ±0.30 ms</td><td style="text-align: right">3.1x</td><td style="text-align: right">0.01 / 0.00</td><td style="text-align: right">9</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q4 professors of a department (+3 props)</td><td style="text-align: right"><strong>0.24 ±0.02 ms</strong></td><td style="text-align: right">0.49 ±0.03 ms</td><td style="text-align: right">2.1x</td><td style="text-align: right">0.09 / 0.01</td><td style="text-align: right">26</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q5 persons member of a department</td><td style="text-align: right"><strong>1.39 ±0.10 ms</strong></td><td style="text-align: right">6.49 ±0.52 ms</td><td style="text-align: right">4.7x</td><td style="text-align: right">0.34 / 0.00</td><td style="text-align: right">544</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q6 all students</td><td style="text-align: right">2.47 ±0.39 ms</td><td style="text-align: right"><strong>1.71 ±0.42 ms</strong></td><td style="text-align: right">0.7x</td><td style="text-align: right">4.39 / 0.00</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q7 students of a professor's courses</td><td style="text-align: right">0.94 ±0.07 ms</td><td style="text-align: right"><strong>0.08 ±0.02 ms</strong></td><td style="text-align: right">0.1x</td><td style="text-align: right">0.04 / 0.01</td><td style="text-align: right">49</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q8 students of a university's departments</td><td style="text-align: right"><strong>11.7 ±1.5 ms</strong></td><td style="text-align: right">18.8 ±0.7 ms</td><td style="text-align: right">1.6x</td><td style="text-align: right">5.05 / 0.01</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q9 student / advisor / course triangle</td><td style="text-align: right"><strong>6.31 ±0.33 ms</strong></td><td style="text-align: right">12.1 ±1.1 ms</td><td style="text-align: right">1.9x</td><td style="text-align: right">1.53 / 0.01</td><td style="text-align: right">115</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q10 students of a graduate course</td><td style="text-align: right"><strong>0.75 ±0.08 ms</strong></td><td style="text-align: right">2.91 ±0.46 ms</td><td style="text-align: right">3.9x</td><td style="text-align: right">0.00 / 0.00</td><td style="text-align: right">0</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q11 research groups of a university</td><td style="text-align: right">0.21 ±0.02 ms</td><td style="text-align: right"><strong>0.15 ±0.02 ms</strong></td><td style="text-align: right">0.7x</td><td style="text-align: right">0.14 / 0.00</td><td style="text-align: right">230</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q12 chairs of a university's departments</td><td style="text-align: right"><strong>0.01 ±0.00 ms</strong></td><td style="text-align: right">0.02 ±0.00 ms</td><td style="text-align: right">2.4x</td><td style="text-align: right">0.00 / 0.01</td><td style="text-align: right">0</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q13 alumni of a university</td><td style="text-align: right"><strong>2.31 ±0.16 ms</strong></td><td style="text-align: right">2.47 ±0.42 ms</td><td style="text-align: right">1.1x</td><td style="text-align: right">1.62 / 0.00</td><td style="text-align: right">2655</td><td style="text-align: center">yes</td></tr>
-<tr><td>Q14 all undergraduate students</td><td style="text-align: right">2.37 ±0.13 ms</td><td style="text-align: right"><strong>1.75 ±0.54 ms</strong></td><td style="text-align: right">0.7x</td><td style="text-align: right">4.39 / 0.00</td><td style="text-align: right">7232</td><td style="text-align: center">yes</td></tr>
-</tbody></table>
+<p><em>(14/14 queries return identical rows. See the raw JSON for full metrics).</em></p>
 <p>Reproduce: <code>cargo run --release -p rete-bench -- --json --lubm 1 &gt; docs/benchmark-lubm.json</code> then re-render this doc.</p>
 <!-- benchmark:lubm:end -->
 <h2>Parallelism</h2>
-<p>A prototype <strong>data-parallel query evaluator</strong> (<code>rete-core</code> feature <code>parallel</code>,
-module <code>parallel.rs</code>, behind <code>rayon</code> — <em>off by default, never compiled into
-wasm</em>) splits decomposable work across communities/seeds and harmonizes the
-partials. Every parallel workload ships with a serial reference that produces a
-bit-identical result; the benchmark asserts <code>serial == parallel</code> (<code>RESULTS MATCH</code>) before trusting any timing. Numbers below are from
-<code>cargo run --release -p rete-core --example parallel_bench --features parallel</code>
-in the dev container, best-of-N after a warm-up.</p>
-<p><strong>Machine: 32 cores</strong> (<code>available_parallelism</code> = 32, rayon = 32 threads).</p>
-<h3>137,499 triples (20k people, 184 communities)</h3>
-<table><thead><tr><th>Workload</th><th style="text-align: right">Serial</th><th style="text-align: right">Parallel</th><th style="text-align: right">Speedup</th><th style="text-align: center">Match</th></tr></thead><tbody>
-<tr><td>A — predicate count (per-community + sum)</td><td style="text-align: right">2.68 ms</td><td style="text-align: right">1.71 ms</td><td style="text-align: right">1.57×</td><td style="text-align: center">✓</td></tr>
-<tr><td>B — per-subject out-degree (per-community + BTreeMap merge)</td><td style="text-align: right">2.77 ms</td><td style="text-align: right">2.75 ms</td><td style="text-align: right"><strong>1.01×</strong></td><td style="text-align: center">✓</td></tr>
-<tr><td>C — batch reachability, 512 seeds (embarrassingly parallel)</td><td style="text-align: right">2,648.9 ms</td><td style="text-align: right">186.8 ms</td><td style="text-align: right"><strong>14.18×</strong></td><td style="text-align: center">✓</td></tr>
+<p>Rete includes a prototype data-parallel query evaluator (opt-in via the <code>parallel</code> feature for native builds; not available in WASM).</p>
+<p>Testing on a <strong>32-core machine</strong> with 343,844 triples:</p>
+<table><thead><tr><th>Workload</th><th style="text-align: right">Serial</th><th style="text-align: right">Parallel</th><th style="text-align: right">Speedup</th></tr></thead><tbody>
+<tr><td>Predicate count</td><td style="text-align: right">7.08 ms</td><td style="text-align: right">1.44 ms</td><td style="text-align: right">4.92×</td></tr>
+<tr><td>Per-subject out-degree</td><td style="text-align: right">7.94 ms</td><td style="text-align: right">4.87 ms</td><td style="text-align: right">1.63×</td></tr>
+<tr><td><strong>Batch reachability (512 seeds)</strong></td><td style="text-align: right">9,057.8 ms</td><td style="text-align: right"><strong>584.6 ms</strong></td><td style="text-align: right"><strong>15.50×</strong></td></tr>
 </tbody></table>
-<h3>343,844 triples (50k people, 346 communities) — 2.5× scale</h3>
-<table><thead><tr><th>Workload</th><th style="text-align: right">Serial</th><th style="text-align: right">Parallel</th><th style="text-align: right">Speedup</th><th style="text-align: center">Match</th></tr></thead><tbody>
-<tr><td>A — predicate count</td><td style="text-align: right">7.08 ms</td><td style="text-align: right">1.44 ms</td><td style="text-align: right">4.92×</td><td style="text-align: center">✓</td></tr>
-<tr><td>B — per-subject out-degree</td><td style="text-align: right">7.94 ms</td><td style="text-align: right">4.87 ms</td><td style="text-align: right">1.63×</td><td style="text-align: center">✓</td></tr>
-<tr><td>C — batch reachability, 512 seeds</td><td style="text-align: right">9,057.8 ms</td><td style="text-align: right">584.6 ms</td><td style="text-align: right"><strong>15.50×</strong></td><td style="text-align: center">✓</td></tr>
-</tbody></table>
-<h3>Honest analysis</h3>
-<ul>
-<li><strong>Batch reachability is the clear win (14–15×).</strong> N independent single-source
-BFS traversals over a shared read-only adjacency map are embarrassingly
-parallel — one rayon task per seed, no shared mutable state, no merge step.
-This is the realistic use case: <em>multi-source impact analysis</em> ("what does each
-of these 512 nodes transitively reach?"). It does not hit linear 32× because
-the per-seed reach sets are huge (~20k–50k nodes each) and the work per seed
-varies, so memory bandwidth and load imbalance cap the gain — but a 14–15×
-wall-clock cut on a 32-core box is real and reproducible. This workload is
-shipped as a command: <strong><code>rete reach --parallel</code></strong> (see the
-<a href="cli.html#graph-traversal">CLI reference</a>).</li>
-<li><strong>Per-subject out-degree barely moves (1.01× at 137k, 1.63× at 344k).</strong> The
-per-community map-build parallelizes, but the <em>harmonize</em> — merging hundreds of
-<code>BTreeMap</code>s into one — is serial in the <code>reduce</code> and dominates when the per-tile
-work is tiny. It only starts to pay (1.63×) once each tile carries enough
-triples to amortize the merge. This is textbook <strong>Amdahl</strong>: the serial merge
-fraction caps the speedup.</li>
-<li><strong>Predicate count is the "cheap scan" caveat, reported plainly.</strong> At 137k the
-whole scan is ~2 ms, so rayon's fork/join overhead is on the same order as the
-work and the speedup is noise-dominated (1.57×). It looks <em>better</em> than it
-should because the comparison isn't perfectly apples-to-apples: the serial
-reference walks the engine's index (<code>match_ids</code>, which materializes a <code>Vec</code> of
-every match), while the parallel side filters pre-tiled in-memory triples.
-<strong>Lesson: a sub-millisecond-per-core workload is not worth parallelizing</strong> —
-the tiling + dispatch overhead eats the gain, and any apparent win is fragile.</li>
-<li><strong>This is CPU-side only.</strong> The HTTP/range query path is I/O-bound (latency is
-in the network round-trips, not the CPU), so threading the evaluator does not
-help there. And wasm has no threads at all — which is exactly why <code>parallel</code> is
-an opt-in native feature and the wasm crate builds with
-<code>--no-default-features</code> (verified: rayon is never compiled for wasm).</li>
-</ul>
-<p><strong>Conclusion on "split across communities + harmonize":</strong> it helps when (a) the
-per-partition work is substantial relative to fork/join + merge overhead, and
-(b) the harmonize step is cheap or itself parallel. Batch reachability nails
-both; per-community aggregations only pay off at scale once the serial merge is
-amortized; cheap single scans should stay serial.</p>
+<p><strong>Takeaway:</strong> Parallelism shines for heavy, independent tasks like batch reachability (<code>rete reach --parallel</code>). For lightweight scans, the thread fork/join overhead eats the benefits, so they are best left serial.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

@@ -1,367 +1,203 @@
-# SPARQL support
+# SPARQL Queries
 
-The engine lives in `rete-core::sparql`. Queries are parsed with
-[`spargebra`](https://crates.io/crates/spargebra) and lowered to a small plan
-algebra (`Bgp`/`Join`/`Union`/`Minus`/`LeftJoin`/`Filter`/`Path`/`Values`/
-`Graph`), evaluated in the unified integer node space and resolved back to terms
-only for final bindings.
+Rete's SPARQL engine (located in `rete-core::sparql`) evaluates queries locally or in the browser over `.rete` files. It translates SPARQL queries into a fast, integer-space plan algebra, only resolving final values when returning the results.
 
-Run via the CLI (`rete sparql <file> "<query>" [--json]`) or in the browser
-(`query` in `rete-wasm` for any query form; `query_sparql` is the older
-SELECT-only wrapper).
+You can run queries in two ways:
+- **CLI**: `rete sparql <file> "<query>" [--json]`
+- **Browser (WASM)**: Use the `query` method in `rete-wasm` to execute any SPARQL query type.
 
-Spatial queries over `geo:wktLiteral` geometry — point-in-polygon, intersection,
-distance — are covered by a focused set of GeoSPARQL functions; see
-[GeoSPARQL (geometry + time)](geosparql.html).
+If you need spatial queries (like point-in-polygon or distances), see our guide on [GeoSPARQL](geosparql.html).
 
 <figure class="fig-right">
   <img src="img/bgp-join.svg" alt="Two triple patterns sharing the variable ?f are joined on it, producing a binding table with columns for the bound variables.">
   <figcaption>A basic graph pattern is a join on shared variables: patterns that share <code>?f</code> are intersected via the permutation indexes.</figcaption>
 </figure>
 
-## Supported
+## What's Supported?
 
-| Area | Details |
+Rete supports a large subset of SPARQL 1.1:
+
+| Feature Area | Supported Capabilities |
 |---|---|
-| **Query forms** | `SELECT`, `ASK`, `CONSTRUCT`, `DESCRIBE` |
-| **Patterns** | Triple patterns and BGPs evaluated as integer-space hash joins on shared variables; blank nodes as non-distinguished variables |
-| **Algebra** | `OPTIONAL` (left join), `UNION`, `MINUS`, `FILTER EXISTS` / `NOT EXISTS`, nested `SELECT` **subqueries** (evaluated independently, then joined on shared projected variables) |
-| **Filters** | Comparisons, `&&`/`\|\|`/`!`, arithmetic, `BOUND`, `COALESCE`; built-ins incl. `CONTAINS`, `STRLEN`, `SUBSTR`, `CONCAT`, `STR`, `isIRI`/`isLiteral`/`isBlank`, `DATATYPE`, `LANG`, `REGEX` |
-| **Property paths** | `p+`, `p*`, `p?` (zero-length included for `*`/`?`), reverse `^p`, sequence `a/b`, alternative `a\|b` — evaluated goal-directed from a bound endpoint |
-| **Solution modifiers** | `DISTINCT`, `ORDER BY` (ASC/DESC), `LIMIT`, `OFFSET`, `VALUES`, `BIND` |
-| **Aggregation** | `GROUP BY`, `HAVING`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` (incl. `COUNT(DISTINCT …)`) |
-| **Datasets** | `GRAPH <iri>` / `GRAPH ?g`, `FROM` (RDF-merge default graph), `FROM NAMED` (scope which graphs `GRAPH` sees); `EXISTS` honors the active graph. Plus an **opt-in, non-standard** [union default graph](#union-default-graph) mode for named-graph-heavy files. |
-| **Output** | SPARQL Results JSON (`--json`), with correct `uri`/`literal`/`bnode` typing, datatype, and `xml:lang`; literal values are properly unescaped |
-| **RDF-star** | Quoted triples `<< s p o >>` in subject/object position — ingest (N-Triples-star & Turtle-star), storage, and SPARQL-star: quoted-triple patterns (incl. inner variables `<< ?s :p ?o >>`) and the `isTRIPLE` / `TRIPLE` / `SUBJECT` / `PREDICATE` / `OBJECT` built-ins. See [below](#rdf-star). |
-| **Reasoning (OWL 2 QL)** | Opt-in ontology-mediated answering by **query rewriting** — no materialization: `rdfs:subClassOf` / `subPropertyOf` hierarchy + `rdfs:domain` / `range` type inference, computed over the raw data. `rete sparql … --entail`, or the playground **🧠 Reason** toggle. See [below](#reasoning-owl-2-ql). |
+| **Query Forms** | `SELECT`, `ASK`, `CONSTRUCT`, and `DESCRIBE`. |
+| **Patterns** | Triple patterns and Basic Graph Patterns (BGPs) evaluated as fast integer-space hash joins. Blank nodes act as non-distinguished variables. |
+| **Algebra** | `OPTIONAL` (left join), `UNION`, `MINUS`, `FILTER EXISTS` / `NOT EXISTS`, and nested `SELECT` **subqueries**. |
+| **Filters** | Comparisons, `&&`/`\|\|`/`!`, arithmetic, `BOUND`, and `COALESCE`. Built-ins include `CONTAINS`, `STRLEN`, `SUBSTR`, `CONCAT`, `STR`, `isIRI`/`isLiteral`/`isBlank`, `DATATYPE`, `LANG`, and `REGEX`. |
+| **Property Paths** | `p+`, `p*`, `p?`, reverse `^p`, sequence `a/b`, and alternative `a\|b`. Evaluated goal-directed from a bound endpoint. |
+| **Solution Modifiers** | `DISTINCT`, `ORDER BY` (ASC/DESC), `LIMIT`, `OFFSET`, `VALUES`, and `BIND`. |
+| **Aggregation** | `GROUP BY`, `HAVING`, and functions like `COUNT` (incl. `DISTINCT`), `SUM`, `AVG`, `MIN`, `MAX`. |
+| **Datasets** | `GRAPH <iri>` / `GRAPH ?g`, `FROM`, and `FROM NAMED`. Plus, an opt-in [union default graph](#union-default-graph) mode. |
+| **Output Formats** | SPARQL Results JSON (`--json`), fully typed with proper URIs, literals, `xml:lang`, and datatypes. |
+| **RDF-star** | Native support for quoted triples (`<< s p o >>`) in both data and queries. See [RDF-star](#rdf-star). |
+| **Reasoning (OWL 2 QL)** | Opt-in ontology-mediated reasoning without materialization via query rewriting. See [Reasoning](#reasoning-owl-2-ql). |
 
-## Property paths
+## Property Paths
 
-Property paths are evaluated goal-directed from a bound endpoint and support
-`p+`, `p*`, `p?`, reverse `^p`, sequence `a/b`, and alternative `a|b`.
+Property paths (`*`, `?`, `+`, etc.) are evaluated directly from known (bound) starting points.
 
-### Zero-length semantics
-
-`*` and `?` include the zero-length path (a node reaches itself); `+` does not.
-This holds in every binding direction:
+### Understanding Zero-Length Paths
+The paths `*` and `?` will return the starting node itself (zero-length), whereas `+` strictly requires at least one hop.
 
 ```sparql
-# Alice plus everyone she transitively knows (includes Alice herself):
+# Returns Alice AND everyone she transitively knows (including herself):
 SELECT ?y WHERE { ex:Alice ex:knows* ?y }
-# Everyone who reaches Carol in ≤1 hop (includes Carol):
+
+# Returns everyone who knows Carol directly, PLUS Carol herself:
 SELECT ?x WHERE { ?x ex:knows? ex:Carol }
 ```
 
-### Index-free aggregates
-
-Exact per-predicate totals come straight from the pyramid summary's superedge
-counts, without reading the triple index:
+### Fast, Index-Free Aggregates
+If you just want the total count of a specific predicate, Rete pulls this straight from the dataset's summary metadata—no index scanning required!
 
 ```sh
-rete predicates data.rete            # CLI
+# Instantly print predicate counts from the CLI
+rete predicates data.rete
 ```
 
-The same per-predicate totals back the playground's index-free aggregate path.
+### How Queries are Evaluated
+Rete evaluates queries using a **lazy pull pipeline**:
+- **Streaming evaluation**: Operations like joins, `MINUS`, `DISTINCT`, filters, and `GRAPH` stream their results. This means `LIMIT` and `ASK` can stop the execution early to save time.
+- **Low memory footprint**: Memory isn't scaled by the number of rows. For example, a `GROUP BY` operation folds rows into accumulators, so memory usage is proportional to the number of *groups*, not rows.
+- **Materialization triggers**: The only things that force Rete to materialize all results before returning are an unbounded `ORDER BY` or a multi-graph `FROM` clause.
 
-### Evaluation model
+### "Split-by-Community" Execution
+For massive datasets, Rete can use a **split-where-sound** strategy. It splits the query into smaller "stars" (groups of patterns sharing a subject), executes them independently across data communities, and hashes them back together. 
+- You can test this in the playground using the "Split by community" toggle. 
+- It gracefully falls back to normal execution if the query shape doesn't allow splitting.
 
-The algebra evaluates as a lazy pull pipeline over integer slot rows: joins,
-`MINUS`, `DISTINCT`, filters, and `GRAPH` stream, so `LIMIT` and `ASK` stop the
-underlying index scans early, and under a small known demand joins switch to
-index-nested-loop probes. Aggregation, `ORDER BY` (a bounded top-k when `LIMIT`
-is present), and hash-join build sides are the only blocking points — and
-*blocking* is about ordering, not memory: aggregation folds rows through
-per-group accumulators, so resident memory is **O(groups), not O(rows)** — a
-bare `COUNT(*)` is a single counter, and a `GROUP BY` over the 1.38 billion
-`rdf:type` rows of the 9.83 B-triple DataCite graph completes inside a 4 GiB
-container (numbers on the [benchmark page](BENCHMARK.md)). What still
-materializes its input: a no-`LIMIT` `ORDER BY`, and a multi-graph `FROM` (a
-single `FROM <g>` borrows that graph's index without copying). Terms are
-resolved to strings only at projection. It is still not a *cost-based* planner —
-join order is a selectivity heuristic — and the benchmark page separates
-correctness coverage from latency and calls out the shapes where Oxigraph still
-wins.
+## Union Default Graph (⛁ All graphs) {#union-default-graph}
 
-### Community-split evaluation
+By default, SPARQL looks at the **default graph** when no `GRAPH` block is specified. But many modern datasets put *all* their data into named graphs (like when converting from N-Quads). On such datasets, a standard `SELECT * WHERE { ?s ?p ?o }` will return nothing, which can be confusing.
 
-The engine can also evaluate a SELECT with a **split-where-sound,
-global-where-not** strategy that always returns exactly the whole-graph
-answer. The one place the pyramid partition genuinely applies is a *subject
-star* — a group of triple patterns sharing one variable subject — because
-tiles partition triples by their subject's community, so a star's solutions
-partition cleanly by community. Each BGP is decomposed into its stars; each
-star is evaluated per community (the community's subjects pushed in as a
-`VALUES` binding, which the engine turns into index probes); and the stars
-are recombined with **global hash joins**, so multi-hop joins work and
-solutions that cross communities survive. `FILTER` / `UNION` / `OPTIONAL` /
-`MINUS` recurse through the same machinery; property paths, inline `VALUES`,
-and `GRAPH` blocks evaluate globally inside the split (exact by definition);
-and `GROUP BY` / `ORDER BY` / `LIMIT` / `DISTINCT` run once on the merged
-rows. A query is refused only when nothing in it can split (no BGP with a
-variable subject — the strategy would add nothing) or under `FROM` / `FROM
-NAMED`. The playground's "Split by community" strategy uses this; natively
-the per-star, per-community partials are the seam for parallel evaluation.
+To fix this, Rete provides an **opt-in** union mode where patterns outside a `GRAPH` block match against the **merged union of all graphs**.
 
-## Union default graph (⛁ All graphs) {#union-default-graph}
+**How it works:**
+- It performs a **set union**: triples found in multiple graphs only match once.
+- If your query has explicit `FROM` or `GRAPH` clauses, those take priority and are unaffected by this mode.
 
-Standard SPARQL scopes a pattern outside `GRAPH` to the **default graph**, and
-the engine keeps exactly that — the W3C conformance suite runs on it. But many
-datasets keep **every statement in named graphs** (anything built from N-Quads:
-DCAT catalogs, provenance stores), so on such a file
-`SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }` answers `0`. That answer is
-*correct*, and nearly every newcomer reads it as breakage — the published Czech
-national open-data catalog (2.28 M quads across 31,974 named graphs, default
-graph empty) is the case that proved it.
+**Where to enable it:**
+- **Playground**: Click the **⛁ All graphs** toggle.
+- **Browser/WASM**: Pass `union: true` in `QueryOpts`.
+- **Rust API**: Set `union_default_graph: true` in `QueryOpts`.
+- *(Note: Not currently available via the CLI or SPARQL endpoint. Use explicit `GRAPH ?g { ... }` instead).*
 
-Virtuoso, GraphDB and Jena TDB (`tdb:unionDefaultGraph`) all offer a
-store-level switch for exactly this, and rete offers the same mode, **opt-in
-per query**: with it on, a pattern outside `GRAPH` matches the **RDF merge of
-the default graph and every named graph**. Because it is not standard SPARQL,
-it is off by default and is never applied implicitly — a plain query never
-changes meaning.
+> [!WARNING]
+> **Performance Note:** Merging graphs can be slow on lazily-opened remote files because it might need to download indexes for *every* named graph. This is why this feature is strictly opt-in per query.
 
-Semantics, precisely:
+## Output Views (Playground)
 
-- The merge is a **set union**: a triple present in several graphs matches
-  once. The file's own default-graph triples are **included** (unlike a bare
-  `FROM`, which replaces the default graph).
-- A query that brings its own `FROM` keeps its `FROM` dataset — the query
-  named its dataset explicitly, and that wins.
-- `GRAPH <iri>` / `GRAPH ?g` and `FROM NAMED` are completely unaffected: they
-  enumerate and scope the named graphs exactly as before.
+The Rete playground can render your results as a Table, Graph, Map, or Timeline. Each view requires specific columns to be returned in your `SELECT` query (like a geometry column for Maps). 
 
-Where it exists today:
+Check out the [Playground Guide](playground-guide.md#output-views) for the exact column requirements.
 
-- **The playground** — the ⛁ All graphs toggle beside 🧠 Reason. Flipping it
-  is announced, and every result computed under it says so in its meta line,
-  so a non-standard answer is never silently presented as a standard one. See
-  [the playground guide](playground-guide.md).
-- **The browser engine** — `Graph.query_opts(query, format, reason, union)`
-  and the same method on `RemoteGraph` (see
-  [WASM & JavaScript API](browser.md)).
-- **Rust** — `eval_query_with(&rete, query, QueryOpts { union_default_graph:
-  true, ..QueryOpts::default() })` in `rete-core::sparql`.
-- **Not** on the CLI — `rete sparql` has no union flag — and **not** in
-  `rete serve`'s endpoint. If you need the union semantics there, write it
-  into the query with `GRAPH ?g { … }` (and `UNION` with a default-graph
-  branch when both sides hold data), which works everywhere.
+## Federation with `SERVICE`
 
-Costs and limits worth knowing before flipping it on:
-
-- The common converted-file shape — **empty default graph, exactly one named
-  graph** — stays a zero-copy borrow of that graph's index: no copying, no
-  extra bytes.
-- Any other shape **materializes the merged index** for the query. On a
-  lazily-opened remote file that can mean faulting the index tiles of every
-  named graph the merge touches — a real cost on a many-graph file, and
-  precisely why the mode is opt-in per query rather than a file-level default.
-- The playground's progressive and community-split strategies answer from
-  default-graph structures, so a union run is evaluated on the whole index
-  instead (the result line says so) rather than silently answering with
-  standard semantics.
-- Federated multi-source runs and live SPARQL endpoints keep standard
-  semantics — the toggle does not reach them (a live endpoint decides its own
-  dataset).
-- Under union, `DESCRIBE`'s per-resource expansion — the triples returned
-  *about* each matched resource — still reads the default graph; the union
-  applies to the pattern matching that selects the resources.
-
-## Output views & query shapes
-
-The playground renders one result several ways — Table, Graph, Map, Time,
-TTL/JSON-LD — and each view expects a particular query shape (a geometry column
-for Map, a year/date column for Time, …). That matrix lives with the rest of the
-playground documentation: see
-[Playground — output views](playground-guide.md#output-views).
-
-## Federation: `SERVICE`
-
-SPARQL 1.1 federated query is supported: a `SERVICE <endpoint> { … }` block is
-shipped (as written) to the remote SPARQL endpoint at evaluation time and its
-solutions join the surrounding pattern on shared variables — so one query can
-span a `.rete` file *and* a live endpoint (Wikidata, DBpedia, …):
+You can blend data from a `.rete` file with live data from external SPARQL endpoints (like Wikidata or DBpedia) using the `SERVICE` keyword.
 
 ```sparql
-# Local entities enriched with live DBpedia labels, in one query.
+# Fetch local books and get their English labels from live DBpedia
 SELECT ?book ?label WHERE {
   ?book <http://ex/about> ?ent .
+  
   SERVICE <https://dbpedia.org/sparql> {
     VALUES ?ent { <http://dbpedia.org/resource/Douglas_Adams> }
-    ?ent rdfs:label ?label . FILTER(lang(?label) = "en")
+    ?ent rdfs:label ?label . 
+    FILTER(lang(?label) = "en")
   }
 }
 ```
 
-Notes:
+**Key Federation Tips:**
+- **Push constraints down:** The `SERVICE` block is sent *exactly as written*. Put constants or `VALUES` inside the block to avoid accidentally downloading the entire remote database.
+- **Rete as an endpoint:** You can serve a `.rete` file using `rete serve <file>`, allowing one Rete dataset to federate against another!
+- **CORS required:** If you are running federated queries from the browser playground, the target endpoint must support CORS.
 
-- rete can also **be** the endpoint: `rete serve <file>` (see [cli](cli.md))
-  exposes a `.rete` over the SPARQL Protocol — queries *and* SPARQL Update —
-  so one rete file can `SERVICE` against another rete served live.
-- `SERVICE SILENT` follows the spec: a failed call degrades to one empty
-  solution instead of failing the query.
-- The block is sent **as written** (no bound-join injection yet), so keep it
-  selective — an unconstrained pattern asks the remote endpoint for everything
-  it knows. Put `VALUES`/constants inside the block, as above.
-- The engine performs no I/O itself: the CLI and the browser client attach the
-  HTTP transport (`ServiceClient`); in the browser the endpoint must allow
-  CORS (the big public ones do).
-- `SERVICE ?endpoint { … }` (a variable endpoint) is not supported.
+## RDF-star (Statements about Statements) {#rdf-star}
 
-## RDF-star
-
-rete supports **RDF-star**: a *quoted triple* `<< s p o >>` may stand in the
-subject or object position of another triple, so you can make statements **about
-statements** — the natural home for provenance and annotation (who recorded a
-fact, when, with what confidence).
+Rete has native support for **RDF-star**, meaning you can embed quotes (`<< s p o >>`) as the subject or object of another triple. This is perfect for tracking provenance, timestamps, or confidence scores.
 
 ```turtle
+# The core fact
 :occ1 a :BarnSwallow .
-# annotate the statement above:
+
+# Data about the fact
 << :occ1 a :BarnSwallow >> :recordedBy :jsmith ;
-                           :individualCount 5 ;
                            :observedOn "2023-05-01"^^xsd:date .
 ```
 
-**Ingest & storage.** Quoted triples parse from both **N-Triples-star** and
-**Turtle-star** (`rete build data.ttls`, `rete validate`) and are stored as
-ordinary dictionary terms — no format change, no version bump, and an old reader
-stays forward-compatible. A file that contains any quoted triple sets a header
-flag (`FLAG_HAS_QUOTED_TRIPLES`), so a plain-RDF consumer can tell from the header
-alone, without scanning; `rete info` shows it. Quoted triples round-trip
-losslessly through `rete export`, and `rete verify` covers them.
-
-**Query — SPARQL-star.** A quoted triple can appear in a query pattern, with
-constants or inner variables:
+### Querying RDF-star
+You can query quoted triples using standard SPARQL syntax or specific built-in functions.
 
 ```sparql
-# Who recorded that occ1 is a Barn Swallow?  (concrete quoted triple)
+# Find who recorded a specific fact:
 SELECT ?who WHERE { << :occ1 a :BarnSwallow >> :recordedBy ?who }
 
-# Every recorded identification, with the sighting and species bound from the
-# quoted triple (inner variables):
+# Find everything recorded, extracting the core fact's subject and object:
 SELECT ?occ ?species ?who WHERE {
   << ?occ a ?species >> :recordedBy ?who
 }
-
-# A quoted variable that is also bound by a regular pattern joins on it:
-SELECT ?who WHERE {
-  ?occ :place ?p .
-  << ?occ a ?species >> :recordedBy ?who     # ?occ unifies across both
-}
 ```
 
-**Built-in functions** inspect and construct quoted triples:
+### Helpful Built-in Functions
+- `isTRIPLE(t)`: Checks if a term is a quoted triple.
+- `SUBJECT(t)`, `PREDICATE(t)`, `OBJECT(t)`: Extracts components from a quoted triple.
+- `TRIPLE(s, p, o)`: Constructs a new quoted triple.
 
-| Function | Result |
-|---|---|
-| `isTRIPLE(t)` | whether `t` is a quoted triple |
-| `SUBJECT(t)` / `PREDICATE(t)` / `OBJECT(t)` | the component of a quoted triple |
-| `TRIPLE(s, p, o)` | build a quoted triple from three terms |
+> [!NOTE]
+> Rete also accepts the new **RDF 1.2** object triple-term syntax `<<( s p o )>>`, mapping it seamlessly to standard RDF-star quotes.
+
+## Reasoning (OWL 2 QL) {#reasoning-owl-2-ql}
+
+Rete can intelligently expand your queries using an ontology (like a taxonomy or schema) to infer answers that aren't explicitly written in the data.
+
+Crucially, it does this via **query rewriting** rather than pre-computing (materializing) all possibilities into the file. This keeps your `.rete` files tiny and fast.
+
+**To enable reasoning:**
+- Pass `--entail` in the CLI (`rete sparql --entail ...`)
+- Turn on the **🧠 Reason** toggle in the playground.
+
+### What it can infer:
+- **Subclasses (`rdfs:subClassOf`)**: Searching for `?x a Animal` will return all instances of `Bird` and `Dog`.
+- **Subproperties (`rdfs:subPropertyOf`)**: Searching for `?x knows ?y` will return pairs connected by `bestFriendOf`.
+- **Domains and Ranges (`rdfs:domain` / `rdfs:range`)**: Infers the type of a node based on the properties it has.
+- **Inverses (`owl:inverseOf`)**: Automatically flips relationships if needed.
 
 ```sparql
-# Equivalent to the inner-variable pattern above, spelled with the built-ins:
-SELECT ?occ ?who WHERE {
-  ?qt :recordedBy ?who
-  FILTER(isTRIPLE(?qt))
-  BIND(SUBJECT(?qt) AS ?occ)
-}
+# Without reasoning: Returns 0 results (data only has specific species types)
+# With reasoning: Returns all birds by automatically walking up the subclass taxonomy
+SELECT ?o WHERE { 
+  ?o a <https://w3id.org/rete/gbif/taxon/class/Aves> 
+} LIMIT 20
 ```
 
-`CONSTRUCT` (and `rete serve`'s SPARQL Update) may build quoted triples in their
-templates. Nested quoting (`<< << … >> :p ?o >>`) works. rete follows the
-RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.
+## What is NOT Supported?
 
-**RDF 1.2 interop.** Ingest also accepts the ratified RDF 1.2 object triple-term
-syntax `<<( s p o )>>`, mapped to the *same* canonical token as `<< s p o >>` — so
-an RDF 1.2 N-Triples file and an RDF-star file are interchangeable. RDF 1.2
-**base-direction strings** (`"…"@lang--dir`) are modelled: `DATATYPE` reports
-`rdf:dirLangString` and `LANG` returns the language subtag; a leading SPARQL 1.2
-`VERSION "1.2"` declaration is accepted. RDF 1.2 reification (`rdf:reifies`) and
-the new SPARQL 1.2 direction functions are not yet supported — see
-[Compatibility](compatibility.md#is-it-compatible-with-rdf).
+The following features are not supported and will result in a clear error:
+- **Variable endpoints**: `SERVICE ?var { ... }` is not allowed.
+- **Complex `ORDER BY` keys**: You must order by a bare variable or constant; expressions inside `ORDER BY` are not yet evaluated.
 
-## Reasoning (OWL 2 QL)
-
-rete answers ontology-mediated queries by **rewriting the query**, not by
-materializing entailments. That is the OWL 2 QL idea, and it is the profile that
-fits a cloud-native, range-queried file: the TBox is small, the ABox is huge and
-maybe remote, so instead of baking inferences into the data (bloating the file,
-forcing a rebuild — what `rete build --materialize` does) the *query* is expanded
-so that evaluating it over the **raw** data yields the entailed answers. A remote
-`.rete` becomes ontology-aware with no rebuild, and only the bytes the rewritten
-query touches are fetched.
-
-Reasoning is **opt-in** — `rete sparql|sparql-url … --entail`, or the playground's
-**🧠 Reason** toggle. A plain query is never changed.
-
-**What is entailed** (the RDFS-plus core of OWL 2 QL):
-
-| Axiom | A query for … also returns … |
-|---|---|
-| `rdfs:subClassOf` | `?x a C` → instances of every subclass of `C` (transitively) |
-| `rdfs:subPropertyOf` | `?x P ?y` → pairs related by any subproperty of `P` |
-| `rdfs:domain` | `?x a C` → subjects of a property whose domain is `⊑ C` |
-| `rdfs:range` | `?x a C` → objects of a property whose range is `⊑ C` |
-| `owl:inverseOf` | `?x P ?y` → pairs `?y Q ?x` for any `Q` inverse to `P` |
-| `owl:someValuesFrom` (`A ⊑ ∃P`) | `?x P ?_` (existential object) → every `?x` that is (transitively) an `A` |
-| existential inverse (`A ⊑ ∃P⁻`) | `?_ P ?x` (existential subject) → every such `?x`, via `P`'s inverse |
-| `domain`/`range` ∘ `subPropertyOf` | type inferred through a *subproperty* of a domain/range-declared property |
+## Quick Examples
 
 ```sparql
-# Over gbif-birds (occurrences are typed to their SPECIES, and each species has a
-# subClassOf chain up to :Aves). WITHOUT reasoning this matches nothing directly;
-# WITH --entail it returns real occurrences via the taxonomy — no hand-written path.
-SELECT ?o WHERE { ?o a <https://w3id.org/rete/gbif/taxon/class/Aves> } LIMIT 20
-```
-
-**How** — a hierarchy atom is lowered to the property path that already walks the
-hierarchy: `?x a C` becomes `?x a ?c . ?c rdfs:subClassOf* C` (reflexive, so a
-direct type still matches), and likewise `subPropertyOf*` for roles; `domain` /
-`range` add `UNION` branches. A small TBox read gates the rewrite, so an atom
-whose class/property has no sub-terms — and every non-reasoned query — is
-untouched. The reasoning reaches nested patterns (`UNION` / `OPTIONAL` /
-subqueries).
-
-The existential rewrite is **sound by construction**: it fires only when the
-object variable is purely existential — it occurs exactly once in the whole query
-and is not returned — because an anonymous `∃P` successor can neither be projected
-nor joined. Where the object is bound, shared, or in the `SELECT`, the rewrite is
-skipped.
-
-**Boundary.** Every DL-Lite_R axiom *type* is covered. The one remaining gap is
-the PerfectRef *reduction* step — existential **chaining**, where a shared join
-constraint is itself entailed by an existential (e.g. a query joins `?x P ?y`
-with `?y a C` and `∃P⁻ ⊑ C` makes the `?y a C` atom redundant). That query shape
-is rare, and reasoning is never *unsound* regardless: with it off you get exact
-matches; with it on you get the entailed answers for the supported cases — it can
-only ever be *incomplete* for that one chaining shape. The whole-graph RL reasoner
-(`rete reason` / the Coherence tab) is a separate, materializing tool for
-coherence checking.
-
-## Not supported
-
-These are **rejected with a clear error** — never silently mis-evaluated:
-
-- **`SERVICE ?var`** — federation to a variable-bound endpoint.
-- Complex `ORDER BY` **key expressions** beyond a bare variable/constant are not
-  yet evaluated for ordering.
-
-## Examples
-
-```sparql
-# 2-hop join
+# 1. Finding a 2-hop connection
 PREFIX ex: <http://ex/>
 SELECT ?z WHERE { ex:Alice ex:knows ?y . ?y ex:knows ?z }
 
-# FILTER + OPTIONAL
-SELECT ?p WHERE { ?p ex:name ?n . OPTIONAL { ?p ex:age ?a } . FILTER(BOUND(?a)) }
+# 2. Fetching optional data safely
+SELECT ?p WHERE { 
+  ?p ex:name ?n . 
+  OPTIONAL { ?p ex:age ?a } . 
+  FILTER(BOUND(?a)) 
+}
 
-# GROUP BY with aggregate
-SELECT ?p (COUNT(?f) AS ?degree) WHERE { ?p ex:knows ?f } GROUP BY ?p ORDER BY DESC(?degree)
+# 3. Grouping and counting connections
+SELECT ?p (COUNT(?f) AS ?degree) WHERE { 
+  ?p ex:knows ?f 
+} GROUP BY ?p ORDER BY DESC(?degree)
 
-# Named graph
+# 4. Searching a specific named graph
 SELECT ?g ?s WHERE { GRAPH ?g { ?s ex:knows ?o } }
 
-# Transitive impact (reverse property path)
+# 5. Finding all dependencies recursively (Reverse path)
 SELECT DISTINCT ?d WHERE { ?d ex:dependsOn+ ex:log4x }
 ```

@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Architecture · rete docs</title>
-  <meta name="description" content="rete is a publish-and-query RDF stack built around one immutable, range-readable file. The design bias is simple: do expensive graph preparation at build time, ship one cacheable artifact, and let…" />
+  <meta name="description" content="rete is a &quot;publish-and-query&quot; RDF stack built entirely around a single, immutable, range-readable file format." />
   <link rel="canonical" href="https://caviri.github.io/rete/architecture.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Architecture · rete docs" />
-  <meta property="og:description" content="rete is a publish-and-query RDF stack built around one immutable, range-readable file. The design bias is simple: do expensive graph preparation at build time, ship one cacheable artifact, and let…" />
+  <meta property="og:description" content="rete is a &quot;publish-and-query&quot; RDF stack built entirely around a single, immutable, range-readable file format." />
   <meta property="og:url" content="https://caviri.github.io/rete/architecture.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/architecture.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Architecture · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Architecture · rete docs" />
-  <meta name="twitter:description" content="rete is a publish-and-query RDF stack built around one immutable, range-readable file. The design bias is simple: do expensive graph preparation at build time, ship one cacheable artifact, and let…" />
+  <meta name="twitter:description" content="rete is a &quot;publish-and-query&quot; RDF stack built entirely around a single, immutable, range-readable file format." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/architecture.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -338,250 +336,70 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>Architecture</h1>
-<p><code>rete</code> is a publish-and-query RDF stack built around one immutable,
-range-readable file. The design bias is simple: do expensive graph preparation at
-build time, ship one cacheable artifact, and let clients answer useful questions
-with bounded reads before they reach for a server.</p>
-<h2>Workspace Map</h2>
-<table><thead><tr><th>Path</th><th>Responsibility</th></tr></thead><tbody>
-<tr><td><code>crates/rete-core</code></td><td>File format, dictionary, triple indexes, pyramid summary, SPARQL evaluation, reasoning, SHACL, range readers</td></tr>
-<tr><td><code>crates/rete-cli</code></td><td>The <code>rete</code> binary, command routing, JSON/text rendering, URL/range command helpers</td></tr>
-<tr><td><code>crates/rete-wasm</code></td><td>Browser-facing API compiled with <code>wasm-bindgen</code>; no native-only dependencies on the default path</td></tr>
-<tr><td><code>crates/docgen</code></td><td>Static docs renderer for <code>docs/*.md</code> to <code>docs/*.html</code>, including each page's social tags</td></tr>
-<tr><td><code>crates/bench</code></td><td>Dev-only Oxigraph comparison harness and benchmark JSON output</td></tr>
-<tr><td><code>web/</code></td><td>Playground template, generated WASM packages, embedded datasets, captured example answers (<code>web/preview/</code>)</td></tr>
-<tr><td><code>scripts/</code></td><td>Smoke tests, synthetic data generation, range server, docs/playground build helpers</td></tr>
-<tr><td><code>scripts/preview/</code></td><td>Social-preview pipeline: measures every catalog example, renders the card images, generates the share pages under <code>docs/q</code> and <code>docs/d</code></td></tr>
-</tbody></table>
-<p>The CLI is split by command group under <code>crates/rete-cli/src/commands/</code>. Core
-query behavior lives in <code>rete-core</code>; the CLI and WASM layers should mostly adapt
-inputs and outputs rather than reimplement engine logic.</p>
-<h2>Build Pipeline</h2>
-<p><code>rete build</code> turns RDF text into a <code>.rete</code> snapshot:</p>
+<p><code>rete</code> is a "publish-and-query" RDF stack built entirely around a single, immutable, range-readable file format.</p>
+<p><strong>The core design philosophy:</strong> Do all the expensive graph preparation at build time, ship a single highly-cacheable artifact, and allow clients to answer complex questions using bounded byte-range reads—all without needing a database server.</p>
+<h2>1. Workspace Map</h2>
+<p>The repository is organized by clear responsibilities:</p>
+<ul>
+<li><strong><code>crates/rete-core</code></strong>: The engine. Handles the file format, dictionaries, triple indexes, pyramid summaries, SPARQL evaluation, reasoning, SHACL, and HTTP range readers.</li>
+<li><strong><code>crates/rete-cli</code></strong>: The command-line interface. Routes commands, renders text/JSON, and handles URLs.</li>
+<li><strong><code>crates/rete-wasm</code></strong>: The browser API. Compiled via <code>wasm-bindgen</code> with no native-only dependencies.</li>
+<li><strong><code>crates/docgen</code></strong>: The static documentation renderer.</li>
+<li><strong><code>crates/bench</code></strong>: The dev-only benchmarking suite (compares against Oxigraph).</li>
+<li><strong><code>scripts/</code></strong>: Utilities for testing, synthetic data generation, and CI automation.</li>
+</ul>
+<h2>2. The Build Pipeline</h2>
+<p>The <code>rete build</code> command converts raw RDF text into a compressed <code>.rete</code> snapshot. The pipeline is designed to be highly memory-efficient and parallelized.</p>
+<h3>Steps:</h3>
 <ol>
-<li>Parse RDF input into default-graph triples and optional named-graph quads.</li>
-<li>Intern terms in the dictionary so query-time matching works on compact integer
-IDs instead of repeated strings.</li>
-<li>Build six permutation indexes over the default graph: SPO, POS, OSP, SOP,
-PSO, and OPS. Three suffice to match any pattern shape; the full six let any
-join key be streamed pre-sorted, enabling sort-merge joins (stable format
-generation 1).</li>
-<li>Compute the pyramid summary: community hierarchy, super-edges, predicate
-totals, class/type summaries, and named-graph metadata.</li>
-<li>Optionally attach dataset-card metadata into the reserved metadata section.</li>
-<li>Write the header, dictionary, indexes, summary, metadata, and content hash.</li>
+<li><strong>Parse &amp; Stream:</strong> Reads RDF input line-by-line (avoiding full-memory buffering).</li>
+<li><strong>Intern Terms:</strong> Replaces large text strings with compact Integer IDs using a dictionary.</li>
+<li><strong>Build Indexes:</strong> Generates 6 permutation indexes (<code>SPO</code>, <code>POS</code>, <code>OSP</code>, <code>SOP</code>, <code>PSO</code>, <code>OPS</code>) concurrently. This allows any join key to be pre-sorted.</li>
+<li><strong>Compute Summaries:</strong> Builds the pyramid summary, class schemas, and community hierarchies.</li>
+<li><strong>Write File:</strong> Packages the header, dictionary, indexes, summary, metadata, and content hash into a single <code>.rete</code> file.</li>
 </ol>
-<p>The file is immutable. Updates mean rebuilding the artifact. That keeps readers
-simple and lets a <code>.rete</code> file sit on GitHub Pages, S3, GCS, or any HTTP server
-that honors <code>Range</code>.</p>
-<p><strong>Build memory.</strong> On a big graph the build's peak RAM is dominated by the raw
-string statements — every term is an owned <code>String</code>, heavily duplicated across
-triples — which are fully redundant with the dictionary once interned. Two
-choices keep the peak low: an N-Triples/N-Quads <strong>file is stream-parsed</strong> line by
-line (the whole text is never resident), and the parsed statements are <strong>dropped
-right after they are encoded to integer id-triples</strong>, before the memory-heavy
-pyramid and index phases. So the dictionary + id-triples (compact) coexist with
-the pyramid working set, but the bulky string statements do not. Measured on a
-3 M-triple / 189 MB N-Triples build, peak RSS fell <strong>~1371 MiB → ~836 MiB (39%)</strong>,
-output byte-identical. The phase-by-phase heap profile is reproducible with
-<code>cargo run --release -p rete-bench -- --build-mem &lt;file.nt&gt;</code>.</p>
-<p><strong>Build time.</strong> On a big graph the build is dominated by the <strong>Louvain community
-pyramid</strong> (<code>build_dendrogram</code>) — on the 3 M-triple build it was ~91% of the
-wall-clock. The local-moving inner loop runs a reusable dense scratch array
-(community → edge-weight, with a touched-list reset) instead of allocating a
-<code>HashMap</code> per node per sweep; accumulation order and the sorted candidate scan are
-unchanged, so the partition — and the file's content hash — are byte-for-byte
-identical. That cut <code>build_dendrogram</code> <strong>~118 s → ~44 s (2.7×)</strong> and the whole
-build ~141 s → 67 s. Set <code>RETE_BUILD_TIMING=1</code> on <code>rete build</code> for the per-phase
-breakdown. (A <em>parallel</em> Louvain is not byte-identical — the partition depends on
-the sequential move order — so the pyramid stays single-threaded; the index
-permutations and the dictionary/permutation sorts already use all cores via
-<code>rayon</code>.)</p>
-<h2>File Layout</h2>
-<p>The header is a fixed 1 KB block: a small core (magic, version, content hash,
-counts, codecs) plus a <strong>typed section directory</strong> of <code>(kind, offset, length)</code>
-entries that point at every other section. New top-level sections are added as new
-directory entries, so the format has headroom without a layout break (stable
-generation 1, header byte <code>0x05</code>). Stable Rete 1.x readers accept this generation;
-pre-1.0 experimental files must be rebuilt. Readers validate the header, then decide how
-much of the file to load:</p>
+<p><strong>Memory Efficiency:</strong> Because string statements are dropped immediately after being encoded into integer IDs, memory spikes are avoided. On a 3M triple build, peak memory is kept under 850 MiB.</p>
+<h2>3. File Layout</h2>
+<p>A <code>.rete</code> file is composed of several independent sections, making it perfect for partial reads over the network.</p>
 <table><thead><tr><th>Section</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>Header</td><td>Magic/version, content hash, counts, and the section directory</td></tr>
-<tr><td>Dictionary</td><td>Front-coded term strings and role-aware ID spaces</td></tr>
-<tr><td>Indexes</td><td>Compressed triple blocks in all six (SPO/POS/OSP/SOP/PSO/OPS) orders</td></tr>
-<tr><td>Summary</td><td>Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (query_stats, entity shapes, label index)</td></tr>
-<tr><td>Text index</td><td>Optional <code>--text-index</code> section: word → subjects, for full-text (<code>--contains</code>) search</td></tr>
-<tr><td>Metadata</td><td>Optional dataset-card JSON/catalog data</td></tr>
+<tr><td><strong>Header (1KB)</strong></td><td>Magic bytes, version, content hash, and a "section directory" mapping offsets.</td></tr>
+<tr><td><strong>Dictionary</strong></td><td>Maps integer IDs to their actual term strings.</td></tr>
+<tr><td><strong>Indexes</strong></td><td>The compressed triple blocks stored in all 6 permutation orders.</td></tr>
+<tr><td><strong>Summary</strong></td><td>Index-free metadata: community graphs, predicate totals, class structures, and label indexes.</td></tr>
+<tr><td><strong>Text Index (Opt-in)</strong></td><td>Maps specific words to subject IDs for full-text searching (<code>--contains</code>).</td></tr>
+<tr><td><strong>Metadata (Opt-in)</strong></td><td>Dataset Card information (license, title, examples).</td></tr>
 </tbody></table>
-<p><code>Rete::open</code> reads the full file. <code>Rete::open_ranged</code> fetches the sections needed
-for exact index queries. <code>SummaryView::open_ranged</code> reads only header,
-dictionary, and summary, deliberately skipping the index.</p>
-<p>The pyramid-meta grows by <strong>length-prefixed, version-tagged blocks</strong> appended
-before the (trailing) schema block: <code>query_stats</code> (per-predicate cardinality),
-characteristic sets (entity shapes), and the <strong>label index</strong> (a bounded,
-label-sorted <code>(label, subject)</code> table powering <code>rete search</code> / <code>prefix_search</code> —
-case-insensitive prefix lookup by binary search, no literal scan). Each block is
-optional and skipped by a reader that predates it, so the format stays
-backward-compatible and a typeless, label-free graph encodes byte-identically to
-v1.</p>
-<p>For <strong>full-text</strong> search — finding entities by a word <em>anywhere</em> in their
-literals, not just a label prefix — an opt-in <strong>TEXT_INDEX</strong> section (<code>rete build --text-index</code>, kind <code>6</code>) maps each literal word to its sorted subject ids. Like
-the dictionary, it is range-readable: a small front-coded token table is read
-once, then <code>rete search --contains &lt;word&gt;</code> (or <code>prefix_search</code>'s sibling
-<code>text_search</code>) faults only the posting list of each queried word — a remote
-<code>--contains</code> over a multi-GB file fetches kilobytes. It is off by default (a build
-without the flag is byte-identical to one without the feature) and lives outside
-the pyramid-meta so SPARQL never pays for it. See §6.3 of the SPEC.</p>
-<h2>Query Pipeline</h2>
-<p>SPARQL goes through four stages:</p>
+<h2>4. The Query Pipeline</h2>
+<p>SPARQL queries are evaluated through a strict, lazy pull-pipeline:</p>
 <ol>
-<li><code>spargebra</code> parses the query.</li>
-<li><code>rete-core</code> lowers the supported algebra subset into an internal plan and
-compiles its variables into a per-query slot map.</li>
-<li>The algebra evaluates as a lazy pull pipeline over integer slot rows:
-joins, <code>MINUS</code>, <code>DISTINCT</code>, filters, and <code>GRAPH</code> stream, so <code>LIMIT</code> and
-<code>ASK</code> stop the underlying index scans early. Aggregation, <code>ORDER BY</code>
-(a bounded top-k when <code>LIMIT</code> is present), and hash-join/<code>MINUS</code> build
-sides are the only blocking points.</li>
-<li>Only the surviving rows' projected values resolve dictionary IDs back into
-RDF terms for text, JSON, or WASM output (late materialization, memoized
-per query).</li>
+<li><strong>Parse:</strong> Uses <code>spargebra</code> to parse the incoming query.</li>
+<li><strong>Compile:</strong> Translates the query into an internal physical plan and variable slots.</li>
+<li><strong>Evaluate (Lazy):</strong> Runs as a streaming pipeline of integer slot rows. Operations like <code>LIMIT</code> or <code>ASK</code> stop the underlying index scans early.</li>
+<li><strong>Materialize (Late):</strong> Only the final, surviving rows are converted back from Integer IDs to real text strings.</li>
 </ol>
-<p>Joins are adaptive: under a small known demand (<code>LIMIT</code>/<code>ASK</code>), multi-pattern
-BGPs and BGP-shaped join sides switch from one-scan-per-pattern hash joins to
-index-nested-loop probing — each row jumps to its group through a lazily-built
-in-memory block directory, so producing k solutions costs O(k) point lookups
-instead of full pattern scans.</p>
-<p>Join <strong>order</strong> is cost-based: each pattern's cardinality is estimated from the
-pyramid summary's exact per-predicate totals (plus default selectivities for a
-bound subject/object), and the cheapest connected pattern joins first — so on
-skewed data, leading with a rare predicate avoids a large intermediate. A bound
-subject/object's selectivity comes from the <code>query_stats</code> block's <strong>measured</strong>
-per-predicate <code>distinct_subjects</code> / <code>distinct_objects</code> (so <code>&lt;s&gt; &lt;p&gt; ?o</code> estimates
-the average objects-per-subject — exactly one for a functional predicate); files
-built before that block, or with no summary at all, fall back to fixed default
-selectivities / a most-constants-first heuristic. The estimate is free for an
-in-memory file (the summary is resident) and is skipped on the lazy remote path
-so it never forces a pyramid fetch. The hash join builds whichever side is
-smaller (the join is symmetric on the key), bounding the hash table — and after
-this ordering the accumulating left side is usually the small one.</p>
-<p>Unsupported SPARQL constructs are rejected with clear errors. Nested <code>SELECT</code>
-subqueries are supported (lowered to an independent inner plan, then joined on
-shared variables), and so is <code>SERVICE</code> federation — the block ships to the
-remote endpoint through a host-injected <code>ServiceClient</code> and its solutions join
-like any other operand (see <a href="sparql.html">sparql</a>).</p>
-<h2>Result Provenance</h2>
-<p><code>Rete::query_with_provenance</code> is the core API behind <code>rete why</code>. It runs the same
-triple-pattern path as <code>Rete::query</code>, then attaches:</p>
+<p><strong>Cost-Based Joins:</strong> <code>rete</code> uses the pyramid summary to know the exact cardinality (count) of predicates <em>before</em> executing the query. It automatically orders joins so that the most selective, rarest patterns execute first, preventing huge intermediate memory bloats.</p>
+<h2>5. Result Provenance</h2>
+<p>Want to know exactly where a result came from? <code>rete why</code> exposes the physical file provenance.</p>
+<p>It reports exactly which permutation order (e.g., <code>POS</code>) was chosen and specifies the physical, compressed byte ranges (tiles) that were fetched to answer the query.</p>
+<p><strong>Tile Pruning:</strong> Because each compressed tile includes min/max boundary data in the file header, remote queries can mathematically prove that a tile doesn't contain matching data <em>before</em> downloading it. A sparse query might fetch <strong>zero</strong> index tiles.</p>
+<h2>6. Progressive Queries &amp; Range Reads</h2>
+<p>Not every query needs to scan millions of rows. <code>rete</code> implements progressive query paths:</p>
 <ul>
-<li>the matched terms and dictionary IDs,</li>
-<li>the graph scope (<code>default</code> today for the local triple-pattern command),</li>
-<li>the resolved ID-space pattern,</li>
-<li>the selected permutation (one of the six: <code>SPO</code>, <code>POS</code>, <code>OSP</code>, <code>SOP</code>, <code>PSO</code>,
-<code>OPS</code>) and section index,</li>
-<li>the header byte ranges for dictionary, index container, selected permutation
-payload, and pyramid metadata.</li>
+<li><strong>Summary-Only Paths:</strong> Queries like <code>SELECT (COUNT(*) AS ?n) WHERE { ?s &lt;p&gt; ?o }</code> never touch the index. They return exact answers by reading the tiny summary metadata.</li>
+<li><strong>Range Reads:</strong> When querying a remote HTTP server, the engine fetches the 1KB header, reads the dictionary, and uses HTTP <code>Range</code> requests to pull down only the exact index tiles needed.</li>
+<li><em>Crucially, if a server doesn't support Range requests, <code>rete</code> explicitly fails rather than silently downloading the entire multi-gigabyte file.</em></li>
 </ul>
-<p>This is intentionally physical-file provenance, not a narrative explanation. Since
-format v0.2 each permutation section is tiled (independently compressed
-~64 KiB tiles with a byte-range directory, SPEC §6.2): routed reads fetch the
-directory plus only the matching tile(s), and provenance names the physical
-tile (<code>PERM/index</code>) with its compressed byte range. For pre-tiling (v0.1)
-files <code>rete why --json</code> still reports tile provenance as <code>not_materialized</code>.</p>
-<p><strong>Tile synopses.</strong> A routed lookup with a bound leading id lands on exactly one
-tile, but the <em>other</em> bound components are only checked after the tile is fetched
-(its in-tile zone map). The optional tile-synopsis trailer (header flag
-<code>FLAG_TILE_SYNOPSIS</code>) lifts each tile's two non-leading-column min/max into the
-section directory, so a range reader prunes that tile by a bound secondary
-component <strong>before</strong> fetching it — a negative or sparse remote lookup (e.g. "does
-this subject have that predicate?", or a join probe that misses) is answered with
-<strong>zero tile fetches</strong>. The prune is conservative — it only skips a tile the
-in-tile zone map would also reject — so it can never drop a result; the trailer is
-appended past the tiles, so older readers ignore it (backward-compatible). It
-costs one extra small tail read per section at open, amortized across a session.</p>
-<h2>Progressive And Cost Paths</h2>
-<p>The summary path is the first layer of progressive querying. These query shapes
-are exact from the summary and skip the full index:</p>
+<h2>7. Reasoning &amp; Validation</h2>
 <ul>
-<li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s &lt;p&gt; ?o }</code></li>
-<li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code></li>
-<li><code>SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p</code></li>
-<li><code>SELECT DISTINCT ?p WHERE { ?s ?p ?o }</code></li>
-<li><code>SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }</code></li>
-<li><code>ASK { ?s ?p ?o }</code></li>
-<li><code>ASK { ?s &lt;p&gt; ?o }</code></li>
+<li><strong>Reasoning:</strong> <code>rete build --materialize</code> runs RDFS and OWL-RL inferences at build time, permanently baking the inferred triples directly into the snapshot.</li>
+<li><strong>Validation:</strong> <code>rete shacl</code> reads the snapshot against a standard SHACL graph to ensure data quality and schema compliance. Both features treat the graph as a fixed, publishable state.</li>
 </ul>
-<p><code>rete cost --json --explain</code> reports whether a query is summary-only, exactly
-routable as one triple pattern, or still needs the full index. <code>rete progressive</code> exposes the summary-safe path directly and returns metadata such as
-byte counts, request counts, and whether the index was read.</p>
-<p>The first exact routed refinement is implemented for single default-graph triple
-patterns: the reader resolves constants from the dictionary, chooses the best of
-the six (SPO/POS/OSP/SOP/PSO/OPS) permutations, follows the container length
-prefixes, and fetches only that permutation payload. The next architectural step is physical community-tile
-directories: use the pyramid to fetch only relevant community ranges instead of
-even a whole permutation section.</p>
-<h2>Range Reads</h2>
-<p>Range readers use the same file layout as local readers. A ranged open typically
-does:</p>
-<ol>
-<li>Fetch the header.</li>
-<li>Fetch dictionary metadata and the term sections needed to resolve constants.</li>
-<li>Fetch summary, one selected permutation payload, or the full index depending
-on the query shape.</li>
-<li>Count bytes and requests with <code>CountingReader</code> for cost/progressive reporting.</li>
-</ol>
-<p>The product boundary here is strict: a host that ignores <code>Range</code> must fail
-clearly instead of silently downloading the world and pretending the query was
-bounded.</p>
-<h2>Reasoning And Validation</h2>
-<p><code>build --materialize</code> can run the RDFS/OWL-RL subset at build time and write the
-inferred triples into the snapshot. SHACL validation reads the snapshot and shape
-graph, then validates the asserted or already-materialized data through
-<code>rete-core</code>'s reusable SHACL API.</p>
-<p>Reasoning and SHACL are intentionally snapshot-oriented. A <code>.rete</code> file records
-the graph state you publish; validation runs against that exact state.</p>
-<h2>Browser And WASM</h2>
-<p>The browser API is compiled from <code>crates/rete-wasm</code> and embedded in the static
-playground. The default WASM build is single-threaded and avoids native-only
-dependencies. The native <code>parallel</code> feature uses Rayon for CPU-side workloads
-such as batch reachability, but it is not part of the default browser path.</p>
-<p><strong>Result serialization.</strong> A query's result crosses the worker boundary as a JSON
-string, so its serialization is on the WASM hot path. The envelope is written
-<strong>directly into a <code>String</code></strong> (<code>rete_core::results_envelope_json</code>) rather than
-built as a <code>serde_json::Value</code> tree and then stringified. On a 500k-row <code>SELECT</code>
-(a 27 MB result) the tree path allocates ~670 MiB — <strong>25× the payload</strong> (a
-<code>BTreeMap</code> per row plus a key clone and a term clone per cell, then a second pass
-to stringify) — and costs more than the query itself; the direct writer is <strong>~13×
-less peak heap and ~10× faster</strong> (50 MiB / 41 ms vs 670 MiB / 408 ms), which on
-the bounded WASM heap is the difference between answering and OOM-ing on a large
-result. Reproduce with <code>cargo run --release -p rete-bench -- --query-mem &lt;file.rete&gt; "&lt;sparql&gt;"</code>, which contrasts the two serializers and checks they
-agree as JSON.</p>
-<p>The playground is a static console generated by <code>scripts/build_playground.py</code>.
-The shell lives in <code>web/playground.template.html</code>; editable source fragments live
-under <code>web/playground-src/</code> (<code>styles.css</code>, <code>catalog.js</code>, and <code>app.js</code>). The
-generator inlines those fragments, the no-modules WASM glue, the WASM bytes, and
-the bundled <code>.rete</code> datasets into <code>docs/playground.html</code>. Run it with
-<code>uv run python scripts/build_playground.py</code>. Do not hand-edit
-<code>docs/playground.html</code>.</p>
-<h2>Safety Invariants</h2>
+<h2>8. Browser &amp; WebAssembly (WASM)</h2>
+<p><code>rete</code> is built to run flawlessly in the browser.</p>
 <ul>
-<li>Binary readers handle corrupt or truncated bytes with clean errors, not panics.</li>
-<li>Bounds checks are product behavior because <code>.rete</code> files may be fetched from
-arbitrary URLs.</li>
-<li>WASM default builds must not pull in native-only dependencies.</li>
-<li>Generated docs HTML must match the Markdown and templates.</li>
-<li>Benchmarks must assert result parity before trusting timing numbers.</li>
-<li>File-format changes require updates to <code>docs/SPEC.md</code>, layout tests, and
-compatibility notes.</li>
+<li>The WASM build drops native dependencies (like Rayon multithreading) to remain compatible with standard browser environments.</li>
+<li>Results crossing the WASM boundary are serialized directly into tight JSON strings, avoiding massive DOM/Memory object allocations. This keeps the browser memory footprint low and prevents Out-Of-Memory (OOM) crashes on large queries.</li>
 </ul>
-<h2>Extension Points</h2>
-<table><thead><tr><th>Area</th><th>Next work</th></tr></thead><tbody>
-<tr><td>Tile-routed query refinement</td><td>Add physical community-tile directories so exact routing can fetch relevant community ranges, not whole permutation payloads</td></tr>
-<tr><td>Result provenance</td><td>Extend tile-range provenance (done for permutation tiles) to pyramid/community tiles</td></tr>
-<tr><td>Query engine rows</td><td>Replace wide <code>BTreeMap&lt;String, String&gt;</code> bindings with integer slot rows</td></tr>
-<tr><td>Benchmark docs</td><td>Refresh JSON snapshots with <code>rete-bench --json</code> and regenerate the benchmark section</td></tr>
-<tr><td>SHACL</td><td>Add SHACL-SPARQL constraints only if the CLI needs extension-level coverage</td></tr>
-</tbody></table>
 
       </article>
       <aside class="rail" aria-label="On this page">

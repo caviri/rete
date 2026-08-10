@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>WASM & JavaScript API · rete docs</title>
-  <meta name="description" content="crates/rete-wasm compiles the same engine (dictionary, permutation indexes, SPARQL, zstd decode) to WebAssembly, so a web page queries a .rete file client-side with no server." />
+  <meta name="description" content="Welcome to the browser architecture of rete! Using the crates/rete-wasm package, we compile the exact same Rust engine (dictionary, indexes, SPARQL, zstd) to WebAssembly." />
   <link rel="canonical" href="https://caviri.github.io/rete/browser.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="WASM &amp; JavaScript API · rete docs" />
-  <meta property="og:description" content="crates/rete-wasm compiles the same engine (dictionary, permutation indexes, SPARQL, zstd decode) to WebAssembly, so a web page queries a .rete file client-side with no server." />
+  <meta property="og:description" content="Welcome to the browser architecture of rete! Using the crates/rete-wasm package, we compile the exact same Rust engine (dictionary, indexes, SPARQL, zstd) to WebAssembly." />
   <meta property="og:url" content="https://caviri.github.io/rete/browser.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/browser.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="WASM &amp; JavaScript API · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="WASM &amp; JavaScript API · rete docs" />
-  <meta name="twitter:description" content="crates/rete-wasm compiles the same engine (dictionary, permutation indexes, SPARQL, zstd decode) to WebAssembly, so a web page queries a .rete file client-side with no server." />
+  <meta name="twitter:description" content="Welcome to the browser architecture of rete! Using the crates/rete-wasm package, we compile the exact same Rust engine (dictionary, indexes, SPARQL, zstd) to WebAssembly." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/browser.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -338,340 +336,82 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>WASM &amp; JavaScript API</h1>
-<p><code>crates/rete-wasm</code> compiles the <strong>same</strong> engine (dictionary, permutation indexes,
-SPARQL, zstd decode) to WebAssembly, so a web page queries a <code>.rete</code> file
-client-side with no server. <code>web/index.html</code> is a working serverless explorer.</p>
-<h2>Build</h2>
+<p>Welcome to the browser architecture of <code>rete</code>! Using the <code>crates/rete-wasm</code> package, we compile the <strong>exact same Rust engine</strong> (dictionary, indexes, SPARQL, zstd) to WebAssembly. This allows web pages to query <code>.rete</code> files entirely client-side—no backend server required.</p>
+<p>Our fully functional serverless explorer lives in <code>web/index.html</code>.</p>
+<h2>1. Building the WASM Artifacts</h2>
+<p>Use the provided Docker tools to build the WebAssembly packages and regenerate the playground:</p>
 <pre><code class="language-sh">docker compose build wasm
 docker compose run --rm wasm
 </code></pre>
-<p>This runs <code>scripts/build_wasm.sh</code>: it builds <code>web/pkg</code>, <code>web/pkg-nomodules</code>, and
-<code>web/pkg-nomodules-async</code> from one checkout, regenerates the playground, and
-writes <a href="wasm-build.json">wasm-build.json</a> with the source revision, pinned tool
-versions, sizes, and SHA-256 digests. The gitignored embedded <code>.rete</code> datasets
-listed in <code>scripts/build_playground.py</code> must already be staged under <code>web/</code>.</p>
-<p>When the checkout is a Windows Git worktree mounted into Linux, pass the
-revision because the worktree's host <code>.git</code> indirection is not visible:</p>
-<pre><code class="language-sh">docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
-</code></pre>
-<p>The image carries Binaryen v108 for the Asyncify transform. That version
-corrupts modern wasm-bindgen extern-reference tables, so regular <code>web</code> and
-<code>no-modules</code> builds deliberately use <code>wasm-pack --no-opt</code>; Rust's release
-profile still optimizes them. The Asyncify build disables reference types
-before its explicit, pinned Binaryen transform.</p>
-<p>zstd's C encoder isn't used on wasm; decoding uses the pure-Rust <code>ruzstd</code>, so the
-browser reads compressed files fine. <code>rete-wasm</code> depends on <code>rete-core</code> with
-<code>--no-default-features</code>.</p>
-<h2>Stable JS API</h2>
-<p>The 1.0 stable surface is <code>Graph</code>, <code>RemoteGraph</code>, <code>build</code>, <code>query</code>,
-<code>query_sparql</code>, <code>header_ranges</code>, <code>summary_overview</code>, and the validation and
-reasoning functions documented below. <code>reach_parallel</code> and the <code>threads</code>
-feature are experimental; the Asyncify artifact is an alternative transport,
-not a different graph/query API.</p>
-<p>Functions take file bytes as <code>Uint8Array</code> and return JSON strings. Every
-Rete-owned JSON <strong>object</strong> envelope includes <code>"schemaVersion": 1</code>; compatibility
-functions that return a bare array (<code>graph_names</code>, <code>query_triples</code>,
-<code>query_sparql</code>, searches, communities, and reachability) remain arrays.
-Binding failures throw JavaScript <code>Error</code> objects rather than strings.</p>
-<table><thead><tr><th>Function</th><th>Returns</th></tr></thead><tbody>
-<tr><td><code>info(bytes)</code></td><td><code>{ schemaVersion, quads, terms, pyramidLevels, namedGraphs }</code></td></tr>
-<tr><td><code>graph_names(bytes)</code></td><td>array of named-graph IRIs</td></tr>
-<tr><td><code>query_triples(bytes, s?, p?, o?)</code></td><td><code>[[s,p,o], …]</code> (omit a position for a wildcard)</td></tr>
-<tr><td><code>why_triples(bytes, s?, p?, o?)</code></td><td><code>{ pattern, resultCount, results:[{ terms, ids, provenance }] }</code> for triple-pattern provenance</td></tr>
-<tr><td><code>query_sparql(bytes, query)</code></td><td>SELECT-only compatibility wrapper; array of solution objects <code>{ var: value, ... }</code></td></tr>
-<tr><td><code>prefix_search(bytes, prefix, limit)</code></td><td>label-prefix autocomplete from the label index: <code>[{ label, subject }]</code> (no literal scan)</td></tr>
-<tr><td><code>text_search(bytes, words, prefix, limit)</code></td><td>full-text (<code>--text-index</code>) word/AND search: <code>[{ subject }]</code>; <code>words</code> is a JSON array string, <code>prefix</code> an optional token-prefix</td></tr>
-<tr><td><code>schema(bytes)</code></td><td><code>{ classes: [["&lt;iri&gt;",count]], relations: [["s","p","o",count]] }</code></td></tr>
-<tr><td><code>shacl(bytes, shapes, graph?, format?)</code></td><td>SHACL Core validation against Turtle <code>shapes</code>; report as text/json/ttl per <code>format</code></td></tr>
-<tr><td><code>file_layout(bytes)</code></td><td>the physical section map (offsets/lengths of header, dictionary, index, pyramid, …) behind the playground's layout view</td></tr>
-<tr><td><code>header_ranges(headerBytes)</code></td><td><code>{ schemaVersion, dictOffset, dictLen, pyramidOffset, pyramidLen, indexOffset, indexLen }</code></td></tr>
-<tr><td><code>summary_overview(bytes)</code></td><td><code>{ schemaVersion, round, communities, predicateTotals: [["&lt;iri&gt;",count]] }</code></td></tr>
-<tr><td><code>progressive_query(bytes, query)</code></td><td>SELECT/ASK envelope for summary-safe COUNT/ASK shapes, plus <code>progressive</code> metadata</td></tr>
-<tr><td><code>query(bytes, query, format)</code></td><td>any SPARQL form, tagged by <code>kind</code> (see below)</td></tr>
-<tr><td><code>communities(bytes, round?)</code></td><td><code>[{ community, size, triples }, …]</code> (Louvain decomposition)</td></tr>
-<tr><td><code>query_communities(bytes, query, round?)</code></td><td>a SELECT evaluated with the community-split strategy (stars per community, global joins — exact rows), plus <code>communities: [{ community, subjects, rows }]</code></td></tr>
-<tr><td><code>pyramid_tree(bytes)</code></td><td>the full community pyramid: per dendrogram round, every community's node/triple counts and its parent at the next-coarser round</td></tr>
-<tr><td><code>reach(bytes, predicate, seeds, reverse)</code></td><td><code>[{ seed, count, reached:["&lt;iri&gt;",…] }, …]</code> (serial transitive reach)</td></tr>
-<tr><td><code>build(text, format)</code></td><td>a complete <code>.rete</code> file image (<code>Uint8Array</code>) built from RDF text</td></tr>
-<tr><td><code>sparql_url(url, query, format)</code></td><td><strong>worker-only</strong>: the <code>query</code> envelope evaluated against a remote URL via lazy HTTP range reads, plus <code>remote: { fileLength, bytes, requests }</code></td></tr>
-<tr><td><code>why_url(url, s?, p?, o?)</code></td><td><strong>worker-only</strong>: triple-pattern provenance over a remote URL (<code>why_triples</code> lazily), plus <code>remote:{…}</code></td></tr>
-<tr><td><code>reach_url(url, predicate, seeds, reverse)</code></td><td><strong>worker-only</strong>: transitive reachability over a remote URL, faulting only the traversed tiles, plus <code>remote:{…}</code></td></tr>
-<tr><td><code>schema_url(url)</code></td><td><strong>worker-only</strong>: the Schema view (<code>classes</code>/<code>relations</code>) from a remote file's schema pyramid, plus <code>remote:{…}</code></td></tr>
-<tr><td><code>shacl_url(url, shapes, format?)</code></td><td><strong>worker-only</strong>: lazy SHACL — validates the remote default graph, range-reading only each shape's targets, plus <code>remote:{…}</code></td></tr>
-<tr><td><code>shacl_construct_url(url, shapes, construct)</code></td><td><strong>worker-only</strong>: SHACL over just the subgraph a CONSTRUCT selects (only its tiles fetched), plus <code>remote:{…}</code></td></tr>
-<tr><td><code>new Graph(bytes)</code> → <code>.query</code>, <code>.query_reasoned</code>, <code>.query_opts</code>, <code>.query_triples</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.why_triples</code>, <code>.schema</code>, <code>.reach</code>, <code>.shacl</code>, <code>.reason</code>, <code>.query_communities</code>, <code>.pyramid_tree</code>, <code>.file_layout</code>, <code>.info</code>, <code>.graph_names</code></td><td>a file opened <strong>once</strong> and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions</td></tr>
-<tr><td><code>new RemoteGraph(url)</code> → <code>.query(query, format)</code>, <code>.query_reasoned</code>, <code>.query_opts</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.stats()</code>, <code>.content_hash()</code></td><td><strong>worker-only</strong>: a remote URL opened <strong>once</strong> and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see <a href="#caching-remote-reads">Caching remote reads</a>)</td></tr>
-<tr><td><code>reason(bytes, graph?)</code></td><td>OWL RL / RDFS coherence over an in-memory graph: <code>{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }</code></td></tr>
-<tr><td><code>check_schema(bytes)</code></td><td>index-free Tier-0 schema coherence: <code>{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], readsIndex:false }</code></td></tr>
-<tr><td><code>check_schema_url(url)</code></td><td><strong>worker-only</strong>: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus <code>remote:{…}</code></td></tr>
-<tr><td><code>reason_construct_url(url, construct)</code></td><td><strong>worker-only</strong>: Tier-1 <em>selective</em> coherence — reason over just the subgraph a CONSTRUCT selects (only its tiles are fetched), plus <code>remote:{…}</code></td></tr>
-<tr><td><code>reason_url(url, graph?)</code></td><td><strong>worker-only</strong>: Tier-2 <em>full</em> coherence over a remote URL (materializes the whole graph), plus <code>remote:{…}</code></td></tr>
+<blockquote>
+<p><strong>Windows Users:</strong> If you are using a Git worktree mounted into Linux, pass the revision explicitly:
+<code>docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm</code></p>
+</blockquote>
+<p>This process outputs <code>web/pkg</code> and <code>web/pkg-nomodules</code>, writes build metadata to <code>wasm-build.json</code>, and ensures the pure-Rust <code>ruzstd</code> decoder is ready for browser use.</p>
+<h2>2. The Stable JavaScript API</h2>
+<p>The core 1.0 stable API is built around <code>Graph</code>, <code>RemoteGraph</code>, and standalone functions for querying and building.</p>
+<p><strong>Data Types &amp; Error Handling:</strong></p>
+<ul>
+<li>Functions take file bytes as <code>Uint8Array</code> and return JSON strings.</li>
+<li>Standard JSON envelopes include <code>"schemaVersion": 1</code>.</li>
+<li>Binding failures throw native JavaScript <code>Error</code> objects.</li>
+</ul>
+<h3>Core Functions at a Glance</h3>
+<table><thead><tr><th>Function</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>info(bytes)</code></td><td>Returns basic metadata: quads, terms, pyramid levels.</td></tr>
+<tr><td><code>query_sparql(bytes, query)</code></td><td>Runs standard SPARQL and returns array of solution objects.</td></tr>
+<tr><td><code>prefix_search(bytes, prefix)</code></td><td>Autocomplete for labels, incredibly fast (no literal scans).</td></tr>
+<tr><td><code>text_search(bytes, words)</code></td><td>Full-text search over literals (if text-indexed).</td></tr>
+<tr><td><code>schema(bytes)</code></td><td>Returns the class and relation schema profile.</td></tr>
+<tr><td><code>shacl(bytes, shapes)</code></td><td>Validates the graph against SHACL Turtle shapes.</td></tr>
+<tr><td><code>progressive_query(bytes, query)</code></td><td>Fast counts and aggregation by querying only the summary!</td></tr>
+<tr><td><code>communities(bytes)</code></td><td>Computes Louvain community clusters.</td></tr>
+<tr><td><code>build(text, format)</code></td><td>Builds a complete <code>.rete</code> file array from RDF text directly in the browser!</td></tr>
 </tbody></table>
-<p><code>query</code> runs SELECT / ASK / CONSTRUCT / DESCRIBE via <code>eval_query</code> and returns a
-single JSON envelope with a <code>kind</code> field:</p>
+<h3>Working with Remote URLs (Workers Only)</h3>
+<p>Because WebAssembly cannot block the main thread with asynchronous <code>fetch</code> calls, we use <strong>synchronous XHR</strong> to achieve lazy HTTP Range reads. <strong>This means URL-based methods must be run inside a Web Worker.</strong></p>
+<table><thead><tr><th>Remote Function</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>sparql_url(url, query)</code></td><td>Runs full SPARQL lazily against a remote URL. Fetches only the needed bytes!</td></tr>
+<tr><td><code>shacl_url(url, shapes)</code></td><td>Validates SHACL lazily; only downloads the nodes targeted by the shapes.</td></tr>
+<tr><td><code>schema_url(url)</code></td><td>Fetches the high-level schema instantly over HTTP.</td></tr>
+</tbody></table>
+<p><em>(Host requirements: Your server must answer <code>Range</code> requests with <code>206 Partial Content</code> and send CORS headers. Silently failing ranges will trigger loud errors).</em></p>
+<h3><code>Graph</code> vs <code>RemoteGraph</code></h3>
+<p>Instead of calling free functions every time (which decodes dictionaries from scratch), use our stateful classes:</p>
 <ul>
-<li>SELECT → <code>{ "schemaVersion":1, "kind":"select", "vars":[…], "rows":[ {var:value,…} ] }</code></li>
-<li>ASK → <code>{ "schemaVersion":1, "kind":"ask", "boolean": true|false }</code></li>
-<li>CONSTRUCT/DESCRIBE → <code>{ "schemaVersion":1, "kind":"construct", "format":"ttl"|"jsonld", "text":"…" }</code>
-when <code>format</code> is <code>"ttl"</code>/<code>"jsonld"</code>, else
-<code>{ "schemaVersion":1, "kind":"construct", "triples":[[s,p,o],…] }</code>.</li>
+<li><strong><code>new Graph(bytes)</code></strong>: Keeps the decoded index in memory. Subsequent queries on this object are incredibly fast.</li>
+<li><strong><code>new RemoteGraph(url)</code></strong>: Keeps the block cache and faulted tiles resident. Subsequent queries on the same remote graph will heavily reuse the cache!</li>
 </ul>
-<p><code>Graph.query_reasoned(query, format)</code> is <code>query</code> with OWL 2 QL entailment on
-(see <a href="reasoning.html">Reasoning</a>); <code>Graph.query_opts(query, format, reason, union)</code> — and the same two methods on <code>RemoteGraph</code> — makes both opt-in
-evaluation toggles explicit: <code>reason</code> is the entailment switch, <code>union</code> the
-non-standard <a href="sparql.html#union-default-graph">union default graph</a> mode, where
-a pattern outside <code>GRAPH</code> matches the merge of the default graph and every
-named graph. Both default to off, and plain <code>query</code> never applies either. One
-cost to know: on a <code>RemoteGraph</code>, a union query over a many-graph file may
-fault the index tiles of <strong>every</strong> named graph the merge touches (the
-empty-default + single-named-graph shape stays a zero-copy borrow), so the
-merge is strictly per-query opt-in.</p>
-<p><code>communities</code> recomputes the Louvain community decomposition (optionally at a
-given dendrogram <code>round</code>) and returns per-community member and triple counts —
-the data behind the playground's "split by community" view.</p>
-<p><code>reach</code> computes multi-source transitive reachability over one <code>predicate</code>.
-<code>seeds</code> is a JSON array string of seed IRI tokens (e.g. <code>'["&lt;http://ex/app&gt;"]'</code>);
-a single bare IRI is also accepted. With <code>reverse=true</code> it traverses edges
-backward ("who reaches the seed?" — impact analysis). It returns one entry per
-seed in input order: <code>{ seed, count, reached }</code>, or <code>{ seed, error }</code> for a seed
-not in the graph (so one unknown seed never fails the whole call). It runs
-<strong>serially</strong> — the browser engine is single-threaded; the native CLI's
-<code>rete reach --parallel</code> fans one task per seed for a real speedup.</p>
-<p><code>build</code> is the ingest path in reverse direction from everything above: it takes
-RDF <em>text</em> (<code>format</code>: <code>"nt"</code> N-Triples, <code>"nq"</code> N-Quads — named graphs become a
-dataset — or <code>"ttl"</code> Turtle) and assembles a complete <code>.rete</code> file image in the
-browser: dictionary, permutation indexes, and the community pyramid. The bytes
-it returns are immediately queryable by every other function, and downloadable
-as a file. One caveat: the wasm engine ships only the pure-Rust zstd <em>decoder</em>,
-so in-browser builds write uncompressed sections (codec <code>NONE</code>) — every reader
-accepts them, but <code>rete build</code> produces a smaller file from the same input.
-This powers the playground's <strong>Build</strong> tab.</p>
-<p><code>sparql_url</code> runs full SPARQL against a <strong>remote <code>.rete</code> URL without
-downloading it</strong>: it reads the header, the dictionary chunk directories and
-index tile directories, then faults in only the dictionary chunks and index
-tiles the query touches — and full scans coalesce adjacent tiles into batched
-range reads, so even <code>?s ?p ?o</code> costs a handful of requests, not one per
-tile. The result envelope is the same as <code>query</code>, plus a <code>remote</code> object
-reporting exactly how little of the file was fetched.</p>
-<p>The design constraint, honestly: the engine is synchronous, and wasm cannot
-block on <code>fetch</code>. Instead of an async engine refactor, the byte-range reads
-use <strong>synchronous XHR — which browsers permit only inside Web Workers</strong>. So
-call <code>sparql_url</code> from a worker (see <code>web/sparql-url-worker.js</code> and the
-"Remote SPARQL" section of the demo page); on the main thread the browser
-throws. The host must answer <code>Range</code> requests with <code>206 Partial Content</code>
-(a host that ignores <code>Range</code> is rejected loudly, never silently mis-read)
-and send CORS headers when cross-origin. A range fetch that fails mid-query
-is an error — never a silently incomplete result.</p>
-<p>The length probe uses a one-byte ranged <code>GET</code> (reading the total from
-<code>Content-Range</code>) rather than <code>HEAD</code>, since some hosts reject <code>HEAD</code> —
-notably Hugging Face's signed-redirect storage, which answers <code>405</code>.</p>
-<h2>Caching remote reads</h2>
-<p>Range reads are <strong>cached</strong>, so re-running or refining a query on a remote dataset
-re-fetches almost nothing. Two layers:</p>
+<h2>3. Caching Remote Reads</h2>
+<p>Efficiency is key. <code>rete-wasm</code> implements two layers of caching:</p>
+<ol>
+<li><strong>Within a query (Block Cache):</strong> The lazy reader fetches data in 64 KiB aligned blocks. If a query requests multiple tiles that fall in the same block, they are served from memory.</li>
+<li><strong>Across queries (Resident Session):</strong> Using <code>RemoteGraph</code>, all decoded dictionary chunks and index tiles survive between queries. If you run a query, refine it, and run it again, <strong>0 new bytes</strong> cross the wire!</li>
+</ol>
+<p><strong>Persistent Range Cache:</strong>
+In the playground, you can enable "Persist fetched ranges across reloads." This saves 1 MiB data blocks into IndexedDB. If you reload the page tomorrow, it will instantly serve those cached blocks instead of hitting the network.</p>
+<h2>4. Progressive Loading: Overview First</h2>
+<p>The "Progressive Fetch" architecture is a game-changer for UI responsiveness.</p>
+<p>Using <code>header_ranges</code> and <code>summary_overview</code>, the browser fetches the 1 KB header, the dictionary, and the pyramid summary (usually ~25% of the file) in exactly three tiny range requests.
+<strong>The massive triple index is never downloaded.</strong></p>
+<p>You can use <code>progressive_query</code> to instantly answer shapes like:</p>
 <ul>
-<li><strong>Within a query — a block cache.</strong> The lazy reader wraps the raw HTTP-range
-backend in a <code>BlockCacheReader</code>: every read is served from a 64 KiB aligned
-block, fetched once and kept. A query's scattered tile reads that fall in the
-same block cost a single fetch (and a multi-range host coalesces the block
-fetches further). This works over any single-range backend — S3, a CDN — not
-just a multi-range gateway.</li>
-<li><strong>Across queries — a resident session.</strong> <code>RemoteGraph</code> opens a URL once and
-keeps the <code>Rete</code> resident, so the block cache <strong>and</strong> the faulted index tiles
-<strong>and</strong> the decoded dictionary chunks all survive between queries. The
-playground's worker holds one <code>RemoteGraph</code> per URL, so exploring a remote
-dataset — refining a filter, paging entity tables, re-running — reuses
-everything already fetched: a fully cached re-run fetches <strong>0 bytes</strong>, and the
-result line shows <em>"0 new bytes, all served from this session's cache"</em> with
-the cache's size. (The free <code>sparql_url</code>
-opens a fresh file each call, so it gets only the within-query block cache —
-use <code>RemoteGraph</code> for cross-query reuse.)</li>
-</ul>
-<p><code>RemoteGraph.stats()</code> returns the session's cumulative <code>{ schemaVersion, fileLength, bytes, requests }</code>; the worker diffs successive calls to report one
-query's physical traffic versus the running session total.</p>
-<ul>
-<li><strong>Across reloads and sessions — an opt-in persistent range cache.</strong> The
-playground's <strong>Settings → Persist fetched ranges across reloads</strong> toggle installs
-a tiny <code>XMLHttpRequest</code> shim in each engine worker that mirrors fetched bytes
-into IndexedDB in 1 MiB blocks (keyed by the file's origin + path) and warms them
-back on the next load — so a reload re-fetches nothing already held, and the
-cache survives browser sessions until cleared. Settings shows a <strong>per-file
-breakdown</strong> — each cached <code>.rete</code> with how much of it is held (e.g. <em>16 MB /
-1.04 GB · 1.6%</em>) and a fill bar — plus per-file and global <strong>Clear</strong>. It is off
-by default, so the default read path is byte-identical with the shim absent.</li>
-<li><strong>Whole-file cache mode — one download, then local.</strong> Choosing <strong>Cache</strong> for a
-catalog dataset downloads that complete <code>.rete</code> once and stores it in the
-playground's IndexedDB whole-file store. Queries open those bytes in memory;
-reloads and later browser sessions reuse the stored file with zero network
-reads. The entry appears under <strong>Settings → Whole-file caches</strong>, where it can be
-removed. If IndexedDB is unavailable or quota is exhausted, the current page
-still uses its in-memory copy, but a later reload must download it again.</li>
-</ul>
-<p><strong>Host CORS, in practice.</strong> Range-querying from the browser needs a host that
-serves the bytes <em>directly</em> to a cross-origin browser request. A plain static
-server with CORS works; an S3/R2/GCS bucket with CORS works; same-origin always
-works. What does <strong>not</strong> work is Hugging Face's <code>buckets/.../resolve</code> endpoint:
-it returns <code>405</code> to a cross-origin browser <code>GET</code> even though it serves the
-<code>rete</code> CLI fine (the CLI sends no <code>Origin</code>). The bytes themselves are reachable
-— the resolved signed CDN URL answers <code>206</code> to the browser — but the <code>resolve</code>
-hop refuses browser requests, so the lazy backends can't follow it. A client
-should probe its data URL on load and surface a clear banner when the
-host isn't browser-reachable; point at a CORS-enabled direct host to light up
-the remote backends.</p>
-<p><strong>Production catalog contract.</strong> Playground datasets are served directly from
-<code>https://data.graphplaza.com</code> (Cloudflare R2), one folder per dataset, without a
-redirect or token. Every published <code>.rete</code> must use stable format generation 1
-(header byte <code>0x05</code>) and expose <code>Content-Range</code>, <code>Content-Length</code>,
-<code>Accept-Ranges</code>, and <code>ETag</code> to CORS callers. <code>web/datasets.lock.json</code> pins each
-catalog object's size, content hash, and format byte. Run
-<code>uv run python scripts/check_dataset_catalog.py --all</code> before a release to probe
-all URLs with a browser-style Range request and verify the lock.</p>
-<p><strong>Parallel range reads (opt-in).</strong> Sequential synchronous XHR serialises a
-query's round trips. With cross-origin isolation the explorer can read the
-faulted ranges in parallel: a pool of fetch workers pulls them (each a
-synchronous XHR, parallel across the pool) into a <code>SharedArrayBuffer</code>,
-<code>Atomics</code>-coordinated, and the engine blocks until they land — <code>read_at</code> falls
-back to sequential when isolation is unavailable, so there is never a
-regression. Static hosts don't send COOP/COEP, so it is <strong>opt-in via
-<code>?parallel=1</code></strong> (a bundled <code>coi-serviceworker.js</code> injects the headers and the
-page reloads once); the default page stays un-isolated so the cross-origin
-DuckDB-WASM / SQLite backends keep working.</p>
-<p><code>why_triples</code> exposes the same result-provenance path as <code>rete why</code>. It resolves
-the optional triple pattern through <code>Rete::query_with_provenance</code> and returns
-browser-style camelCase fields: <code>resultCount</code>, <code>matchedPattern</code>,
-<code>indexPermutation</code>, <code>indexSection</code>, <code>dictionaryRange</code>, <code>indexRange</code>,
-<code>indexSectionRange</code>, and <code>pyramidRange</code>. <code>indexRange</code> is the full permutation
-container; <code>indexSectionRange</code> is the selected permutation payload inside it.
-Tile provenance reports the physical tile holding each match —
-<code>{ "available": true, "id": "SPO/3", "range": { … } }</code>.</p>
-<h3>Minimal example</h3>
-<pre><code class="language-js">import init, { info, query_sparql } from "./pkg/rete_wasm.js";
-await init();
-const bytes = new Uint8Array(await (await fetch("/data.rete")).arrayBuffer());
-console.log(JSON.parse(info(bytes)));
-const rows = JSON.parse(query_sparql(bytes,
-  `PREFIX e: &lt;http://ex/&gt; SELECT ?y WHERE { e:Alice e:knows ?y }`));
-</code></pre>
-<h2>Progressive loading (overview without the index)</h2>
-<img src="img/progressive-fetch.svg" alt="A client issues three small range requests for the header, dictionary, and pyramid summary; the large index block is greyed out and never fetched.">
-<p><em>Three small range requests (header + dictionary + summary, ~25% of the file) build the coarse graph; the large triple index is never downloaded.</em></p>
-<p><code>header_ranges</code> + <code>summary_overview</code> implement the "overview first" path in the
-browser: read the 1 KB header (bytes <code>0..1024</code>), learn where the dictionary and
-pyramid summary live, range-fetch <strong>only those</strong>, and compute the coarse graph —
-the large triple index is never downloaded.</p>
-<pre><code class="language-js">import init, { header_ranges, summary_overview } from "./pkg/rete_wasm.js";
-await init();
-
-const range = async (off, len) =&gt; new Uint8Array(await (await fetch(url, {
-  headers: { Range: `bytes=${off}-${off + len - 1}` }
-})).arrayBuffer());
-
-const total  = +(await fetch(url, { method: "HEAD" })).headers.get("content-length");
-const header = await range(0, 1024);
-const r      = JSON.parse(header_ranges(header));
-
-const buf = new Uint8Array(total);                 // index region left zero
-buf.set(header, 0);
-buf.set(await range(r.dictOffset, r.dictLen), r.dictOffset);
-buf.set(await range(r.pyramidOffset, r.pyramidLen), r.pyramidOffset);
-
-const overview = JSON.parse(summary_overview(buf)); // index never fetched
-</code></pre>
-<p>This is the same path as <code>rete summary-url</code> natively. It's verified end-to-end in
-<code>rete-wasm</code>'s Node test: with the index region zero-filled, the overview still
-computes — typically ~25 % of the file fetched in 3 ranges.</p>
-<p><code>progressive_query</code> uses the same summary-only path for query answering. It is
-intentionally conservative and returns an error unless the query is exactly one
-of these shapes:</p>
-<ul>
-<li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s &lt;predicate&gt; ?o }</code></li>
 <li><code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code></li>
-<li><code>SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p</code></li>
-<li><code>SELECT DISTINCT ?p WHERE { ?s ?p ?o }</code></li>
-<li><code>SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }</code></li>
-<li><code>ASK { ?s ?p ?o }</code></li>
 <li><code>ASK { ?s &lt;predicate&gt; ?o }</code></li>
 </ul>
-<p>Successful responses reuse the normal <code>query</code> envelopes and add
-<code>progressive</code>, for example:</p>
-<pre><code class="language-json">{
-  "schemaVersion": 1,
-  "kind": "select",
-  "vars": ["n"],
-  "rows": [{ "n": "\"42\"^^&lt;http://www.w3.org/2001/XMLSchema#integer&gt;" }],
-  "progressive": {
-    "stage": "summary",
-    "exact": true,
-    "readsIndex": false,
-    "queryShape": "predicate_count",
-    "bytes": 9182,
-    "requests": 3,
-    "fileBytes": 37210
-  }
-}
-</code></pre>
-<h2>The demo page / playground</h2>
-<p><code>docs/playground.html</code> is the static console build. It is generated from
-<code>web/playground.template.html</code> plus the source fragments in
-<code>web/playground-src/</code>, then inlines the no-modules WASM glue, WASM bytes, and
-bundled <code>.rete</code> datasets. It opens directly from <code>file://</code>, defaults to SPARQL,
-and keeps SHACL, reachability, schema, and provenance modes available without a
-runtime server or bundler. The WASM initializer receives embedded bytes; the
-generator removes wasm-bindgen's URL/fetch fallback so app boot cannot silently
-go to the network.</p>
-<p>Beyond the bundled datasets it also opens <strong>remote</strong> <code>.rete</code> files lazily over
-HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
-tiles cross the wire), caches those reads across queries (above), and federates a
-query across <strong>several</strong> sources via the SPARQL console's <strong>+ Add source</strong> button
-— see <a href="federation.html#in-the-playground">Federated queries</a>.</p>
-<h3>Rich result cells and focused cards</h3>
-<p>Every Table column and Card field has the same explicit render-type menu. In
-addition to Auto, Text, Link, Button, Image, IIIF, PDF viewer, Map, 3D, Audio,
-Video, Spin, and Number, two opt-in types handle values that Auto deliberately
-does not guess:</p>
+<p>If the query requires a full index scan, the progressive engine will cleanly reject it, prompting you to run a standard SPARQL query.</p>
+<h2>5. The Browser Playground</h2>
+<p>Our static explorer (<code>docs/playground.html</code>) requires no bundler. It opens remote files lazily, supports federation across multiple sources, and renders rich results!</p>
+<h3>Rich Result Cells</h3>
+<p>The table views in the playground go beyond plain text:</p>
 <ul>
-<li><strong>Page preview</strong> lazily embeds a desktop-shaped thumbnail as the cell nears
-the viewport. The iframe uses <code>sandbox="allow-scripts"</code> and
-<code>referrerpolicy="no-referrer"</code>; it cannot gain same-origin access or navigate
-the parent. A site's <code>X-Frame-Options</code> or CSP <code>frame-ancestors</code> policy can
-still block it, so the cell always retains an <strong>Open page ↗</strong> link.</li>
-<li><strong>Markdown</strong> renders an RDF literal as headings, paragraphs, lists,
-blockquotes, emphasis, links, and inline/fenced code. Raw HTML remains escaped,
-and only <code>http:</code>, <code>https:</code>, and <code>mailto:</code> links become anchors. The RDF
-language badge is preserved.</li>
+<li><strong>Media Previews:</strong> Renders images, audio, video, IIIF manifests, PDFs, and 3D models inline.</li>
+<li><strong>Page Previews:</strong> Lazily embeds a sandboxed thumbnail of a webpage when hovered.</li>
+<li><strong>Markdown:</strong> Renders RDF literals as beautiful markdown (headings, lists, code blocks).</li>
 </ul>
-<p>Every media cell keeps a contextual source link below the preview—<strong>Open image,
-PDF, audio, video, 3D, viewer, manifest,</strong> or <strong>page</strong>—even when its inline
-preview fails. Clicking an inline PDF page opens a larger paged modal without
-opening the document a second time; the modal reuses the same PDF.js document
-and current page. A linearized (Fast Web View) PDF on a server with byte-range
-support gives the quickest first page. Ordinary PDFs remain compatible: PDF.js
-may first fetch the file tail or fall back to downloading the complete file.
-Cross-origin range streaming also requires suitable CORS response headers.</p>
-<p>On a fine-pointer desktop, image hover previews grow up to the available
-viewport but are disabled inside the focused-card dialog. The focused Card view
-is wider and leaves neighboring cards visible. Navigate it with Prev/Next,
-Left/Right, native horizontal trackpad scrolling, Shift+wheel, dragging a
-non-interactive card area, or the visible horizontal scrollbar. Touch devices
-retain native swipe and vertical scrolling inside long cards.</p>
-<h3>Find a term</h3>
-<p>The console's <strong>🔎 Find a term</strong> button opens a picker so you don't have to know
-a graph's IRIs by heart. It opens on the schema card's <strong>classes and predicates</strong>
-(instant, from the resident card) and, as you type, also searches <strong>entities by
-label</strong> — synchronously for an embedded graph, and over HTTP-range reads (with a
-spinner) for a remote-lazy one, using the bounded label index. Click any result
-to drop its <code>&lt;IRI&gt;</code> at the cursor.</p>
-<p>Each predicate row also carries a <strong>values ›</strong> drill: click it for a faceted
-browse of the distinct objects that predicate takes — IRIs resolved to their
-human labels, literals shown verbatim — then click one to insert it into the
-query. The values for a predicate are read once and cached, so re-opening is
-instant; on a remote graph the read is a single bounded range query. The <strong>Label</strong>
-selector at the top chooses which predicate is read as the human label
-(<code>rdfs:label</code>, <code>skos:prefLabel</code>, <code>schema:name</code>, … or <code>auto</code>), and the same choice
-drives the editor's inline <strong>Labels</strong> decode chips.</p>
-<h2>Media &amp; companions</h2>
-<p>Inline rendering of images / IIIF / 3D / audio / geo cells in playground
-results — and the asset-preparation pipelines behind them — moved to their own
-page: <a href="media-companions.html">Media &amp; SQL companions</a>.</p>
+<h3>Find a Term (Search)</h3>
+<p>Don't memorize IRIs. The <strong>🔎 Find a term</strong> button opens a fast autocomplete picker for classes, predicates, and entities. It runs synchronously for local graphs, and seamlessly utilizes HTTP-range reads for remote datasets.</p>
+<p>Clicking the <strong>"values ›"</strong> drill down on a predicate instantly shows a faceted list of all objects assigned to that predicate!</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

@@ -1,63 +1,72 @@
 # Python API
 
-`rete-graph` is the Python client for `.rete` files: native bindings (PyO3) to
-the same Rust engine behind the [CLI](cli.md) and the
-[browser playground](playground-guide.md). It opens a graph from a **local
-path, an HTTP(S) URL, in-memory bytes, or a custom reader object** and queries
-it with SPARQL — remote files are read lazily over HTTP `Range` requests, so a
-selective query over a multi-GB file fetches kilobytes, never the file.
+Welcome to the `rete-graph` Python client! This package provides native Python bindings (via PyO3) to the same high-performance Rust engine powering the [CLI](cli.md) and the [browser playground](playground-guide.md).
+
+With this client, you can open a graph from a **local path, an HTTP(S) URL, in-memory bytes, or a custom reader object** and query it using SPARQL. Because remote files are queried lazily using HTTP `Range` requests, running a selective query over a multi-gigabyte file only fetches a few kilobytes!
+
+## Installation
+
+Install via pip or uv. The package works anywhere CPython ≥ 3.9 runs (scripts, Jupyter, marimo, Colab, Linux, macOS, Windows).
 
 ```sh
 uv pip install rete-graph          # or: pip install rete-graph
 ```
 
-Works anywhere real CPython ≥ 3.9 runs: scripts, Jupyter, **marimo**
-(desktop/server), Colab, uv/pip/conda environments, on Linux, macOS, and
-Windows. From **0.2.0** there are also Pyodide wheels for browser Pythons —
-see [JupyterLite & marimo WASM](#browser-python-jupyterlite--marimo-wasm)
-below. A runnable
-[Jupyter notebook tour](https://github.com/caviri/rete/blob/main/clients/python/examples/tutorial.ipynb)
-covers everything below with captured outputs.
+*(Note: We also provide Pyodide wheels for browser Pythons! See [Browser Python](#browser-python-jupyterlite--marimo-wasm) below.)*
 
-## Open a graph
+> **Try it out:** Check out our [interactive Jupyter notebook tour](https://github.com/caviri/rete/blob/main/clients/python/examples/tutorial.ipynb) which covers everything below with runnable examples.
+
+## 1. Open a Graph
+
+You can open a graph from virtually any source. All methods return the exact same `Graph` object.
 
 ```python
 import rete_graph as rete
 
-g = rete.open("https://data.graphplaza.com/boe/boe.rete")     # remote, lazy
-g = rete.open("data/example.rete")                            # local file, lazy too
-g = rete.open(file_bytes)                                     # bytes image, eager
-g = rete.open(url, headers={"Authorization": "Bearer ..."})   # authed hosts
+# 1. Remote and lazy (fetches bytes only as needed)
+g = rete.open("https://data.graphplaza.com/boe/boe.rete")
+
+# 2. Local and lazy (reads from disk only as needed)
+g = rete.open("data/example.rete")
+
+# 3. In-memory eager (from a bytes object)
+g = rete.open(file_bytes)
+
+# 4. Authenticated remote hosts
+g = rete.open(url, headers={"Authorization": "Bearer ..."})
 ```
 
-All four paths return the same `Graph`. Remote and local opens are **lazy**:
-the header, dictionary directory, and index tile directories load up front;
-tile payloads fault in per query and stay cached on the handle, so repeated
-queries get faster. The host serving a remote file must answer `Range`
-requests with `206 Partial Content` (any S3/R2/CDN/GitHub URL does — see
-[Hosting your .rete](hosting.md)); anything else is a loud error, never a
-silently wrong slice.
+### How Lazy Loading Works
 
-`g.stats()` reports the physical traffic since open —
-`{"fileLength": ..., "bytes": ..., "requests": ...}` — the number that makes
-the lazy story visible: a `LIMIT 3` scan of a 6.9 MB remote file fetches
-~24% of it in ~13 requests; a cache-hit re-run adds ~0.
+Local and remote opens are **lazy**:
+- The file header, dictionary directory, and index tile directories are loaded immediately.
+- Tile payloads (the actual data) are fetched *only* when your query needs them, and then they are cached on the graph handle for subsequent queries.
 
-### Custom readers (fsspec, S3, anything)
+You can verify the physical network traffic using `.stats()`:
+```python
+print(g.stats())
+# Example output: {'fileLength': 7234567, 'bytes': 15432, 'requests': 13}
+```
+*(A standard `LIMIT 3` query might only download a tiny fraction of the file, and a re-run will fetch 0 new bytes!)*
 
-Any object with `read_at(offset, length) -> bytes` and a length (a `len()`
-method or `__len__`) can back a graph — so fsspec reaches authenticated
-S3/GCS/Azure with no rete-specific code:
+> **Host Requirements for URLs:** The host must support HTTP `Range` requests and return `206 Partial Content` (like S3, R2, CDNs, or GitHub). If it doesn't, you will get a clear error, not a silently corrupted file. See [Hosting your .rete](hosting.md).
+
+### Using Custom Readers (S3, GCS, fsspec)
+
+You aren't limited to standard files or HTTP. You can pass any Python object that implements `read_at(offset, length)` and a `len()` method. This makes integrating with `fsspec` (for S3, Azure, GCS) trivial!
 
 ```python
-import fsspec, rete_graph as rete
+import fsspec
+import rete_graph as rete
 
 class FsspecReader:
     def __init__(self, url, **kw):
         self.f = fsspec.open(url, "rb", **kw).open()
         self.size = self.f.size
-    def len(self):
+        
+    def __len__(self):
         return self.size
+        
     def read_at(self, offset, length):
         self.f.seek(offset)
         return self.f.read(length)
@@ -65,7 +74,9 @@ class FsspecReader:
 g = rete.open(reader=FsspecReader("s3://my-bucket/data.rete"))
 ```
 
-## Query
+## 2. Querying Data
+
+Query your graph using standard SPARQL:
 
 ```python
 rows = g.query("""
@@ -73,211 +84,147 @@ rows = g.query("""
         ?s <http://www.w3.org/2000/01/rdf-schema#label> ?label
     } LIMIT 10
 """)
-for row in rows:                       # SELECT -> list of {var: Term}
+
+# SELECT queries return a list of dictionaries mapping variables to Terms
+for row in rows:
     print(row["s"].value, row["label"].to_python())
 
-g.query("ASK { ?s ?p ?o }")            # -> bool
-g.query("CONSTRUCT { ... } WHERE { ... }")   # -> list of (s, p, o) Term triples
+# ASK returns a boolean
+is_present = g.query("ASK { ?s ?p ?o }") 
+
+# CONSTRUCT/DESCRIBE returns a list of (s, p, o) Term triples
+triples = g.query("CONSTRUCT { ... } WHERE { ... }")
 ```
 
-Every value is a `Term` with `.kind` (`"iri"` / `"literal"` / `"bnode"` /
-`"triple"` for RDF-star), `.value`, `.datatype`, `.lang`, plus:
+### The `Term` Object
+Every value returned is a `Term` with useful properties:
+- `.kind`: `"iri"`, `"literal"`, `"bnode"`, or `"triple"` (for RDF-star).
+- `.value`, `.datatype`, `.lang`: Standard RDF components.
+- `.to_python()`: Converts common XSD datatypes to native Python `int`, `float`, or `bool`.
+- `.n3`: Returns the term formatted as an N-Triples string.
 
-- `.to_python()` — int/float/bool for the common XSD datatypes, else the string
-- `.n3` — the term back in N-Triples surface form
+### Pandas & Raw Data
+- Want dataframes? Run `pip install rete-graph[pandas]` and use `g.query_df(q)`.
+- Want raw engine JSON? Use `g.query_raw(q)`.
 
-`g.query_raw(q)` returns the engine's JSON envelope unparsed (the same shape
-the playground uses), and `g.query_df(q)` returns a pandas DataFrame
-(`pip install rete-graph[pandas]`).
+## 3. Powerful Graph Features
 
-### Run the file's own example queries
-
-A `.rete` can carry **example SPARQL queries inside the file** (in its
-[Dataset Card](dataset-cards.md)); CLI-built datasets ship a whole tiered
-starter library. `g.examples()` reads them — on a remote file that costs one
-small ranged read:
+### Example Queries
+`.rete` files can embed starter queries inside their [Dataset Card](dataset-cards.md). You can list and run them directly—which only costs one small range read on a remote file!
 
 ```python
-g = rete.open("https://data.graphplaza.com/boe/boe.rete")
-for ex in g.examples():                     # 20 entries on this dataset
+for ex in g.examples():
     print(ex["title"], "—", ex["question"])
-g.query(g.examples()[0]["sparql"])          # and they just run
+
+# Run the first embedded example directly!
+g.query(g.examples()[0]["sparql"])
 ```
 
-Embed your own with `Builder.example()` (rich: title + question + SPARQL) or
-`Builder.card(example_queries=[...])` (plain strings).
+### Reasoning (OWL 2 QL)
+Want intelligent inference? Enable OWL 2 QL reasoning, which dynamically rewrites your query based on the graph's ontology (`rdfs:subClassOf`, `domain`, etc.). No materialization required, so it works flawlessly on lazy remote files!
 
-### Reasoning
-
-`g.query(q, reason=True)` turns on OWL 2 QL entailment — `rdfs:subClassOf`,
-`subPropertyOf`, `domain`/`range` and friends, computed by **query rewriting**
-over the file's ontology, so it works over lazy remote files without
-materializing anything. See [Reasoning & coherence](reasoning.md).
+```python
+g.query(q, reason=True)
+```
+See [Reasoning & coherence](reasoning.md).
 
 ### Federation
+Join your `.rete` file against public SPARQL endpoints (like Wikidata) in a single query using SPARQL 1.1 `SERVICE` blocks. See [Federated queries](federation.md).
 
-SPARQL 1.1 `SERVICE` works out of the box: join a `.rete` file against any
-public SPARQL endpoint (Wikidata, DBpedia, …) in one query. See
-[Federated queries](federation.md).
+## 4. Search and Explore Metadata
 
-## Build `.rete` files from Python
-
-`rete.build()` produces a complete file image, ready to `open()`, save, or
-upload:
+Easily explore graphs you didn't build:
 
 ```python
-data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl")
-pathlib.Path("out.rete").write_bytes(data)
+g.schema()                    # Get class and relation counts: {"classes": [...], "relations": [...]}
+g.prefix_search("Berl")       # Fast label autocomplete -> [(label, subject_iri)]
+g.text_search("volcano")      # Full-text search (if the file was built with --text-index)
+g.info()                      # Returns {"quads": ..., "terms": ..., "pyramidLevels": ...}
+g.graph_names()               # List named graphs in a dataset
+g.content_hash()              # Get the blake3-16 hex hash (great as a cache key!)
 ```
 
-It also accepts a **graph object from another RDF library** — anything with a
-`.serialize(format=...)` method (duck-typed; rdflib is not a dependency). An
-rdflib `Graph` round-trips as N-Triples; a context-aware `Dataset` /
-`ConjunctiveGraph` as N-Quads, so named graphs survive:
+## 5. SHACL Validation
+
+Validate your graph against SHACL Core shapes written in Turtle. Validation is **lazy-aware**: when checking a remote graph, only the specific targets of the shapes are fetched over the network!
 
 ```python
-import rdflib, rete_graph as rete
-
-g = rdflib.Graph()
-g.parse("mydata.ttl")
-
-rg = rete.open(rete.build(g))                # rdflib -> .rete -> SPARQL
-```
-
-For step-by-step preparation — an embedded Dataset Card, pyramid options, the
-full-text index — use the **lazy `Builder`**: configure, then `run()` and
-`export()`:
-
-```python
-builder = (
-    rete.Builder()
-    .add_file("people.ttl")
-    .card(title="People", license="CC0-1.0")
-    .pyramid(algo="louvain")        # or "types", or .pyramid(False)
-    .text_index()
-)
-builder.run()                        # bytes; stats in builder.stats
-builder.export("people.rete")
-```
-
-The full walkthrough (every card field, pyramid trade-offs, verification) is
-in [Python: build a .rete](python-build-tutorial.md). In-memory builds suit
-tests and small-to-medium graphs (say, up to a few million triples). For big
-datasets use the [`rete build` CLI](cli.md), which streams from disk,
-compresses harder, and derives the enriched card profile — see
-[Tables, VKG & big builds](data-engineering.md).
-
-## Search and overview
-
-```python
-g.schema()                    # {"classes": [(iri, count)], "relations": [(s, p, o, count)]}
-g.prefix_search("Berl")       # label autocomplete -> [(label, subject_iri)]
-g.text_search("volcano")      # full-text; needs a file built with --text-index
-g.info()                      # {"quads": ..., "terms": ..., "pyramidLevels": ...}
-g.quads, g.terms              # header counts, as properties
-g.graph_names()               # named graphs in a dataset
-g.content_hash()              # blake3-16 hex — a stable cache key
-```
-
-## SHACL validation
-
-From **0.2.2**, validate a graph against SHACL Core shapes written in
-Turtle — data-quality contracts checked in place:
-
-```python
-report = g.shacl("""
+shapes = """
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
 [] a sh:NodeShape ;
   sh:targetClass <https://example.org/Person> ;
   sh:property [ sh:path rdfs:label ; sh:minCount 1 ] .
-""")
-report["conforms"]            # True / False
-report["results"]             # one entry per violation (focus node, path, message)
-g.shacl(shapes, format="ttl") # the same report as sh:ValidationReport Turtle
+"""
+
+report = g.shacl(shapes)
+print("Conforms?", report["conforms"])
+print("Violations:", report["results"])
+
+# Get the report as a Turtle string instead
+ttl_report = g.shacl(shapes, format="ttl")
 ```
+Use the `graph="<iri>"` argument to validate a specific named graph.
 
-Validation is **lazy-aware**: on a remote graph only the shapes' targets
-are fetched — the index is consulted in place, never the whole file (a
-broad `sh:targetClass` fetches many targets, so scope shapes tightly).
-`graph="<iri>"` validates one named graph instead of the default graph.
+## 6. Build `.rete` Files from Python
 
-## Browser Python: JupyterLite & marimo WASM {#browser-python-jupyterlite--marimo-wasm}
-
-From version 0.2.0 the release also ships **PyEmscripten (Pyodide) wheels**,
-so the client runs inside browser Pythons — a JupyterLite site, marimo's WASM
-playground — with no server anywhere. **Try it right now** in the
-[JupyterLite experiment](jupyterlite-guide.md) bundled with these docs.
+You can easily build `.rete` files from RDF text or directly from `rdflib` objects.
 
 ```python
-# JupyterLite / Pyodide 314 (Python 3.14) — needs rete-graph >= 0.2.1
-%pip install rete-graph
+# 1. From raw text
+data = rete.build(nt_text) # Handles "nt", "nq", "ttl"
+with open("out.rete", "wb") as f:
+    f.write(data)
 
+# 2. From an rdflib Graph
+import rdflib
+g_rdf = rdflib.Graph()
+g_rdf.parse("mydata.ttl")
+rg = rete.open(rete.build(g_rdf))
+```
+
+### The `Builder` API
+For granular control over metadata, community pyramids, and text indexing, use the lazy `Builder`:
+
+```python
+builder = (
+    rete.Builder()
+    .add_file("people.ttl")
+    .card(title="People", license="CC0-1.0")
+    .pyramid(algo="louvain")        # "louvain", "types", or False
+    .text_index()
+)
+
+builder.run() # Builds the graph
+builder.export("people.rete")
+```
+See the full tutorial: [Python: build a .rete](python-build-tutorial.md).
+
+> **For Big Data:** In-memory building is great for tests and graphs up to a few million triples. For massive datasets, use the [`rete build` CLI](cli.md), which streams from disk and uses advanced compression.
+
+## 7. Browser Python: JupyterLite & marimo WASM
+
+We provide **PyEmscripten (Pyodide) wheels**, meaning this client runs directly inside browser-based Pythons (like JupyterLite or marimo) with zero servers required!
+
+```python
+# Inside JupyterLite (Python 3.14+)
+%pip install rete-graph
 import rete_graph as rete
+
 g = rete.open("https://data.graphplaza.com/boe/boe.rete")
 g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 ```
 
-(On the older Pyodide 0.29, whose installer predates the PEP 783 wheel-tag
-spelling PyPI requires, install the byte-identical retagged wheel by URL
-instead: `%pip install
-https://data.graphplaza.com/wheels/rete_graph-0.3.2-cp39-abi3-pyodide_2025_0_wasm32.whl`.)
+**Key Details for Browser Environments:**
+- Remote reads use synchronous `XMLHttpRequest` range requests. Because browsers only allow this in **web workers**, it runs perfectly in JupyterLite/marimo kernels, but would block the main thread.
+- Due to WebAssembly limitations, range fetches are sequential and `SERVICE` federation is unavailable. 
+- In-browser builds write uncompressed data.
 
-Under the hood, remote reads use synchronous `XMLHttpRequest` range requests —
-allowed only in **web workers**, which is where JupyterLite and marimo run
-their kernels, so it just works there. The file's host must send CORS headers
-and honor `Range`, the same contract as the [playground](playground-guide.md).
+See the [JupyterLite experiment guide](jupyterlite-guide.md).
 
-Differences from the native wheels, by browser necessity:
+## Guarantees and Threading
 
-- Range fetches are sequential (no threads in wasm) — fine in practice, since
-  the block cache already coalesces reads.
-- `SERVICE` federation is unavailable.
-- In-browser `build()` writes uncompressed sections (like the playground's
-  Build tab); every reader accepts them.
-- wasm32 means a 4 GiB memory ceiling — lazy *remote* querying is the
-  intended use, not giant in-memory builds. (A wasm64 build lifts this, and
-  is tracked as future work pending Pyodide support.)
-
-Pyodide wheels are per-ABI-year (not abi3): current Pyodide releases are
-covered; if yours isn't, `micropip.install("<url of the .whl>")` works from
-any CORS-enabled host.
-
-## Guarantees and threading
-
-- **No silent partial results**: if a range fetch fails mid-query on a lazy
-  handle, the query raises instead of returning fewer rows.
-- **The GIL is released** around every engine call, and remote range reads fan
-  out over an internal thread pool (16-way, like the CLI and the playground) —
-  other Python threads keep running during long queries.
-- Errors surface as ordinary exceptions: `ValueError` for bad SPARQL or RDF
-  input, `RuntimeError` for I/O and format problems.
-
-## Feature matrix
-
-| Capability | Python | Notes |
-|---|---|---|
-| SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE | ✅ | `query()` |
-| Lazy remote open (HTTP Range) | ✅ | `open(url)`, custom `headers` |
-| Lazy local open | ✅ | positional reads, no whole-file load |
-| Custom reader objects | ✅ | `open(reader=...)` — fsspec/S3 |
-| OWL 2 QL reasoned queries | ✅ | `query(..., reason=True)` |
-| `SERVICE` federation | ✅ | host-injected HTTP client |
-| Build from RDF text / rdflib objects | ✅ | `build()`, `Builder` |
-| Dataset Card: embed + read back | ✅ | `Builder.card()`, `Graph.card()` (ranged on remote) |
-| Example queries in the file | ✅ | `Builder.example()`, `Graph.examples()` |
-| Build options: pyramid algo, text index | ✅ | `Builder.pyramid()/text_index()/type_predicate()` |
-| Schema profile, prefix & text search | ✅ | `schema()`, `prefix_search()`, `text_search()` |
-| pandas DataFrames | ✅ | `query_df()`, `[pandas]` extra |
-| Browser Python (Pyodide) | ✅ 0.2.0 | JupyterLite / marimo WASM; no SERVICE, sequential fetches |
-| SHACL validation | ✅ 0.2.2 | `shacl()` — lazy over shape targets |
-| Reachability / communities / provenance (`why`) | ⏳ | planned bindings |
-| Multi-shard federated open | ⏳ | planned |
-| Writes / SPARQL UPDATE | — | `.rete` is immutable; use [`rete serve`](cli.md) |
-
-## For contributors
-
-This page is for *using* the package. Building from source, the CI layout,
-the release/publishing procedure, and the checklist for adding new language
-clients live in [Client development & releases](clients-dev.md).
+- **No Silent Failures:** If a range fetch fails mid-query, the query raises an exception rather than returning incomplete rows.
+- **True Concurrency:** The Python GIL is released during engine execution. Remote reads fan out over an internal 16-way thread pool, keeping your other Python threads responsive!
+- **Clear Exceptions:** Errors surface as native Python exceptions (`ValueError` for bad syntax, `RuntimeError` for I/O).

@@ -1,141 +1,157 @@
 # R API
 
-`rete` is the R client for `.rete` files: native bindings (extendr) to the
-same Rust engine behind the [CLI](cli.md), the
-[Python client](python.md), and the
-[browser playground](playground-guide.md). It opens a graph from a **local
-path, an HTTP(S) URL, or a raw vector** and queries it with SPARQL, returning
-ordinary data frames — remote files are read lazily over HTTP `Range`
-requests, so a selective query over a multi-GB file fetches kilobytes, never
-the file.
+Welcome to `rete` for R! This package provides native R bindings (via extendr) to the same powerful Rust engine that drives the [CLI](cli.md), the [Python client](python.md), and the [browser playground](playground-guide.md). 
+
+With this client, you can open a graph from a **local file, an HTTP(S) URL, or a raw vector** in memory and query it using SPARQL. Best of all, results are returned as **standard R data frames**. 
+
+Because remote files are read lazily using HTTP `Range` requests, running a selective query over a multi-gigabyte file only downloads a few kilobytes—never the entire file!
+
+## Installation
+
+Currently, the package is installed directly from GitHub.
+
+**Prerequisites:** You must have Rust ≥ 1.87 installed on your system (get it from [rustup.rs](https://rustup.rs)).
 
 ```r
-# Straight from GitHub — needs Rust ≥ 1.87 on PATH (https://rustup.rs):
+# Install from the main branch
 install.packages("remotes")
 remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)
 
-# A specific branch, tag, or commit:
+# Or, install from a specific branch, tag, or commit:
 remotes::install_github("caviri/rete@main", subdir = "clients/r", build = FALSE)
 ```
 
-One command fetches the repository, compiles the bundled Rust engine
-(a few minutes the first time), and installs the package — no clone needed.
-After install, `vignette("rete")` opens an offline tour that mirrors this
-page, and `?rete_open`, `?rete_query`, `?rete_build` are the reference
-pages.
-`build = FALSE` matters: the package lives in a monorepo and its Rust crate
-references the engine at the repository root, so it must install from the
-full source tree rather than a pre-built subdir tarball (that also rules out
-`pak::pak("caviri/rete/clients/r")` for now). Binary installs via
-R-universe/CRAN (no Rust required) are planned; GitHub is the install path
-today.
+> **Why `build = FALSE`?**
+> The R package lives inside a monorepo and its Rust crate references the core engine at the repository root. `build = FALSE` ensures it installs from the full source tree rather than a disconnected subdirectory tarball.
+> *(Note: Binary installs via R-universe/CRAN that won't require Rust are planned for the future!)*
 
-## Open a graph and query it
+Once installed, you can open the offline tutorial using `vignette("rete")` or check the reference pages (`?rete_open`, `?rete_query`, `?rete_build`).
+
+## 1. Open a Graph and Query It
+
+Opening a graph is straightforward, whether it's local or remote.
 
 ```r
 library(rete)
 
-g <- rete_open("https://data.graphplaza.com/boe/boe.rete")   # remote, lazy
-g <- rete_open("data/example.rete")                          # local file, lazy too
-g <- rete_open(file_image)                                   # raw vector, eager
+# Open lazily from a remote URL (fetches only what it needs)
+g <- rete_open("https://data.graphplaza.com/boe/boe.rete")   
 
-rete_query(g, "
+# Open lazily from a local file
+g <- rete_open("data/example.rete")                          
+
+# Open eagerly from a raw vector in memory
+g <- rete_open(file_image)                                   
+
+# Run a SPARQL query
+results <- rete_query(g, "
   SELECT ?title WHERE {
     ?law <http://data.europa.eu/eli/ontology#title> ?title
   } LIMIT 5
 ")
 ```
 
-`rete_query()` returns what an R user expects:
+### Understanding Results
 
-- **SELECT** → a `data.frame`, one column per variable. IRI brackets are
-  stripped; `xsd:integer` family literals become integers (doubles on
-  overflow), `xsd:decimal`/`double`/`float` become doubles, `xsd:boolean`
-  becomes logical; everything else stays character.
-- **ASK** → a logical scalar.
-- **CONSTRUCT / DESCRIBE** → a `data.frame` with `subject`, `predicate`,
-  `object`.
+`rete_query()` automatically converts SPARQL results into familiar R structures:
 
-`rete_query_raw()` returns the engine's JSON envelope parsed to a list, with
-terms in full N-Triples token fidelity (`<iri>`, `"lit"^^<datatype>`,
-`_:bnode`) — reach for it when the coercions above are too helpful.
+- **`SELECT`**: Returns a `data.frame` with one column per variable. 
+  - IRI brackets are stripped.
+  - `xsd:integer` family literals become R integers (or doubles on overflow).
+  - `xsd:decimal`, `double`, and `float` become R doubles.
+  - `xsd:boolean` becomes R logicals.
+  - Everything else remains character data.
+- **`ASK`**: Returns a logical scalar (`TRUE` or `FALSE`).
+- **`CONSTRUCT` / `DESCRIBE`**: Returns a `data.frame` with three columns: `subject`, `predicate`, and `object`.
 
-Both opens are **lazy**: the header, dictionary directory, and index tile
-directories load up front; tile payloads fault in per query and stay cached
-on the handle, so repeated queries get faster. The host serving a remote file
-must answer `Range` requests with `206 Partial Content` (any S3/R2/CDN/GitHub
-URL does — see [Hosting your .rete](hosting.md)); anything else is a loud
-error, never a silently wrong slice.
+Need the raw, uncoerced data? Use `rete_query_raw()` to get the engine's JSON envelope parsed into an R list, preserving full N-Triples tokens (like `<iri>`, `"lit"^^<datatype>`, `_:bnode`).
+
+### The Magic of Lazy Loading
+
+Both `rete_open(url)` and `rete_open(path)` are **lazy**. 
+- The file header, dictionary directory, and index tile directories are loaded upfront.
+- Tile payloads are fetched exactly when your query needs them and are cached on the graph handle, making subsequent queries blazing fast.
+
+> **Host Requirements:** To query a remote file, the host must support HTTP `Range` requests and return `206 Partial Content` (standard for S3, R2, CDNs, and GitHub). If it doesn't, the client will immediately throw an error rather than silently reading the wrong data. See [Hosting your .rete](hosting.md).
+
+You can check your network efficiency at any time:
 
 ```r
+# Check physical traffic since the graph was opened
 rete_stats(g)
 #> $fileLength  … $bytes  … $requests
 ```
+*(Typically, a query over a multi-hundred MB remote file fetches well under 1% of its total size!)*
 
-`rete_stats()` reports the physical traffic since open — the number that
-makes the lazy story visible: a selective query over a multi-hundred-MB
-remote file typically fetches well under 1% of it.
+## 2. Reasoning (OWL 2 QL)
 
-## Reasoning
+Turn on OWL 2 QL entailment simply by adding `reason = TRUE`. 
 
 ```r
 rete_query(g, query, reason = TRUE)
 ```
 
-`reason = TRUE` answers with OWL 2 QL entailment, computed by query rewriting
-over the ontology embedded in the file — no materialization, so it works on
-remote files too. See [Reasoning](reasoning.md).
+Because reasoning is computed dynamically via **query rewriting** over the file's embedded ontology, it requires no upfront materialization. This means it works seamlessly and instantly over remote files too. See [Reasoning](reasoning.md) for details.
 
-## Explore a file you did not build
+## 3. Explore a Graph
+
+Even if you didn't build the `.rete` file, you can easily inspect its contents, metadata, and schema:
 
 ```r
-rete_info(g)            # quads, terms, pyramid levels, named graphs
-rete_card(g)            # the embedded Dataset Card as a list (or NULL)
-rete_examples(g)        # starter queries the card carries, as a data.frame
-rete_schema(g)          # class + predicate profile, two data.frames
-rete_prefix_search(g, "Mad")        # label autocomplete
-rete_text_search(g, "madrid ley")   # full-text (needs a text-indexed file)
-rete_content_hash(g)    # blake3-16 hex
+rete_info(g)                        # Overview: quads, terms, pyramid levels, named graphs
+rete_card(g)                        # The embedded Dataset Card as an R list (or NULL)
+rete_examples(g)                    # Starter queries included in the card, as a data.frame
+rete_schema(g)                      # Class and predicate profiles (returns two data.frames)
+rete_prefix_search(g, "Mad")        # Fast autocomplete for labels starting with "Mad"
+rete_text_search(g, "madrid ley")   # Full-text search (requires a file built with text-index)
+rete_content_hash(g)                # The blake3-16 hex hash of the file
 ```
 
-`rete_card()` and `rete_examples()` fetch only the metadata section's byte
-range on lazy opens — reading a remote file's card costs a few requests.
-Every `sparql` entry in `rete_examples()` runs as-is:
+> **Fast Metadata:** Functions like `rete_card()` and `rete_examples()` only fetch the metadata byte range. Reading them from a remote file costs just a few tiny network requests.
+
+You can even run the embedded starter queries directly:
 
 ```r
 ex <- rete_examples(g)
 rete_query(g, ex$sparql[[1]])
 ```
 
-## Build a .rete from R
+## 4. Build a `.rete` File from R
+
+You can build a `.rete` file completely in memory using R strings. This is perfect for testing, small graphs, and data pipelines.
 
 ```r
+# Define some raw RDF text
 nt <- '
 <urn:x:alice> <http://xmlns.com/foaf/0.1/knows> <urn:x:bob> .
 <urn:x:alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
 '
+
+# Build the .rete image
 img <- rete_build(nt,
-  format = "nt",                       # nt | nq | ttl | rdfxml
+  format = "nt",                       # Options: "nt", "nq", "ttl", "rdfxml"
   card = list(
     title = "Tiny demo",
     description = "Two triples about Alice",
     license = "CC0-1.0"
   ),
-  pyramid = "louvain",                 # louvain | types | none
-  text_index = TRUE
+  pyramid = "louvain",                 # Community detection: "louvain", "types", or "none"
+  text_index = TRUE                    # Enable full-text search
 )
-writeBin(img, "demo.rete")             # or query it in place:
+
+# Save it to disk...
+writeBin(img, "demo.rete")             
+
+# ...or query it directly in memory!
 rete_query(rete_open(img), "SELECT ?n WHERE { ?s <http://xmlns.com/foaf/0.1/name> ?n }")
 ```
 
-Counts (`triple_count`, `term_count`, …) are stamped into the card
-automatically. In-memory assembly suits tests and small graphs; for large
-datasets use the [`rete build` CLI](cli.md), which streams and compresses.
+When you build a graph, statistics like `triple_count` and `term_count` are automatically injected into the Dataset Card. 
 
-## The same file everywhere
+> **For Big Data:** In-memory building is great for small graphs. For massive datasets, we recommend using the [`rete build` CLI](cli.md), which streams from disk and uses advanced compression.
 
-A `.rete` built anywhere is readable everywhere: this client, the
-[Python client](python.md), the [JavaScript client](javascript.md), the
-[CLI](cli.md), and the [playground](playground-guide.md) all read the same
-bytes over the same range-read discipline — publish one file on any static
-host and every runtime gets it lazily.
+## Write Once, Query Everywhere
+
+The true power of the `.rete` format is its portability. A `.rete` file built in R can be read exactly the same way by the [Python client](python.md), the [JavaScript client](javascript.md), the [CLI](cli.md), and the [browser playground](playground-guide.md). 
+
+Publish a single file to any static host, and every environment can query it lazily!

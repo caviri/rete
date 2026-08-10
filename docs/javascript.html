@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>JavaScript — rete-graph · rete docs</title>
-  <meta name="description" content="rete-graph on npm is the JavaScript client for .rete files: the same WebAssembly engine behind the playground, packaged for browsers and Node with an idiomatic wrapper — parsed Term results, clean…" />
+  <meta name="description" content="Welcome to the rete-graph JavaScript client! Available on npm, this package brings the exact same WebAssembly engine that powers the playground to Node.js and modern browsers." />
   <link rel="canonical" href="https://caviri.github.io/rete/javascript.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="JavaScript — rete-graph · rete docs" />
-  <meta property="og:description" content="rete-graph on npm is the JavaScript client for .rete files: the same WebAssembly engine behind the playground, packaged for browsers and Node with an idiomatic wrapper — parsed Term results, clean…" />
+  <meta property="og:description" content="Welcome to the rete-graph JavaScript client! Available on npm, this package brings the exact same WebAssembly engine that powers the playground to Node.js and modern browsers." />
   <meta property="og:url" content="https://caviri.github.io/rete/javascript.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/javascript.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="JavaScript — rete-graph · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="JavaScript — rete-graph · rete docs" />
-  <meta name="twitter:description" content="rete-graph on npm is the JavaScript client for .rete files: the same WebAssembly engine behind the playground, packaged for browsers and Node with an idiomatic wrapper — parsed Term results, clean…" />
+  <meta name="twitter:description" content="Welcome to the rete-graph JavaScript client! Available on npm, this package brings the exact same WebAssembly engine that powers the playground to Node.js and modern browsers." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/javascript.png" />
   <meta name="rete:section" content="Clients" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -338,92 +336,129 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>JavaScript API</h1>
-<p><code>rete-graph</code> on npm is the JavaScript client for <code>.rete</code> files: the same
-WebAssembly engine behind the <a href="playground-guide.html">playground</a>, packaged for
-<strong>browsers and Node</strong> with an idiomatic wrapper — parsed <code>Term</code> results,
-clean IRIs, the same API shape as the <a href="python.html">Python client</a>.</p>
+<p>Welcome to the <code>rete-graph</code> JavaScript client! Available on npm, this package brings the exact same WebAssembly engine that powers the <a href="playground-guide.html">playground</a> to <strong>Node.js and modern browsers</strong>.</p>
+<p>Enjoy an idiomatic wrapper with parsed <code>Term</code> results, clean IRIs, and an API shape that feels right at home if you've used our <a href="python.html">Python client</a>.</p>
+<h2>Installation</h2>
 <pre><code class="language-sh">npm install rete-graph
 </code></pre>
-<pre><code class="language-js">import { open, build } from "rete-graph";
+<h2>1. Open and Query a Graph</h2>
+<p>You can open and query a <code>.rete</code> file lazily over the network, or from raw bytes in memory.</p>
+<pre><code class="language-javascript">import { open, build } from "rete-graph";
 
-const g = await open("https://data.graphplaza.com/boe/boe.rete"); // Node / worker
-for (const row of g.query(`
+// Open lazily from a remote URL (Node.js or Browser Web Worker)
+const g = await open("https://data.graphplaza.com/boe/boe.rete");
+
+// Run a SPARQL query
+const rows = g.query(`
     SELECT ?s ?label WHERE {
         ?s &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; ?label
-    } LIMIT 5`)) {
-  console.log(row.s.value, "→", row.label.toJS());
+    } LIMIT 5
+`);
+
+for (const row of rows) {
+    console.log(row.s.value, "→", row.label.toJS());
 }
-console.log(g.stats()); // { fileLength, bytes, requests } — lazy, not a download
+
+// Check your network efficiency!
+console.log(g.stats()); 
+// Output: { fileLength, bytes, requests } — proves it was a lazy range read, not a full download!
 </code></pre>
-<h2>Or a single <code>&lt;script&gt;</code> tag — no bundler, no install</h2>
-<p>p5.js-style: one self-contained file (engine embedded), full and minified,
-served by any npm CDN:</p>
+<h3>Understanding Query Results</h3>
+<p>The <code>query()</code> function returns data based on your SPARQL query type:</p>
+<ul>
+<li><strong><code>SELECT</code></strong>: Returns an array of <code>{variable: Term}</code> objects.</li>
+<li><strong><code>ASK</code></strong>: Returns a boolean.</li>
+<li><strong><code>CONSTRUCT</code> / <code>DESCRIBE</code></strong>: Returns an array of <code>[subject, predicate, object]</code> <code>Term</code> triples.</li>
+</ul>
+<p><strong>The <code>Term</code> Object</strong>
+Every value is wrapped in a <code>Term</code> object containing:</p>
+<ul>
+<li><code>.kind</code>: Either <code>"iri"</code>, <code>"literal"</code>, <code>"bnode"</code>, or <code>"triple"</code>.</li>
+<li><code>.value</code>, <code>.datatype</code>, <code>.lang</code>.</li>
+<li><strong><code>.toJS()</code></strong>: Intelligently coerces common XSD types into native JavaScript <code>number</code>, <code>boolean</code>, or <code>BigInt</code>.</li>
+<li><strong><code>.n3</code></strong>: Returns the term formatted as an N-Triples string.</li>
+</ul>
+<h3>More Powerful Methods</h3>
+<p>Your graph object <code>g</code> comes packed with powerful analytical tools:</p>
+<pre><code class="language-javascript">// Enable OWL 2 QL entailment via query rewriting!
+g.query(q, { reason: true });   
+
+// Get raw JSON from the engine
+g.queryRaw(q);                  
+
+// Fast autocomplete for labels (returns [{label, subject}])
+g.prefixSearch("Berl");         
+
+// Full-text search (requires a file built with --text-index)
+g.textSearch("volcano");        
+
+// Get a high-level summary of classes and relations
+g.schema();                     
+
+// Inspect metadata and hashes
+g.graphNames(); 
+g.info(); 
+g.quads;
+g.contentHash();                
+
+// Build a new .rete file from RDF text (returns a Uint8Array)
+await build(ntText, "nt");      
+</code></pre>
+<h2>2. Environment Compatibility: Where Remote Opens Work</h2>
+<p>To keep the WASM engine fast and simple, it relies on synchronous requests for lazy data fetching. This introduces some important environment rules:</p>
+<table><thead><tr><th>Environment</th><th><code>open(url)</code> (Lazy Remote)</th><th><code>open(bytes)</code> (Eager Memory)</th></tr></thead><tbody>
+<tr><td><strong>Node ≥ 18</strong></td><td>✅ <em>(Uses built-in sync-fetch bridge)</em></td><td>✅</td></tr>
+<tr><td><strong>Browser Web Worker</strong></td><td>✅ <em>(Uses native sync XHR)</em></td><td>✅</td></tr>
+<tr><td><strong>Browser Main Thread</strong></td><td>❌ <em>(Browsers block sync binary XHR)</em></td><td>✅</td></tr>
+</tbody></table>
+<blockquote>
+<p><strong>Best Practice for Browsers:</strong> If you are building a web UI, run your remote graph inside a Web Worker so you don't block the main thread. This is exactly how our playground operates. Also, ensure your data host supports CORS and <code>Range</code> headers! (See <a href="hosting.html">Hosting your .rete</a>).</p>
+</blockquote>
+<h2>3. No Bundler? Use a <code>&lt;script&gt;</code> Tag</h2>
+<p>If you're writing a quick script or a p5.js sketch, you can drop <code>rete-graph</code> straight into your HTML—no <code>npm install</code> or bundler required.</p>
 <pre><code class="language-html">&lt;script src="https://cdn.jsdelivr.net/npm/rete-graph@0.3.0/dist/rete-graph.min.js"&gt;&lt;/script&gt;
 &lt;script&gt;
   (async () =&gt; {
-    const bytes = new Uint8Array(await (await fetch("mydata.rete")).arrayBuffer());
+    // Fetch the file bytes manually (for small files on the main thread)
+    const response = await fetch("mydata.rete");
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    
+    // Open eagerly
     const g = await rete.open(bytes);
+    
     console.log(g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 3"));
   })();
 &lt;/script&gt;
 </code></pre>
-<p><code>…/dist/rete-graph.js</code> is the readable twin; pin the version in the URL.</p>
-<h2>Where remote opens work</h2>
-<p>Remote graphs are read with synchronous XHR range requests (that's what lets
-the engine stay simple and synchronous):</p>
-<table><thead><tr><th>Environment</th><th><code>open(url)</code></th><th><code>open(bytes)</code></th></tr></thead><tbody>
-<tr><td>Node ≥ 18</td><td>✅ built-in sync-fetch bridge</td><td>✅</td></tr>
-<tr><td>Browser web worker</td><td>✅ native sync XHR</td><td>✅</td></tr>
-<tr><td>Browser main thread</td><td>❌ (browsers forbid sync binary XHR)</td><td>✅</td></tr>
-</tbody></table>
-<p>On a main thread, either fetch the bytes yourself (small files) or run the
-graph in a worker — the pattern the playground uses. Hosts must send CORS
-headers and honor <code>Range</code> (<a href="hosting.html">Hosting your .rete</a>).</p>
-<h2>Query results</h2>
-<p><code>query()</code> returns <code>{variable: Term}</code> rows for SELECT, a boolean for ASK, and
-<code>[s, p, o]</code> <code>Term</code> triples for CONSTRUCT/DESCRIBE. A <code>Term</code> has <code>.kind</code>
-(<code>"iri" | "literal" | "bnode" | "triple"</code>), <code>.value</code>, <code>.datatype</code>, <code>.lang</code>,
-plus <code>.toJS()</code> (number/boolean/BigInt for the common XSD types) and <code>.n3</code>.</p>
-<pre><code class="language-js">g.query(q, { reason: true });   // OWL 2 QL entailment by query rewriting
-g.queryRaw(q);                  // the engine's raw JSON envelope
-g.prefixSearch("Berl");         // label autocomplete → [{label, subject}]
-g.textSearch("volcano");        // full-text (files built with --text-index)
-g.schema();                     // { classes: [[iri, n]], relations: [[s,p,o,n]] }
-g.graphNames(); g.info(); g.quads;
-g.contentHash();                // remote graphs: blake3-16 cache key
-await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array)
-</code></pre>
-<h2 id="comunica-and-the-rdfjs-ecosystem">Comunica (and the RDF/JS ecosystem)</h2>
-<p>From <strong>0.2.0</strong> the package ships <code>ReteSource</code>, an RDF/JS Source that plugs
-<code>.rete</code> files into <a href="https://comunica.dev">Comunica</a>, LDflex, GraphQL-LD,
-and the Solid ecosystem:</p>
-<pre><code class="language-js">import { open, ReteSource } from "rete-graph";
+<p><em>(Tip: Always pin the version in your CDN URL for production stability).</em></p>
+<h2>4. Integration with Comunica (and RDF/JS)</h2>
+<p>If you live in the RDF/JS ecosystem, we have great news! As of version <strong>0.2.0</strong>, <code>rete-graph</code> ships with <code>ReteSource</code>, a standard RDF/JS Source connector.</p>
+<p>This allows you to plug <code>.rete</code> files directly into <a href="https://comunica.dev">Comunica</a>, LDflex, GraphQL-LD, and the Solid ecosystem:</p>
+<pre><code class="language-javascript">import { open, ReteSource } from "rete-graph";
+
+// Wrap your graph in an RDF/JS source
 const source = new ReteSource(await open(bytesOrUrl));
-// → sources: [source] in any Comunica QueryEngine
+
+// Now use `source` in any Comunica QueryEngine!
 </code></pre>
-<p>Comunica also talks to rete <strong>with zero code</strong> through the gateway's
-SPARQL endpoints (full query pushdown — prefer it for heavy joins over big
-remote files). Both levels, the exact semantics, and the
-which-level-when table live on the dedicated page:
-<strong><a href="comunica.html">Comunica — rete in the RDF/JS ecosystem</a></strong>.</p>
-<h2>Feature matrix</h2>
-<table><thead><tr><th>Capability</th><th>JS</th><th>Notes</th></tr></thead><tbody>
+<blockquote>
+<p><strong>Zero Code Alternative:</strong> Comunica can also query <code>rete</code> via standard SPARQL endpoints (perfect for heavy joins over large remote files). For a deep dive on which method to use when, see our dedicated guide: <strong><a href="comunica.html">Comunica — rete in the RDF/JS ecosystem</a></strong>.</p>
+</blockquote>
+<h2>5. Feature Matrix</h2>
+<p>Here is a quick overview of what the JS client currently supports:</p>
+<table><thead><tr><th>Capability</th><th>Status</th><th>Notes</th></tr></thead><tbody>
 <tr><td>SPARQL SELECT / ASK / CONSTRUCT / DESCRIBE</td><td>✅</td><td><code>query()</code></td></tr>
-<tr><td>Lazy remote open (HTTP Range)</td><td>✅</td><td>Node + browser workers</td></tr>
+<tr><td>Lazy remote open (HTTP Range)</td><td>✅</td><td>Node + Browser Workers</td></tr>
 <tr><td>OWL 2 QL reasoned queries</td><td>✅</td><td><code>query(q, {reason: true})</code></td></tr>
-<tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td>clean IRIs everywhere</td></tr>
-<tr><td>Build from RDF text</td><td>✅</td><td><code>build()</code> — uncompressed, like the playground</td></tr>
-<tr><td>Script-tag single-file build</td><td>✅</td><td><code>dist/rete-graph(.min).js</code>, global <code>rete</code></td></tr>
-<tr><td>TypeScript types</td><td>✅</td><td>bundled <code>index.d.ts</code></td></tr>
-<tr><td>RDF/JS Source (Comunica, LDflex, GraphQL-LD)</td><td>✅ 0.2.0</td><td><code>ReteSource</code> — see <a href="#comunica-and-the-rdfjs-ecosystem">Comunica</a></td></tr>
-<tr><td><code>SERVICE</code> federation</td><td>✅*</td><td>via the engine; same worker/Node constraint</td></tr>
-<tr><td>Dataset Card / embedded examples</td><td>⏳</td><td>needs a wasm export — planned parity with Python</td></tr>
-<tr><td>Custom headers / custom readers</td><td>⏳</td><td>planned</td></tr>
-<tr><td>Builder (card, pyramid options)</td><td>⏳</td><td>use <code>build()</code> or the Python/CLI builders</td></tr>
+<tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td>Returns clean, idiomatic JS types</td></tr>
+<tr><td>Build from RDF text</td><td>✅</td><td><code>build()</code> produces uncompressed <code>.rete</code> arrays</td></tr>
+<tr><td>Script-tag single-file usage</td><td>✅</td><td><code>dist/rete-graph(.min).js</code></td></tr>
+<tr><td>TypeScript types</td><td>✅</td><td>Bundled <code>index.d.ts</code></td></tr>
+<tr><td>RDF/JS Source (Comunica, LDflex)</td><td>✅</td><td>Extends into the wider linked data ecosystem</td></tr>
+<tr><td><code>SERVICE</code> federation</td><td>✅*</td><td>Supported via engine (requires Worker/Node)</td></tr>
+<tr><td>Embedded Examples &amp; Dataset Cards</td><td>⏳</td><td>Planned for future release</td></tr>
 </tbody></table>
-<p>For contributors — how the package builds its engine from the crates, the
-sync-XHR bridge, and the release procedure:
-<a href="clients-dev.html">Client development &amp; releases</a>.</p>
+<p><em>For contributors looking to build the engine from source or understand the sync-XHR bridge, please see <a href="clients-dev.html">Client development &amp; releases</a>.</em></p>
 
       </article>
       <aside class="rail" aria-label="On this page">

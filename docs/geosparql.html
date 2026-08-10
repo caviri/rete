@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>GeoSPARQL (geometry + time) · rete docs</title>
-  <meta name="description" content="rete stores geometry as standard GeoSPARQL geo:wktLiteral values and answers a focused set of GeoSPARQL filter functions — so you can ask spatial questions (point-in-polygon, intersection, distance)…" />
+  <meta name="description" content="Rete has built-in support for spatial geometry and time. It stores geometries as standard GeoSPARQL geo:wktLiteral values." />
   <link rel="canonical" href="https://caviri.github.io/rete/geosparql.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="GeoSPARQL (geometry + time) · rete docs" />
-  <meta property="og:description" content="rete stores geometry as standard GeoSPARQL geo:wktLiteral values and answers a focused set of GeoSPARQL filter functions — so you can ask spatial questions (point-in-polygon, intersection, distance)…" />
+  <meta property="og:description" content="Rete has built-in support for spatial geometry and time. It stores geometries as standard GeoSPARQL geo:wktLiteral values." />
   <meta property="og:url" content="https://caviri.github.io/rete/geosparql.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/geosparql.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="GeoSPARQL (geometry + time) · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="GeoSPARQL (geometry + time) · rete docs" />
-  <meta name="twitter:description" content="rete stores geometry as standard GeoSPARQL geo:wktLiteral values and answers a focused set of GeoSPARQL filter functions — so you can ask spatial questions (point-in-polygon, intersection, distance)…" />
+  <meta name="twitter:description" content="Rete has built-in support for spatial geometry and time. It stores geometries as standard GeoSPARQL geo:wktLiteral values." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/geosparql.png" />
   <meta name="rete:section" content="Guides" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -337,113 +335,97 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>GeoSPARQL (geometry + time)</h1>
-<p>rete stores geometry as standard <a href="https://www.ogc.org/standard/geosparql/">GeoSPARQL</a>
-<code>geo:wktLiteral</code> values and answers a focused set of <strong>GeoSPARQL filter
-functions</strong> — so you can ask spatial questions (<em>point-in-polygon</em>,
-<em>intersection</em>, <em>distance</em>) and combine them with ordinary SPARQL, including
-temporal filters. The whole thing runs in the <strong>browser/WASM</strong> engine too: the
-geometry code is pure Rust (<code>core</code> + <code>f64</code>, no GIS C libraries), so a <code>.rete</code>
-file of polygons-with-time is queryable in place, offline.</p>
-<p>Try it in the <strong><a href="playground.html">playground</a></strong> — pick the <em>history.rete</em>
-dataset and the <strong>Geo</strong> examples.</p>
-<h2>Data model</h2>
-<p>Geometry follows the GeoSPARQL convention — a feature links to a geometry node
-that carries a WKT literal:</p>
+<h1>GeoSPARQL (Geometry &amp; Time)</h1>
+<p>Rete has built-in support for spatial geometry and time. It stores geometries as standard <a href="https://www.ogc.org/standard/geosparql/">GeoSPARQL</a> <code>geo:wktLiteral</code> values.</p>
+<p>This means you can write SPARQL queries to ask spatial questions like:</p>
+<ul>
+<li><em>"Is this point inside this polygon?"</em></li>
+<li><em>"Do these two regions intersect?"</em></li>
+<li><em>"How far is city A from territory B?"</em></li>
+</ul>
+<p>Crucially, <strong>this all runs completely in the browser</strong> via WASM. The geometry engine is written in pure Rust with no external GIS C libraries, meaning you can query massive geospatial datasets directly from a <code>.rete</code> file offline.</p>
+<blockquote>
+<p>[!TIP]
+Try it out in the <strong><a href="playground.html">Playground</a></strong>! Load the <strong>history.rete</strong> dataset and try the <strong>Geo</strong> examples.</p>
+</blockquote>
+<h2>How the Data is Modeled</h2>
+<p>Rete follows standard GeoSPARQL conventions. A feature (like a country) is linked to a geometry node containing a Well-Known Text (WKT) literal. Time can be easily modeled as a standard integer or string.</p>
 <pre><code class="language-turtle">&lt;http://ex/terr/France_1914&gt;
   rdfs:label "France" ;
-  ex:year 1914 ;                                   # plain xsd:integer — filter on it
-  geo:hasGeometry [ geo:asWKT
-    "POLYGON((-4.79 48.32, 2.55 51.09, 7.59 47.59, ...))"^^geo:wktLiteral ] .
+  ex:year 1914 ;                           # A simple integer for temporal filtering
+  geo:hasGeometry [ 
+    geo:asWKT "POLYGON((-4.79 48.32, 2.55 51.09, 7.59 47.59, ...))"^^geo:wktLiteral 
+  ] .
 </code></pre>
+<h3>Important Data Rules:</h3>
 <ul>
-<li><code>geo:</code> = <code>http://www.opengis.net/ont/geosparql#</code></li>
-<li>The functions operate on a <code>geo:wktLiteral</code> term, normally reached with the
-property path <code>?f geo:hasGeometry/geo:asWKT ?wkt</code>. A plain or <code>xsd:string</code>
-literal whose value happens to be WKT is also accepted.</li>
-<li><strong>Axis order is CRS84 lon/lat, always.</strong> A CRS-URI prefix on a literal
-(<code>&lt;http://…/CRS84&gt; POINT(…)</code>) is accepted but ignored — rete never swaps
-axes, so do <strong>not</strong> feed it lat/lon EPSG:4326 data.</li>
-<li>Time is just an ordinary literal (<code>ex:year 1914</code>, or <code>ex:startYear</code>/
-<code>ex:endYear</code>), so a temporal slice is a plain <code>FILTER(?year = 1914)</code>.</li>
+<li><strong>Namespaces:</strong> Use <code>geo:</code> for <code>http://www.opengis.net/ont/geosparql#</code>.</li>
+<li><strong>Finding Geometries:</strong> WKT values are typically reached using the path <code>?f geo:hasGeometry/geo:asWKT ?wkt</code>.</li>
+<li><strong>Axis Order:</strong> <strong>Always use CRS84 (Longitude/Latitude).</strong> Do NOT provide Lat/Lon (EPSG:4326) data, as Rete will not swap the axes for you.</li>
+<li><strong>Time:</strong> Time is handled using standard literals (e.g., <code>ex:year</code>, <code>ex:startDate</code>), meaning you can slice time using a simple <code>FILTER(?year = 1914)</code>.</li>
 </ul>
-<h2>Functions</h2>
-<table><thead><tr><th>Function</th><th>Returns</th><th>Notes</th></tr></thead><tbody>
-<tr><td><code>geof:sfContains(g1, g2)</code></td><td><code>xsd:boolean</code></td><td><code>g2</code> inside/on <code>g1</code> (POLYGON ⊇ POINT is the common case)</td></tr>
-<tr><td><code>geof:sfWithin(g1, g2)</code></td><td><code>xsd:boolean</code></td><td><code>sfContains(g2, g1)</code></td></tr>
-<tr><td><code>geof:sfIntersects(g1, g2)</code></td><td><code>xsd:boolean</code></td><td>share any point (boundary contact counts)</td></tr>
-<tr><td><code>geof:sfDisjoint(g1, g2)</code></td><td><code>xsd:boolean</code></td><td><code>!sfIntersects</code></td></tr>
-<tr><td><code>geof:sfEquals(g1, g2)</code></td><td><code>xsd:boolean</code></td><td>structural equality within ε</td></tr>
-<tr><td><code>geof:distance(g1, g2, unit)</code></td><td><code>xsd:double</code></td><td>min distance; <code>unit</code> = <code>uom:metre</code> (haversine) or <code>uom:degree</code> (planar)</td></tr>
-<tr><td><code>geof:envelope(g)</code></td><td><code>geo:wktLiteral</code></td><td>axis-aligned bounding box as a <code>POLYGON</code></td></tr>
+<h2>Supported Spatial Functions</h2>
+<p>You can use the following <code>geof:</code> functions (Prefix: <code>http://www.opengis.net/def/function/geosparql/</code>) to filter and compute spatial data:</p>
+<table><thead><tr><th>Function</th><th>Returns</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>geof:sfContains(g1, g2)</code></td><td>Boolean</td><td>True if <code>g2</code> is completely inside or on the border of <code>g1</code>. (Most common use: Polygon contains Point).</td></tr>
+<tr><td><code>geof:sfWithin(g1, g2)</code></td><td>Boolean</td><td>The reverse of <code>sfContains</code>. True if <code>g1</code> is within <code>g2</code>.</td></tr>
+<tr><td><code>geof:sfIntersects(g1, g2)</code></td><td>Boolean</td><td>True if <code>g1</code> and <code>g2</code> share <em>any</em> point (even just a border).</td></tr>
+<tr><td><code>geof:sfDisjoint(g1, g2)</code></td><td>Boolean</td><td>True if they do not intersect at all.</td></tr>
+<tr><td><code>geof:sfEquals(g1, g2)</code></td><td>Boolean</td><td>True if they are structurally identical.</td></tr>
+<tr><td><code>geof:distance(g1, g2, unit)</code></td><td>Double</td><td>Calculates minimum distance. Units: <code>uom:metre</code> (curved earth/haversine) or <code>uom:degree</code> (flat map).</td></tr>
+<tr><td><code>geof:envelope(g)</code></td><td>WKT</td><td>Returns the bounding box (envelope) of the geometry as a <code>POLYGON</code>.</td></tr>
 </tbody></table>
-<p><code>geof:</code> = <code>http://www.opengis.net/def/function/geosparql/</code>,
-<code>uom:</code> = <code>http://www.opengis.net/def/uom/OGC/1.0/</code>.</p>
-<p>WKT parsing covers <code>POINT</code>, <code>MULTIPOINT</code>, <code>LINESTRING</code>, <code>POLYGON</code> (with holes),
-<code>MULTIPOLYGON</code>, <code>GEOMETRYCOLLECTION</code>, the <code>EMPTY</code> keyword, and <code>Z</code>/<code>M</code>
-ordinates (dropped). A malformed or non-geometry argument is a type error: the
-row drops out of a <code>FILTER</code> and the variable is left unbound in a <code>BIND</code> — never
-an engine error.</p>
-<h2>Example — "which territory contained this point in year Y?"</h2>
-<p>The headline query combines a temporal filter and a spatial predicate in one
-<code>FILTER</code>:</p>
+<p><em>(Note: <code>uom:</code> maps to <code>http://www.opengis.net/def/uom/OGC/1.0/</code>)</em></p>
+<p>Rete can parse <code>POINT</code>, <code>MULTIPOINT</code>, <code>LINESTRING</code>, <code>POLYGON</code> (including holes), <code>MULTIPOLYGON</code>, <code>GEOMETRYCOLLECTION</code>, and <code>EMPTY</code>. If your data contains <code>Z</code> or <code>M</code> dimensions, they will be safely ignored.</p>
+<h2>Examples</h2>
+<h3>1. Point in Time and Space</h3>
+<p><em>"Which historical territory contained this exact GPS coordinate in the year 1914?"</em></p>
 <pre><code class="language-sparql">PREFIX geo:  &lt;http://www.opengis.net/ont/geosparql#&gt;
 PREFIX geof: &lt;http://www.opengis.net/def/function/geosparql/&gt;
 PREFIX ex:   &lt;http://ex/&gt;
 PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
 
 SELECT ?territory WHERE {
-  ?t ex:year 1914 ; rdfs:label ?territory ;
+  # 1. Filter by year
+  ?t ex:year 1914 ; 
+     rdfs:label ?territory ;
      geo:hasGeometry/geo:asWKT ?w .
+     
+  # 2. Filter by spatial containment (Longitude 2.35, Latitude 48.85 is Paris)
   FILTER(geof:sfContains(?w, "POINT(2.35 48.85)"^^geo:wktLiteral))
 }
-# → France   (the same point resolves to "Kingdom of France" in the year-1000 snapshot,
-#    and "Liao" / "Qing" / … for Beijing across the era snapshots)
+# Result -&gt; France 
 </code></pre>
-<p>Distance ranking (metres → km), bounding boxes, and bbox intersection work the
-same way:</p>
-<pre><code class="language-sparql"># nearest territories to a point over London, 1914
-SELECT ?territory ?km WHERE {
-  ?t ex:year 1914 ; rdfs:label ?territory ; geo:hasGeometry/geo:asWKT ?w .
+<h3>2. Distance Ranking</h3>
+<p><em>"What were the nearest territories to a point over London in 1914, sorted by distance in kilometers?"</em></p>
+<pre><code class="language-sparql">SELECT ?territory ?km WHERE {
+  ?t ex:year 1914 ; 
+     rdfs:label ?territory ; 
+     geo:hasGeometry/geo:asWKT ?w .
+     
+  # Calculate distance in metres, convert to km, and bind it
   BIND(geof:distance(?w, "POINT(0 51)"^^geo:wktLiteral,
        &lt;http://www.opengis.net/def/uom/OGC/1.0/metre&gt;) / 1000 AS ?km)
 } ORDER BY ?km LIMIT 8
 </code></pre>
-<h2>The example dataset</h2>
-<p><code>history.rete</code> (embedded in the playground) is built from
-<a href="https://github.com/aourednik/historical-basemaps"><strong>aourednik/historical-basemaps</strong></a>
-(GPL-3.0) — world territorial borders at snapshots from 323 BCE to 1994 CE. Each
-border polygon becomes a <code>geo:wktLiteral</code>, the snapshot year an <code>xsd:integer</code>,
-geometry simplified to ~1 km for an in-browser-sized file. Build it with:</p>
-<pre><code class="language-sh">python3 scripts/geo_to_rete.py basemaps \
+<h2>The Example Dataset (<code>history.rete</code>)</h2>
+<p>To see this in action, we embedded the <code>history.rete</code> dataset in the playground. It is derived from <a href="https://github.com/aourednik/historical-basemaps">aourednik/historical-basemaps</a>, providing world territorial borders from 323 BCE to 1994 CE.</p>
+<p>If you want to build this yourself from scratch, run:</p>
+<pre><code class="language-sh"># Fetch and convert the data to N-Triples
+python3 scripts/geo_to_rete.py basemaps \
   --years bc323,1000,1492,1815,1914,1945,1994 --prec 2 --min-bbox 0.3 \
   --max-per-year 90 -o history.nt
+
+# Build the .rete file
 rete build history.nt -o web/history.rete
 </code></pre>
-<p>The same script also converts an
-<a href="https://www.openhistoricalmap.org/"><strong>OpenHistoricalMap</strong></a> extract — real dated
-administrative boundaries pulled from its public
-<a href="https://qlever.dev/api/ohm-planet">QLever endpoint</a> (<code>geo:hasGeometry/geo:asWKT</code></p>
+<h2>Limitations to Keep in Mind</h2>
+<p>To keep the engine blazing fast and browser-compatible, Rete focuses heavily on the most common spatial operations:</p>
 <ul>
-<li><code>start_date</code>/<code>end_date</code>) — via the <code>ohm</code> subcommand.</li>
+<li><strong>No Reprojection:</strong> Computations assume a planar Cartesian coordinate system on Lon/Lat. We do not reproject CRS on the fly.</li>
+<li><strong>Specific Topological Coverage:</strong> Point-in-polygon and intersections are exact and fully supported. Advanced constructs like <code>sfTouches</code>, <code>buffer</code>, <code>union</code>, or <code>geof:area</code> are <strong>not</strong> implemented.</li>
+<li><strong>No Spatial Index:</strong> There is no dedicated spatial index (like an R-Tree). Spatial filters scan candidate rows directly. For best performance, use standard SPARQL constraints (like the <code>ex:year 1914</code> example) to narrow down the rows <em>before</em> applying the spatial filter.</li>
 </ul>
-<h2>Scope &amp; limitations</h2>
-<p>v1 is deliberately tight and exact for the common cases rather than broad:</p>
-<ul>
-<li><strong>Planar</strong> Cartesian computation on lon/lat (haversine only for the metre
-distance). No CRS reprojection — <code>geof:transform</code> and non-CRS84 axis handling
-are out of scope.</li>
-<li>The five topological relations are computed directly (point-in-polygon +
-segment crossing), not via a full DE-9IM matrix. Exact for the dominant
-polygon ⊇ point / nested-territory cases; <code>sfTouches</code>/<code>sfCrosses</code>/<code>sfOverlaps</code>,
-<code>geof:relate</code>, constructive geometry (<code>buffer</code>/<code>union</code>/<code>boundary</code>/…),
-<code>geof:area</code>/<code>length</code>, and <code>geof:getSRID</code> are <strong>not</strong> implemented — an
-unsupported <code>geof:</code> IRI is rejected at parse time.</li>
-<li>No spatial index: filters scan the candidate rows (fine for the curated demo
-data and for queries already narrowed by a non-spatial pattern).</li>
-</ul>
-<p>Performance of the non-spatial engine is covered in <a href="BENCHMARK.html">Benchmarks</a>;
-overall SPARQL coverage in the <a href="conformance.html">conformance scorecard</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

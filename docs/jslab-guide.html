@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>JS lab — rete × D3 · rete docs</title>
-  <meta name="description" content="An experiment in the spirit of Observable and the p5.js editor: an in-browser JavaScript editor next to a live visualization." />
+  <meta name="description" content="Welcome to the JS Lab, an experimental environment inspired by Observable and the p5.js editor. It features an in-browser JavaScript editor paired with a live visualization canvas." />
   <link rel="canonical" href="https://caviri.github.io/rete/jslab-guide.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="JS lab — rete × D3 · rete docs" />
-  <meta property="og:description" content="An experiment in the spirit of Observable and the p5.js editor: an in-browser JavaScript editor next to a live visualization." />
+  <meta property="og:description" content="Welcome to the JS Lab, an experimental environment inspired by Observable and the p5.js editor. It features an in-browser JavaScript editor paired with a live visualization canvas." />
   <meta property="og:url" content="https://caviri.github.io/rete/jslab-guide.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/jslab-guide.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="JS lab — rete × D3 · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="JS lab — rete × D3 · rete docs" />
-  <meta name="twitter:description" content="An experiment in the spirit of Observable and the p5.js editor: an in-browser JavaScript editor next to a live visualization." />
+  <meta name="twitter:description" content="Welcome to the JS Lab, an experimental environment inspired by Observable and the p5.js editor. It features an in-browser JavaScript editor paired with a live visualization canvas." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/jslab-guide.png" />
   <meta name="rete:section" content="Explore in the browser" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -337,70 +335,51 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>JS lab — rete × D3, Observable-style</h1>
-<p>An experiment in the spirit of <a href="https://observablehq.com">Observable</a> and the
-p5.js editor: <strong>an in-browser JavaScript editor next to a live
-visualization</strong>. The code on the left queries a remote <code>.rete</code> file through
-the <a href="javascript.html"><code>rete-graph</code> npm client</a> (loaded straight from the CDN —
-the same build any web page can <code>&lt;script src&gt;</code>), and draws the result with
-<a href="https://d3js.org">D3</a> on the right. Edit, hit <code>Ctrl+Enter</code>, watch it redraw.</p>
-<p><strong><a href="jslab.html">Launch the lab →</a></strong></p>
-<p>Five presets, over two datasets, each ending with <code>stats()</code> — how few bytes
-the queries actually fetched:</p>
+<h1>JS Lab: Rete × D3 (Observable-Style)</h1>
+<p>Welcome to the <strong>JS Lab</strong>, an experimental environment inspired by <a href="https://observablehq.com">Observable</a> and the p5.js editor. It features an <strong>in-browser JavaScript editor paired with a live visualization canvas</strong>.</p>
+<p>Here is how it works: the code on the left queries a remote <code>.rete</code> file using the <a href="javascript.html"><code>rete-graph</code> npm client</a> (loaded directly from a CDN, just like you would with a <code>&lt;script&gt;</code> tag in any web page). The results are then visualized on the right using <a href="https://d3js.org">D3.js</a>.</p>
+<p><strong>How to use it:</strong> Simply edit your code, press <code>Ctrl+Enter</code>, and watch the visualization update instantly!</p>
+<p><strong><a href="jslab.html">▶ Launch the JS Lab</a></strong></p>
+<h2>Included Presets</h2>
+<p>To get you started, we've included five presets spanning two different datasets. Each preset demonstrates how few bytes are actually fetched, using the <code>stats()</code> function:</p>
 <ul>
-<li><strong>network</strong> — the <strong>Linked Jazz collaboration graph</strong> (who played, toured,
-and sat in bands with whom, a 176 KB <code>.rete</code>) as a draggable, zoomable
-force layout; hover a musician to isolate their circle.</li>
-<li><strong>chord</strong> — a circos-style diagram of the top 16 musicians over the <strong>full
-relationship taxonomy</strong> (eleven predicates: played/toured/band ties,
-friendship/acquaintance/hasMet, influence/mentorship — the generic
-<code>knowsOf</code> is deliberately excluded). Ribbons take the color of the pair's
-dominant relationship group; hovering a ribbon shows the exact breakdown.</li>
-<li><strong>stacked</strong> — each musician's connections broken down by relationship type
-(a validated 4-color categorical stack).</li>
-<li><strong>top 20</strong> — a SPARQL <code>GROUP BY</code> as a clean ranked bar chart.</li>
-<li><strong>timeline ▶</strong> — a <em>different</em> dataset with real temporal data:
-<strong>Heroic-Age Antarctic expeditions</strong> (Wikidata, CC0). Time runs down the
-y-axis; a year-cursor sweeps 1896→1918, expeditions grow as it passes,
-crews pop out of them, and the four people who sailed more than once
-become orange threads connecting expeditions. Run again to replay.</li>
+<li><strong>Network:</strong> Explore the <strong>Linked Jazz collaboration graph</strong> (a 176 KB <code>.rete</code> file showing who played or toured together). It uses a draggable, zoomable force-directed layout. <strong>Tip:</strong> Hover over a musician to isolate their network.</li>
+<li><strong>Chord:</strong> View a circos-style diagram of the top 16 musicians and their complex relationships (e.g., mentorship, played with). Ribbons are colored by the dominant relationship type. Hover over a ribbon to see the exact breakdown.</li>
+<li><strong>Stacked:</strong> See a validated, 4-color stacked bar chart detailing each musician's connections, broken down by relationship type.</li>
+<li><strong>Top 20:</strong> A clean, ranked bar chart powered by a SPARQL <code>GROUP BY</code> query.</li>
+<li><strong>Timeline ▶:</strong> Dive into a different dataset featuring temporal data: <strong>Heroic-Age Antarctic expeditions</strong> (Wikidata, CC0). Watch a cursor sweep through the years (1896–1918) as expeditions grow and crews appear.</li>
 </ul>
-<p>Two more buttons in the header: <strong>⿻ hide code</strong> collapses the editor for a
-presentation view, and <strong>⬇ standalone</strong> downloads the <em>current program</em> as a
-single self-contained HTML file — D3 and the rete-graph engine embedded, no
-CDN, no editor — that runs anywhere and credits its sources (only the data's
-own network is needed). That exported file is yours to host or share.</p>
-<h2>How it works</h2>
+<h2>Interface Features</h2>
+<p>Look for these handy tools in the header:</p>
 <ul>
-<li>The rete engine's remote reader uses <strong>synchronous XHR range requests</strong>,
-which browsers only allow in workers — so the page boots a tiny <strong>Web
-Worker</strong> that <code>importScripts</code> the CDN bundle and holds the opened graphs.
-Your code gets a promise-based façade: <code>openGraph(url)</code> →
-<code>{ query, prefixSearch, textSearch, stats, contentHash }</code>.</li>
-<li>Graphs stay <strong>resident in the worker</strong> between runs, so a re-run reuses the
-block cache and decoded dictionary — the second query is nearly free.</li>
-<li>Query rows arrive as <code>{variable: term}</code> objects; each term carries <code>.kind</code>
-(<code>iri</code>/<code>literal</code>/<code>bnode</code>) and <code>.value</code> (plus <code>.datatype</code>/<code>.lang</code>). Numbers
-from aggregates are literal terms — coerce with <code>+row.n.value</code>.</li>
-<li>Your program runs with five bindings in scope: <strong><code>openGraph</code></strong>, <strong><code>d3</code></strong>,
-<strong><code>viz</code></strong> (the output container element), <strong><code>log(...)</code></strong> (the console
-strip), and <strong><code>theme</code></strong> — the active palette (surface, inks, grid, and
-validated series colors), so charts repaint correctly when you flip the
-<strong>◐ theme</strong> toggle between light and dark. Both palettes pass the
-colorblind-safety validator against their own surfaces; the standalone
-export bakes in whichever theme is active.</li>
+<li><strong>⿻ Hide Code:</strong> Collapses the editor, giving you a clean, presentation-ready view of the visualization.</li>
+<li><strong>⬇ Standalone:</strong> Downloads your <em>current program</em> as a single, self-contained HTML file. It embeds D3 and the rete-graph engine without needing a CDN or the editor. It runs anywhere—just host or share it!</li>
+<li><strong>◐ Theme:</strong> Toggles between light and dark modes. Both color palettes are colorblind-safe and automatically update your charts. (The standalone export will bake in whichever theme is currently active.)</li>
 </ul>
-<p>Point <code>openGraph()</code> at any <code>.rete</code> URL whose host serves <code>Range</code> with CORS
-(see <a href="hosting.html">Hosting</a>) — every dataset in the
-<a href="playground-guide.html">playground</a> qualifies; find their URLs in its catalog.</p>
-<h2>Credits &amp; license</h2>
-<p>Data: the <a href="https://linkedjazz.org/">Linked Jazz Project</a> (CC BY-SA) — thank
-you for a wonderful graph. Libraries: <a href="https://d3js.org">D3</a> (ISC),
-<a href="https://codemirror.net">CodeMirror</a> (MIT), served by
-<a href="https://www.jsdelivr.com/">jsDelivr</a>.</p>
-<p>Source &amp; issues: <a href="https://github.com/caviri/rete">https://github.com/caviri/rete</a> · © 2026 Carlos Vivar Ríos,
-released under the
-<a href="https://github.com/caviri/rete/blob/main/LICENSE">Apache License 2.0</a>.</p>
+<h2>Under the Hood</h2>
+<p>Curious how the magic happens?</p>
+<ul>
+<li><strong>Web Worker:</strong> The Rete engine's remote reader uses <strong>synchronous XHR range requests</strong>, which browsers only allow inside Web Workers. We boot a tiny worker that loads the CDN bundle and holds the opened graphs. You interact with a friendly Promise-based API: <code>openGraph(url)</code> → <code>{ query, prefixSearch, textSearch, stats, contentHash }</code>.</li>
+<li><strong>Caching:</strong> Graphs stay <strong>resident in the worker</strong> between runs. This means re-runs reuse the block cache and the decoded dictionary, making subsequent queries nearly instantaneous.</li>
+<li><strong>Data Types:</strong> Query rows arrive as <code>{variable: term}</code> objects. Each term has a <code>.kind</code> (e.g., <code>iri</code>, <code>literal</code>, <code>bnode</code>) and a <code>.value</code> (plus optional <code>.datatype</code> or <code>.lang</code>). Note that numbers from aggregates are literal terms; coerce them in JS using <code>+row.n.value</code>.</li>
+<li><strong>Environment Variables:</strong> Your program runs with five helpful bindings already in scope:
+<ul>
+<li><code>openGraph</code></li>
+<li><code>d3</code></li>
+<li><code>viz</code> (the output container element)</li>
+<li><code>log(...)</code> (the console strip)</li>
+<li><code>theme</code> (the active color palette)</li>
+</ul>
+</li>
+</ul>
+<p>You can point <code>openGraph()</code> at <strong>any</strong> <code>.rete</code> URL, provided the host supports <code>Range</code> requests with CORS enabled (see <a href="hosting.html">Hosting</a>). All datasets in the <a href="playground-guide.html">Playground</a> catalog meet these requirements!</p>
+<h2>Credits &amp; License</h2>
+<ul>
+<li><strong>Data:</strong> The <a href="https://linkedjazz.org/">Linked Jazz Project</a> (CC BY-SA) — Thanks for a wonderful graph!</li>
+<li><strong>Libraries:</strong> <a href="https://d3js.org">D3</a> (ISC), <a href="https://codemirror.net">CodeMirror</a> (MIT), served by <a href="https://www.jsdelivr.com/">jsDelivr</a>.</li>
+<li><strong>Source &amp; Issues:</strong> <a href="https://github.com/caviri/rete">caviri/rete on GitHub</a></li>
+<li><strong>License:</strong> © 2026 Carlos Vivar Ríos, released under the <a href="https://github.com/caviri/rete/blob/main/LICENSE">Apache License 2.0</a>.</li>
+</ul>
 
       </article>
       <aside class="rail" aria-label="On this page">

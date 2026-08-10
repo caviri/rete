@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Rust API · rete docs</title>
-  <meta name="description" content="rete-core is the embeddable Rust implementation of the .rete format. Its supported surface is organized into five facade modules, which become the SemVer-stable API at 1.0.0:" />
+  <meta name="description" content="Welcome to the rete-core Rust API! This crate provides the embeddable Rust implementation of the .rete format." />
   <link rel="canonical" href="https://caviri.github.io/rete/rust-api.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Rust API · rete docs" />
-  <meta property="og:description" content="rete-core is the embeddable Rust implementation of the .rete format. Its supported surface is organized into five facade modules, which become the SemVer-stable API at 1.0.0:" />
+  <meta property="og:description" content="Welcome to the rete-core Rust API! This crate provides the embeddable Rust implementation of the .rete format." />
   <meta property="og:url" content="https://caviri.github.io/rete/rust-api.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/rust-api.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Rust API · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Rust API · rete docs" />
-  <meta name="twitter:description" content="rete-core is the embeddable Rust implementation of the .rete format. Its supported surface is organized into five facade modules, which become the SemVer-stable API at 1.0.0:" />
+  <meta name="twitter:description" content="Welcome to the rete-core Rust API! This crate provides the embeddable Rust implementation of the .rete format." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/rust-api.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -338,102 +336,98 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1>Rust API</h1>
-<p><code>rete-core</code> is the embeddable Rust implementation of the <code>.rete</code> format. Its
-supported surface is organized into five facade modules, which become the
-SemVer-stable API at <code>1.0.0</code>:</p>
-<table><thead><tr><th>Module</th><th>Supported purpose</th></tr></thead><tbody>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/format/"><code>format</code></a></td><td>Parse RDF, build or open a <code>.rete</code>, inspect its header, and verify the container</td></tr>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/query/"><code>query</code></a></td><td>Evaluate SPARQL and graph patterns, format results, and configure federation</td></tr>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/range/"><code>range</code></a></td><td>Implement byte-range readers and open summary data without loading the full file</td></tr>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/validation/"><code>validation</code></a></td><td>Validate an eager graph or a <code>.rete</code> index with SHACL</td></tr>
-<tr><td><a href="https://docs.rs/rete-core/latest/rete_core/reasoning/"><code>reasoning</code></a></td><td>Run the supported RDFS/OWL rules and inspect schema coherence</td></tr>
-</tbody></table>
-<p>Use those module paths in application code. The crate retains some hidden root
-exports and implementation namespaces for the other workspace crates, but they
-are not part of the 1.x compatibility contract and may change without a major
-release.</p>
-<h2>Add the dependency</h2>
-<p>Until the 1.0.0 release, pin the exact 0.x version:</p>
+<p>Welcome to the <code>rete-core</code> Rust API! This crate provides the embeddable Rust implementation of the <code>.rete</code> format.</p>
+<p>To keep things simple and stable, the API is organized into <strong>five core facade modules</strong>. These will form the SemVer-stable API when we reach <code>1.0.0</code>.</p>
+<h3>The Five Core Modules</h3>
+<ul>
+<li><strong><a href="https://docs.rs/rete-core/latest/rete_core/format/"><code>format</code></a></strong>: Your starting point. Use it to parse RDF, build or open a <code>.rete</code> file, inspect headers, and verify the container.</li>
+<li><strong><a href="https://docs.rs/rete-core/latest/rete_core/query/"><code>query</code></a></strong>: The engine room. Evaluate SPARQL queries and graph patterns, format your results, and configure federation.</li>
+<li><strong><a href="https://docs.rs/rete-core/latest/rete_core/range/"><code>range</code></a></strong>: For the network-savvy. Implement byte-range readers and open summary data lazily without downloading the entire file.</li>
+<li><strong><a href="https://docs.rs/rete-core/latest/rete_core/validation/"><code>validation</code></a></strong>: Ensure data quality. Validate an eager graph or a <code>.rete</code> index against SHACL shapes.</li>
+<li><strong><a href="https://docs.rs/rete-core/latest/rete_core/reasoning/"><code>reasoning</code></a></strong>: Add logic. Run supported RDFS/OWL rules and inspect your schema's coherence.</li>
+</ul>
+<blockquote>
+<p><strong>Tip:</strong> Always use these five module paths in your application code. While the crate contains hidden exports for internal workspace use, they are not part of the stable 1.x contract and might change.</p>
+</blockquote>
+<h2>Getting Started</h2>
+<h3>1. Add the Dependency</h3>
+<p>Until the <code>1.0.0</code> release, we recommend pinning the exact <code>0.x</code> version in your <code>Cargo.toml</code>:</p>
 <pre><code class="language-toml">[dependencies]
 rete-core = "=0.3.0"
 </code></pre>
-<p>The default feature set supports compressed <code>.rete</code> files. Optional parallel or
-browser-thread features remain experimental; they do not change the five facade
-module names.</p>
-<h2>Build, open, and query</h2>
-<p>The in-memory path is useful for applications that already have RDF text or a
-complete file image:</p>
+<p>The default feature set handles compressed <code>.rete</code> files out of the box. (Note: Optional parallel or browser-thread features are experimental but won't change the five facade module names).</p>
+<h3>2. Build, Open, and Query</h3>
+<p>If you already have RDF text or a complete file image in memory, here's how you can quickly build, open, and run a query:</p>
 <pre><code class="language-rust">use rete_core::format::{assemble_dataset, parse_statements, Rete};
 use rete_core::query::{eval_query, QueryOutput};
 
 fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    // 1. Parse your RDF data
     let rdf = "&lt;urn:alice&gt; &lt;urn:knows&gt; &lt;urn:bob&gt; .";
     let quads = parse_statements(rdf, "nt")?;
+    
+    // 2. Assemble it into a .rete format
     let (bytes, stats) = assemble_dataset(quads, br#"{"source":"example"}"#);
     assert_eq!(stats.statements, 1);
 
+    // 3. Open the graph and run a SPARQL query
     let graph = Rete::open(&amp;bytes)?;
     match eval_query(&amp;graph, "SELECT ?o WHERE { &lt;urn:alice&gt; &lt;urn:knows&gt; ?o }")? {
         QueryOutput::Select(vars, rows) =&gt; {
             assert_eq!(vars, ["o"]);
             assert_eq!(rows.len(), 1);
         }
-        _ =&gt; unreachable!("the query is SELECT"),
+        _ =&gt; unreachable!("The query is SELECT"),
     }
+    
     Ok(())
 }
 </code></pre>
-<p><code>QueryOutput</code>, public error enums, and other result-shape enums are
-non-exhaustive. Always keep a wildcard arm when matching them; new variants can
-then be added in a compatible 1.x release.</p>
-<h2>Read by byte range</h2>
-<p>Implement <code>RangeReader</code> for a local file, object-store client, or HTTP client.
-Every range must either return exactly the requested bytes or an error; offsets
-from an untrusted remote file must not be used as unchecked slice indexes.</p>
+<blockquote>
+<p><strong>Note on Enums:</strong> Result-shape enums like <code>QueryOutput</code> and public error enums are <strong>non-exhaustive</strong>. Always include a wildcard (<code>_ =&gt; ...</code>) arm when matching against them to ensure your code remains compatible with future 1.x releases.</p>
+</blockquote>
+<h3>3. Read by Byte Range</h3>
+<p>If you're reading large files locally or over the network, you don't need to load everything at once. Implement the <code>RangeReader</code> trait for your storage backend (local file, S3, HTTP, etc.).</p>
 <pre><code class="language-rust">use rete_core::range::{RangeReader, SliceReader, SummaryView};
 
 fn inspect_summary(bytes: &amp;[u8]) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
     let reader = SliceReader::new(bytes);
     let _file_len = reader.len();
+    
+    // Lazily open the summary view without reading the full index
     if let Some(summary) = SummaryView::open_ranged(&amp;reader)? {
-        println!("{} communities", summary.community_count());
+        println!("Found {} communities!", summary.community_count());
     }
+    
     Ok(())
 }
 </code></pre>
-<p>Remote readers should preserve HTTP <code>Range</code> semantics. See <a href="hosting.html">Hosting your
-<code>.rete</code></a> for required CORS response headers and <a href="browser.html">WASM &amp; JavaScript
-API</a> for the browser-specific reader.</p>
-<h2>Validate and reason</h2>
-<p>SHACL can operate directly against a <code>.rete</code> index, so a lazy remote graph only
-fetches ranges used by the shapes:</p>
+<p><strong>Network Readers:</strong> When implementing remote readers, ensure they preserve standard HTTP <code>Range</code> semantics. For browser specifics, check out the <a href="browser.html">WASM &amp; JavaScript API</a>, and for CORS requirements, see <a href="hosting.html">Hosting your <code>.rete</code></a>.</p>
+<h3>4. Validate and Reason</h3>
+<p>Need to ensure your data follows specific rules? You can run SHACL validation directly against a <code>.rete</code> index. Because it's lazy, a remote graph will only fetch the byte ranges required by the shapes!</p>
 <pre><code class="language-rust">use rete_core::format::Rete;
 use rete_core::validation::{validate_shacl, ReteGraph, ShaclShapes};
 
 fn validate(bytes: &amp;[u8], shapes_turtle: &amp;str) -&gt; Result&lt;bool, Box&lt;dyn std::error::Error&gt;&gt; {
     let rete = Rete::open(bytes)?;
     let shapes = ShaclShapes::parse_turtle(shapes_turtle)?;
+    
+    // Validate the graph against the parsed shapes
     let report = validate_shacl(&amp;ReteGraph::new(&amp;rete), &amp;shapes);
+    
     Ok(report.conforms)
 }
 </code></pre>
-<p>The reasoning facade exposes the documented ruleset and both eager reasoning
-and reasoned query entry points. It is deliberately a bounded RDFS/OWL profile,
-not a complete OWL reasoner; see <a href="reasoning.html">Reasoning &amp; coherence</a> for the
-supported entailments and inconsistency checks.</p>
-<h2>Compatibility policy</h2>
+<p>For logic and schemas, the <code>reasoning</code> facade provides both eager reasoning and reasoned query entry points. It implements a focused RDFS/OWL profile (not full OWL DL) — see <a href="reasoning.html">Reasoning &amp; coherence</a> for details on supported entailments.</p>
+<h2>Compatibility Policy</h2>
+<p>We take stability seriously. Here is what you can expect:</p>
 <ul>
-<li><code>.rete</code> format compatibility and Rust API compatibility are versioned
-independently. The format byte and read window live in <code>format</code>.</li>
-<li>The five facade modules follow SemVer from <code>1.0.0</code> onward; while the crates
-are 0.x any release may change them. Hidden modules and experimental
-feature-gated APIs are excluded even after 1.0.0.</li>
-<li>Public errors and result shapes are non-exhaustive. Treat unfamiliar variants
-as unsupported input or output rather than panicking.</li>
-<li>Rustdoc is built with warnings denied, and release CI compares the facade with
-the previous release using <code>cargo-semver-checks</code>.</li>
+<li><strong>Format vs. API:</strong> The <code>.rete</code> file format and the Rust API are versioned independently. The format byte and read window are managed in the <code>format</code> module.</li>
+<li><strong>SemVer:</strong> The five facade modules will strictly follow Semantic Versioning starting from <code>1.0.0</code>. Hidden modules and experimental APIs are exempt from this guarantee.</li>
+<li><strong>Non-Exhaustive Types:</strong> Public errors and result enums are non-exhaustive. Treat unfamiliar variants as unsupported rather than panicking.</li>
+<li><strong>Safety Checks:</strong> We build rustdocs with warnings denied and use <code>cargo-semver-checks</code> in our CI to catch accidental breaking changes.</li>
 </ul>
-<p>For the byte-level contract, read the <a href="SPEC.html">format specification</a>.</p>
+<p>For the byte-level contract, refer to the <a href="SPEC.html">format specification</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Semantic zoom (schema pyramid) · rete docs</title>
-  <meta name="description" content="The schema pyramid is built automatically whenever your data carries an rdf:type hierarchy. There is no flag to remember and nothing extra to host — it travels in the file's pyramid section and is…" />
+  <meta name="description" content="The core idea: When you open an unfamiliar .rete file, you immediately want to know, &quot;What is in here?&quot; The Schema Pyramid acts as a map legend with a built-in zoom control." />
   <link rel="canonical" href="https://caviri.github.io/rete/semantic-zoom.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Semantic zoom (schema pyramid) · rete docs" />
-  <meta property="og:description" content="The schema pyramid is built automatically whenever your data carries an rdf:type hierarchy. There is no flag to remember and nothing extra to host — it travels in the file's pyramid section and is…" />
+  <meta property="og:description" content="The core idea: When you open an unfamiliar .rete file, you immediately want to know, &quot;What is in here?&quot; The Schema Pyramid acts as a map legend with a built-in zoom control." />
   <meta property="og:url" content="https://caviri.github.io/rete/semantic-zoom.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/semantic-zoom.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Semantic zoom (schema pyramid) · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Semantic zoom (schema pyramid) · rete docs" />
-  <meta name="twitter:description" content="The schema pyramid is built automatically whenever your data carries an rdf:type hierarchy. There is no flag to remember and nothing extra to host — it travels in the file's pyramid section and is…" />
+  <meta name="twitter:description" content="The core idea: When you open an unfamiliar .rete file, you immediately want to know, &quot;What is in here?&quot; The Schema Pyramid acts as a map legend with a built-in zoom control." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/semantic-zoom.png" />
   <meta name="rete:section" content="Guides" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -337,277 +335,56 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Semantic zoom — the schema pyramid</h1>
-<blockquote>
-<p><strong>The one-paragraph pitch.</strong> Open any <code>.rete</code> and ask <em>"what kinds of things are
-in here?"</em> — and get an answer that <strong>zooms</strong>. At a glance you see the broad
-strokes (<code>Agent: 4k, Place: 8k</code>); zoom one step and <code>Agent</code> resolves into
-<code>Person</code> and <code>Organisation</code>; zoom again and <code>Person</code> resolves into <code>Scientist</code>,
-<code>Artist</code>, … down to the leaf classes. It's a <strong>map legend with a zoom control</strong>,
-shipped <em>inside the file</em>, and a remote client reads the whole leveled legend in
-<strong>two or three small HTTP range requests — without ever touching the triple
-index.</strong> This is rete's "PMTiles for graphs," applied to <em>types</em>.</p>
-</blockquote>
-<p>The schema pyramid is built automatically whenever your data carries an <code>rdf:type</code>
-hierarchy. There is no flag to remember and nothing extra to host — it travels in
-the file's pyramid section and is served over the same range-request transport as
-everything else.</p>
-<img src="img/semantic-zoom.svg" alt="A four-band pyramid, narrow abstract level at the top widening to detailed leaf classes at the base. Level 0: Agent ×4. Level 1: Person ×3, Organisation ×1. Level 2: Scientist ×2, Artist ×1, Organisation ×1. Level 3: Astronomer ×2, Artist ×1, Organisation ×1. A footer notes it is read index-free from the pyramid-meta over HTTP.">
-<p><em>Each level is one type histogram. Read top to bottom and the same instances
-resolve from abstract classes into leaves — and the whole stack is fetched
-index-free, in a few kilobytes, over HTTP.</em></p>
-<hr />
-<h2>Why it exists</h2>
-<p>A knowledge graph you've never seen is <strong>opaque</strong>: you don't know which classes
-exist, how they relate, or where to start. The flat answer — <em>"here are 200
-classes, alphabetical"</em> — is noise. What you actually want is to start coarse and
-drill down only where it's interesting. That's exactly what a web map gives you for
-geography; the schema pyramid gives it for <strong>ontology</strong>.</p>
-<p>Three things make this work, and they're really one idea:</p>
-<ul>
-<li>The data's <strong><code>rdfs:subClassOf</code></strong> axioms define an abstraction hierarchy
-(<code>Astronomer ⊑ Scientist ⊑ Person ⊑ Agent</code>).</li>
-<li>rete <strong>rolls every instance's type up that hierarchy</strong> to a chosen depth, once,
-at build time, and stores one <strong>type histogram per level</strong>.</li>
-<li>The whole thing lives in the <strong>pyramid-meta</strong> section, which range-reading
-clients fetch <em>without</em> the triple index — so it is <strong>index-free and instant</strong>,
-the cheapest tier of the <a href="dataset-cards.html#the-three-tier-exploration-model">three-tier exploration model</a>.</li>
-</ul>
-<img src="img/schema-rollup.svg" alt="The subClassOf tree laid out by depth — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — with instance dots at the leaves (ada and edwin are Astronomers, frida an Artist, nasa an Organisation). A panel shows each instance's type rolled up the chain to depth d to form level d's histogram.">
-<p><em>The <code>subClassOf</code> chain is the zoom function: instances live at the leaves, and
-rolling their types up to depth <code>d</code> produces level <code>d</code>'s histogram — <code>Astronomer</code>
-becomes <code>Scientist</code> becomes <code>Person</code> becomes <code>Agent</code>. Nothing is invented; the
-ontology in the data does the work.</em></p>
-<hr />
-<h2>What you need in the data</h2>
-<table><thead><tr><th>Ingredient</th><th>Predicate</th><th>Required?</th></tr></thead><tbody>
-<tr><td><strong>Typed instances</strong></td><td><code>rdf:type</code> (<code>a</code>)</td><td>Yes — no types, no schema pyramid.</td></tr>
-<tr><td><strong>A class hierarchy</strong></td><td><code>rdfs:subClassOf</code></td><td>Optional — without it the pyramid is a single flat level (= the Dataset Card's class list).</td></tr>
-</tbody></table>
-<p>The <code>subClassOf</code> axioms can come straight from your data, from an ontology file you
-merge in at build time, or be <strong>inferred</strong> with <code>rete build --materialize</code> (the
-RDFS/OWL-RL reasoner — see <a href="reasoning.html">Reasoning</a>). Multiple inheritance is
-handled by picking a canonical (lexicographically smallest) parent so the rollup is
-a deterministic tree.</p>
-<hr />
-<h2>Build it</h2>
-<p>Nothing special: it's part of the normal pyramid, so a plain <code>rete build</code> produces
-it. Take this little graph — five classes in a <code>subClassOf</code> tree plus four typed
-people/orgs:</p>
-<pre><code class="language-turtle"># people.nt  (N-Triples; prefixes shown for readability)
-ex:Scientist     rdfs:subClassOf ex:Person .
-ex:Artist        rdfs:subClassOf ex:Person .
-ex:Astronomer    rdfs:subClassOf ex:Scientist .
-ex:Person        rdfs:subClassOf ex:Agent .
-ex:Organisation  rdfs:subClassOf ex:Agent .
-
-ex:ada    a ex:Astronomer .
-ex:edwin  a ex:Astronomer .
-ex:frida  a ex:Artist .
-ex:nasa   a ex:Organisation .
-ex:ada    ex:memberOf ex:nasa .
-ex:ada    ex:knows    ex:edwin .
-ex:frida  ex:knows    ex:ada .
+<h1>Semantic Zoom: The Schema Pyramid</h1>
+<p><strong>The core idea:</strong> When you open an unfamiliar <code>.rete</code> file, you immediately want to know, "What is in here?" The <strong>Schema Pyramid</strong> acts as a map legend with a built-in zoom control.</p>
+<p>At a glance, you see the broad categories (e.g., <code>Agent: 4k</code>, <code>Place: 8k</code>). Zoom in, and <code>Agent</code> resolves into <code>Person</code> and <code>Organisation</code>. Zoom further, and <code>Person</code> becomes <code>Scientist</code> and <code>Artist</code>. This entire leveled legend is shipped <em>inside</em> the file and can be fetched remotely in just 2 or 3 tiny HTTP range requests—<strong>without ever touching the massive triple index.</strong></p>
+<h2>How It Works</h2>
+<p>The schema pyramid is automatically generated during <code>rete build</code> whenever your data contains an <code>rdf:type</code> hierarchy (using <code>rdfs:subClassOf</code>).</p>
+<ol>
+<li><strong>The Hierarchy:</strong> The data's <code>subClassOf</code> axioms define an abstraction tree (<code>Astronomer ⊑ Scientist ⊑ Person ⊑ Agent</code>).</li>
+<li><strong>The Rollup:</strong> Rete rolls every instance's type up that hierarchy at various depths, storing one distinct type histogram per level.</li>
+<li><strong>The Storage:</strong> These histograms live in the <strong>pyramid-meta</strong> section. Range-reading clients can fetch this instantly.</li>
+</ol>
+<h2>Building the Pyramid</h2>
+<p>If your dataset already has typed instances (<code>a</code>) and a class hierarchy (<code>rdfs:subClassOf</code>), building the pyramid requires zero extra flags:</p>
+<pre><code class="language-sh">rete build data.nt -o data.rete
 </code></pre>
-<pre><code class="language-sh">rete build people.nt -o people.rete
-</code></pre>
-<p>That's it — <code>people.rete</code> now carries the schema pyramid. (If your <code>subClassOf</code>
-axioms live in a separate ontology, merge them in the same build:
-<code>rete build people.nt ontology.ttl -o people.rete</code>. If they're only <em>implied</em>,
-<code>rete build people.nt --materialize -o people.rete</code> infers them first.)</p>
-<hr />
-<h2>Use it</h2>
-<h3>Browse every level at once</h3>
-<p><code>rete summary</code> prints the community super-edge graph and then the schema pyramid —
-one line per semantic level, coarse (abstract) at the top:</p>
+<p><em>Note: If your hierarchy is implied but not explicitly stated, you can use the <code>rete build --materialize</code> flag to infer it via the RDFS/OWL-RL reasoner.</em></p>
+<h2>Using the Pyramid</h2>
+<h3>Command Line Interface</h3>
+<p>Use <code>rete summary</code> to view the entire pyramid at once. Read from top (Level 0, the most abstract) to bottom (the leaves):</p>
 <pre><code class="language-text">$ rete summary people.rete
-…
-schema pyramid — 4 level(s), 6 class(es) in the subClassOf hierarchy:
-  level 0 (depth 0, round 1): &lt;http://ex/Agent&gt;×4
-  level 1 (depth 1, round 0): &lt;http://ex/Person&gt;×3, &lt;http://ex/Organisation&gt;×1
-  level 2 (depth 2, round 0): &lt;http://ex/Scientist&gt;×2, &lt;http://ex/Artist&gt;×1, &lt;http://ex/Organisation&gt;×1
-  level 3 (depth 3, round 0): &lt;http://ex/Astronomer&gt;×2, &lt;http://ex/Artist&gt;×1, &lt;http://ex/Organisation&gt;×1
-  + 3 per-community descriptor(s) for progressive zoom
+schema pyramid — 4 level(s), 6 class(es):
+  level 0 (depth 0): &lt;http://ex/Agent&gt;×4
+  level 1 (depth 1): &lt;http://ex/Person&gt;×3, &lt;http://ex/Organisation&gt;×1
+  level 2 (depth 2): &lt;http://ex/Scientist&gt;×2, &lt;http://ex/Artist&gt;×1, &lt;http://ex/Organisation&gt;×1
+  level 3 (depth 3): &lt;http://ex/Astronomer&gt;×2, &lt;http://ex/Artist&gt;×1, &lt;http://ex/Organisation&gt;×1
 </code></pre>
-<p>Read it top to bottom and the zoom is visible: <strong>everything is an <code>Agent</code> (×4)</strong>;
-that <code>Agent</code> is <code>Person ×3</code> + <code>Organisation ×1</code>; that <code>Person</code> is <code>Scientist ×2</code> +
-<code>Artist ×1</code>; that <code>Scientist</code> is <code>Astronomer ×2</code>. <strong>Counts conserve up the
-hierarchy</strong> — each level re-partitions the <em>same</em> instances at a finer grain.</p>
-<h3>Zoom to one level</h3>
-<p><code>--level k</code> prints just one level's type histogram (<code>0</code> = coarsest / most abstract):</p>
-<pre><code class="language-text">$ rete summary people.rete --level 0          # the big picture
-schema pyramid level 0 — depth 0 (round 1), 1 class(es):
-           4  &lt;http://ex/Agent&gt;
-
-$ rete summary people.rete --level 1          # one step in
+<p>Use <code>--level k</code> to isolate a specific zoom level:</p>
+<pre><code class="language-text">$ rete summary people.rete --level 1
 schema pyramid level 1 — depth 1 (round 0), 2 class(es):
            3  &lt;http://ex/Person&gt;
            1  &lt;http://ex/Organisation&gt;
-
-$ rete summary people.rete --level 3          # the leaves
-schema pyramid level 3 — depth 3 (round 0), 3 class(es):
-           2  &lt;http://ex/Astronomer&gt;
-           1  &lt;http://ex/Artist&gt;
-           1  &lt;http://ex/Organisation&gt;
 </code></pre>
-<p>A viewer wires <code>--level k</code> to a zoom slider: render level 0 when zoomed out, fetch
-deeper levels as the user drills in.</p>
-<h3>Over HTTP / S3 — the index-free payoff</h3>
-<p>This is the selling point. The schema pyramid lives in the pyramid-meta section, so
-<code>summary-url</code> fetches it <strong>without downloading the file and without touching the
-triple index</strong> — only the header, dictionary, and pyramid:</p>
-<img src="img/zoom-fetch.svg" alt="A range client over HTTP draws fetch arrows to three small on-disk sections — HEADER, DICTIONARY, and PYRAMID-META (highlighted) — while the large TRIPLE INDEX section is marked 'never fetched'. Caption: the whole leveled legend in a few KB and 3 range requests; the index stays on the server.">
-<p><em>A range client pulls only the header, dictionary, and pyramid-meta. The large
-triple index never leaves the server — so the leveled legend costs the same few
-kilobytes whether the file is a megabyte or a gigabyte.</em></p>
-<p>(The transcript above is from a larger published file — hence the bigger counts —
-to show the real at-scale byte cost: the whole leveled legend in <strong>27 KB and 3
-range requests</strong>, with the triple index untouched.)</p>
+<h3>The Index-Free HTTP Advantage</h3>
+<p>The true magic happens over HTTP. Using <code>rete summary-url</code>, a client reads the header, dictionary, and pyramid-meta sections. <strong>The triple index remains entirely untouched.</strong></p>
 <pre><code class="language-text">$ rete summary-url https://host/people.rete
-…
-schema pyramid — 4 level(s), 6 class(es) in the subClassOf hierarchy:
-  level 0 (depth 0, round 5): &lt;http://ex/Agent&gt;×2847, &lt;http://ex/Place&gt;×1153
-  …
+...
 fetched 27337 of 161420 bytes in 3 range request(s) — index NOT fetched
 </code></pre>
-<p>The bytes-on-the-wire are <strong>bounded by the number of classes, not the size of the
-graph</strong> — the same leveled legend costs roughly the same whether the file is a
-megabyte or a gigabyte. Put the <code>.rete</code> on any range-capable host (S3, a CDN,
-GitHub Pages) and a browser or CLI gets a zoomable type map for the cost of a few
-kilobytes. See <a href="dataset-cards.html#the-three-tier-exploration-model">Dataset Cards → the three-tier model</a>
-for how this tier sits alongside the index-free <code>card-url</code> and the lazy
-<code>sparql-url</code> tiers.</p>
-<h3>Read it programmatically</h3>
-<p>The Rust API exposes the pyramid index-free through <code>SummaryView</code>
-(<code>rete-core</code>), which reads only the header + dictionary + pyramid ranges:</p>
-<pre><code class="language-rust">use rete_core::{SummaryView, SliceReader};
-
-let view = SummaryView::open_ranged(&amp;SliceReader::new(&amp;bytes))?.unwrap();
-for k in 0..view.level_count() {
-    let level = view.level_rollup(k).unwrap();
-    println!("level {k} (depth {}):", level.depth);
-    for (class, n) in &amp;level.classes {
-        println!("  {n:&gt;8}  {class}");
-    }
-}
-// view.class_hierarchy : the subClassOf DAG with per-class depth
-// view.descriptors     : per-community descriptors (below)
-</code></pre>
-<p>Any <code>RangeReader</code> works here — back it with an HTTP client and you read the schema
-pyramid straight off a URL.</p>
-<hr />
-<h2>A graph, not a tree — multiple parents and lateral links</h2>
-<p>A real ontology isn't a strict tree. Two things break the "every class sits in
-exactly one branch" assumption, and the schema pyramid keeps <strong>both</strong>:</p>
-<img src="img/ontology-graph.svg" alt="Class nodes laid out by depth. Solid blue subClassOf edges form the is-a hierarchy, including Astronaut which has TWO parents (Scientist and Explorer). A dashed green edge shows a lateral 'memberOf' relation from Person to Organisation. A legend distinguishes is-a edges from lateral relation edges.">
-<p><strong>1. Non-exclusive <code>subClassOf</code> (multiple inheritance).</strong> A class can be a subclass
-of several others — <code>Astronaut ⊑ Scientist</code> <em>and</em> <code>Astronaut ⊑ Explorer</code>. The
-shipped hierarchy keeps <strong>all</strong> parents, so it is a directed acyclic <em>graph</em>, not a
-tree. (A single canonical parent — the lexicographically smallest — drives the
-deterministic depth/rollup; the rest are preserved as cross-links you can
-navigate.) On <code>ClassNode</code> you get <code>parents: Vec&lt;String&gt;</code> and <code>canonical_parent()</code>.</p>
-<p><strong>2. Lateral connections (the non-<code>is-a</code> relations).</strong> Beyond "is-a", classes are
-<em>connected</em> — <code>Person memberOf Organisation</code>, <code>Person knows Person</code>. The pyramid
-rolls these relations up <strong>per level</strong> too, so each level is a small <strong>graph</strong>, not
-just a histogram. Zoom out and the relations abstract along with the types:</p>
-<pre><code class="language-text">$ rete summary people.rete --level 1          # concrete
-  3  &lt;http://ex/Person&gt;
-  1  &lt;http://ex/Organisation&gt;
-  relations at this level (2):
-       2  &lt;http://ex/Person&gt; --&lt;http://ex/knows&gt;-&gt; &lt;http://ex/Person&gt;
-       1  &lt;http://ex/Person&gt; --&lt;http://ex/memberOf&gt;-&gt; &lt;http://ex/Organisation&gt;
-
-$ rete summary people.rete --level 0          # abstracted
-  4  &lt;http://ex/Agent&gt;
-  relations at this level (2):
-       2  &lt;http://ex/Agent&gt; --&lt;http://ex/knows&gt;-&gt; &lt;http://ex/Agent&gt;
-       1  &lt;http://ex/Agent&gt; --&lt;http://ex/memberOf&gt;-&gt; &lt;http://ex/Agent&gt;
-</code></pre>
-<p><code>Person memberOf Organisation</code> becomes <code>Agent memberOf Agent</code> as you zoom out — the
-<strong>connections are preserved and generalized</strong>, never dropped. So the answer to <em>"can
-the pyramid be non-exclusive and keep connections?"</em> is <strong>yes, by construction</strong>:
-it's a <em>leveled multigraph</em> over the ontology, not a leveled tree. On the API these
-are <code>view.level_links</code> (<code>Vec&lt;LevelLinks&gt;</code>, each a <code>Vec&lt;ClassRelation&gt;</code>).</p>
-<hr />
-<h2>Per-community descriptors (progressive zoom)</h2>
-<p>Alongside the global levels, the pyramid ships a <strong>descriptor per community</strong>: its
-dominant class, local type histogram, and — when the data has them — a geographic
-bounding box (CRS84 lon/lat) and a temporal range. These let a client refine the
-global picture <em>locally</em> — "what's in this region / this cluster?" — again without
-fetching any triples. They're available on <code>view.descriptors</code>.</p>
-<blockquote>
-<p><strong>Status.</strong> The descriptors describe communities and ship in the index-free
-pyramid-meta today. The <em>physical per-community triple tiles</em> they're designed to
-annotate are a separate, in-progress storage step; until those land, a descriptor
-is a standalone summary of its community.</p>
-</blockquote>
-<hr />
-<h2>No hierarchy? It still works</h2>
-<p>If your data has types but <strong>no <code>subClassOf</code></strong>, the pyramid degrades gracefully to
-a <strong>single flat level</strong> — exactly the class histogram you'd get from the Dataset
-Card — so <code>rete summary --level 0</code> always answers. Add a hierarchy (or
-<code>--materialize</code>) later and the levels appear automatically on the next build.</p>
-<hr />
-<h2>How the ontology is embedded in the format</h2>
-<p>The ontology isn't a sidecar — it is <strong>derived once at build time and written into
-the file's own sections</strong>, where range clients read it without the triple index.
-Three <em>orthogonal</em> structures are embedded, each answering a different question:</p>
-<img src="img/ontology-embedding.svg" alt="A .rete file's two index-free sections. The METADATA/Dataset Card section holds class_links (the leaf class-relation graph), class/predicate/datatype histograms, and starter queries (read by card-url). The PYRAMID-META section holds the non-exclusive subClassOf DAG, the per-level type histogram, the per-level lateral class-relation graph, and the community super-edges plus descriptors (read by summary-url). A dashed TRIPLE INDEX box is marked 'not needed to read the ontology'.">
-<table><thead><tr><th>Structure</th><th>Question it answers</th><th>Where it lives</th><th>Read by</th></tr></thead><tbody>
-<tr><td><strong><code>subClassOf</code> DAG</strong> (non-exclusive, with depth)</td><td><em>is-a</em> — how classes generalize</td><td>pyramid-meta (v2)</td><td><code>summary</code> / <code>summary-url</code></td></tr>
-<tr><td><strong>Per-level type + relation rollups</strong></td><td><em>what &amp; how, at each zoom</em></td><td>pyramid-meta (v2)</td><td><code>summary --level k</code></td></tr>
-<tr><td><strong>Per-community descriptors</strong></td><td><em>what's in this cluster/region</em></td><td>pyramid-meta (v2)</td><td><code>SummaryView.descriptors</code></td></tr>
-<tr><td><strong><code>class_links</code></strong> (leaf relation graph)</td><td><em>relates-to</em> — the effective schema</td><td>the Dataset Card (metadata)</td><td><code>card</code> / <code>card-url</code></td></tr>
-<tr><td><strong>Community super-edges</strong></td><td><em>co-occurrence</em> — topological structure</td><td>pyramid-meta (v1)</td><td><code>summary</code> / <code>summary-url</code></td></tr>
-</tbody></table>
-<p>A few properties that make the embedding work:</p>
+<p>A massive gigabyte-scale graph provides its zoomable type map for the exact same network cost (a few kilobytes) as a tiny graph!</p>
+<h2>Advanced Features</h2>
 <ul>
-<li><strong>Self-contained.</strong> The schema pyramid stores class and predicate IRIs in its own
-<strong>string table</strong>, so it can be decoded <strong>without the dictionary</strong> — the ontology
-travels as plain text, not dictionary IDs.</li>
-<li><strong>Index-free.</strong> Reading any of it never opens the triple index — <code>rete summary [--level k]</code>, <code>summary-url</code>, <code>card-url</code>, and <code>SummaryView</code> keep to the header +
-the small metadata/pyramid ranges. The index stays on the server.</li>
-<li><strong>Physically additive (pyramid-meta v2).</strong> The schema block is appended after the
-v1 summary and written <strong>only when the graph has types</strong>, so a typeless file is
-byte-identical to a v1 build and an older reader silently ignores the new bytes.
-See <a href="SPEC.html#7-4-the-schema-pyramid-semantic-zoom-v2">the format spec §7.4</a> for
-the exact byte layout.</li>
-<li><strong>Provenance.</strong> The <code>subClassOf</code> axioms come straight from the data, from a merged
-ontology file, or from <code>rete build --materialize</code> (the RDFS/OWL-RL reasoner). The
-pyramid never invents structure — it <em>embeds the ontology that's already there</em>.</li>
-<li><strong>Deterministic &amp; bounded.</strong> Same input → byte-identical file (stable content
-hash, safe to cache). Levels (≤ 6), classes/relations per level, and descriptors
-are all capped, so the embedded ontology stays small <strong>regardless of graph size</strong>.</li>
+<li><strong>Multiple Inheritance:</strong> Real ontologies aren't strict trees (e.g., <code>Astronaut</code> is both a <code>Scientist</code> and an <code>Explorer</code>). The pyramid retains <em>all</em> parent links, maintaining a true directed acyclic graph (DAG).</li>
+<li><strong>Lateral Links:</strong> Relationships like <code>Person memberOf Organisation</code> are also rolled up. At Level 0, this might generalize to <code>Agent memberOf Agent</code>. The connections are preserved at every zoom level.</li>
+<li><strong>Missing Hierarchy?</strong> If your data lacks <code>subClassOf</code> axioms, the pyramid gracefully degrades to a single flat level (identical to the Dataset Card's class list).</li>
 </ul>
-<h2>Cost vs benefit — is the pyramid worth it?</h2>
-<p>Measured honestly (see the <a href="BENCHMARK.html#the-pyramid-cost-vs-benefit">benchmark</a>),
-the two pyramidal structures have very different economics:</p>
+<h2>Is the Pyramid Worth It?</h2>
 <ul>
-<li>The <strong>schema pyramid is bounded</strong> — its size and read cost track the <em>ontology</em>
-(classes/relations), not the graph, so it stays cheap (~tens of KB, ~20 ms read)
-at any scale. This is the structure that earns its keep for exploration.</li>
-<li>The <strong>community super-edge summary scales with the graph</strong> and adds build time
-(Louvain), and it gives <strong>no</strong> benefit to node-selective lazy queries. If you only
-serve selective SPARQL, <code>--no-pyramid</code> is smaller and just as fast.</li>
+<li><strong>The Schema Pyramid (Semantic Zoom) is always worth it.</strong> It tracks the ontology size, not the graph size, meaning it remains tiny (tens of KB) and lightning-fast (~20ms read) at any scale.</li>
+<li><strong>The Community Pyramid (Topological Zoom) is expensive.</strong> It scales with the size of the graph, increasing build times and file size.</li>
 </ul>
-<p>Rule of thumb: <strong>keep the pyramid when you want index-free overview/exploration;
-drop it (<code>--no-pyramid</code>) when you only serve selective queries at scale.</strong></p>
-<h2>When to reach for it</h2>
-<ul>
-<li><strong>Publishing a dataset</strong> people will explore cold — the schema pyramid is the
-zoomable legend that tells them what to ask.</li>
-<li><strong>A browser/edge client</strong> that should show "the shape of the data" before
-running a single SPARQL query — render level 0 from a few KB, drill down on
-demand.</li>
-<li><strong>Faceted / drill-down UIs</strong> — wire the levels to a type facet that starts
-abstract and refines as the user narrows.</li>
-</ul>
-<p>If your data is <strong>untyped</strong> or has <strong>no class hierarchy</strong>, the payoff is smaller (a
-single flat level); everything else here still applies.</p>
-<hr />
-<p>See also: <a href="dataset-cards.html">Dataset Cards</a> (the self-describing card + starter
-queries that ride the same index-free path), <a href="reasoning.html">Reasoning</a>
-(<code>--materialize</code> to infer <code>subClassOf</code>), and <a href="SPEC.html#7-the-pyramid-community-summarization">the format spec</a>.</p>
+<p><strong>Rule of Thumb:</strong> Keep the pyramid enabled for index-free exploration and overviews. If you are <em>only</em> serving selective backend SPARQL queries at massive scale, use the <code>--no-pyramid</code> flag to save space and build time.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">

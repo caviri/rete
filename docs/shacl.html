@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>SHACL validation · rete docs</title>
-  <meta name="description" content="rete shacl validates a .rete file against SHACL Core shapes. It is meant for release checks and CI gates: build the graph once, run the shape file against the default graph or a named graph, and fail…" />
+  <meta name="description" content="The rete shacl command validates a .rete file against SHACL Core shapes. It's the perfect tool for release checks and CI pipelines: build your graph, run your shapes against it, and fail the pipeline…" />
   <link rel="canonical" href="https://caviri.github.io/rete/shacl.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="SHACL validation · rete docs" />
-  <meta property="og:description" content="rete shacl validates a .rete file against SHACL Core shapes. It is meant for release checks and CI gates: build the graph once, run the shape file against the default graph or a named graph, and fail…" />
+  <meta property="og:description" content="The rete shacl command validates a .rete file against SHACL Core shapes. It's the perfect tool for release checks and CI pipelines: build your graph, run your shapes against it, and fail the pipeline…" />
   <meta property="og:url" content="https://caviri.github.io/rete/shacl.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/shacl.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="SHACL validation · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="SHACL validation · rete docs" />
-  <meta name="twitter:description" content="rete shacl validates a .rete file against SHACL Core shapes. It is meant for release checks and CI gates: build the graph once, run the shape file against the default graph or a named graph, and fail…" />
+  <meta name="twitter:description" content="The rete shacl command validates a .rete file against SHACL Core shapes. It's the perfect tool for release checks and CI pipelines: build your graph, run your shapes against it, and fail the pipeline…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/shacl.png" />
   <meta name="rete:section" content="Guides" />
   <script>
@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -337,35 +335,32 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>SHACL validation</h1>
-<p><code>rete shacl</code> validates a <code>.rete</code> file against SHACL Core shapes. It is meant for
-release checks and CI gates: build the graph once, run the shape file against the
-default graph or a named graph, and fail the job if the validation report is not
-conformant.</p>
-<pre><code class="language-sh">rete build data.ttl -o data.rete
+<h1>SHACL Validation</h1>
+<p>The <code>rete shacl</code> command validates a <code>.rete</code> file against <strong>SHACL Core</strong> shapes. It's the perfect tool for release checks and CI pipelines: build your graph, run your shapes against it, and fail the pipeline if the data is non-conformant.</p>
+<pre><code class="language-sh"># 1. Build the data
+rete build data.ttl -o data.rete
+
+# 2. Validate against shapes
 rete shacl data.rete --shapes shapes.ttl
+
+# 3. Output as JSON
 rete shacl data.rete --shapes shapes.ttl --format json
+
+# 4. Validate a specific named graph
 rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/releases/2026-06&gt;'
 </code></pre>
-<p>The command exits with status <code>0</code> when the report conforms and non-zero when it
-finds at least one result. Shapes are read as Turtle. Data comes from the <code>.rete</code>
-file, so validation runs over exactly the graph you publish and query.</p>
-<h2>Validating a remote graph (lazy)</h2>
-<p>SHACL validation is <strong>node-by-node</strong>: a shape names its targets (a class, a node,
-the subjects/objects of a predicate), then checks each focus node's own property
-values. That maps onto <strong>routed range reads</strong>, so a remote <code>.rete</code> can be
-validated over HTTP <em>without downloading it</em> — each lookup faults only the tiles
-holding the target nodes and their values:</p>
+<p>If the validation fails (finds non-conformant results), the command exits with a non-zero status.</p>
+<h2>Validating Remote Graphs (Lazy Loading)</h2>
+<p>SHACL validation works node-by-node. Because of Rete's indexed architecture, you can validate a remote <code>.rete</code> file over HTTP <strong>without downloading the whole file!</strong> Rete will perform targeted range-reads to fetch only the nodes the SHACL shapes actually care about.</p>
 <pre><code class="language-sh">rete shacl-url https://host/data.rete --shapes shapes.ttl
-# (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
+# Result: Fetched 38KB (7 requests) out of a 1MB file!
 </code></pre>
-<p>A <strong>targeted</strong> shape (<code>sh:targetClass</code> / <code>targetNode</code> / <code>targetSubjectsOf</code> /
-<code>targetObjectsOf</code>) fetches only its targets — the win grows with the file. The one
-exception is a <strong>target-less shape</strong> (one that implicitly targets every node) or a
-general inverse path, which must read the whole graph; <code>^predicate</code> inverse paths
-are routed (they become a single <code>(?, p, focus)</code> lookup). <code>shacl-url</code> validates the
-default graph.</p>
-<h2>A minimal shape</h2>
+<blockquote>
+<p>[!TIP]
+<strong>Performance Note:</strong> Targeted shapes (<code>sh:targetClass</code>, <code>targetNode</code>, etc.) are blazing fast over the network. However, "target-less" shapes (which implicitly target <em>every</em> node) will force the engine to read the entire graph. Keep your shapes targeted for best performance.</p>
+</blockquote>
+<h2>A Minimal Example Shape</h2>
+<p>Here is a simple SHACL shape enforcing that every <code>ex:Person</code> must have exactly one email string:</p>
 <pre><code class="language-turtle">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
 @prefix ex: &lt;http://ex/&gt; .
 @prefix xsd: &lt;http://www.w3.org/2001/XMLSchema#&gt; .
@@ -382,9 +377,10 @@ ex:PersonShape
     sh:message "Every person needs exactly one email string." ;
   ] .
 </code></pre>
+<p>Run it:</p>
 <pre><code class="language-sh">rete shacl people.rete --shapes person-shapes.ttl
 </code></pre>
-<p>Text output is compact and human-oriented:</p>
+<p>The output is clean and human-readable:</p>
 <pre><code class="language-text">conforms: false
 
 - focus: &lt;http://ex/Alice&gt;
@@ -394,74 +390,58 @@ ex:PersonShape
   shape: _:b1
   message: Every person needs exactly one email string.
 </code></pre>
-<p>Use <code>--format json</code> for automation and <code>--format ttl</code> for a Turtle validation
-report.</p>
-<h2>Supported SHACL surface</h2>
-<p>This implementation targets the stable W3C SHACL Core 2017 Recommendation. It
-does not try to implement SHACL-SPARQL, SHACL-AF, SHACL-JS, SHACL 1.2 drafts, or
-ShEx.</p>
-<p>Supported targets:</p>
-<table><thead><tr><th>Feature</th><th>Status</th></tr></thead><tbody>
-<tr><td><code>sh:targetNode</code></td><td>yes</td></tr>
-<tr><td><code>sh:targetClass</code></td><td>yes, including <code>rdfs:subClassOf</code> closure in the data graph</td></tr>
-<tr><td><code>sh:targetSubjectsOf</code></td><td>yes</td></tr>
-<tr><td><code>sh:targetObjectsOf</code></td><td>yes</td></tr>
-<tr><td>implicit class targets (<code>rdfs:Class</code>, <code>owl:Class</code>)</td><td>yes</td></tr>
-<tr><td><code>sh:deactivated</code>, <code>sh:severity</code>, <code>sh:message</code></td><td>yes</td></tr>
-</tbody></table>
-<p>Supported property paths:</p>
-<table><thead><tr><th>Path form</th><th>Status</th></tr></thead><tbody>
-<tr><td>predicate IRI</td><td>yes</td></tr>
-<tr><td><code>sh:inversePath</code></td><td>yes</td></tr>
-<tr><td>RDF list sequence paths</td><td>yes</td></tr>
-<tr><td><code>sh:alternativePath</code></td><td>yes</td></tr>
-<tr><td><code>sh:zeroOrMorePath</code></td><td>yes</td></tr>
-<tr><td><code>sh:oneOrMorePath</code></td><td>yes</td></tr>
-<tr><td><code>sh:zeroOrOnePath</code></td><td>yes</td></tr>
-</tbody></table>
-<p>Supported constraint components:</p>
-<table><thead><tr><th>Constraint family</th><th>Components</th></tr></thead><tbody>
-<tr><td>Cardinality</td><td><code>sh:minCount</code>, <code>sh:maxCount</code></td></tr>
-<tr><td>Value type</td><td><code>sh:class</code>, <code>sh:datatype</code>, <code>sh:nodeKind</code></td></tr>
-<tr><td>Value range</td><td><code>sh:minInclusive</code>, <code>sh:maxInclusive</code>, <code>sh:minExclusive</code>, <code>sh:maxExclusive</code></td></tr>
-<tr><td>Strings and languages</td><td><code>sh:minLength</code>, <code>sh:maxLength</code>, <code>sh:pattern</code>, <code>sh:flags</code>, <code>sh:languageIn</code>, <code>sh:uniqueLang</code></td></tr>
-<tr><td>Property pairs</td><td><code>sh:equals</code>, <code>sh:disjoint</code>, <code>sh:lessThan</code>, <code>sh:lessThanOrEquals</code></td></tr>
-<tr><td>Value sets</td><td><code>sh:hasValue</code>, <code>sh:in</code></td></tr>
-<tr><td>Nested shapes</td><td><code>sh:node</code>, <code>sh:property</code></td></tr>
-<tr><td>Logical constraints</td><td><code>sh:not</code>, <code>sh:and</code>, <code>sh:or</code>, <code>sh:xone</code></td></tr>
-<tr><td>Closed shapes</td><td><code>sh:closed</code>, <code>sh:ignoredProperties</code></td></tr>
-<tr><td>Qualified values</td><td><code>sh:qualifiedValueShape</code>, <code>sh:qualifiedMinCount</code>, <code>sh:qualifiedMaxCount</code>, <code>sh:qualifiedValueShapesDisjoint</code></td></tr>
-</tbody></table>
-<h2>Current limits</h2>
+<p><em>(You can also use <code>--format json</code> for CI parsing, or <code>--format ttl</code> for a standard Turtle report).</em></p>
+<h2>What SHACL Features are Supported?</h2>
+<p>Rete targets the stable <strong>W3C SHACL Core 2017 Recommendation</strong>. (SHACL-SPARQL, SHACL-JS, and ShEx are not supported).</p>
+<h3>Targets Supported</h3>
 <ul>
-<li>Shape files must be Turtle.</li>
-<li>SHACL-SPARQL constraints, custom functions, rules, and JavaScript extensions
-are out of scope for this command.</li>
-<li>Recursive shape cycles are reported as validation results instead of being
-treated as fatal engine errors.</li>
-<li>Rete files are immutable snapshots. If your build uses <code>--materialize</code>, SHACL
-validates the already-materialized graph; otherwise it validates asserted data
-only.</li>
+<li><code>sh:targetNode</code>, <code>sh:targetSubjectsOf</code>, <code>sh:targetObjectsOf</code></li>
+<li><code>sh:targetClass</code> (including <code>rdfs:subClassOf</code> closure in the graph)</li>
+<li>Implicit class targets (<code>rdfs:Class</code>, <code>owl:Class</code>)</li>
+<li>Metadata: <code>sh:deactivated</code>, <code>sh:severity</code>, <code>sh:message</code></li>
 </ul>
-<h2>Core API</h2>
-<p>The CLI uses the reusable core API. <code>validate_shacl</code> is generic over a
-[<code>GraphView</code>] — the data graph can be an in-memory <code>DataGraph</code> (eager) or a
-<code>ReteGraph</code> that routes every lookup as a range read (lazy / remote):</p>
+<h3>Property Paths Supported</h3>
+<ul>
+<li>Predicate IRIs</li>
+<li><code>sh:inversePath</code>, <code>sh:alternativePath</code></li>
+<li><code>sh:zeroOrMorePath</code>, <code>sh:oneOrMorePath</code>, <code>sh:zeroOrOnePath</code></li>
+<li>RDF list sequence paths</li>
+</ul>
+<h3>Constraint Components Supported</h3>
+<table><thead><tr><th>Category</th><th>Supported Constraints</th></tr></thead><tbody>
+<tr><td><strong>Cardinality</strong></td><td><code>sh:minCount</code>, <code>sh:maxCount</code></td></tr>
+<tr><td><strong>Value Type</strong></td><td><code>sh:class</code>, <code>sh:datatype</code>, <code>sh:nodeKind</code></td></tr>
+<tr><td><strong>Value Range</strong></td><td><code>sh:minInclusive</code>, <code>sh:maxInclusive</code>, <code>sh:minExclusive</code>, <code>sh:maxExclusive</code></td></tr>
+<tr><td><strong>Strings</strong></td><td><code>sh:minLength</code>, <code>sh:maxLength</code>, <code>sh:pattern</code>, <code>sh:flags</code>, <code>sh:languageIn</code>, <code>sh:uniqueLang</code></td></tr>
+<tr><td><strong>Property Pairs</strong></td><td><code>sh:equals</code>, <code>sh:disjoint</code>, <code>sh:lessThan</code>, <code>sh:lessThanOrEquals</code></td></tr>
+<tr><td><strong>Value Sets</strong></td><td><code>sh:hasValue</code>, <code>sh:in</code></td></tr>
+<tr><td><strong>Nested Shapes</strong></td><td><code>sh:node</code>, <code>sh:property</code></td></tr>
+<tr><td><strong>Logic</strong></td><td><code>sh:not</code>, <code>sh:and</code>, <code>sh:or</code>, <code>sh:xone</code></td></tr>
+<tr><td><strong>Closed Shapes</strong></td><td><code>sh:closed</code>, <code>sh:ignoredProperties</code></td></tr>
+<tr><td><strong>Qualified</strong></td><td><code>sh:qualifiedValueShape</code>, <code>sh:qualifiedMinCount</code>, <code>sh:qualifiedMaxCount</code>, <code>sh:qualifiedValueShapesDisjoint</code></td></tr>
+</tbody></table>
+<h2>Limitations</h2>
+<ul>
+<li>Shapes must be provided in <strong>Turtle</strong> format.</li>
+<li>Recursive shape cycles are reported as validation results (they won't crash the engine).</li>
+<li>If your <code>.rete</code> file was built with <code>--materialize</code>, SHACL validates the <strong>entire materialized graph</strong>. Otherwise, it only validates the explicitly asserted data.</li>
+</ul>
+<h2>Rust Core API</h2>
+<p>You can use the SHACL engine programmatically in Rust. <code>validate_shacl</code> accepts either an eager, fully-loaded <code>DataGraph</code>, or a lazy <code>ReteGraph</code> that streams only what it needs over HTTP!</p>
 <pre><code class="language-rust">use rete_core::{validate_shacl, DataGraph, ReteGraph, Rete, ShaclShapes};
 
+// 1. Parse the shapes
 let shapes = ShaclShapes::parse_turtle(&amp;std::fs::read_to_string("shapes.ttl")?)?;
 
-// Eager: whole graph in memory.
+// 2. EAGER METHOD: Load the whole graph in memory
 let rete = Rete::open(&amp;std::fs::read("data.rete")?)?;
 let report = validate_shacl(&amp;DataGraph::from_rete(&amp;rete, None), &amp;shapes);
 
-// Lazy: validate over a range reader (e.g. an HTTP backend) — fetches only the
-// shapes' targets.
+// 3. LAZY METHOD: Validate over a range reader (HTTP backend)
 let rete = Rete::open_ranged_lazy(reader)?;
 let report = validate_shacl(&amp;ReteGraph::new(&amp;rete), &amp;shapes);
 </code></pre>
-<p>Pass <code>Some("&lt;graph-iri&gt;")</code> to <code>DataGraph::from_rete</code> to validate one named graph
-(the lazy <code>ReteGraph</code> validates the default graph).</p>
+<p><em>(Pass <code>Some("&lt;graph-iri&gt;")</code> to <code>DataGraph::from_rete</code> to validate a specific named graph).</em></p>
 
       </article>
       <aside class="rail" aria-label="On this page">

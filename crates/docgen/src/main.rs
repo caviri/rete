@@ -45,7 +45,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("ask-the-graph.md", "Ask the graph — browser graphRAG"),
             ("football.md", "Football — match replays"),
             ("subtitles-guide.md", "Subtitle timeline"),
-            ("anatomy-guide.md", "Z-Anatomy — 3D human body"),
+            ("showcases.md", "Case studies & showcases"),
             ("building-guide.md", "FZK-Haus — one building in 3D"),
             ("bim-pair-guide.md", "Architecture vs structure (BIM)"),
             ("lombardi-guide.md", "Lombardi — network drawings in ink"),
@@ -84,7 +84,6 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("blender.md", "Blender — graphs as scenes"),
             ("agents.md", "Agents — MCP, plugin & skills"),
             ("agent-frameworks.md", "LangChain & Pydantic AI"),
-            ("fallacies.md", "Experiment: graphs from speech"),
         ],
     ),
     (

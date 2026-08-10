@@ -1,42 +1,38 @@
-# SHACL validation
+# SHACL Validation
 
-`rete shacl` validates a `.rete` file against SHACL Core shapes. It is meant for
-release checks and CI gates: build the graph once, run the shape file against the
-default graph or a named graph, and fail the job if the validation report is not
-conformant.
+The `rete shacl` command validates a `.rete` file against **SHACL Core** shapes. It's the perfect tool for release checks and CI pipelines: build your graph, run your shapes against it, and fail the pipeline if the data is non-conformant.
 
 ```sh
+# 1. Build the data
 rete build data.ttl -o data.rete
+
+# 2. Validate against shapes
 rete shacl data.rete --shapes shapes.ttl
+
+# 3. Output as JSON
 rete shacl data.rete --shapes shapes.ttl --format json
+
+# 4. Validate a specific named graph
 rete shacl data.rete --shapes shapes.ttl --graph '<http://ex/releases/2026-06>'
 ```
 
-The command exits with status `0` when the report conforms and non-zero when it
-finds at least one result. Shapes are read as Turtle. Data comes from the `.rete`
-file, so validation runs over exactly the graph you publish and query.
+If the validation fails (finds non-conformant results), the command exits with a non-zero status.
 
-## Validating a remote graph (lazy)
+## Validating Remote Graphs (Lazy Loading)
 
-SHACL validation is **node-by-node**: a shape names its targets (a class, a node,
-the subjects/objects of a predicate), then checks each focus node's own property
-values. That maps onto **routed range reads**, so a remote `.rete` can be
-validated over HTTP *without downloading it* — each lookup faults only the tiles
-holding the target nodes and their values:
+SHACL validation works node-by-node. Because of Rete's indexed architecture, you can validate a remote `.rete` file over HTTP **without downloading the whole file!** Rete will perform targeted range-reads to fetch only the nodes the SHACL shapes actually care about.
 
 ```sh
 rete shacl-url https://host/data.rete --shapes shapes.ttl
-# (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
+# Result: Fetched 38KB (7 requests) out of a 1MB file!
 ```
 
-A **targeted** shape (`sh:targetClass` / `targetNode` / `targetSubjectsOf` /
-`targetObjectsOf`) fetches only its targets — the win grows with the file. The one
-exception is a **target-less shape** (one that implicitly targets every node) or a
-general inverse path, which must read the whole graph; `^predicate` inverse paths
-are routed (they become a single `(?, p, focus)` lookup). `shacl-url` validates the
-default graph.
+> [!TIP]
+> **Performance Note:** Targeted shapes (`sh:targetClass`, `targetNode`, etc.) are blazing fast over the network. However, "target-less" shapes (which implicitly target *every* node) will force the engine to read the entire graph. Keep your shapes targeted for best performance.
 
-## A minimal shape
+## A Minimal Example Shape
+
+Here is a simple SHACL shape enforcing that every `ex:Person` must have exactly one email string:
 
 ```turtle
 @prefix sh: <http://www.w3.org/ns/shacl#> .
@@ -56,12 +52,12 @@ ex:PersonShape
   ] .
 ```
 
+Run it:
 ```sh
 rete shacl people.rete --shapes person-shapes.ttl
 ```
 
-Text output is compact and human-oriented:
-
+The output is clean and human-readable:
 ```text
 conforms: false
 
@@ -73,84 +69,59 @@ conforms: false
   message: Every person needs exactly one email string.
 ```
 
-Use `--format json` for automation and `--format ttl` for a Turtle validation
-report.
+*(You can also use `--format json` for CI parsing, or `--format ttl` for a standard Turtle report).*
 
-## Supported SHACL surface
+## What SHACL Features are Supported?
 
-This implementation targets the stable W3C SHACL Core 2017 Recommendation. It
-does not try to implement SHACL-SPARQL, SHACL-AF, SHACL-JS, SHACL 1.2 drafts, or
-ShEx.
+Rete targets the stable **W3C SHACL Core 2017 Recommendation**. (SHACL-SPARQL, SHACL-JS, and ShEx are not supported).
 
-Supported targets:
+### Targets Supported
+- `sh:targetNode`, `sh:targetSubjectsOf`, `sh:targetObjectsOf`
+- `sh:targetClass` (including `rdfs:subClassOf` closure in the graph)
+- Implicit class targets (`rdfs:Class`, `owl:Class`)
+- Metadata: `sh:deactivated`, `sh:severity`, `sh:message`
 
-| Feature | Status |
+### Property Paths Supported
+- Predicate IRIs
+- `sh:inversePath`, `sh:alternativePath`
+- `sh:zeroOrMorePath`, `sh:oneOrMorePath`, `sh:zeroOrOnePath`
+- RDF list sequence paths
+
+### Constraint Components Supported
+| Category | Supported Constraints |
 |---|---|
-| `sh:targetNode` | yes |
-| `sh:targetClass` | yes, including `rdfs:subClassOf` closure in the data graph |
-| `sh:targetSubjectsOf` | yes |
-| `sh:targetObjectsOf` | yes |
-| implicit class targets (`rdfs:Class`, `owl:Class`) | yes |
-| `sh:deactivated`, `sh:severity`, `sh:message` | yes |
+| **Cardinality** | `sh:minCount`, `sh:maxCount` |
+| **Value Type** | `sh:class`, `sh:datatype`, `sh:nodeKind` |
+| **Value Range** | `sh:minInclusive`, `sh:maxInclusive`, `sh:minExclusive`, `sh:maxExclusive` |
+| **Strings** | `sh:minLength`, `sh:maxLength`, `sh:pattern`, `sh:flags`, `sh:languageIn`, `sh:uniqueLang` |
+| **Property Pairs**| `sh:equals`, `sh:disjoint`, `sh:lessThan`, `sh:lessThanOrEquals` |
+| **Value Sets** | `sh:hasValue`, `sh:in` |
+| **Nested Shapes** | `sh:node`, `sh:property` |
+| **Logic** | `sh:not`, `sh:and`, `sh:or`, `sh:xone` |
+| **Closed Shapes** | `sh:closed`, `sh:ignoredProperties` |
+| **Qualified** | `sh:qualifiedValueShape`, `sh:qualifiedMinCount`, `sh:qualifiedMaxCount`, `sh:qualifiedValueShapesDisjoint` |
 
-Supported property paths:
+## Limitations
+- Shapes must be provided in **Turtle** format.
+- Recursive shape cycles are reported as validation results (they won't crash the engine).
+- If your `.rete` file was built with `--materialize`, SHACL validates the **entire materialized graph**. Otherwise, it only validates the explicitly asserted data.
 
-| Path form | Status |
-|---|---|
-| predicate IRI | yes |
-| `sh:inversePath` | yes |
-| RDF list sequence paths | yes |
-| `sh:alternativePath` | yes |
-| `sh:zeroOrMorePath` | yes |
-| `sh:oneOrMorePath` | yes |
-| `sh:zeroOrOnePath` | yes |
+## Rust Core API
 
-Supported constraint components:
-
-| Constraint family | Components |
-|---|---|
-| Cardinality | `sh:minCount`, `sh:maxCount` |
-| Value type | `sh:class`, `sh:datatype`, `sh:nodeKind` |
-| Value range | `sh:minInclusive`, `sh:maxInclusive`, `sh:minExclusive`, `sh:maxExclusive` |
-| Strings and languages | `sh:minLength`, `sh:maxLength`, `sh:pattern`, `sh:flags`, `sh:languageIn`, `sh:uniqueLang` |
-| Property pairs | `sh:equals`, `sh:disjoint`, `sh:lessThan`, `sh:lessThanOrEquals` |
-| Value sets | `sh:hasValue`, `sh:in` |
-| Nested shapes | `sh:node`, `sh:property` |
-| Logical constraints | `sh:not`, `sh:and`, `sh:or`, `sh:xone` |
-| Closed shapes | `sh:closed`, `sh:ignoredProperties` |
-| Qualified values | `sh:qualifiedValueShape`, `sh:qualifiedMinCount`, `sh:qualifiedMaxCount`, `sh:qualifiedValueShapesDisjoint` |
-
-## Current limits
-
-- Shape files must be Turtle.
-- SHACL-SPARQL constraints, custom functions, rules, and JavaScript extensions
-  are out of scope for this command.
-- Recursive shape cycles are reported as validation results instead of being
-  treated as fatal engine errors.
-- Rete files are immutable snapshots. If your build uses `--materialize`, SHACL
-  validates the already-materialized graph; otherwise it validates asserted data
-  only.
-
-## Core API
-
-The CLI uses the reusable core API. `validate_shacl` is generic over a
-[`GraphView`] — the data graph can be an in-memory `DataGraph` (eager) or a
-`ReteGraph` that routes every lookup as a range read (lazy / remote):
+You can use the SHACL engine programmatically in Rust. `validate_shacl` accepts either an eager, fully-loaded `DataGraph`, or a lazy `ReteGraph` that streams only what it needs over HTTP!
 
 ```rust
 use rete_core::{validate_shacl, DataGraph, ReteGraph, Rete, ShaclShapes};
 
+// 1. Parse the shapes
 let shapes = ShaclShapes::parse_turtle(&std::fs::read_to_string("shapes.ttl")?)?;
 
-// Eager: whole graph in memory.
+// 2. EAGER METHOD: Load the whole graph in memory
 let rete = Rete::open(&std::fs::read("data.rete")?)?;
 let report = validate_shacl(&DataGraph::from_rete(&rete, None), &shapes);
 
-// Lazy: validate over a range reader (e.g. an HTTP backend) — fetches only the
-// shapes' targets.
+// 3. LAZY METHOD: Validate over a range reader (HTTP backend)
 let rete = Rete::open_ranged_lazy(reader)?;
 let report = validate_shacl(&ReteGraph::new(&rete), &shapes);
 ```
-
-Pass `Some("<graph-iri>")` to `DataGraph::from_rete` to validate one named graph
-(the lazy `ReteGraph` validates the default graph).
+*(Pass `Some("<graph-iri>")` to `DataGraph::from_rete` to validate a specific named graph).*
