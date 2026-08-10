@@ -196,6 +196,123 @@ hf buckets ls katospiegel/rete-public/rete/foo/foo.rete --recursive --json
 Anything short of N/N is listed by key in `dev/backup-hf/missing.txt`; the logs
 and the resume state live beside it in `dev/backup-hf/`.
 
+## 7. Back up the SOURCE too — a `.rete` is a derived artifact
+
+Step 6 protects the graph. It does **not** protect the thing the graph was made
+from, and those are not the same asset. The repo has withdrawn its pre-1.0
+backwards-compatibility promise, so **every published graph will be rebuilt at
+least once** — and a rebuild needs the source, not the output. `getty-tgn` was
+lost exactly this way during the `0x02` → v5 migration: the `.rete` could no
+longer be read and there was nothing left to rebuild it from.
+
+Do this in the same sitting as step 6, for the same dataset:
+
+```bash
+# After publishing one dataset — the normal case.
+scripts/backup_sources_to_hf.sh <dataset-dir>          # e.g. davidrumsey-maps
+
+# Plan only; prints file counts and GiB, uploads nothing.
+scripts/backup_sources_to_hf.sh --all --dry-run
+
+# Whole-corpus sweep.
+scripts/backup_sources_to_hf.sh --all
+```
+
+### Destination keys
+
+A second prefix beside `rete/`, in the shape the hand-mirrored datasets already
+use — do not invent a third:
+
+```text
+local  data/<dataset>/raw/<path>  ->  hf  sources/<dataset>/<path>   ("raw/" strips)
+local  data/<dataset>/<path>      ->  hf  sources/<dataset>/<path>
+```
+
+`raw/` disappears from the key because the datasets mirrored before the script
+existed (`cordis`, `dblp`, `ror`, `zenodo`, `graphontology`, …) keep their source
+archive at the top of the dataset directory and have no `raw/` at all. A handful
+of dataset directories map to a different bucket prefix — `davidrumsey-maps` →
+`davidrumsey`, `epfl-graph` → `graphontology`, `openalex` →
+`semopenalex/2025-02-10` — because the bytes were uploaded by hand under those
+names; the mapping exists so a sweep *recognises* them instead of writing a
+second copy. `scripts/backup_sources_to_hf.sh --all --list` prints it.
+
+### What counts as source
+
+- **Everything under `raw/` is source, unfiltered.** A `.nt` or `.ttl` in there
+  is a *downloaded* ontology, not something we generated.
+- **Outside `raw/`, exclusion is by LANE, never by data-file extension** — a
+  directory we generate *into* (`nt/`, `nq/`, `ttl/`, `parquet*/`, `duckdb/`,
+  `sqlite/`, `tables/`, `companions/`, `turntables/`, `preview/`, `spill/`,
+  `logs/`), plus `*.rete`, `*.pmtiles` and build scratch.
+
+**Do not "improve" this back into an extension filter.** That was the first cut
+and it silently ate real sources: bne's three official `.nt.bz2` dumps, jonas's
+`heurist.duckdb` export, the WDQS harvest `.nt` behind `wd-events` /
+`wikidata-themes` / `dbpedia-themes`, `wd-tables`' `Q*.parquet`, and
+`biblissima`'s `shards/*.nt.gz`. An extension says nothing about whether we
+produced a file; only where it sits does.
+
+Three directories break the default and the script encodes why:
+`data/_extras/` and `data/playground/` are mirrored **raw-like** (the whole tree
+is harvest output, with no `raw/` lane to separate it from ours), and so is
+`data/datacite/`, whose `parquet-*/` is the canonical copy of 994M rows because
+its 24-hour source links expired and the archives were never kept. Loose files
+at the top of `data/` — which `find -maxdepth 1 -type d` never sees, and which
+include the entire source of `causenet` — go to `sources/_root/` via the
+`_root` pseudo-dataset.
+
+The rules live in two rsync-style filter files the script writes into
+`dev/backup-sources/`. **They have to be files.** `hf buckets sync
+--exclude '*.rete'` silently matches *nothing* — only directory-prefix patterns
+like `raw/**` work as a command-line flag — while the identical pattern inside
+`--filter-from` works. Every file-level rule therefore goes in the filter file.
+
+### What the script guarantees
+
+- **Resumable and additive.** `hf buckets sync --ignore-times` compares by byte
+  size only, so an object already in the bucket at the identical length is
+  skipped. `--delete` is never passed: the script only ever adds.
+- **Verified by re-planning, not by exit code.** After syncing, the *same* plan
+  is recomputed against a freshly listed bucket. The dataset counts as mirrored
+  only when that second plan holds **zero** remaining uploads — which is a
+  size comparison over every single file, not a spot check.
+- **Single instance, by atomic `mkdir` lock** in `dev/backup-sources/.lock`, for
+  the same reason as step 6.
+- **Bulk-safe.** Directories go through `hf buckets sync`, not per-file
+  `hf buckets cp`: `davidrumsey` alone is 449,247 files, which as individual
+  `cp` invocations would take days.
+
+### Not everything is on disk, and that is the point
+
+`openaire`, `orcid` and `crossref` are on the skip list: their source tars are
+**already** in the bucket under a hand-made snapshot-dated layout
+(`sources/openaire/2021-v3.0/`, `sources/orcid/2025/`,
+`sources/crossref/public-data-file-2026-03/`) and the local copies were deleted
+afterwards to free disk. The bucket is the only copy — which is exactly the
+outcome this step exists to produce.
+
+### Never write off a source without testing a fetch
+
+If a dataset's source is *neither* on disk *nor* in the bucket, **try the URL
+before calling it lost, and record the HTTP status you actually observed.**
+Every "unrecoverable" claim checked during the first full sweep turned out to
+be false:
+
+| claimed lost | reality |
+|---|---|
+| `databnf` — "expiring `transfert.bnf.fr` links" | all 22 answer `200`; 6.16 GiB re-fetched and mirrored, byte counts matched `Content-Length` |
+| `getty-tgn` — "lost in the `0x02` → v5 migration" | `data/_extras/getty-tgn.ttl` was on disk the whole time |
+| `crossref` | already in the bucket at `sources/crossref/public-data-file-2026-03/` |
+| `chemotion` | GitHub LFS, `206`, sha256 matched the pointer exactly |
+| `ontoneurolog` | the legacy unice.fr zip still answers `200` |
+
+Two real gotchas when re-fetching: `transfert.bnf.fr` **ignores `Range`** (a
+`curl -r 0-1023` returns the whole file, so there is no resumable partial
+fetch), and the filename lives only in `Content-Disposition` — capture it
+rather than numbering the downloads. Keep the URL list next to the bytes in the
+bucket: `sources/databnf/urls.txt` is what made that dataset recoverable at all.
+
 ## Commit
 
 Commit `catalog.js`, `web/datasets.lock.json`, the rebuilt
