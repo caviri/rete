@@ -133,10 +133,10 @@ rete build dump.nq -o out.rete
   146.8 N-Quads bytes per triple, so its 8.5 GiB author dump would land as
   ~400 GB of `.nt` before a single triple were indexed.
 - If the dump keeps its data in **named graphs** — TriG exports, Wikibase and
-  GraphDB dumps — add `--collapse-graphs`. In SPARQL the default graph is not
-  the union of the named ones, so without it `?s ?p ?o` answers nothing and the
-  pyramid comes out empty; it is also what makes the input eligible for the
-  default-graph-only external build.
+  GraphDB dumps — consider `--collapse-graphs`. In SPARQL the default graph is
+  not the union of the named ones, so without it `?s ?p ?o` answers nothing and
+  the pyramid comes out empty. It is a modelling choice, not a build constraint:
+  `--memory-budget-mb` builds named graphs directly.
 - Add `--text-index` at build time if you want [full-text search](cli.md)
   over the migrated data, and a [Dataset Card](dataset-cards.md) so the file
   explains itself.

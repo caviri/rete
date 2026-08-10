@@ -133,9 +133,11 @@ enum Command {
         /// and merging them (the budget decides the number of chunks and the
         /// external-sort run sizes). For graphs too large for the in-RAM build.
         /// Output is byte-identical to a standard `--no-pyramid` build.
+        /// Named graphs are carried through the same spill (the graph leads the
+        /// sort key), so a `.nq`/TriG input needs no `--collapse-graphs`.
         /// Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or not — RDF/XML
-        /// is the one syntax that must be converted first), default graph only
-        /// (see `--collapse-graphs`), implies `--no-pyramid`, and excludes
+        /// is the one syntax that must be converted first), implies
+        /// `--no-pyramid`, and excludes
         /// `--text-index`/`--materialize`/`--reason`.
         #[arg(long = "memory-budget-mb")]
         memory_budget_mb: Option<u64>,

@@ -973,18 +973,12 @@ disk — the staged text runs **9–15× the `.rete`** — and the two paths lan
 the same place: on `nkod` they produce the **same content hash**, differing only
 in the four unhashed bytes that say `repyramid` rather than `build`.
 
-**`rete build --memory-budget-mb` is not the third option**, even though it is
-the genuinely bounded builder. It fails a re-card twice over, both times hard:
-
-```
-Error: external build supports the default graph only (named graph <…> found);
-use the standard build, or strip graph terms (.nq -> .nt) first
-```
-
-— which rules out exactly the named-graph population this work exists for; and
-where it does run it writes a **counts-only card**, roughly a hundred bytes of
-`triple_count` / `quad_count` / `term_count` / `named_graph_count` with no
-profile and **no starter queries**, because deriving the profile lists needs
+**`rete build --memory-budget-mb` is still not the third option**, even though
+it is the genuinely bounded builder — and even now that it builds named graphs
+(#139), which used to rule out exactly the named-graph population this work
+exists for. Where it runs it writes a **counts-only card**, roughly a hundred
+bytes of `triple_count` / `quad_count` / `term_count` / `named_graph_count` with
+no profile and **no starter queries**, because deriving the profile lists needs
 unbounded RAM. Ten of the largest published datasets — `crossref`, `datacite`,
 `dblp`, `deps-dev`, `epfl-graph`, `gharchive`, `gharchive-2026-06`,
 `opencitations`, `orcid`, `wikiart` — carry exactly that, and report `0 starter

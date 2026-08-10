@@ -1428,15 +1428,12 @@ whether it is producing 679 MB or 6.88 GB of N-Quads. What it buys with that is
 disk — the staged text runs <strong>9–15× the <code>.rete</code></strong> — and the two paths land in
 the same place: on <code>nkod</code> they produce the <strong>same content hash</strong>, differing only
 in the four unhashed bytes that say <code>repyramid</code> rather than <code>build</code>.</p>
-<p><strong><code>rete build --memory-budget-mb</code> is not the third option</strong>, even though it is
-the genuinely bounded builder. It fails a re-card twice over, both times hard:</p>
-<pre><code>Error: external build supports the default graph only (named graph &lt;…&gt; found);
-use the standard build, or strip graph terms (.nq -&gt; .nt) first
-</code></pre>
-<p>— which rules out exactly the named-graph population this work exists for; and
-where it does run it writes a <strong>counts-only card</strong>, roughly a hundred bytes of
-<code>triple_count</code> / <code>quad_count</code> / <code>term_count</code> / <code>named_graph_count</code> with no
-profile and <strong>no starter queries</strong>, because deriving the profile lists needs
+<p><strong><code>rete build --memory-budget-mb</code> is still not the third option</strong>, even though
+it is the genuinely bounded builder — and even now that it builds named graphs
+(#139), which used to rule out exactly the named-graph population this work
+exists for. Where it runs it writes a <strong>counts-only card</strong>, roughly a hundred
+bytes of <code>triple_count</code> / <code>quad_count</code> / <code>term_count</code> / <code>named_graph_count</code> with
+no profile and <strong>no starter queries</strong>, because deriving the profile lists needs
 unbounded RAM. Ten of the largest published datasets — <code>crossref</code>, <code>datacite</code>,
 <code>dblp</code>, <code>deps-dev</code>, <code>epfl-graph</code>, <code>gharchive</code>, <code>gharchive-2026-06</code>,
 <code>opencitations</code>, <code>orcid</code>, <code>wikiart</code> — carry exactly that, and report <code>0 starter queries</code> in the survey. That is <em>why</em> they do. They are also the files no
