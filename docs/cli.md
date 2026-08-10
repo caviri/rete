@@ -752,10 +752,14 @@ per posting list; the bare prefix mode faults the pyramid instead, where the
 label index lives.
 
 That narrowness is the point, because on a literal-heavy graph the dictionary is
-most of the file and its **object-only chunk directory** — which carries every
-chunk's first term verbatim — is most of what a normal open costs. Searching
-`epfl-infoscience.rete` (1.64 GB; a 1.35 GB dictionary, a 186 MB text index over
-titles and 132k abstracts) for `photosynthesis`:
+most of the file, and on a file built before 2026-08 its **object-only chunk
+directory** — which carried every chunk's first term verbatim — is most of what a
+normal open costs. (Newer builds key that directory by the shortest *separator*
+instead, a few bytes per chunk: on `epfl-infoscience` that is 234 MB of routing
+keys against ~600 KB. It is a write-side change, so a published file keeps its
+large directory until it is rebuilt — the figures below are the published one.)
+Searching `epfl-infoscience.rete` (1.64 GB; a 1.35 GB dictionary, a 186 MB text
+index over titles and 132k abstracts) for `photosynthesis`:
 
 | | bytes fetched | requests | time |
 |---|---|---|---|
