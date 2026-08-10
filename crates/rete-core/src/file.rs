@@ -1505,7 +1505,7 @@ pub fn write_file(
 /// compressed individually with `codec`. A three-permutation index writes three
 /// sections — not six with three empty, which would be indistinguishable from
 /// an empty graph to a reader that does not check the header mask.
-fn encode_index_container(index: &GraphIndex, codec: u8) -> Vec<u8> {
+pub(crate) fn encode_index_container(index: &GraphIndex, codec: u8) -> Vec<u8> {
     let sections = index.tile_sections();
     let payloads: Vec<Vec<u8>> = index
         .perms()

@@ -246,9 +246,10 @@ Before touching a `.rete` that is already published. Full lifecycle in
   stop — it is engine work. Exceeding a ceiling is an OOM kill mid-rebuild, not
   an error message.
 - **`rete build --memory-budget-mb` cannot re-card.** It writes a counts-only
-  card with no profile and no starter queries. It still errors out on named
-  graphs — pass `--collapse-graphs` to fold them into the default graph when
-  that is what the dump means (TriG exports usually do).
+  card with no profile and no starter queries. It *does* build named graphs
+  (#139) — `--collapse-graphs` is now a modelling choice (fold a TriG export's
+  graphs into the default graph when that is what the dump means), not a
+  requirement. `--text-index` is still refused there.
 - **Feed the external build the dump as it ships.** It reads
   N-Triples/N-Quads/Turtle/TriG, gzipped or not, straight from the compressed
   file — so a `dump.ttl.gz` never has to be expanded to `.nt` first. That

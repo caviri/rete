@@ -107,10 +107,6 @@ pub(crate) fn merge_cmd(
         anyhow::bail!("refusing to overwrite an input ({output} is also an input)");
     }
 
-    // The external builder is DEFAULT-GRAPH ONLY, and it discovers that when the
-    // first named quad reaches it — which on a multi-gigabyte shard is hours in.
-    // Every input's graph list is in its header, so check all of them up front
-    // and fail in a second instead.
     // The merged file carries the UNION of its inputs' permutation sets: an
     // all-lean merge stays lean, and one full input is enough to keep the
     // merge-join orders that input's queries relied on. `merge` has no
@@ -120,16 +116,6 @@ pub(crate) fn merge_cmd(
     for path in inputs {
         let rete = crate::commands::range_source::open_local(path)?;
         perms_bits |= rete.header().perms.bits();
-        let names = rete.graph_names();
-        if !names.is_empty() {
-            anyhow::bail!(
-                "{path} carries {} named graph(s) (e.g. {}), and the memory-bounded \
-                 builder merge uses handles the default graph only. Merge the \
-                 default-graph shards, or export to .nq and use the standard build.",
-                names.len(),
-                names[0]
-            );
-        }
     }
 
     let curated = if card_args.requested() {

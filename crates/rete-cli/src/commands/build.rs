@@ -600,10 +600,14 @@ pub(crate) fn build(
 /// budget in RAM regardless of graph size (`rete_core::extbuild`). Output is
 /// byte-identical to a standard `--no-pyramid` build of the same input.
 ///
-/// Constraints (explicit errors): default graph only — pass `--collapse-graphs`
-/// for an input whose data lives in named graphs — no pyramid, no text index, no
-/// reasoning. `--card` embeds curated fields + counts (the derived profile lists
-/// need unbounded RAM, so they are omitted here). Every input syntax streams,
+/// Named graphs are supported: the graph ordinal leads the external sort key, so
+/// each graph comes out as one contiguous run and is indexed from that run alone
+/// (`--collapse-graphs` still folds them into the default graph when that is what
+/// you want).
+///
+/// Constraints (explicit errors): no pyramid, no text index, no reasoning.
+/// `--card` embeds curated fields + counts (the derived profile lists need
+/// unbounded RAM, so they are omitted here). Every input syntax streams,
 /// including gzipped ones, so the source never has to be decompressed to disk.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_external_cmd(
@@ -625,8 +629,19 @@ pub(crate) fn build_external_cmd(
              (they need the whole graph resident); run them via the standard build"
         );
     }
+    // Still refused, deliberately. The text index is `token -> sorted subjects`
+    // over the *literals* — a second external sort on a completely different
+    // key (a string token, not an id), fed from the chunk-local terms before the
+    // dictionary merge, and emitted as its own section. It shares no code with
+    // the named-graph column, so landing it here would not have saved a second
+    // pass over the same lines; it is its own change. Until then, build a
+    // text-indexed file with the standard build, or index the text separately.
     if text_index {
-        anyhow::bail!("--memory-budget-mb does not support --text-index yet");
+        anyhow::bail!(
+            "--memory-budget-mb does not support --text-index (the inverted index is \
+             a separate external sort over literal tokens, not part of the triple \
+             spill); build with the standard path, or drop --text-index"
+        );
     }
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
         .iter()

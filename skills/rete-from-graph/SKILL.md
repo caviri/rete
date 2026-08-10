@@ -98,8 +98,9 @@ A monolithic build holds the dictionary + index in RAM. If it OOMs:
    [reference/build.md](reference/build.md): emit NT to disk then build in a
    DETACHED container, spill is resumable after a crash, and verify/query the
    output with `sparql-url` (lazy), never plain `sparql`.
-3. **Shard** when v1 external-build limits bite (named graphs, pyramid, text
-   index) or you need parallel per-part builds: split by subject into ~1–2 GB
+3. **Shard** when the remaining external-build limits bite (pyramid, text index
+   — named graphs build fine) or you need parallel per-part builds: split by
+   subject into ~1–2 GB
    N-Triples shards, build each with `--no-pyramid`, and ship a folder +
    manifest (federation). See `scripts/build_databnf_shards.sh` and
    **[reference/build.md](reference/build.md)**.

@@ -134,8 +134,9 @@ every permutation is rebuilt. Memory is bounded at both ends: each input is
 opened lazily and streamed rather than loaded, and the quads feed the same
 memory-bounded external builder `rete build --memory-budget-mb` uses, which
 chunks and spills under this command's own `--memory-budget-mb` (default 4096)
-into `--tmp-dir`. Default graph only — it checks every input's header up front
-and fails in a second rather than hours in. Card flags match `rete build`.
+into `--tmp-dir`. Shards carrying **named graphs** fold like any other: the
+builder puts the graph in its sort key, so each graph comes back out of the
+merge as one contiguous run. Card flags match `rete build`.
 
 The merged file carries the **union** of its inputs' permutation sets — an
 all-lean merge stays lean, and one six-permutation input is enough to keep the

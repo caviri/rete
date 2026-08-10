@@ -146,9 +146,8 @@ fn trig_keeps_its_named_graph() {
 }
 
 /// `--collapse-graphs` folds those statements into the default graph — which is
-/// what makes a named-graph dump answer `?s ?p ?o` at all, and what makes it
-/// eligible for the default-graph-only external build. The result must equal the
-/// same data written as plain Turtle.
+/// what makes a named-graph dump answer `?s ?p ?o` at all. The result must equal
+/// the same data written as plain Turtle.
 #[test]
 fn collapse_graphs_matches_the_default_graph_build() {
     let f = fixture();
@@ -179,32 +178,124 @@ fn collapse_graphs_matches_the_default_graph_build() {
     );
 }
 
-/// The external build writes default-graph files only. A TriG input with named
-/// graphs must therefore fail with an error that names the fix, not with a
-/// half-written file.
+/// The external build carries named graphs through the same spill the default
+/// graph uses, so a TriG input must produce **byte-identical** output to the
+/// in-RAM `--no-pyramid` build — the guarantee `--memory-budget-mb` already made
+/// for the default graph, extended to quads (#139).
 #[test]
-fn external_build_rejects_named_graphs_and_names_the_fix() {
+fn external_build_keeps_named_graphs_byte_identically() {
     let f = fixture();
     let src = f.write("g.trig", TRIG);
-    let out = f.path("ext.rete");
+    let out_ext = f.path("ext.rete");
+    let out_ram = f.path("ram.rete");
 
     rete()
         .args(["build"])
         .arg(&src)
         .args(["--memory-budget-mb", "64", "-o"])
-        .arg(&out)
+        .arg(&out_ext)
         .assert()
-        .failure()
-        .stderr(predicates::str::contains("named graph"));
+        .success()
+        .stdout(predicates::str::contains("named graph"));
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--no-pyramid", "-o"])
+        .arg(&out_ram)
+        .assert()
+        .success();
 
-    // …and with the fix applied it goes through.
+    assert_eq!(
+        std::fs::read(&out_ext).unwrap(),
+        std::fs::read(&out_ram).unwrap(),
+        "external build of a TriG must equal the in-RAM --no-pyramid build"
+    );
+    rete()
+        .args(["graphs"])
+        .arg(&out_ext)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("http://example.test/people"));
+
+    // …and --collapse-graphs still folds them into the default graph.
+    let out_flat = f.path("flat.rete");
     rete()
         .args(["build"])
         .arg(&src)
         .args(["--collapse-graphs", "--memory-budget-mb", "64", "-o"])
+        .arg(&out_flat)
+        .assert()
+        .success();
+}
+
+/// `rete merge` fed the external builder, so it refused named-graph shards up
+/// front. With #139 it folds them: two shards carrying *different* named graphs
+/// merge into one file that has both, and the union of their statements.
+#[test]
+fn merge_folds_named_graph_shards() {
+    let f = fixture();
+    let a = f.write(
+        "a.nq",
+        concat!(
+            "<http://ex/s1> <http://ex/p> <http://ex/o1> <http://ex/gA> .\n",
+            "<http://ex/d> <http://ex/p> <http://ex/o> .\n",
+        ),
+    );
+    let b = f.write(
+        "b.nq",
+        concat!(
+            "<http://ex/s2> <http://ex/p> <http://ex/o2> <http://ex/gB> .\n",
+            "<http://ex/s1> <http://ex/p> <http://ex/o1> <http://ex/gA> .\n",
+        ),
+    );
+    let (ra, rb, out) = (f.path("a.rete"), f.path("b.rete"), f.path("all.rete"));
+    for (src, dst) in [(&a, &ra), (&b, &rb)] {
+        rete()
+            .args(["build"])
+            .arg(src)
+            .arg("-o")
+            .arg(dst)
+            .assert()
+            .success();
+    }
+    rete()
+        .args(["merge"])
+        .arg(&ra)
+        .arg(&rb)
+        .arg("-o")
         .arg(&out)
         .assert()
         .success();
+
+    let graphs = rete().args(["graphs"]).arg(&out).assert().success();
+    let listed = String::from_utf8(graphs.get_output().stdout.clone()).unwrap();
+    assert!(listed.contains("http://ex/gA"), "gA missing: {listed}");
+    assert!(listed.contains("http://ex/gB"), "gB missing: {listed}");
+    // the duplicate quad in gA is written once: 2 named + 1 default
+    rete()
+        .args(["info"])
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("quad_count: 3"));
+}
+
+/// `--text-index` stays refused on the memory-bounded path, with an error that
+/// says why rather than a bare "not supported yet".
+#[test]
+fn external_build_rejects_text_index_with_a_reason() {
+    let f = fixture();
+    let src = f.write("g.nt", "<http://ex/s> <http://ex/p> \"hello world\" .\n");
+    let out = f.path("ext.rete");
+
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--text-index", "--memory-budget-mb", "64", "-o"])
+        .arg(&out)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("separate external sort"));
 }
 
 /// RDF/XML is the one syntax the external build still refuses; the error has to

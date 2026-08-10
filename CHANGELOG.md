@@ -7,6 +7,60 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The memory-bounded builder builds named graphs (#139)** — `rete build
+  --memory-budget-mb` and `rete merge` no longer refuse a `.nq`/TriG input, or a
+  shard that carries named graphs. `--collapse-graphs` becomes a modelling
+  choice rather than a precondition.
+
+  The graph goes in the **sort key**, not in a filename. Each chunk spills its
+  own sorted graph-name file next to its term files; the same k-way merge that
+  builds the dictionary assigns a global **graph ordinal**, and that ordinal
+  leads a 16-byte `(g, s, p, o)` spill. After the external sort every graph is
+  one contiguous run, so its index is built from that run and the next graph
+  begins — one dictionary, one extra spill file, no per-graph files. (The
+  rejected alternative was one file per graph: `switzerland-fedlex` would have
+  made 497,905 of them, each with its own dictionary, and the shared dictionary
+  is where the compression comes from.)
+
+  The **default graph is untouched**: it keeps its own 12-byte spill, its own
+  run length and its own sort, and the named-quad spill is not even created for
+  an input without named graphs. A default-graph build therefore costs exactly
+  what it cost before — no wider key, no extra comparison, no extra byte
+  written.
+
+  Most named graphs are small (fedlex averages ~113 quads each), so a graph's
+  index is built by the very `GraphIndexBuilder` the in-RAM path uses; a graph
+  too big for the budget spills and takes the same external per-permutation
+  path the default graph always takes. Both are covered by the byte-identity
+  tests.
+
+  The guarantee is unchanged and now extends to quads: **byte-identical output**
+  to the standard `--no-pyramid` build. Verified on 2,000,009 real
+  `switzerland-fedlex` quads across 43,812 named graphs — same SHA-256 from both
+  builders — including a triple asserted in two graphs, a triple present in both
+  a named graph and the default graph, a single-statement graph, and duplicates.
+
+  And the budget holds. 4,000,000 fedlex quads (1.09 GB of N-Quads, 82,240
+  named graphs, 3,846,476 unique quads written), peak RSS read from
+  `/proc/<pid>/status` `VmHWM`:
+
+  | build | peak RSS | wall |
+  |---|--:|--:|
+  | `--memory-budget-mb 256` | **224 MiB** | 192 s |
+  | `--memory-budget-mb 512` | **380 MiB** | 222 s |
+  | `--memory-budget-mb 1024` | **739 MiB** | 281 s |
+  | in-RAM `--no-pyramid` | 809 MiB | 252 s |
+
+  All four files are byte-identical (one SHA-256). The peak tracks the budget
+  and stays under it; the 256 MiB build also ran inside a **hard 384 MiB cgroup
+  limit**, which the in-RAM build cannot fit in at all.
+
+  `--text-index` remains refused on this path, deliberately: the inverted index
+  is `token -> sorted subjects` over the literals — a separate external sort on
+  a string key, fed from the chunk-local terms and emitted as its own section.
+  It shares no code with the graph column, so it is its own change, and the
+  error now says so.
+
 - **Filtered dumps prune the file, not the rows (#117)** — `rete export
   --graph/--subject/--predicate/--object`, `dump({predicate})` in the JS client,
   `iter_quads(predicate=…)` in Python. A dump
