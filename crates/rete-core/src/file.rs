@@ -7157,20 +7157,31 @@ mod tests {
 
         let (full_rows, full_bytes) = probe(None, None, None);
         let (pred_rows, pred_bytes) = probe(None, Some("<http://ex/p/07>"), None);
+        let (subj_rows, subj_bytes) = probe(Some("<http://ex/s/0021>"), None, None);
         assert_eq!(full_rows, 4000);
         assert_eq!(pred_rows, 200, "one predicate covers every subject once");
-        assert!(
-            pred_bytes * 4 < full_bytes,
-            "a 1-in-20 predicate slice fetched {pred_bytes} B where the whole graph \
-             fetched {full_bytes} B — the scan is not being pruned"
-        );
-
-        // A subject slice routes to SPO and reads one tile's worth.
-        let (subj_rows, subj_bytes) = probe(Some("<http://ex/s/0021>"), None, None);
         assert_eq!(subj_rows, 20);
+        // True in any build: a slice fetches strictly less than the graph.
         assert!(
-            subj_bytes * 4 < full_bytes,
-            "a single-subject dump fetched {subj_bytes} B of {full_bytes} B"
+            pred_bytes < full_bytes && subj_bytes < full_bytes,
+            "a slice fetched {pred_bytes} / {subj_bytes} B where the whole graph fetched \
+             {full_bytes} B — the scan is not being pruned at all"
+        );
+        // The SIZE of the win is a property of the FILE, not of this change: it is
+        // the index share of what a dump reads, and the dictionary — which no
+        // filter prunes — is the rest. With the default `compression` feature the
+        // dictionary chunk bodies are zstd-compressed and the slice costs about a
+        // tenth of the graph (measured here: 1,565 B for the predicate and 864 B
+        // for the subject, against 15,714 B). Built `--no-default-features` those
+        // same chunks are stored RAW, so resolving 200 rows' terms dominates and
+        // the identical, identically-pruned scan costs 22,225 B of 40,165 — 55%.
+        // Asserting the strong ratio unconditionally would be asserting that zstd
+        // is enabled; the index-side prune is checked below and holds either way.
+        #[cfg(feature = "compression")]
+        assert!(
+            pred_bytes * 4 < full_bytes && subj_bytes * 4 < full_bytes,
+            "a 1-in-20 predicate slice fetched {pred_bytes} B and one subject \
+             {subj_bytes} B where the whole graph fetched {full_bytes} B"
         );
 
         // And the plan predicted the index side of it without fetching a tile.
