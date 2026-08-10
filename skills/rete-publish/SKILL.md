@@ -240,12 +240,27 @@ second copy. `scripts/backup_sources_to_hf.sh --all --list` prints it.
 ### What counts as source
 
 - **Everything under `raw/` is source, unfiltered.** A `.nt` or `.ttl` in there
-  is a *downloaded* ontology, not something we generated — filtering by
-  extension would silently drop it.
-- **Outside `raw/`, the derived lanes are filtered out**: `*.rete`, parquet /
-  duckdb / sqlite companions, generated N-Triples, `spill/`, `parquet-*/`,
-  `shards/`, `companions/`, build logs. All of that is reproducible from the
-  source; the source is not reproducible from it.
+  is a *downloaded* ontology, not something we generated.
+- **Outside `raw/`, exclusion is by LANE, never by data-file extension** — a
+  directory we generate *into* (`nt/`, `nq/`, `ttl/`, `parquet*/`, `duckdb/`,
+  `sqlite/`, `tables/`, `companions/`, `turntables/`, `preview/`, `spill/`,
+  `logs/`), plus `*.rete`, `*.pmtiles` and build scratch.
+
+**Do not "improve" this back into an extension filter.** That was the first cut
+and it silently ate real sources: bne's three official `.nt.bz2` dumps, jonas's
+`heurist.duckdb` export, the WDQS harvest `.nt` behind `wd-events` /
+`wikidata-themes` / `dbpedia-themes`, `wd-tables`' `Q*.parquet`, and
+`biblissima`'s `shards/*.nt.gz`. An extension says nothing about whether we
+produced a file; only where it sits does.
+
+Three directories break the default and the script encodes why:
+`data/_extras/` and `data/playground/` are mirrored **raw-like** (the whole tree
+is harvest output, with no `raw/` lane to separate it from ours), and so is
+`data/datacite/`, whose `parquet-*/` is the canonical copy of 994M rows because
+its 24-hour source links expired and the archives were never kept. Loose files
+at the top of `data/` — which `find -maxdepth 1 -type d` never sees, and which
+include the entire source of `causenet` — go to `sources/_root/` via the
+`_root` pseudo-dataset.
 
 The rules live in two rsync-style filter files the script writes into
 `dev/backup-sources/`. **They have to be files.** `hf buckets sync
@@ -277,11 +292,26 @@ like `raw/**` work as a command-line flag — while the identical pattern inside
 afterwards to free disk. The bucket is the only copy — which is exactly the
 outcome this step exists to produce.
 
-If a dataset's source is *neither* on disk *nor* in the bucket, say so in the
-dataset README with the URL it can be re-fetched from, and re-fetch it before
-the link rots. `data/databnf/urls.txt` is the cautionary example: 22
-`transfert.bnf.fr` one-time transfer links, no local copy of the 6.2 GB dump
-they served.
+### Never write off a source without testing a fetch
+
+If a dataset's source is *neither* on disk *nor* in the bucket, **try the URL
+before calling it lost, and record the HTTP status you actually observed.**
+Every "unrecoverable" claim checked during the first full sweep turned out to
+be false:
+
+| claimed lost | reality |
+|---|---|
+| `databnf` — "expiring `transfert.bnf.fr` links" | all 22 answer `200`; 6.16 GiB re-fetched and mirrored, byte counts matched `Content-Length` |
+| `getty-tgn` — "lost in the `0x02` → v5 migration" | `data/_extras/getty-tgn.ttl` was on disk the whole time |
+| `crossref` | already in the bucket at `sources/crossref/public-data-file-2026-03/` |
+| `chemotion` | GitHub LFS, `206`, sha256 matched the pointer exactly |
+| `ontoneurolog` | the legacy unice.fr zip still answers `200` |
+
+Two real gotchas when re-fetching: `transfert.bnf.fr` **ignores `Range`** (a
+`curl -r 0-1023` returns the whole file, so there is no resumable partial
+fetch), and the filename lives only in `Content-Disposition` — capture it
+rather than numbering the downloads. Keep the URL list next to the bytes in the
+bucket: `sources/databnf/urls.txt` is what made that dataset recoverable at all.
 
 ## Commit
 
