@@ -83,7 +83,10 @@ async function openDataset(page, group) {
     (count) => window.PlaygroundEditor
       && document.getElementById("run")
       && document.querySelectorAll("#examples [data-example]").length === count,
-    group.cases.length,
+    // Every example the catalog defines, not the subset being run: the page
+    // draws a button for a `skipCapture` example like any other. See
+    // catalogDatasetGroups().
+    group.rendered,
     // Remote-lazy opens of multi-GB files fetch dictionary directories over
     // live HTTP range — allow the slow-network case instead of flaking.
     { timeout: 120000 },
@@ -124,6 +127,7 @@ async function main() {
   const page = await context.newPage();
   const failures = [];
   let passed = 0;
+  let skipped = 0;
   let pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error).slice(0, 240)));
 
@@ -136,6 +140,15 @@ async function main() {
       }
       console.log(`\n[${browserName}] ${group.dataset} (${group.cases.length} queries)`);
       for (const entry of group.cases) {
+        // A justified exclusion, with the reason in the flag (#212). Running it
+        // does not measure the example, it measures how long we were willing to
+        // wait — and check_catalog_answers.mjs already holds these to the other
+        // half of the bargain: one that turns out to answer fails as stale.
+        if (entry.skipCapture) {
+          skipped++;
+          console.log(`  SKIP ${entry.id} ${entry.label} — ${entry.skipCapture.slice(0, 100)}`);
+          continue;
+        }
         let lastFailure = null;
         const tries = group.remote ? REMOTE_TRIES : 1;
         for (let attempt = 1; attempt <= tries; attempt++) {
@@ -201,6 +214,8 @@ async function main() {
     datasets: groups.length,
     queries: total,
     passed,
+    // Excluded by a `skipCapture` reason in the catalog, not by this run.
+    skipped,
     failures,
   };
   const reportFilter = DATASET_FILTER

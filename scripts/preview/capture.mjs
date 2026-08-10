@@ -50,7 +50,39 @@ const flag = (name, fallback) => {
 const SCOPE = flag("scope", "all");
 const DATASET = flag("dataset", "");
 const CONCURRENCY = Math.max(1, Number(flag("concurrency", 4)));
+// How long ONE example may take, split by what it is querying — because a single
+// number cannot be right for both halves of this catalog (#212).
+//
+// The playground itself imposes NO query timeout: a visitor who presses Run on
+// `databnf:3` (predicate totals over 673.5M triples) or `gbif-birds:7` (4,000
+// GeoSPARQL points out of 1.43 GB) waits, and gets an answer. Every timeout here
+// is therefore a statement about the HARNESS's patience, never about whether the
+// example works, and recording one as a failure is recording our own budget.
+//
+// 90 s was the single budget for both tiers, and against the remote tier it was
+// simply wrong — `check_catalog_examples.mjs`, which runs the same examples in
+// the same browser, has always allowed 300 s for exactly this reason ("an ORDER
+// BY on a billion-triple file enumerates every match before the LIMIT — minutes,
+// not seconds, over live HTTP range").
+//
+// 600 s, not 300 s, and the extra is a measurement rather than a hunch. Of the
+// examples that answer, these are the four slowest, all of them correct:
+//
+//     crossref:4              295.9 s   50 rows, 706 range req, 474 MB of 56.09 GB
+//     boe:6                   256.4 s   87 triples (CONSTRUCT, reasoning on)
+//     ror:4                   193.7 s   50 rows, cross-source join into 17.5 GB of ORCID
+//     gbif-birds:7            131.5 s   4,000 GeoSPARQL points out of 1.43 GB
+//
+// A budget of 300 s clears the slowest of those by four seconds, which is not a
+// budget, it is a coin toss — and losing the toss does not read as "slow", it
+// reads as a dead example in answers.json. Doubling it costs nothing on a green
+// run (a passing example returns when it returns) and buys the sweep a 2× margin
+// over the worst answer anyone has measured.
+//
+// Embedded stays at 90 s deliberately: those graphs are in memory, and a local
+// wasm query that needs a minute and a half IS a regression worth failing on.
 const TIMEOUT = Number(flag("timeout", 90000));
+const REMOTE_TIMEOUT = Number(flag("remote-timeout", 600000));
 // Opening a multi-GB remote graph faults its dictionary directory over HTTP
 // range before the first query can run — minutes on a cold cache, and it is
 // paid once per dataset, not per example.
@@ -101,6 +133,14 @@ function allCases() {
     if (SCOPE === "embedded" && remote) continue;
     if (DATASET && !key.includes(DATASET)) continue;
     for (const [index, example] of examples.entries()) {
+      // A deliberate, justified exclusion from the sweep (#212). The flag's
+      // VALUE is the justification — an example whose cost the harness cannot
+      // pay, like a FILTER over 223,082 inline WebP literals on a 25.4 GB graph,
+      // which does not time out so much as decline to finish. Running it anyway
+      // does not measure anything; it just spends the budget and records the
+      // budget back. check_catalog_answers.mjs accepts the missing entry, and
+      // fails if one of these ever turns up with a good answer after all.
+      if (String(example.skipCapture || "").trim()) continue;
       cases.push({
         id: `${key}:${index}`,
         dataset: key,
@@ -149,7 +189,15 @@ function groupByDataset(cases) {
   const groups = new Map();
   for (const entry of cases) {
     if (!groups.has(entry.dataset)) {
-      groups.set(entry.dataset, { dataset: entry.dataset, remote: entry.remote, cases: [] });
+      groups.set(entry.dataset, {
+        dataset: entry.dataset,
+        remote: entry.remote,
+        // How many example buttons the PAGE will render for this dataset — the
+        // whole catalog list, which is NOT `cases.length` once anything has been
+        // filtered out. See openDataset() for what conflating the two cost.
+        rendered: CATALOG.examples[entry.dataset].length,
+        cases: [],
+      });
     }
     groups.get(entry.dataset).cases.push(entry);
   }
@@ -298,13 +346,34 @@ function playgroundUrl(group) {
   return `http://127.0.0.1:${PORT}/playground.html?preview-capture=${group.dataset}-${++documentSequence}#${params}`;
 }
 
+/**
+ * Wait until the playground has rendered this dataset's whole example library.
+ *
+ * The count to wait for is `group.rendered` — every example the CATALOG defines
+ * for the dataset — and never `group.cases.length`, which is the subset this run
+ * happens to be measuring.
+ *
+ * Getting that wrong is not a slow path, it is an unsatisfiable one, and it cost
+ * 39 of the 52 dead entries in the committed answers.json (#212). A resume only
+ * re-runs examples that are missing or failed, so `cases.length` is smaller than
+ * the rendered count for any dataset that is not being measured whole: the page
+ * renders gbif-birds' 21 buttons, the predicate demands exactly 9, and it waits
+ * for the full budget and throws. The failure then arrives at the group-level
+ * catch, which records `dataset open failed: page.waitForFunction: Timeout …`
+ * for every case in the group — overwriting whatever the real, per-example error
+ * had been, because a failure may supersede a failure. So the harness both
+ * invented a dataset-wide open timeout and destroyed the evidence of what had
+ * actually gone wrong, and the number in the message was only ever the budget
+ * someone last passed on the command line (240 s, 300 s, 420 s), never a
+ * measurement of anything.
+ */
 async function openDataset(page, group) {
   await page.goto(playgroundUrl(group), { waitUntil: "domcontentloaded" });
   await page.waitForFunction(
     (count) => window.PlaygroundEditor
       && document.getElementById("run")
       && document.querySelectorAll("#examples [data-example]").length === count,
-    group.cases.length,
+    group.rendered,
     { timeout: OPEN_TIMEOUT },
   );
   await page.waitForTimeout(group.remote ? 300 : 1000);
@@ -396,7 +465,7 @@ async function captureGroup(browser, group, progress) {
         }, entry.index);
         if (!selected) throw new Error("example button missing from the rendered library");
         await page.evaluate(() => document.getElementById("run").click());
-        await waitForResult(page, TIMEOUT);
+        await waitForResult(page, group.remote ? REMOTE_TIMEOUT : TIMEOUT);
         const scraped = await scrape(page);
         const { count, unit } = parseCount(scraped.qmeta, scraped.rows);
         const ok = !scraped.error && !(count === 0 && !entry.allowEmpty) && !!scraped.qmeta
@@ -430,10 +499,19 @@ async function captureGroup(browser, group, progress) {
           }
         }
       } catch (e) {
+        // Say WHOSE limit was hit. "Timeout 90000ms exceeded" reads as a property
+        // of the query; it is a property of this sweep, and the distinction is
+        // the whole of #212.
+        const raw = String((e && e.message) || e);
+        const budget = group.remote ? REMOTE_TIMEOUT : TIMEOUT;
+        const message = /waitForFunction: Timeout/.test(raw)
+          ? `the capture gave up after ${Math.round(budget / 1000)} s — this is the harness budget `
+            + `(--${group.remote ? "remote-" : ""}timeout), not a playground limit; the query may still be correct: ${raw}`
+          : raw;
         record = {
           id: entry.id, dataset: entry.dataset, index: entry.index, view: entry.view,
           ok: false, qmeta: "", count: null, unit: "", columns: [], rows: [],
-          error: String((e && e.message) || e).slice(0, 300),
+          error: message.slice(0, 300),
           elapsedMs: Date.now() - started,
         };
         // A timed-out remote query leaves a worker running; start the next case

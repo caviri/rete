@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>The graph still works (countries) — geoadmin-tiles</title>
-<meta name="description" content="Proof the embedded tiles don&#39;t disturb the graph: a normal SPARQL query over the same one file. Runs live in your browser over geoadmin-tiles (372.5 K triples · 157.8 MB) — no server." />
+<meta name="description" content="Answer: 100 rows in 13.9 s. Proof the embedded tiles don&#39;t disturb the graph: a normal SPARQL query over the same one file, 213 countries with their ISO code and boundary… Runs live in your browser over geoadmin-tiles (372.5 K triples · 157.8 MB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/geoadmin-tiles-1.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="The graph still works (countries) — geoadmin-tiles" />
-<meta property="og:description" content="Proof the embedded tiles don&#39;t disturb the graph: a normal SPARQL query over the same one file. Runs live in your browser over geoadmin-tiles (372.5 K triples · 157.8 MB) — no server." />
+<meta property="og:description" content="Answer: 100 rows in 13.9 s. Proof the embedded tiles don&#39;t disturb the graph: a normal SPARQL query over the same one file, 213 countries with their ISO code and boundary… Runs live in your browser over geoadmin-tiles (372.5 K triples · 157.8 MB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/geoadmin-tiles-1.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/geoadmin-tiles-1.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="The graph still works (countries) — geoadmin-tiles" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="The graph still works (countries) — geoadmin-tiles" />
-<meta name="twitter:description" content="Proof the embedded tiles don&#39;t disturb the graph: a normal SPARQL query over the same one file. Runs live in your browser over geoadmin-tiles (372.5 K triples · 157.8 MB) — no server." />
+<meta name="twitter:description" content="Answer: 100 rows in 13.9 s. Proof the embedded tiles don&#39;t disturb the graph: a normal SPARQL query over the same one file, 213 countries with their ISO code and boundary… Runs live in your browser over geoadmin-tiles (372.5 K triples · 157.8 MB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/geoadmin-tiles-1.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"The graph still works (countries)","description":"Proof the embedded tiles don't disturb the graph: a normal SPARQL query over the same one file. Runs live in your browser over geoadmin-tiles (372.5 K triples · 157.8 MB) — no server.","url":"https://caviri.github.io/rete/q/geoadmin-tiles-1.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"geoadmin-tiles","url":"https://caviri.github.io/rete/d/geoadmin-tiles.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"The graph still works (countries)","description":"Answer: 100 rows in 13.9 s. Proof the embedded tiles don't disturb the graph: a normal SPARQL query over the same one file, 213 countries with their ISO code and boundary… Runs live in your browser over geoadmin-tiles (372.5 K triples · 157.8 MB) — no server.","url":"https://caviri.github.io/rete/q/geoadmin-tiles-1.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"geoadmin-tiles","url":"https://caviri.github.io/rete/d/geoadmin-tiles.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,13 +49,13 @@
       <div class="chip">Aggregate</div>
     </div>
     <h1 class="title s1">The graph still works (countries)</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?country</span> <span class="v">?iso</span> <span class="v">?boundary</span> <span class="kw">WHERE</span> {
-  <span class="v">?c</span> a class:Country ; schema:name <span class="v">?country</span> ; g:iso <span class="v">?iso</span> …
-} <span class="kw">LIMIT</span> 100</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Country</th><th>ISO</th><th>Boundary</th></tr></thead><tbody><tr><td class="">Afghanistan</td><td class="">AF</td><td class="">60°65°70°75°30°35°40°</td></tr><tr><td class="">Albania</td><td class="">AL</td><td class="">19°20°21°40°41°42°</td></tr><tr><td class="">Algeria</td><td class="">DZ</td><td class="">−10°−5°0°5°10°20°25°3…</td></tr><tr><td class="">Andorra</td><td class="">AD</td><td class="">1.4°1.5°1.6°1.7°1.8°4…</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🧱</div>
       <div class="key">geoadmin-tiles</div>
       <div class="facts"><b>372.5 K</b> triples · 157.8 MB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">100 rows</div>
+        <div class="sub">44 range requests · 47.0 MB of 150.5 MB read</div>
+        <div class="sub">in 13.9 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -65,14 +65,13 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=geoadmin-tiles&amp;load=lazy&amp;mode=sparql&amp;ex=1">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">100 rows · 13.9 s · 47.0 MB of 150.5 MB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
-  <div class="q"><h2>The query</h2>PREFIX g: &lt;https://w3id.org/rete/geoadmin/prop/&gt;
-PREFIX schema: &lt;http://schema.org/&gt;
+  <div class="q"><h2>The query</h2>PREFIX g: &lt;https://geoadmin.rete/prop/&gt;
 PREFIX geo: &lt;http://www.opengis.net/ont/geosparql#&gt;
-PREFIX class: &lt;https://w3id.org/rete/geoadmin/class/&gt;
+PREFIX class: &lt;https://geoadmin.rete/class/&gt;
 SELECT ?country ?iso ?boundary WHERE {
-  ?c a class:Country ; schema:name ?country ; g:iso ?iso ; geo:asWKT ?boundary .
+  ?c a class:Country ; g:name ?country ; g:iso ?iso ; geo:asWKT ?boundary .
 } LIMIT 100</div>
   <p class="alt" style="margin-top:20px">
     <a href="../playground.html">rete playground</a> ·

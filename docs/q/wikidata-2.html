@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>Find a thing by its name — wikidata</title>
-<meta name="description" content="The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here &#39;bemelen&#39;, matching the village… Runs live in your browser over wikidata (1.04 GB) — no server." />
+<meta name="description" content="Answer: 17 rows in 267.4 s. The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here &#39;bemelen&#39;, matching the village… Runs live in your browser over wikidata (1.04 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/wikidata-2.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="Find a thing by its name — wikidata" />
-<meta property="og:description" content="The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here &#39;bemelen&#39;, matching the village… Runs live in your browser over wikidata (1.04 GB) — no server." />
+<meta property="og:description" content="Answer: 17 rows in 267.4 s. The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here &#39;bemelen&#39;, matching the village… Runs live in your browser over wikidata (1.04 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/wikidata-2.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/wikidata-2.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="Find a thing by its name — wikidata" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Find a thing by its name — wikidata" />
-<meta name="twitter:description" content="The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here &#39;bemelen&#39;, matching the village… Runs live in your browser over wikidata (1.04 GB) — no server." />
+<meta name="twitter:description" content="Answer: 17 rows in 267.4 s. The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here &#39;bemelen&#39;, matching the village… Runs live in your browser over wikidata (1.04 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/wikidata-2.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Find a thing by its name","description":"The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here 'bemelen', matching the village… Runs live in your browser over wikidata (1.04 GB) — no server.","url":"https://caviri.github.io/rete/q/wikidata-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"wikidata","url":"https://caviri.github.io/rete/d/wikidata.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Find a thing by its name","description":"Answer: 17 rows in 267.4 s. The inverse of looking up by Q-id - start from a human string. CONTAINS scans rdfs:label for the text you type (here 'bemelen', matching the village… Runs live in your browser over wikidata (1.04 GB) — no server.","url":"https://caviri.github.io/rete/q/wikidata-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"wikidata","url":"https://caviri.github.io/rete/d/wikidata.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,14 +49,13 @@
       <div class="chip">Select</div>
     </div>
     <h1 class="title s1">Find a thing by its name</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?entity</span> <span class="v">?name</span> <span class="kw">WHERE</span> {
-  <span class="v">?entity</span> rdfs:label <span class="v">?name</span> .
-  <span class="kw">FILTER</span>(CONTAINS(LCASE(STR(<span class="v">?name</span>)), &quot;bemelen&quot;))
-} <span class="kw">LIMIT</span> 25</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Entity</th><th>Name</th></tr></thead><tbody><tr><td class="">Q100001</td><td class="">Bemelen @ast</td></tr><tr><td class="">Q100001</td><td class="">Bemelen @ca</td></tr><tr><td class="">Q100001</td><td class="">Bemelen @ceb</td></tr><tr><td class="">Q100001</td><td class="">Bemelen @cy</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🌐</div>
       <div class="key">wikidata</div>
       <div class="facts">1.04 GB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">17 rows</div>
+        <div class="sub">268 range requests · 151.0 MB of 1.39 GB read</div>
+        <div class="sub">in 267.4 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -66,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=wikidata&amp;load=lazy&amp;mode=sparql&amp;ex=2">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">17 rows · 267.4 s · 151.0 MB of 1.39 GB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
 SELECT ?entity ?name WHERE {
