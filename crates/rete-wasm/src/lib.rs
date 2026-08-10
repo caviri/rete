@@ -104,10 +104,11 @@ pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
 ///   is already an error). `format_version` is stamped by the writer.
 /// - **The derived profile is NOT written.** Predicates, classes,
 ///   vocabularies, datatypes, languages, class links, hubs, signals and the
-///   tiered starter-query library are derived by `rete-cli`, which this crate
-///   does not depend on. Their absence is honest absence: the card simply does
-///   not carry those keys, exactly as a `rete merge` card does not. Rebuild
-///   with `rete build --card-file` to get them.
+///   tiered starter-query library are absent. Their absence is honest absence:
+///   the card simply does not carry those keys, exactly as a `rete merge` card
+///   does not. Call [`build_with_derived_card`] instead to compute them here —
+///   this function stays curated-only so its bytes never change under a caller
+///   who did not ask for the extra passes.
 /// - **No build-info section** (kind 7) is written: its cost figures come from
 ///   measuring the starter queries, and there are none to measure.
 ///
@@ -137,6 +138,70 @@ pub fn build_with_card(text: &str, format: &str, card_json: &str) -> Result<Vec<
             rete_core::CURRENT_FORMAT_VERSION,
         );
         serde_json::to_vec(&card).expect("card serializes")
+    });
+    Ok(bytes)
+}
+
+/// [`build_with_card`], but the card also carries the **auto-derived profile**
+/// — the half a browser build used to have to do without (#152).
+///
+/// Predicates, classes, vocabularies, datatypes, languages, the class-link
+/// quotient, hubs, the affordance signals, and the tiered starter-query
+/// library are all computed here, by exactly the code `rete build --card`
+/// runs ([`rete_core::card::derive_card`]). On the same graph with the same
+/// curated document, the metadata section this writes is **byte-identical** to
+/// the CLI's.
+///
+/// Two honest differences remain, and neither is derivation:
+///
+/// - **Sections are uncompressed** (the wasm build has no zstd *encoder*), so
+///   the file is larger than a CLI build of the same graph. Every reader
+///   accepts it.
+/// - **No build-info section** (kind 7): its cost figures come from *running*
+///   the starter queries, which is a benchmark, not a build.
+///
+/// # Why this is a separate function
+///
+/// Derivation walks the graph twice more. In a browser, on a paste the user is
+/// waiting on, that is a cost they should choose — so [`build_with_card`]
+/// keeps writing exactly the bytes it always has, and this is the opt-in.
+///
+/// Pass an empty string for `card_json` to derive a profile-only card with no
+/// curated fields (the equivalent of a bare `rete build --card`).
+#[wasm_bindgen]
+pub fn build_with_derived_card(
+    text: &str,
+    format: &str,
+    card_json: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let quads = rete_core::ingest::parse_statements(text, format).map_err(err)?;
+    if quads.is_empty() {
+        return Err(js_error(
+            "no statements parsed (empty input or only comments)",
+        ));
+    }
+    // The typed curated half, held to the same rules `--card-file` is held to.
+    let curated = if card_json.trim().is_empty() {
+        rete_core::card::CardInput::default()
+    } else {
+        // Validate through the document validator first, so the wording a
+        // browser author sees is the wording `validate_card` shows them while
+        // they type, not a raw serde message.
+        validated_card(card_json)?;
+        rete_core::card::CardInput::from_json_str(card_json).map_err(js_error)?
+    };
+    let (bytes, _stats) = rete_core::ingest::assemble_dataset_with(quads, move |stats, quads| {
+        let card = rete_core::card::derive_card(
+            quads,
+            stats.terms as u64,
+            stats.named_graphs as u64,
+            curated,
+        );
+        // The counts the file actually holds are known only once the indexes
+        // have deduplicated the input — the same two-stage stamp the CLI uses.
+        rete_core::ingest::DeferredMetadata::new(move |counts| {
+            card.with_final_counts(counts).to_json_bytes()
+        })
     });
     Ok(bytes)
 }

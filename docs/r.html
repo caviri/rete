@@ -713,8 +713,14 @@ writeBin(img, "demo.rete")             # or query it in place:
 rete_query(rete_open(img), "SELECT ?n WHERE { ?s &lt;http://xmlns.com/foaf/0.1/name&gt; ?n }")
 </code></pre>
 <p>Counts (<code>triple_count</code>, <code>term_count</code>, …) are stamped into the card
-automatically. In-memory assembly suits tests and small graphs; for large
-datasets use the <a href="cli.html"><code>rete build</code> CLI</a>, which streams and compresses.</p>
+automatically. Pass <code>derive_card = TRUE</code> and the card also carries the
+<strong>auto-derived profile</strong> — predicates, classes, vocabularies, datatypes,
+languages, hubs, signals and the tiered starter-query library — from the same
+code <code>rete build --card</code> runs, so the same graph yields a byte-identical card.
+It is opt-in: derivation walks the graph twice more, and the default keeps
+writing exactly the bytes it always did.</p>
+<p>In-memory assembly suits tests and small graphs; for large datasets use the
+<a href="cli.html"><code>rete build</code> CLI</a>, which streams and compresses.</p>
 <h2 id="the-same-file-everywhere">The same file everywhere</h2>
 <p>A <code>.rete</code> built anywhere is readable everywhere: this client, the
 <a href="python.html">Python client</a>, the <a href="javascript.html">JavaScript client</a>, the

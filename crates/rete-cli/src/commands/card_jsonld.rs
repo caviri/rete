@@ -516,7 +516,7 @@ pub(crate) fn to_croissant(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::card::{Creator, Publisher};
+    use rete_core::card::{Creator, Publisher};
 
     fn sample_card() -> DatasetCard {
         DatasetCard {

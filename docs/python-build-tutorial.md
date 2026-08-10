@@ -72,6 +72,11 @@ builder.card(
 )
 ```
 
+> **The example above matches the *default graph*.** If your sources are
+> N-Quads (or rdflib `Dataset`s with named graphs), a bare `{ ?s <urn:knows> ?o }`
+> correctly returns nothing — scope it with `GRAPH ?g { … }`. Details in
+> [§2's closing note](#2-the-dataset-card).
+
 Beyond the named keyword arguments, `card()` passes **any extra field**
 straight into the card JSON — which is how you set the curated **identity and
 provenance** fields the card schema defines (the same ones the CLI's
@@ -137,15 +142,39 @@ After opening the built file (even remotely), `g.examples()` lists every
 embedded query, and each entry's `["sparql"]` runs as-is — the dataset ships
 its own documentation *and* its own first queries.
 
-One honest limit: the Python builder **writes the card you supply — it cannot
-derive one**. The CLI's `rete build` additionally derives an **enriched
-profile** (top predicates and classes, vocabularies, hubs, datatype/language
-histograms, a tiered starter-query library, an optional coherence verdict) and
-writes the adjacent **build-info record** (timestamp, builder, parameters,
-measured starter-query costs); the JSON-LD and Croissant **projections**
-(`rete card --format jsonld|croissant`) are also CLI-only. The Python builder
-embeds the curated fields + counts only — if you want the full auto-profile
-and build record, rebuild the exported data with the CLI.
+### Deriving the profile
+
+`card()` writes the **curated** half. Add `derive_card()` and the builder also
+computes the **auto-derived** half — top predicates and classes, vocabularies,
+datatype and language histograms, the class-link quotient, top hubs, the
+affordance signals, and the tiered starter-query library instantiated with your
+graph's own vocabulary:
+
+```python
+builder.card(title="People & places", license="CC0-1.0").derive_card()
+```
+
+It runs the same code `rete build --card` runs, so the same graph and the same
+curated fields produce a **byte-identical card** — the derivation used to live
+in the CLI, where no client could reach it ([#152]). Anything `example()` added
+is appended to the generated library.
+
+Two things to know before turning it on:
+
+- It is **off by default**, and deliberately: derivation walks the graph twice
+  more, so an existing build keeps costing what it always cost and keeps
+  producing the bytes it always produced.
+- Turning it on **tightens validation**. The curated half is then held to the
+  exact rules `rete build --card-file` enforces (reserved top level, `theme`
+  must be a controlled-vocabulary IRI, the `extra` bag is bounded), so a card
+  this accepts is one the CLI accepts.
+
+What stays CLI-only: the adjacent **build-info record** (timestamp, builder,
+parameters, measured starter-query costs — its cost figures come from *running*
+the starter queries, which is a benchmark, not a build) and the JSON-LD /
+Croissant **projections** (`rete card --format jsonld|croissant`).
+
+[#152]: https://github.com/caviri/rete/issues/152
 
 One shape to watch: every example query in this tutorial matches the
 **default graph**. If your sources are N-Quads (or rdflib `Dataset`s with

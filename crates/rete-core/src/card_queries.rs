@@ -8,7 +8,7 @@
 //! carries its own `PREFIX` block (the engine injects none) and is tagged with
 //! the cheapest [`Tier`] that can answer it.
 //!
-//! Bodies are **graph-scope aware** ([`GraphScope`]): a dataset whose statements
+//! Bodies are **graph-scope aware** (`GraphScope`): a dataset whose statements
 //! live entirely in named graphs (`triple_count == 0`, `named_graph_count > 0`)
 //! gets `GRAPH ?g`-scoped bodies — a bare `{ ?s ?p ?o }` there can only ever
 //! return zero rows — and a dataset with data in **both** the default graph and
@@ -19,8 +19,8 @@
 //!
 //! A starter query that answers nothing is worse than no starter query: the
 //! reader concludes the **file** is broken. So every template carries a
-//! [`NonEmpty`] claim — the reason its emitted form cannot come back empty —
-//! and [`check_body`] enforces the one rule that claim rests on:
+//! `NonEmpty` claim — the reason its emitted form cannot come back empty —
+//! and `check_body` enforces the one rule that claim rests on:
 //!
 //! > A body may conjoin substituted vocabulary only when the card **proves the
 //! > pieces co-occur**.
@@ -34,21 +34,24 @@
 //! `hugging-face` (top class `hf:Model`; `rdfs:label` appears only on the
 //! embedded TBox terms). The fix is not to check harder downstream but to make
 //! the conjunction unrepresentable: capabilities that appear together in a body
-//! must be **jointly derived** ([`Cap::joint_with`]) — chosen *because* they
+//! must be **jointly derived** (`Cap::joint_with`) — chosen *because* they
 //! meet, with a `class_links` row as the witness.
 //!
 //! Where the card genuinely cannot decide emptiness, the template says so
-//! ([`NonEmpty::Undecidable`]) instead of pretending; `provably_empty` is the
+//! (`NonEmpty::Undecidable`) instead of pretending; `provably_empty` is the
 //! last gate, dropping a template the card can prove would answer nothing.
 //!
-//! This is pure CLI/serde generation — no format change.
+//! This is pure serde generation — no format change, no I/O, no threads. It
+//! lives in `rete-core` (it used to live in the binary-only `rete-cli`, where no
+//! client could reach it — #152) so the CLI, the browser builder and every
+//! language binding instantiate one query library from one table.
 
 use serde::Serialize;
 
-use super::card::{
+use crate::card_derive::{
     DatasetCard, ExampleQuery, Tier, CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY, O_LITERAL,
 };
-use rete_core::RDF_TYPE;
+use crate::RDF_TYPE;
 
 /// Prepended to every generated query — the engine parses with **zero** implicit
 /// prefixes (`Query::parse(q, None)`), so an undeclared prefix is a parse error.
@@ -166,7 +169,7 @@ impl Cap {
     /// This is the whole safety property. Every other pair of substitutions is
     /// picked from a different ranking (most instances / most statements / most
     /// labels), and two independent maxima need not describe the same entity;
-    /// see the module docs. The relation is symmetric — [`check_body`] checks
+    /// see the module docs. The relation is symmetric — `check_body` checks
     /// both directions.
     fn joint_with(self) -> &'static [Cap] {
         match self {
@@ -185,7 +188,7 @@ impl Cap {
 /// A `class_links` row is positive evidence — the quotient counts real
 /// statements, so a row exists only because a subject classified as `class`
 /// really made a `pred` statement. Both the generator (choosing
-/// [`Cap::LabeledClass`]) and the audit ([`audit`]) ask this one question, so
+/// `Cap::LabeledClass`) and the audit ([`audit`]) ask this one question, so
 /// "does the card prove these meet?" has exactly one implementation.
 fn class_carries(card: &DatasetCard, class: &str, pred: &str) -> bool {
     card.class_links
@@ -194,7 +197,7 @@ fn class_carries(card: &DatasetCard, class: &str, pred: &str) -> bool {
 }
 
 /// Why a template's emitted query cannot come back empty. Declared per template
-/// and enforced by [`check_body`] plus the fixture tests, which run every
+/// and enforced by `check_body` plus the fixture tests, which run every
 /// generated query against the very graph it was generated for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NonEmpty {
@@ -251,7 +254,7 @@ struct Template {
     /// `GRAPH`-scoped body). `Some(f)` and `f(card)` true ⇒ the query would
     /// answer nothing ⇒ it is not emitted. The generator's last gate.
     provably_empty: Option<fn(&DatasetCard) -> bool>,
-    /// Is [`Template::provably_empty`] an **equivalence** in default-graph
+    /// Is `Template::provably_empty` an **equivalence** in default-graph
     /// scope — does `false` prove the query answers, and not merely fail to
     /// prove it empty?
     ///
@@ -867,15 +870,14 @@ const TEMPLATES: &[Template] = &[
 ];
 
 /// What the template behind an emitted query claims about its emptiness — the
-/// [`NonEmpty`] declaration, read back by id.
+/// `NonEmpty` declaration, read back by id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Claim {
+pub enum Claim {
     /// The template asserts the emitted query cannot come back empty
-    /// ([`NonEmpty::AnyGraph`] / [`Aggregate`](NonEmpty::Aggregate) /
-    /// [`Witnessed`](NonEmpty::Witnessed)).
+    /// (`NonEmpty::AnyGraph` / `NonEmpty::Aggregate` / `NonEmpty::Witnessed`).
     CannotBeEmpty,
     /// The template admits the card cannot decide it
-    /// ([`NonEmpty::Undecidable`]).
+    /// (`NonEmpty::Undecidable`).
     Undecidable,
     /// No template of this revision owns the id — a curated query, or one an
     /// older revision wrote. It claims nothing, so nothing is contradicted.
@@ -892,7 +894,7 @@ pub(crate) enum Claim {
 /// `commands::build` says so out loud and records it. `Undecidable` is the
 /// opposite: the template said in advance it could not know, so a measured zero
 /// is expected news, not a contradiction.
-pub(crate) fn claim_of(id: &str) -> Claim {
+pub fn claim_of(id: &str) -> Claim {
     match TEMPLATES.iter().find(|t| t.id == id) {
         Some(t) if matches!(t.nonempty, NonEmpty::Undecidable(_)) => Claim::Undecidable,
         Some(_) => Claim::CannotBeEmpty,
@@ -1096,7 +1098,7 @@ impl Caps {
 /// 1. Every `{{PLACEHOLDER}}` names a capability the template *requires*. A body
 ///    can therefore never be shipped with an unsubstituted hole, whatever the
 ///    card looks like.
-/// 2. Unless the template declares itself [`NonEmpty::Undecidable`], any two
+/// 2. Unless the template declares itself `NonEmpty::Undecidable`, any two
 ///    distinct capabilities appearing in the same body are [jointly
 ///    derived](Cap::joint_with). This is the rule `lb-labels` broke.
 fn check_body(id: &str, body: &str, requires: &[Cap], nonempty: NonEmpty) -> Result<(), String> {
@@ -1152,9 +1154,9 @@ fn bbox_polygon(bbox: Option<[f64; 4]>) -> String {
 
 /// Generate the tiered starter-query library for a card: emit each template whose
 /// required capabilities are all present, with the body picked for where the data
-/// lives ([`GraphScope`]), placeholders substituted, and the shared PREFIX block
+/// lives (`GraphScope`), placeholders substituted, and the shared PREFIX block
 /// prepended.
-pub(crate) fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
+pub fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
     let caps = Caps::from_card(card);
     let scope = GraphScope::of(card);
     let mut out = Vec::new();
@@ -1238,23 +1240,23 @@ pub(crate) fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
 //
 // It is deliberately in this module and not beside it: the one judgement it
 // makes ("does the card prove these two pieces meet?") is
-// [`class_carries`], the same function [`Caps::from_card`] resolves
-// [`Cap::LabeledClass`] with, and the emptiness gates it applies are the
-// templates' own [`Template::provably_empty`] hooks and [`NonEmpty`] claims. A
+// `class_carries`, the same function `Caps::from_card` resolves
+// `Cap::LabeledClass` with, and the emptiness gates it applies are the
+// templates' own `Template::provably_empty` hooks and `NonEmpty` claims. A
 // second, drifting copy of "is this empty" living in a script is how the
 // original defect survived four releases.
 
 /// What a published starter query is worth on the file that carries it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum Verdict {
+pub enum Verdict {
     /// The card **proves** at least one row comes back.
     Answers,
     /// The card **proves** none does. Airtight for the shapes that turn on a
     /// term's existence (a path step missing from a complete predicate list, a
     /// `VALUES` list disjoint from the link predicates, a default-graph body on
     /// an empty default graph); for the class-∧-predicate shape it rests on the
-    /// quotient, whose one blind spot [`Refuted`] documents and narrows.
+    /// quotient, whose one blind spot `Refuted` documents and narrows.
     Empty,
     /// A row comes back (an un-grouped aggregate always returns one) but it is
     /// vacuous — the thing being counted is provably zero.
@@ -1271,7 +1273,7 @@ pub(crate) enum Verdict {
 }
 
 impl Verdict {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Verdict::Answers => "answers",
             Verdict::Empty => "empty",
@@ -1285,7 +1287,7 @@ impl Verdict {
 
 /// One published query's verdict, with the evidence behind it.
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct Finding {
+pub struct Finding {
     pub id: String,
     pub verdict: Verdict,
     /// The evidence, in the words a maintainer needs to act on it.
@@ -1312,7 +1314,7 @@ pub(crate) struct Finding {
 
 /// One starter query, actually run.
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct Observation {
+pub struct Observation {
     /// `answers` (rows with bindings), `vacuous` (rows that bind nothing),
     /// `empty` (no rows at all), or `error` (the run did not finish).
     pub outcome: &'static str,
@@ -1336,7 +1338,7 @@ pub(crate) struct Observation {
 
 /// The figures a build wrote into the file, beside the ones just measured.
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct Recorded {
+pub struct Recorded {
     pub bytes: u64,
     pub requests: u64,
     pub rows: u64,
@@ -1351,7 +1353,7 @@ impl Observation {
     /// Does the observation contradict what the card alone concluded? Only
     /// `Answers` and `Empty` are claims strong enough to be wrong; `Suspect`
     /// and `Undecidable` say in so many words that they are not claims.
-    pub(crate) fn contradicts(&self, verdict: Verdict) -> bool {
+    pub fn contradicts(&self, verdict: Verdict) -> bool {
         match verdict {
             Verdict::Answers => self.outcome != "answers",
             Verdict::Empty => self.outcome == "answers",
@@ -1363,7 +1365,7 @@ impl Observation {
 
 /// A substituted term and where in the card profile it came from.
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct Substitution {
+pub struct Substitution {
     pub placeholder: String,
     pub value: String,
     /// e.g. `classes[0]`, `predicates[3]`, `signals.label_predicate`. Empty
@@ -1375,7 +1377,7 @@ pub(crate) struct Substitution {
 /// Bodies that **earlier revisions** of a template shipped. A published file is
 /// not re-cardable for free, so the audit has to read the query text that is
 /// actually out there; only the revisions the current bodies no longer match
-/// need an entry. Every one is a body [`check_body`] would reject today — that
+/// need an entry. Every one is a body `check_body` would reject today — that
 /// is why it has an entry.
 struct Legacy {
     id: &'static str,
@@ -1416,7 +1418,7 @@ fn complete<T>(card: &DatasetCard, list: &[T]) -> bool {
 }
 
 /// How far the card can go towards proving that no instance of `class` carries
-/// `pred` — the negative of [`class_carries`], which a card can rarely settle
+/// `pred` — the negative of `class_carries`, which a card can rarely settle
 /// outright.
 /// The refutation is exact **for singly-typed data only**, and that is the
 /// audit's one standing caveat: the quotient gives every subject exactly one
@@ -1643,7 +1645,7 @@ fn required_path_steps(path: &str) -> Vec<String> {
 /// is re-run over the same profile — what a re-card would ship — which says
 /// whether the query is *stale*. The verdict says whether it *answers*, which is
 /// the thing a reader of the published file experiences today.
-pub(crate) fn audit(card: &DatasetCard) -> Vec<Finding> {
+pub fn audit(card: &DatasetCard) -> Vec<Finding> {
     let caps = Caps::from_card(card);
     let scope = GraphScope::of(card);
     let fresh = generate(card);
@@ -1964,8 +1966,8 @@ fn finding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::card::{derive_card, CardInput};
-    use rete_core::{eval_query, ingest, summary_query_shape, QueryOutput, Rete};
+    use crate::card_derive::{derive_card, CardInput};
+    use crate::{eval_query, ingest, summary_query_shape, QueryOutput, Rete};
 
     const TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 
@@ -1975,7 +1977,7 @@ mod tests {
 
     /// Ids whose template admits it cannot prove non-emptiness. The allow-list
     /// is **read off the table** rather than written out here, so a template
-    /// cannot quietly join it: adding [`NonEmpty::Undecidable`] to one means
+    /// cannot quietly join it: adding `NonEmpty::Undecidable` to one means
     /// writing down the reason, in the source, next to the body.
     fn may_be_empty(id: &str) -> bool {
         claim_of(id) == Claim::Undecidable
@@ -2007,9 +2009,10 @@ mod tests {
                         eq.id
                     )
                 }
-                // `QueryOutput` is non-exhaustive; the library only emits the
-                // forms above.
-                Ok(other) => panic!("{}: unexpected result form: {other:?}", eq.id),
+                // No catch-all arm: `QueryOutput`'s `#[non_exhaustive]` does not
+                // apply inside its own crate, so the three arms above are
+                // exhaustive here — and a fourth result form should red this
+                // test until someone decides what the query library does with it.
                 Err(e) => panic!("{}: failed to run: {e:?}", eq.id),
             }
         }

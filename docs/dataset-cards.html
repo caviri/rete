@@ -1669,9 +1669,13 @@ as absence, never as zeroed measurements.</li>
 <code>--card-file</code> document into step 3 and the file it builds carries it. The
 engine validates it with the rules on this page — the same code the CLI runs,
 so the browser cannot compose a card <code>rete build --card-file</code> would refuse. It
-writes the curated fields plus the four counts its own build measured; the
-derived profile and the build record are CLI-only, and the built card simply
-does not carry those keys. See <a href="playground-guide.html#build">the playground guide</a>.</p>
+writes the curated fields plus the four counts its own build measured, and the
+built card carries no derived profile and no build record. See
+<a href="playground-guide.html#build">the playground guide</a>.</p>
+<p>That is the playground's own choice, not a limit of the engine: the wasm build
+exports <code>build_with_derived_card</code>, which derives the full profile in the
+browser. It is a separate export because derivation walks the graph twice more,
+and <code>build_with_card</code>'s bytes are a shipped contract.</p>
 <p><code>rete info</code> prints the file header and, when a card is present, appends the same
 catalog — so <code>info</code> is a one-shot overview of <em>what the file is</em> as well as <em>how
 it's laid out</em>. A file with no card just shows the header.</p>
@@ -1701,14 +1705,16 @@ byte-identical to a cardless build, and existing files keep verifying unchanged.
 the card</strong>, so embedding one adds nothing to query-time bytes-on-the-wire. To
 read the card remotely without downloading the file, <code>rete card-url</code> fetches
 just the header + metadata range (two ranges, index untouched).</li>
-<li><strong>Opaque to the engine.</strong> <code>rete-core</code> treats the section as raw bytes and the
-card <em>schema</em> — the derived profile, the starter-query library — lives in the
-CLI. The one exception is deliberate: the <strong>write-time rules for the curated
-half</strong> (the reserved top level, the <code>theme</code> IRI requirement, the <code>extra</code>
-bounds) live in <code>rete_core::card</code>, because the CLI is no longer the only
-writer. The playground's in-browser builder calls the same validator, so one
-implementation decides what a card file may say. The metadata section itself
-is a general extension point — a card is just its first use.</li>
+<li><strong>Opaque to the writer's <em>layout</em>, not to the card.</strong> The metadata section is
+raw bytes as far as the file format is concerned — a general extension point,
+of which a card is just the first use. The card <em>itself</em>, both halves, lives
+in <code>rete_core::card</code>: the write-time rules for the curated half (the reserved
+top level, the <code>theme</code> IRI requirement, the <code>extra</code> bounds), and the
+derivation of the profile and the starter-query library. It used to live in
+<code>rete-cli</code>, which is a binary-only crate no client can link, so a card
+derived there could never be derived anywhere else (<a href="https://github.com/caviri/rete/issues/152">#152</a>) — a correction to
+the derivation reached CLI-built files and nothing else. One implementation
+now answers for the CLI, the browser, and every language binding.</li>
 </ul>
 <p>See <a href="SPEC.html">the format specification</a> for the header layout and
 <a href="cli.html">the CLI reference</a> for every flag.</p>

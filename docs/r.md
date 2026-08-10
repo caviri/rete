@@ -129,8 +129,15 @@ rete_query(rete_open(img), "SELECT ?n WHERE { ?s <http://xmlns.com/foaf/0.1/name
 ```
 
 Counts (`triple_count`, `term_count`, …) are stamped into the card
-automatically. In-memory assembly suits tests and small graphs; for large
-datasets use the [`rete build` CLI](cli.md), which streams and compresses.
+automatically. Pass `derive_card = TRUE` and the card also carries the
+**auto-derived profile** — predicates, classes, vocabularies, datatypes,
+languages, hubs, signals and the tiered starter-query library — from the same
+code `rete build --card` runs, so the same graph yields a byte-identical card.
+It is opt-in: derivation walks the graph twice more, and the default keeps
+writing exactly the bytes it always did.
+
+In-memory assembly suits tests and small graphs; for large datasets use the
+[`rete build` CLI](cli.md), which streams and compresses.
 
 ## The same file everywhere
 

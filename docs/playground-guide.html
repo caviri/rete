@@ -854,10 +854,17 @@ accept.</p>
 whoever reads the file later: <strong>the curated fields, and the four counts the
 build itself measured</strong>. It does <strong>not</strong> write the derived profile (predicates,
 classes, vocabularies, signals, the tiered starter-query library) or the build
-record — those are <code>rete-cli</code>'s, and the wasm engine does not carry them. They
-are absent from the card rather than present-and-empty, and the 🏷 Card viewer
-shows that absence for what it is. Rebuild with <code>rete build --card-file</code> to get
-them (and compressed sections, which the browser also cannot write).</p>
+record. They are absent from the card rather than present-and-empty, and the
+🏷 Card viewer shows that absence for what it is. Rebuild with
+<code>rete build --card-file</code> to get them (and compressed sections, which the
+browser cannot write).</p>
+<p>The derived half is no longer beyond the engine's reach — the wasm build
+exports <code>build_with_derived_card</code>, which computes the whole profile in the
+browser from the same code the CLI runs. This page does not call it yet:
+derivation walks the graph twice more, and spending that on every build without
+asking would be the wrong default for a paste-and-see tool. The build record
+stays CLI-only for a different reason — its cost figures come from <em>running</em>
+the starter queries, which is a benchmark, not a build.</p>
 <p>Leave the card editor empty and the file carries no card at all.</p>
 <h2 id="federation-query-several-sources-as-one">Federation: query several sources as one</h2>
 <p><strong>+ Add source</strong> adds a second (third, …) <code>.rete</code> — from the catalog or any

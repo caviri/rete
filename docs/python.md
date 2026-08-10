@@ -160,12 +160,17 @@ builder.run()                        # bytes; stats in builder.stats
 builder.export("people.rete")
 ```
 
+Add `.derive_card()` and the card also carries the **auto-derived profile** —
+predicates, classes, vocabularies, datatypes, languages, hubs, signals and the
+tiered starter-query library — from the same code `rete build --card` runs, so
+the same graph yields a byte-identical card. It is opt-in: derivation walks the
+graph twice more, and the default keeps writing exactly the bytes it always did.
+
 The full walkthrough (every card field, pyramid trade-offs, verification) is
 in [Python: build a .rete](python-build-tutorial.md). In-memory builds suit
 tests and small-to-medium graphs (say, up to a few million triples). For big
-datasets use the [`rete build` CLI](cli.md), which streams from disk,
-compresses harder, and derives the enriched card profile — see
-[Tables, VKG & big builds](data-engineering.md).
+datasets use the [`rete build` CLI](cli.md), which streams from disk and
+compresses harder — see [Tables, VKG & big builds](data-engineering.md).
 
 ## Search and overview
 
@@ -266,6 +271,7 @@ any CORS-enabled host.
 | `SERVICE` federation | ✅ | host-injected HTTP client |
 | Build from RDF text / rdflib objects | ✅ | `build()`, `Builder` |
 | Dataset Card: embed + read back | ✅ | `Builder.card()`, `Graph.card()` (ranged on remote) |
+| Dataset Card: derive the profile | ✅ | `Builder.derive_card()` — opt-in; identical to `rete build --card` |
 | Example queries in the file | ✅ | `Builder.example()`, `Graph.examples()` |
 | Build options: pyramid algo, text index | ✅ | `Builder.pyramid()/text_index()/type_predicate()` |
 | Schema profile, prefix & text search | ✅ | `schema()`, `prefix_search()`, `text_search()` |

@@ -9,7 +9,8 @@ rete_build(
   format = "nt",
   card = NULL,
   pyramid = c("louvain", "types", "none"),
-  text_index = FALSE
+  text_index = FALSE,
+  derive_card = FALSE
 )
 }
 \arguments{
@@ -27,6 +28,16 @@ default), \code{"types"} (one community per \code{rdf:type} class), or \code{"no
 
 \item{text_index}{If \code{TRUE}, add the opt-in full-text word index that
 powers \code{\link[=rete_text_search]{rete_text_search()}}.}
+
+\item{derive_card}{If \code{TRUE}, also compute the card's \strong{auto-derived
+profile} — predicate and class histograms, vocabularies, datatypes,
+languages, the class-link quotient, top hubs, the affordance signals and
+the tiered starter-query library — exactly as \verb{rete build --card} does.
+\code{FALSE} (the default) writes the curated fields only, so an existing call
+keeps producing the bytes it always produced; derivation walks the graph
+twice more, which is a cost to opt into. Turning it on also holds the
+curated half to the CLI's write-time rules (reserved top level, \code{theme}
+must be a controlled-vocabulary IRI, the \code{extra} bag is bounded).}
 }
 \value{
 A raw vector holding the file image — pass it to \code{\link[=rete_open]{rete_open()}} or

@@ -21,6 +21,7 @@ const stableExports = [
   "RemoteGraph",
   "build",
   "build_with_card",
+  "build_with_derived_card",
   "validate_card",
   "card",
   "card_and_build",
@@ -130,13 +131,60 @@ try {
   // Counts are MEASURED by the build, not asserted by the author.
   t.equal("writtenCard.triple_count", writtenCard.triple_count, 2, "counts were not measured");
   t.ok("writtenCard.term_count", writtenCard.term_count >= 1, `term_count was ${writtenCard.term_count}`);
-  // The derived profile the browser cannot compute must be ABSENT — not an empty
-  // list that reads like "measured, and there were none".
+  // `build_with_card` stays CURATED-ONLY. Not because the browser cannot derive
+  // — it can, see `build_with_derived_card` below — but because this function's
+  // bytes are a shipped contract: a caller who did not ask for the extra passes
+  // must keep getting the file they always got. Absence here is deliberate, and
+  // it must be absence, not an empty list that reads like a measured zero.
   for (const derived of ["predicates", "classes", "vocabularies", "queries", "signals", "top_n"]) {
     t.ok(`browserCardOmits:${derived}`, !(derived in writtenCard), "a browser build claimed a derived field");
   }
   // Likewise the build record: null, never an empty object.
   t.equal("browserBuildRecord", envelope.build, null, "a browser build must not write a build record");
+
+  // --- the opt-in derived card (#152) ---------------------------------------
+  // The other half of the same contract: ask for derivation and the browser
+  // computes the profile the CLI computes, from the code the CLI runs.
+  // Its own input, typed: `classes` is derived from rdf:type assertions, and
+  // the shared 2-triple fixture has none — an absent `classes` there would be
+  // honest absence, not a defect, so it cannot witness derivation.
+  const typedFixture = fixture +
+    "<http://example.test/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> " +
+    "<http://xmlns.com/foaf/0.1/Person> .\n";
+  const derivedBytes = api.build_with_derived_card(typedFixture, "nt", JSON.stringify({
+    title: "Derived in a browser",
+    keywords: ["b", "a"],
+  }));
+  const derivedGraph = new api.Graph(derivedBytes);
+  const derivedEnvelope = JSON.parse(derivedGraph.card_and_build());
+  const derivedCard = derivedEnvelope.card ? JSON.parse(derivedEnvelope.card) : {};
+  t.equal("derivedCard.title", derivedCard.title, "Derived in a browser");
+  t.equal("derivedCard.keywords", JSON.stringify(derivedCard.keywords), '["a","b"]',
+    "the curated half must still be canonicalized");
+  for (const derived of ["predicates", "classes", "vocabularies", "queries", "signals", "top_n"]) {
+    t.ok(`derivedCardHas:${derived}`, derived in derivedCard,
+      `build_with_derived_card did not write ${derived}`);
+  }
+  // The cap the lists were derived under is the CLI's, so the two agree.
+  t.equal("derivedCard.top_n", derivedCard.top_n, 100);
+  t.ok("derivedQueryCount", (derivedCard.queries || []).length > 0, "no starter queries were generated");
+  // Shape only, deliberately: this harness runs the engine in a bare
+  // `node:vm` context with no Web Crypto, and every aggregate query traps
+  // there (`could not initialize thread_rng`) — an environment limit of the
+  // sandbox, not of the file. That the generated queries RETURN ROWS is
+  // asserted where a real engine runs them: rete-core's
+  // `every_generated_query_returns_rows`, and check_card_examples in a browser.
+  for (const q of derivedCard.queries || []) {
+    const wellFormed = q && typeof q.id === "string" && typeof q.sparql === "string" &&
+      q.sparql.includes("PREFIX rdf:") && !q.sparql.includes("{{");
+    t.ok(`derivedQueryWellFormed:${q && q.id}`, wellFormed,
+      "a generated query is missing its PREFIX block or left a placeholder unsubstituted");
+  }
+  // Still no build record: its cost figures come from RUNNING the queries,
+  // which is a benchmark, not a build.
+  t.equal("derivedBuildRecord", derivedEnvelope.build, null,
+    "a browser build must not write a build record, derived or not");
+  derivedGraph.free();
 
   // A cardless build stays byte-identical to the old `build` — the card path must
   // not have changed what a card-free file looks like.

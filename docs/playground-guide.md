@@ -283,10 +283,18 @@ What a browser build writes, stated plainly because the difference matters to
 whoever reads the file later: **the curated fields, and the four counts the
 build itself measured**. It does **not** write the derived profile (predicates,
 classes, vocabularies, signals, the tiered starter-query library) or the build
-record — those are `rete-cli`'s, and the wasm engine does not carry them. They
-are absent from the card rather than present-and-empty, and the 🏷 Card viewer
-shows that absence for what it is. Rebuild with `rete build --card-file` to get
-them (and compressed sections, which the browser also cannot write).
+record. They are absent from the card rather than present-and-empty, and the
+🏷 Card viewer shows that absence for what it is. Rebuild with
+`rete build --card-file` to get them (and compressed sections, which the
+browser cannot write).
+
+The derived half is no longer beyond the engine's reach — the wasm build
+exports `build_with_derived_card`, which computes the whole profile in the
+browser from the same code the CLI runs. This page does not call it yet:
+derivation walks the graph twice more, and spending that on every build without
+asking would be the wrong default for a paste-and-see tool. The build record
+stays CLI-only for a different reason — its cost figures come from *running*
+the starter queries, which is a benchmark, not a build.
 
 Leave the card editor empty and the file carries no card at all.
 
