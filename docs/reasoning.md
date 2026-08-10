@@ -24,6 +24,40 @@ The `rete reason` command runs a forward-chaining reasoner over your default gra
   <figcaption>Forward-chaining materializes entailed triples (dashed); disjointness and domain clashes surface as <strong>incoherent points</strong>.</figcaption>
 </figure>
 
+### Action & Result: Materialization
+
+Let's see a concrete example. Suppose we have raw data missing explicit links—a person is linked to a city, and a city is in a country, with a rule that "located in" is transitive.
+
+**Before: Raw Data & Rules (`data.ttl`)**
+```turtle
+@prefix ex: <http://ex/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+# Data: Alice is in Paris, Paris is in France
+ex:Alice ex:locatedIn ex:Paris .
+ex:Paris ex:locatedIn ex:France .
+
+# Rule: location is transitive
+ex:locatedIn a owl:TransitiveProperty .
+```
+
+**Action:**
+Build the graph and materialize it:
+```sh
+rete build data.ttl -o data.rete
+rete reason data.rete --materialize --format ttl
+```
+
+**After: Resulting Graph**
+The engine forward-chains the transitive rule and outputs a graph with the newly explicit connection:
+```turtle
+<http://ex/Alice> <http://ex/locatedIn> <http://ex/Paris> .
+<http://ex/Paris> <http://ex/locatedIn> <http://ex/France> .
+<http://ex/locatedIn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#TransitiveProperty> .
+# The inferred link!
+<http://ex/Alice> <http://ex/locatedIn> <http://ex/France> .
+```
+
 ### Usage
 
 ```sh

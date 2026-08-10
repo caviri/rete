@@ -270,6 +270,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="tradeoffs.html">Trade-offs & Alternatives</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Explore in the browser</li>
@@ -283,6 +284,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
+        <li><a href="showcases.html">Case studies & showcases</a></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -359,8 +361,15 @@ rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/releases/2026-06
 <p>[!TIP]
 <strong>Performance Note:</strong> Targeted shapes (<code>sh:targetClass</code>, <code>targetNode</code>, etc.) are blazing fast over the network. However, "target-less" shapes (which implicitly target <em>every</em> node) will force the engine to read the entire graph. Keep your shapes targeted for best performance.</p>
 </blockquote>
-<h2>A Minimal Example Shape</h2>
-<p>Here is a simple SHACL shape enforcing that every <code>ex:Person</code> must have exactly one email string:</p>
+<h2>Action &amp; Result: SHACL Validation</h2>
+<p>Here is a concrete example. Suppose we have raw Turtle data where <code>&lt;http://ex/Alice&gt;</code> is an <code>ex:Person</code> but lacks an email address:</p>
+<p><strong>Data (<code>people.ttl</code>):</strong></p>
+<pre><code class="language-turtle">@prefix ex: &lt;http://ex/&gt; .
+
+ex:Alice a ex:Person .
+</code></pre>
+<p><strong>Shape (<code>person-shapes.ttl</code>):</strong>
+We write a simple SHACL shape enforcing that every <code>ex:Person</code> must have exactly one email string:</p>
 <pre><code class="language-turtle">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
 @prefix ex: &lt;http://ex/&gt; .
 @prefix xsd: &lt;http://www.w3.org/2001/XMLSchema#&gt; .
@@ -377,10 +386,13 @@ ex:PersonShape
     sh:message "Every person needs exactly one email string." ;
   ] .
 </code></pre>
-<p>Run it:</p>
-<pre><code class="language-sh">rete shacl people.rete --shapes person-shapes.ttl
+<p><strong>Action:</strong>
+Build the data and run the validation:</p>
+<pre><code class="language-sh">rete build people.ttl -o people.rete
+rete shacl people.rete --shapes person-shapes.ttl
 </code></pre>
-<p>The output is clean and human-readable:</p>
+<p><strong>Result:</strong>
+Because Alice is missing the required <code>ex:email</code>, <code>rete</code> throws a clear violation error:</p>
 <pre><code class="language-text">conforms: false
 
 - focus: &lt;http://ex/Alice&gt;

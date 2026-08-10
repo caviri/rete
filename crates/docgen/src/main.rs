@@ -28,6 +28,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("index.md", "Overview"),
             ("intro.md", "Graph data 101"),
+            ("tradeoffs.md", "Trade-offs & Alternatives"),
             ("getting-started.md", "Getting started"),
             ("scenario.md", "Real-world scenario"),
         ],
@@ -388,10 +389,7 @@ fn nav_group_subs(md: &str) -> Option<&'static [(&'static str, &'static str)]> {
             ("subtitles-guide.html", "overview"),
             ("subtitles.html", "play the timeline →"),
         ]),
-        "anatomy-guide.md" => Some(&[
-            ("anatomy-guide.html", "overview"),
-            ("anatomy.html", "open the 3D body →"),
-        ]),
+
         "building-guide.md" => Some(&[
             ("building-guide.html", "overview"),
             ("building.html", "open the 3D building →"),

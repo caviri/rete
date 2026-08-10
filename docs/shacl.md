@@ -30,9 +30,19 @@ rete shacl-url https://host/data.rete --shapes shapes.ttl
 > [!TIP]
 > **Performance Note:** Targeted shapes (`sh:targetClass`, `targetNode`, etc.) are blazing fast over the network. However, "target-less" shapes (which implicitly target *every* node) will force the engine to read the entire graph. Keep your shapes targeted for best performance.
 
-## A Minimal Example Shape
+## Action & Result: SHACL Validation
 
-Here is a simple SHACL shape enforcing that every `ex:Person` must have exactly one email string:
+Here is a concrete example. Suppose we have raw Turtle data where `<http://ex/Alice>` is an `ex:Person` but lacks an email address:
+
+**Data (`people.ttl`):**
+```turtle
+@prefix ex: <http://ex/> .
+
+ex:Alice a ex:Person .
+```
+
+**Shape (`person-shapes.ttl`):**
+We write a simple SHACL shape enforcing that every `ex:Person` must have exactly one email string:
 
 ```turtle
 @prefix sh: <http://www.w3.org/ns/shacl#> .
@@ -52,12 +62,15 @@ ex:PersonShape
   ] .
 ```
 
-Run it:
+**Action:**
+Build the data and run the validation:
 ```sh
+rete build people.ttl -o people.rete
 rete shacl people.rete --shapes person-shapes.ttl
 ```
 
-The output is clean and human-readable:
+**Result:**
+Because Alice is missing the required `ex:email`, `rete` throws a clear violation error:
 ```text
 conforms: false
 

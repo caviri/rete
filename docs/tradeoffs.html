@@ -4,23 +4,23 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>JupyterLite — Python in the tab · rete docs</title>
-  <meta name="description" content="An experiment: a full Jupyter notebook running the rete-graph Python client entirely in your browser tab. The kernel is Pyodide (CPython on WebAssembly) inside JupyterLite; the package installs from…" />
-  <link rel="canonical" href="https://caviri.github.io/rete/jupyterlite-guide.html" />
+  <title>Trade-offs & Alternatives · rete docs</title>
+  <meta name="description" content="Rete is designed for a specific set of problems: publishing, sharing, and range-querying immutable RDF graphs over HTTP without a backend server." />
+  <link rel="canonical" href="https://caviri.github.io/rete/tradeoffs.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
-  <meta property="og:title" content="JupyterLite — Python in the tab · rete docs" />
-  <meta property="og:description" content="An experiment: a full Jupyter notebook running the rete-graph Python client entirely in your browser tab. The kernel is Pyodide (CPython on WebAssembly) inside JupyterLite; the package installs from…" />
-  <meta property="og:url" content="https://caviri.github.io/rete/jupyterlite-guide.html" />
-  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/jupyterlite-guide.png" />
+  <meta property="og:title" content="Trade-offs &amp; Alternatives · rete docs" />
+  <meta property="og:description" content="Rete is designed for a specific set of problems: publishing, sharing, and range-querying immutable RDF graphs over HTTP without a backend server." />
+  <meta property="og:url" content="https://caviri.github.io/rete/tradeoffs.html" />
+  <meta property="og:image" content="https://caviri.github.io/rete/og/doc/tradeoffs.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="JupyterLite — Python in the tab · rete docs" />
+  <meta property="og:image:alt" content="Trade-offs &amp; Alternatives · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="JupyterLite — Python in the tab · rete docs" />
-  <meta name="twitter:description" content="An experiment: a full Jupyter notebook running the rete-graph Python client entirely in your browser tab. The kernel is Pyodide (CPython on WebAssembly) inside JupyterLite; the package installs from…" />
-  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/jupyterlite-guide.png" />
-  <meta name="rete:section" content="Explore in the browser" />
+  <meta name="twitter:title" content="Trade-offs &amp; Alternatives · rete docs" />
+  <meta name="twitter:description" content="Rete is designed for a specific set of problems: publishing, sharing, and range-querying immutable RDF graphs over HTTP without a backend server." />
+  <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/tradeoffs.png" />
+  <meta name="rete:section" content="Start here" />
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
@@ -270,7 +270,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
-        <li><a href="tradeoffs.html">Trade-offs & Alternatives</a></li>
+        <li><a href="tradeoffs.html" class="active">Trade-offs & Alternatives</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Explore in the browser</li>
@@ -278,7 +278,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="plaza-guide.html">Plaza — dataset gallery</a></summary><ul class="nav-sub"><li><a href="plaza-guide.html">overview</a></li><li><a href="plaza/index.html" target="_blank" rel="noopener">open the gallery →</a></li></ul></details></li>
         <li><a href="file-explorer.html">File explorer — browse like an archive</a></li>
         <li class="nav-group"><details><summary><a href="yasgui-guide.html">SPARQL IDE — yasgui·wasm</a></summary><ul class="nav-sub"><li><a href="yasgui-guide.html">overview</a></li><li><a href="yasgui.html" target="_blank" rel="noopener">launch the IDE →</a></li></ul></details></li>
-        <li class="nav-group"><details open><summary><a href="jupyterlite-guide.html" class="active">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html" class="active">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="jupyterlite-guide.html">JupyterLite — Python in the tab</a></summary><ul class="nav-sub"><li><a href="jupyterlite-guide.html">overview</a></li><li><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb" target="_blank" rel="noopener">tour: query graphs →</a></li><li><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb" target="_blank" rel="noopener">build: anatomy of a .rete →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="jslab-guide.html">JS lab — rete × D3</a></summary><ul class="nav-sub"><li><a href="jslab-guide.html">overview</a></li><li><a href="jslab.html" target="_blank" rel="noopener">launch the lab →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="atlas.html">Historical atlas — SPARQL + GIS</a></summary><ul class="nav-sub"><li><a href="atlas.html">overview</a></li><li><a href="atlas-app.html" target="_blank" rel="noopener">launch the atlas →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
@@ -337,60 +337,47 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>JupyterLite — Python notebooks, no install</h1>
-<p>An experiment: a <strong>full Jupyter notebook running the
-<a href="python.html"><code>rete-graph</code> Python client</a> entirely in your browser tab</strong>. The
-kernel is <a href="https://pyodide.org">Pyodide</a> (CPython on WebAssembly) inside
-<a href="https://jupyterlite.readthedocs.io">JupyterLite</a>; the package installs from
-PyPI as a PyEmscripten wheel; remote <code>.rete</code> graphs are queried over HTTP
-range requests from inside the tab. Nothing to install, no server anywhere in
-the stack — not even for Python itself.</p>
-<p>Two notebooks are bundled:</p>
+<h1>Trade-offs &amp; Alternatives</h1>
+<p>Rete is designed for a specific set of problems: publishing, sharing, and range-querying immutable RDF graphs over HTTP without a backend server. However, it is <strong>not</strong> a one-size-fits-all solution for graph data.</p>
+<p>Understanding when <em>not</em> to use Rete is just as important as knowing when to use it. Here is an honest look at the trade-offs and alternatives.</p>
+<h2>When NOT to use Rete</h2>
+<h3>1. You need live updates (OLTP)</h3>
+<p><strong>Limitation</strong>: Rete files are immutable. You build a <code>.rete</code> file once and query it many times. There is no <code>INSERT</code>, <code>UPDATE</code>, or <code>DELETE</code> support at runtime.</p>
+<p><strong>Use instead</strong>: If your application requires high-frequency transactional updates, you need a traditional database.</p>
 <ul>
-<li><strong><a href="jupyterlite/lab/index.html?path=rete-graph.ipynb">Tour: query graphs →</a></strong>
-— the client end to end: lazy remote graphs, SPARQL → pandas, embedded
-starter queries.</li>
-<li><strong><a href="jupyterlite/lab/index.html?path=build-a-rete.ipynb">Build: anatomy of a <code>.rete</code> →</a></strong>
-— author a small KG <strong>with an ontology in rdflib</strong>, build a <code>.rete</code> from
-it, and dissect every part of the file: the <strong>dictionary</strong> (terms stored
-once, integer-id triples), the <strong>triple indexes</strong>, the <strong>pyramid</strong> (built
-with the <code>types</code> algorithm, so the summary <em>is</em> the class structure), the
-<strong>Dataset Card</strong>, and the <strong>embedded example queries</strong> — ending with OWL 2
-QL reasoning inferring what was never asserted, and an exported file in the
-notebook's file browser.</li>
+<li><strong>Traditional Triplestores</strong>: <a href="https://oxigraph.org/">Oxigraph</a>, <a href="https://jena.apache.org/">Jena</a>, or <a href="https://graphdb.ontotext.com/">GraphDB</a> are designed for live mutations and ACID transactions.</li>
+<li><strong>Labeled Property Graphs (LPG)</strong>: <a href="https://neo4j.com/">Neo4j</a> or <a href="https://falkordb.com/">FalkorDB</a> are excellent for transactional read/write graph workloads.</li>
 </ul>
-<p>The tour notebook, <code>rete-graph.ipynb</code>, walks through the whole client with
-explanations between the cells:</p>
-<ol>
-<li><code>%pip install rete-graph pandas</code> — the PyEmscripten wheel resolves
-straight from PyPI;</li>
-<li><strong>open the BOE legal graph lazily</strong> (447k triples, 6.9 MB on Cloudflare
-R2) and watch <code>stats()</code> count how few bytes the open actually fetched;</li>
-<li><strong>SPARQL → pandas</strong> — <code>query_df()</code> renders results as real DataFrame
-tables, like the most-citing laws in the corpus;</li>
-<li><strong>the dataset documents itself</strong> — the starter queries embedded in the
-file's <a href="dataset-cards.html">Dataset Card</a>, listed as a table and then run
-as-is;</li>
-<li>the <strong>schema profile</strong> as a table, and</li>
-<li><strong>building a <code>.rete</code> in the browser</strong> with the lazy <code>Builder</code>, card and
-embedded example included.</li>
-</ol>
-<p>Run it top to bottom with <code>Shift+Enter</code>; the first cell takes a moment (it
-boots Pyodide and downloads the wheel). Everything is editable — change the
-queries, point <code>rete.open()</code> at any <code>.rete</code> URL whose host sends CORS +
-<code>Range</code> (see <a href="hosting.html">Hosting</a>).</p>
-<p>Notes and limits, honestly: the kernel runs in a web worker, which is exactly
-where the client's synchronous XHR range reads are allowed — so remote opens
-work here, while <code>SERVICE</code> federation and threads stay disabled (see the
-<a href="python.html">Python API's browser notes</a>). The Pyodide runtime loads from a
-CDN on first start, so the page needs network. Wheels are per-Pyodide-ABI;
-this deployment pins a JupyterLite release whose Pyodide matches the wheels
-published from this repo.</p>
-<p>Source &amp; issues: <a href="https://github.com/caviri/rete">https://github.com/caviri/rete</a> · © 2026 Carlos Vivar Ríos,
-released under the
-<a href="https://github.com/caviri/rete/blob/main/LICENSE">Apache License 2.0</a>.
-Datasets keep their own licenses (BOE: © Agencia Estatal Boletín Oficial del
-Estado, <a href="https://www.boe.es/datosabiertos/">reuse conditions</a>).</p>
+<h3>2. You need query-time OWL reasoning</h3>
+<p><strong>Limitation</strong>: Rete does not perform complex reasoning (like OWL inferencing) at query time. It focuses on fast, deterministic structural queries.</p>
+<p><strong>Use instead</strong>: If your workflow relies on dynamic, deep logical entailments during query execution:</p>
+<ul>
+<li><strong>Jena (with reasoners like Pellet or HermiT)</strong></li>
+<li><strong>Stardog</strong></li>
+<li><strong>GraphDB</strong></li>
+</ul>
+<p><em>Note: You can perform reasoning ahead of time and materialize the inferred triples into your dataset before building the <code>.rete</code> file, but the engine won't do it for you on the fly.</em></p>
+<h3>3. Your dataset is heavily mutated by concurrent users</h3>
+<p><strong>Limitation</strong>: Because Rete is built on static files served over HTTP, it lacks a concurrency control mechanism for writes.</p>
+<p><strong>Use instead</strong>: Any dedicated graph database server (Oxigraph, Neo4j) that handles connection pooling, locks, and transactional integrity.</p>
+<h3>4. You need complex graph algorithms (e.g., PageRank, Shortest Path)</h3>
+<p><strong>Limitation</strong>: Rete supports SPARQL 1.1 for pattern matching and federated queries, but it is not a graph analytics engine. It does not have built-in graph algorithms.</p>
+<p><strong>Use instead</strong>:</p>
+<ul>
+<li><strong>Neo4j</strong> (with Graph Data Science library)</li>
+<li><strong>Memgraph</strong></li>
+<li><strong>Apache TinkerPop / Gremlin</strong></li>
+</ul>
+<h2>When Rete Shines</h2>
+<p>If your use case aligns with these conditions, Rete might be the perfect fit:</p>
+<ul>
+<li><strong>Serverless publishing</strong>: You want to publish a dataset on Amazon S3, Cloudflare R2, or GitHub Pages and query it directly from a browser without paying for a running database server.</li>
+<li><strong>Read-heavy, analytical workloads</strong>: Your data is updated periodically (e.g., daily, weekly) rather than continuously.</li>
+<li><strong>Data decentralization</strong>: You want to federate queries across multiple datasets hosted by different organizations without maintaining complex infrastructure.</li>
+<li><strong>Edge computing &amp; WASM</strong>: You need an embedded graph engine that runs perfectly in the browser (via WebAssembly) or on resource-constrained devices.</li>
+</ul>
+<h2>Summary</h2>
+<p>Rete trades write capability and live reasoning for <strong>extreme read portability and zero-maintenance hosting</strong>. If you need a living, breathing database for your application backend, look at Oxigraph or Neo4j. If you want to package a graph and share it with the world as a queryable static file, Rete is built for you.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -398,7 +385,7 @@ Estado, <a href="https://www.boe.es/datosabiertos/">reuse conditions</a>).</p>
         <div class="keyterms" id="keyterms"></div>
       </aside>
     </div>
-    <footer>Generated from <code>docs/jupyterlite-guide.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
+    <footer>Generated from <code>docs/tradeoffs.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
   <script>
 (function () {

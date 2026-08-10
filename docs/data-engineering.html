@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>Tables, VKG & big builds · rete docs</title>
-  <meta name="description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, or ingest genuinely massive datasets." />
+  <meta name="description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, ingest messy data, or work with genuinely massive datasets." />
   <link rel="canonical" href="https://caviri.github.io/rete/data-engineering.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Tables, VKG &amp; big builds · rete docs" />
-  <meta property="og:description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, or ingest genuinely massive datasets." />
+  <meta property="og:description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, ingest messy data, or work with genuinely massive datasets." />
   <meta property="og:url" content="https://caviri.github.io/rete/data-engineering.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/data-engineering.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Tables, VKG &amp; big builds · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Tables, VKG &amp; big builds · rete docs" />
-  <meta name="twitter:description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, or ingest genuinely massive datasets." />
+  <meta name="twitter:description" content="This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, ingest messy data, or work with genuinely massive datasets." />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/data-engineering.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -270,6 +270,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
         <li><a href="intro.html">Graph data 101</a></li>
+        <li><a href="tradeoffs.html">Trade-offs & Alternatives</a></li>
         <li><a href="getting-started.html">Getting started</a></li>
         <li><a href="scenario.html">Real-world scenario</a></li>
         <li class="nav-h">Explore in the browser</li>
@@ -283,6 +284,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
+        <li><a href="showcases.html">Case studies & showcases</a></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -335,10 +337,87 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1>Data Engineering &amp; Tables</h1>
-<p>This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, or ingest genuinely massive datasets.</p>
+<h1>Data Engineering &amp; ETL</h1>
+<p>This page is for data engineers who want to integrate Rete with data lakes, generate tabular exports, ingest messy data, or work with genuinely massive datasets.</p>
 <p><em>(If you just want to build your first file and query it, start at <a href="getting-started.html">Getting Started</a>.)</em></p>
-<h2>1. Lossless Entity Tables (The Best of Both Worlds)</h2>
+<hr />
+<h2>1. Mini-Tutorial: CSV to <code>.rete</code> (ETL with Python)</h2>
+<p>Before diving into large-scale tools, let's walk through a classic Data Engineering task: taking a messy, real-world CSV file, converting it into RDF N-Triples, and building a <code>.rete</code> graph from it.</p>
+<h3>Step 1: The Messy Data</h3>
+<p>Imagine you have an <code>employees.csv</code> file exported from a legacy system. It has inconsistent casing and some missing dates.</p>
+<pre><code class="language-csv">ID,Full Name,Department,Start Date
+101,  jane smith, Engineering,2021-03-15
+102,BOB JONES,Sales, 
+103, alice wang,Engineering,2022-11-01
+</code></pre>
+<h3>Step 2: The ETL Script</h3>
+<p>We'll use Python with <code>pandas</code> to clean the data and emit <strong>N-Triples</strong>, the simplest and most robust RDF serialization format. Each line in an N-Triples file is simply <code>Subject Predicate Object .</code>.</p>
+<p>Create a file called <code>etl_script.py</code>:</p>
+<pre><code class="language-python">import pandas as pd
+
+# 1. Load the messy data
+df = pd.read_csv("employees.csv")
+
+# 2. Clean the data (Pandas shines here)
+# Strip whitespace and fix casing
+df['Full Name'] = df['Full Name'].str.strip().str.title()
+df['Department'] = df['Department'].str.strip()
+# Normalize dates
+df['Start Date'] = pd.to_datetime(df['Start Date']).dt.strftime('%Y-%m-%d')
+
+# 3. Define our vocabulary prefixes (for readability in the code)
+EX = "http://example.org/vocab/"
+EMP = "http://example.org/emp/"
+DEPT = "http://example.org/dept/"
+XSD = "http://www.w3.org/2001/XMLSchema#"
+RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+
+# 4. Generate N-Triples
+with open("employees.nt", "w", encoding="utf-8") as out:
+    for _, row in df.iterrows():
+        # Construct IRIs (URIs enclosed in angle brackets)
+        emp_iri = f"&lt;{EMP}{row['ID']}&gt;"
+        dept_iri = f"&lt;{DEPT}{row['Department'].replace(' ', '_')}&gt;"
+        
+        # 4a. Emit Type
+        out.write(f'{emp_iri} &lt;{RDF}type&gt; &lt;{EX}Employee&gt; .\n')
+        
+        # 4b. Emit String Literal
+        out.write(f'{emp_iri} &lt;{EX}name&gt; "{row["Full Name"]}" .\n')
+        
+        # 4c. Emit Object Property (Link)
+        out.write(f'{emp_iri} &lt;{EX}worksIn&gt; {dept_iri} .\n')
+        
+        # 4d. Emit Typed Literal (Date)
+        if pd.notna(row['Start Date']):
+            out.write(f'{emp_iri} &lt;{EX}startDate&gt; "{row["Start Date"]}"^^&lt;{XSD}date&gt; .\n')
+</code></pre>
+<blockquote>
+<p>[!TIP]
+<strong>Why string formatting?</strong> While libraries like <code>rdflib</code> are great, manually formatting N-Triples strings in Python or DuckDB is often <strong>10x to 100x faster</strong> for massive datasets.</p>
+</blockquote>
+<h3>Step 3: Run the ETL</h3>
+<p>Run the script to generate your <code>employees.nt</code> file:</p>
+<pre><code class="language-sh">python etl_script.py
+</code></pre>
+<p><em>(Take a look at <code>employees.nt</code> — it's plain text, ready for any graph database).</em></p>
+<h3>Step 4: Build the Rete Graph</h3>
+<p>Now, feed those triples into the Rete CLI to build a queryable binary graph:</p>
+<pre><code class="language-sh">rete build employees.nt -o employees.rete
+</code></pre>
+<h3>Step 5: Query It</h3>
+<p>Your messy CSV is now a clean knowledge graph. Let's ask it a question:</p>
+<pre><code class="language-sh">rete query employees.rete -q "
+  PREFIX ex: &lt;http://example.org/vocab/&gt;
+  SELECT ?name ?date WHERE {
+    ?emp ex:worksIn &lt;http://example.org/dept/Engineering&gt; ;
+         ex:name ?name ;
+         ex:startDate ?date .
+  }
+"
+</code></pre>
+<hr />
+<h2>2. Lossless Entity Tables (The Best of Both Worlds)</h2>
 <p>The script <code>scripts/rdf_to_entity_tables.py</code> converts an RDF graph into a readable, one-table-per-type format <strong>without losing any data</strong>.</p>
 <p>It outputs files as <strong>Parquet</strong>, <strong>DuckDB</strong>, and <strong>SQLite</strong> simultaneously.</p>
 <h3>How it achieves losslessness:</h3>
@@ -355,7 +434,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   -o data/ent --duckdb data/ent.duckdb --sqlite data/ent.sqlite --verify
 </code></pre>
 <p><em>(The <code>--verify</code> flag automatically reconstructs the graph and checks it against the input to prove 100% losslessness).</em></p>
-<h2>2. Property Tables (Columnar Comparison)</h2>
+<h2>3. Property Tables (Columnar Comparison)</h2>
 <p>To compare how Rete performs against standard columnar layouts, you can use <code>scripts/rdf_to_property_tables.py</code>. This denormalizes Wikidata triples into <strong>one Parquet table per entity type</strong> (rows are entities, columns are properties).</p>
 <pre><code class="language-sh">pip install --break-system-packages duckdb
 uv run python scripts/rdf_to_property_tables.py --parts 10 --limit 120000000 -o data/wd-tables
@@ -364,7 +443,7 @@ uv run python scripts/rdf_to_property_tables.py --parts 10 --limit 120000000 -o 
 <p>[!NOTE]
 This export is <strong>not lossless</strong>. Sparse properties become NULLs, and complex objects may be dropped. It is purely designed as a benchmarking companion to compare graph engines against columnar engines.</p>
 </blockquote>
-<h2>3. Virtual Knowledge Graphs (VKG)</h2>
+<h2>4. Virtual Knowledge Graphs (VKG)</h2>
 <p>When you generate the Parquet companions above, Rete also generates a <code>_manifest.parquet</code> file mapping every column back to its RDF predicate.</p>
 <p>This manifest is exactly the <strong>R2RML mapping</strong> needed to power a <strong>Virtual Knowledge Graph (VKG)</strong> (like <a href="https://ontop-vkg.org/">Ontop</a>).
 Instead of materializing the <code>.rete</code> graph, a VKG keeps the data in Parquet and rewrites SPARQL queries into SQL on-the-fly.</p>
@@ -374,7 +453,7 @@ Instead of materializing the <code>.rete</code> graph, a VKG keeps the data in P
 <tr><td><strong>Pros/Cons</strong></td><td>Graph-native, fast lookups, built-in reasoning &amp; SHACL. Requires a build step.</td><td>Always fresh, no ingest required. Lacks graph-native features like path traversal.</td></tr>
 </tbody></table>
 <p>Both approaches use the same lazy HTTP-range fetching, so you can easily run both architectures side-by-side using the same storage bucket!</p>
-<h2>4. Fetching Real Data (Wikidata)</h2>
+<h2>5. Fetching Real Data (Wikidata)</h2>
 <p>If you want to pull large chunks of real data, we provide two scripts:</p>
 <h3>Slicing a Biology Graph via WDQS</h3>
 <p><code>scripts/fetch_wikidata_bio.py</code> pulls a highly connected life-sciences slice from the live Wikidata Query Service (genes, proteins, diseases, and drugs).</p>

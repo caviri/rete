@@ -68,12 +68,64 @@ Not every query needs to scan millions of rows. `rete` implements progressive qu
 - **Range Reads:** When querying a remote HTTP server, the engine fetches the 1KB header, reads the dictionary, and uses HTTP `Range` requests to pull down only the exact index tiles needed. 
 - *Crucially, if a server doesn't support Range requests, `rete` explicitly fails rather than silently downloading the entire multi-gigabyte file.*
 
-## 7. Reasoning & Validation
+## 7. A Day in the Life of a Query
+
+What actually happens when you query a multi-gigabyte `.rete` file hosted on an HTTP server from your browser? Because `rete` is serverless, the client drives the entire process using HTTP Range requests. 
+
+Here is the exact step-by-step execution for a query like `SELECT * WHERE { <User:123> foaf:knows ?who }`:
+
+> [!NOTE]
+> **The Goal:** Answer the query using the absolute minimum network bandwidth and memory.
+
+### 🥾 Step 1: The Client Connects (The Header)
+
+The client knows the URL of the `.rete` file. It needs the map of the file layout.
+
+1. **Request:** `GET` with `Range: bytes=0-1023`
+2. **Response:** The server returns exactly the first **1KB** of the file.
+3. **Parse:** The client reads the magic bytes, validates the version, and parses the **Section Directory**. The client now knows the exact byte offsets and lengths of the Dictionary, the Indexes, and the Summary.
+
+### 📖 Step 2: Term Translation (The Dictionary)
+
+`rete` works entirely with compact Integer IDs, not text strings. The client needs to translate `<User:123>` and `foaf:knows` into numbers.
+
+1. The client knows exactly where the Dictionary lives in the file.
+2. It performs a **binary search over HTTP**. It calculates the byte range of the middle of the dictionary and fetches a small chunk.
+3. It compares the string, updates its bounds, and fetches another small chunk.
+4. **Result:** In a few tiny network requests, it learns that `<User:123>` = `ID 45` and `foaf:knows` = `ID 12`. 
+
+### 🗺️ Step 3: Tile Navigation (The Indexes)
+
+The query pattern is now `45 12 ?who` (Subject=45, Predicate=12, Object=Unknown). The client needs to find the `SPO` (Subject-Predicate-Object) index to scan for this prefix.
+
+1. From the header, the client looks up the **SPO Index**.
+2. The index isn't just raw data; it's split into compressed **Tiles**, each with a min/max Subject and Predicate boundary listed in the section directory.
+3. The client does the math: *Which tiles contain `Subject >= 45` and `Subject <= 45`?* 
+4. **Pruning:** It immediately proves that 99% of the file's tiles *cannot* contain the answer. 
+
+### 🚚 Step 4: The Fetch & Decompression
+
+1. **Request:** The client groups the matching adjacent tiles and fires off a combined HTTP `Range` request for those specific byte ranges.
+2. **Response:** The server sends back only the compressed blocks.
+3. **Process:** The client decompresses the tiles locally, scans the rows matching `45 12`, and extracts the `?who` Object IDs (e.g., `ID 88`, `ID 91`).
+
+### ✨ Step 5: Materialization (Late Binding)
+
+The query engine has the answers (`88`, `91`), but the user wants real text.
+
+1. The client goes back to the Dictionary.
+2. It looks up `ID 88` and `ID 91` (again using binary search or index jumps).
+3. **Final Output:** The client returns `"<Alice>"` and `"<Bob>"`.
+
+> [!TIP]
+> **Total Cost:** Out of a 5 GB file, the client downloaded perhaps 15 KB of data in a few parallel requests, keeping memory usage flat and rendering results in milliseconds—all without a database server.
+
+## 8. Reasoning & Validation
 
 - **Reasoning:** `rete build --materialize` runs RDFS and OWL-RL inferences at build time, permanently baking the inferred triples directly into the snapshot.
 - **Validation:** `rete shacl` reads the snapshot against a standard SHACL graph to ensure data quality and schema compliance. Both features treat the graph as a fixed, publishable state.
 
-## 8. Browser & WebAssembly (WASM)
+## 9. Browser & WebAssembly (WASM)
 
 `rete` is built to run flawlessly in the browser. 
 - The WASM build drops native dependencies (like Rayon multithreading) to remain compatible with standard browser environments.
