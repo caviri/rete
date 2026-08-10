@@ -2386,6 +2386,56 @@ mod tests {
         }
     }
 
+    /// …and the same, with the terms spread across **named graphs**. The graph
+    /// column changes which chunk a term is first seen in, which changes what
+    /// the per-chunk dictionaries look like — so the separator directory the two
+    /// writers agree on has to survive quads, not just triples. Same shape as
+    /// `separator_keyed_dictionary_is_byte_identical_across_writers` (#222),
+    /// with the literals distributed over 30 graphs.
+    #[test]
+    fn separator_keyed_dictionary_survives_named_graphs() {
+        let blob = "w".repeat(1200);
+        let quads: Vec<RawQuad> = (0..900usize)
+            .map(|i| {
+                (
+                    format!("<http://ex/s{i:04}>"),
+                    "<http://ex/note>".to_string(),
+                    if i % 2 == 0 {
+                        format!("\"{blob}{i:04}\"")
+                    } else {
+                        format!("\"{i:04}{blob}\"")
+                    },
+                    // graph names generated out of order, so the graph merge has
+                    // to sort them and the ordinals are not the insertion order
+                    Some(format!("<http://ex/g{:02}>", (i * 7) % 30)),
+                )
+            })
+            .collect();
+
+        let reference = build_reference(quads.clone());
+        let (bytes, stats) = build_ext(quads, 0);
+        assert_eq!(
+            bytes, reference,
+            "the external builder's chunk directory drifted from the in-RAM one \
+             once named graphs were in the input"
+        );
+        assert_eq!(stats.named_graphs, 30);
+
+        let keys = crate::file::dict_chunk_keys_for_test(&bytes);
+        let obj = &keys[2]; // section 2 = object-only, the one with the literals
+        assert!(
+            obj.len() > 4,
+            "object-only section has {} chunks",
+            obj.len()
+        );
+        assert!(obj[0].is_empty(), "chunk 0 must carry no separator");
+        let longest = obj.iter().map(Vec::len).max().unwrap();
+        assert!(
+            longest < 1_200,
+            "longest key is {longest} B — that is a stored term, not a separator"
+        );
+    }
+
     /// The external file must open and answer queries like any other build.
     #[test]
     fn external_build_output_is_queryable() {
