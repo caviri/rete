@@ -221,6 +221,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
 .content h2 { clear:right; }
 
+/* Square figures get a narrower column than landscape ones.
+   `.img-sq` / `.fig-sq` are stamped by docgen from the image's MEASURED
+   aspect ratio — the viewBox of an SVG, the IHDR of a PNG — against
+   SQUARE_MAX_RATIO; nothing here is decided by hand. The reason: at the full
+   column a square is as tall as it is wide, so one picture is an 830-950px
+   wall that pushes every word after it under the fold, while a landscape
+   strip (the byte-layout diagrams, the app screenshots) needs that width to
+   stay legible and is left alone.
+   The cap is 60% of the column, clamped at both ends: never above 560px,
+   which is the width every diagram is DRAWN at, so they render at their
+   intended size instead of being enlarged up to 1.75x; and never below
+   340px, so a narrow desktop window — where the column is small but the
+   sidebar still takes its 250px — gets a readable figure rather than a
+   thumbnail.
+   ONLY above the phone breakpoint. The mobile column is 353px at 390px, and
+   60% of that is 212px of unreadable diagram, so a phone keeps every image
+   full-bleed exactly as before — hence min-width:781px, the complement of the
+   780px query the mobile chrome uses. */
+@media (min-width:781px) {
+  .content img.img-sq { display:block; max-width:clamp(340px, 60%, 560px); margin-left:auto; margin-right:auto; }
+  /* Anchors are inline, so a linked image needs a block box to centre in. */
+  .content a:has(> img.img-sq) { display:block; }
+  /* The FIGURE is capped, not its img, so the caption stays the same width as
+     the picture it captions. `fig-right` is excluded: it is already floated at
+     min(42%, 390px), and this would make it wider, not narrower. */
+  .content figure.fig-sq:not(.fig-right) { max-width:clamp(340px, 60%, 560px); }
+}
+
 .content img { cursor:zoom-in; }
 .lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
 .lightbox.open { display:flex; align-items:center; justify-content:center; }
@@ -595,7 +623,7 @@ index.</strong> This is rete's "PMTiles for graphs," applied to <em>types</em>.<
 hierarchy. There is no flag to remember and nothing extra to host — it travels in
 the file's pyramid section and is served over the same range-request transport as
 everything else.</p>
-<img src="img/semantic-zoom.svg" alt="A four-level schema pyramid over the six-class subClassOf hierarchy in a small people graph. Level 0 is Agent times 4; level 1 is Person times 3 and Organisation times 1; level 2 is Scientist times 2, Artist times 1 and Organisation times 1; level 3, the leaves, is Astronomer times 2, Artist times 1 and Organisation times 1. Every level re-partitions the same four instances, so the counts conserve, and rete summary --level k reads any one level without touching the triple index. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.">
+<img class="img-sq" src="img/semantic-zoom.svg" alt="A four-level schema pyramid over the six-class subClassOf hierarchy in a small people graph. Level 0 is Agent times 4; level 1 is Person times 3 and Organisation times 1; level 2 is Scientist times 2, Artist times 1 and Organisation times 1; level 3, the leaves, is Astronomer times 2, Artist times 1 and Organisation times 1. Every level re-partitions the same four instances, so the counts conserve, and rete summary --level k reads any one level without touching the triple index. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.">
 <p><em>Each level is one type histogram. Read top to bottom and the same instances
 resolve from abstract classes into leaves — and the whole stack is fetched
 index-free, in a few kilobytes, over HTTP.</em></p>
@@ -616,7 +644,7 @@ at build time, and stores one <strong>type histogram per level</strong>.</li>
 clients fetch <em>without</em> the triple index — so it is <strong>index-free and instant</strong>,
 the cheapest tier of the <a href="dataset-cards.html#the-three-tier-exploration-model">three-tier exploration model</a>.</li>
 </ul>
-<img src="img/schema-rollup.svg" alt="How one level of the schema pyramid is built. Six classes hang off a subClassOf chain — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — and the four instances sit at the leaves: ada and edwin are Astronomers, frida an Artist, nasa an Organisation. Rolling each instance's type up to depth d gives level d's histogram: Agent times 4 at depth 0; Person times 3 and Organisation times 1 at depth 1; Scientist times 2, Artist times 1 and Organisation times 1 at depth 2; Astronomer times 2, Artist times 1 and Organisation times 1 at depth 3. Every level totals the same four instances. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.">
+<img class="img-sq" src="img/schema-rollup.svg" alt="How one level of the schema pyramid is built. Six classes hang off a subClassOf chain — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — and the four instances sit at the leaves: ada and edwin are Astronomers, frida an Artist, nasa an Organisation. Rolling each instance's type up to depth d gives level d's histogram: Agent times 4 at depth 0; Person times 3 and Organisation times 1 at depth 1; Scientist times 2, Artist times 1 and Organisation times 1 at depth 2; Astronomer times 2, Artist times 1 and Organisation times 1 at depth 3. Every level totals the same four instances. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.">
 <p><em>The <code>subClassOf</code> chain is the zoom function: instances live at the leaves, and
 rolling their types up to depth <code>d</code> produces level <code>d</code>'s histogram — <code>Astronomer</code>
 becomes <code>Scientist</code> becomes <code>Person</code> becomes <code>Agent</code>. Nothing is invented; the
@@ -699,7 +727,7 @@ deeper levels as the user drills in.</p>
 <p>This is the selling point. The schema pyramid lives in the pyramid-meta section, so
 <code>summary-url</code> fetches it <strong>without downloading the file and without touching the
 triple index</strong> — only the header, dictionary, and pyramid:</p>
-<img src="img/zoom-fetch.svg" alt="What rete summary-url pulls over HTTP: three range requests and no more. First the 1024-byte header, whose section directory gives every other section's offset and length; then the dictionary, for the term strings; then the pyramid, section kind 4, which carries every level, the subClassOf DAG and the per-community descriptors. The triple index — the triples themselves, in every permutation — is never requested and stays on the server.">
+<img class="img-sq" src="img/zoom-fetch.svg" alt="What rete summary-url pulls over HTTP: three range requests and no more. First the 1024-byte header, whose section directory gives every other section's offset and length; then the dictionary, for the term strings; then the pyramid, section kind 4, which carries every level, the subClassOf DAG and the per-community descriptors. The triple index — the triples themselves, in every permutation — is never requested and stays on the server.">
 <p><em>A range client pulls only the header, dictionary and pyramid-meta — three
 ranges, and never the triple index.</em></p>
 <p>What that costs is set by the <strong>dictionary</strong>, not by the size of the graph. The
@@ -745,7 +773,7 @@ pyramid straight off a URL.</p>
 <h2 id="a-graph-not-a-tree--multiple-parents-and-lateral-links">A graph, not a tree — multiple parents and lateral links</h2>
 <p>A real ontology isn't a strict tree. Two things break the "every class sits in
 exactly one branch" assumption, and the schema pyramid keeps <strong>both</strong>:</p>
-<img src="img/ontology-graph.svg" alt="The shipped class hierarchy is a directed acyclic graph, not a tree. Astronaut has two subClassOf parents — Scientist and Explorer — and both are kept; a single canonical parent only decides its depth. Classes are also joined by lateral, non-is-a relations: Person memberOf Organisation, drawn as a dashed edge to keep it distinguishable without relying on colour. Those lateral relations are rolled up per level too, so at level 1 the pyramid records Person memberOf Organisation and at level 0 the same edge generalises to Agent memberOf Agent — never dropped.">
+<img class="img-sq" src="img/ontology-graph.svg" alt="The shipped class hierarchy is a directed acyclic graph, not a tree. Astronaut has two subClassOf parents — Scientist and Explorer — and both are kept; a single canonical parent only decides its depth. Classes are also joined by lateral, non-is-a relations: Person memberOf Organisation, drawn as a dashed edge to keep it distinguishable without relying on colour. Those lateral relations are rolled up per level too, so at level 1 the pyramid records Person memberOf Organisation and at level 0 the same edge generalises to Agent memberOf Agent — never dropped.">
 <p><strong>1. Non-exclusive <code>subClassOf</code> (multiple inheritance).</strong> A class can be a subclass
 of several others — <code>Astronaut ⊑ Scientist</code> <em>and</em> <code>Astronaut ⊑ Explorer</code>. The
 shipped hierarchy keeps <strong>all</strong> parents, so it is a directed acyclic <em>graph</em>, not a
@@ -798,7 +826,7 @@ Card — so <code>rete summary --level 0</code> always answers. Add a hierarchy 
 <p>The ontology isn't a sidecar — it is <strong>derived once at build time and written into
 the file's own sections</strong>, where range clients read it without the triple index.
 Three <em>orthogonal</em> structures are embedded, each answering a different question:</p>
-<img src="img/ontology-embedding.svg" alt="Where a .rete file keeps its ontology, on the published davidrumsey.rete — 74.8 MB across 6 sections. The dataset card, section kind 1, holds class_links (the leaf class-to-predicate-to-class graph), the class, predicate and datatype histograms, and the starter queries; rete card-url reads it. The pyramid, section kind 4, holds the subClassOf DAG with each class's parents and depth, the per-level type and relation rollups, and the community super-edges and descriptors; rete summary-url reads it, and it is absent whenever the graph has no rdf:type. The triple index, section kind 3, is never opened to read any of this.">
+<img class="img-sq" src="img/ontology-embedding.svg" alt="Where a .rete file keeps its ontology, on the published davidrumsey.rete — 74.8 MB across 6 sections. The dataset card, section kind 1, holds class_links (the leaf class-to-predicate-to-class graph), the class, predicate and datatype histograms, and the starter queries; rete card-url reads it. The pyramid, section kind 4, holds the subClassOf DAG with each class's parents and depth, the per-level type and relation rollups, and the community super-edges and descriptors; rete summary-url reads it, and it is absent whenever the graph has no rdf:type. The triple index, section kind 3, is never opened to read any of this.">
 <table><thead><tr><th>Structure</th><th>Question it answers</th><th>Where it lives</th><th>Read by</th></tr></thead><tbody>
 <tr><td><strong><code>subClassOf</code> DAG</strong> (non-exclusive, with depth)</td><td><em>is-a</em> — how classes generalize</td><td>pyramid-meta (v2)</td><td><code>summary</code> / <code>summary-url</code></td></tr>
 <tr><td><strong>Per-level type + relation rollups</strong></td><td><em>what &amp; how, at each zoom</em></td><td>pyramid-meta (v2)</td><td><code>summary --level k</code></td></tr>

@@ -7,7 +7,8 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
 
@@ -18,6 +19,21 @@ const REPO_URL: &str = "https://github.com/caviri/rete";
 /// `og:image` is silently dropped by every unfurler — so social tags are the one
 /// place the site's own address has to be hard-coded.
 const SITE_BASE: &str = "https://caviri.github.io/rete/";
+
+/// Widest aspect ratio (intrinsic width ÷ height) still counted as "square".
+///
+/// Every figure in `docs/img` is measured at build time — the `viewBox` of an
+/// SVG, the IHDR of a PNG — and anything at or below this gets the narrower
+/// column (see `.img-sq` / `.fig-sq` in `CSS`). Nothing is classified by hand,
+/// so a diagram added tomorrow is sized by its own shape with no HTML to
+/// remember.
+///
+/// 1.35 sits inside the real gap in the corpus: the squarest 21 figures run
+/// 0.87 (`lazy-open.svg`, taller than it is wide) to 1.32 (`pyramid.svg`), and
+/// the next one up is 1.41 (`triple.svg`). Landscape strips — the byte-layout
+/// diagrams, the app screenshots, the 3.8:1 logo — stay on the far side of it
+/// and keep the full column, which they need.
+const SQUARE_MAX_RATIO: f64 = 1.35;
 
 /// Sectioned nav: (section title, [(file, sidebar title)]). Markdown entries are
 /// rendered to the sibling `.html`; entries already ending in `.html` are
@@ -155,7 +171,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue; // already reported above
             }
             let markdown = fs::read_to_string(&src)?;
-            let body = render_markdown(&markdown);
+            // Figures are sized by their own measured shape — see
+            // `classify_images`. `src` is relative to the docs dir (`img/x.svg`),
+            // and a `docs/`-prefixed path is the form the README uses, so accept
+            // both; anything remote or unmeasurable is left as it is.
+            let body = classify_images(&render_markdown(&markdown), &|src| {
+                let rel = src.strip_prefix("docs/").unwrap_or(src);
+                aspect_ratio(&docs_dir.join(rel))
+            });
             let html_name = md.replace(".md", ".html");
             let page = template(title, &body, md, &summarize(&markdown), &missing);
             let out = docs_dir.join(&html_name);
@@ -429,6 +452,175 @@ fn unique(used: &mut HashMap<String, usize>, base: String) -> String {
     };
     *seen += 1;
     anchor
+}
+
+/// An image's intrinsic aspect ratio, width ÷ height, read out of the file.
+///
+/// SVG: the `viewBox`, which every diagram in `docs/img` carries and which is
+/// the only place the shape is recorded — they deliberately have no `width` /
+/// `height` attributes so they scale. PNG: the IHDR, the first chunk of the
+/// file, so only 24 bytes are read however large the screenshot is.
+///
+/// `None` for anything unmeasurable (unknown extension, no `viewBox`, a
+/// zero-height box), and the caller then leaves the image alone — an image
+/// whose shape is unknown keeps the width it has always had.
+fn aspect_ratio(path: &Path) -> Option<f64> {
+    let (w, h) = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("svg") => {
+            // The header is enough: `viewBox` is an attribute of the root
+            // <svg>, so it is in the first few hundred bytes.
+            let text = fs::read_to_string(path).ok()?;
+            let after = text.split_once("viewBox")?.1.trim_start();
+            let quoted = after.strip_prefix('=')?.trim_start();
+            let quote = quoted.chars().next()?;
+            let value = quoted[quote.len_utf8()..].split(quote).next()?;
+            // "min-x min-y width height", separated by whitespace or commas.
+            let nums: Vec<f64> = value
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|s| !s.is_empty())
+                .filter_map(|s| s.parse::<f64>().ok())
+                .collect();
+            (*nums.get(2)?, *nums.get(3)?)
+        }
+        Some("png") => {
+            let mut head = [0u8; 24];
+            fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+            if head[..8] != *b"\x89PNG\r\n\x1a\n" || head[12..16] != *b"IHDR" {
+                return None;
+            }
+            let n = |o: usize| u32::from_be_bytes(head[o..o + 4].try_into().unwrap()) as f64;
+            (n(16), n(20))
+        }
+        _ => return None,
+    };
+    (w > 0.0 && h > 0.0).then(|| w / h)
+}
+
+/// Tag every square-ish image in the rendered HTML, so the stylesheet can give
+/// it a narrower column than a landscape one.
+///
+/// The classification is the *measured* ratio (`ratio_of`, keyed on the `src`)
+/// against [`SQUARE_MAX_RATIO`] — never a hand-written class, so nobody has to
+/// remember to mark a new diagram and nobody can mark one wrongly.
+///
+/// Which element carries the class depends on the shape of the markup:
+///
+/// * inside a `<figure>` the class goes on the **figure**, because the figure
+///   is what carries the caption — capping the `<img>` alone would leave a
+///   full-width caption under a half-width picture;
+/// * anywhere else — a bare `<img>` block, a Markdown `![…](…)`, a Markdown
+///   image wrapped in a link — it goes on the **img** itself.
+fn classify_images(html: &str, ratio_of: &dyn Fn(&str) -> Option<f64>) -> String {
+    // (start, end) of every `<img …>` tag, and whether it is square-ish.
+    let mut imgs: Vec<(usize, usize, bool)> = Vec::new();
+    let mut at = 0;
+    while let Some(rel) = html[at..].find("<img") {
+        let start = at + rel;
+        let end = tag_end(html, start);
+        let tag = &html[start..end];
+        let square = attr_value(tag, "src")
+            .and_then(ratio_of)
+            .is_some_and(|r| r <= SQUARE_MAX_RATIO);
+        imgs.push((start, end, square));
+        at = end;
+    }
+
+    // (start, end) of every `<figure …>` OPENING tag paired with the offset of
+    // its `</figure>`. Figures never nest in these docs, so a linear scan is
+    // the whole story.
+    let mut figures: Vec<(usize, usize, usize)> = Vec::new();
+    let mut at = 0;
+    while let Some(rel) = html[at..].find("<figure") {
+        let start = at + rel;
+        let open_end = tag_end(html, start);
+        let close = html[open_end..]
+            .find("</figure>")
+            .map(|r| open_end + r)
+            .unwrap_or(html.len());
+        figures.push((start, open_end, close));
+        at = open_end;
+    }
+
+    // Each edit inserts a class into one opening tag. A figure claims the
+    // images inside it; the rest speak for themselves.
+    let mut edits: Vec<(usize, usize, &'static str)> = Vec::new();
+    for &(fig_start, fig_open_end, fig_close) in &figures {
+        let square_inside = imgs
+            .iter()
+            .any(|&(s, _, sq)| sq && s > fig_start && s < fig_close);
+        if square_inside {
+            edits.push((fig_start, fig_open_end, "fig-sq"));
+        }
+    }
+    for &(start, end, square) in &imgs {
+        let inside_figure = figures.iter().any(|&(s, _, c)| start > s && start < c);
+        if square && !inside_figure {
+            edits.push((start, end, "img-sq"));
+        }
+    }
+    edits.sort_by_key(|&(start, _, _)| start);
+
+    let mut out = String::with_capacity(html.len() + edits.len() * 16);
+    let mut copied = 0;
+    for (start, end, class) in edits {
+        out.push_str(&html[copied..start]);
+        out.push_str(&with_class(&html[start..end], class));
+        copied = end;
+    }
+    out.push_str(&html[copied..]);
+    out
+}
+
+/// The offset just past the `>` that closes the tag starting at `start`,
+/// ignoring any `>` inside a quoted attribute value — the alt text on these
+/// diagrams is a paragraph of prose and may well contain one.
+fn tag_end(html: &str, start: usize) -> usize {
+    let bytes = html.as_bytes();
+    let mut i = start;
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        match (quote, bytes[i]) {
+            (Some(q), c) if c == q => quote = None,
+            (None, c @ (b'"' | b'\'')) => quote = Some(c),
+            (None, b'>') => return i + 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+/// The value of a double-quoted attribute of an opening tag, or `None`.
+fn attr_value<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let needle = format!("{name}=\"");
+    let at = tag.match_indices(&needle).find(|&(i, _)| {
+        // Not a suffix of a longer attribute name: `data-src="…"` is not `src`.
+        i > 0 && tag.as_bytes()[i - 1].is_ascii_whitespace()
+    })?;
+    tag[at.0 + needle.len()..].split('"').next()
+}
+
+/// The same opening tag with `class` added — appended if the tag already has
+/// one, inserted after the element name if it does not.
+fn with_class(tag: &str, class: &str) -> String {
+    match attr_value(tag, "class") {
+        Some(existing) => tag.replacen(
+            &format!("class=\"{existing}\""),
+            &format!("class=\"{existing} {class}\""),
+            1,
+        ),
+        None => {
+            let name_end = tag
+                .find(|c: char| c.is_ascii_whitespace() || c == '>')
+                .unwrap_or(tag.len());
+            format!("{} class=\"{class}\"{}", &tag[..name_end], &tag[name_end..])
+        }
+    }
 }
 
 /// Make links between docs work in the rendered site: a `docs/`-prefixed or bare
@@ -1001,6 +1193,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 }
 .content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
 .content h2 { clear:right; }
+
+/* Square figures get a narrower column than landscape ones.
+   `.img-sq` / `.fig-sq` are stamped by docgen from the image's MEASURED
+   aspect ratio — the viewBox of an SVG, the IHDR of a PNG — against
+   SQUARE_MAX_RATIO; nothing here is decided by hand. The reason: at the full
+   column a square is as tall as it is wide, so one picture is an 830-950px
+   wall that pushes every word after it under the fold, while a landscape
+   strip (the byte-layout diagrams, the app screenshots) needs that width to
+   stay legible and is left alone.
+   The cap is 60% of the column, clamped at both ends: never above 560px,
+   which is the width every diagram is DRAWN at, so they render at their
+   intended size instead of being enlarged up to 1.75x; and never below
+   340px, so a narrow desktop window — where the column is small but the
+   sidebar still takes its 250px — gets a readable figure rather than a
+   thumbnail.
+   ONLY above the phone breakpoint. The mobile column is 353px at 390px, and
+   60% of that is 212px of unreadable diagram, so a phone keeps every image
+   full-bleed exactly as before — hence min-width:781px, the complement of the
+   780px query the mobile chrome uses. */
+@media (min-width:781px) {
+  .content img.img-sq { display:block; max-width:clamp(340px, 60%, 560px); margin-left:auto; margin-right:auto; }
+  /* Anchors are inline, so a linked image needs a block box to centre in. */
+  .content a:has(> img.img-sq) { display:block; }
+  /* The FIGURE is capped, not its img, so the caption stays the same width as
+     the picture it captions. `fig-right` is excluded: it is already floated at
+     min(42%, 390px), and this would make it wider, not narrower. */
+  .content figure.fig-sq:not(.fig-right) { max-width:clamp(340px, 60%, 560px); }
+}
 
 .content img { cursor:zoom-in; }
 .lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
@@ -1833,7 +2053,132 @@ const MOBILE_JS: &str = r##"
 
 #[cfg(test)]
 mod tests {
-    use super::render_markdown;
+    use super::{aspect_ratio, classify_images, render_markdown, SQUARE_MAX_RATIO};
+    use std::path::PathBuf;
+
+    /// The shipped diagrams, measured. This is the classification the site
+    /// depends on, so it is asserted against the real files rather than a
+    /// fixture: a redrawn diagram that changes shape changes its width, and
+    /// this says so.
+    fn img(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/img")
+            .join(name)
+    }
+
+    #[test]
+    fn svg_shape_comes_from_the_viewbox() {
+        // The diagrams carry no width/height attributes — only a viewBox.
+        let logo = aspect_ratio(&img("logo.svg")).expect("logo.svg");
+        assert!((logo - 760.0 / 200.0).abs() < 1e-9, "{logo}");
+        assert!(logo > SQUARE_MAX_RATIO, "a 3.8:1 banner is not square");
+
+        // Taller than it is wide, and the worst offender at full width.
+        let lazy = aspect_ratio(&img("lazy-open.svg")).expect("lazy-open.svg");
+        assert!((lazy - 560.0 / 644.0).abs() < 1e-9, "{lazy}");
+        assert!(lazy <= SQUARE_MAX_RATIO, "portrait counts as square-ish");
+    }
+
+    #[test]
+    fn png_shape_comes_from_the_ihdr() {
+        let shot = aspect_ratio(&img("playground-sparql.png")).expect("playground-sparql.png");
+        assert!((shot - 1280.0 / 1140.0).abs() < 1e-9, "{shot}");
+        assert!(shot <= SQUARE_MAX_RATIO);
+        // A screenshot in the usual landscape shape keeps the full column.
+        let wide = aspect_ratio(&img("atlas-1914.png")).expect("atlas-1914.png");
+        assert!(wide > SQUARE_MAX_RATIO, "{wide}");
+    }
+
+    #[test]
+    fn unmeasurable_sources_are_left_alone() {
+        assert_eq!(aspect_ratio(&img("no-such-file.svg")), None);
+        assert_eq!(aspect_ratio(&img("README.md")), None);
+    }
+
+    /// A stub shape table, so the tagging is tested without touching disk.
+    fn shapes(src: &str) -> Option<f64> {
+        match src {
+            "img/square.svg" => Some(1.0),
+            "img/tall.svg" => Some(0.87),
+            "img/wide.svg" => Some(1.7),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn only_square_images_are_tagged() {
+        let html = classify_images(
+            r#"<p><img src="img/square.svg" alt="a"><img src="img/wide.svg" alt="b"><img src="img/tall.svg" alt="c"></p>"#,
+            &shapes,
+        );
+        assert!(
+            html.contains(r#"<img class="img-sq" src="img/square.svg""#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<img class="img-sq" src="img/tall.svg""#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<img src="img/wide.svg""#), "{html}");
+        assert_eq!(html.matches("img-sq").count(), 2, "{html}");
+    }
+
+    /// An unknown `src` — a remote badge, an image added without a shape we
+    /// can read — must not be narrowed on a guess.
+    #[test]
+    fn unknown_shapes_keep_the_full_column() {
+        let html = classify_images(r#"<img src="https://example.com/badge.svg">"#, &shapes);
+        assert!(!html.contains("img-sq"), "{html}");
+    }
+
+    /// In a figure the CAPTION has to keep the picture's width, so the figure
+    /// is what gets capped — and its img must not be capped a second time.
+    #[test]
+    fn a_square_figure_is_tagged_not_its_image() {
+        let html = classify_images(
+            r#"<figure class="fig-center"><img src="img/square.svg" alt="x"><figcaption>c</figcaption></figure>"#,
+            &shapes,
+        );
+        assert!(
+            html.contains(r#"<figure class="fig-center fig-sq">"#),
+            "{html}"
+        );
+        assert!(!html.contains("img-sq"), "{html}");
+    }
+
+    #[test]
+    fn a_wide_figure_is_untouched() {
+        let src = r#"<figure class="fig-right"><img src="img/wide.svg" alt="x"></figure>"#;
+        assert_eq!(classify_images(src, &shapes), src);
+    }
+
+    /// The alt text on these diagrams is a paragraph of prose; a `>` in it must
+    /// not be mistaken for the end of the tag.
+    #[test]
+    fn a_gt_inside_alt_text_does_not_end_the_tag() {
+        let html = classify_images(
+            r#"<img src="img/square.svg" alt="level 0 -> level 1, x > y">"#,
+            &shapes,
+        );
+        assert_eq!(
+            html,
+            r#"<img class="img-sq" src="img/square.svg" alt="level 0 -> level 1, x > y">"#
+        );
+    }
+
+    /// The Markdown forms reach the same place: `![…](…)`, and a linked image.
+    #[test]
+    fn markdown_images_are_classified_too() {
+        let html = classify_images(
+            &render_markdown("![a](img/square.svg)\n\n[![b](img/wide.svg)](playground.html)\n"),
+            &shapes,
+        );
+        assert!(
+            html.contains(r#"<img class="img-sq" src="img/square.svg""#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<img src="img/wide.svg""#), "{html}");
+    }
 
     /// The ids have to be the ones github.com mints for the same headings —
     /// that is the whole point of the convention, and what makes an anchor an

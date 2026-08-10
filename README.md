@@ -58,7 +58,7 @@ WebAssembly, so a **browser can query the file directly with no backend**.
 > graphs + SPARQL**.
 
 <p align="center">
-  <img src="docs/img/lazy-open.svg" alt="How lazy opening works. Any client — a browser, a notebook, the CLI, a server — sends HTTP byte-range reads to one .rete file that stays where it is, on a bucket or on local disk. Only the 1 KiB header, the few dictionary chunks and the few index tiles a query actually touches are fetched; the rest of the file is never transferred, and a block cache of at most 256 MiB keeps hot blocks resident. Measured on the 52 GB datacite.rete, 9.83 billion triples: a COUNT returns 779,399 rows in 4 seconds inside a 2 GiB container, because aggregation streams and nothing is ever read whole." width="680">
+  <img src="docs/img/lazy-open.svg" alt="How lazy opening works. Any client — a browser, a notebook, the CLI, a server — sends HTTP byte-range reads to one .rete file that stays where it is, on a bucket or on local disk. Only the 1 KiB header, the few dictionary chunks and the few index tiles a query actually touches are fetched; the rest of the file is never transferred, and a block cache of at most 256 MiB keeps hot blocks resident. Measured on the 52 GB datacite.rete, 9.83 billion triples: a COUNT returns 779,399 rows in 4 seconds inside a 2 GiB container, because aggregation streams and nothing is ever read whole." width="480">
 </p>
 
 - **No server.** The file *is* the database. Publish once to static hosting.
@@ -143,7 +143,7 @@ shipping the answer *inside the file*, read over a couple of HTTP range requests
   (not just the `is-a` tree), as a *non-exclusive* graph.
 
 <p align="center">
-  <img src="docs/img/semantic-zoom.svg" alt="A four-level schema pyramid over the six-class subClassOf hierarchy in a small people graph. Level 0 is Agent times 4; level 1 is Person times 3 and Organisation times 1; level 2 is Scientist times 2, Artist times 1 and Organisation times 1; level 3, the leaves, is Astronomer times 2, Artist times 1 and Organisation times 1. Every level re-partitions the same four instances, so the counts conserve, and rete summary --level k reads any one level without touching the triple index. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none." width="560">
+  <img src="docs/img/semantic-zoom.svg" alt="A four-level schema pyramid over the six-class subClassOf hierarchy in a small people graph. Level 0 is Agent times 4; level 1 is Person times 3 and Organisation times 1; level 2 is Scientist times 2, Artist times 1 and Organisation times 1; level 3, the leaves, is Astronomer times 2, Artist times 1 and Organisation times 1. Every level re-partitions the same four instances, so the counts conserve, and rete summary --level k reads any one level without touching the triple index. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none." width="480">
 </p>
 
 ```text
@@ -299,7 +299,9 @@ explain triple-pattern provenance — all offline. Two focused demos:
 Every shot below is the same single HTML page, querying a file that stays on its
 URL. Each links to the deep link that reproduces it.
 
-[![The rete playground querying opencitations.rete: a ten-line SPARQL SELECT that pins a journal by title, walks oc:partOf to its papers and adds two OPTIONAL identifier blocks; under it the counter reads 25 row(s), 161 range req, 189.4 MB of 33.39 GB fetched; below that a results table of DOIs, titles and years.](docs/img/playground-sparql.png)](https://caviri.github.io/rete/playground.html#dataset=opencitations&load=lazy&ex=2)
+<p align="center">
+  <a href="https://caviri.github.io/rete/playground.html#dataset=opencitations&amp;load=lazy&amp;ex=2"><img src="docs/img/playground-sparql.png" alt="The rete playground querying opencitations.rete: a ten-line SPARQL SELECT that pins a journal by title, walks oc:partOf to its papers and adds two OPTIONAL identifier blocks; under it the counter reads 25 row(s), 161 range req, 189.4 MB of 33.39 GB fetched; below that a results table of DOIs, titles and years." width="480"></a>
+</p>
 
 **SPARQL against 5.18 billion triples, from a browser tab.** `opencitations.rete`
 is one 33.4 GB file on object storage. The line under the toolbar is the whole
@@ -307,7 +309,9 @@ point: 25 rows came back after **161 range requests and 189 MB** — including
 opening the file. The other 33 GB were never transferred, and there is no server
 on the other end.
 
-[![The rete playground querying plantatlas.rete: a three-column results table — Scientific name (Triticum turgidum ssp. durum, Triticum aestivum …), Plant part (Package labelling, Compound fruit …) and Photo, where each Photo cell is a rendered WebP photograph of the specimen captioned 'WEBP · 1448×1024' with an 'Open image' link; the counter above reads 40 row(s), 1 range req, 256.0 KB of 9.8 MB fetched, 157 ms.](docs/img/playground-media.png)](https://caviri.github.io/rete/playground.html#dataset=plantatlas&load=lazy&ex=0)
+<p align="center">
+  <a href="https://caviri.github.io/rete/playground.html#dataset=plantatlas&amp;load=lazy&amp;ex=0"><img src="docs/img/playground-media.png" alt="The rete playground querying plantatlas.rete: a three-column results table — Scientific name (Triticum turgidum ssp. durum, Triticum aestivum …), Plant part (Package labelling, Compound fruit …) and Photo, where each Photo cell is a rendered WebP photograph of the specimen captioned 'WEBP · 1448×1024' with an 'Open image' link; the counter above reads 40 row(s), 1 range req, 256.0 KB of 9.8 MB fetched, 157 ms." width="480"></a>
+</p>
 
 **The pictures are in the graph.** Those photographs are `xsd:base64Binary`
 WebP literals stored *inside* the `.rete`, rendered straight into the result
@@ -323,7 +327,9 @@ counts, vocabularies, classes, and runnable starter queries. Read straight off
 the header: **58.5 KB in one coalesced range request**, without touching the
 triple index, on a 5 M-triple file or a 5 B-triple one alike.
 
-[![The playground's Map output over gbif-birds.rete: 3,000 red sighting dots for the family Accipitridae blanketing Iberia and clustering in the western Alps, drawn on a pale Carto Light basemap of western Europe, with a Basemap picker and an 'Explore full map' button above it.](docs/img/playground-map.png)](https://caviri.github.io/rete/playground.html#dataset=gbif-birds&load=lazy&ex=10)
+<p align="center">
+  <a href="https://caviri.github.io/rete/playground.html#dataset=gbif-birds&amp;load=lazy&amp;ex=10"><img src="docs/img/playground-map.png" alt="The playground's Map output over gbif-birds.rete: 3,000 red sighting dots for the family Accipitridae blanketing Iberia and clustering in the western Alps, drawn on a pale Carto Light basemap of western Europe, with a Basemap picker and an 'Explore full map' button above it." width="480"></a>
+</p>
 
 **GeoSPARQL, drawn.** 3,000 raptor sightings selected out of a **334 M-triple,
 1.43 GB** GBIF graph and put on a basemap — `geo:asWKT` literals detected in the
