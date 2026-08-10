@@ -1014,6 +1014,128 @@ fn parse_tile_directory(bytes: &[u8], total_len: u64) -> Result<Vec<TileDirEntry
     Ok(entries)
 }
 
+/// Fetch a tiled directory without crossing its exact byte boundary. Once the
+/// tile count is known, every unfinished field requires at least one byte, so
+/// bounded batches of that minimum size can advance without touching payloads.
+fn read_tile_directory_ranged_exact<R: RangeReader>(
+    reader: &R,
+    section: ByteRange,
+) -> Result<Vec<TileDirEntry>, FileError> {
+    const DIRECTORY_BATCH: u64 = 4096;
+
+    let section_end = checked_end(section.offset, section.len)?;
+    let mut read_offset = section.offset;
+    let mut count_bytes = Vec::with_capacity(10);
+    let num_tiles = loop {
+        if read_offset >= section_end || count_bytes.len() == 10 {
+            return Err(FileError::Container("truncated tile directory"));
+        }
+        let one = reader.read_at_precise(read_offset, 1)?;
+        if one.len() != 1 {
+            return Err(FileError::Container("truncated tile directory"));
+        }
+        let byte = one
+            .first()
+            .copied()
+            .ok_or(FileError::Container("truncated tile directory"))?;
+        read_offset = checked_end(read_offset, 1)?;
+        count_bytes.push(byte);
+        if byte & 0x80 == 0 {
+            if count_bytes.len() == 10 && byte > 1 {
+                return Err(FileError::Container("tile count overflows u64"));
+            }
+            break read_uvarint(&count_bytes)
+                .ok_or(FileError::Container("malformed tile count"))?
+                .0;
+        }
+    };
+    let num_tiles =
+        usize::try_from(num_tiles).map_err(|_| FileError::Container("tile count too large"))?;
+    let total_fields = num_tiles
+        .checked_mul(3)
+        .ok_or(FileError::Container("tile directory field count overflows"))?;
+    let section_capacity = usize::try_from(section.len).unwrap_or(usize::MAX);
+    // Neither the tile count nor a virtual section length is an allocation
+    // bound. Keep only a small proven-safe initial reserve; grow in proportion
+    // to directory records that were actually fetched and parsed.
+    let initial_capacity = num_tiles
+        .min(section_capacity)
+        .min(DIRECTORY_BATCH as usize);
+    let mut entries = Vec::with_capacity(initial_capacity);
+    let mut lens = Vec::with_capacity(initial_capacity);
+    let mut prev_min = 0u32;
+    let mut field_index = 0usize;
+    let mut pending = Vec::new();
+    let mut pending_pos = 0usize;
+    let mut fields = [0u64; 3];
+
+    while field_index < total_fields {
+        let available = &pending[pending_pos..];
+        let parsed = read_uvarint(available)
+            .and_then(|(value, used)| (used < 10 || available[9] <= 1).then_some((value, used)));
+        if let Some((value, used)) = parsed {
+            fields[field_index % 3] = value;
+            pending_pos += used;
+            field_index += 1;
+            if field_index.is_multiple_of(3) {
+                let dmin = u32::try_from(fields[0])
+                    .map_err(|_| FileError::Container("tile minimum delta too large"))?;
+                let span = u32::try_from(fields[1])
+                    .map_err(|_| FileError::Container("tile leading span too large"))?;
+                let min_a = prev_min
+                    .checked_add(dmin)
+                    .ok_or(FileError::Container("tile minimum overflows u32"))?;
+                let max_a = min_a
+                    .checked_add(span)
+                    .ok_or(FileError::Container("tile maximum overflows u32"))?;
+                entries.push(TileDirEntry {
+                    min_a,
+                    max_a,
+                    start: 0,
+                    end: 0,
+                });
+                lens.push(fields[2]);
+                prev_min = min_a;
+            }
+            continue;
+        }
+        if available.len() >= 10 {
+            return Err(FileError::Container("tile directory varint overflows"));
+        }
+
+        pending.drain(..pending_pos);
+        pending_pos = 0;
+        let unfinished_fields = total_fields - field_index;
+        let fetch_len = (unfinished_fields as u64).min(DIRECTORY_BATCH);
+        let fetch_end = checked_end(read_offset, fetch_len)?;
+        if fetch_end > section_end {
+            return Err(FileError::Container("truncated tile directory"));
+        }
+        let bytes = reader.read_at_precise(read_offset, fetch_len)?;
+        if bytes.len() as u64 != fetch_len {
+            return Err(FileError::Container("truncated tile directory"));
+        }
+        pending.extend_from_slice(&bytes);
+        read_offset = fetch_end;
+    }
+
+    if pending_pos != pending.len() {
+        return Err(FileError::Container("tile directory framing is ambiguous"));
+    }
+    let body_start = read_offset - section.offset;
+    let mut start = body_start;
+    for (entry, len) in entries.iter_mut().zip(lens) {
+        let end = start
+            .checked_add(len)
+            .filter(|&end| end <= section.len)
+            .ok_or(FileError::Container("tile overruns section"))?;
+        entry.start = start;
+        entry.end = end;
+        start = end;
+    }
+    Ok(entries)
+}
+
 /// Fetch and parse a remote tiled section's directory: read a small prefix and
 /// grow it geometrically until the directory parses, never fetching past the
 /// section. A directory that still fails on the whole section is corrupt.
@@ -1028,14 +1150,15 @@ fn read_tile_directory_ranged<R: RangeReader>(
         match parse_tile_directory(&prefix, total) {
             Ok(dir) => return Ok(dir),
             Err(_) if prefetch < total => prefetch = prefetch.saturating_mul(2).min(total),
-            Err(e) => return Err(e),
+            Err(error) => return Err(error),
         }
     }
 }
 
 /// Fetch and parse a remote section's **tile-synopsis trailer** (only when the
-/// header's [`FLAG_TILE_SYNOPSIS`] is set): one targeted range read of the bytes
-/// past the last tile, parsed into one synopsis per tile (directory order). A
+/// header's [`FLAG_TILE_SYNOPSIS`] is set): one targeted, format-bounded range
+/// read past the last tile, parsed into one synopsis per tile (directory order).
+/// Each synopsis contains four uvarints, at most ten bytes each. A
 /// missing/short/garbled trailer degrades to all-`None` — pruning simply doesn't
 /// fire, never a wrong result. The directory gives the trailer's start (the last
 /// tile's end).
@@ -1043,6 +1166,7 @@ fn read_tile_synopsis_ranged<R: RangeReader>(
     reader: &R,
     section: ByteRange,
     dir: &[TileDirEntry],
+    precise: bool,
 ) -> Vec<Option<TileSynopsis>> {
     let n = dir.len();
     let none = vec![None; n];
@@ -1051,8 +1175,22 @@ fn read_tile_synopsis_ranged<R: RangeReader>(
     if n == 0 || trailer_start >= total {
         return none; // no trailer bytes present
     }
-    let trailer_len = total - trailer_start;
-    let Ok(bytes) = reader.read_at(section.offset + trailer_start, trailer_len) else {
+    let Some(max_synopsis_len) = u64::try_from(n)
+        .ok()
+        .and_then(|count| count.checked_mul(4 * 10))
+    else {
+        return none;
+    };
+    let trailer_len = (total - trailer_start).min(max_synopsis_len);
+    let Ok(trailer_offset) = checked_end(section.offset, trailer_start) else {
+        return none;
+    };
+    let bytes = if precise {
+        reader.read_at_precise(trailer_offset, trailer_len)
+    } else {
+        reader.read_at(trailer_offset, trailer_len)
+    };
+    let Ok(bytes) = bytes else {
         return none;
     };
     match parse_tile_synopsis(&bytes, 0, n) {
@@ -1174,6 +1312,247 @@ fn decode_index_section_ranges(
         .map_err(|_| FileError::Container("expected 6 permutation blocks"))
 }
 
+struct RemoteGraphIndex {
+    index: GraphIndex,
+    section_ranges: [ByteRange; NUM_PERMS],
+    tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS],
+}
+
+/// View of a reader that preserves exact physical metadata ranges through
+/// wrappers which normally widen/cache [`RangeReader::read_at`] calls. Payload
+/// loaders keep the original reader and therefore retain ordinary caching.
+struct PreciseMetadataReader<'a, R: RangeReader + ?Sized> {
+    inner: &'a R,
+}
+
+impl<R: RangeReader + ?Sized> RangeReader for PreciseMetadataReader<'_, R> {
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.inner.read_at_precise(offset, len)
+    }
+
+    fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.inner.read_at_precise(offset, len)
+    }
+
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+}
+
+/// Construct a tile-faulting graph index from on-disk framing. Named graphs set
+/// `exact_payload_boundaries`: their lazy-open contract permits no payload
+/// fetch at all. The established default-graph path keeps its 4 KiB directory
+/// prefix to avoid adding dozens of high-latency metadata round trips.
+fn open_remote_graph_index<R: RangeReader + Send + Sync + 'static>(
+    reader: std::sync::Arc<R>,
+    container: ByteRange,
+    codec: u8,
+    has_tile_synopsis: bool,
+    read_concurrency: usize,
+    exact_payload_boundaries: bool,
+) -> Result<RemoteGraphIndex, FileError> {
+    let section_ranges = if exact_payload_boundaries {
+        locate_container_sections_ranged_exact::<R, NUM_PERMS>(reader.as_ref(), container)?
+    } else {
+        let mut ranges = [ByteRange { offset: 0, len: 0 }; NUM_PERMS];
+        for (si, range) in ranges.iter_mut().enumerate() {
+            *range = locate_container_section_ranged(
+                reader.as_ref(),
+                container.offset,
+                container.len,
+                si,
+                NUM_PERMS as u64,
+            )?;
+        }
+        ranges
+    };
+    let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
+    #[allow(clippy::type_complexity)]
+    let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; NUM_PERMS] = Default::default();
+
+    for si in 0..NUM_PERMS {
+        let section = section_ranges[si];
+        let dir = if exact_payload_boundaries {
+            read_tile_directory_ranged_exact(reader.as_ref(), section)?
+        } else {
+            read_tile_directory_ranged(reader.as_ref(), section)?
+        };
+        let synopsis = if has_tile_synopsis {
+            read_tile_synopsis_ranged(reader.as_ref(), section, &dir, exact_payload_boundaries)
+        } else {
+            vec![None; dir.len()]
+        };
+        directories[si] = dir
+            .iter()
+            .zip(synopsis)
+            .map(|(entry, synopsis)| (entry.min_a, entry.max_a, synopsis))
+            .collect();
+        tile_ranges[si] = dir
+            .into_iter()
+            .map(|entry| {
+                Ok((
+                    entry.min_a,
+                    entry.max_a,
+                    ByteRange {
+                        offset: checked_end(section.offset, entry.start)?,
+                        len: entry.end - entry.start,
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>, FileError>>()?;
+    }
+
+    let loader_ranges = tile_ranges.clone();
+    let loader_reader = reader.clone();
+    let loader: crate::index::TileLoader = Box::new(move |si, ti| {
+        let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
+        let compressed = loader_reader.read_at(range.offset, range.len).ok()?;
+        if compressed.len() as u64 != range.len {
+            return None;
+        }
+        let bytes = decompress(codec, &compressed).ok()?;
+        crate::triples::TripleBlock::parse(&bytes).ok()?;
+        Some(bytes)
+    });
+    let bulk_ranges = tile_ranges.clone();
+    let bulk_reader = reader;
+    let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
+        let section = bulk_ranges.get(si)?;
+        let want: Option<Vec<ByteRange>> = tis
+            .iter()
+            .map(|&ti| section.get(ti).map(|&(_, _, range)| range))
+            .collect();
+        let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
+        blobs
+            .iter()
+            .map(|blob| {
+                let bytes = decompress(codec, blob).ok()?;
+                crate::triples::TripleBlock::parse(&bytes).ok()?;
+                Some(bytes)
+            })
+            .collect()
+    });
+    let mut index = GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
+    index.set_tile_lens(std::array::from_fn(|si| {
+        tile_ranges[si]
+            .iter()
+            .map(|&(_, _, range)| range.len.min(u32::MAX as u64) as u32)
+            .collect()
+    }));
+    index.set_read_concurrency(read_concurrency);
+
+    Ok(RemoteGraphIndex {
+        index,
+        section_ranges,
+        tile_ranges,
+    })
+}
+
+fn open_named_graphs_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
+    reader: std::sync::Arc<R>,
+    section: ByteRange,
+    codec: u8,
+    has_tile_synopsis: bool,
+    read_concurrency: usize,
+) -> Result<Vec<(String, GraphIndex)>, FileError> {
+    let section_end = checked_end(section.offset, section.len)?;
+    let (graph_count, count_len) =
+        read_uvarint_at_exact(reader.as_ref(), section.offset, section_end)?;
+    let graph_count = usize::try_from(graph_count)
+        .map_err(|_| FileError::Container("named-graph count too large"))?;
+    // The count is untrusted and the section may advertise a virtual u64-sized
+    // range. Grow only after each complete, bounded graph record is parsed.
+    let mut graphs = Vec::new();
+    let mut pos = checked_end(section.offset, count_len)?;
+
+    for _ in 0..graph_count {
+        let (iri_len, iri_len_used) = read_uvarint_at_exact(reader.as_ref(), pos, section_end)?;
+        pos = checked_end(pos, iri_len_used)?;
+        let iri_end = checked_end(pos, iri_len)?;
+        if iri_end > section_end {
+            return Err(FileError::Container("named-graph IRI overruns section"));
+        }
+        let iri_len_usize = usize::try_from(iri_len)
+            .map_err(|_| FileError::Container("named-graph IRI too large"))?;
+        let iri_bytes = reader.read_at_precise(pos, iri_len)?;
+        if iri_bytes.len() != iri_len_usize {
+            return Err(FileError::Container("truncated named-graph IRI"));
+        }
+        let iri = String::from_utf8_lossy(&iri_bytes).into_owned();
+        pos = iri_end;
+
+        let (container_len, container_len_used) =
+            read_uvarint_at_exact(reader.as_ref(), pos, section_end)?;
+        pos = checked_end(pos, container_len_used)?;
+        let container_end = checked_end(pos, container_len)?;
+        if container_end > section_end {
+            return Err(FileError::Container(
+                "named-graph index container overruns section",
+            ));
+        }
+        let remote = open_remote_graph_index(
+            reader.clone(),
+            ByteRange {
+                offset: pos,
+                len: container_len,
+            },
+            codec,
+            has_tile_synopsis,
+            read_concurrency,
+            true,
+        )?;
+        graphs.push((iri, remote.index));
+        pos = container_end;
+    }
+
+    Ok(graphs)
+}
+
+fn read_uvarint_at_exact<R: RangeReader>(
+    reader: &R,
+    absolute_offset: u64,
+    container_end: u64,
+) -> Result<(u64, u64), FileError> {
+    if absolute_offset >= container_end {
+        return Err(FileError::Container("truncated container varint"));
+    }
+    // Framing precedes opaque payload bytes with no encoded framing length.
+    // Read one byte at a time until the varint terminates: even a 10-byte
+    // speculative probe could otherwise cross a tiny tile directory and fetch
+    // compressed tile bytes during a supposedly metadata-only lazy open. This
+    // costs at most ten tiny reads per framing value; tile directories use the
+    // bounded batched reader above once their field count is known.
+    let mut bytes = Vec::with_capacity(10);
+    for used in 0..10u64 {
+        let offset = checked_end(absolute_offset, used)?;
+        if offset >= container_end {
+            return Err(FileError::Container("truncated container varint"));
+        }
+        let one = reader.read_at_precise(offset, 1)?;
+        if one.len() != 1 {
+            return Err(FileError::Container("truncated container varint"));
+        }
+        let byte = one
+            .first()
+            .copied()
+            .ok_or(FileError::Container("truncated container varint"))?;
+        bytes.push(byte);
+        if byte & 0x80 == 0 {
+            if used == 9 && byte > 1 {
+                return Err(FileError::Container("container varint overflows u64"));
+            }
+            let (value, _) =
+                read_uvarint(&bytes).ok_or(FileError::Container("malformed container varint"))?;
+            return Ok((value, used + 1));
+        }
+    }
+    Err(FileError::Container("container varint overflows u64"))
+}
+
 fn read_uvarint_at<R: RangeReader>(
     reader: &R,
     absolute_offset: u64,
@@ -1188,6 +1567,34 @@ fn read_uvarint_at<R: RangeReader>(
     read_uvarint(&bytes)
         .map(|(value, used)| (value, used as u64))
         .ok_or(FileError::Container("truncated container varint"))
+}
+
+fn locate_container_sections_ranged_exact<R: RangeReader, const SECTION_COUNT: usize>(
+    reader: &R,
+    container: ByteRange,
+) -> Result<[ByteRange; SECTION_COUNT], FileError> {
+    let container_end = checked_end(container.offset, container.len)?;
+    let (section_count, used) = read_uvarint_at_exact(reader, container.offset, container_end)?;
+    if section_count != SECTION_COUNT as u64 {
+        return Err(FileError::Container("unexpected container section count"));
+    }
+
+    let mut ranges = [ByteRange { offset: 0, len: 0 }; SECTION_COUNT];
+    let mut pos = checked_end(container.offset, used)?;
+    for range in &mut ranges {
+        let (payload_len, len_used) = read_uvarint_at_exact(reader, pos, container_end)?;
+        pos = checked_end(pos, len_used)?;
+        let payload_end = checked_end(pos, payload_len)?;
+        if payload_end > container_end {
+            return Err(FileError::Container("section overruns buffer"));
+        }
+        *range = ByteRange {
+            offset: pos,
+            len: payload_len,
+        };
+        pos = payload_end;
+    }
+    Ok(ranges)
 }
 
 /// Locate one section's payload byte range inside a remote container, walking
@@ -2350,11 +2757,14 @@ impl Rete {
     }
 
     /// Open via an **owned** [`RangeReader`] with lazy tile faulting (tiled
-    /// v0.2 files): fetches the header, dictionary, pyramid meta, named graphs,
-    /// and each permutation's tile **directory** â€” but no default-graph tile
-    /// payloads. Tiles fault in (one range request each) the first time a scan
-    /// touches them, so a selective SPARQL query fetches O(touched tiles)
-    /// bytes instead of the whole index.
+    /// v0.2 files): fetches the header plus dictionary/index directory metadata;
+    /// pyramid and text data stay deferred. When named graphs exist, every
+    /// opening metadata read uses exact physical boundaries (including the
+    /// shared dictionary and default graph), so even a widening block-cache
+    /// wrapper cannot fetch a named tile payload. Default-only files retain
+    /// their bounded cached directory prefixes. No tile image is decompressed
+    /// until a scan touches it, so a selective SPARQL query fetches O(touched
+    /// tiles) bytes instead of the whole index.
     ///
     /// **Failure contract:** scans are infallible by design, so a failed tile
     /// fetch yields an empty tile and sets a sticky flag â€” after evaluating,
@@ -2363,7 +2773,10 @@ impl Rete {
     pub fn open_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
-        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        // The header tells us whether named graphs exist, so it must be precise
+        // before that decision: a block-aligned cache read could otherwise
+        // swallow a tiny file's named tile payload during the opening probe.
+        let head = reader.read_at_precise(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
         let reader = std::sync::Arc::new(reader);
         // Captured before the loader closures take the Arc: the reader's
@@ -2373,16 +2786,33 @@ impl Rete {
         // Lazily-chunked dictionary: locate the four sections, fetch each
         // section's header + restart table + chunk directory (small), and
         // fault the chunk bodies in on first term lookup.
+        let has_named_graphs = header.named_graphs_len > 0;
         let mut dict_sections: Vec<crate::dict::ChunkedSection> = Vec::with_capacity(4);
         for si in 0..4 {
-            let section = locate_container_section_ranged(
-                reader.as_ref(),
-                header.dictionary_offset,
-                header.dictionary_len,
-                si,
-                4,
-            )?;
-            let (meta, entries) = read_dict_dir_ranged(reader.as_ref(), section)?;
+            let (section, meta, entries) = if has_named_graphs {
+                let metadata_reader = PreciseMetadataReader {
+                    inner: reader.as_ref(),
+                };
+                let section = locate_container_section_ranged(
+                    &metadata_reader,
+                    header.dictionary_offset,
+                    header.dictionary_len,
+                    si,
+                    4,
+                )?;
+                let (meta, entries) = read_dict_dir_ranged(&metadata_reader, section)?;
+                (section, meta, entries)
+            } else {
+                let section = locate_container_section_ranged(
+                    reader.as_ref(),
+                    header.dictionary_offset,
+                    header.dictionary_len,
+                    si,
+                    4,
+                )?;
+                let (meta, entries) = read_dict_dir_ranged(reader.as_ref(), section)?;
+                (section, meta, entries)
+            };
             let ranges: Vec<ByteRange> = entries
                 .iter()
                 .map(|e| ByteRange {
@@ -2421,49 +2851,21 @@ impl Rete {
             .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
         let dict = Dictionary::from_chunked_sections(dict_arr);
 
-        // Locate the six index section payloads (container framing only)
-        // and fetch just their tile directories.
-        let mut index_section_ranges = [ByteRange { offset: 0, len: 0 }; NUM_PERMS];
-        let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
-        #[allow(clippy::type_complexity)]
-        let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; NUM_PERMS] =
-            Default::default();
-        for si in 0..NUM_PERMS {
-            let section = locate_container_section_ranged(
-                reader.as_ref(),
-                header.root_dir_offset,
-                header.root_dir_len,
-                si,
-                NUM_PERMS as u64,
-            )?;
-            index_section_ranges[si] = section;
-            let dir = read_tile_directory_ranged(reader.as_ref(), section)?;
-            // Tile synopses (one extra small tail read per section) let a routed
-            // scan prune a tile by a bound secondary component before faulting it.
-            let syn = if header.has_tile_synopsis() {
-                read_tile_synopsis_ranged(reader.as_ref(), section, &dir)
-            } else {
-                vec![None; dir.len()]
-            };
-            directories[si] = dir
-                .iter()
-                .zip(syn)
-                .map(|(e, s)| (e.min_a, e.max_a, s))
-                .collect();
-            tile_ranges[si] = dir
-                .into_iter()
-                .map(|e| {
-                    (
-                        e.min_a,
-                        e.max_a,
-                        ByteRange {
-                            offset: section.offset + e.start,
-                            len: (e.end - e.start),
-                        },
-                    )
-                })
-                .collect();
-        }
+        let RemoteGraphIndex {
+            index,
+            section_ranges: index_section_ranges,
+            tile_ranges,
+        } = open_remote_graph_index(
+            reader.clone(),
+            ByteRange {
+                offset: header.root_dir_offset,
+                len: header.root_dir_len,
+            },
+            header.block_codec,
+            header.has_tile_synopsis(),
+            read_concurrency,
+            has_named_graphs,
+        )?;
 
         // The pyramid meta is large on real graphs (tens of MB) and SPARQL never
         // reads it, so defer its fetch: it faults in only if `pyramid()` is
@@ -2519,48 +2921,19 @@ impl Rete {
         };
 
         let named_graphs = if header.named_graphs_len > 0 {
-            let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
-            decode_named_graphs(&nb, header.block_codec)?
+            open_named_graphs_ranged_lazy(
+                reader,
+                ByteRange {
+                    offset: header.named_graphs_offset,
+                    len: header.named_graphs_len,
+                },
+                header.block_codec,
+                header.has_tile_synopsis(),
+                read_concurrency,
+            )?
         } else {
             Vec::new()
         };
-
-        // The loader fetches and decompresses one tile per call; the bulk
-        // loader serves multi-tile scans by coalescing adjacent tile ranges
-        // into single range reads (tiles are back-to-back in their section,
-        // so a full-section scan is typically one request).
-        let codec = header.block_codec;
-        let loader_ranges = tile_ranges.clone();
-        let loader_reader = reader.clone();
-        let loader: crate::index::TileLoader = Box::new(move |si, ti| {
-            let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
-            let bytes = loader_reader.read_at(range.offset, range.len).ok()?;
-            decompress(codec, &bytes).ok()
-        });
-        let bulk_ranges = tile_ranges.clone();
-        let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
-            let section = bulk_ranges.get(si)?;
-            let want: Option<Vec<ByteRange>> = tis
-                .iter()
-                .map(|&ti| section.get(ti).map(|&(_, _, r)| r))
-                .collect();
-            let blobs = read_coalesced(reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
-            blobs.iter().map(|b| decompress(codec, b).ok()).collect()
-        });
-        let mut index =
-            GraphIndex::from_remote_directories(directories, loader).with_bulk_loader(bulk);
-        // Per-tile encoded lengths (from the directory) feed the join planner's
-        // fatness gates — free here, unavailable later without a fetch.
-        index.set_tile_lens(std::array::from_fn(|si| {
-            tile_ranges[si]
-                .iter()
-                .map(|&(_, _, r)| r.len.min(u32::MAX as u64) as u32)
-                .collect()
-        }));
-        // The reader's fan-out widens the planner's remote probe budget: a
-        // desktop/CLI reader overlapping 16 range reads probes far more cheaply
-        // than a phone's serial sync-XHR path.
-        index.set_read_concurrency(read_concurrency);
 
         Ok(Self {
             header,
@@ -3266,6 +3639,178 @@ mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
     use crate::index::GraphIndexBuilder;
+    use std::collections::BTreeMap;
+
+    struct SparseReader {
+        len: u64,
+        bytes: BTreeMap<u64, u8>,
+    }
+
+    struct SynopsisProbeReader {
+        normal_reads: std::sync::Mutex<Vec<(u64, u64)>>,
+        precise_reads: std::sync::Mutex<Vec<(u64, u64)>>,
+    }
+
+    impl SynopsisProbeReader {
+        fn new() -> Self {
+            Self {
+                normal_reads: std::sync::Mutex::new(Vec::new()),
+                precise_reads: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn response(len: u64) -> std::io::Result<Vec<u8>> {
+            if len > 40 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "oversized synopsis request",
+                ));
+            }
+            Ok(vec![0; len as usize])
+        }
+    }
+
+    impl SparseReader {
+        fn with_uvarint(value: u64, len: u64) -> Self {
+            let mut encoded = Vec::new();
+            write_uvarint(&mut encoded, value);
+            Self {
+                len,
+                bytes: encoded
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, byte)| (offset as u64, byte))
+                    .collect(),
+            }
+        }
+    }
+
+    impl RangeReader for SparseReader {
+        fn len(&self) -> u64 {
+            self.len
+        }
+
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            let end = offset
+                .checked_add(len)
+                .filter(|&end| end <= self.len)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "sparse range out of bounds",
+                    )
+                })?;
+            (offset..end)
+                .map(|at| {
+                    self.bytes.get(&at).copied().ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "unmapped sparse byte",
+                        )
+                    })
+                })
+                .collect()
+        }
+    }
+
+    impl RangeReader for SynopsisProbeReader {
+        fn len(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            self.normal_reads.lock().unwrap().push((offset, len));
+            Self::response(len)
+        }
+
+        fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            self.precise_reads.lock().unwrap().push((offset, len));
+            Self::response(len)
+        }
+    }
+
+    #[test]
+    fn synopsis_reads_are_capped_by_format_for_normal_and_precise_paths() {
+        let section = ByteRange {
+            offset: 0,
+            len: u64::MAX,
+        };
+        // A zero-length tile is syntactically representable. Its directory end
+        // puts the synopsis at byte 4 while the hostile virtual section claims
+        // that virtually the entire u64 address space remains.
+        let directory = [TileDirEntry {
+            min_a: 0,
+            max_a: 0,
+            start: 4,
+            end: 4,
+        }];
+
+        for precise in [false, true] {
+            let reader = SynopsisProbeReader::new();
+            assert_eq!(
+                read_tile_synopsis_ranged(&reader, section, &directory, precise),
+                vec![Some((0, 0, 0, 0))]
+            );
+            let normal = reader.normal_reads.lock().unwrap().clone();
+            let exact = reader.precise_reads.lock().unwrap().clone();
+            if precise {
+                assert!(normal.is_empty());
+                assert_eq!(exact, vec![(4, 40)]);
+            } else {
+                assert_eq!(normal, vec![(4, 40)]);
+                assert!(exact.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn huge_untrusted_named_graph_count_is_a_clean_error() {
+        let len = usize::MAX as u64;
+        let reader = SparseReader::with_uvarint(usize::MAX as u64, len);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            open_named_graphs_ranged_lazy(
+                std::sync::Arc::new(reader),
+                ByteRange { offset: 0, len },
+                CODEC_NONE,
+                false,
+                1,
+            )
+        }));
+
+        assert!(result.is_ok(), "untrusted graph count must not panic");
+        assert!(result.unwrap().is_err(), "huge graph count must fail open");
+    }
+
+    #[test]
+    fn huge_untrusted_tile_count_is_a_clean_error() {
+        let len = usize::MAX as u64;
+        let reader = SparseReader::with_uvarint(usize::MAX as u64, len);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_tile_directory_ranged_exact(&reader, ByteRange { offset: 0, len })
+        }));
+
+        assert!(result.is_ok(), "untrusted tile count must not panic");
+        assert!(result.unwrap().is_err(), "huge tile count must fail open");
+    }
+
+    #[test]
+    fn allocation_sized_untrusted_tile_count_is_a_clean_error() {
+        let count = (isize::MAX as usize / std::mem::size_of::<TileDirEntry>()) + 1;
+        assert!(count.checked_mul(3).is_some());
+        let reader = SparseReader::with_uvarint(count as u64, u64::MAX);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_tile_directory_ranged_exact(
+                &reader,
+                ByteRange {
+                    offset: 0,
+                    len: u64::MAX,
+                },
+            )
+        }));
+
+        assert!(result.is_ok(), "untrusted tile count must not panic");
+        assert!(result.unwrap().is_err(), "huge tile count must fail open");
+    }
 
     #[test]
     fn read_coalesced_merges_within_gap_and_splits_beyond() {

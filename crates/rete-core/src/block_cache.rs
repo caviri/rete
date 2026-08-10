@@ -16,6 +16,9 @@
 //! right call on a latency-bound link. Missing blocks for one access are fetched
 //! through [`RangeReader::read_many`], so a backend that *does* support
 //! multi-range collapses them further still; the two optimizations compose.
+//! [`RangeReader::read_at_precise`] is the deliberate exception: metadata
+//! callers that must preserve a physical byte boundary bypass widening and do
+//! not populate this cache.
 //!
 //! Residency is **bounded**: past a byte cap (default [`DEFAULT_CACHE_CAP`],
 //! overridable with [`BlockCacheReader::with_cache_cap`]) the least-recently
@@ -371,6 +374,29 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
         Ok(out)
     }
 
+    fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        self.bounds(offset, len)?;
+        let out = self.inner.read_at_precise(offset, len)?;
+        if out.len() as u64 != len {
+            let (kind, mismatch) = if (out.len() as u64) < len {
+                (std::io::ErrorKind::UnexpectedEof, "short")
+            } else {
+                (std::io::ErrorKind::InvalidData, "overlong")
+            };
+            return Err(std::io::Error::new(
+                kind,
+                format!(
+                    "{mismatch} precise read at offset {offset}: got {} of {len} bytes",
+                    out.len()
+                ),
+            ));
+        }
+        Ok(out)
+    }
+
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         let mut want = BTreeSet::new();
         for &(o, l) in ranges {
@@ -407,6 +433,10 @@ mod tests {
         len: u64,
     }
 
+    struct OverlongReader {
+        len: u64,
+    }
+
     impl RangeReader for ShortReader {
         fn len(&self) -> u64 {
             self.len
@@ -414,6 +444,16 @@ mod tests {
 
         fn read_at(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
             Ok(vec![0; len.saturating_sub(1) as usize])
+        }
+    }
+
+    impl RangeReader for OverlongReader {
+        fn len(&self) -> u64 {
+            self.len
+        }
+
+        fn read_at(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            Ok(vec![0; len.saturating_add(1) as usize])
         }
     }
 
@@ -559,5 +599,35 @@ mod tests {
         let err = r.read_at(0, 8192).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
         assert!(err.to_string().contains("short block fetch"));
+    }
+
+    #[test]
+    fn precise_read_bypasses_block_widening_and_cache_population() {
+        let data: Vec<u8> = (0..16 * 1024u32).map(|i| i as u8).collect();
+        let counting = Arc::new(CountingReader::new(SliceReader::new(&data)));
+        let r = BlockCacheReader::new(counting.clone(), 4096);
+
+        assert_eq!(r.read_at_precise(5000, 3).unwrap(), data[5000..5003]);
+        assert_eq!(counting.requests(), 1);
+        assert_eq!(counting.bytes_read(), 3);
+        assert_eq!(r.cached_bytes(), 0);
+    }
+
+    #[test]
+    fn precise_read_rejects_a_short_backend_response() {
+        let r = BlockCacheReader::new(ShortReader { len: 16 * 1024 }, 4096);
+
+        let err = r.read_at_precise(5000, 8).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(err.to_string().contains("short precise read"));
+    }
+
+    #[test]
+    fn precise_read_rejects_an_overlong_backend_response() {
+        let r = BlockCacheReader::new(OverlongReader { len: 16 * 1024 }, 4096);
+
+        let err = r.read_at_precise(5000, 8).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("overlong precise read"));
     }
 }

@@ -11,9 +11,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use rete_core::{
-    build_pyramid_meta, eval_query, validate_shacl, write_file, CountingReader, DataGraph,
-    DictionaryBuilder, GraphIndexBuilder, QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes,
-    SliceReader, SummaryView, DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, eval_query, validate_shacl, write_dataset, write_file, BlockCacheReader,
+    ByteRange, CountingReader, DataGraph, DictionaryBuilder, GraphIndexBuilder, Header,
+    QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes, SliceReader, SummaryView,
+    DEFAULT_TILE_BUDGET, HEADER_LEN,
 };
 
 /// A `RangeReader` over an in-memory image that records each `(offset, len)`,
@@ -23,6 +24,7 @@ struct RecordingReader {
     data: Vec<u8>,
     reads: Mutex<Vec<(u64, u64)>>,
     fail: AtomicBool,
+    short: AtomicBool,
 }
 
 impl RecordingReader {
@@ -31,6 +33,7 @@ impl RecordingReader {
             data,
             reads: Mutex::new(Vec::new()),
             fail: AtomicBool::new(false),
+            short: AtomicBool::new(false),
         }
     }
     fn reads(&self) -> Vec<(u64, u64)> {
@@ -43,9 +46,14 @@ impl RecordingReader {
     fn fail_from_now(&self) {
         self.fail.store(true, Ordering::Relaxed);
     }
-    /// End the simulated outage — reads succeed again.
+    /// End either simulated transport disruption; reads succeed exactly again.
     fn recover(&self) {
         self.fail.store(false, Ordering::Relaxed);
+        self.short.store(false, Ordering::Relaxed);
+    }
+    /// Return one byte fewer than requested while still reporting success.
+    fn short_from_now(&self) {
+        self.short.store(true, Ordering::Relaxed);
     }
 }
 
@@ -63,7 +71,12 @@ impl RangeReader for RecordingReader {
             .checked_add(len as usize)
             .filter(|&e| e <= self.data.len())
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "oob"))?;
-        Ok(self.data[start..end].to_vec())
+        let returned_end = if self.short.load(Ordering::Relaxed) && len > 0 {
+            end - 1
+        } else {
+            end
+        };
+        Ok(self.data[start..returned_end].to_vec())
     }
 }
 
@@ -272,6 +285,516 @@ fn multi_tile_image() -> Vec<u8> {
         ib.push(dict.encode(&node(s), &knows, &node(o)).unwrap());
     }
     write_file(&dict, &ib.build(), false, &[], 0)
+}
+
+#[derive(Debug)]
+struct NamedGraphLayout {
+    name: String,
+    sections: [ByteRange; 6],
+    tiles: [Vec<ByteRange>; 6],
+}
+
+/// Independent, test-only unsigned LEB128 walker. It deliberately does not use
+/// rete's container/directory decoders: overlap assertions need an oracle whose
+/// bounds calculations cannot share the production bug under test.
+fn oracle_uvarint(image: &[u8], pos: &mut usize, end: usize) -> u64 {
+    let mut value = 0u64;
+    for shift in (0..=63).step_by(7) {
+        let byte = *image
+            .get(*pos)
+            .filter(|_| *pos < end)
+            .expect("fixture varint stays inside its declared section");
+        *pos += 1;
+        if shift == 63 {
+            assert!(byte <= 1, "fixture varint overflows u64");
+        }
+        value |= ((byte & 0x7f) as u64) << shift;
+        if byte & 0x80 == 0 {
+            return value;
+        }
+    }
+    panic!("fixture varint exceeds ten bytes");
+}
+
+fn oracle_bound(pos: usize, len: u64, end: usize) -> usize {
+    pos.checked_add(usize::try_from(len).expect("fixture length fits usize"))
+        .filter(|&next| next <= end)
+        .expect("fixture field stays inside its declared section")
+}
+
+fn named_graph_layout(image: &[u8]) -> Vec<NamedGraphLayout> {
+    let header = Header::from_bytes(&image[..HEADER_LEN]).unwrap();
+    let mut pos = usize::try_from(header.named_graphs_offset).unwrap();
+    let end = oracle_bound(pos, header.named_graphs_len, image.len());
+    let graph_count = usize::try_from(oracle_uvarint(image, &mut pos, end)).unwrap();
+    let mut graphs = Vec::with_capacity(graph_count);
+
+    for _ in 0..graph_count {
+        let iri_len = oracle_uvarint(image, &mut pos, end);
+        let iri_end = oracle_bound(pos, iri_len, end);
+        let name = String::from_utf8_lossy(&image[pos..iri_end]).into_owned();
+        pos = iri_end;
+
+        let container_len = oracle_uvarint(image, &mut pos, end);
+        let container_end = oracle_bound(pos, container_len, end);
+        let section_count = oracle_uvarint(image, &mut pos, container_end);
+        assert_eq!(section_count, 6, "fixture index container has six sections");
+        let mut sections = [ByteRange { offset: 0, len: 0 }; 6];
+        for section in &mut sections {
+            let len = oracle_uvarint(image, &mut pos, container_end);
+            let section_end = oracle_bound(pos, len, container_end);
+            *section = ByteRange {
+                offset: pos as u64,
+                len,
+            };
+            pos = section_end;
+        }
+        assert_eq!(
+            pos, container_end,
+            "fixture container has no trailing bytes"
+        );
+
+        let tiles = std::array::from_fn(|section_index| {
+            let section = sections[section_index];
+            let mut dir_pos = usize::try_from(section.offset).unwrap();
+            let section_end = oracle_bound(dir_pos, section.len, image.len());
+            let tile_count =
+                usize::try_from(oracle_uvarint(image, &mut dir_pos, section_end)).unwrap();
+            let mut lengths = Vec::with_capacity(tile_count);
+            for _ in 0..tile_count {
+                let _delta_min = oracle_uvarint(image, &mut dir_pos, section_end);
+                let _span = oracle_uvarint(image, &mut dir_pos, section_end);
+                lengths.push(oracle_uvarint(image, &mut dir_pos, section_end));
+            }
+            lengths
+                .into_iter()
+                .map(|len| {
+                    let tile_end = oracle_bound(dir_pos, len, section_end);
+                    let range = ByteRange {
+                        offset: dir_pos as u64,
+                        len,
+                    };
+                    dir_pos = tile_end;
+                    range
+                })
+                .collect()
+        });
+        graphs.push(NamedGraphLayout {
+            name,
+            sections,
+            tiles,
+        });
+        pos = container_end;
+    }
+    graphs
+}
+
+fn named_graph_image() -> Vec<u8> {
+    let p = "<http://ex/p>".to_string();
+    let make = |graph: &str, count: u32| {
+        (0..count)
+            .map(|i| {
+                (
+                    format!("<http://ex/{graph}/s{i:04}>"),
+                    p.clone(),
+                    format!("<http://ex/{graph}/o{i:04}>"),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let default = make("default", 96);
+    let g1 = make("g1", 256);
+    let g2 = make("g2", 256);
+
+    let mut db = DictionaryBuilder::new();
+    for triples in [&default, &g1, &g2] {
+        for (s, p, o) in triples {
+            db.observe(s, p, o);
+        }
+    }
+    let dict = db.build();
+    let build_index = |triples: &[(String, String, String)]| {
+        let mut builder = GraphIndexBuilder::new().with_tile_budget(64);
+        for (s, p, o) in triples {
+            builder.push(dict.encode(s, p, o).unwrap());
+        }
+        builder.build()
+    };
+    let default_index = build_index(&default);
+    let named = vec![
+        ("<http://ex/g1>".to_string(), build_index(&g1)),
+        ("<http://ex/g2>".to_string(), build_index(&g2)),
+    ];
+    assert!(
+        named.iter().all(|(_, index)| index
+            .tile_sections()
+            .iter()
+            .all(|section| section.len() > 1)),
+        "fixture must be multi-tile in every named permutation"
+    );
+    write_dataset(&dict, &default_index, &named, true, &[], 0)
+}
+
+fn single_tile_named_graph_image() -> Vec<u8> {
+    let triple = (
+        "<http://ex/tiny-s>",
+        "<http://ex/tiny-p>",
+        "<http://ex/tiny-o>",
+    );
+    let mut db = DictionaryBuilder::new();
+    db.observe(triple.0, triple.1, triple.2);
+    let dict = db.build();
+    let mut graph = GraphIndexBuilder::new();
+    graph.push(dict.encode(triple.0, triple.1, triple.2).unwrap());
+    write_dataset(
+        &dict,
+        &GraphIndexBuilder::new().build(),
+        &[("<http://ex/tiny>".to_string(), graph.build())],
+        true,
+        &[],
+        0,
+    )
+}
+
+#[test]
+fn lazy_open_reads_named_graph_directories_but_no_named_tile_payloads() {
+    let image = named_graph_image();
+    let layout = named_graph_layout(&image);
+    assert!(
+        layout
+            .iter()
+            .flat_map(|graph| graph.tiles.iter().flatten())
+            .count()
+            > 12,
+        "fixture must expose many named tile payloads"
+    );
+
+    let eager_reader = RecordingReader::new(image.clone());
+    let eager = Rete::open_ranged(&eager_reader).unwrap();
+    assert_eq!(
+        eager.graph_names(),
+        vec!["<http://ex/g1>", "<http://ex/g2>"]
+    );
+    let eager_reads = eager_reader.reads();
+    assert!(
+        layout
+            .iter()
+            .flat_map(|graph| graph.tiles.iter().flatten())
+            .all(|tile| {
+                eager_reads
+                    .iter()
+                    .any(|&read| overlaps(read, (tile.offset, tile.end())))
+            }),
+        "eager ranged open must retain resident named payload behavior: {eager_reads:?}"
+    );
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    assert_eq!(rete.graph_names(), vec!["<http://ex/g1>", "<http://ex/g2>"]);
+
+    let reads = reader.reads();
+    for graph in &layout {
+        for tile in graph.tiles.iter().flatten() {
+            assert!(
+                !reads
+                    .iter()
+                    .any(|&read| overlaps(read, (tile.offset, tile.end()))),
+                "lazy open read named graph {} tile {tile:?}: {reads:?}",
+                graph.name
+            );
+        }
+    }
+}
+
+#[test]
+fn lazy_open_through_block_cache_physically_skips_named_tile_payloads() {
+    let image = named_graph_image();
+    let layout = named_graph_layout(&image);
+    let physical = std::sync::Arc::new(RecordingReader::new(image));
+    let cached = std::sync::Arc::new(BlockCacheReader::new(physical.clone(), 4096));
+
+    let rete = Rete::open_ranged_lazy(cached).unwrap();
+    assert_eq!(rete.graph_names(), vec!["<http://ex/g1>", "<http://ex/g2>"]);
+
+    let reads = physical.reads();
+    for graph in &layout {
+        for tile in graph.tiles.iter().flatten() {
+            assert!(
+                !reads
+                    .iter()
+                    .any(|&read| overlaps(read, (tile.offset, tile.end()))),
+                "physical cache fetch read named graph {} tile {tile:?}: {reads:?}",
+                graph.name
+            );
+        }
+    }
+}
+
+#[test]
+fn lazy_open_does_not_probe_past_tiny_named_graph_framing() {
+    let image = single_tile_named_graph_image();
+    let layout = named_graph_layout(&image);
+    assert_eq!(layout.len(), 1);
+    assert!(
+        layout[0].tiles.iter().all(|tiles| tiles.len() == 1),
+        "tiny fixture must have exactly one tile per permutation"
+    );
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    assert_eq!(rete.graph_names(), vec!["<http://ex/tiny>"]);
+    let reads = reader.reads();
+    for tile in layout[0].tiles.iter().flatten() {
+        assert!(
+            !reads
+                .iter()
+                .any(|&read| overlaps(read, (tile.offset, tile.end()))),
+            "framing probe crossed tiny tile payload {tile:?}: {reads:?}"
+        );
+    }
+}
+
+#[test]
+fn lazy_tiny_open_through_block_cache_physically_skips_named_tile_payloads() {
+    let image = single_tile_named_graph_image();
+    let layout = named_graph_layout(&image);
+    let physical = std::sync::Arc::new(RecordingReader::new(image));
+    let cached = std::sync::Arc::new(BlockCacheReader::new(physical.clone(), 4096));
+
+    let rete = Rete::open_ranged_lazy(cached).unwrap();
+    assert_eq!(rete.graph_names(), vec!["<http://ex/tiny>"]);
+    let reads = physical.reads();
+    for tile in layout[0].tiles.iter().flatten() {
+        assert!(
+            !reads
+                .iter()
+                .any(|&read| overlaps(read, (tile.offset, tile.end()))),
+            "physical opening read crossed header-adjacent tiny tile {tile:?}: {reads:?}"
+        );
+    }
+}
+
+#[test]
+fn lazy_named_graph_queries_match_eager_for_graph_from_and_graph_variable() {
+    let image = named_graph_image();
+    let eager = Rete::open(&image).unwrap();
+    let lazy = Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(image))).unwrap();
+    let queries = [
+        "SELECT ?s ?o WHERE { GRAPH <http://ex/g1> { ?s <http://ex/p> ?o } } ORDER BY ?s ?o",
+        "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex/p> ?o } } ORDER BY ?g ?s",
+        "SELECT ?s ?o FROM <http://ex/g1> WHERE { ?s <http://ex/p> ?o } ORDER BY ?s ?o",
+    ];
+
+    for query in queries {
+        match (
+            eval_query(&eager, query).unwrap(),
+            eval_query(&lazy, query).unwrap(),
+        ) {
+            (QueryOutput::Select(want_vars, want), QueryOutput::Select(got_vars, got)) => {
+                assert_eq!(got_vars, want_vars, "variables differ for {query}");
+                assert_eq!(got, want, "rows differ for {query}");
+            }
+            (want, got) => panic!("unexpected outputs for {query}: {want:?} vs {got:?}"),
+        }
+        assert!(!lazy.index_incomplete(), "lazy query failed: {query}");
+    }
+}
+
+#[test]
+fn lazy_named_graph_query_fetches_only_the_routed_tiles() {
+    let image = named_graph_image();
+    let layout = named_graph_layout(&image);
+    let g1 = layout
+        .iter()
+        .find(|graph| graph.name == "<http://ex/g1>")
+        .unwrap();
+    let g2 = layout
+        .iter()
+        .find(|graph| graph.name == "<http://ex/g2>")
+        .unwrap();
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let before = reader.reads().len();
+
+    let query =
+        "SELECT ?o WHERE { GRAPH <http://ex/g1> { <http://ex/g1/s0007> <http://ex/p> ?o } }";
+    let rows = match eval_query(&rete, query).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(rows.len(), 1);
+    assert!(!rete.index_incomplete());
+
+    let query_reads = &reader.reads()[before..];
+    let touched_g1 = g1
+        .tiles
+        .iter()
+        .flatten()
+        .filter(|tile| {
+            query_reads
+                .iter()
+                .any(|&read| overlaps(read, (tile.offset, tile.end())))
+        })
+        .count();
+    let g1_tiles = g1.tiles.iter().flatten().count();
+    assert!(touched_g1 > 0, "query must fetch a routed g1 tile");
+    assert!(
+        touched_g1 < g1_tiles,
+        "bound query fetched all {g1_tiles} g1 tiles"
+    );
+    assert!(
+        !g2.tiles.iter().flatten().any(|tile| query_reads
+            .iter()
+            .any(|&read| overlaps(read, (tile.offset, tile.end())))),
+        "g1 query fetched a g2 tile: {query_reads:?}"
+    );
+}
+
+#[test]
+fn lazy_named_graph_tile_failure_sets_incomplete_and_retries_after_reset() {
+    let image = named_graph_image();
+    let query =
+        "SELECT ?o WHERE { GRAPH <http://ex/g1> { <http://ex/g1/s0007> <http://ex/p> ?o } }";
+    let expected = match eval_query(&Rete::open(&image).unwrap(), query).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(expected.len(), 1);
+
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    assert!(rete
+        .dictionary()
+        .subject_id("<http://ex/g1/s0007>")
+        .is_some());
+    assert!(rete.dictionary().predicate_id("<http://ex/p>").is_some());
+    reader.fail_from_now();
+    let _ = eval_query(&rete, query).unwrap();
+    assert!(
+        rete.graph_index("<http://ex/g1>")
+            .unwrap()
+            .load_incomplete(),
+        "the named graph itself must record its failed tile fetch"
+    );
+    assert!(rete.index_incomplete());
+
+    reader.recover();
+    rete.reset_load_failures();
+    assert!(!rete.index_incomplete());
+    let got = match eval_query(&rete, query).unwrap() {
+        QueryOutput::Select(_, rows) => rows,
+        other => panic!("unexpected output {other:?}"),
+    };
+    assert_eq!(got, expected);
+    assert!(!rete.index_incomplete());
+}
+
+#[test]
+fn lazy_named_graph_short_tile_read_sets_incomplete() {
+    let image = named_graph_image();
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let subject = rete
+        .dictionary()
+        .subject_id("<http://ex/g1/s0007>")
+        .unwrap();
+    let predicate = rete.dictionary().predicate_id("<http://ex/p>").unwrap();
+    let graph = rete.graph_index("<http://ex/g1>").unwrap();
+
+    reader.short_from_now();
+    let first = graph
+        .scan_iter((Some(subject), Some(predicate), None))
+        .collect::<Vec<_>>();
+
+    assert!(first.is_empty());
+    assert!(
+        graph.load_incomplete(),
+        "a short successful tile response must be a failed lazy load"
+    );
+    assert!(rete.index_incomplete());
+
+    reader.recover();
+    rete.reset_load_failures();
+    let recovered = graph
+        .scan_iter((Some(subject), Some(predicate), None))
+        .collect::<Vec<_>>();
+    assert_eq!(recovered.len(), 1);
+    assert!(!rete.index_incomplete());
+}
+
+fn assert_corrupt_named_tile_is_lazy(image: Vec<u8>) {
+    let rete = Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(image)))
+        .expect("tile payload corruption must remain lazy at open");
+    let query = "SELECT ?s ?p ?o WHERE { GRAPH <http://ex/g1> { ?s ?p ?o } } ORDER BY ?s ?p ?o";
+    let _ = eval_query(&rete, query).unwrap();
+    assert!(
+        rete.graph_index("<http://ex/g1>")
+            .unwrap()
+            .load_incomplete(),
+        "first scan of the corrupt named tile must mark the graph incomplete"
+    );
+    assert!(rete.index_incomplete());
+}
+
+#[cfg(feature = "compression")]
+#[test]
+fn corrupt_named_compressed_tile_fails_on_first_scan_not_open() {
+    let mut image = named_graph_image();
+    let layout = named_graph_layout(&image);
+    let corrupt = layout
+        .iter()
+        .find(|graph| graph.name == "<http://ex/g1>")
+        .unwrap()
+        .tiles[0][0];
+    assert!(corrupt.len > 0);
+    image[corrupt.offset as usize] ^= 0xff;
+
+    assert_corrupt_named_tile_is_lazy(image);
+}
+
+#[cfg(not(feature = "compression"))]
+#[test]
+fn corrupt_named_raw_tile_fails_on_first_scan_not_open() {
+    let mut image = named_graph_image();
+    let layout = named_graph_layout(&image);
+    let corrupt = layout
+        .iter()
+        .find(|graph| graph.name == "<http://ex/g1>")
+        .unwrap()
+        .tiles[0][0];
+    assert!(corrupt.len > 0);
+    let corrupt_end = usize::try_from(corrupt.end()).unwrap();
+    image[corrupt.offset as usize..corrupt_end].fill(0xff);
+
+    assert_corrupt_named_tile_is_lazy(image);
+}
+
+#[test]
+fn malformed_named_graph_framing_or_directory_fails_open_cleanly() {
+    let image = named_graph_image();
+    let layout = named_graph_layout(&image);
+
+    let mut malformed_framing = image.clone();
+    let mut header = Rete::open(&image).unwrap().header().clone();
+    header.named_graphs_len = 1;
+    malformed_framing[..HEADER_LEN].copy_from_slice(&header.to_bytes());
+    assert!(
+        Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(malformed_framing)))
+            .is_err(),
+        "truncated named-graph framing must fail open"
+    );
+
+    let mut malformed_directory = image;
+    let directory = layout[0].sections[0];
+    assert!(directory.len >= 10);
+    malformed_directory[directory.offset as usize..directory.offset as usize + 10].fill(0x80);
+    assert!(
+        Rete::open_ranged_lazy(std::sync::Arc::new(RecordingReader::new(
+            malformed_directory
+        )))
+        .is_err(),
+        "malformed named tile directory must fail open"
+    );
 }
 
 /// On a tiled (v0.2) multi-tile file, a bound-subject routed query must fetch

@@ -123,9 +123,11 @@
 **Files:**
 
 - Modify: `crates/rete-core/src/file.rs`
+- Modify: `crates/rete-core/src/reader.rs`
+- Modify: `crates/rete-core/src/block_cache.rs`
 - Modify: `crates/rete-core/tests/ranged.rs`
 
-- [ ] **Step 1: Build a multi-tile named-graph fixture and add RED tests**
+- [x] **Step 1: Build a multi-tile named-graph fixture and add RED tests**
 
   In `crates/rete-core/tests/ranged.rs`, import `write_dataset` and add a fixture that builds one default graph plus two named graphs against one shared dictionary. Use `GraphIndexBuilder::with_tile_budget(64)` and enough sorted triples per graph to force multiple tiles in every relevant permutation.
 
@@ -163,7 +165,7 @@
 
   The failure/recovery test must open successfully, enable `RecordingReader::fail_from_now`, evaluate a named-graph query, observe `index_incomplete() == true`, call `recover()` and `reset_load_failures()`, re-evaluate, and compare the recovered result to eager output. The corruption test must flip a byte inside a compressed named tile while leaving framing and its directory intact; lazy open succeeds, the first routed scan sets incomplete. Separate mutations of the graph-record framing and one tile directory must remain clean open-time `FileError`s.
 
-- [ ] **Step 2: Run focused tests and observe RED**
+- [x] **Step 2: Run focused tests and observe RED**
 
   ```powershell
   docker compose run --rm dev cargo test -p rete-core --test ranged lazy_open_reads_named_graph -- --nocapture
@@ -173,7 +175,7 @@
 
   Expected failure: `open_ranged_lazy` currently reads and decodes the entire `named_graphs` section, overlapping every named tile before a query.
 
-- [ ] **Step 3: Extract one internal remote-index constructor**
+- [x] **Step 3: Extract one internal remote-index constructor**
 
   In `crates/rete-core/src/file.rs`, introduce a private result carrier and constructor near the existing ranged directory helpers:
 
@@ -204,7 +206,7 @@
 
   Refactor the default-graph block inside `open_ranged_lazy` to call this helper. This should be behavior-preserving and prevents the named-graph implementation from copying loader logic.
 
-- [ ] **Step 4: Walk named-graph framing lazily**
+- [x] **Step 4: Walk named-graph framing lazily**
 
   Add a ranged named-graph decoder with this signature:
 
@@ -249,7 +251,7 @@
 
   Leave `decode_named_graphs` in place for `Rete::open` and `Rete::open_ranged`.
 
-- [ ] **Step 5: Run GREEN across feature variants**
+- [x] **Step 5: Run GREEN across feature variants**
 
   ```powershell
   docker compose run --rm dev cargo fmt --all -- --check
@@ -259,7 +261,7 @@
   docker compose run --rm dev cargo build -p rete-core --all-features
   ```
 
-- [ ] **Step 6: Review invariants and commit Task 2**
+- [x] **Step 6: Review invariants and commit Task 2**
 
   Confirm from the recording tests that lazy open performs zero reads overlapping named tile payloads; selective queries read only routed payloads; eager APIs still decode named graphs eagerly; failures are uncached and reflected by the pre-existing aggregate `index_incomplete`/reset methods.
 

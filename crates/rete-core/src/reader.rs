@@ -22,6 +22,16 @@ pub trait RangeReader {
     /// an out-of-bounds range rather than truncating.
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>>;
 
+    /// Read exactly the requested range without opportunistically widening it.
+    ///
+    /// Most readers already fetch exact ranges, so the default delegates to
+    /// [`read_at`](Self::read_at). Wrappers that normally prefetch or align
+    /// reads (such as a block cache) override this for framing metadata whose
+    /// physical transfer boundary is part of the caller's contract.
+    fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.read_at(offset, len)
+    }
+
     /// Read several `(offset, len)` ranges, returning each range's bytes in
     /// request order. These ranges are independent, so a reader whose backing
     /// store is high-latency but parallelizable (an HTTP client) overrides this
@@ -53,6 +63,10 @@ impl<R: RangeReader + ?Sized> RangeReader for std::sync::Arc<R> {
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         (**self).read_at(offset, len)
+    }
+
+    fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        (**self).read_at_precise(offset, len)
     }
 
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
@@ -111,7 +125,7 @@ impl<R: RangeReader> CountingReader<R> {
         }
     }
 
-    /// Number of `read_at` calls made so far.
+    /// Number of single-range calls (`read_at` or `read_at_precise`) made so far.
     pub fn requests(&self) -> u64 {
         self.requests.load(Ordering::Relaxed)
     }
@@ -129,6 +143,13 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         let out = self.inner.read_at(offset, len)?;
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
+        Ok(out)
+    }
+
+    fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        let out = self.inner.read_at_precise(offset, len)?;
         self.requests.fetch_add(1, Ordering::Relaxed);
         self.bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
         Ok(out)
@@ -154,6 +175,22 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
 mod tests {
     use super::*;
 
+    struct DistinguishingReader;
+
+    impl RangeReader for DistinguishingReader {
+        fn len(&self) -> u64 {
+            16
+        }
+
+        fn read_at(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            Ok(vec![0x11; len as usize])
+        }
+
+        fn read_at_precise(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            Ok(vec![0x22; len as usize])
+        }
+    }
+
     #[test]
     fn slice_reader_serves_ranges_and_bounds_check() {
         let data = (0u8..=255).collect::<Vec<_>>();
@@ -171,5 +208,13 @@ mod tests {
         r.read_at(50, 20).unwrap();
         assert_eq!(r.requests(), 2);
         assert_eq!(r.bytes_read(), 30);
+    }
+
+    #[test]
+    fn counting_reader_forwards_and_tallies_precise_reads() {
+        let r = CountingReader::new(DistinguishingReader);
+        assert_eq!(r.read_at_precise(3, 4).unwrap(), vec![0x22; 4]);
+        assert_eq!(r.requests(), 1);
+        assert_eq!(r.bytes_read(), 4);
     }
 }
