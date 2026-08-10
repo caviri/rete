@@ -468,11 +468,62 @@ fn card_bytes(
     serde_json::to_vec(&value).unwrap_or_default()
 }
 
+/// The curated half of a card, typed and validated exactly as
+/// `rete build --card-file` validates it — the input the derivation takes.
+///
+/// Two things happen here that the pass-through path never did: the top level
+/// is held **reserved** (a stray key is a named error, not a silent write), and
+/// `keywords`/`theme`/`extra`/`description` go through the shared write-time
+/// gates. So a Python-derived card is one the CLI would also have accepted.
+///
+/// `queries` is split off first: it is not a rete-defined *curated* field (the
+/// CLI derives that list), but `Builder.example()` writes one, and dropping a
+/// caller's hand-written examples on the floor because they asked for
+/// derivation would be a nasty surprise. They are returned separately and
+/// appended to the derived library.
+fn curated_for_derivation(
+    value: serde_json::Value,
+) -> PyResult<(
+    rete_core::card::CardInput,
+    Vec<rete_core::card::ExampleQuery>,
+)> {
+    let mut obj = match value {
+        serde_json::Value::Object(o) => o,
+        _ => return Err(PyValueError::new_err("card must be a JSON object")),
+    };
+    let examples: Vec<rete_core::card::ExampleQuery> = match obj.remove("queries") {
+        None => Vec::new(),
+        Some(q) => serde_json::from_value(q).map_err(|e| {
+            PyValueError::new_err(format!(
+                "card `queries` is not a list of example queries: {e}"
+            ))
+        })?,
+    };
+    let doc = serde_json::Value::Object(obj);
+    // Validate through the document validator first: its wording is the one
+    // the CLI and the browser builder both show (a free-text theme is pointed
+    // at `keywords`; a stray key is pointed at the `extra` bag).
+    rete_core::card::validate_curated_card(&doc).map_err(PyValueError::new_err)?;
+    let curated = rete_core::card::CardInput::from_json_str(&doc.to_string())
+        .map_err(PyValueError::new_err)?;
+    Ok((curated, examples))
+}
+
 /// Full-option build behind `rete_graph.Builder`: multiple parsed sources,
 /// an optional Dataset Card, pyramid on/off + algorithm, opt-in text index,
-/// and a forced type predicate. Returns `(file_bytes, stats_json)`.
+/// a forced type predicate, and opt-in card derivation. Returns
+/// `(file_bytes, stats_json)`.
+///
+/// `derive_card` is **off by default and must stay that way**: `rete-graph` is
+/// published, and a caller who wrote `.card(title=…)` last release must get
+/// the same bytes this release. Derivation also walks the graph twice more —
+/// a cost nobody should pay without asking.
+// One keyword argument per build option, which is the shape a `#[pyfunction]`
+// with a `signature` has to take — the wrapper calls it with keywords, so an
+// options struct here would only move the same list one level down.
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (sources, card=None, pyramid=true, pyramid_algo="louvain", text_index=false, type_predicate=None))]
+#[pyo3(signature = (sources, card=None, pyramid=true, pyramid_algo="louvain", text_index=false, type_predicate=None, derive_card=false))]
 fn build_dataset(
     py: Python<'_>,
     sources: Vec<(String, String)>,
@@ -481,6 +532,7 @@ fn build_dataset(
     pyramid_algo: &str,
     text_index: bool,
     type_predicate: Option<String>,
+    derive_card: bool,
 ) -> PyResult<(Py<PyBytes>, String)> {
     let algo = rete_core::PyramidAlgo::from_cli(pyramid_algo).ok_or_else(|| {
         PyValueError::new_err(format!(
@@ -500,6 +552,15 @@ fn build_dataset(
             Some(value)
         }
     };
+    // The derived path types + validates the curated half before any parsing,
+    // so a malformed card fails before the graph is read rather than after.
+    let derived_input = if derive_card {
+        Some(curated_for_derivation(
+            curated.clone().unwrap_or_else(|| serde_json::json!({})),
+        )?)
+    } else {
+        None
+    };
     let (bytes, stats) = py.allow_threads(|| -> PyResult<_> {
         let mut quads = Vec::new();
         for (text, format) in &sources {
@@ -511,6 +572,30 @@ fn build_dataset(
         if quads.is_empty() {
             return Err(PyValueError::new_err(
                 "no statements parsed (empty input or only comments)",
+            ));
+        }
+        if let Some((input, examples)) = derived_input {
+            return Ok(rete_core::ingest::assemble_dataset_with_opts_algo(
+                quads,
+                pyramid,
+                text_index,
+                type_predicate.as_deref(),
+                algo,
+                move |stats, quads| {
+                    let mut card = rete_core::card::derive_card(
+                        quads,
+                        stats.terms as u64,
+                        stats.named_graphs as u64,
+                        input,
+                    );
+                    card.queries.extend(examples);
+                    // Two-stage, exactly as the CLI does it: derive while the
+                    // quads are resident, stamp the DEDUPLICATED counts once
+                    // the indexes exist.
+                    rete_core::ingest::DeferredMetadata::new(move |counts| {
+                        card.with_final_counts(counts).to_json_bytes()
+                    })
+                },
             ));
         }
         Ok(rete_core::ingest::assemble_dataset_with_opts_algo(

@@ -22,7 +22,11 @@ pub mod bgp;
 #[doc(hidden)]
 pub mod block_cache;
 #[doc(hidden)]
+pub mod card_derive;
+#[doc(hidden)]
 pub mod card_input;
+#[doc(hidden)]
+pub mod card_queries;
 #[doc(hidden)]
 pub mod dict;
 #[doc(hidden)]
@@ -96,17 +100,40 @@ pub mod format {
     };
 }
 
-/// Stable **curated Dataset Card** API — the write-time rules a card document
-/// must satisfy, shared so that every writer (the CLI's `--card-file`, the
-/// browser builder, any third-party tool) accepts and rejects the same
-/// documents with the same words.
+/// Stable **Dataset Card** API — both halves of a card, so that every writer
+/// (`rete build --card-file`, the browser builder, any language binding, any
+/// third-party tool) produces the same card from the same graph.
+///
+/// - The **curated** half ([`crate::card_input`]) is the write-time rules a
+///   hand-authored card document must satisfy: the reserved top level, the
+///   `theme` IRI requirement, the bounded `extra` bag.
+/// - The **derived** half ([`crate::card_derive`] + [`crate::card_queries`])
+///   is the profile computed from the
+///   graph's own statements — predicate/class histograms, vocabularies,
+///   datatypes, languages, the class-link quotient, hubs, affordance signals
+///   and the tiered starter-query library. [`card_derive::derive_card`] is the entry point
+///   for an in-memory quad slice; [`card_derive::derive_card_encoded`] for a streaming build
+///   that only has a dictionary + id-triples; [`card_derive::CardTripleSource`] for anything
+///   else.
+///
+/// Derivation is **opt-in**: it walks the graph a second time, so no build
+/// spends that pass unless the caller asks for a card.
 pub mod card {
+    pub use crate::card_derive::{
+        curated_counts_card, derive_card, derive_card_encoded, derive_card_from, load_card,
+        CardInput, CardTripleSource, ClassLink, Coherence, Creator, DatasetCard, ExampleQuery,
+        PermutationsSignal, Publisher, Signals, TextIndexSignal, Tier, CARD_TOP_N, GEO_ASWKT,
+        GEO_HASGEOMETRY, O_LITERAL,
+    };
     pub use crate::card_input::{
         canonicalize_json, check_description_len, compose_curated_card, json_depth,
         normalize_description, normalize_extra, normalize_string_list, normalize_themes,
         validate_curated_card, CARD_DESCRIPTION_MAX_BYTES, CARD_EXTRA_MAX_BYTES,
         CARD_EXTRA_MAX_DEPTH, CARD_EXTRA_MAX_KEYS, CARD_EXTRA_MAX_KEY_BYTES, CURATED_CARD_FIELDS,
         UNKNOWN_FIELD_HINT,
+    };
+    pub use crate::card_queries::{
+        audit, claim_of, generate, Claim, Finding, Observation, Recorded, Substitution, Verdict,
     };
 }
 

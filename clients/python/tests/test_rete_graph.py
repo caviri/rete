@@ -241,6 +241,77 @@ def test_builder_end_to_end(tmp_path, nt_text):
     assert g2.card()["title"] == "Tiny people graph"
 
 
+def test_builder_card_is_curated_only_by_default(nt_text):
+    """The published default must not change under an upgrade.
+
+    `derive_card()` is opt-in precisely so a caller who wrote `.card(...)` last
+    release gets the same bytes this one: the curated fields verbatim, the four
+    counts, the format version — and *none* of the derived profile.
+    """
+    card = (
+        rete.Builder()
+        .add(nt_text)
+        .card(title="Curated only", keywords=["zeta", "alpha"])
+        .graph()
+        .card()
+    )
+    for derived in ("predicates", "classes", "vocabularies", "queries", "signals", "top_n"):
+        assert derived not in card, f"a default build derived {derived}"
+    # Pass-through, not canonicalization: the default path writes what it is
+    # given (canonicalizing here would itself be a behaviour change).
+    assert card["keywords"] == ["zeta", "alpha"]
+
+
+def test_builder_derive_card_matches_the_cli(nt_text):
+    """`.derive_card()` computes the profile `rete build --card` computes."""
+    builder = (
+        rete.Builder()
+        .add(nt_text)
+        .card(title="Derived", keywords=["zeta", "alpha"])
+        .example("ASK { ?s ?p ?o }", title="Anything at all?")
+        .derive_card()
+    )
+    g = builder.graph()
+    card = g.card()
+
+    # The derived half is present and measured, not asserted.
+    assert card["top_n"] == 100
+    assert card["predicates"], "no predicate histogram"
+    assert card["vocabularies"], "no vocabulary list"
+    assert card["signals"]["label_predicate"].endswith("rdf-schema#label>")
+    assert card["quad_count"] == 6
+
+    # The curated half went through the CLI's write-time gates: `keywords` is
+    # canonicalized (sorted + deduplicated) the way `--card-file` canonicalizes it.
+    assert card["keywords"] == ["alpha", "zeta"]
+
+    # The generated starter-query library is there, every query runs, and a
+    # hand-written `.example()` is appended rather than dropped.
+    ids = [q["id"] for q in g.examples()]
+    assert len(ids) > 5, ids
+    assert "ex-1" in ids, "a hand-written example was dropped by derivation"
+    for example in g.examples():
+        g.query(example["sparql"])
+
+
+def test_builder_derive_card_enforces_the_cli_card_rules(nt_text):
+    """Deriving means being held to the rules the CLI holds a card file to."""
+    with pytest.raises(ValueError, match="not an IRI"):
+        rete.Builder().add(nt_text).card(theme=["physics"]).derive_card().run()
+    # …and the same document is accepted with a controlled-vocabulary IRI.
+    card = (
+        rete.Builder()
+        .add(nt_text)
+        .card(theme=["http://publications.europa.eu/resource/authority/data-theme/EDUC"])
+        .derive_card()
+        .graph()
+        .card()
+    )
+    assert card["theme"] == [
+        "http://publications.europa.eu/resource/authority/data-theme/EDUC"
+    ]
+
+
 def test_builder_no_pyramid(nt_text):
     g = rete.Builder().add(nt_text).pyramid(False).graph()
     assert g.info()["pyramidLevels"] == 0

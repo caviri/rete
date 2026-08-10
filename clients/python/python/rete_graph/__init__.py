@@ -715,6 +715,7 @@ class Builder:
         self._pyramid_algo: str = "louvain"
         self._text_index: bool = False
         self._type_predicate: Optional[str] = None
+        self._derive_card: bool = False
         self._bytes: Optional[bytes] = None
         #: Build statistics from the last :meth:`run` (``statements``,
         #: ``defaultTriples``, ``namedGraphs``, ``terms``, ``pyramidLevels``).
@@ -799,6 +800,10 @@ class Builder:
         ``term_count``) and ``format_version`` are filled in automatically at
         build time — read the card back with :meth:`Graph.card` or the
         ``rete card`` CLI.
+
+        This writes the *curated* half only. Add :meth:`derive_card` to also
+        compute the auto-derived profile (predicates, classes, vocabularies,
+        signals, the starter-query library) the way ``rete build --card`` does.
         """
         fields: Dict[str, Any] = {
             "title": title,
@@ -847,8 +852,9 @@ class Builder:
         ``title`` is the short human name, ``question`` the plain-language
         question it answers. May be called many times.
 
-        (For a full auto-generated query library — overview, labels, topology
-        tiers derived from the data — build with the ``rete build`` CLI.)
+        For a full auto-generated query library — overview, labels, topology
+        tiers instantiated from the data's own vocabulary — add
+        :meth:`derive_card`; anything added here is appended to it.
         """
         merged = dict(self._card or {})
         queries = list(merged.get("queries", []))
@@ -898,6 +904,36 @@ class Builder:
         self._invalidate()
         return self
 
+    def derive_card(self, enabled: bool = True) -> "Builder":
+        """Also compute the card's **auto-derived profile**, exactly as
+        ``rete build --card`` does.
+
+            rete.Builder().add_file("people.ttl").card(title="People").derive_card()
+
+        Adds the half a client build used to have to do without: the predicate
+        and class histograms, the vocabulary list, the datatype and language
+        distributions, the class-link quotient, the top hubs, the affordance
+        signals (label predicate, base IRI, temporal/spatial extent, …) and the
+        tiered starter-query library, instantiated with this graph's own
+        vocabulary. Same code as the CLI, so the same graph and the same
+        curated fields produce a byte-identical card.
+
+        Anything :meth:`example` added is appended to the derived query library.
+
+        **Off by default, deliberately.** Derivation walks the graph twice more
+        and holds a subject→class map for the pass; that is a real cost on a
+        large build, and leaving today's behaviour untouched means a caller who
+        upgrades ``rete-graph`` gets the same bytes they got before.
+
+        Turning it on also **tightens validation**: the curated half is then
+        held to the exact rules ``rete build --card-file`` enforces (reserved
+        top level, ``theme`` must be a controlled-vocabulary IRI, the ``extra``
+        bag is bounded), so a card this accepts is one the CLI accepts.
+        """
+        self._derive_card = enabled
+        self._invalidate()
+        return self
+
     # -- execution --------------------------------------------------------------
 
     def run(self) -> bytes:
@@ -914,6 +950,7 @@ class Builder:
                 self._pyramid_algo,
                 self._text_index,
                 self._type_predicate,
+                self._derive_card,
             )
             self._bytes = bytes(data)
             self.stats = json.loads(stats_json)

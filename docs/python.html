@@ -733,12 +733,16 @@ full-text index — use the <strong>lazy <code>Builder</code></strong>: configur
 builder.run()                        # bytes; stats in builder.stats
 builder.export("people.rete")
 </code></pre>
+<p>Add <code>.derive_card()</code> and the card also carries the <strong>auto-derived profile</strong> —
+predicates, classes, vocabularies, datatypes, languages, hubs, signals and the
+tiered starter-query library — from the same code <code>rete build --card</code> runs, so
+the same graph yields a byte-identical card. It is opt-in: derivation walks the
+graph twice more, and the default keeps writing exactly the bytes it always did.</p>
 <p>The full walkthrough (every card field, pyramid trade-offs, verification) is
 in <a href="python-build-tutorial.html">Python: build a .rete</a>. In-memory builds suit
 tests and small-to-medium graphs (say, up to a few million triples). For big
-datasets use the <a href="cli.html"><code>rete build</code> CLI</a>, which streams from disk,
-compresses harder, and derives the enriched card profile — see
-<a href="data-engineering.html">Tables, VKG &amp; big builds</a>.</p>
+datasets use the <a href="cli.html"><code>rete build</code> CLI</a>, which streams from disk and
+compresses harder — see <a href="data-engineering.html">Tables, VKG &amp; big builds</a>.</p>
 <h2 id="search-and-overview">Search and overview</h2>
 <pre><code class="language-python">g.schema()                    # {"classes": [(iri, count)], "relations": [(s, p, o, count)]}
 g.prefix_search("Berl")       # label autocomplete -&gt; [(label, subject_iri)]
@@ -820,6 +824,7 @@ input, <code>RuntimeError</code> for I/O and format problems.</li>
 <tr><td><code>SERVICE</code> federation</td><td>✅</td><td>host-injected HTTP client</td></tr>
 <tr><td>Build from RDF text / rdflib objects</td><td>✅</td><td><code>build()</code>, <code>Builder</code></td></tr>
 <tr><td>Dataset Card: embed + read back</td><td>✅</td><td><code>Builder.card()</code>, <code>Graph.card()</code> (ranged on remote)</td></tr>
+<tr><td>Dataset Card: derive the profile</td><td>✅</td><td><code>Builder.derive_card()</code> — opt-in; identical to <code>rete build --card</code></td></tr>
 <tr><td>Example queries in the file</td><td>✅</td><td><code>Builder.example()</code>, <code>Graph.examples()</code></td></tr>
 <tr><td>Build options: pyramid algo, text index</td><td>✅</td><td><code>Builder.pyramid()/text_index()/type_predicate()</code></td></tr>
 <tr><td>Schema profile, prefix &amp; text search</td><td>✅</td><td><code>schema()</code>, <code>prefix_search()</code>, <code>text_search()</code></td></tr>

@@ -75,6 +75,41 @@ test_that("dataset card and embedded examples round-trip", {
   expect_true("http://example.org/alice" %in% hits)
 })
 
+test_that("derive_card is opt-in, and derives what the CLI derives", {
+  # Default: curated fields only. `rete-graph`'s R twin is published too, so an
+  # existing call must keep writing the bytes it always wrote.
+  plain <- rete_card(build_graph(card = list(title = "Curated only")))
+  expect_null(plain$predicates)
+  expect_null(plain$queries)
+  expect_null(plain$signals)
+
+  # Opt in: the whole auto-derived profile, from the code `rete build --card`
+  # runs — plus the CLI's write-time validation of the curated half.
+  g <- build_graph(
+    card = list(title = "Derived", keywords = list("zeta", "alpha")),
+    derive_card = TRUE
+  )
+  card <- rete_card(g)
+  expect_equal(card$top_n, 100)
+  expect_gt(length(card$predicates), 0)
+  expect_gt(length(card$classes), 0)
+  expect_gt(length(card$vocabularies), 0)
+  # Canonicalized (sorted + deduplicated), exactly as `--card-file` does it.
+  expect_equal(unlist(card$keywords), c("alpha", "zeta"))
+
+  # Every generated starter query is runnable on the file that carries it.
+  ex <- rete_examples(g)
+  expect_gt(nrow(ex), 5)
+  for (q in ex$sparql) expect_no_error(rete_query(g, q))
+
+  # And the CLI's card rules now apply: a free-text theme is refused, with the
+  # CLI's own wording.
+  expect_error(
+    rete_build(NT, card = list(theme = list("physics")), derive_card = TRUE),
+    "not an IRI"
+  )
+})
+
 test_that("schema profile and prefix search have the right shapes", {
   g <- build_graph()
   s <- rete_schema(g)

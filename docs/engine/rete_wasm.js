@@ -1199,10 +1199,11 @@ export function build(text, format) {
  *   is already an error). `format_version` is stamped by the writer.
  * - **The derived profile is NOT written.** Predicates, classes,
  *   vocabularies, datatypes, languages, class links, hubs, signals and the
- *   tiered starter-query library are derived by `rete-cli`, which this crate
- *   does not depend on. Their absence is honest absence: the card simply does
- *   not carry those keys, exactly as a `rete merge` card does not. Rebuild
- *   with `rete build --card-file` to get them.
+ *   tiered starter-query library are absent. Their absence is honest absence:
+ *   the card simply does not carry those keys, exactly as a `rete merge` card
+ *   does not. Call [`build_with_derived_card`] instead to compute them here —
+ *   this function stays curated-only so its bytes never change under a caller
+ *   who did not ask for the extra passes.
  * - **No build-info section** (kind 7) is written: its cost figures come from
  *   measuring the starter queries, and there are none to measure.
  *
@@ -1220,6 +1221,54 @@ export function build_with_card(text, format, card_json) {
     const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
     const ret = wasm.build_with_card(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
+ * [`build_with_card`], but the card also carries the **auto-derived profile**
+ * — the half a browser build used to have to do without (#152).
+ *
+ * Predicates, classes, vocabularies, datatypes, languages, the class-link
+ * quotient, hubs, the affordance signals, and the tiered starter-query
+ * library are all computed here, by exactly the code `rete build --card`
+ * runs ([`rete_core::card::derive_card`]). On the same graph with the same
+ * curated document, the metadata section this writes is **byte-identical** to
+ * the CLI's.
+ *
+ * Two honest differences remain, and neither is derivation:
+ *
+ * - **Sections are uncompressed** (the wasm build has no zstd *encoder*), so
+ *   the file is larger than a CLI build of the same graph. Every reader
+ *   accepts it.
+ * - **No build-info section** (kind 7): its cost figures come from *running*
+ *   the starter queries, which is a benchmark, not a build.
+ *
+ * # Why this is a separate function
+ *
+ * Derivation walks the graph twice more. In a browser, on a paste the user is
+ * waiting on, that is a cost they should choose — so [`build_with_card`]
+ * keeps writing exactly the bytes it always has, and this is the opt-in.
+ *
+ * Pass an empty string for `card_json` to derive a profile-only card with no
+ * curated fields (the equivalent of a bare `rete build --card`).
+ * @param {string} text
+ * @param {string} format
+ * @param {string} card_json
+ * @returns {Uint8Array}
+ */
+export function build_with_derived_card(text, format, card_json) {
+    const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.build_with_derived_card(ptr0, len0, ptr1, len1, ptr2, len2);
     if (ret[3]) {
         throw takeFromExternrefTable0(ret[2]);
     }

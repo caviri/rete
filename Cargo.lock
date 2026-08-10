@@ -1396,6 +1396,7 @@ dependencies = [
  "rayon",
  "regex-lite",
  "ruzstd",
+ "serde",
  "serde_json",
  "sha1",
  "sha2",

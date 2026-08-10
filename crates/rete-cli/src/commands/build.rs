@@ -6,7 +6,7 @@
 
 use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
-use crate::commands::queries::{claim_of, Claim};
+use rete_core::card::{claim_of, Claim};
 use rete_core::ingest;
 
 /// Run the card's starter queries against the finished image and **remove the

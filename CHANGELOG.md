@@ -225,6 +225,51 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **Dataset Card derivation moved into `rete-core`, so every client can derive
+  one (#152).** The card type, the profile derived from a graph's own
+  statements, and the tiered starter-query library lived in `crates/rete-cli` —
+  a **binary-only crate**: no `[lib]`, no `lib.rs`, so nothing could link it
+  even if it wanted to, and the entry points were `pub(crate)` besides. A
+  `.rete` built from Python, R, JavaScript, Java or the in-browser builder
+  could write the *curated* half of a card and never the derived half, no
+  matter how the CLI was fixed. They are now `rete_core::card_derive` and
+  `rete_core::card_queries`, re-exported from `rete_core::card` beside the
+  curated-half rules that were already shared.
+
+  The move is behaviour-preserving for the CLI: across ten build paths
+  (in-memory, streaming, external/memory-bounded, `--reason`, `merge`,
+  `repyramid --card`, named-graph-only, bare `--card`), the **metadata section
+  bytes and the header content hash are byte-identical** before and after. The
+  only differences anywhere are the build-info section's wall-clock timestamp
+  and its measured per-query millisecond figures.
+
+  Derivation is **opt-in everywhere**, because it walks the graph twice more:
+
+  | surface | how |
+  |---|---|
+  | `rete build` / `merge` / `repyramid` | `--card` (unchanged) |
+  | `rete-wasm` | new export `build_with_derived_card(text, format, card_json)` |
+  | Python (`rete-graph`) | `Builder.derive_card()` — **default off** |
+  | R (`rete`) | `rete_build(..., derive_card = TRUE)` — **default off** |
+  | JavaScript | `wasm.build_with_derived_card` via the raw-engine escape hatch |
+
+  Existing callers get byte-identical output: `build_with_card` still writes the
+  curated half only, and both bindings default to their old pass-through path.
+  Asking for derivation also *tightens* validation — the curated half then goes
+  through `rete build --card-file`'s own gates (reserved top level, `theme` must
+  be a controlled-vocabulary IRI, the bounded `extra` bag), which Python and R
+  had never applied.
+
+  Cost of the capability, measured: `web/pkg/rete_wasm_bg.wasm` 3,261,860 →
+  3,416,435 B (+4.7%); the Asyncify build 10,461,792 → 11,047,111 B (+5.6%).
+
+  Still CLI-only, and for reasons that are not reach: the **build-info record**
+  (its cost figures come from *running* the starter queries — a benchmark, not a
+  build) and the JSON-LD / Croissant projections. The playground's Build mode
+  keeps writing curated-only cards by choice, not by limitation; the export it
+  would need now exists.
+
+
 - **The dictionary's chunk directory stores a shortest separator, not the
   chunk's first term (#198).** Writer-side only, on by default, no flag, no
   generation bump. Each directory entry keeps its framing — `Δfirst_run`,
