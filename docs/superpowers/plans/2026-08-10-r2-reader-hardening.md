@@ -28,7 +28,7 @@
 - Modify: `crates/rete-cli/src/http.rs`
 - Test: `crates/rete-cli/src/http.rs` (`#[cfg(test)] mod tests`)
 
-- [ ] **Step 1: Add failing parser and transport tests**
+- [x] **Step 1: Add failing parser and transport tests**
 
   Introduce a table-driven unit test for a private parser with this shape:
 
@@ -53,7 +53,7 @@
 
   Assert duplicate fields fail even if their values match. Assert all protocol failures are `std::io::ErrorKind::InvalidData` and mention URL, requested offset, requested length, expected tuple, and actual raw value/count. Strengthen `rejects_a_truncated_range_response` so the returned kind is `UnexpectedEof` while retaining the same context assertions.
 
-- [ ] **Step 2: Run the focused tests and observe RED**
+- [x] **Step 2: Run the focused tests and observe RED**
 
   ```powershell
   docker compose run --rm dev cargo test -p rete-cli http::tests::parse_content_range -- --nocapture
@@ -63,7 +63,7 @@
 
   Expected failures: the parser does not exist, duplicate headers are not counted, and the truncated-body kind is not normalized to `UnexpectedEof`.
 
-- [ ] **Step 3: Implement the strict parser and single-field check**
+- [x] **Step 3: Implement the strict parser and single-field check**
 
   Add small helpers above `impl RangeReader for HttpRangeReader`:
 
@@ -99,7 +99,7 @@
 
   For a header-count failure, render `got {count} fields`. For a malformed field, render its debug-quoted raw value. Map premature body EOF—including `ureq`'s body-closed error—to `UnexpectedEof`, while preserving the original body-read error in the message. Do not change other I/O error kinds.
 
-- [ ] **Step 4: Run GREEN and package checks**
+- [x] **Step 4: Run GREEN and package checks**
 
   ```powershell
   docker compose run --rm dev cargo fmt --all -- --check
@@ -107,7 +107,7 @@
   docker compose run --rm dev cargo test -p rete-cli
   ```
 
-- [ ] **Step 5: Review and commit Task 1**
+- [x] **Step 5: Review and commit Task 1**
 
   Verify no acceptance path permits wildcard totals, multi-range syntax, non-ASCII digits, or duplicate raw fields. Verify all range/body failures retain URL and request coordinates.
 

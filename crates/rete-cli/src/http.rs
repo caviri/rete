@@ -24,6 +24,43 @@ fn range_does_not_fit_in_memory_error(len: u64, offset: u64, url: &str) -> std::
     )
 }
 
+fn parse_ascii_u64(value: &str) -> Option<u64> {
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| value.parse().ok())
+        .flatten()
+}
+
+fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
+    let (unit, range_and_total) = value.split_once(' ')?;
+    if !unit.eq_ignore_ascii_case("bytes") || range_and_total.contains(' ') {
+        return None;
+    }
+    let (range, total) = range_and_total.split_once('/')?;
+    let (first, last) = range.split_once('-')?;
+    Some((
+        parse_ascii_u64(first)?,
+        parse_ascii_u64(last)?,
+        parse_ascii_u64(total)?,
+    ))
+}
+
+fn invalid_content_range_error(
+    len: u64,
+    offset: u64,
+    end: u64,
+    total: u64,
+    url: &str,
+    actual: &str,
+) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "invalid Content-Range for requested {len} bytes at offset {offset} from {url}: \
+             expected bytes {offset}-{end}/{total}; got {actual}"
+        ),
+    )
+}
+
 impl HttpRangeReader {
     /// Probe the resource length with a HEAD request.
     pub fn open(url: &str) -> anyhow::Result<Self> {
@@ -75,29 +112,33 @@ impl RangeReader for HttpRangeReader {
                 self.url
             )));
         }
-        let expected_content_range = format!("bytes {offset}-{end}/{}", self.len);
-        match resp.header("content-range") {
-            Some(actual) if actual == expected_content_range => {}
-            Some(actual) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "invalid Content-Range for requested {len} bytes at offset {offset} from {}: \
-                         expected {expected_content_range:?}, got {actual:?}",
-                        self.url
-                    ),
-                ));
-            }
-            None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "missing Content-Range for requested {len} bytes at offset {offset} from {}; \
-                         expected {expected_content_range:?}",
-                        self.url
-                    ),
-                ));
-            }
+        let content_range_fields = resp
+            .headers_names()
+            .iter()
+            .filter(|name| name.eq_ignore_ascii_case("content-range"))
+            .count();
+        if content_range_fields != 1 {
+            return Err(invalid_content_range_error(
+                len,
+                offset,
+                end,
+                self.len,
+                &self.url,
+                &format!("{content_range_fields} fields"),
+            ));
+        }
+        let actual = resp.header("content-range").ok_or_else(|| {
+            invalid_content_range_error(len, offset, end, self.len, &self.url, "1 unreadable field")
+        })?;
+        if parse_content_range(actual) != Some((offset, end, self.len)) {
+            return Err(invalid_content_range_error(
+                len,
+                offset,
+                end,
+                self.len,
+                &self.url,
+                &format!("{actual:?}"),
+            ));
         }
         let capacity = usize::try_from(len)
             .map_err(|_| range_does_not_fit_in_memory_error(len, offset, &self.url))?;
@@ -133,11 +174,14 @@ impl RangeReader for HttpRangeReader {
         // buffer handed to
         // the format parsers — mirroring `SliceReader`'s out-of-bounds error.
         match (body.len() as u64).cmp(&len) {
-            std::cmp::Ordering::Less => Err(std::io::Error::other(format!(
-                "short range response length mismatch: got {} of {len} bytes at offset {offset} from {}",
-                body.len(),
-                self.url
-            ))),
+            std::cmp::Ordering::Less => Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!(
+                    "short range response length mismatch: got {} of requested {len} bytes at offset {offset} from {}",
+                    body.len(),
+                    self.url
+                ),
+            )),
             std::cmp::Ordering::Greater => Err(std::io::Error::other(format!(
                 "overlong range response length mismatch: got {} of {len} bytes at offset {offset} from {}",
                 body.len(),
@@ -213,6 +257,8 @@ mod tests {
         /// A flaky host: claims the full range (`206` + Content-Length) but
         /// closes the connection after sending only half the bytes.
         TruncateBody,
+        /// A flaky host: claims the range but close-delimits a short body.
+        TruncateBodyWithoutContentLength,
         /// A broken host: returns the requested range plus one extra byte.
         OverlongBody,
         /// A broken host: reports a different first byte in Content-Range.
@@ -229,6 +275,12 @@ mod tests {
         WrongRangeUnit,
         /// A broken host: does not disclose the complete resource length.
         UnknownRangeTotal,
+        /// A conforming host: varies the range-unit case and pads numerals.
+        SemanticContentRange,
+        /// An ambiguous host: sends the same Content-Range field twice.
+        DuplicateContentRange,
+        /// An ambiguous host: sends conflicting Content-Range fields.
+        ConflictingContentRange,
         /// A broken host: `500` on every GET.
         Error500,
     }
@@ -280,6 +332,7 @@ mod tests {
                     (
                         ServerMode::HonorRange
                         | ServerMode::TruncateBody
+                        | ServerMode::TruncateBodyWithoutContentLength
                         | ServerMode::OverlongBody
                         | ServerMode::WrongRangeStart
                         | ServerMode::WrongRangeEnd
@@ -287,14 +340,20 @@ mod tests {
                         | ServerMode::MissingContentRange
                         | ServerMode::MalformedContentRange
                         | ServerMode::WrongRangeUnit
-                        | ServerMode::UnknownRangeTotal,
+                        | ServerMode::UnknownRangeTotal
+                        | ServerMode::SemanticContentRange
+                        | ServerMode::DuplicateContentRange
+                        | ServerMode::ConflictingContentRange,
                         Some(r),
                     ) => {
                         let (a, b) = r.split_once('-').unwrap();
                         let a: usize = a.parse().unwrap();
                         let b: usize = b.parse().unwrap();
                         let slice = &data[a..=b.min(total - 1)];
-                        let sent = if matches!(mode, ServerMode::TruncateBody) {
+                        let sent = if matches!(
+                            mode,
+                            ServerMode::TruncateBody | ServerMode::TruncateBodyWithoutContentLength
+                        ) {
                             &slice[..slice.len() / 2] // lie, then hang up early
                         } else if matches!(mode, ServerMode::OverlongBody) {
                             &data[a..=b.min(total - 2) + 1]
@@ -326,10 +385,26 @@ mod tests {
                             ServerMode::UnknownRangeTotal => {
                                 format!("Content-Range: bytes {a}-{b}/*\r\n")
                             }
+                            ServerMode::SemanticContentRange => {
+                                format!("Content-Range: ByTeS {a:04}-{b:04}/{total:05}\r\n")
+                            }
+                            ServerMode::DuplicateContentRange => format!(
+                                "Content-Range: bytes {a}-{b}/{total}\r\nContent-Range: bytes {a}-{b}/{total}\r\n"
+                            ),
+                            ServerMode::ConflictingContentRange => format!(
+                                "Content-Range: bytes {a}-{b}/{total}\r\nContent-Range: bytes {}-{b}/{total}\r\n",
+                                a + 1
+                            ),
                             _ => format!("Content-Range: bytes {a}-{b}/{total}\r\n"),
                         };
+                        let content_length =
+                            if matches!(mode, ServerMode::TruncateBodyWithoutContentLength) {
+                                String::new()
+                            } else {
+                                format!("Content-Length: {declared_len}\r\n")
+                            };
                         let h = format!(
-                            "HTTP/1.1 206 Partial Content\r\n{content_range}Content-Length: {declared_len}\r\nConnection: close\r\n\r\n"
+                            "HTTP/1.1 206 Partial Content\r\n{content_range}{content_length}Connection: close\r\n\r\n"
                         );
                         let _ = stream.write_all(h.as_bytes());
                         let _ = stream.write_all(sent);
@@ -426,6 +501,87 @@ mod tests {
     }
 
     #[test]
+    fn parse_content_range_accepts_exact_semantic_forms() {
+        assert_eq!(
+            parse_content_range("bytes 100-139/1000"),
+            Some((100, 139, 1000))
+        );
+        assert_eq!(
+            parse_content_range("BYTES 0100-0139/01000"),
+            Some((100, 139, 1000))
+        );
+    }
+
+    #[test]
+    fn parse_content_range_rejects_ambiguous_or_malformed_forms() {
+        let rejected = [
+            "bytes */1000",
+            "bytes 100-139/*",
+            "bytes +100-139/1000",
+            "bytes -100-139/1000",
+            "bytes 100--139/1000",
+            "bytes 100-+139/1000",
+            "bytes 100-139/+1000",
+            "bytes ١٠٠-139/1000",
+            "bytes 100-١٣٩/1000",
+            "bytes 100-139/١٠٠٠",
+            "bytes\t100-139/1000",
+            "bytes  100-139/1000",
+            "bytes 100-139 /1000",
+            "bytes 100-139/ 1000",
+            "bytes 100-139/1000 ",
+            "bytes 100-139/1000, bytes 200-239/1000",
+            "bytes 100-139/1000/1000",
+            "bytes 100-139-140/1000",
+            "bytes -139/1000",
+            "bytes 100-/1000",
+            "bytes 100-139/",
+            "items 100-139/1000",
+            "bytes 18446744073709551616-18446744073709551616/18446744073709551616",
+        ];
+
+        for value in rejected {
+            assert_eq!(parse_content_range(value), None, "accepted {value:?}");
+        }
+    }
+
+    #[test]
+    fn accepts_semantically_exact_content_range() {
+        let data: Vec<u8> = (0..=255).cycle().take(1000).collect();
+        let url = serve(data.clone(), ServerMode::SemanticContentRange);
+        let reader = HttpRangeReader::open(&url).unwrap();
+
+        assert_eq!(reader.read_at(100, 40).unwrap(), &data[100..140]);
+    }
+
+    #[test]
+    fn rejects_duplicate_content_range_fields() {
+        for (mode, case) in [
+            (ServerMode::DuplicateContentRange, "identical duplicates"),
+            (
+                ServerMode::ConflictingContentRange,
+                "conflicting duplicates",
+            ),
+        ] {
+            let data: Vec<u8> = (0..=255).cycle().take(1000).collect();
+            let url = serve(data, mode);
+            let reader = HttpRangeReader::open(&url).unwrap();
+            let err = reader.read_at(100, 40).unwrap_err();
+            let message = err.to_string();
+
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{case}");
+            assert!(message.contains(&url), "{case}: {message}");
+            assert!(message.contains("offset 100"), "{case}: {message}");
+            assert!(message.contains("requested 40 bytes"), "{case}: {message}");
+            assert!(
+                message.contains("expected bytes 100-139/1000"),
+                "{case}: {message}"
+            );
+            assert!(message.contains("got 2 fields"), "{case}: {message}");
+        }
+    }
+
+    #[test]
     fn reuses_the_open_agent_for_sequential_ranges() {
         let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
         let (url, accepted) = serve_keep_alive(data.clone(), 3);
@@ -490,23 +646,28 @@ mod tests {
         // connection, range past EOF, broken proxy) must surface as a clean
         // error — never as a silently short buffer.
         let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
-        let url = serve(data, ServerMode::TruncateBody);
-        let r = HttpRangeReader::open(&url).unwrap();
-        // ureq itself flags the Content-Length mismatch ("body closed before
-        // all bytes were read"); our own check is the backstop for transports
-        // that don't. Either way: an error, never a short buffer.
-        let err = r.read_at(100, 40).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("short range response") || msg.contains("closed before"),
-            "expected a truncation error, got: {err}"
-        );
-        assert!(msg.contains(&url), "missing URL context: {msg}");
-        assert!(msg.contains("offset 100"), "missing offset context: {msg}");
-        assert!(
-            msg.contains("requested 40 bytes"),
-            "missing requested-length context: {msg}"
-        );
+        for mode in [
+            ServerMode::TruncateBody,
+            ServerMode::TruncateBodyWithoutContentLength,
+        ] {
+            let url = serve(data.clone(), mode);
+            let r = HttpRangeReader::open(&url).unwrap();
+            // `ureq` flags a declared Content-Length mismatch itself. The
+            // close-delimited case reaches our own exact-length backstop.
+            let err = r.read_at(100, 40).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+            let msg = err.to_string();
+            assert!(
+                msg.contains("short range response") || msg.contains("closed before"),
+                "expected a truncation error, got: {err}"
+            );
+            assert!(msg.contains(&url), "missing URL context: {msg}");
+            assert!(msg.contains("offset 100"), "missing offset context: {msg}");
+            assert!(
+                msg.contains("requested 40 bytes"),
+                "missing requested-length context: {msg}"
+            );
+        }
         // And a range that genuinely runs past EOF on an honest host errors too.
         let data: Vec<u8> = (0..100u8).collect();
         let url = serve(data, ServerMode::HonorRange);
@@ -544,10 +705,20 @@ mod tests {
                 Ok(_) => panic!("accepted {case}"),
             };
             let message = err.to_string();
+            assert_eq!(
+                err.kind(),
+                std::io::ErrorKind::InvalidData,
+                "{case}: {message}"
+            );
             assert!(message.contains("Content-Range"), "{case}: {message}");
             assert!(message.contains(&url), "{case}: {message}");
             assert!(message.contains("offset 100"), "{case}: {message}");
-            assert!(message.contains("40 bytes"), "{case}: {message}");
+            assert!(message.contains("requested 40 bytes"), "{case}: {message}");
+            assert!(
+                message.contains("expected bytes 100-139/1000"),
+                "{case}: {message}"
+            );
+            assert!(message.contains("got "), "{case}: {message}");
         }
     }
 
