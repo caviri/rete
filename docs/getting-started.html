@@ -221,6 +221,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
 .content h2 { clear:right; }
 
+/* Square figures get a narrower column than landscape ones.
+   `.img-sq` / `.fig-sq` are stamped by docgen from the image's MEASURED
+   aspect ratio — the viewBox of an SVG, the IHDR of a PNG — against
+   SQUARE_MAX_RATIO; nothing here is decided by hand. The reason: at the full
+   column a square is as tall as it is wide, so one picture is an 830-950px
+   wall that pushes every word after it under the fold, while a landscape
+   strip (the byte-layout diagrams, the app screenshots) needs that width to
+   stay legible and is left alone.
+   The cap is 60% of the column, clamped at both ends: never above 560px,
+   which is the width every diagram is DRAWN at, so they render at their
+   intended size instead of being enlarged up to 1.75x; and never below
+   340px, so a narrow desktop window — where the column is small but the
+   sidebar still takes its 250px — gets a readable figure rather than a
+   thumbnail.
+   ONLY above the phone breakpoint. The mobile column is 353px at 390px, and
+   60% of that is 212px of unreadable diagram, so a phone keeps every image
+   full-bleed exactly as before — hence min-width:781px, the complement of the
+   780px query the mobile chrome uses. */
+@media (min-width:781px) {
+  .content img.img-sq { display:block; max-width:clamp(340px, 60%, 560px); margin-left:auto; margin-right:auto; }
+  /* Anchors are inline, so a linked image needs a block box to centre in. */
+  .content a:has(> img.img-sq) { display:block; }
+  /* The FIGURE is capped, not its img, so the caption stays the same width as
+     the picture it captions. `fig-right` is excluded: it is already floated at
+     min(42%, 390px), and this would make it wider, not narrower. */
+  .content figure.fig-sq:not(.fig-right) { max-width:clamp(340px, 60%, 560px); }
+}
+
 .content img { cursor:zoom-in; }
 .lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
 .lightbox.open { display:flex; align-items:center; justify-content:center; }
@@ -635,7 +663,7 @@ cargo build --release -p rete-cli
 <p>The compiled CLI is at <code>target/release/rete</code>; put it on your <code>PATH</code> and the
 examples below run without the alias (or substitute <code>cargo run -p rete-cli --</code>).</p>
 <h2 id="building-a-rete-file">Building a <code>.rete</code> file</h2>
-<figure class="fig-right">
+<figure class="fig-right fig-sq">
   <img src="img/build-pipeline.svg" alt="Building a .rete file: source triples in N-Triples, Turtle, N-Quads, RDF/XML or OWL are compiled by rete build — which sorts, dedupes, front-codes the dictionary and writes the permutation indexes — into one immutable file holding a dictionary, permutation indexes and a dataset card, plus an optional community pyramid that many published files do not have. The result goes on any HTTP host that answers Range requests: a bucket, a static site, a CDN. There is no server and no database to run.">
   <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
 </figure>

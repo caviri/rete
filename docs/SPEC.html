@@ -221,6 +221,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
 .content h2 { clear:right; }
 
+/* Square figures get a narrower column than landscape ones.
+   `.img-sq` / `.fig-sq` are stamped by docgen from the image's MEASURED
+   aspect ratio — the viewBox of an SVG, the IHDR of a PNG — against
+   SQUARE_MAX_RATIO; nothing here is decided by hand. The reason: at the full
+   column a square is as tall as it is wide, so one picture is an 830-950px
+   wall that pushes every word after it under the fold, while a landscape
+   strip (the byte-layout diagrams, the app screenshots) needs that width to
+   stay legible and is left alone.
+   The cap is 60% of the column, clamped at both ends: never above 560px,
+   which is the width every diagram is DRAWN at, so they render at their
+   intended size instead of being enlarged up to 1.75x; and never below
+   340px, so a narrow desktop window — where the column is small but the
+   sidebar still takes its 250px — gets a readable figure rather than a
+   thumbnail.
+   ONLY above the phone breakpoint. The mobile column is 353px at 390px, and
+   60% of that is 212px of unreadable diagram, so a phone keeps every image
+   full-bleed exactly as before — hence min-width:781px, the complement of the
+   780px query the mobile chrome uses. */
+@media (min-width:781px) {
+  .content img.img-sq { display:block; max-width:clamp(340px, 60%, 560px); margin-left:auto; margin-right:auto; }
+  /* Anchors are inline, so a linked image needs a block box to centre in. */
+  .content a:has(> img.img-sq) { display:block; }
+  /* The FIGURE is capped, not its img, so the caption stays the same width as
+     the picture it captions. `fig-right` is excluded: it is already floated at
+     min(42%, 390px), and this would make it wider, not narrower. */
+  .content figure.fig-sq:not(.fig-right) { max-width:clamp(340px, 60%, 560px); }
+}
+
 .content img { cursor:zoom-in; }
 .lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
 .lightbox.open { display:flex; align-items:center; justify-content:center; }
@@ -646,7 +674,7 @@ actually emit). The
 header is the directory: it carries the absolute offset+length of every section, so a
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.</p>
-<img src="img/file-layout.svg" alt="The section directory inside a .rete header, drawn to scale on the published davidrumsey.rete. The header is 1024 bytes: a 64-byte core, then up to 40 directory entries of 24 bytes each starting at byte 64, then zero padding — this file uses 6 entries, so most of the header is spare room. One entry is a 2-byte kind, a 2-byte flags field, 4 reserved bytes, an 8-byte offset and an 8-byte length. The seven typed kinds are dataset card, dictionary, index, pyramid, named graphs, text index and build info; this file has all but named graphs and build info. One GET of bytes 0 to 1023 therefore locates every section in the file.">
+<img class="img-sq" src="img/file-layout.svg" alt="The section directory inside a .rete header, drawn to scale on the published davidrumsey.rete. The header is 1024 bytes: a 64-byte core, then up to 40 directory entries of 24 bytes each starting at byte 64, then zero padding — this file uses 6 entries, so most of the header is spare room. One entry is a 2-byte kind, a 2-byte flags field, 4 reserved bytes, an 8-byte offset and an 8-byte length. The seven typed kinds are dataset card, dictionary, index, pyramid, named graphs, text index and build info; this file has all but named graphs and build info. One GET of bytes 0 to 1023 therefore locates every section in the file.">
 <p><em>The header is the directory, on a real specimen. Entry <code>i</code> lives at <code>64 + i×24</code>;
 a kind the reader does not recognise is kept verbatim, so a new writer cannot
 break an old reader.</em></p>
@@ -758,7 +786,7 @@ ones alike; treat its contents as advisory provenance, not integrity-protected
 data.</p>
 <hr />
 <h2 id="5-dictionary">5. Dictionary</h2>
-<img src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
+<img class="img-sq" src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
 <p><em>Four front-coded sections with role-ordered IDs: a term's ID range reveals whether it is a subject, object, or predicate.</em></p>
 <ul>
 <li>
@@ -818,7 +846,7 @@ that run comparing each materialized term; return its ID or <code>None</code>.</
 fetches just the run(s) covering the IDs/terms a query touches.</p>
 <hr />
 <h2 id="6-triples--quads">6. Triples / quads</h2>
-<img src="img/index-permutations.svg" alt="Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.">
+<img class="img-sq" src="img/index-permutations.svg" alt="Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.">
 <p><em>Which pattern reaches which index, and what the other three actually buy. The
 routing three are measured on <code>tree-city-inventory</code>; the optional three are the
 bigger half, because a sort order that does not lead with a subject or predicate
@@ -988,7 +1016,7 @@ are already such a break and must be rebuilt from RDF source.</p>
 <hr />
 <h2 id="7-the-pyramid--community-summarization">7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>
-<img src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
+<img class="img-sq" src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
 <p><em>Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.</em></p>
 <h3 id="71-build-time">7.1 Build time</h3>
 <ol>
@@ -1160,7 +1188,7 @@ separate directory/footer round-trip is needed:</p>
     prefixes and fetch only that one permutation payload. Unknown bound terms
     skip the index entirely and return an empty result.
 </code></pre>
-<img src="img/remote-open-cost.svg" alt="What a cold remote open costs, measured with rete cost on the published davidrumsey.rete — 74.8 MB, 5,001,983 triples. Each track is the whole file; the solid part is what crosses the wire. Reading the dataset card costs 2 requests and 61 KB, 0.08 percent. Opening lazily for a query costs 65 requests and 407 KB, 0.54 percent, because only tile directories are read. But routing one triple pattern costs 2 requests and 16.1 MB, 21.5 percent, and the overview costs 3 requests and 17.4 MB, 23.3 percent — both because resolving a term to an id pulls the whole dictionary, whose chunk directory stores every chunk's first term verbatim. Reading the file whole costs 74.7 MB, 99.9 percent.">
+<img class="img-sq" src="img/remote-open-cost.svg" alt="What a cold remote open costs, measured with rete cost on the published davidrumsey.rete — 74.8 MB, 5,001,983 triples. Each track is the whole file; the solid part is what crosses the wire. Reading the dataset card costs 2 requests and 61 KB, 0.08 percent. Opening lazily for a query costs 65 requests and 407 KB, 0.54 percent, because only tile directories are read. But routing one triple pattern costs 2 requests and 16.1 MB, 21.5 percent, and the overview costs 3 requests and 17.4 MB, 23.3 percent — both because resolving a term to an id pulls the whole dictionary, whose chunk directory stores every chunk's first term verbatim. Reading the file whole costs 74.7 MB, 99.9 percent.">
 <p><em>The same file, five ways in. The lazy path is 0.54% of the file; the two paths
 that must resolve a constant term to an id pay for the whole dictionary, whose
 chunk directory still stores every chunk's first term verbatim (#198).</em></p>
