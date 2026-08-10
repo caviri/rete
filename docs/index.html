@@ -708,11 +708,11 @@ rete schema  social.rete    # semantic (by rdf:type)
 <h2 id="version--status">Version &amp; status</h2>
 <p>Developed in the open at <a href="https://github.com/caviri/rete">github.com/caviri/rete</a>.
 The crates are <strong>v0.3.0</strong>, the first release on crates.io. Stable file-format
-generation 1 (header byte <code>0x05</code>) is the compatibility baseline for Rete 1.x.
-Stable readers keep reading it; a future incompatible layout must retain
-generation-1 read support and ship a documented migration path. Pre-1.0
-experimental files must be rebuilt from RDF source. The public Rust, CLI, and
-WASM APIs carry no semantic-versioning promise until 1.0.0 final.
+generation 1 (header byte <code>0x05</code>) was frozen on 2026-07-14 and first released in
+0.3.0; the experimental generations <code>0x01</code>–<code>0x04</code> predate it and must be rebuilt
+from RDF source. <strong>No backwards-compatibility promise is made before 1.0.0</strong> —
+neither for the <code>.rete</code> format nor for the public Rust, CLI and WASM APIs. See
+<a href="compatibility.html#stable-rete-file-compatibility">compatibility</a>.
 Everything is built and tested in Docker — see
 <a href="getting-started.html">Getting started</a>.</p>
 

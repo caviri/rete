@@ -34,10 +34,10 @@
 </p>
 
 > [!IMPORTANT]
-> **Pre-1.0 — expect breaking API changes.** rete is **0.3.2**, and until
-> **1.0.0** the public Rust, CLI and WASM APIs may change in ways that break what
-> you built on them. Files are the exception: a `.rete` you publish today stays
-> readable by every later release. See
+> **Pre-1.0 — expect breaking changes.** rete is **0.3.2**, and until **1.0.0**
+> *both* the public API and the `.rete` file format may change in ways that break
+> what you built on them — including changes that require rebuilding a file you
+> already published. See
 > [compatibility](https://caviri.github.io/rete/compatibility.html) for details.
 
 ---
@@ -405,15 +405,14 @@ Working end-to-end — the single-file format, dictionary + permutation indexes,
 community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
 lazy HTTP-range queries (with per-tile synopses that prune a routed tile before
 fetching it), and the browser/WASM engine. **Stable file-format generation 1**
-(header byte `0x05`, frozen 2026-07-14 and first released in 0.3.0) is the
-compatibility baseline every later generation must keep: stable readers keep
-reading it, and an incompatible future layout must retain generation-1 read
-support plus a documented migration path. **No flag-day rebuild is reserved
-before 1.0.0** — the format may still gain a generation, but not at the cost of
-the files you already published. The experimental generations `0x01`–`0x04`
-predate that freeze and must be rebuilt from RDF source. The generation number is
-not the release version — the Rust, CLI, and WASM APIs are the surfaces that
-carry no semver promise until 1.0.0. SPARQL evaluation is exact for supported shapes
+(header byte `0x05`, frozen 2026-07-14 and first released in 0.3.0) has not moved
+since that freeze — but "stable" names the generation and is not a compatibility
+promise: **no backwards-compatibility guarantee is made before 1.0.0**, and the
+format may still change in ways that require rebuilding a file you already
+published. The experimental generations `0x01`–`0x04` predate that freeze and
+must be rebuilt from RDF source. The generation number is not the release version
+— there is no Rete 1.0.0, and the Rust, CLI, and WASM APIs carry no semver
+promise until there is. SPARQL evaluation is exact for supported shapes
 (no implicit OWL/RDFS query-time entailment); cross-file federation is
 UNION-fan-out, while SPARQL 1.1 `SERVICE` calls external endpoints from inside a
 query.

@@ -7,19 +7,19 @@ first released in Rete **0.3.0**. Files carrying the experimental generations
 `0x01`–`0x04` predate that freeze and must be rebuilt from RDF source. Every
 stable Rete reader from 0.3.0 onward reads format `0x05`. Newer readers may
 add optional sections and flags that preserve `0x05` semantics. A required layout
-change uses a new format byte, retains `0x05` read support, and ships with a
-documented migration path. Older readers may reject a newer format cleanly;
+change uses a new format byte. Older readers may reject a newer format cleanly;
 silent misinterpretation is never permitted.
 
-**Generation-1 files stay readable, and no flag-day rebuild is reserved before
-1.0.0.** Read that for exactly what it says: the promise is about *files*, not
-about the format standing still. A generation `0x06` remains possible — what it
-may not do is invalidate a `0x05` file you have already published.
+> **No backwards-compatibility promise before 1.0.0.** rete reserves the right to
+> change the `.rete` format while it is pre-1.0, **including in ways that require
+> rebuilding a file you have already published**. `0x05` has not moved since it
+> froze on 2026-07-14 — that is a track record, not a guarantee. Keep the RDF
+> source you built from; the durable compatibility promise starts at 1.0.0.
 
 **The generation number is not a release version.** There is no Rete 1.0.0: the
-workspace is 0.3.x, and it is the *Rust, CLI and WASM APIs* that carry no semver
-promise until 1.0.0 ([release.md](release.md)) — the file format froze earlier
-and independently. Two consequences worth stating, because both have bitten:
+workspace is 0.3.x, and the file format froze earlier and independently of any
+release version ([release.md](release.md)). Two consequences worth stating,
+because both have bitten:
 
 - **`0x05` does not pin reader capability.** Nine days after the freeze,
   [#68](https://github.com/caviri/rete/pull/68) changed what the *writer* emits

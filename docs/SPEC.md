@@ -1,6 +1,6 @@
 # Rete — a cloud-native, range-queryable RDF graph file
 
-**Status:** Stable format generation **1**, implemented (header byte `0x05`; Rete 1.x compatibility baseline) · **File extension:** `.rete` · **Header magic:** `RETE`
+**Status:** Stable format generation **1**, implemented (header byte `0x05`, frozen 2026-07-14; no compatibility promise before 1.0.0) · **File extension:** `.rete` · **Header magic:** `RETE`
 
 > One file. Put it on S3, GitHub, or any HTTP server that honors `Range`.
 > Give a client the URL. Run SPARQL. No database server.
@@ -445,14 +445,14 @@ range read at `text_index offset` and is the honest cost figure; the section
 length alone overstates it several-fold, since the postings blob is never read
 whole.
 
-**Compatibility:** `0x05` is stable format generation 1 and the compatibility
-baseline every later generation must keep reading. Every stable reader from Rete
-**0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen in
-the 0.3 line and the release version is a separate number.
+**Compatibility:** `0x05` is stable format generation 1. Every stable reader from
+Rete **0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen
+in the 0.3 line and the release version is a separate number.
 Optional sections and flags may extend it without changing its required semantics.
-A required layout change uses a new format byte, keeps `0x05` read support, and
-ships with a documented rebuild or migration path. Experimental formats `0x01`
-through `0x04` are a clean break and must be rebuilt from RDF source.
+A required layout change uses a new format byte. **No backwards-compatibility
+promise is made before 1.0.0:** a later generation may drop `0x05` read support
+and force a rebuild from RDF source. Experimental formats `0x01` through `0x04`
+are already such a break and must be rebuilt from RDF source.
 
 ---
 

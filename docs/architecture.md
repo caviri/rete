@@ -75,8 +75,9 @@ The header is a fixed 1 KB block: a small core (magic, version, content hash,
 counts, codecs) plus a **typed section directory** of `(kind, offset, length)`
 entries that point at every other section. New top-level sections are added as new
 directory entries, so the format has headroom without a layout break (stable
-generation 1, header byte `0x05`). Stable Rete 1.x readers accept this generation;
-pre-1.0 experimental files must be rebuilt. Readers validate the header, then decide how
+generation 1, header byte `0x05`). Every stable reader from 0.3.0 onward accepts
+this generation; the experimental generations `0x01`–`0x04` predate it and must be
+rebuilt from RDF source. Readers validate the header, then decide how
 much of the file to load:
 
 | Section | Purpose |

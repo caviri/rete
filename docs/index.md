@@ -143,10 +143,10 @@ The same engine, in your language of choice — every client opens local files
 
 Developed in the open at [github.com/caviri/rete](https://github.com/caviri/rete).
 The crates are **v0.3.0**, the first release on crates.io. Stable file-format
-generation 1 (header byte `0x05`) is the compatibility baseline for Rete 1.x.
-Stable readers keep reading it; a future incompatible layout must retain
-generation-1 read support and ship a documented migration path. Pre-1.0
-experimental files must be rebuilt from RDF source. The public Rust, CLI, and
-WASM APIs carry no semantic-versioning promise until 1.0.0 final.
+generation 1 (header byte `0x05`) was frozen on 2026-07-14 and first released in
+0.3.0; the experimental generations `0x01`–`0x04` predate it and must be rebuilt
+from RDF source. **No backwards-compatibility promise is made before 1.0.0** —
+neither for the `.rete` format nor for the public Rust, CLI and WASM APIs. See
+[compatibility](compatibility.md#stable-rete-file-compatibility).
 Everything is built and tested in Docker — see
 [Getting started](getting-started.md).
