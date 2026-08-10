@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>What kinds of works are in the corpus — opencitations</title>
-<meta name="description" content="A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
+<meta name="description" content="Answer: 23 rows in 44.1 s. A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/opencitations-3.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="What kinds of works are in the corpus — opencitations" />
-<meta property="og:description" content="A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
+<meta property="og:description" content="Answer: 23 rows in 44.1 s. A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/opencitations-3.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/opencitations-3.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="What kinds of works are in the corpus — opencitations" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="What kinds of works are in the corpus — opencitations" />
-<meta name="twitter:description" content="A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
+<meta name="twitter:description" content="Answer: 23 rows in 44.1 s. A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/opencitations-3.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What kinds of works are in the corpus","description":"A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What kinds of works are in the corpus","description":"Answer: 23 rows in 44.1 s. A GROUP BY over 135.4M records. Aggregation STREAMS through per-group accumulators, so this holds O(groups) memory — a handful of rows — no matter… Runs live in your browser over opencitations (5184588893 triples · 33.4 GB) — no server.","url":"https://caviri.github.io/rete/q/opencitations-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"opencitations","url":"https://caviri.github.io/rete/d/opencitations.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,14 +49,13 @@
       <div class="chip">Aggregate</div>
     </div>
     <h1 class="title s1">What kinds of works are in the corpus</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?type</span> (<span class="kw">COUNT</span>(*) <span class="kw">AS</span> <span class="v">?works</span>) <span class="kw">WHERE</span> {
-  <span class="v">?w</span> oc:resourceType <span class="v">?type</span> .
-}
-<span class="kw">GROUP BY</span> <span class="v">?type</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?works</span>)</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Type</th><th>Works</th></tr></thead><tbody><tr><td class="">journal article</td><td class="num">87,698,513</td></tr><tr><td class="">book chapter</td><td class="num">8,300,648</td></tr><tr><td class="">book</td><td class="num">7,648,915</td></tr><tr><td class="">proceedings</td><td class="num">6,638,384</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🔗</div>
       <div class="key">opencitations</div>
       <div class="facts"><b>5184588893</b> triples · 33.4 GB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">23 rows</div>
+        <div class="sub">26 range requests · 18.5 MB of 33.39 GB read</div>
+        <div class="sub">in 44.1 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -66,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=opencitations&amp;load=lazy&amp;mode=sparql&amp;ex=3">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">23 rows · 44.1 s · 18.5 MB of 33.39 GB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX oc: &lt;https://w3id.org/rete/opencitations#&gt;
 SELECT ?type (COUNT(*) AS ?works) WHERE {

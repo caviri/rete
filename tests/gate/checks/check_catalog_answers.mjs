@@ -60,12 +60,39 @@
 // of 552 counted and 39 drawn answers, (1) matches 8, (2) matches exactly one —
 // the defect — and (3) matches none.
 //
-// DELIBERATELY OUT OF SCOPE: entries that are `count: null` AND not `ok` — a
-// capture that never produced an answer at all (a `waitForFunction` timeout on a
-// 17 GB file, an R2 blip, a tab that hit its WebAssembly memory ceiling). That is
-// a capture-infrastructure problem, not a claim that the example is empty, and
-// it is not reproducible offline. They are counted and reported in the payload
-// (`unmeasured`) so the number stays visible, but they do not turn the gate red.
+// WHAT USED TO BE OUT OF SCOPE, AND WHY IT NO LONGER IS (#212). Entries that
+// are `count: null` AND not `ok` were counted as `unmeasured` and waved through
+// — "a capture-infrastructure problem, not a claim that the example is empty".
+// Fifty-two of 644 sat there, and the exemption is what let them sit: a query
+// that HANGS and a query that RETURNS NOTHING are different failures, and only
+// the second was guarded, so the first was invisible for as long as anyone cared
+// to leave it. Thirty-nine of the fifty-two were not even a dataset problem —
+// `capture.mjs` waited for the example library to render exactly as many buttons
+// as the run happened to be MEASURING, which on any resume is fewer than the
+// page draws, so the wait could not succeed and the whole dataset was recorded
+// as "dataset open failed: page.waitForFunction: Timeout … exceeded". The
+// exemption then swallowed the evidence. Underneath it were ordinary zero-row
+// defects of exactly the class (1) already catches.
+//
+// So the contract is now: a shipped catalog example must have a RECORDED,
+// SUCCESSFUL answer. Three ways to satisfy it and no fourth —
+//
+//   A. `ok: true` with something in it (the rules above), or
+//   B. `ok: true, count: 0` with `allowEmpty: true` (the empty answer IS the
+//      point — a SHACL "no violations" probe), or
+//   C. `skipCapture: "<why>"` on the example, for one the sweep must not run at
+//      all. The flag's VALUE is the justification, so it cannot be set without
+//      recording one, and like `allowEmpty` it is not a mute button: an example
+//      that carries it and nevertheless has a good recorded answer fails, so a
+//      stale exclusion cannot outlive its reason.
+//
+// An example the catalog ships with no entry in answers.json at all fails too.
+// That hole had a name before it had a check: `wikiart:0` FILTERs an artist
+// across the whole `wa:imageData` predicate — 223,082 inline WebP literals on a
+// 25.4 GB graph — and had not returned after twenty minutes. It appeared in NO
+// count of broken examples, including the one this file's own payload printed,
+// precisely because no capture ever survived long enough to write a record. The
+// worst example in the catalog was the one thing the measurement could not see.
 //
 // Assertions go through `_expect.mjs` (#186): the runner reads the last JSON
 // verdict, never the exit code, so a check that throws reports a stack trace
@@ -100,12 +127,19 @@ try {
   process.exit(1);
 }
 
-// `allowEmpty` lives on the catalog example, not in answers.json — the flag is a
-// statement of intent by whoever wrote the query, and it belongs beside it.
+// `allowEmpty` and `skipCapture` live on the catalog example, not in
+// answers.json — both are statements of intent by whoever wrote the query, and
+// they belong beside it.
 const flagged = new Map();
 for (const [dataset, examples] of Object.entries(catalog.examples)) {
   examples.forEach((example, index) => {
-    flagged.set(`${dataset}:${index}`, { allowEmpty: !!example.allowEmpty, label: example.label || `example ${index}` });
+    flagged.set(`${dataset}:${index}`, {
+      allowEmpty: !!example.allowEmpty,
+      // A string, never a boolean: the reason is the flag. Whitespace does not
+      // count as a reason.
+      skipCapture: String(example.skipCapture || "").trim(),
+      label: example.label || `example ${index}`,
+    });
   });
 }
 
@@ -158,8 +192,20 @@ let empty = 0;
 let zeroAggregate = 0;
 let blankPictures = 0;
 let allowed = 0;
-let unmeasured = 0;
+let neverAnswered = 0;
+let unrecorded = 0;
+let skipped = 0;
 let orphans = 0;
+
+// The head of a capture failure, for the report. `error` is the playground's own
+// error box scraped verbatim — emoji, advice paragraph and a "Copy full log"
+// button caption all run together — so keep the first words and drop the rest.
+function why(answer) {
+  const text = String(answer.error || "").replace(/\s+/g, " ").trim();
+  if (text) return text.slice(0, 110);
+  if (GAVE_UP.test(answer.qmeta || "")) return `gave up — ${String(answer.qmeta).split("|")[0].trim()}`;
+  return "recorded ok: false with no error text";
+}
 
 for (const [id, answer] of Object.entries(answers)) {
   const example = flagged.get(id);
@@ -169,10 +215,34 @@ for (const [id, answer] of Object.entries(answers)) {
   if (!example) { orphans++; continue; }
 
   const counted = answer.count !== null && answer.count !== undefined;
-  // No count and no answer either: a capture that failed, or one that gave up.
-  // Out of scope, above.
-  if (!counted && (answer.ok !== true || GAVE_UP.test(answer.qmeta || ""))) { unmeasured++; continue; }
+  // Never answered at all: the capture threw, the engine errored, or the
+  // playground said it gave up. Formerly the `unmeasured` exemption; see the
+  // header for the fifty-two entries that lived in it.
+  //
+  // A record that DID come back with a row count is deliberately not routed
+  // here even when it is `ok: false`, because `ok: false, count: 0` is the
+  // zero-row class and rule (1) below says so in the words that repair it —
+  // "0 row(s)", with the allowEmpty escape named. Reporting that as "never
+  // answered" would be true and useless.
+  if ((!counted && answer.ok !== true) || GAVE_UP.test(answer.qmeta || "")) {
+    if (example.skipCapture) { skipped++; continue; }
+    neverAnswered++;
+    t.equal(id, `never answered — ${why(answer)} — ${example.label}`, "a recorded, successful answer",
+      "a shipped catalog example is recorded as NOT answering — a hang and an engine error are"
+        + " failures exactly as much as an empty result. Re-run it:"
+        + " scripts/preview/run.sh capture --dataset=<key> --force ; then fix the query, or if it"
+        + " genuinely cannot be swept set skipCapture: \"<why>\" on the example in"
+        + " web/playground-src/catalog.js");
+    continue;
+  }
   if (counted) measured++; else drawings++;
+  // The flag is not a mute button, in either direction: an example excluded from
+  // the sweep must not also be sitting here with a perfectly good answer.
+  if (example.skipCapture) {
+    skipped++;
+    t.equal(id, `skipCapture with an answer — ${example.label}`, "skipCapture only when there is no answer",
+      "this example answers, so the exclusion is stale — drop skipCapture from web/playground-src/catalog.js");
+  }
   if (example.allowEmpty) allowed++;
 
   // Answered nothing — in whichever way this view can say it.
@@ -207,9 +277,33 @@ for (const [id, answer] of Object.entries(answers)) {
   if (noRows && answer.ok === true && !example.allowEmpty) {
     t.equal(`${id}.ok`, true, false, "answers.json marks a zero-row example ok — capture.mjs never writes that");
   }
+  // A count came back, none of the "nothing" shapes matched, and the capture
+  // still refused it — an error box drawn over a partial table, say. Rare, but
+  // the whole point of #212 is that no `ok: false` may pass unread.
+  if (!nothing && answer.ok !== true) {
+    neverAnswered++;
+    t.equal(id, `not ok despite ${answer.count} row(s) — ${why(answer)} — ${example.label}`,
+      "a recorded, successful answer",
+      "the capture recorded a result AND rejected it — re-run the example and read the error box:"
+        + " scripts/preview/run.sh capture --dataset=<key> --force");
+  }
+}
+
+// A shipped example with NO record at all. Nothing above can see it — every loop
+// so far walks answers.json — which is exactly how the catalog's most expensive
+// query stayed out of every count of broken examples (see the header).
+for (const [id, example] of flagged) {
+  if (id in answers) continue;
+  if (example.skipCapture) { skipped++; continue; }
+  unrecorded++;
+  t.equal(id, `no recorded answer at all — ${example.label}`, "a recorded, successful answer",
+    "a shipped catalog example has NO entry in web/preview/answers.json — an example that was never"
+      + " measured is not a passing example, it is an unmeasured one. Capture it:"
+      + " scripts/preview/run.sh capture --dataset=<key> ; or if it genuinely cannot be swept set"
+      + " skipCapture: \"<why>\" on the example in web/playground-src/catalog.js");
 }
 
 t.finish({
   measured, drawings, emptyWithoutOptOut: empty, zeroAggregates: zeroAggregate,
-  blankPictures, allowEmpty: allowed, unmeasured, orphans,
+  blankPictures, allowEmpty: allowed, neverAnswered, unrecorded, skipCapture: skipped, orphans,
 });

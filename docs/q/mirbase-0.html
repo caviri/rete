@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>What&#39;s in the graph (predicate totals) — mirbase</title>
-<meta name="description" content="The shape of miRBase in one scan. faldo:position leads because every genomic region carries a begin AND an end position node, then dcterms:identifier… Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta name="description" content="Answer: 20 rows in 8.1 s. The shape of miRBase in one scan. faldo:position leads because every genomic region carries a begin AND an end position node, then dcterms:identifier… Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/mirbase-0.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="What&#39;s in the graph (predicate totals) — mirbase" />
-<meta property="og:description" content="The shape of miRBase in one scan. faldo:position leads because every genomic region carries a begin AND an end position node, then dcterms:identifier… Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta property="og:description" content="Answer: 20 rows in 8.1 s. The shape of miRBase in one scan. faldo:position leads because every genomic region carries a begin AND an end position node, then dcterms:identifier… Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/mirbase-0.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/mirbase-0.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="What&#39;s in the graph (predicate totals) — mirbase" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="What&#39;s in the graph (predicate totals) — mirbase" />
-<meta name="twitter:description" content="The shape of miRBase in one scan. faldo:position leads because every genomic region carries a begin AND an end position node, then dcterms:identifier… Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta name="twitter:description" content="Answer: 20 rows in 8.1 s. The shape of miRBase in one scan. faldo:position leads because every genomic region carries a begin AND an end position node, then dcterms:identifier… Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/mirbase-0.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What's in the graph (predicate totals)","description":"The shape of miRBase in one scan. faldo:position leads because every genomic region carries a begin AND an end position node, then dcterms:identifier… Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server.","url":"https://caviri.github.io/rete/q/mirbase-0.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mirbase","url":"https://caviri.github.io/rete/d/mirbase.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What's in the graph (predicate totals)","description":"Answer: 20 rows in 8.1 s. The shape of miRBase in one scan. faldo:position leads because every genomic region carries a begin AND an end position node, then dcterms:identifier… Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server.","url":"https://caviri.github.io/rete/q/mirbase-0.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mirbase","url":"https://caviri.github.io/rete/d/mirbase.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,14 +49,13 @@
       <div class="chip">Summary</div>
     </div>
     <h1 class="title s1">What&#39;s in the graph (predicate totals)</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?p</span> (<span class="kw">COUNT</span>(*) <span class="kw">AS</span> <span class="v">?n</span>) <span class="kw">WHERE</span> {
-  <span class="v">?s</span> <span class="v">?p</span> <span class="v">?o</span> .
-}
-<span class="kw">GROUP BY</span> <span class="v">?p</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?n</span>) <span class="kw">LIMIT</span> 20</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Predicate</th><th>Triples</th></tr></thead><tbody><tr><td class="">type</td><td class="num">508,116</td></tr><tr><td class="">reference</td><td class="num">198,651</td></tr><tr><td class="">position</td><td class="num">132,434</td></tr><tr><td class="">identifier</td><td class="num">103,568</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🧬</div>
       <div class="key">mirbase</div>
       <div class="facts"><b>2.74 M</b> triples · 39 MB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">20 rows</div>
+        <div class="sub">19 range requests · 6.3 MB of 39.2 MB read</div>
+        <div class="sub">in 8.1 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -66,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=mirbase&amp;load=lazy&amp;mode=sparql&amp;ex=0">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">20 rows · 8.1 s · 6.3 MB of 39.2 MB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>SELECT ?p (COUNT(*) AS ?n) WHERE {
   ?s ?p ?o .

@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>What&#39;s in this graph — worldcup</title>
-<meta name="description" content="The shape of the WC2022 graph: 64 Matches, 32 SportsTeams, players, Goals, 8 Stadiums, and the Prediction nodes (538 × 6 dates + Opta + bookmaker)… Runs live in your browser over worldcup (14.8 K triples · 225 KB) — no server." />
+<meta name="description" content="Answer: 5 rows in 4.8 s. The shape of the WC2022 graph: 588 Predictions (538 × 6 dates + Opta + bookmaker), 162 Goals, 90 CareerStints, 64 Matches, 8 Stadiums. Runs live in your browser over worldcup (14.8 K triples · 225 KB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/worldcup-2.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="What&#39;s in this graph — worldcup" />
-<meta property="og:description" content="The shape of the WC2022 graph: 64 Matches, 32 SportsTeams, players, Goals, 8 Stadiums, and the Prediction nodes (538 × 6 dates + Opta + bookmaker)… Runs live in your browser over worldcup (14.8 K triples · 225 KB) — no server." />
+<meta property="og:description" content="Answer: 5 rows in 4.8 s. The shape of the WC2022 graph: 588 Predictions (538 × 6 dates + Opta + bookmaker), 162 Goals, 90 CareerStints, 64 Matches, 8 Stadiums. Runs live in your browser over worldcup (14.8 K triples · 225 KB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/worldcup-2.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/worldcup-2.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="What&#39;s in this graph — worldcup" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="What&#39;s in this graph — worldcup" />
-<meta name="twitter:description" content="The shape of the WC2022 graph: 64 Matches, 32 SportsTeams, players, Goals, 8 Stadiums, and the Prediction nodes (538 × 6 dates + Opta + bookmaker)… Runs live in your browser over worldcup (14.8 K triples · 225 KB) — no server." />
+<meta name="twitter:description" content="Answer: 5 rows in 4.8 s. The shape of the WC2022 graph: 588 Predictions (538 × 6 dates + Opta + bookmaker), 162 Goals, 90 CareerStints, 64 Matches, 8 Stadiums. Runs live in your browser over worldcup (14.8 K triples · 225 KB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/worldcup-2.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What's in this graph","description":"The shape of the WC2022 graph: 64 Matches, 32 SportsTeams, players, Goals, 8 Stadiums, and the Prediction nodes (538 × 6 dates + Opta + bookmaker)… Runs live in your browser over worldcup (14.8 K triples · 225 KB) — no server.","url":"https://caviri.github.io/rete/q/worldcup-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"worldcup","url":"https://caviri.github.io/rete/d/worldcup.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"What's in this graph","description":"Answer: 5 rows in 4.8 s. The shape of the WC2022 graph: 588 Predictions (538 × 6 dates + Opta + bookmaker), 162 Goals, 90 CareerStints, 64 Matches, 8 Stadiums. Runs live in your browser over worldcup (14.8 K triples · 225 KB) — no server.","url":"https://caviri.github.io/rete/q/worldcup-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"worldcup","url":"https://caviri.github.io/rete/d/worldcup.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,14 +49,13 @@
       <div class="chip">Summary</div>
     </div>
     <h1 class="title s1">What&#39;s in this graph</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?kind</span> (<span class="kw">COUNT</span>(<span class="v">?s</span>) <span class="kw">AS</span> <span class="v">?n</span>) <span class="kw">WHERE</span> {
-  <span class="v">?s</span> a <span class="v">?c</span> . <span class="v">?c</span> rdfs:label <span class="v">?kind</span> .
-  <span class="kw">VALUES</span> <span class="v">?c</span> { wc:Match wc:Goal wc:Stadium wc:Prediction w…
-} <span class="kw">GROUP BY</span> <span class="v">?kind</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?n</span>)</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Kind</th><th>#</th></tr></thead><tbody><tr><td class="">Prediction</td><td class="num">588</td></tr><tr><td class="">Goal</td><td class="num">162</td></tr><tr><td class="">CareerStint</td><td class="num">90</td></tr><tr><td class="">Match</td><td class="num">64</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">⚽</div>
       <div class="key">worldcup</div>
       <div class="facts"><b>14.8 K</b> triples · 225 KB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">5 rows</div>
+        <div class="sub">11 range requests · 706.0 KB of 219.1 KB read</div>
+        <div class="sub">in 4.8 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -66,13 +65,13 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=worldcup&amp;load=lazy&amp;mode=sparql&amp;ex=2">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">5 rows · 4.8 s · 706.0 KB of 219.1 KB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX wc: &lt;https://w3id.org/rete/worldcup#&gt;
-PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
 SELECT ?kind (COUNT(?s) AS ?n) WHERE {
-  ?s a ?c . ?c rdfs:label ?kind .
+  ?s a ?c .
   VALUES ?c { wc:Match wc:Goal wc:Stadium wc:Prediction wc:CareerStint }
+  BIND(STRAFTER(STR(?c), &quot;#&quot;) AS ?kind)
 } GROUP BY ?kind ORDER BY DESC(?n)</div>
   <p class="alt" style="margin-top:20px">
     <a href="../playground.html">rete playground</a> ·

@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>The commonest trees in Geneva — tree-city-inventory</title>
-<meta name="description" content="A census over all 239,116 trees, grouped by the shared taxon node. Birch and oak lead at ~12,100 each, then spruce and pine — a temperate-continental… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
+<meta name="description" content="Answer: 20 rows in 3.2 s. A census over all 239,116 trees, grouped by the shared taxon node. Birch and oak lead at ~12,100 each, then spruce and pine — a temperate-continental… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/tree-city-inventory-0.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="The commonest trees in Geneva — tree-city-inventory" />
-<meta property="og:description" content="A census over all 239,116 trees, grouped by the shared taxon node. Birch and oak lead at ~12,100 each, then spruce and pine — a temperate-continental… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
+<meta property="og:description" content="Answer: 20 rows in 3.2 s. A census over all 239,116 trees, grouped by the shared taxon node. Birch and oak lead at ~12,100 each, then spruce and pine — a temperate-continental… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/tree-city-inventory-0.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/tree-city-inventory-0.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="The commonest trees in Geneva — tree-city-inventory" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="The commonest trees in Geneva — tree-city-inventory" />
-<meta name="twitter:description" content="A census over all 239,116 trees, grouped by the shared taxon node. Birch and oak lead at ~12,100 each, then spruce and pine — a temperate-continental… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
+<meta name="twitter:description" content="Answer: 20 rows in 3.2 s. A census over all 239,116 trees, grouped by the shared taxon node. Birch and oak lead at ~12,100 each, then spruce and pine — a temperate-continental… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/tree-city-inventory-0.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"The commonest trees in Geneva","description":"A census over all 239,116 trees, grouped by the shared taxon node. Birch and oak lead at ~12,100 each, then spruce and pine — a temperate-continental… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server.","url":"https://caviri.github.io/rete/q/tree-city-inventory-0.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"tree-city-inventory","url":"https://caviri.github.io/rete/d/tree-city-inventory.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"The commonest trees in Geneva","description":"Answer: 20 rows in 3.2 s. A census over all 239,116 trees, grouped by the shared taxon node. Birch and oak lead at ~12,100 each, then spruce and pine — a temperate-continental… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server.","url":"https://caviri.github.io/rete/q/tree-city-inventory-0.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"tree-city-inventory","url":"https://caviri.github.io/rete/d/tree-city-inventory.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,15 +49,13 @@
       <div class="chip">Aggregate</div>
     </div>
     <h1 class="title s1">The commonest trees in Geneva</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?species</span> (<span class="kw">COUNT</span>(<span class="v">?t</span>) <span class="kw">AS</span> <span class="v">?n</span>) <span class="kw">WHERE</span> {
-  <span class="v">?t</span> a tci:Tree ; tci:taxon <span class="v">?tx</span> .
-  <span class="v">?tx</span> skos:prefLabel <span class="v">?species</span>
-}
-<span class="kw">GROUP BY</span> <span class="v">?species</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?n</span>) <span class="kw">LIMIT</span> 20</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Species</th><th>Trees</th></tr></thead><tbody><tr><td class="">Betula</td><td class="num">12,143</td></tr><tr><td class="">Quercus</td><td class="num">12,100</td></tr><tr><td class="">Picea</td><td class="num">11,118</td></tr><tr><td class="">Pinus</td><td class="num">9,697</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🌳</div>
       <div class="key">tree-city-inventory</div>
       <div class="facts"><b>3.15 M</b> triples · 25 MB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">20 rows</div>
+        <div class="sub">28 range requests · 7.5 MB of 23.9 MB read</div>
+        <div class="sub">in 3.2 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -67,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=tree-city-inventory&amp;load=lazy&amp;mode=sparql&amp;ex=0">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">20 rows · 3.2 s · 7.5 MB of 23.9 MB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX tci: &lt;https://data.graphplaza.com/tree-city-inventory/ns#&gt;
 PREFIX skos: &lt;http://www.w3.org/2004/02/skos/core#&gt;

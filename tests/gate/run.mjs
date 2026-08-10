@@ -233,6 +233,12 @@ function g0() {
   // measured by scripts/preview/capture.mjs and committed to answers.json, and
   // until now nothing read that file. Nine examples sat recorded at 0 rows.
   // Offline by construction: committed JSON + committed catalog, no network.
+  //
+  // Since #212 the same check also reads the OTHER two ways an example can fail
+  // to answer, both of which used to be exempt: a record that came back `ok:
+  // false` (a hang, an engine error, a capture that threw) and an example with
+  // no record at all. Fifty-two entries lived in the first exemption and the
+  // catalog's most expensive query lived in the second.
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/check_catalog_answers.mjs`, {
       encoding: "utf8",
@@ -241,14 +247,15 @@ function g0() {
     const ok = verdict && verdict.verdict === "PASS";
     record(
       "G0",
-      "no catalog example is recorded as answering nothing",
+      "every catalog example has a recorded answer with something in it",
       ok,
       ok
-        ? `${verdict.measured} counted + ${verdict.drawings} drawn, ${verdict.allowEmpty} allowEmpty, ${verdict.unmeasured} unmeasured`
+        ? `${verdict.measured} counted + ${verdict.drawings} drawn, ${verdict.allowEmpty} allowEmpty, `
+          + `${verdict.skipCapture} skipCapture`
         : out.slice(-240),
     );
   } catch (e) {
-    record("G0", "no catalog example is recorded as answering nothing", false,
+    record("G0", "every catalog example has a recorded answer with something in it", false,
       String(e.stdout || e.stderr || e).slice(-240));
   }
 }

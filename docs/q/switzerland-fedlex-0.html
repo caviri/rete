@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>The most-cited acts in Swiss federal law — switzerland-fedlex</title>
-<meta name="description" content="Four hops, and each one lives in a DIFFERENT named graph — hence one graph variable per block. Runs live in your browser over switzerland-fedlex (56.3 M triples · 1.04 GB) — no server." />
+<meta name="description" content="Answer: 25 rows in 595.9 s. Four hops, and each one lives in a DIFFERENT named graph — hence one graph variable per block. Runs live in your browser over switzerland-fedlex (56.3 M triples · 1.04 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/switzerland-fedlex-0.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="The most-cited acts in Swiss federal law — switzerland-fedlex" />
-<meta property="og:description" content="Four hops, and each one lives in a DIFFERENT named graph — hence one graph variable per block. Runs live in your browser over switzerland-fedlex (56.3 M triples · 1.04 GB) — no server." />
+<meta property="og:description" content="Answer: 25 rows in 595.9 s. Four hops, and each one lives in a DIFFERENT named graph — hence one graph variable per block. Runs live in your browser over switzerland-fedlex (56.3 M triples · 1.04 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/switzerland-fedlex-0.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/switzerland-fedlex-0.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="The most-cited acts in Swiss federal law — switzerland-fedlex" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="The most-cited acts in Swiss federal law — switzerland-fedlex" />
-<meta name="twitter:description" content="Four hops, and each one lives in a DIFFERENT named graph — hence one graph variable per block. Runs live in your browser over switzerland-fedlex (56.3 M triples · 1.04 GB) — no server." />
+<meta name="twitter:description" content="Answer: 25 rows in 595.9 s. Four hops, and each one lives in a DIFFERENT named graph — hence one graph variable per block. Runs live in your browser over switzerland-fedlex (56.3 M triples · 1.04 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/switzerland-fedlex-0.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"The most-cited acts in Swiss federal law","description":"Four hops, and each one lives in a DIFFERENT named graph — hence one graph variable per block. Runs live in your browser over switzerland-fedlex (56.3 M triples · 1.04 GB) — no server.","url":"https://caviri.github.io/rete/q/switzerland-fedlex-0.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"switzerland-fedlex","url":"https://caviri.github.io/rete/d/switzerland-fedlex.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"The most-cited acts in Swiss federal law","description":"Answer: 25 rows in 595.9 s. Four hops, and each one lives in a DIFFERENT named graph — hence one graph variable per block. Runs live in your browser over switzerland-fedlex (56.3 M triples · 1.04 GB) — no server.","url":"https://caviri.github.io/rete/q/switzerland-fedlex-0.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"switzerland-fedlex","url":"https://caviri.github.io/rete/d/switzerland-fedlex.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,16 +49,13 @@
       <div class="chip">Aggregate</div>
     </div>
     <h1 class="title s1">The most-cited acts in Swiss federal law</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?act</span> <span class="v">?title</span> <span class="v">?lang</span> (<span class="kw">COUNT</span>(*) <span class="kw">AS</span> <span class="v">?citations</span>) <span class="kw">WHERE</span> {
-  GRAPH <span class="v">?g1</span> { <span class="v">?c</span> jolux:citationToLegalResource <span class="v">?sub</span> }
-  GRAPH <span class="v">?g2</span> { <span class="v">?sub</span> jolux:legalResourceSubdivisionIsPartOf…
-  GRAPH <span class="v">?g3</span> { <span class="v">?act</span> jolux:isRealizedBy <span class="v">?e</span> }
-  GRAPH <span class="v">?g4</span> { <span class="v">?e</span> jolux:title <span class="v">?title</span> ; jolux:language <span class="v">?lan</span>…
-} <span class="kw">GROUP BY</span> <span class="v">?act</span> <span class="v">?title</span> <span class="v">?lang</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?citations</span>) LI…</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Act (ELI)</th><th>Title</th><th>Language</th><th class="more">+1</th></tr></thead><tbody><tr><td class="">112</td><td class="">Botschaft zur Änderun…</td><td class="">DEU</td><td class="more">…</td></tr><tr><td class="">112</td><td class="">Message concernant la…</td><td class="">FRA</td><td class="more">…</td></tr><tr><td class="">112</td><td class="">Messaggio concernente…</td><td class="">ITA</td><td class="more">…</td></tr><tr><td class="">746</td><td class="">Code des obligations…</td><td class="">FRA</td><td class="more">…</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🇨🇭</div>
       <div class="key">switzerland-fedlex</div>
       <div class="facts"><b>56.3 M</b> triples · 1.04 GB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">25 rows</div>
+        <div class="sub">166 range requests · 986.7 MB of 995.2 MB read</div>
+        <div class="sub">in 595.9 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -68,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=switzerland-fedlex&amp;load=lazy&amp;mode=sparql&amp;ex=0">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">25 rows · 595.9 s · 986.7 MB of 995.2 MB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX jolux: &lt;http://data.legilux.public.lu/resource/ontology/jolux#&gt;
 SELECT ?act ?title ?lang (COUNT(*) AS ?citations) WHERE {

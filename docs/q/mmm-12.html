@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>Predicate totals (the shape of the graph) — mmm</title>
-<meta name="description" content="Which CIDOC-CRM / FRBRoo predicates carry the provenance across all 23.3M triples - ownership (P51), production (P108/P7), documentation (P70i), the… Runs live in your browser over mmm (23.3 M triples · 141 MB) — no server." />
+<meta name="description" content="Answer: 30 rows in 16.1 s. Which CIDOC-CRM / FRBRoo predicates carry the provenance across all 23.3M triples - ownership (P51), production (P108/P7), documentation (P70i), the… Runs live in your browser over mmm (23.3 M triples · 141 MB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/mmm-12.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="Predicate totals (the shape of the graph) — mmm" />
-<meta property="og:description" content="Which CIDOC-CRM / FRBRoo predicates carry the provenance across all 23.3M triples - ownership (P51), production (P108/P7), documentation (P70i), the… Runs live in your browser over mmm (23.3 M triples · 141 MB) — no server." />
+<meta property="og:description" content="Answer: 30 rows in 16.1 s. Which CIDOC-CRM / FRBRoo predicates carry the provenance across all 23.3M triples - ownership (P51), production (P108/P7), documentation (P70i), the… Runs live in your browser over mmm (23.3 M triples · 141 MB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/mmm-12.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/mmm-12.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="Predicate totals (the shape of the graph) — mmm" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Predicate totals (the shape of the graph) — mmm" />
-<meta name="twitter:description" content="Which CIDOC-CRM / FRBRoo predicates carry the provenance across all 23.3M triples - ownership (P51), production (P108/P7), documentation (P70i), the… Runs live in your browser over mmm (23.3 M triples · 141 MB) — no server." />
+<meta name="twitter:description" content="Answer: 30 rows in 16.1 s. Which CIDOC-CRM / FRBRoo predicates carry the provenance across all 23.3M triples - ownership (P51), production (P108/P7), documentation (P70i), the… Runs live in your browser over mmm (23.3 M triples · 141 MB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/mmm-12.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Predicate totals (the shape of the graph)","description":"Which CIDOC-CRM / FRBRoo predicates carry the provenance across all 23.3M triples - ownership (P51), production (P108/P7), documentation (P70i), the… Runs live in your browser over mmm (23.3 M triples · 141 MB) — no server.","url":"https://caviri.github.io/rete/q/mmm-12.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mmm","url":"https://caviri.github.io/rete/d/mmm.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Predicate totals (the shape of the graph)","description":"Answer: 30 rows in 16.1 s. Which CIDOC-CRM / FRBRoo predicates carry the provenance across all 23.3M triples - ownership (P51), production (P108/P7), documentation (P70i), the… Runs live in your browser over mmm (23.3 M triples · 141 MB) — no server.","url":"https://caviri.github.io/rete/q/mmm-12.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mmm","url":"https://caviri.github.io/rete/d/mmm.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,11 +49,13 @@
       <div class="chip">Summary</div>
     </div>
     <h1 class="title s1">Predicate totals (the shape of the graph)</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?p</span> (<span class="kw">COUNT</span>(*) <span class="kw">AS</span> <span class="v">?triples</span>) <span class="kw">WHERE</span> { <span class="v">?s</span> <span class="v">?p</span> <span class="v">?o</span> } GROUP…</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>P</th><th>Triples</th></tr></thead><tbody><tr><td class="">type</td><td class="num">3,842,370</td></tr><tr><td class="">prefLabel</td><td class="num">3,302,674</td></tr><tr><td class="">source</td><td class="num">2,911,106</td></tr><tr><td class="">decade</td><td class="num">1,717,208</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">📜</div>
       <div class="key">mmm</div>
       <div class="facts"><b>23.3 M</b> triples · 141 MB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">30 rows</div>
+        <div class="sub">42 range requests · 33.7 MB of 140.3 MB read</div>
+        <div class="sub">in 16.1 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -63,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=mmm&amp;load=lazy&amp;mode=sparql&amp;ex=12">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">30 rows · 16.1 s · 33.7 MB of 140.3 MB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>SELECT ?p (COUNT(*) AS ?triples) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY DESC(?triples) LIMIT 30</div>
   <p class="alt" style="margin-top:20px">

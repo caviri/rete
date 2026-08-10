@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>Entities grouped by type (instance of) — biblissima</title>
-<meta name="description" content="Group entities by their type (prop/direct/P2 = &#39;instance of&#39; in the Biblissima Wikibase), resolved to a French label - the composition of the whole… Runs live in your browser over biblissima (254 M triples · 667 MB) — no server." />
+<meta name="description" content="Answer: 20 rows in 7.6 s. Group entities by their type (prop/direct/P2 = &#39;instance of&#39; in the Biblissima Wikibase), resolved to a French label - the composition of the whole… Runs live in your browser over biblissima (254 M triples · 667 MB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/biblissima-4.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="Entities grouped by type (instance of) — biblissima" />
-<meta property="og:description" content="Group entities by their type (prop/direct/P2 = &#39;instance of&#39; in the Biblissima Wikibase), resolved to a French label - the composition of the whole… Runs live in your browser over biblissima (254 M triples · 667 MB) — no server." />
+<meta property="og:description" content="Answer: 20 rows in 7.6 s. Group entities by their type (prop/direct/P2 = &#39;instance of&#39; in the Biblissima Wikibase), resolved to a French label - the composition of the whole… Runs live in your browser over biblissima (254 M triples · 667 MB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/biblissima-4.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/biblissima-4.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="Entities grouped by type (instance of) — biblissima" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Entities grouped by type (instance of) — biblissima" />
-<meta name="twitter:description" content="Group entities by their type (prop/direct/P2 = &#39;instance of&#39; in the Biblissima Wikibase), resolved to a French label - the composition of the whole… Runs live in your browser over biblissima (254 M triples · 667 MB) — no server." />
+<meta name="twitter:description" content="Answer: 20 rows in 7.6 s. Group entities by their type (prop/direct/P2 = &#39;instance of&#39; in the Biblissima Wikibase), resolved to a French label - the composition of the whole… Runs live in your browser over biblissima (254 M triples · 667 MB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/biblissima-4.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Entities grouped by type (instance of)","description":"Group entities by their type (prop/direct/P2 = 'instance of' in the Biblissima Wikibase), resolved to a French label - the composition of the whole… Runs live in your browser over biblissima (254 M triples · 667 MB) — no server.","url":"https://caviri.github.io/rete/q/biblissima-4.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"biblissima","url":"https://caviri.github.io/rete/d/biblissima.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Entities grouped by type (instance of)","description":"Answer: 20 rows in 7.6 s. Group entities by their type (prop/direct/P2 = 'instance of' in the Biblissima Wikibase), resolved to a French label - the composition of the whole… Runs live in your browser over biblissima (254 M triples · 667 MB) — no server.","url":"https://caviri.github.io/rete/q/biblissima-4.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"biblissima","url":"https://caviri.github.io/rete/d/biblissima.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,13 +49,13 @@
       <div class="chip">Aggregate</div>
     </div>
     <h1 class="title s1">Entities grouped by type (instance of)</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?typeLabel</span> (<span class="kw">COUNT</span>(<span class="v">?s</span>) <span class="kw">AS</span> <span class="v">?n</span>) <span class="kw">WHERE</span> {
-  <span class="v">?s</span> bd:P2 <span class="v">?type</span> . <span class="v">?type</span> rdfs:label <span class="v">?typeLabel</span> . <span class="kw">FILTER</span>(L…
-} <span class="kw">GROUP BY</span> <span class="v">?typeLabel</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?n</span>) <span class="kw">LIMIT</span> 20</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Type Label</th><th>N</th></tr></thead><tbody><tr><td class="">unité textuelle @fr</td><td class="num">370,362</td></tr><tr><td class="">référence biblique @fr</td><td class="num">356,702</td></tr><tr><td class="">manuscrit @fr</td><td class="num">337,819</td></tr><tr><td class="">être humain @fr</td><td class="num">56,701</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🗝️</div>
       <div class="key">biblissima</div>
       <div class="facts"><b>254 M</b> triples · 667 MB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">20 rows</div>
+        <div class="sub">11 range requests · 5.5 MB of 667.5 MB read</div>
+        <div class="sub">in 7.6 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -65,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=biblissima&amp;load=lazy&amp;mode=sparql&amp;ex=4">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">20 rows · 7.6 s · 5.5 MB of 667.5 MB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX bd: &lt;https://data.biblissima.fr/prop/direct/&gt;
 PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;

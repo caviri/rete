@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>The let-7 family across every species that has it — mirbase</title>
-<meta name="description" content="let-7 is the classic deeply-conserved microRNA family — first found in C. elegans, present from insects to mammals. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta name="description" content="Answer: 100 rows in 172 ms. let-7 is the classic deeply-conserved microRNA family — first found in C. elegans, present from insects to mammals. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/mirbase-4.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="The let-7 family across every species that has it — mirbase" />
-<meta property="og:description" content="let-7 is the classic deeply-conserved microRNA family — first found in C. elegans, present from insects to mammals. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta property="og:description" content="Answer: 100 rows in 172 ms. let-7 is the classic deeply-conserved microRNA family — first found in C. elegans, present from insects to mammals. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/mirbase-4.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/mirbase-4.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="The let-7 family across every species that has it — mirbase" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="The let-7 family across every species that has it — mirbase" />
-<meta name="twitter:description" content="let-7 is the classic deeply-conserved microRNA family — first found in C. elegans, present from insects to mammals. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta name="twitter:description" content="Answer: 100 rows in 172 ms. let-7 is the classic deeply-conserved microRNA family — first found in C. elegans, present from insects to mammals. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/mirbase-4.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"The let-7 family across every species that has it","description":"let-7 is the classic deeply-conserved microRNA family — first found in C. elegans, present from insects to mammals. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server.","url":"https://caviri.github.io/rete/q/mirbase-4.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mirbase","url":"https://caviri.github.io/rete/d/mirbase.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"The let-7 family across every species that has it","description":"Answer: 100 rows in 172 ms. let-7 is the classic deeply-conserved microRNA family — first found in C. elegans, present from insects to mammals. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server.","url":"https://caviri.github.io/rete/q/mirbase-4.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mirbase","url":"https://caviri.github.io/rete/d/mirbase.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,16 +49,13 @@
       <div class="chip">Select</div>
     </div>
     <h1 class="title s2">The let-7 family across every species that has it</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?species</span> <span class="v">?stemLoop</span> <span class="v">?conf</span> <span class="kw">WHERE</span> {
-  <span class="v">?fam</span> rdfs:label &quot;let-7&quot; .
-  <span class="v">?h</span> mb:family <span class="v">?fam</span> ; rdfs:label <span class="v">?stemLoop</span> ;
-     mb:organism/rdfs:label <span class="v">?species</span> .
-  <span class="kw">OPTIONAL</span> { <span class="v">?h</span> mb:confidence <span class="v">?conf</span> }
-}</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Species</th><th>Stem-loop</th><th>Confidence</th></tr></thead><tbody><tr><td class="">Acyrthosiphon pisum</td><td class="">api-let-7</td><td class="num">0</td></tr><tr><td class="">Aedes aegypti</td><td class="">aae-let-7</td><td class="num">0</td></tr><tr><td class="">Anolis carolinensis</td><td class="">aca-let-7a</td><td class="num">0</td></tr><tr><td class="">Anolis carolinensis</td><td class="">aca-let-7b</td><td class="num">0</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🧬</div>
       <div class="key">mirbase</div>
       <div class="facts"><b>2.74 M</b> triples · 39 MB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">100 rows</div>
+        <div class="sub">1 range request · 256.0 KB of 39.2 MB read</div>
+        <div class="sub">in 172 ms</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -68,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=mirbase&amp;load=lazy&amp;mode=sparql&amp;ex=4">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">100 rows · 172 ms · 256.0 KB of 39.2 MB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX mb: &lt;https://w3id.org/rete/mirbase#&gt;
 PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
