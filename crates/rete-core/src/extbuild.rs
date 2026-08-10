@@ -2415,10 +2415,21 @@ mod tests {
     ///   RETE_RESUME_CARD    optional JSON card file to embed
     /// Missing permutation sections are rebuilt from global.tri; existing ones
     /// are reused as-is.
+    ///
+    /// **Default graph only.** A spill from a build that had named graphs also
+    /// carries `global.qtri` and `g.graphs`, and this harness ignores both — it
+    /// would resume as a file with the named graphs silently dropped. It is
+    /// checked rather than commented: `global.qtri` present is a hard stop.
     #[test]
     #[ignore = "operational tool, driven by RETE_RESUME_* env vars"]
     fn resume_from_spill() {
         let spill = PathBuf::from(std::env::var("RETE_RESUME_SPILL").expect("RETE_RESUME_SPILL"));
+        assert!(
+            !spill.join("global.qtri").exists(),
+            "this spill has named quads (global.qtri); resuming it here would \
+             write a file with the named graphs silently missing — rerun the \
+             build instead"
+        );
         let out = PathBuf::from(std::env::var("RETE_RESUME_OUT").expect("RETE_RESUME_OUT"));
         let term_count: u64 = std::env::var("RETE_RESUME_TERMS").unwrap().parse().unwrap();
         let quad_count: u64 = std::env::var("RETE_RESUME_QUADS").unwrap().parse().unwrap();
