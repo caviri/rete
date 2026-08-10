@@ -645,8 +645,9 @@ enum Command {
         #[arg(long)]
         no_route: bool,
     },
-    /// Run SPARQL against a remote .rete: files up to 8 MiB are fetched eagerly;
-    /// larger files use lazy HTTP range reads. RETE_EAGER_MAX_MB=0 forces lazy.
+    /// Run SPARQL against a remote .rete: eligible small HTTP objects use one
+    /// full-file transfer into owned memory and the lazy ranged opener; larger
+    /// objects stay remote-lazy. RETE_EAGER_MAX_MB=0 forces remote-lazy.
     SparqlUrl {
         /// http(s):// URL of a `.rete` file (host must honor Range requests).
         url: String,
@@ -655,8 +656,8 @@ enum Command {
         /// Emit standard SPARQL Results JSON (SELECT/ASK).
         #[arg(long)]
         json: bool,
-        /// OWL 2 QL entailment (see `sparql --entail`): reason over the ontology
-        /// while reading only the bytes the rewritten query touches.
+        /// OWL 2 QL entailment (see `sparql --entail`), using the same adaptive
+        /// transfer policy as the plain query.
         #[arg(long)]
         entail: bool,
         /// Skip triple-block bounds checks. Research only: the URL must serve a

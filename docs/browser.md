@@ -115,13 +115,14 @@ so in-browser builds write uncompressed sections (codec `NONE`) — every reader
 accepts them, but `rete build` produces a smaller file from the same input.
 This powers the playground's **Build** tab.
 
-`sparql_url` runs full SPARQL against a **remote `.rete` URL without
-downloading it**: it reads the header, the dictionary chunk directories and
-index tile directories, then faults in only the dictionary chunks and index
-tiles the query touches — and full scans coalesce adjacent tiles into batched
-range reads, so even `?s ?p ?o` costs a handful of requests, not one per
-tile. The result envelope is the same as `query`, plus a `remote` object
-reporting exactly how little of the file was fetched.
+`sparql_url` runs full SPARQL against a **remote `.rete` URL through lazy range
+reads**. Browser/WASM does not adopt native `rete sparql-url`'s small-object
+one-GET policy: every object size uses the remote-lazy opener. Open reads the
+header, dictionary metadata, graph names, and index tile directories/synopses;
+default and named-graph tile payloads are faulted only when a query touches
+them. Full scans coalesce adjacent tiles into batched range reads, but can still
+fetch most or all of a file. The result envelope is the same as `query`, plus a
+`remote` object reporting the bytes and requests fetched for that call.
 
 The design constraint, honestly: the engine is synchronous, and wasm cannot
 block on `fetch`. Instead of an async engine refactor, the byte-range reads
@@ -133,9 +134,13 @@ throws. The host must answer `Range` requests with `206 Partial Content`
 and send CORS headers when cross-origin. A range fetch that fails mid-query
 is an error — never a silently incomplete result.
 
-The length probe uses a one-byte ranged `GET` (reading the total from
-`Content-Range`) rather than `HEAD`, since some hosts reject `HEAD` —
-notably Hugging Face's signed-redirect storage, which answers `405`.
+The default synchronous XHR reader prefers a `HEAD` probe and reads the full
+size from `Content-Length`, which browsers expose without an
+`Access-Control-Expose-Headers` entry. If `HEAD` is rejected or lacks a usable
+length, the reader falls back to `Range: bytes=0-0` and reads the total from
+`Content-Range`. Cross-origin hosts must expose `Content-Range` through CORS for
+that fallback; the production R2 policy does so. This probe choice does not
+change the browser's always-lazy data path.
 
 ## Caching remote reads
 
@@ -315,6 +320,13 @@ HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
 tiles cross the wire), caches those reads across queries (above), and federates a
 query across **several** sources via the SPARQL console's **+ Add source** button
 — see [Federated queries](federation.md#in-the-playground).
+
+For a catalog entry with `shards`, the playground keeps one always-lazy
+`RemoteGraph` per shard and fans queries across those independent files before
+merging results; the native small-object threshold never turns a shard into a
+whole-file fetch. This browser path is separate from CLI `rete federate`, which
+retains its own existing ranged opener and likewise is not part of native
+`sparql-url`'s one-GET optimization.
 
 ### Rich result cells and focused cards
 

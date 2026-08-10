@@ -1128,9 +1128,10 @@ extern "C" {
         n: usize,
         dst_ptr: *mut u8,
     ) -> usize;
-    /// Async length probe (a `bytes=0-0` fetch; reads the total from
-    /// `Content-Range`). Writes the u64 length to `out_ptr`, returns 1 on
-    /// success. Lets the asyncify build open a file with NO sync XHR at all.
+    /// Host-provided Asyncify length probe. Writes the u64 length to `out_ptr`
+    /// and returns 1 on success. The shipped browser host prefers HEAD and
+    /// falls back to `bytes=0-0`; test or custom hosts may obtain the length
+    /// differently. Lets the Asyncify build open a file with no sync XHR.
     fn rete_file_len(url_ptr: *const u8, url_len: usize, out_ptr: *mut u64) -> usize;
     /// LEAF panic reporter (deliberately NOT in asyncify-imports): the panic
     /// hook passes the raw `Location` pointers so the host can log file:line
@@ -1268,10 +1269,12 @@ impl XhrRangeReader {
 }
 
 impl XhrRangeReader {
-    /// Probe the resource length. Some hosts reject `HEAD` (Hugging Face's
-    /// signed-redirect storage answers `405`), so use a one-byte ranged `GET`
-    /// and read the total from the `Content-Range` header (`bytes 0-0/TOTAL`),
-    /// falling back to `Content-Length` if the host doesn't send a range.
+    /// Probe the resource length. The default synchronous XHR path prefers
+    /// `HEAD`/`Content-Length`, then falls back to a `bytes=0-0` ranged `GET`
+    /// and its `Content-Range` total. The Asyncify build delegates this
+    /// operation to its host import: the shipped host follows the same
+    /// HEAD-first policy, while test or custom hosts may implement the probe
+    /// differently.
     fn open(url: &str) -> Result<Self, JsValue> {
         // Asyncify build: probe the length via the async import — no sync XHR.
         #[cfg(feature = "asyncify")]
@@ -1343,8 +1346,10 @@ impl XhrRangeReader {
             .filter(|&n| n > 0)
     }
 
-    /// One length probe: a one-byte ranged `GET`, reading the total from
-    /// `Content-Range` (`bytes 0-0/TOTAL`), falling back to `Content-Length`.
+    /// One fallback length probe: a ranged `GET` requesting byte zero, reading
+    /// the total from `Content-Range` (`bytes 0-0/TOTAL`) or `Content-Length`.
+    /// A host that honors Range returns one byte; a host that ignores it may
+    /// return a full `200` response.
     #[cfg(not(feature = "asyncify"))]
     fn probe_len(url: &str) -> Result<u64, String> {
         let err = |m: &str| m.to_string();
@@ -1588,9 +1593,10 @@ impl rete_core::ServiceClient for XhrServiceClient {
 /// Open a remote `.rete` lazily over HTTP range reads, returning the counting
 /// reader (for byte/request stats) and the `Rete`. The seam every `*_url`
 /// task shares with [`sparql_url`].
-/// Auto-tune the block-cache size from the FILE SIZE — known for free at open
-/// from the `Content-Range` of the single `bytes=0-0` request (one byte, no
-/// download; it's what `stats().fileLength` reports). Remote reads are
+/// Auto-tune the block-cache size from the FILE SIZE. The default synchronous
+/// path and shipped Asyncify host prefer a HEAD response, with `bytes=0-0` as a
+/// fallback. A custom Asyncify host may determine the length another way. The
+/// resulting value is what `stats().fileLength` reports. Remote reads are
 /// round-trip-bound, so a bigger block means far fewer requests; benchmarked on
 /// wikidata-1GB: 64 KiB = 262 reqs / 63 s, 256 KiB = 83 / 27 s, 512 KiB = 51 / 19 s.
 /// Bigger files (bigger working sets + dictionaries) get bigger blocks as

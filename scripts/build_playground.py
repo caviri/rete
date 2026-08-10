@@ -31,10 +31,11 @@ import sys
 # Patch spliced into the asyncified wasm-bindgen glue in place of the
 # `const import1 = require("env");` line (which throws in a browser). It defines
 # the two async imports (env.rete_fetch_ranges = Promise.all of fetch;
-# env.rete_file_len = a bytes=0-0 length probe), the Asyncify suspend/rewind
-# driver `reteDrive`, and `reteOpenRemote` (opens a resident RemoteGraph by
-# driving the raw constructor and wrapping the pointer ONCE after rewind — so the
-# unwind pass never registers a garbage instance with the FinalizationRegistry).
+# env.rete_file_len = a HEAD-first probe with a bytes=0-0 fallback), the
+# Asyncify suspend/rewind driver `reteDrive`, and `reteOpenRemote` (opens a
+# resident RemoteGraph by driving the raw constructor and wrapping the pointer
+# ONCE after rewind — so the unwind pass never registers a garbage instance with
+# the FinalizationRegistry).
 # Sits inside the glue closure, so it can use wasm/passStringToWasm0/RemoteGraph/
 # takeObject/WASM_VECTOR_LEN directly. Proven end-to-end in dev/asyncify-e2e.cjs.
 ASYNC_ENV_JS = """

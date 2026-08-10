@@ -277,12 +277,16 @@
 **Files:**
 
 - Modify: `crates/rete-cli/src/commands/url.rs`
+- Modify: `crates/rete-cli/src/main.rs`
+- Modify: `crates/rete-cli/tests/help_contract.rs`
+- Modify: `crates/rete-wasm/src/lib.rs`
+- Modify: `scripts/build_playground.py`
 - Modify: `docs/cli.md`
 - Modify: `docs/browser.md`
 - Regenerate: `docs/cli.html`
 - Regenerate: `docs/browser.html`
 
-- [ ] **Step 1: Replace the stale read-path claims**
+- [x] **Step 1: Replace the stale read-path claims**
 
   Update the `sparql-url` prose in `docs/cli.md` in both the earlier reasoning section and the command reference. State precisely:
 
@@ -290,14 +294,14 @@
   - files at or below `RETE_EAGER_MAX_MB` (default 8 MiB) are fetched once into owned memory, then parsed/query-executed from that image;
   - larger files remain remote-lazy and use HTTP range reads;
   - `RETE_EAGER_MAX_MB=0` forces remote-lazy behavior;
-  - `--unsafe-read` selects the measured experimental kernel but does not relax file or HTTP validation;
+  - the hidden `--unsafe-decode` flag exists only in non-default `unsafe-decode-bench` builds: HTTP and outer framing validation remain, but triple-block bounds validation is explicitly skipped and malformed/truncated/mutable input can cause undefined behavior;
   - `rete federate` retains its existing ranged opener and is not part of the small-object one-GET optimization.
 
   In `docs/browser.md`, replace the claim that length discovery uses `Range: bytes=0-0` instead of `HEAD`. Explain that the browser reader prefers `HEAD` and falls back to a `0-0` range probe when needed, and that R2 CORS must expose `Content-Range` for the fallback.
 
   Update module/command comments in `crates/rete-cli/src/commands/url.rs` so they match the adaptive behavior. Comments must not claim all HTTP queries remain range-lazy.
 
-- [ ] **Step 2: Run documentation generation and focused verification**
+- [x] **Step 2: Run documentation generation and focused verification**
 
   ```powershell
   docker compose run --rm dev cargo run -q -p docgen
@@ -308,7 +312,7 @@
 
   Inspect the generated HTML diff and verify it contains only the intended prose regeneration.
 
-- [ ] **Step 3: Review and commit Task 3**
+- [x] **Step 3: Review and commit Task 3**
 
   ```powershell
   git add crates/rete-cli/src/commands/url.rs docs/cli.md docs/browser.md docs/cli.html docs/browser.html

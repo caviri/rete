@@ -1,7 +1,10 @@
 //! The ranged-read group: read a `.rete` from an `http(s)://` URL or local path.
 //! Summary and triple-pattern operations fetch only their required ranges.
-//! SPARQL eagerly opens small remote objects and keeps lazy tile faulting for
-//! larger remote objects and local paths. Each wraps the transport in a
+//! Native SPARQL adaptively transfers a small remote object once into owned
+//! memory, then still parses and evaluates it through the lazy ranged opener.
+//! Larger remote objects retain lazy transport and tile faulting. Normal local
+//! SPARQL opening follows `open_local`'s separate size policy and is not governed
+//! by this HTTP threshold. Each URL-command path wraps its transport in a
 //! `CountingReader` and reports bytes fetched + range-request count.
 
 use std::ffi::OsStr;
@@ -194,8 +197,10 @@ pub(crate) fn query_url(
 }
 
 /// Run SPARQL against a `.rete` over HTTP(S). Small non-empty HTTP objects are
-/// opened from one full-file range request; larger objects retain lazy tile
-/// faulting, fetching index tiles only when scans and probes touch them.
+/// transferred by one exact full-file range request into owned memory, then
+/// opened through the same lazy section/tile parser. Larger objects retain
+/// remote-lazy tile faulting and fetch index tiles only when evaluation touches
+/// them.
 pub(crate) fn sparql_url(
     url: &str,
     query: &str,
@@ -203,9 +208,10 @@ pub(crate) fn sparql_url(
     entail: bool,
     #[cfg(feature = "unsafe-decode-bench")] unsafe_decode: bool,
 ) -> anyhow::Result<()> {
-    // This command historically also accepts a local path. The native eager
-    // threshold is an HTTP policy, so local sources must not parse or depend on
-    // its environment setting. For HTTP(S), validation still precedes HEAD/GET.
+    // This command historically also accepts a local path. The native
+    // full-transfer threshold is an HTTP policy, so local sources must not parse
+    // or depend on its environment setting. For HTTP(S), threshold validation
+    // still precedes the HEAD probe and range GETs.
     let eager_max = if crate::commands::range_source::is_url(url) {
         eager_max_bytes()?
     } else {
@@ -217,7 +223,7 @@ pub(crate) fn sparql_url(
     // block fetches. `RETE_BLOCK_KB=0` disables it (one fetch per logical read).
     let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(url)?));
     let total = reader.len();
-    // The block size is computed only in the lazy branch. An explicit
+    // The block size is computed only in the remote-lazy branch. An explicit
     // `RETE_BLOCK_KB` wins (0 disables the cache); otherwise auto-tune it.
     let mut rete = if should_eager_open(url, total, eager_max) {
         let image = reader.read_at(0, total)?;
@@ -279,8 +285,8 @@ pub(crate) fn sparql_url(
 
 /// Explain a triple-pattern result over a **remote** `.rete` — which permutation,
 /// section, and byte ranges answered it — fetching only the routed tiles. The CLI
-/// counterpart of the browser's `why_url`, mirroring [`sparql_url`]'s lazy
-/// block-cached open.
+/// counterpart of the browser's `why_url`, using the same lazy block-cached
+/// open as [`sparql_url`]'s large-object and forced-lazy branches.
 pub(crate) fn why_url(
     url: &str,
     subject: Option<String>,

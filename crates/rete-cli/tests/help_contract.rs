@@ -76,3 +76,14 @@ fn release_critical_subcommand_help_keeps_required_flags() {
             .stdout(predicate::str::contains(required));
     }
 }
+
+#[test]
+fn sparql_url_help_distinguishes_full_transfer_from_lazy_parsing() {
+    common::rete()
+        .args(["sparql-url", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("one full-file transfer"))
+        .stdout(predicate::str::contains("lazy ranged opener"))
+        .stdout(predicate::str::contains("same adaptive transfer policy"));
+}

@@ -436,13 +436,14 @@ as a file. One caveat: the wasm engine ships only the pure-Rust zstd <em>decoder
 so in-browser builds write uncompressed sections (codec <code>NONE</code>) — every reader
 accepts them, but <code>rete build</code> produces a smaller file from the same input.
 This powers the playground's <strong>Build</strong> tab.</p>
-<p><code>sparql_url</code> runs full SPARQL against a <strong>remote <code>.rete</code> URL without
-downloading it</strong>: it reads the header, the dictionary chunk directories and
-index tile directories, then faults in only the dictionary chunks and index
-tiles the query touches — and full scans coalesce adjacent tiles into batched
-range reads, so even <code>?s ?p ?o</code> costs a handful of requests, not one per
-tile. The result envelope is the same as <code>query</code>, plus a <code>remote</code> object
-reporting exactly how little of the file was fetched.</p>
+<p><code>sparql_url</code> runs full SPARQL against a <strong>remote <code>.rete</code> URL through lazy range
+reads</strong>. Browser/WASM does not adopt native <code>rete sparql-url</code>'s small-object
+one-GET policy: every object size uses the remote-lazy opener. Open reads the
+header, dictionary metadata, graph names, and index tile directories/synopses;
+default and named-graph tile payloads are faulted only when a query touches
+them. Full scans coalesce adjacent tiles into batched range reads, but can still
+fetch most or all of a file. The result envelope is the same as <code>query</code>, plus a
+<code>remote</code> object reporting the bytes and requests fetched for that call.</p>
 <p>The design constraint, honestly: the engine is synchronous, and wasm cannot
 block on <code>fetch</code>. Instead of an async engine refactor, the byte-range reads
 use <strong>synchronous XHR — which browsers permit only inside Web Workers</strong>. So
@@ -452,9 +453,13 @@ throws. The host must answer <code>Range</code> requests with <code>206 Partial 
 (a host that ignores <code>Range</code> is rejected loudly, never silently mis-read)
 and send CORS headers when cross-origin. A range fetch that fails mid-query
 is an error — never a silently incomplete result.</p>
-<p>The length probe uses a one-byte ranged <code>GET</code> (reading the total from
-<code>Content-Range</code>) rather than <code>HEAD</code>, since some hosts reject <code>HEAD</code> —
-notably Hugging Face's signed-redirect storage, which answers <code>405</code>.</p>
+<p>The default synchronous XHR reader prefers a <code>HEAD</code> probe and reads the full
+size from <code>Content-Length</code>, which browsers expose without an
+<code>Access-Control-Expose-Headers</code> entry. If <code>HEAD</code> is rejected or lacks a usable
+length, the reader falls back to <code>Range: bytes=0-0</code> and reads the total from
+<code>Content-Range</code>. Cross-origin hosts must expose <code>Content-Range</code> through CORS for
+that fallback; the production R2 policy does so. This probe choice does not
+change the browser's always-lazy data path.</p>
 <h2>Caching remote reads</h2>
 <p>Range reads are <strong>cached</strong>, so re-running or refining a query on a remote dataset
 re-fetches almost nothing. Two layers:</p>
@@ -612,6 +617,12 @@ HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
 tiles cross the wire), caches those reads across queries (above), and federates a
 query across <strong>several</strong> sources via the SPARQL console's <strong>+ Add source</strong> button
 — see <a href="federation.html#in-the-playground">Federated queries</a>.</p>
+<p>For a catalog entry with <code>shards</code>, the playground keeps one always-lazy
+<code>RemoteGraph</code> per shard and fans queries across those independent files before
+merging results; the native small-object threshold never turns a shard into a
+whole-file fetch. This browser path is separate from CLI <code>rete federate</code>, which
+retains its own existing ranged opener and likewise is not part of native
+<code>sparql-url</code>'s one-GET optimization.</p>
 <h3>Rich result cells and focused cards</h3>
 <p>Every Table column and Card field has the same explicit render-type menu. In
 addition to Auto, Text, Link, Button, Image, IIIF, PDF viewer, Map, 3D, Audio,

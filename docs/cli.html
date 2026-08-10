@@ -496,8 +496,11 @@ standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a 
 includes ontology-entailed solutions (<code>rdfs:subClassOf</code> / <code>subPropertyOf</code> /
 <code>domain</code> / <code>range</code> / <code>owl:inverseOf</code> / <code>someValuesFrom</code>), computed over the raw
 data with no materialization — off by default, so a plain query is unchanged. Same
-flag on <code>rete sparql-url</code> reasons over a remote file, fetching only what the
-rewritten query touches. See <a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</p>
+flag on <code>rete sparql-url</code> reasons over a remote file. Its byte behavior follows
+the command's adaptive transfer policy: an eligible small object is fetched in
+one exact full-file range request, while a larger object (or
+<code>RETE_EAGER_MAX_MB=0</code>) remains remote-lazy and fetches the ranges touched by the
+rewritten evaluation. See <a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</p>
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
@@ -717,18 +720,22 @@ bound term is unknown, the index is skipped entirely and the result is empty.</p
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
 <h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
-<p>Run a full SPARQL query over HTTP. The native CLI first sends a <code>HEAD</code> probe to
-learn the object's length. A non-empty remote file up to 8 MiB is fetched with
-one exact full-file <code>Range</code> GET for <code>[0,len)</code> (<code>bytes=0-(len-1)</code>) into a bounded,
-owned in-memory range source. The bytes remain compressed; <code>Rete</code> opens them
-through its lazy ranged reader and decompresses dictionary chunks,
-default-graph index tiles, the pyramid, and text-index data on demand. The
-named-graphs section still decodes during open. Physical accounting is therefore
-one GET and the full compressed file length, without the eager <code>Rete::open</code>
-whole-image decode of every section. Larger files use <strong>remote-lazy tile faulting</strong>:
-the open fetches the header and small dictionary/index directories, then reads
-O(touched tiles) rather than the whole index.</p>
-<p><code>RETE_EAGER_MAX_MB</code> sets the eager threshold in MiB (default <code>8</code>), and
+<p>Run a full SPARQL query over HTTP. The native CLI first validates a <code>HEAD</code> probe
+and learns the object's length. A non-empty remote file at or below
+<code>RETE_EAGER_MAX_MB</code> (8 MiB by default) is fetched with one exact full-file
+<code>Range</code> GET for <code>[0,len)</code> (<code>bytes=0-(len-1)</code>) into an owned in-memory range
+source. <code>Rete</code> then parses and evaluates that image through its lazy ranged
+opener; full transfer does not mean eager <code>Rete::open</code> decoding of every
+section. Dictionary chunks, default-graph and named-graph index tiles, pyramid
+data, and text-index data are decoded when the open or query needs them.</p>
+<p>Larger files use <strong>remote-lazy tile faulting</strong>. Open reads bounded framing,
+dictionary metadata, graph names, tile directories, and optional synopses. It
+does not fetch or decompress named-graph tile payloads; a <code>GRAPH</code> or <code>FROM</code>
+query faults only the named tiles it routes to, just as default-graph evaluation
+faults its selected tiles. A broad query can still touch much more data than a
+selective one, and query-triggered zstd decompression has no new global output
+cap in this change.</p>
+<p><code>RETE_EAGER_MAX_MB</code> sets the full-transfer threshold in MiB (default <code>8</code>), and
 <code>RETE_EAGER_MAX_MB=0</code> forces the lazy path. It must be a non-negative integer
 whose byte count fits the platform; an invalid value fails before any network
 request. The value is parsed only for HTTP(S); a local path accepted by this
@@ -736,6 +743,13 @@ command keeps its prior behavior even if the environment value is invalid.
 Larger native HTTP objects, native HTTP reads with <code>RETE_EAGER_MAX_MB=0</code>, and
 browser/WASM readers remain remote-lazy. A range failure mid-query is reported
 as an error, never as silently fewer rows.</p>
+<p>The hidden <code>--unsafe-decode</code> flag exists only in a non-default build compiled
+with the <code>unsafe-decode-bench</code> feature. It selects the measured research decoder
+without changing HTTP status, <code>Content-Range</code>, body-length, or outer file and
+framing validation, but it <strong>does skip triple-block bounds validation</strong>.
+Malformed, mutable, or truncated block input can therefore cause undefined
+behavior. Normal builds neither compile this path nor accept the flag; it is not
+a switch for querying arbitrary remote files.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>
@@ -754,6 +768,10 @@ aggregates (<code>COUNT</code>/<code>GROUP BY</code>) and <code>LIMIT</code> are
 unioned (a federated <code>COUNT(*)</code> returns per-source counts, not a global sum). See
 <a href="federation.html">Federated queries</a> for the full model, limitations, and a real
 OpenCitations multi-shard example.</p>
+<p><code>rete federate</code> uses its existing ranged source opener; it does not use
+<code>sparql-url</code>'s small-object one-GET policy. Catalog <code>shards</code> in the browser are
+also a separate path: the playground keeps one always-lazy <code>RemoteGraph</code> per
+shard and fans the query across them before merging the results.</p>
 <pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
                                           &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'

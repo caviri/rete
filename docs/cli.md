@@ -204,8 +204,11 @@ standard SPARQL Results JSON (for `SELECT`/`ASK`). See [SPARQL support](sparql.m
 includes ontology-entailed solutions (`rdfs:subClassOf` / `subPropertyOf` /
 `domain` / `range` / `owl:inverseOf` / `someValuesFrom`), computed over the raw
 data with no materialization — off by default, so a plain query is unchanged. Same
-flag on `rete sparql-url` reasons over a remote file, fetching only what the
-rewritten query touches. See [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
+flag on `rete sparql-url` reasons over a remote file. Its byte behavior follows
+the command's adaptive transfer policy: an eligible small object is fetched in
+one exact full-file range request, while a larger object (or
+`RETE_EAGER_MAX_MB=0`) remains remote-lazy and fetches the ranges touched by the
+rewritten evaluation. See [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
 
 ```sh
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
@@ -476,19 +479,24 @@ rete query-url https://host/data.rete --object '<http://ex/Dave>'
 ```
 
 ### `rete sparql-url <url> "<query>" [--json]`
-Run a full SPARQL query over HTTP. The native CLI first sends a `HEAD` probe to
-learn the object's length. A non-empty remote file up to 8 MiB is fetched with
-one exact full-file `Range` GET for `[0,len)` (`bytes=0-(len-1)`) into a bounded,
-owned in-memory range source. The bytes remain compressed; `Rete` opens them
-through its lazy ranged reader and decompresses dictionary chunks,
-default-graph index tiles, the pyramid, and text-index data on demand. The
-named-graphs section still decodes during open. Physical accounting is therefore
-one GET and the full compressed file length, without the eager `Rete::open`
-whole-image decode of every section. Larger files use **remote-lazy tile faulting**:
-the open fetches the header and small dictionary/index directories, then reads
-O(touched tiles) rather than the whole index.
+Run a full SPARQL query over HTTP. The native CLI first validates a `HEAD` probe
+and learns the object's length. A non-empty remote file at or below
+`RETE_EAGER_MAX_MB` (8 MiB by default) is fetched with one exact full-file
+`Range` GET for `[0,len)` (`bytes=0-(len-1)`) into an owned in-memory range
+source. `Rete` then parses and evaluates that image through its lazy ranged
+opener; full transfer does not mean eager `Rete::open` decoding of every
+section. Dictionary chunks, default-graph and named-graph index tiles, pyramid
+data, and text-index data are decoded when the open or query needs them.
 
-`RETE_EAGER_MAX_MB` sets the eager threshold in MiB (default `8`), and
+Larger files use **remote-lazy tile faulting**. Open reads bounded framing,
+dictionary metadata, graph names, tile directories, and optional synopses. It
+does not fetch or decompress named-graph tile payloads; a `GRAPH` or `FROM`
+query faults only the named tiles it routes to, just as default-graph evaluation
+faults its selected tiles. A broad query can still touch much more data than a
+selective one, and query-triggered zstd decompression has no new global output
+cap in this change.
+
+`RETE_EAGER_MAX_MB` sets the full-transfer threshold in MiB (default `8`), and
 `RETE_EAGER_MAX_MB=0` forces the lazy path. It must be a non-negative integer
 whose byte count fits the platform; an invalid value fails before any network
 request. The value is parsed only for HTTP(S); a local path accepted by this
@@ -496,6 +504,14 @@ command keeps its prior behavior even if the environment value is invalid.
 Larger native HTTP objects, native HTTP reads with `RETE_EAGER_MAX_MB=0`, and
 browser/WASM readers remain remote-lazy. A range failure mid-query is reported
 as an error, never as silently fewer rows.
+
+The hidden `--unsafe-decode` flag exists only in a non-default build compiled
+with the `unsafe-decode-bench` feature. It selects the measured research decoder
+without changing HTTP status, `Content-Range`, body-length, or outer file and
+framing validation, but it **does skip triple-block bounds validation**.
+Malformed, mutable, or truncated block input can therefore cause undefined
+behavior. Normal builds neither compile this path nor accept the flag; it is not
+a switch for querying arbitrary remote files.
 
 ```sh
 rete sparql-url https://host/data.rete \
@@ -519,6 +535,11 @@ aggregates (`COUNT`/`GROUP BY`) and `LIMIT` are evaluated **per source** then
 unioned (a federated `COUNT(*)` returns per-source counts, not a global sum). See
 [Federated queries](federation.md) for the full model, limitations, and a real
 OpenCitations multi-shard example.
+
+`rete federate` uses its existing ranged source opener; it does not use
+`sparql-url`'s small-object one-GET policy. Catalog `shards` in the browser are
+also a separate path: the playground keeps one always-lazy `RemoteGraph` per
+shard and fans the query across them before merging the results.
 
 ```sh
 rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
