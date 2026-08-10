@@ -196,6 +196,93 @@ hf buckets ls katospiegel/rete-public/rete/foo/foo.rete --recursive --json
 Anything short of N/N is listed by key in `dev/backup-hf/missing.txt`; the logs
 and the resume state live beside it in `dev/backup-hf/`.
 
+## 7. Back up the SOURCE too — a `.rete` is a derived artifact
+
+Step 6 protects the graph. It does **not** protect the thing the graph was made
+from, and those are not the same asset. The repo has withdrawn its pre-1.0
+backwards-compatibility promise, so **every published graph will be rebuilt at
+least once** — and a rebuild needs the source, not the output. `getty-tgn` was
+lost exactly this way during the `0x02` → v5 migration: the `.rete` could no
+longer be read and there was nothing left to rebuild it from.
+
+Do this in the same sitting as step 6, for the same dataset:
+
+```bash
+# After publishing one dataset — the normal case.
+scripts/backup_sources_to_hf.sh <dataset-dir>          # e.g. davidrumsey-maps
+
+# Plan only; prints file counts and GiB, uploads nothing.
+scripts/backup_sources_to_hf.sh --all --dry-run
+
+# Whole-corpus sweep.
+scripts/backup_sources_to_hf.sh --all
+```
+
+### Destination keys
+
+A second prefix beside `rete/`, in the shape the hand-mirrored datasets already
+use — do not invent a third:
+
+```text
+local  data/<dataset>/raw/<path>  ->  hf  sources/<dataset>/<path>   ("raw/" strips)
+local  data/<dataset>/<path>      ->  hf  sources/<dataset>/<path>
+```
+
+`raw/` disappears from the key because the datasets mirrored before the script
+existed (`cordis`, `dblp`, `ror`, `zenodo`, `graphontology`, …) keep their source
+archive at the top of the dataset directory and have no `raw/` at all. A handful
+of dataset directories map to a different bucket prefix — `davidrumsey-maps` →
+`davidrumsey`, `epfl-graph` → `graphontology`, `openalex` →
+`semopenalex/2025-02-10` — because the bytes were uploaded by hand under those
+names; the mapping exists so a sweep *recognises* them instead of writing a
+second copy. `scripts/backup_sources_to_hf.sh --all --list` prints it.
+
+### What counts as source
+
+- **Everything under `raw/` is source, unfiltered.** A `.nt` or `.ttl` in there
+  is a *downloaded* ontology, not something we generated — filtering by
+  extension would silently drop it.
+- **Outside `raw/`, the derived lanes are filtered out**: `*.rete`, parquet /
+  duckdb / sqlite companions, generated N-Triples, `spill/`, `parquet-*/`,
+  `shards/`, `companions/`, build logs. All of that is reproducible from the
+  source; the source is not reproducible from it.
+
+The rules live in two rsync-style filter files the script writes into
+`dev/backup-sources/`. **They have to be files.** `hf buckets sync
+--exclude '*.rete'` silently matches *nothing* — only directory-prefix patterns
+like `raw/**` work as a command-line flag — while the identical pattern inside
+`--filter-from` works. Every file-level rule therefore goes in the filter file.
+
+### What the script guarantees
+
+- **Resumable and additive.** `hf buckets sync --ignore-times` compares by byte
+  size only, so an object already in the bucket at the identical length is
+  skipped. `--delete` is never passed: the script only ever adds.
+- **Verified by re-planning, not by exit code.** After syncing, the *same* plan
+  is recomputed against a freshly listed bucket. The dataset counts as mirrored
+  only when that second plan holds **zero** remaining uploads — which is a
+  size comparison over every single file, not a spot check.
+- **Single instance, by atomic `mkdir` lock** in `dev/backup-sources/.lock`, for
+  the same reason as step 6.
+- **Bulk-safe.** Directories go through `hf buckets sync`, not per-file
+  `hf buckets cp`: `davidrumsey` alone is 449,247 files, which as individual
+  `cp` invocations would take days.
+
+### Not everything is on disk, and that is the point
+
+`openaire`, `orcid` and `crossref` are on the skip list: their source tars are
+**already** in the bucket under a hand-made snapshot-dated layout
+(`sources/openaire/2021-v3.0/`, `sources/orcid/2025/`,
+`sources/crossref/public-data-file-2026-03/`) and the local copies were deleted
+afterwards to free disk. The bucket is the only copy — which is exactly the
+outcome this step exists to produce.
+
+If a dataset's source is *neither* on disk *nor* in the bucket, say so in the
+dataset README with the URL it can be re-fetched from, and re-fetch it before
+the link rots. `data/databnf/urls.txt` is the cautionary example: 22
+`transfert.bnf.fr` one-time transfer links, no local copy of the 6.2 GB dump
+they served.
+
 ## Commit
 
 Commit `catalog.js`, `web/datasets.lock.json`, the rebuilt
