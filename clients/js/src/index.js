@@ -133,6 +133,23 @@ function parseLiteral(token) {
 
 const cleanIri = (token) => Term.parse(token).value;
 
+/**
+ * A dump filter value → the N-Triples term token the engine's dictionary stores.
+ *
+ * Accepts a {@link Term}, an already-canonical token (`<iri>`, `'"x"@en'`,
+ * `_:b`), or — this client's normal currency — a clean IRI string, which gets
+ * its angle brackets here. `undefined`/`null` mean unbound; the engine spells
+ * that `""`, so a caller never needs a separate sentinel.
+ */
+function term(value, what) {
+  if (value === undefined || value === null) return "";
+  if (value instanceof Term) return value.n3;
+  if (typeof value !== "string")
+    throw new TypeError(`the \`${what}\` option takes an IRI string, a Term, null, or undefined`);
+  if (value.startsWith("<") || value.startsWith('"') || value.startsWith("_:")) return value;
+  return `<${value}>`;
+}
+
 // ---------------------------------------------------------------------------
 // wasm initialization: lazy, once. The single-file script-tag bundle embeds
 // the wasm bytes and hands them over via __setWasmSource; the ESM build loads
@@ -294,8 +311,8 @@ export class Graph {
    *   are re-serializing rather than inspecting.
    * - `batch`: quads fetched per wasm call (default 10 000).
    */
-  async *dump({ graph, raw = false, batch = DUMP_BATCH } = {}) {
-    const cursor = this.#cursor(graph);
+  async *dump({ graph, subject, predicate, object, raw = false, batch = DUMP_BATCH } = {}) {
+    const cursor = this.#cursor({ graph, subject, predicate, object });
     try {
       for (;;) {
         // A flat [s, p, o, g, s, p, o, g, …] array: one JS array per BATCH,
@@ -336,8 +353,8 @@ export class Graph {
    * instead of four per quad, and nothing is re-serialized in JavaScript.
    * Takes the same `graph` / `batch` options as {@link dump}.
    */
-  async *nquads({ graph, batch = DUMP_BATCH } = {}) {
-    const cursor = this.#cursor(graph);
+  async *nquads({ graph, subject, predicate, object, batch = DUMP_BATCH } = {}) {
+    const cursor = this.#cursor({ graph, subject, predicate, object });
     try {
       for (;;) {
         const chunk = cursor.next_nquads(batch);
@@ -387,15 +404,25 @@ export class Graph {
     return parts.join("");
   }
 
-  /** Open an engine-side cursor for the `graph` option of the dump methods. */
-  #cursor(graph) {
+  /**
+   * Open an engine-side cursor for the `graph` / `subject` / `predicate` /
+   * `object` options of the dump methods.
+   *
+   * The three term filters are not a row test the wrapper applies — they go into
+   * the engine's scan as a triple pattern, which routes to one permutation and
+   * drops every index tile whose synopsis proves it cannot match *before*
+   * fetching it. That is what makes a filtered dump of a remote graph cost the
+   * slice rather than the graph.
+   */
+  #cursor({ graph, subject, predicate, object }) {
     // undefined → every graph; null → the default graph (the engine's ""
     // sentinel); a string → that named graph, as a clean IRI or an <iri> token.
-    if (graph === undefined) return this.#g.quads(undefined);
-    if (graph === null) return this.#g.quads("");
-    if (typeof graph !== "string")
-      throw new TypeError("the `graph` option takes an IRI string, null, or undefined");
-    return this.#g.quads(graph);
+    let slot;
+    if (graph === undefined) slot = undefined;
+    else if (graph === null) slot = "";
+    else if (typeof graph === "string") slot = graph;
+    else throw new TypeError("the `graph` option takes an IRI string, null, or undefined");
+    return this.#g.quads(slot, term(subject, "subject"), term(predicate, "predicate"), term(object, "object"));
   }
 
   graphNames() {

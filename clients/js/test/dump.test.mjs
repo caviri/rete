@@ -9,7 +9,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { build, init, open, wasm } from "../dist/index.js";
+import { build, init, open, Term, wasm } from "../dist/index.js";
 import { serveBytes } from "./range-server.mjs";
 
 // A dataset with a default graph AND two named graphs, plus the term shapes a
@@ -244,4 +244,75 @@ test("a bad graph option is rejected, not silently ignored", async () => {
     // eslint-disable-next-line no-empty
     for await (const _ of g.dump({ graph: 42 })) {}
   }, TypeError);
+});
+
+// ---------------------------------------------------------------------------
+// Filtered dumps (issue #117). The filter is not a row test in JavaScript — it
+// goes into the engine's scan as a triple pattern, so the wasm side fetches
+// only the index tiles that can match. What has to be tested here is that the
+// rows are exactly right, because a pruning bug loses rows silently.
+
+test("dump({predicate}) returns exactly the quads with that predicate", async () => {
+  const g = await open(await build(NQ, "nq"));
+  const all = await collect(g);
+  const LABEL = "http://www.w3.org/2000/01/rdf-schema#label";
+
+  const got = await collect(g, { predicate: LABEL });
+  const want = all.filter((l) => l.includes(`<${LABEL}>`)).sort();
+  assert.deepEqual(got, want);
+  assert.equal(got.length, 2, "one label in the default graph, one in a named one");
+
+  // An `<iri>` token and a Term are accepted as well as a clean IRI.
+  assert.deepEqual(await collect(g, { predicate: `<${LABEL}>` }), want);
+  assert.deepEqual(await collect(g, { predicate: new Term("iri", LABEL) }), want);
+});
+
+test("dump() filters compose with each other and with graph", async () => {
+  const g = await open(await build(NQ, "nq"));
+
+  // subject + graph
+  const got = await collect(g, {
+    graph: SOCIAL,
+    subject: "http://example.org/alice",
+  });
+  assert.deepEqual(got, [
+    `<http://example.org/alice> <http://example.org/knows> <http://example.org/bob> <${SOCIAL}>`,
+  ]);
+
+  // object, as an IRI, across every graph
+  const knowsBob = await collect(g, { object: "http://example.org/bob" });
+  assert.equal(knowsBob.length, 1);
+
+  // object, as a typed literal token — the shape that would break if the
+  // wrapper wrapped everything in angle brackets
+  const typed = await collect(g, {
+    object: '"42"^^<http://www.w3.org/2001/XMLSchema#integer>',
+  });
+  assert.equal(typed.length, 1);
+  assert.ok(typed[0].startsWith("<http://example.org/bob> <http://example.org/age>"));
+
+  // all three bound
+  assert.deepEqual(
+    await collect(g, {
+      subject: "http://example.org/bob",
+      predicate: "http://example.org/knows",
+      object: "http://example.org/alice",
+    }),
+    [`<http://example.org/bob> <http://example.org/knows> <http://example.org/alice> <${SOCIAL}>`],
+  );
+});
+
+test("a filter term the file does not contain yields nothing, not everything", async () => {
+  const g = await open(await build(NQ, "nq"));
+  assert.deepEqual(await collect(g, { predicate: "http://example.org/nope" }), []);
+  assert.deepEqual(await collect(g, { subject: "http://example.org/nobody" }), []);
+  assert.equal(await g.toNQuads({ object: "http://example.org/nope" }), "");
+});
+
+test("nquads() takes the same filters as dump()", async () => {
+  const g = await open(await build(NQ, "nq"));
+  const text = await g.toNQuads({ predicate: "http://example.org/knows" });
+  const got = lines(text);
+  assert.equal(got.length, 2);
+  assert.ok(got.every((l) => l.includes("<http://example.org/knows>")));
 });

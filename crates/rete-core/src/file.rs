@@ -481,6 +481,25 @@ fn content_hash(parts: &[&[u8]]) -> [u8; 16] {
 /// A resolved triple as terms.
 pub type TermTriple = (String, String, String);
 
+/// What a filtered dump will cost, before it runs — see
+/// [`Rete::dump_plan`](crate::Rete::dump_plan).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DumpPlan {
+    /// The routed scan this dump will run. `None` when it provably matches
+    /// nothing without touching the index: an absent graph IRI, or a bound term
+    /// the dictionary does not contain.
+    pub scan: Option<crate::index::ScanPlan>,
+    /// The file's whole dictionary section — the **ceiling** on what resolving
+    /// the matched rows' terms can fault, and on a literal-heavy file the
+    /// dominant term in a dump's real cost.
+    ///
+    /// It is deliberately not an estimate. A dump that matches one row faults
+    /// only the chunks that row's three terms live in, but nothing in the tile
+    /// directories says which chunks those are or how big they are, and a
+    /// preview that guessed would be worse than one that states the bound.
+    pub dictionary_bytes: u64,
+}
+
 /// One labelled byte region of a `.rete` file image (see
 /// [`Rete::file_layout`]). `kind` is a stable machine tag: `header`,
 /// `metadata`, `dictionary`, `directory`, `tile`, `pyramid`, `named-graphs`.
@@ -3077,12 +3096,92 @@ impl Rete {
     /// *everything* still reads every dictionary byte and leaves every chunk
     /// resident — that is inherent, and it, not the prefetch, is what sets the
     /// peak of a full export. See the comment in the body for both measurements.
-    pub fn dump_each<F: FnMut(&str, &str, &str)>(&self, graph: Option<&str>, mut f: F) {
+    ///
+    /// To dump a *slice* — one predicate, one subject, one object — call
+    /// [`dump_filtered_each`](Self::dump_filtered_each), which is this method
+    /// with a triple pattern and prunes tiles instead of filtering rows.
+    pub fn dump_each<F: FnMut(&str, &str, &str)>(&self, graph: Option<&str>, f: F) {
+        self.dump_filtered_each(graph, None, None, None, f)
+    }
+
+    /// [`dump_each`](Self::dump_each) restricted to a triple **pattern** — the
+    /// filtered dump. Any of `s` / `p` / `o` may be bound (canonical N-Triples
+    /// term tokens); all three unbound is exactly `dump_each`.
+    ///
+    /// # Why this is cheap, and how much
+    ///
+    /// It is the same access path a routed *query* takes, not a full scan with a
+    /// predicate test bolted on: [`GraphIndex::scan_iter`] picks the permutation
+    /// with the longest bound prefix, binary-searches that section's tile
+    /// directory down to the span a bound leading id can live in, and then drops
+    /// every remaining tile whose recorded synopsis proves it cannot hold a
+    /// bound secondary component — **all from directories, without fetching a
+    /// tile**. So a filtered dump pays for the slice, which is the whole point
+    /// of issue #117.
+    ///
+    /// Measured on `cordis.rete` (801 MB, a 417 MB dictionary, 26.4M quads,
+    /// six named graphs), lazily opened; "before" is the only way to get a
+    /// predicate slice out of a dump previously — dump the graph and throw away
+    /// what does not match, in the consumer:
+    ///
+    /// ```text
+    ///   graph=results  p=s66#doi     -> 337,811 rows
+    ///     before  375.8 MB · 1797 req · 2105.8 MB RSS · 12.8 s · first row 409 ms
+    ///     after    16.0 MB ·  105 req ·  182.6 MB RSS ·  0.41 s · first row  14 ms
+    ///   graph=results  p=s66#isbn    ->  40,761 rows
+    ///     before  375.8 MB · 1797 req · 2105.7 MB RSS · 12.8 s
+    ///     after    15.5 MB ·  104 req ·  155.2 MB RSS ·  0.23 s
+    /// ```
+    ///
+    /// # Where it does NOT help
+    ///
+    /// The index is pruned; the **dictionary is not**. Term resolution still
+    /// faults whichever chunks the surviving rows' terms live in, and on a file
+    /// whose payload *is* the literals those chunks are most of the file. Same
+    /// file, a predicate whose objects are the long abstracts:
+    ///
+    /// ```text
+    ///   graph=projects p=s66#abstract ->  80,206 rows
+    ///     before  260.7 MB · 1142 req · 1496.9 MB RSS · 5.97 s
+    ///     after   213.4 MB · 1606 req · 1144.4 MB RSS · 2.91 s   (1.2x, not 23x)
+    /// ```
+    ///
+    /// An *unfiltered* dump is unchanged by construction — it is the floor, and
+    /// its peak is the resident dictionary, not this. Two ceilings sit above
+    /// both: a faulted dictionary chunk is a `OnceCell` nothing ever evicts, and
+    /// on a literal-heavy file the chunk directory alone can be a third of the
+    /// file before any dump work at all (#198).
+    ///
+    /// # Permutations
+    ///
+    /// Every one of the eight bound/unbound shapes routes inside
+    /// [`PermSet::CORE`] — `{SPO, POS, OSP}`, the minimum a legal file carries
+    /// (see `perm_routing_never_leaves_core`). A file built with
+    /// `--permutations 3` therefore prunes *identically* to a six-permutation
+    /// one: same tiles, same rows, no fallback path to get wrong.
+    ///
+    /// A bound term the dictionary does not know, or an absent graph IRI, yields
+    /// nothing without touching the index.
+    ///
+    /// [`PermSet::CORE`]: crate::index::PermSet::CORE
+    pub fn dump_filtered_each<F: FnMut(&str, &str, &str)>(
+        &self,
+        graph: Option<&str>,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+        mut f: F,
+    ) {
         let index = match graph {
             None => Some(&self.index),
             Some(g) => self.graph_index(g),
         };
         let Some(index) = index else { return };
+        // A bound term the dictionary does not know can match nothing, and the
+        // index is never touched — same contract as `query_iter`/`query_batch`.
+        let Some(pattern) = self.resolve_query_pattern(s, p, o) else {
+            return;
+        };
         let dict = &self.dict;
         // Resolve in fixed-size batches with ONE coalesced dictionary fault per
         // batch — the same `prefetch_terms` call `dump_batch` makes, for the
@@ -3091,8 +3190,8 @@ impl Rete {
         // This used to be `Dictionary::prefetch_all` up front, on the argument
         // that a full dump reaches every term anyway so the bytes are owed
         // either way. That argument only holds for a dump of EVERYTHING, and
-        // `dump_each` takes a graph. Measured on `cordis.rete` (801 MB, a
-        // 417 MB dictionary, six named graphs), lazily opened:
+        // this takes a graph AND a pattern. Measured on `cordis.rete` (801 MB,
+        // a 417 MB dictionary, six named graphs), lazily opened:
         //
         //   dump_each(Some(fundingschemes))  417 MB read, 2510 MB peak RSS
         //                              →     173 MB read,  619 MB peak RSS
@@ -3139,13 +3238,40 @@ impl Rete {
             }
             ids.clear();
         };
-        for t in index.scan_iter((None, None, None)) {
+        for t in index.scan_iter(pattern) {
             ids.push(t);
             if ids.len() == RESOLVE_BATCH {
                 flush(&mut ids, &mut f);
             }
         }
         flush(&mut ids, &mut f);
+    }
+
+    /// What a [`dump_filtered_each`](Self::dump_filtered_each) over this graph
+    /// and pattern will fetch, **before** it starts — the dump twin of
+    /// `rete cost`'s query preview.
+    ///
+    /// Costed from the tile directories, so it fetches no tile. It does read the
+    /// dictionary far enough to resolve the bound terms (that is a real,
+    /// unavoidable cost of the dump too) and to learn whether the graph exists.
+    pub fn dump_plan(
+        &self,
+        graph: Option<&str>,
+        s: Option<&str>,
+        p: Option<&str>,
+        o: Option<&str>,
+    ) -> DumpPlan {
+        let index = match graph {
+            None => Some(&self.index),
+            Some(g) => self.graph_index(g),
+        };
+        let scan = index
+            .zip(self.resolve_query_pattern(s, p, o))
+            .map(|(ix, pattern)| ix.scan_plan(pattern));
+        DumpPlan {
+            scan,
+            dictionary_bytes: self.header.dictionary_len,
+        }
     }
 
     /// The **pull** twin of [`Rete::dump_each`](Self::dump_each): every triple of a
@@ -6791,6 +6917,276 @@ mod tests {
             pulled * 3 < dict_len * 2,
             "dumping half the graph faulted {pulled} B of a {dict_len} B dictionary — \
              the other graph's chunks are being pulled in too"
+        );
+    }
+
+    /// **The filtered-dump correctness invariant** (#117 point 1): for every
+    /// graph and every one of the eight bound/unbound shapes,
+    /// `dump_filtered_each` must return *exactly* the quads `dump_each` returns,
+    /// filtered — no more, and above all no fewer.
+    ///
+    /// "No fewer" is the whole risk. The speedup comes from *not fetching* tiles
+    /// a synopsis says cannot match, and a pruning bug does not crash, it
+    /// silently returns a shorter answer. So the oracle here is the unfiltered
+    /// dump with a plain Rust `retain` over it — the thing the filter is meant
+    /// to be a cheaper spelling of — and it is checked on every open path, since
+    /// the eager path prunes with a different code path than the lazy one.
+    ///
+    /// It runs on a `PermSet::CORE` (`--permutations 3`) file as well as a
+    /// six-permutation one. Every shape routes inside CORE — `perm_routing_never_leaves_core`
+    /// proves the routing table does — so the two must agree row for row, and if
+    /// a future shape ever routed outside CORE this test fails on the three-perm
+    /// build rather than silently returning nothing from an absent section.
+    #[test]
+    fn filtered_dump_is_exactly_the_unfiltered_dump_filtered() {
+        use crate::index::PermSet;
+        use crate::reader::SliceReader;
+
+        let terms = |i: u32| {
+            (
+                format!("<http://ex/s{}>", i % 11),
+                format!("<http://ex/p{}>", i % 3),
+                // Mix IRIs and literals in the object column: a literal lives in
+                // a different dictionary section than a node, and the object
+                // filter has to resolve through the right one.
+                if i.is_multiple_of(4) {
+                    format!("\"lit {}\"@en", i % 5)
+                } else {
+                    format!("<http://ex/o{}>", i % 7)
+                },
+            )
+        };
+        let build = |perms: PermSet| {
+            let mut db = DictionaryBuilder::new();
+            let all: Vec<_> = (0..90u32).map(terms).collect();
+            for (s, p, o) in &all {
+                db.observe(s, p, o);
+            }
+            let dict = db.build();
+            let mut def = GraphIndexBuilder::new()
+                .with_tile_budget(16)
+                .with_perms(perms);
+            let mut g1 = GraphIndexBuilder::new()
+                .with_tile_budget(16)
+                .with_perms(perms);
+            for (i, (s, p, o)) in all.iter().enumerate() {
+                let t = dict.encode(s, p, o).unwrap();
+                // Deliberately overlapping, not disjoint: every second triple is
+                // in both graphs, so a filter that leaked across graphs would
+                // still look plausible on counts alone.
+                if i % 2 == 0 {
+                    g1.push(t);
+                }
+                def.push(t);
+            }
+            write_dataset(
+                &dict,
+                &def.build(),
+                &[("<http://ex/g1>".to_string(), g1.build())],
+                true,
+                &[],
+                0,
+            )
+        };
+
+        let shapes: Vec<(Option<&str>, Option<&str>, Option<&str>)> = vec![
+            (None, None, None),
+            (Some("<http://ex/s3>"), None, None),
+            (None, Some("<http://ex/p1>"), None),
+            (None, None, Some("<http://ex/o5>")),
+            (None, None, Some("\"lit 0\"@en")),
+            (Some("<http://ex/s3>"), Some("<http://ex/p0>"), None),
+            (Some("<http://ex/s4>"), None, Some("<http://ex/o4>")),
+            (None, Some("<http://ex/p1>"), Some("<http://ex/o5>")),
+            (
+                Some("<http://ex/s3>"),
+                Some("<http://ex/p0>"),
+                Some("<http://ex/o3>"),
+            ),
+            // Terms the dictionary has never seen, in each position: these must
+            // return nothing, not everything (an unresolvable bound term must
+            // not silently degrade to "unbound").
+            (Some("<http://ex/nope>"), None, None),
+            (None, Some("<http://ex/nope>"), None),
+            (None, None, Some("<http://ex/nope>")),
+        ];
+
+        let mut any_pruned = false;
+        for perms in [PermSet::ALL, PermSet::CORE] {
+            let image = build(perms);
+            let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
+            let opens: Vec<(&str, Rete)> = vec![
+                ("resident", Rete::open(&image).unwrap()),
+                (
+                    "ranged",
+                    Rete::open_ranged(&SliceReader::new(leaked)).unwrap(),
+                ),
+                (
+                    "lazy",
+                    Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap(),
+                ),
+            ];
+            for graph in [None, Some("<http://ex/g1>"), Some("<http://ex/absent>")] {
+                // The oracle: the unfiltered dump, filtered in Rust.
+                let full: Vec<TermTriple> = {
+                    let mut v = Vec::new();
+                    Rete::open(&image).unwrap().dump_each(graph, |s, p, o| {
+                        v.push((s.to_string(), p.to_string(), o.to_string()))
+                    });
+                    v.sort();
+                    v
+                };
+                for &(s, p, o) in &shapes {
+                    let mut want = full.clone();
+                    want.retain(|(ts, tp, to)| {
+                        s.is_none_or(|x| x == ts)
+                            && p.is_none_or(|x| x == tp)
+                            && o.is_none_or(|x| x == to)
+                    });
+                    for (path, rete) in &opens {
+                        let mut got = Vec::new();
+                        rete.dump_filtered_each(graph, s, p, o, |s, p, o| {
+                            got.push((s.to_string(), p.to_string(), o.to_string()))
+                        });
+                        got.sort();
+                        assert_eq!(
+                            got,
+                            want,
+                            "{path}/{perms:?} graph={graph:?} pattern={:?} — filtered dump \
+                             is not the unfiltered dump filtered",
+                            (s, p, o)
+                        );
+                        assert!(!rete.index_incomplete(), "{path}: a fetch failed");
+                    }
+                    // …and the plan must agree with what the dump actually did:
+                    // an empty answer means either no scan at all, or a scan
+                    // whose admitted tiles simply held nothing.
+                    let plan = opens[2].1.dump_plan(graph, s, p, o);
+                    if graph == Some("<http://ex/absent>")
+                        || [s, p, o].contains(&Some("<http://ex/nope>"))
+                    {
+                        assert!(
+                            plan.scan.is_none(),
+                            "an unmatchable dump still planned a scan: {:?}",
+                            (graph, s, p, o)
+                        );
+                    } else {
+                        let scan = plan.scan.expect("a matchable dump plans a scan");
+                        assert!(
+                            PermSet::CORE.contains(scan.permutation),
+                            "a dump routed to {:?}, outside PermSet::CORE — a \
+                             --permutations 3 file has no such section",
+                            scan.permutation
+                        );
+                        assert!(scan.tiles_admitted <= scan.tiles_routed);
+                        assert!(scan.tiles_routed <= scan.tiles_total);
+                        assert!(scan.tile_bytes <= scan.section_bytes);
+                        if scan.tiles_admitted < scan.tiles_total {
+                            any_pruned = true;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            any_pruned,
+            "no shape pruned a single tile — the fixture is too small to be \
+             measuring anything"
+        );
+    }
+
+    /// The point of the filter: a predicate-scoped dump of a lazily range-read
+    /// file must **fetch less** than the same graph's full dump, not merely
+    /// return less.
+    ///
+    /// The fixture is the shape the win shows on — many tiles, and a predicate
+    /// whose triples live in a minority of them — so the assertion can be about
+    /// bytes rather than about the code path being taken on faith. Measured on
+    /// the real thing (`cordis.rete`, 801 MB): one predicate of one named graph
+    /// read 16.0 MB where the graph's full dump read 375.8 MB.
+    #[test]
+    fn a_predicate_scoped_dump_fetches_less_than_the_graph() {
+        use crate::reader::{CountingReader, SliceReader};
+
+        // 200 subjects × 20 predicates, tiled small so there are many tiles, and
+        // one distinct object per cell so that a predicate slice needs a
+        // twentieth of the object dictionary rather than all of it — otherwise
+        // the dictionary, which this change does not prune, swamps the index
+        // saving the test is about.
+        let mut db = DictionaryBuilder::new();
+        let mut all = Vec::new();
+        for s in 0..200u32 {
+            for p in 0..20u32 {
+                let t = (
+                    format!("<http://ex/s/{s:04}>"),
+                    format!("<http://ex/p/{p:02}>"),
+                    format!("\"object {s:04}/{p:02}\""),
+                );
+                db.observe(&t.0, &t.1, &t.2);
+                all.push(t);
+            }
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(64);
+        for (s, p, o) in &all {
+            ib.push(dict.encode(s, p, o).unwrap());
+        }
+        let image = write_dataset(&dict, &ib.build(), &[], false, &[], 0);
+        let leaked: &'static [u8] = Box::leak(image.clone().into_boxed_slice());
+
+        // Bytes faulted past the open, for one dump.
+        let probe = |s: Option<&str>, p: Option<&str>, o: Option<&str>| -> (usize, u64) {
+            let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+            let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+            let before = reader.bytes_read();
+            let mut n = 0usize;
+            lazy.dump_filtered_each(None, s, p, o, |_, _, _| n += 1);
+            assert!(!lazy.index_incomplete());
+            (n, reader.bytes_read() - before)
+        };
+
+        let (full_rows, full_bytes) = probe(None, None, None);
+        let (pred_rows, pred_bytes) = probe(None, Some("<http://ex/p/07>"), None);
+        assert_eq!(full_rows, 4000);
+        assert_eq!(pred_rows, 200, "one predicate covers every subject once");
+        assert!(
+            pred_bytes * 4 < full_bytes,
+            "a 1-in-20 predicate slice fetched {pred_bytes} B where the whole graph \
+             fetched {full_bytes} B — the scan is not being pruned"
+        );
+
+        // A subject slice routes to SPO and reads one tile's worth.
+        let (subj_rows, subj_bytes) = probe(Some("<http://ex/s/0021>"), None, None);
+        assert_eq!(subj_rows, 20);
+        assert!(
+            subj_bytes * 4 < full_bytes,
+            "a single-subject dump fetched {subj_bytes} B of {full_bytes} B"
+        );
+
+        // And the plan predicted the index side of it without fetching a tile.
+        let reader = std::sync::Arc::new(CountingReader::new(SliceReader::new(leaked)));
+        let lazy = Rete::open_ranged_lazy(reader.clone()).unwrap();
+        let before = reader.bytes_read();
+        let plan = lazy
+            .dump_plan(None, None, Some("<http://ex/p/07>"), None)
+            .scan
+            .expect("a known predicate plans a scan");
+        assert!(
+            reader.bytes_read() - before < 64 * 1024,
+            "planning fetched {} B — it is supposed to read directories, not tiles",
+            reader.bytes_read() - before
+        );
+        assert!(plan.tiles_admitted < plan.tiles_total);
+        // The index side on its own, with the dictionary's share taken out: one
+        // predicate of twenty routes to a handful of POS tiles. (Measured here:
+        // the whole dump faults 15,714 B, the predicate slice 1,565 B and one
+        // subject 864 B — a 10x and an 18x, most of what is left being the
+        // dictionary this change does not prune.)
+        assert!(
+            plan.tile_bytes * 5 < plan.section_bytes,
+            "one predicate of twenty planned {} B of a {} B section",
+            plan.tile_bytes,
+            plan.section_bytes
         );
     }
 

@@ -35,6 +35,19 @@ export interface DumpOptions {
    * default graph only; an IRI for that named graph only.
    */
   graph?: string | null;
+  /**
+   * Restrict the dump to a triple pattern. These **prune index tiles** rather
+   * than filtering rows: the engine routes the scan to the permutation that
+   * sorts on the bound components and drops every tile whose synopsis proves it
+   * cannot match, without fetching it. Dumping one predicate of a large remote
+   * graph therefore costs the slice, not the graph.
+   *
+   * A clean IRI (`"http://ex/p"`), an N-Triples token (`'"x"@en'`, `"_:b"`), or
+   * a `Term`. A term the file's dictionary does not contain yields nothing.
+   */
+  subject?: string | Term | null;
+  predicate?: string | Term | null;
+  object?: string | Term | null;
   /** Quads pulled per wasm call (default 10 000). Bounds memory, not results. */
   batch?: number;
 }

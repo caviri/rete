@@ -150,6 +150,68 @@ proptest! {
         }
         prop_assert!(!lazy.index_incomplete(), "lazy open faulted incompletely");
     }
+
+    /// A **filtered dump returns exactly the quads an unfiltered dump returns,
+    /// filtered** — for arbitrary graphs, every bound/unbound shape, and on both
+    /// read paths. The sibling of `prop_lazy_equals_eager` for issue #117's
+    /// filtered dumps.
+    ///
+    /// Worth stating as a property rather than a fixture: the saving comes from
+    /// *not fetching* index tiles a synopsis proves cannot match, and the way
+    /// that goes wrong is a missing row, not a crash. The oracle is deliberately
+    /// the dumbest possible one — dump everything, then `retain` in Rust — so
+    /// nothing about the routing is assumed by the thing checking the routing.
+    /// proptest shrinks any disagreement to a minimal graph and shape.
+    #[test]
+    fn prop_filtered_dump_equals_the_full_dump_filtered(specs in graph()) {
+        let want = triples(&specs);
+        let image = build_image(&want);
+        let eager = Rete::open(&image).unwrap();
+        let lazy = Rete::open_ranged_lazy(Arc::new(VecReader(image.clone()))).unwrap();
+
+        let mut full: Vec<(String, String, String)> = Vec::new();
+        eager.dump_each(None, |s, p, o| full.push((s.into(), p.into(), o.into())));
+        full.sort();
+
+        // Every shape instantiated from a term the graph HAS, plus one it does
+        // not (an unresolvable bound term must yield nothing, not everything).
+        let sample = full.first().cloned();
+        let mut shapes: Vec<(Option<&str>, Option<&str>, Option<&str>)> = vec![
+            (None, None, None),
+            (Some("<http://ex/n/absent>"), None, None),
+            (None, Some("<http://ex/p/absent>"), None),
+        ];
+        if let Some((s, p, o)) = sample.as_ref() {
+            shapes.extend([
+                (Some(s.as_str()), None, None),
+                (None, Some(p.as_str()), None),
+                (None, None, Some(o.as_str())),
+                (Some(s.as_str()), Some(p.as_str()), None),
+                (Some(s.as_str()), None, Some(o.as_str())),
+                (None, Some(p.as_str()), Some(o.as_str())),
+                (Some(s.as_str()), Some(p.as_str()), Some(o.as_str())),
+            ]);
+        }
+
+        for (s, p, o) in shapes {
+            let mut expect = full.clone();
+            expect.retain(|(ts, tp, to)| {
+                s.is_none_or(|x| x == ts) && p.is_none_or(|x| x == tp) && o.is_none_or(|x| x == to)
+            });
+            for (tag, rete) in [("eager", &eager), ("lazy", &lazy)] {
+                let mut got: Vec<(String, String, String)> = Vec::new();
+                rete.dump_filtered_each(None, s, p, o, |s, p, o| {
+                    got.push((s.into(), p.into(), o.into()))
+                });
+                got.sort();
+                prop_assert_eq!(
+                    &got, &expect,
+                    "{} filtered dump != full dump filtered for {:?}", tag, (s, p, o)
+                );
+            }
+        }
+        prop_assert!(!lazy.index_incomplete(), "lazy open faulted incompletely");
+    }
 }
 
 proptest! {

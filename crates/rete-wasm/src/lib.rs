@@ -459,12 +459,19 @@ impl Graph {
         })
     }
 
-    /// A **lazy, resumable cursor** over every quad of this graph — the
-    /// streaming export path. See [`QuadCursor`]; `graph` selects one graph
-    /// (`""` = the default graph), `None` streams the default graph followed by
-    /// every named graph.
-    pub fn quads(&self, graph: Option<String>) -> QuadCursor {
-        QuadCursor::start(self.rete.clone(), graph)
+    /// A **lazy, resumable cursor** over the quads of this graph — the streaming
+    /// export path. See [`QuadCursor`]; `graph` selects one graph (`""` = the
+    /// default graph), `None` streams the default graph followed by every named
+    /// graph. `s` / `p` / `o` optionally restrict the dump to a triple pattern,
+    /// which **prunes tiles** rather than filtering rows.
+    pub fn quads(
+        &self,
+        graph: Option<String>,
+        s: Option<String>,
+        p: Option<String>,
+        o: Option<String>,
+    ) -> QuadCursor {
+        QuadCursor::start(self.rete.clone(), graph, s, p, o)
     }
 
     /// See [`info`].
@@ -679,8 +686,8 @@ impl Graph {
     }
 }
 
-/// A **lazy, resumable cursor** over every quad of an open `.rete` — the engine
-/// side of `for await (const [s, p, o, g] of graph.quads())` in the JS client.
+/// A **lazy, resumable cursor** over the quads of an open `.rete` — the engine
+/// side of `for await (const [s, p, o, g] of graph.dump())` in the JS client.
 ///
 /// # Why a cursor and not a callback
 ///
@@ -688,8 +695,8 @@ impl Graph {
 /// cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
 /// it would have to buffer every quad first, which is exactly the `Vec` that
 /// [`Rete::dump`] builds and that OOMs on a large file. This wraps
-/// [`Rete::dump_batch`] instead, so the scan can be suspended between calls and
-/// resumed in place — the whole resume state is one subject id, never a
+/// [`Rete::query_batch`] instead, so the scan can be suspended between calls and
+/// resumed in place — the whole resume state is one opaque `u64`, never a
 /// whole-graph materialization anywhere in the pipeline.
 ///
 /// # Why batched (and not one call per quad)
@@ -705,22 +712,34 @@ impl Graph {
 /// The dictionary is **not** prefetched whole: each batch faults only the
 /// chunks its own terms live in, so taking five quads off the front costs five
 /// quads' worth of dictionary rather than all of it. Index tiles fault in as the
-/// scan advances and stay resident, and so do dictionary chunks, so a dump
-/// driven *to the end* still ends up fetching essentially the whole file — that
-/// is inherent in exporting a graph. Peak memory is O(faulted dictionary +
-/// index), never O(quads).
+/// scan advances and stay resident, and so do dictionary chunks, so an
+/// **unfiltered** dump driven to the end still ends up fetching essentially the
+/// whole file — that is inherent in exporting a graph.
+///
+/// A **filtered** cursor (a bound `s` / `p` / `o`) is a different shape: the
+/// scan routes to the one permutation that sorts on the bound prefix and drops
+/// every tile whose synopsis proves it cannot match, from the tile directory,
+/// *without fetching it*. On `cordis.rete` (801 MB, six named graphs) dumping
+/// one predicate of one graph reads 16 MB where the unfiltered dump of that
+/// graph reads 376 MB. Peak memory is O(faulted dictionary + index), never
+/// O(quads), either way.
 #[wasm_bindgen]
 pub struct QuadCursor {
     /// Graph slots not yet streamed; `None` = the default graph.
     pending: std::vec::IntoIter<Option<String>>,
     /// The graph being streamed (`None` = the default graph), and how far into
-    /// it we got. The resume state is one subject id — see `Rete::dump_batch`.
+    /// it we got. The resume state is one opaque `u64` — see `Rete::query_batch`.
     current: Option<Option<String>>,
-    cursor: u32,
+    cursor: u64,
+    /// The triple pattern this dump is restricted to; all-`None` = every quad.
+    /// Held as owned tokens because the cursor outlives every call.
+    s: Option<String>,
+    p: Option<String>,
+    o: Option<String>,
     /// Whether the live graph's last batch was its final one.
     slot_done: bool,
-    /// Triples resolved by the last `dump_batch` that the caller has not taken
-    /// yet. A batch ends on a subject boundary, so this drains before the next.
+    /// Triples resolved by the last `query_batch` that the caller has not taken
+    /// yet. A batch ends on a group boundary, so this drains before the next.
     buffered: std::vec::IntoIter<TermTriple>,
     rete: Rc<Rete>,
 }
@@ -738,7 +757,18 @@ impl QuadCursor {
     /// `graph`: `None` = the default graph followed by every named graph;
     /// `Some("")` = the default graph only; `Some(name)` = that named graph
     /// (bare IRI or `<iri>` token — both are accepted).
-    fn start(rete: Rc<Rete>, graph: Option<String>) -> QuadCursor {
+    ///
+    /// `s` / `p` / `o` are canonical N-Triples term tokens; an empty string is
+    /// treated as unbound, so a JS caller can pass `""` for "no filter" without
+    /// a separate sentinel. A bound term the dictionary does not know yields an
+    /// empty dump without touching the index.
+    fn start(
+        rete: Rc<Rete>,
+        graph: Option<String>,
+        s: Option<String>,
+        p: Option<String>,
+        o: Option<String>,
+    ) -> QuadCursor {
         let slots: Vec<Option<String>> = match graph {
             None => std::iter::once(None)
                 .chain(rete.graph_names().iter().map(|g| Some((*g).to_string())))
@@ -750,10 +780,14 @@ impl QuadCursor {
         // failure from an earlier query does not condemn this one (and so
         // `finish()` reports only what happened while streaming).
         rete.reset_load_failures();
+        let term = |t: Option<String>| t.filter(|t| !t.is_empty());
         QuadCursor {
             pending: slots.into_iter(),
             current: None,
             cursor: 0,
+            s: term(s),
+            p: term(p),
+            o: term(o),
             slot_done: false,
             buffered: Vec::new().into_iter(),
             rete,
@@ -765,8 +799,8 @@ impl QuadCursor {
     /// Returns how many were emitted; fewer than `max` means the stream ended.
     ///
     /// The scan is resumable rather than held open: each refill calls
-    /// `Rete::dump_batch`, whose entire resume state is one subject id. That is
-    /// what lets this struct be `'static` — required by `#[wasm_bindgen]` —
+    /// `Rete::query_batch`, whose entire resume state is one opaque `u64`. That
+    /// is what lets this struct be `'static` — required by `#[wasm_bindgen]` —
     /// without a self-referential iterator borrowing the `Rete` beside it.
     fn pull<F: FnMut(&str, &str, &str, Option<&str>)>(&mut self, max: usize, mut sink: F) -> usize {
         let mut emitted = 0;
@@ -795,10 +829,17 @@ impl QuadCursor {
                 self.current = None;
                 continue;
             }
-            // 4. Otherwise resume it. `dump_batch` always advances the cursor or
-            //    reports done, so this cannot spin.
+            // 4. Otherwise resume it. `query_batch` always advances the cursor
+            //    or reports done, so this cannot spin.
             let want = (max - emitted).max(DUMP_BATCH);
-            let (triples, next, done) = self.rete.dump_batch(slot.as_deref(), self.cursor, want);
+            let (triples, next, done) = self.rete.query_batch(
+                slot.as_deref(),
+                self.s.as_deref(),
+                self.p.as_deref(),
+                self.o.as_deref(),
+                self.cursor,
+                want,
+            );
             self.cursor = next;
             self.slot_done = done;
             self.buffered = triples.into_iter();
@@ -936,14 +977,24 @@ impl RemoteGraph {
     }
 
     /// See [`Graph::quads`] — the SAME lazy cursor, over the lazily range-read
-    /// remote handle. It streams and stays memory-bounded exactly as the local
-    /// one does, but it is not *network*-lazy: a full dump resolves every term
-    /// and visits every tile, so it ends up fetching essentially the whole file
-    /// (and the tiles it faults stay resident). Use it to export a remote graph,
-    /// not to peek at one — for that, run a `LIMIT` query. Worker-only in the
-    /// browser, like every other read here.
-    pub fn quads(&self, graph: Option<String>) -> QuadCursor {
-        QuadCursor::start(self.rete.clone(), graph)
+    /// remote handle.
+    ///
+    /// An **unfiltered** dump is not network-lazy and cannot be: it resolves
+    /// every term and visits every tile, so it ends up fetching essentially the
+    /// whole file (and what it faults stays resident). A **filtered** one is:
+    /// pass `s` / `p` / `o` and the scan routes to one permutation, keeps only
+    /// the tiles whose synopsis admits the bound components, and fetches those.
+    /// On `cordis.rete` (801 MB) one predicate of one named graph costs 16 MB
+    /// instead of 376 MB. To peek at an unfiltered graph, still prefer a `LIMIT`
+    /// query. Worker-only in the browser, like every other read here.
+    pub fn quads(
+        &self,
+        graph: Option<String>,
+        s: Option<String>,
+        p: Option<String>,
+        o: Option<String>,
+    ) -> QuadCursor {
+        QuadCursor::start(self.rete.clone(), graph, s, p, o)
     }
 
     /// `{ fileLength, bytes, requests, base }` — CUMULATIVE physical fetches
