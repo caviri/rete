@@ -136,6 +136,25 @@ impl Tile {
     }
 }
 
+/// What a routed scan of one pattern will touch, from the tile directories
+/// alone — see [`GraphIndex::scan_plan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanPlan {
+    /// The permutation the scan routes to (always inside [`PermSet::CORE`]).
+    pub permutation: IndexPermutation,
+    /// Tiles in that permutation's section — the denominator.
+    pub tiles_total: usize,
+    /// Tiles left after routing on the bound leading component.
+    pub tiles_routed: usize,
+    /// Tiles left after the synopsis prune — what the scan will actually fetch.
+    pub tiles_admitted: usize,
+    /// Encoded (on-disk) bytes of the admitted tiles: the index-side upper
+    /// bound on the scan's range reads.
+    pub tile_bytes: u64,
+    /// Encoded bytes of the whole section — what an unpruned scan would read.
+    pub section_bytes: u64,
+}
+
 /// Which stored permutation to scan. The full **six** orders (a SPARQL engine's
 /// classic set, as in QLever): together they sort the triples on *every* prefix
 /// of `(s, p, o)` columns, so for any bound-component prefix and any free
@@ -989,6 +1008,42 @@ impl GraphIndex {
     /// than panicking. The permutation is chosen for the longest bound prefix.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
         self.scan_iter_with(pattern, Self::best_permutation(pattern))
+    }
+
+    /// What [`scan_iter`](Self::scan_iter) *would* fetch for `pattern`, computed
+    /// from the tile directories alone — **no tile is fetched, decoded, or even
+    /// looked at**. This is the cost-preview half of the routed scan: it walks
+    /// the same three decisions the scan makes (permutation, routed tile span,
+    /// synopsis prune) and reports what survives, so a caller can say "this dump
+    /// will pull 16 MB of index, not 376 MB" before starting it.
+    ///
+    /// It is a preview, not a promise: `tile_bytes` is an **upper bound** on the
+    /// index bytes the scan reads (an admitted tile can still be rejected by its
+    /// in-tile zone map once in hand, and a re-scan of an already-faulted tile
+    /// reads nothing), and it says nothing about the dictionary, which is where
+    /// a term-resolving dump's real cost usually lives.
+    pub fn scan_plan(&self, pattern: Pattern) -> ScanPlan {
+        let perm = Self::best_permutation_in(self.perms, pattern);
+        let [_, pb, pc] = perm.order_pattern(pattern);
+        let si = perm.section_index();
+        let tiles = &self.sections[si];
+        let (start, end) = self.tile_span(si, perm.order_pattern(pattern)[0]);
+        let mut admitted = 0usize;
+        let mut tile_bytes = 0u64;
+        for t in &tiles[start..end] {
+            if t.syn_admits(pb, pc) {
+                admitted += 1;
+                tile_bytes += t.encoded_len();
+            }
+        }
+        ScanPlan {
+            permutation: perm,
+            tiles_total: tiles.len(),
+            tiles_routed: end - start,
+            tiles_admitted: admitted,
+            tile_bytes,
+            section_bytes: tiles.iter().map(|t| t.encoded_len()).sum(),
+        }
     }
 
     /// One bounded, **resumable** slice of `pattern`'s matches: the pull form of

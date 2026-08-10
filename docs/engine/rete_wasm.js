@@ -175,17 +175,27 @@ export class Graph {
         }
     }
     /**
-     * A **lazy, resumable cursor** over every quad of this graph — the
-     * streaming export path. See [`QuadCursor`]; `graph` selects one graph
-     * (`""` = the default graph), `None` streams the default graph followed by
-     * every named graph.
+     * A **lazy, resumable cursor** over the quads of this graph — the streaming
+     * export path. See [`QuadCursor`]; `graph` selects one graph (`""` = the
+     * default graph), `None` streams the default graph followed by every named
+     * graph. `s` / `p` / `o` optionally restrict the dump to a triple pattern,
+     * which **prunes tiles** rather than filtering rows.
      * @param {string | null} [graph]
+     * @param {string | null} [s]
+     * @param {string | null} [p]
+     * @param {string | null} [o]
      * @returns {QuadCursor}
      */
-    quads(graph) {
+    quads(graph, s, p, o) {
         var ptr0 = isLikeNone(graph) ? 0 : passStringToWasm0(graph, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len0 = WASM_VECTOR_LEN;
-        const ret = wasm.graph_quads(this.__wbg_ptr, ptr0, len0);
+        var ptr1 = isLikeNone(s) ? 0 : passStringToWasm0(s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(p) ? 0 : passStringToWasm0(p, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(o) ? 0 : passStringToWasm0(o, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.graph_quads(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         return QuadCursor.__wrap(ret);
     }
     /**
@@ -560,8 +570,8 @@ export class Graph {
 if (Symbol.dispose) Graph.prototype[Symbol.dispose] = Graph.prototype.free;
 
 /**
- * A **lazy, resumable cursor** over every quad of an open `.rete` — the engine
- * side of `for await (const [s, p, o, g] of graph.quads())` in the JS client.
+ * A **lazy, resumable cursor** over the quads of an open `.rete` — the engine
+ * side of `for await (const [s, p, o, g] of graph.dump())` in the JS client.
  *
  * # Why a cursor and not a callback
  *
@@ -569,8 +579,8 @@ if (Symbol.dispose) Graph.prototype[Symbol.dispose] = Graph.prototype.free;
  * cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
  * it would have to buffer every quad first, which is exactly the `Vec` that
  * [`Rete::dump`] builds and that OOMs on a large file. This wraps
- * [`Rete::dump_batch`] instead, so the scan can be suspended between calls and
- * resumed in place — the whole resume state is one subject id, never a
+ * [`Rete::query_batch`] instead, so the scan can be suspended between calls and
+ * resumed in place — the whole resume state is one opaque `u64`, never a
  * whole-graph materialization anywhere in the pipeline.
  *
  * # Why batched (and not one call per quad)
@@ -586,10 +596,17 @@ if (Symbol.dispose) Graph.prototype[Symbol.dispose] = Graph.prototype.free;
  * The dictionary is **not** prefetched whole: each batch faults only the
  * chunks its own terms live in, so taking five quads off the front costs five
  * quads' worth of dictionary rather than all of it. Index tiles fault in as the
- * scan advances and stay resident, and so do dictionary chunks, so a dump
- * driven *to the end* still ends up fetching essentially the whole file — that
- * is inherent in exporting a graph. Peak memory is O(faulted dictionary +
- * index), never O(quads).
+ * scan advances and stay resident, and so do dictionary chunks, so an
+ * **unfiltered** dump driven to the end still ends up fetching essentially the
+ * whole file — that is inherent in exporting a graph.
+ *
+ * A **filtered** cursor (a bound `s` / `p` / `o`) is a different shape: the
+ * scan routes to the one permutation that sorts on the bound prefix and drops
+ * every tile whose synopsis proves it cannot match, from the tile directory,
+ * *without fetching it*. On `cordis.rete` (801 MB, six named graphs) dumping
+ * one predicate of one graph reads 16 MB where the unfiltered dump of that
+ * graph reads 376 MB. Peak memory is O(faulted dictionary + index), never
+ * O(quads), either way.
  */
 export class QuadCursor {
     static __wrap(ptr) {
@@ -835,19 +852,32 @@ export class RemoteGraph {
     }
     /**
      * See [`Graph::quads`] — the SAME lazy cursor, over the lazily range-read
-     * remote handle. It streams and stays memory-bounded exactly as the local
-     * one does, but it is not *network*-lazy: a full dump resolves every term
-     * and visits every tile, so it ends up fetching essentially the whole file
-     * (and the tiles it faults stay resident). Use it to export a remote graph,
-     * not to peek at one — for that, run a `LIMIT` query. Worker-only in the
-     * browser, like every other read here.
+     * remote handle.
+     *
+     * An **unfiltered** dump is not network-lazy and cannot be: it resolves
+     * every term and visits every tile, so it ends up fetching essentially the
+     * whole file (and what it faults stays resident). A **filtered** one is:
+     * pass `s` / `p` / `o` and the scan routes to one permutation, keeps only
+     * the tiles whose synopsis admits the bound components, and fetches those.
+     * On `cordis.rete` (801 MB) one predicate of one named graph costs 16 MB
+     * instead of 376 MB. To peek at an unfiltered graph, still prefer a `LIMIT`
+     * query. Worker-only in the browser, like every other read here.
      * @param {string | null} [graph]
+     * @param {string | null} [s]
+     * @param {string | null} [p]
+     * @param {string | null} [o]
      * @returns {QuadCursor}
      */
-    quads(graph) {
+    quads(graph, s, p, o) {
         var ptr0 = isLikeNone(graph) ? 0 : passStringToWasm0(graph, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len0 = WASM_VECTOR_LEN;
-        const ret = wasm.remotegraph_quads(this.__wbg_ptr, ptr0, len0);
+        var ptr1 = isLikeNone(s) ? 0 : passStringToWasm0(s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(p) ? 0 : passStringToWasm0(p, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(o) ? 0 : passStringToWasm0(o, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.remotegraph_quads(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         return QuadCursor.__wrap(ret);
     }
     /**

@@ -232,18 +232,57 @@ section directory rather than read out of the card — see
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).
 
-### `rete export <file> [--format nq|ttl|jsonld]`
-Serialize the dataset. `nq` (the default) dumps every triple/quad as N-Quads
-(default graph + named graphs) — a lossless round-trip. `ttl` emits Turtle and
-`jsonld` emits expanded JSON-LD; both serialize the **default graph only**
-(Turtle/JSON-LD here carry no default-vs-named distinction, so named graphs are
-skipped — use `nq` to export those).
+### `rete export <file> [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O]`
+Serialize the dataset, or a slice of it. `nq` (the default) dumps every
+triple/quad as N-Quads (default graph + named graphs) — a lossless round-trip.
+`ttl` emits Turtle and `jsonld` emits expanded JSON-LD; both serialize a
+**single graph** (the default graph unless `--graph` names one), because
+Turtle/JSON-LD carry no default-vs-named distinction — use `nq` to export the
+whole dataset.
 
 ```sh
 rete export data.rete                 # N-Quads (default)
 rete export data.rete --format ttl    # Turtle
 rete export data.rete --format jsonld # expanded JSON-LD
 ```
+
+**Filters prune the file; they are not `| grep`.** `--graph` /`--subject` /
+`--predicate` / `--object` become a triple pattern the engine routes: it picks
+the index permutation that sorts on the bound components, binary-searches its
+tile directory down to the tiles that can match, and drops the rest by their
+recorded synopsis *without fetching them*. On a lazily-opened file that is the
+difference between exporting a slice and reading the graph.
+
+```sh
+# one predicate of one named graph: 16 MB read instead of 376 MB, 0.4 s
+# instead of 12.8 s, 183 MB peak RSS instead of 2.1 GB (cordis.rete, 801 MB)
+rete export cordis.rete --format nq \
+    --graph http://data.europa.eu/s66/graph/results \
+    --predicate http://data.europa.eu/s66#doi
+
+rete export data.rete --format nq --graph ''            # the default graph alone
+rete export data.rete --format nq --subject http://ex/a # everything about one subject
+rete export data.rete --format nq --object '"text"@en'  # an exact literal
+```
+
+Terms are bare IRIs or N-Triples tokens (`<iri>`, `"lit"@en`, `"lit"^^<dt>`,
+`_:b`) — quote literals for your shell. A term the file's dictionary does not
+contain matches nothing, which is an empty export, not an error. `--graph ''`
+selects the default graph alone; omitting `--graph` keeps the current behaviour
+(default graph, then every named graph).
+
+Two caveats worth knowing before you measure it:
+
+- **A filtered dump prunes the index, not the dictionary.** Resolving the rows
+  it keeps still faults the dictionary chunks their terms live in, so on a graph
+  whose payload *is* long literals the saving is much smaller: on the same file,
+  a predicate whose objects are abstracts went 261 MB → 213 MB, not 23×.
+- **Rows arrive in the routed permutation's order.** Unfiltered (and
+  subject-bound) that is `(s, p, o)` as before; a bound predicate streams
+  `(p, o, s)`, a bound object `(o, s, p)`. The *set* is identical; N-Quads does
+  not care, but `diff` does — sort both sides.
+
+Preview any of this before running it with [`rete cost --dump`](#rete-cost-file-or-url---dump---graph-g---subject-s---predicate-p---object-o---json).
 
 ## Querying
 
@@ -367,6 +406,36 @@ summary-based routing, and compares three access paths:
 rete cost data.rete "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 rete cost https://host/data.rete "ASK { ?s <http://ex/knows> ?o }" --json
 ```
+
+#### `rete cost <file-or-url> --dump [--graph G] [--subject S] [--predicate P] [--object O] [--json]`
+
+The same preview for a **dump** — what `rete export` (or a client's streaming
+dump) will fetch for that filter, before it starts. Same report shape as above.
+
+The index figure is *computed*, not sampled: the tile directories say which
+tiles the filter's routed scan can touch and how big each is, so no tile is
+fetched to produce it.
+
+```
+$ rete cost cordis.rete --dump \
+      --graph http://data.europa.eu/s66/graph/results \
+      --predicate http://data.europa.eu/s66#doi
+  file bytes: 801016143
+  lazy dump open: 43156179 bytes in 66 range request(s) · reads index
+  graphs selected: 1
+    <…/graph/results>: POS · 31 of 528 tile(s) admitted · 1217273 bytes (section 21227100)
+  index tiles: 31 of 528 admitted · 1217273 bytes of 21227100 · computed from the
+               tile directories, no tile fetched
+  dictionary ceiling: 417246556 bytes
+  estimated dump cost: 44373452 – 461620008 bytes
+```
+
+Read the range honestly: the **floor** (open + admitted tiles) is exact; the
+**ceiling** adds the whole dictionary, which only a dump touching every term
+pays. Term resolution faults chunks the tile directories cannot name, so the
+true cost sits between — near the floor when the slice is small and its terms
+are short, near the ceiling on a literal-heavy file however well the index
+prunes. The dump previewed above actually read 59,672,911 bytes.
 
 For the exact summary-only shapes `SELECT (COUNT(*) AS ?n) WHERE { ?s <p> ?o }`,
 `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`,

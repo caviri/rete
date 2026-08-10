@@ -4,31 +4,110 @@
 use crate::commands::range_source::open_local;
 use crate::commands::render::term_to_json;
 
-/// `rete export <file> <format>`: write the graph as N-Quads, Turtle, or JSON-LD.
-pub(crate) fn export(file: &str, format: &str) -> anyhow::Result<()> {
+/// Which slice of the dataset `rete export` should write.
+///
+/// Every field is a **pruning** filter, not a post-hoc row test: they become the
+/// triple pattern `Rete::dump_filtered_each` routes on, so exporting one
+/// predicate of a 33 GB graph fetches the tiles that predicate lives in and
+/// nothing else. See that method for the measured before/after.
+#[derive(Default, Clone)]
+pub(crate) struct ExportFilter {
+    /// `None` = the default graph followed by every named graph (the lossless
+    /// N-Quads dump). `Some(None)` = the default graph only. `Some(Some(iri))`
+    /// = that named graph only.
+    pub graph: Option<Option<String>>,
+    pub subject: Option<String>,
+    pub predicate: Option<String>,
+    pub object: Option<String>,
+}
+
+impl ExportFilter {
+    /// The graph slots to write, in order.
+    pub(crate) fn slots(&self, rete: &rete_core::Rete) -> Vec<Option<String>> {
+        match &self.graph {
+            None => std::iter::once(None)
+                .chain(rete.graph_names().iter().map(|g| Some((*g).to_string())))
+                .collect(),
+            Some(None) => vec![None],
+            Some(Some(g)) => vec![Some(canonical_graph(rete, g))],
+        }
+    }
+
+    fn terms(&self) -> (Option<&str>, Option<&str>, Option<&str>) {
+        (
+            self.subject.as_deref(),
+            self.predicate.as_deref(),
+            self.object.as_deref(),
+        )
+    }
+}
+
+/// Resolve a user-supplied graph name to the token the file stores. Graph names
+/// are canonical N-Triples terms (`<iri>`), but a shell user types the bare IRI;
+/// accept either, preferring an exact match. Same rule as the wasm client's
+/// `canonical_graph_name`, so `--graph` behaves identically in both.
+pub(crate) fn canonical_graph(rete: &rete_core::Rete, name: &str) -> String {
+    if rete.graph_names().contains(&name) {
+        return name.to_string();
+    }
+    if name.starts_with('<') || name.starts_with("_:") {
+        return name.to_string();
+    }
+    format!("<{name}>")
+}
+
+/// Canonicalize a user-supplied filter term to the N-Triples token the
+/// dictionary stores: `<iri>`, `"literal"`, `"lit"@en`, `"lit"^^<dt>`, `_:b`
+/// pass through, and a bare IRI gets its angle brackets. A term the dictionary
+/// does not know matches nothing — which is a legitimate answer, not an error.
+pub(crate) fn canonical_term(term: &str) -> String {
+    if term.starts_with('<') || term.starts_with('"') || term.starts_with("_:") {
+        term.to_string()
+    } else {
+        format!("<{term}>")
+    }
+}
+
+/// `rete export <file> --format <fmt>`: write the graph — or a filtered slice of
+/// it — as N-Quads, Turtle, or JSON-LD.
+pub(crate) fn export(file: &str, format: &str, filter: &ExportFilter) -> anyhow::Result<()> {
     let rete = open_local(file)?;
+    let (s, p, o) = filter.terms();
     match format {
-        // N-Quads: lossless dump of the default graph + every named graph.
-        // Streamed (dump_each) so a 100M+ triple file serializes in constant
-        // memory instead of materializing every term into a Vec (which OOMs).
+        // N-Quads: lossless dump of the selected graph(s).
+        // Streamed (dump_filtered_each) so a 100M+ triple file serializes in
+        // constant memory instead of materializing every term into a Vec.
         "nq" => {
             use std::io::Write;
             let stdout = std::io::stdout();
             let mut out = std::io::BufWriter::new(stdout.lock());
-            rete.dump_each(None, |s, p, o| {
-                let _ = writeln!(out, "{s} {p} {o} .");
-            });
-            let names: Vec<String> = rete.graph_names().iter().map(|s| s.to_string()).collect();
-            for g in names {
-                rete.dump_each(Some(&g), |s, p, o| {
-                    let _ = writeln!(out, "{s} {p} {o} {g} .");
-                });
+            for slot in filter.slots(&rete) {
+                match &slot {
+                    None => rete.dump_filtered_each(None, s, p, o, |s, p, o| {
+                        let _ = writeln!(out, "{s} {p} {o} .");
+                    }),
+                    Some(g) => rete.dump_filtered_each(Some(g), s, p, o, |s, p, o| {
+                        let _ = writeln!(out, "{s} {p} {o} {g} .");
+                    }),
+                }
             }
             out.flush()?;
         }
-        // Turtle / JSON-LD are single-graph formats here: emit the default graph.
-        "ttl" => print!("{}", export_turtle(&rete.dump(None))),
-        "jsonld" => println!("{}", export_jsonld(&rete.dump(None))),
+        // Turtle / JSON-LD are single-graph formats here: the default graph
+        // unless `--graph` names one (they have no default-vs-named distinction,
+        // so an all-graphs export would silently merge them).
+        "ttl" | "jsonld" => {
+            let g = match &filter.graph {
+                None | Some(None) => None,
+                Some(Some(g)) => Some(canonical_graph(&rete, g)),
+            };
+            let triples = rete.query_in_graph(g.as_deref(), s, p, o);
+            if format == "ttl" {
+                print!("{}", export_turtle(&triples));
+            } else {
+                println!("{}", export_jsonld(&triples));
+            }
+        }
         other => anyhow::bail!("unknown export format: {other}"),
     }
     Ok(())

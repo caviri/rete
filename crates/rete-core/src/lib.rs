@@ -80,13 +80,14 @@ pub mod varint;
 pub mod format {
     pub use crate::file::{
         attach_build_info, plan_build_info, read_build_info, replace_metadata, verify,
-        BuildInfoPlan, ByteRange, FileError, LayoutSegment, Rete, TermTriple, TripleProvenance,
-        CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
+        BuildInfoPlan, ByteRange, DumpPlan, FileError, LayoutSegment, Rete, TermTriple,
+        TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
     };
     pub use crate::header::{
         Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
         MIN_STABLE_READ_VERSION,
     };
+    pub use crate::index::ScanPlan;
     pub use crate::ingest::{
         assemble_dataset, assemble_dataset_with, assemble_dataset_with_opts,
         assemble_dataset_with_opts_algo, assemble_dataset_with_perms, parse, parse_quads,
@@ -172,8 +173,8 @@ pub use file::{
     read_card_and_build_info_with_header, read_metadata_ranged, read_schema_coherence_ranged,
     read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata,
     schema_classes, schema_coherence, schema_summary, verify, write_dataset,
-    write_dataset_with_metadata, write_file, BuildInfoPlan, ByteRange, LayoutSegment, Rete,
-    SearchView, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
+    write_dataset_with_metadata, write_file, BuildInfoPlan, ByteRange, DumpPlan, LayoutSegment,
+    Rete, SearchView, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
     DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 #[doc(hidden)]
@@ -182,7 +183,7 @@ pub use header::{
     MIN_STABLE_READ_VERSION,
 };
 #[doc(hidden)]
-pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSet};
+pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSet, ScanPlan};
 #[doc(hidden)]
 pub use meta::{
     CharSet, ClassNode, ClassRelation, CommunityDescriptor, LabelEntry, LevelLinks, LevelRollup,

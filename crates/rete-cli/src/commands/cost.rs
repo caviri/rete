@@ -134,6 +134,179 @@ pub(crate) fn cost(source: &str, query: &str, json: bool, explain: bool) -> anyh
     Ok(())
 }
 
+/// Preview the range-read cost of a **dump** — `rete export`, or a client's
+/// streaming dump — over a local file or HTTP(S) `.rete` URL.
+///
+/// Same reporting shape as the query preview above (`AccessCost`, the same JSON
+/// keys, the same "bytes in N range request(s)" line), because it is the same
+/// question asked of a different access path. What it adds is the part a dump
+/// can answer *exactly*: the tile directories say which tiles the filter's
+/// routed scan can touch and how big they are, so the index figure is computed,
+/// not sampled — no tile is fetched to produce it.
+///
+/// The dictionary is the honest gap. Term resolution faults whichever chunks the
+/// matched rows' terms live in, and nothing in the directories says which, so
+/// this reports the section length as a ceiling and says so. On a literal-heavy
+/// file that ceiling, not the index, is what a dump actually costs.
+pub(crate) fn dump_cost(
+    source: &str,
+    filter: &crate::commands::export::ExportFilter,
+    json: bool,
+) -> anyhow::Result<()> {
+    let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(source)?));
+    let file_bytes = reader.len();
+    let rete = Rete::open_ranged_lazy(reader.clone())?;
+    let open = AccessCost {
+        available: true,
+        bytes: reader.bytes_read(),
+        requests: reader.requests(),
+        reads_index: true,
+    };
+
+    let slots = filter.slots(&rete);
+    let (s, p, o) = (
+        filter.subject.as_deref(),
+        filter.predicate.as_deref(),
+        filter.object.as_deref(),
+    );
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    let mut tile_bytes = 0u64;
+    let mut section_bytes = 0u64;
+    let mut tiles_admitted = 0usize;
+    let mut tiles_total = 0usize;
+    let mut dictionary_bytes = 0u64;
+    for slot in &slots {
+        let plan = rete.dump_plan(slot.as_deref(), s, p, o);
+        dictionary_bytes = plan.dictionary_bytes;
+        let label = slot.clone().unwrap_or_else(|| "(default)".into());
+        match plan.scan {
+            Some(scan) => {
+                tile_bytes += scan.tile_bytes;
+                section_bytes += scan.section_bytes;
+                tiles_admitted += scan.tiles_admitted;
+                tiles_total += scan.tiles_total;
+                rows.push(serde_json::json!({
+                    "graph": label,
+                    "matches": true,
+                    "permutation": scan.permutation.name(),
+                    "tiles_total": scan.tiles_total,
+                    "tiles_routed": scan.tiles_routed,
+                    "tiles_admitted": scan.tiles_admitted,
+                    "tile_bytes": scan.tile_bytes,
+                    "section_bytes": scan.section_bytes,
+                }));
+            }
+            // No scan at all: the graph is absent, or a bound term is not in the
+            // dictionary. Either way the dump reads zero index bytes.
+            None => rows.push(serde_json::json!({
+                "graph": label,
+                "matches": false,
+                "reason": "graph absent, or a filter term the dictionary does not contain",
+            })),
+        }
+    }
+    // The floor is what the scan provably reads (open + admitted tiles); the
+    // ceiling adds the whole dictionary, which is what a dump touching every
+    // term would fault. The truth is between, and closer to the floor the more
+    // selective the filter — except on a file whose payload IS the literals.
+    let floor = open.bytes + tile_bytes;
+    let ceiling = floor + dictionary_bytes;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schemaVersion": crate::JSON_SCHEMA_VERSION,
+                "source": source,
+                "source_kind": if is_url(source) { "url" } else { "local" },
+                "file_bytes": file_bytes,
+                "mode": "dump",
+                "filter": {
+                    "graph": match &filter.graph {
+                        None => serde_json::Value::Null,
+                        Some(None) => serde_json::json!(""),
+                        Some(Some(g)) => serde_json::json!(g),
+                    },
+                    "subject": s,
+                    "predicate": p,
+                    "object": o,
+                },
+                "lazy_dump_open": {
+                    "available": open.available,
+                    "bytes": open.bytes,
+                    "requests": open.requests,
+                    "reads_index": open.reads_index,
+                    "note": "tile directories only; index tiles fault in per scan",
+                },
+                "graphs": rows,
+                "index_tiles": {
+                    "admitted": tiles_admitted,
+                    "total": tiles_total,
+                    "bytes": tile_bytes,
+                    "section_bytes": section_bytes,
+                    "note": "computed from the tile directories — no tile fetched",
+                },
+                "dictionary_ceiling_bytes": dictionary_bytes,
+                "estimated_bytes": { "floor": floor, "ceiling": ceiling },
+            }))?
+        );
+    } else {
+        println!("dump cost preview");
+        println!("  source: {source}");
+        println!(
+            "  source kind: {}",
+            if is_url(source) { "url" } else { "local" }
+        );
+        println!("  file bytes: {file_bytes}");
+        println!(
+            "  filter: graph={} subject={} predicate={} object={}",
+            match &filter.graph {
+                None => "(all)".to_string(),
+                Some(None) => "(default)".to_string(),
+                Some(Some(g)) => g.clone(),
+            },
+            s.unwrap_or("?"),
+            p.unwrap_or("?"),
+            o.unwrap_or("?")
+        );
+        print_access("lazy dump open", open);
+        println!("  graphs selected: {}", slots.len());
+        for row in &rows {
+            if row["matches"].as_bool() == Some(true) {
+                println!(
+                    "    {}: {} · {} of {} tile(s) admitted · {} bytes (section {})",
+                    row["graph"].as_str().unwrap_or(""),
+                    row["permutation"].as_str().unwrap_or(""),
+                    row["tiles_admitted"],
+                    row["tiles_total"],
+                    row["tile_bytes"],
+                    row["section_bytes"],
+                );
+            } else {
+                println!(
+                    "    {}: matches nothing ({})",
+                    row["graph"].as_str().unwrap_or(""),
+                    row["reason"].as_str().unwrap_or("")
+                );
+            }
+        }
+        println!(
+            "  index tiles: {tiles_admitted} of {tiles_total} admitted · {tile_bytes} bytes \
+             of {section_bytes} · computed from the tile directories, no tile fetched"
+        );
+        println!("  dictionary ceiling: {dictionary_bytes} bytes");
+        println!("  estimated dump cost: {floor} – {ceiling} bytes");
+        println!(
+            "  note: the floor is the open plus the index tiles the filter admits — exact. \
+             The ceiling adds the WHOLE dictionary, which only a dump that touches every \
+             term pays. Term resolution faults chunks the tile directories cannot name, so \
+             the true cost sits between; on a literal-heavy file it sits near the ceiling \
+             however well the index prunes."
+        );
+    }
+    Ok(())
+}
+
 fn print_access(label: &str, cost: AccessCost) {
     let available = if cost.available {
         ""

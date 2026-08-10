@@ -422,6 +422,20 @@ enum Command {
         /// Output format: nq | ttl | jsonld.
         #[arg(long, value_parser = ["nq", "ttl", "jsonld"], default_value = "nq")]
         format: String,
+        /// Export ONE graph: a named-graph IRI, or the empty string for the
+        /// default graph. Omit for the default graph plus every named graph.
+        #[arg(long)]
+        graph: Option<String>,
+        /// Export only triples with this subject (bare IRI or N-Triples token).
+        #[arg(long)]
+        subject: Option<String>,
+        /// Export only triples with this predicate (bare IRI or N-Triples token).
+        #[arg(long)]
+        predicate: Option<String>,
+        /// Export only triples with this object (bare IRI or N-Triples token,
+        /// e.g. `'"text"@en'`).
+        #[arg(long)]
+        object: Option<String>,
     },
     /// Rebuild a `.rete`'s pyramid in place, reading triples straight from the
     /// file (no `export | build` N-Quads round-trip). Use to add a schema
@@ -652,8 +666,25 @@ enum Command {
     Cost {
         /// Local `.rete` file path or http(s) URL.
         source: String,
-        /// The SPARQL query to parse and inspect.
-        query: String,
+        /// The SPARQL query to parse and inspect. Omit with `--dump`.
+        query: Option<String>,
+        /// Preview a **dump** instead of a query: what `rete export` (and the
+        /// clients' streaming dump) will fetch for the filter below.
+        #[arg(long)]
+        dump: bool,
+        /// `--dump` only: one graph — a named-graph IRI, or the empty string for
+        /// the default graph. Omit for the default graph plus every named graph.
+        #[arg(long)]
+        graph: Option<String>,
+        /// `--dump` only: restrict to this subject.
+        #[arg(long)]
+        subject: Option<String>,
+        /// `--dump` only: restrict to this predicate.
+        #[arg(long)]
+        predicate: Option<String>,
+        /// `--dump` only: restrict to this object.
+        #[arg(long)]
+        object: Option<String>,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
@@ -1131,7 +1162,25 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             },
         ),
         Command::Graphs { file } => commands::inspect::graphs(&file),
-        Command::Export { file, format } => commands::export::export(&file, &format),
+        Command::Export {
+            file,
+            format,
+            graph,
+            subject,
+            predicate,
+            object,
+        } => commands::export::export(
+            &file,
+            &format,
+            &commands::export::ExportFilter {
+                // `--graph ''` is the default graph alone; a non-empty value is
+                // that named graph; absent is every graph (the lossless dump).
+                graph: graph.map(|g| (!g.is_empty()).then_some(g)),
+                subject: subject.as_deref().map(commands::export::canonical_term),
+                predicate: predicate.as_deref().map(commands::export::canonical_term),
+                object: object.as_deref().map(commands::export::canonical_term),
+            },
+        ),
         Command::Repyramid {
             file,
             output,
@@ -1233,9 +1282,34 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Cost {
             source,
             query,
+            dump,
+            graph,
+            subject,
+            predicate,
+            object,
             json,
             explain,
-        } => commands::cost::cost(&source, &query, json, explain),
+        } => {
+            if dump {
+                commands::cost::dump_cost(
+                    &source,
+                    &commands::export::ExportFilter {
+                        graph: graph.map(|g| (!g.is_empty()).then_some(g)),
+                        subject: subject.as_deref().map(commands::export::canonical_term),
+                        predicate: predicate.as_deref().map(commands::export::canonical_term),
+                        object: object.as_deref().map(commands::export::canonical_term),
+                    },
+                    json,
+                )
+            } else {
+                let query = query.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "`rete cost` needs a SPARQL query, or `--dump` to preview a dump"
+                    )
+                })?;
+                commands::cost::cost(&source, &query, json, explain)
+            }
+        }
         Command::Progressive {
             source,
             query,

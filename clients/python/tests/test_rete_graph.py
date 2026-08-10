@@ -380,6 +380,107 @@ def test_iter_quads_preserves_named_graphs(nq_bytes):
     assert list(g.iter_quads("http://example.org/nope")) == []
 
 
+def test_iter_quads_filters_are_the_full_dump_filtered(nq_bytes):
+    """A filtered dump must return exactly the quads the unfiltered dump
+    returns, filtered — the correctness half of the pruning it does.
+
+    The saving comes from *not fetching* index tiles a synopsis rejects, and a
+    pruning bug loses rows without erroring, so the expectation here is computed
+    from the unfiltered walk rather than written out by hand.
+    """
+    g = rete.open(nq_bytes)
+    everything = list(g.iter_quads())
+
+    knows = "http://example.org/knows"
+    assert sorted(g.iter_quads(predicate=knows)) == sorted(
+        q for q in everything if q[1] == f"<{knows}>"
+    )
+    # A bare IRI, an `<iri>` token and a Term are the same filter.
+    assert sorted(g.iter_quads(predicate=f"<{knows}>")) == sorted(
+        g.iter_quads(predicate=knows)
+    )
+    assert sorted(g.iter_quads(predicate=rete.Term("iri", knows))) == sorted(
+        g.iter_quads(predicate=knows)
+    )
+
+    alice = "http://example.org/alice"
+    assert sorted(g.iter_quads(subject=alice)) == sorted(
+        q for q in everything if q[0] == f"<{alice}>"
+    )
+    assert sorted(g.iter_quads(object=alice)) == sorted(
+        q for q in everything if q[2] == f"<{alice}>"
+    )
+
+    # Filters compose with each other and with the graph scope.
+    assert sorted(g.iter_quads(subject=alice, predicate=knows)) == sorted(
+        q for q in everything if q[0] == f"<{alice}>" and q[1] == f"<{knows}>"
+    )
+    assert sorted(g.iter_quads("http://example.org/g1", predicate=knows)) == sorted(
+        q
+        for q in everything
+        if q[1] == f"<{knows}>" and q[3] == "<http://example.org/g1>"
+    )
+
+    # A term the file does not contain yields nothing — not everything.
+    assert list(g.iter_quads(predicate="http://example.org/nope")) == []
+    assert list(g.iter_quads(subject="http://example.org/nobody")) == []
+    assert list(g.iter_quads(object='"no such literal"')) == []
+
+
+def test_to_nquads_takes_the_same_filters(nq_bytes):
+    import io
+
+    g = rete.open(nq_bytes)
+    out = io.StringIO()
+    written = g.to_nquads(out, predicate="http://example.org/knows")
+    lines = [line for line in out.getvalue().splitlines() if line]
+    assert written == len(lines)
+    assert all("<http://example.org/knows>" in line for line in lines)
+    assert len(lines) == len(list(g.iter_quads(predicate="http://example.org/knows")))
+
+
+def test_a_filtered_dump_over_a_remote_graph_agrees_and_costs_no_more(
+    serve_bytes, multiblock_rete_bytes
+):
+    """Over a lazily range-read remote graph, a filtered dump must return
+    exactly the unfiltered dump filtered, and fetch no more than it.
+
+    Deliberately *not* asserting a byte ratio here. The filter prunes the index,
+    not the dictionary, and on this fixture — 200 000 quads whose objects are
+    200 000 distinct literals — resolving a fifth of the rows still needs a
+    fifth of the object dictionary, while the physical counter reports
+    block-aligned fetches over a 3.4 MB file. Measured: 1,048,576 B for the
+    whole dump and the same for the slice; on a 17 MB build of the same shape,
+    3,932,160 B vs 3,145,728 B. The byte proof belongs where it can be made
+    exact, and is: `a_predicate_scoped_dump_fetches_less_than_the_graph` in
+    rete-core. What this guards is that the client wires the filter to the
+    engine's scan at all, over the remote path, without losing rows.
+    """
+    url = serve_bytes(multiblock_rete_bytes)
+
+    whole = rete.open(url)
+    everything = list(whole.iter_quads())
+    assert len(everything) == whole.quads
+    whole_bytes = whole.stats()["bytes"]
+
+    sliced = rete.open(url)
+    rows = list(sliced.iter_quads(predicate="http://example.org/p0"))
+    # Sorted, not positional: a filtered walk streams in the ROUTED
+    # permutation's order (a bound predicate routes to POS), so the rows are the
+    # same set in a different order. See `iter_quads`.
+    assert sorted(rows) == sorted(
+        q for q in everything if q[1] == "<http://example.org/p0>"
+    )
+    assert 0 < len(rows) < whole.quads
+    assert sliced.stats()["bytes"] <= whole_bytes
+
+    one = rete.open(url)
+    assert sorted(one.iter_quads(subject="http://example.org/s7")) == sorted(
+        q for q in everything if q[0] == "<http://example.org/s7>"
+    )
+    assert one.stats()["bytes"] <= whole_bytes
+
+
 def test_iter_quads_batching_is_invisible(big_rete_bytes):
     """Any batch size yields the same quads in the same order — batching is an
     implementation detail of *how much* is resolved per call, never of what."""
