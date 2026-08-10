@@ -601,10 +601,20 @@ const DICT_CHUNK_BUDGET: usize = 64 * 1024;
 
 /// Encode one dictionary section as a chunked payload (format v0.2):
 /// `[header_len, raw header (term_count/interval/restart table)]
-///  [num_chunks; per chunk: Î”first_run, first_term, comp_len]
+///  [num_chunks; per chunk: Î”first_run, key_len, key, comp_len]
 ///  [individually compressed run-aligned body slices]`.
 /// The header keeps its original encoding, so restart offsets stay valid in
 /// the section's coordinate space.
+///
+/// `key` is the chunk's **routing separator**, not its first term: the
+/// shortest string strictly above the previous chunk's last term and at most
+/// the chunk's own first term (empty for chunk 0). See
+/// [`crate::dict::SectionChunk::key`] for the invariant and
+/// [`crate::dict::shortest_separator`] for the choice. Storing the first term
+/// verbatim — what this wrote before — is the degenerate case of the same
+/// invariant, so readers of either vintage route both correctly; the
+/// separator is simply orders of magnitude smaller when the boundary term is a
+/// long literal.
 fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
     let meta = crate::dict::parse_meta(raw).unwrap_or(crate::dict::SectionMeta {
         term_count: 0,
@@ -646,11 +656,31 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
     out.extend_from_slice(header);
     write_uvarint(&mut out, bounds.len() as u64);
     let mut prev_run = 0usize;
-    for (&(first_run, start, _), comp) in bounds.iter().zip(&compressed) {
-        let first_term = crate::dict::run_first_term(raw, start as usize).unwrap_or_default();
+    // The previous chunk's last term — the separator's lower bound. Decoding it
+    // walks at most `restart_interval` front-coded entries of one chunk, which
+    // is nothing beside the zstd pass over the same 64 KiB.
+    let mut prev_last: Option<Vec<u8>> = None;
+    for (i, (&(first_run, start, end), comp)) in bounds.iter().zip(&compressed).enumerate() {
+        let key = if i == 0 {
+            // Everything routes to chunk 0; it needs no separator at all.
+            Vec::new()
+        } else {
+            let first = crate::dict::run_first_term(raw, start as usize).unwrap_or_default();
+            match &prev_last {
+                // Undecodable predecessor: the verbatim first term is always a
+                // valid separator, just not a short one.
+                None => first,
+                Some(pl) => crate::dict::shortest_separator(pl, &first),
+            }
+        };
+        if i + 1 < bounds.len() {
+            // The last run of THIS chunk starts one run before the next chunk's.
+            let last_run_off = meta.restart_offsets[bounds[i + 1].0 - 1] as usize;
+            prev_last = crate::dict::run_last_term(raw, last_run_off, end as usize);
+        }
         write_uvarint(&mut out, (first_run - prev_run) as u64);
-        write_uvarint(&mut out, first_term.len() as u64);
-        out.extend_from_slice(&first_term);
+        write_uvarint(&mut out, key.len() as u64);
+        out.extend_from_slice(&key);
         write_uvarint(&mut out, comp.len() as u64);
         prev_run = first_run;
     }
@@ -660,11 +690,12 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
     out
 }
 
-/// A parsed chunked-dict-section directory entry: the chunk's run/term/body
-/// coordinates plus its compressed byte range *within the payload*.
+/// A parsed chunked-dict-section directory entry: the chunk's run/key/body
+/// coordinates plus its compressed byte range *within the payload*. `key` is a
+/// routing separator, not a term — see [`crate::dict::SectionChunk::key`].
 struct DictChunkEntry {
     first_run: usize,
-    first_term: Vec<u8>,
+    key: Vec<u8>,
     body_start: u64,
     start: u64,
     end: u64,
@@ -698,12 +729,12 @@ fn parse_chunked_dict_dir(
     let mut prev_run = 0usize;
     for _ in 0..num_chunks {
         let drun = take(&mut pos)? as usize;
-        let tlen = take(&mut pos)? as usize;
-        let term = bytes
-            .get(pos..pos.saturating_add(tlen))
-            .ok_or(FileError::Container("truncated dict chunk first term"))?
+        let klen = take(&mut pos)? as usize;
+        let key = bytes
+            .get(pos..pos.saturating_add(klen))
+            .ok_or(FileError::Container("truncated dict chunk key"))?
             .to_vec();
-        pos += tlen;
+        pos += klen;
         let clen = take(&mut pos)?;
         let first_run = prev_run + drun;
         let body_start = meta
@@ -713,7 +744,7 @@ fn parse_chunked_dict_dir(
             .ok_or(FileError::Container("dict chunk run out of range"))?;
         entries.push(DictChunkEntry {
             first_run,
-            first_term: term,
+            key,
             body_start,
             start: 0,
             end: 0,
@@ -867,7 +898,7 @@ enum ChunkDirParse {
 }
 
 /// Parse just the chunk directory (the bytes after a section header):
-/// `[num_chunks][per chunk: Δfirst_run, first_term_len, first_term, comp_len]`.
+/// `[num_chunks][per chunk: Δfirst_run, key_len, key, comp_len]`.
 /// Chunk byte ranges (`start`/`end`) come back relative to the directory's own
 /// start; `body_start` is 0 (a lite section never uses it — lookups derive run
 /// offsets per chunk). Bodies aren't needed here, so `dir` may end at the first
@@ -900,22 +931,22 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, Fil
             used: entry_start,
             total: num_chunks,
         };
-        let (Some(drun), Some(tlen)) = (take(&mut pos), take(&mut pos)) else {
+        let (Some(drun), Some(klen)) = (take(&mut pos), take(&mut pos)) else {
             return Ok(short);
         };
-        let (drun, tlen) = (drun as usize, tlen as usize);
-        let Some(term) = dir.get(pos..pos.saturating_add(tlen)) else {
+        let (drun, klen) = (drun as usize, klen as usize);
+        let Some(key) = dir.get(pos..pos.saturating_add(klen)) else {
             return Ok(short);
         };
-        let term = term.to_vec();
-        pos += tlen;
+        let key = key.to_vec();
+        pos += klen;
         let Some(clen) = take(&mut pos) else {
             return Ok(short);
         };
         let first_run = prev_run + drun;
         entries.push(DictChunkEntry {
             first_run,
-            first_term: term,
+            key,
             body_start: 0,
             start: 0,
             end: 0,
@@ -949,7 +980,7 @@ fn decode_chunked_dict_section(
         .map(|e| {
             Ok(crate::dict::SectionChunk::resident(
                 e.first_run,
-                e.first_term,
+                e.key,
                 e.body_start,
                 decompress(codec, &payload[e.start as usize..e.end as usize])?,
             ))
@@ -4138,12 +4169,15 @@ fn resolve_query_pattern(
 ///
 /// `want` selects which of the four sections (0 shared, 1 subject-only,
 /// 2 object-only, 3 predicates) are really read; a skipped one becomes an empty
-/// section whose terms resolve to `None`. A **directory is not small** on a
-/// literal-heavy graph — it carries each chunk's first term verbatim, so the
-/// object-only section of a dataset that stores abstracts can run to hundreds of
-/// megabytes, and fetching it is most of what a remote open costs. A reader that
-/// only ever resolves subjects (see [`SearchView`]) skips sections 2 and 3 and
-/// pays none of it. [`Rete::open_ranged_lazy`] wants all four.
+/// section whose terms resolve to `None`. On a file written before #198 a
+/// **directory is not small**: it carried each chunk's first term verbatim, so
+/// the object-only section of a dataset that stores abstracts can run to
+/// hundreds of megabytes, and fetching it is most of what a remote open costs.
+/// Current builds key it by the shortest separator instead (a few bytes per
+/// chunk), but that is write-side, so every already-published file still pays.
+/// A reader that only ever resolves subjects (see [`SearchView`]) skips
+/// sections 2 and 3 and pays none of it. [`Rete::open_ranged_lazy`] wants all
+/// four.
 fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
     reader: &std::sync::Arc<R>,
     header: &Header,
@@ -4180,7 +4214,7 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
             .collect();
         let chunks: Vec<crate::dict::SectionChunk> = entries
             .into_iter()
-            .map(|e| crate::dict::SectionChunk::remote(e.first_run, e.first_term, e.body_start))
+            .map(|e| crate::dict::SectionChunk::remote(e.first_run, e.key, e.body_start))
             .collect();
         let chunk_reader = reader.clone();
         let codec = header.dict_codec;
@@ -4329,8 +4363,10 @@ fn text_search_in(
 /// `epfl-infoscience.rete` (1.64 GB), a full [`Rete::open_ranged_lazy`] reads
 /// 536,947,344 B, of which the six permutation tile directories are **49,940 B
 /// in 40 reads** and the dictionary is 536,896,380 B in 36 reads: the
-/// object-only chunk directory alone is 234,400,728 B, because it stores every
-/// chunk's first term verbatim (see #198). This view opens sections 0 and 1
+/// object-only chunk directory alone is 234,400,728 B, because that file stores
+/// every chunk's first term verbatim. Files built since #198 key it by the
+/// shortest separator (~600 KB on this graph); the published one still does
+/// not, and only a rebuild changes that. This view opens sections 0 and 1
 /// only — both search modes return subject IRIs — and costs **21,554 B in 9
 /// reads** on the same file. It also skips the index container and defers the
 /// TEXT_INDEX and pyramid, so it pays only for what it reads: the token table
@@ -4747,6 +4783,25 @@ pub fn read_schema_summary_ranged<R: RangeReader>(
         })
         .unwrap_or_default();
     Ok(Some((classes, relations)))
+}
+
+/// Every dictionary section's chunk **routing keys**, exactly as stored, from a
+/// finished file image. Test-only: it exists so a test in another module of
+/// this crate (`extbuild`) can assert on the directory the writers produce
+/// without any of this becoming public surface.
+#[cfg(test)]
+pub(crate) fn dict_chunk_keys_for_test(image: &[u8]) -> Vec<Vec<Vec<u8>>> {
+    let header = Header::from_bytes(&image[..HEADER_LEN]).unwrap();
+    let s = header.dictionary_offset as usize;
+    let e = s + header.dictionary_len as usize;
+    decode_container(&image[s..e], CODEC_NONE)
+        .unwrap()
+        .iter()
+        .map(|payload| {
+            let (_meta, entries) = parse_chunked_dict_dir(payload, payload.len() as u64).unwrap();
+            entries.into_iter().map(|c| c.key).collect()
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -5379,7 +5434,7 @@ mod tests {
     /// `SearchView` answers exactly what a full open answers, having read
     /// strictly less: it skips the permutation tile directories and — the part
     /// that actually costs on a literal-heavy graph — the object-only
-    /// dictionary's chunk directory, which carries every chunk's first term.
+    /// dictionary's chunk directory.
     #[test]
     fn search_view_matches_full_open_for_far_fewer_bytes() {
         use crate::reader::{CountingReader, SliceReader};
@@ -5443,16 +5498,27 @@ mod tests {
     #[test]
     fn dict_chunk_directory_probe_costs_about_one_directory() {
         use crate::reader::{CountingReader, SliceReader};
-        // ~4 KiB literals: one restart run (16 terms) far exceeds the 64 KiB
-        // chunk budget, so every chunk stores a full 4 KiB term in the directory
-        // — the shape that makes this directory expensive on real graphs.
-        let filler = "x".repeat(4000);
-        let triples: Vec<(String, String, String)> = (0..800u32)
+        // Long literals that share a 3 KiB prefix with their neighbour, each
+        // ending in a 1 KiB tail of its own: the WKT-polygon / JSON-blob shape
+        // (#198's weak case). The directory stores the SHORTEST SEPARATOR per
+        // chunk, and a separator has to reproduce the whole shared prefix — so
+        // these keys are still ~3 KiB and the directory still runs well past
+        // the 8 KiB header prefix, which is what gives the probe something to
+        // measure.
+        //
+        // This fixture used to put the varying bytes FIRST (`"{i:04} xxxx…"`).
+        // That shape is the one separators annihilate: its keys collapse to ~4
+        // bytes, the whole directory to 192 B, it fits the header prefix, and
+        // the probe never runs — the assertion below then fails naming itself.
+        // Keep the shared prefix.
+        let head = "x".repeat(3000);
+        let triples: Vec<(String, String, String)> = (0..2000u32)
             .map(|i| {
+                let tail = char::from(b'a' + (i % 26) as u8).to_string().repeat(1000);
                 (
                     format!("<http://ex/s/{i:04}>"),
                     "<http://ex/abstract>".to_string(),
-                    format!("\"{i:04} {filler}\""),
+                    format!("\"{head}{i:04}{tail}\""),
                 )
             })
             .collect();
@@ -5514,6 +5580,371 @@ mod tests {
             spent < old,
             "probe read {spent} B; the re-reading loop it replaced spent {old} B"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Separator routing keys (#198 option (d))
+    // ---------------------------------------------------------------------
+
+    /// A verbatim-keyed twin of a chunked dictionary section: same header, same
+    /// chunking, byte-identical compressed bodies — only every directory key
+    /// replaced by the chunk's actual first term. That is exactly what
+    /// `encode_chunked_dict_section` wrote before separator keys, so it is the
+    /// control for every comparison below (and for the proptest).
+    fn verbatim_keyed_twin(payload: &[u8], codec: u8) -> Vec<u8> {
+        let (_meta, entries) = parse_chunked_dict_dir(payload, payload.len() as u64).unwrap();
+        let (header_len, n0) = read_uvarint(payload).unwrap();
+        let mut out = Vec::new();
+        write_uvarint(&mut out, header_len);
+        out.extend_from_slice(&payload[n0..n0 + header_len as usize]);
+        write_uvarint(&mut out, entries.len() as u64);
+        let mut prev_run = 0usize;
+        for e in &entries {
+            let body = decompress(codec, &payload[e.start as usize..e.end as usize]).unwrap();
+            let first = crate::dict::run_first_term(&body, 0).unwrap();
+            write_uvarint(&mut out, (e.first_run - prev_run) as u64);
+            write_uvarint(&mut out, first.len() as u64);
+            out.extend_from_slice(&first);
+            write_uvarint(&mut out, e.end - e.start);
+            prev_run = e.first_run;
+        }
+        for e in &entries {
+            out.extend_from_slice(&payload[e.start as usize..e.end as usize]);
+        }
+        out
+    }
+
+    /// Each chunk's (first term, last term), decoded from the bodies.
+    fn chunk_bounds_of(payload: &[u8], codec: u8) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let (_meta, entries) = parse_chunked_dict_dir(payload, payload.len() as u64).unwrap();
+        entries
+            .iter()
+            .map(|e| {
+                let body = decompress(codec, &payload[e.start as usize..e.end as usize]).unwrap();
+                (
+                    crate::dict::run_first_term(&body, 0).unwrap(),
+                    crate::dict::run_last_term(&body, 0, body.len()).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// A term set built to hit every shape the corpus has: plain IRIs, literals
+    /// sharing a long prefix with their neighbour (separators are LONG there —
+    /// the WKT/`ohm-full` weak case), literals that diverge in their first bytes
+    /// (separators are tiny — the `epfl-infoscience` case), literals larger than
+    /// `DICT_CHUNK_BUDGET` on their own, and multibyte UTF-8.
+    fn adversarial_terms() -> Vec<String> {
+        let mut terms: Vec<String> = Vec::new();
+        for i in 0..6_000 {
+            terms.push(format!("<http://example.org/work/{i:06}>"));
+        }
+        let shared = "X".repeat(900);
+        for i in 0..4_000 {
+            terms.push(format!("\"{shared}-{i:05}-tail\""));
+        }
+        let deep = "Y".repeat(3_000); // shared prefix far past any short key
+        for i in 0..120 {
+            terms.push(format!("\"{deep}{i:03}\""));
+        }
+        for i in 0..6 {
+            // one literal larger than the 64 KiB budget: a chunk of one run
+            terms.push(format!("\"BIG-{i:02}-{}\"", "Z".repeat(90_000)));
+        }
+        for i in 0..800 {
+            terms.push(format!(
+                "\"h\u{e9}llo-{}-\u{1F600}{i:04}\"",
+                "\u{e9}".repeat(40)
+            ));
+        }
+        for i in 0..2_000 {
+            terms.push(format!("\"{i:05}-{}\"", "T".repeat(1_800)));
+        }
+        terms.sort();
+        terms.dedup();
+        terms
+    }
+
+    fn chunked_section_of(terms: &[String]) -> Vec<u8> {
+        let mut b = crate::dict::DictSectionBuilder::new().with_restart_interval(16);
+        for t in terms {
+            b.push(t.clone());
+        }
+        b.build()
+    }
+
+    /// The invariant, asserted against the real chunk contents: the stored key
+    /// of chunk `i` is strictly above chunk `i-1`'s LAST term and at most chunk
+    /// `i`'s own first term, chunk 0's key is empty, and the keys ascend — the
+    /// three facts `ChunkedSection::id`'s `partition_point` relies on.
+    ///
+    /// Plus the anti-regression the rename exists for: on a section like this
+    /// the key must NOT be the first term. A writer that quietly went back to
+    /// storing terms would pass every other test in this file — dumps and
+    /// `term(id)` route by `first_run` and never read the key.
+    #[test]
+    fn chunk_directory_keys_are_separators_not_terms() {
+        let terms = adversarial_terms();
+        let raw = chunked_section_of(&terms);
+        let payload = encode_chunked_dict_section(&raw, CODEC_NONE);
+        let (_meta, entries) = parse_chunked_dict_dir(&payload, payload.len() as u64).unwrap();
+        let bounds = chunk_bounds_of(&payload, CODEC_NONE);
+        assert!(
+            entries.len() > 20,
+            "need a many-chunk section, got {}",
+            entries.len()
+        );
+
+        assert!(entries[0].key.is_empty(), "chunk 0 needs no separator");
+        let mut key_bytes = 0usize;
+        let mut term_bytes = 0usize;
+        let mut differ = 0usize;
+        for (i, e) in entries.iter().enumerate() {
+            key_bytes += e.key.len();
+            term_bytes += bounds[i].0.len();
+            if e.key != bounds[i].0 {
+                differ += 1;
+            }
+            assert!(
+                e.key <= bounds[i].0,
+                "chunk {i}: key must be <= its own first term"
+            );
+            if i > 0 {
+                assert!(
+                    e.key.as_slice() > bounds[i - 1].1.as_slice(),
+                    "chunk {i}: key must be > the previous chunk's last term"
+                );
+                assert!(
+                    e.key > entries[i - 1].key,
+                    "chunk {i}: keys must ascend for partition_point"
+                );
+                // shortest: one byte past the divergence from the predecessor
+                assert_eq!(
+                    e.key,
+                    crate::dict::shortest_separator(&bounds[i - 1].1, &bounds[i].0),
+                    "chunk {i}: key is not the SHORTEST separator"
+                );
+            }
+        }
+        assert!(
+            differ > 0,
+            "every key equalled its first term — the writer stores terms again"
+        );
+        assert!(
+            key_bytes * 4 < term_bytes,
+            "separators bought almost nothing: {key_bytes} B vs {term_bytes} B of first terms"
+        );
+        eprintln!(
+            "chunks={} first-term keys={term_bytes} B  separator keys={key_bytes} B ({:.1}x)",
+            entries.len(),
+            term_bytes as f64 / key_bytes.max(1) as f64
+        );
+    }
+
+    /// A separator-keyed section answers **identically** to the verbatim-keyed
+    /// one built over the same bodies, under the same unmodified reader: every
+    /// id, every term, and every boundary probe — the first and last term of
+    /// each chunk, one byte either side of each, strings that fall strictly
+    /// *between* two chunks, truncations, the empty string, and probes below
+    /// and above the whole section.
+    ///
+    /// Probing `id(term)` is the entire point. A broken key (a truncation, a
+    /// hash) leaves `term(id)`, `dump` and `export` byte-perfect — they route by
+    /// `first_run` — and only lookups lie.
+    #[test]
+    fn separator_keys_route_identically_to_verbatim_first_terms() {
+        let terms = adversarial_terms();
+        let raw = chunked_section_of(&terms);
+        let sep_payload = encode_chunked_dict_section(&raw, CODEC_NONE);
+        let ver_payload = verbatim_keyed_twin(&sep_payload, CODEC_NONE);
+
+        // Same chunking, byte-identical bodies — only the keys differ.
+        let (_ms, es) = parse_chunked_dict_dir(&sep_payload, sep_payload.len() as u64).unwrap();
+        let (_mv, ev) = parse_chunked_dict_dir(&ver_payload, ver_payload.len() as u64).unwrap();
+        assert_eq!(es.len(), ev.len());
+        for (a, b) in es.iter().zip(ev.iter()) {
+            assert_eq!(a.first_run, b.first_run);
+            assert_eq!(
+                &sep_payload[a.start as usize..a.end as usize],
+                &ver_payload[b.start as usize..b.end as usize],
+                "chunk bodies must be identical"
+            );
+        }
+        assert!(
+            sep_payload.len() < ver_payload.len(),
+            "separator payload is not smaller"
+        );
+
+        let sec_s = decode_chunked_dict_section(&sep_payload, CODEC_NONE).unwrap();
+        let sec_v = decode_chunked_dict_section(&ver_payload, CODEC_NONE).unwrap();
+
+        // 1. every present term → the same, correct id
+        for (i, t) in terms.iter().enumerate() {
+            let want = Some(i as u32 + 1);
+            assert_eq!(sec_v.id(t), want, "verbatim id() lost a term");
+            assert_eq!(sec_s.id(t), want, "separator id() lost a term");
+        }
+        // 2. every id → the same term
+        for i in 0..terms.len() as u32 {
+            assert_eq!(sec_s.term(i + 1), sec_v.term(i + 1));
+            assert_eq!(
+                sec_s.term(i + 1).as_deref(),
+                Some(terms[i as usize].as_str())
+            );
+        }
+        // 3. boundary probes, from the real chunk bounds
+        let bounds = chunk_bounds_of(&sep_payload, CODEC_NONE);
+        let mut probes: Vec<String> = Vec::new();
+        let push = |bytes: &[u8], probes: &mut Vec<String>| {
+            if let Ok(s) = std::str::from_utf8(bytes) {
+                probes.push(s.to_string());
+            }
+        };
+        for (first, last) in &bounds {
+            for base in [first, last] {
+                push(base, &mut probes); // present
+                let mut after = base.clone();
+                after.push(0x01); // immediately after — between chunks when base = last
+                push(&after, &mut probes);
+                let mut far = base.clone();
+                far.push(b'~');
+                push(&far, &mut probes);
+                if !base.is_empty() {
+                    push(&base[..base.len() - 1], &mut probes); // truncated
+                    let mut down = base.clone();
+                    *down.last_mut().unwrap() = down.last().unwrap().wrapping_sub(1);
+                    push(&down, &mut probes);
+                    let mut up = base.clone();
+                    *up.last_mut().unwrap() = up.last().unwrap().wrapping_add(1);
+                    push(&up, &mut probes);
+                }
+            }
+        }
+        // 4. the stored separators themselves, and the ends of the world
+        for e in &es {
+            push(&e.key, &mut probes);
+            let mut plus = e.key.clone();
+            plus.push(0);
+            push(&plus, &mut probes);
+        }
+        probes.push(String::new()); // the empty key, i.e. chunk 0's
+        probes.push("\u{1}".to_string()); // below every term
+        probes.push("\u{10FFFF}\u{10FFFF}".to_string()); // above every term
+        probes.push(terms.first().unwrap().clone());
+        probes.push(terms.last().unwrap().clone());
+
+        let mut hits = 0usize;
+        for p in &probes {
+            let (a, b) = (sec_v.id(p), sec_s.id(p));
+            assert_eq!(
+                a,
+                b,
+                "probe diverged: {:?}",
+                p.get(..p.len().min(48)).unwrap_or(p.as_str())
+            );
+            hits += usize::from(a.is_some());
+        }
+        assert!(
+            probes.len() > 500 && hits > 50,
+            "probe set is too thin: {} probes, {hits} of them present",
+            probes.len()
+        );
+        eprintln!(
+            "{} boundary probes, {hits} present, all identical",
+            probes.len()
+        );
+    }
+
+    /// The same claim as a **property**: for arbitrary term sets and arbitrary
+    /// probes, a separator-keyed section and the verbatim-keyed twin built from
+    /// the same input are indistinguishable through the reader. The fixed test
+    /// above picks the shapes I thought of; this one shrinks a counterexample
+    /// out of the ones I did not.
+    mod separator_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Sorted, deduplicated term sets mixing the three shapes that decide a
+        /// separator's length: short IRIs, literals whose payload comes BEFORE
+        /// the discriminating bytes (long shared prefixes ⇒ long separators),
+        /// and literals that diverge immediately (⇒ one-byte separators). Sizes
+        /// straddle `DICT_CHUNK_BUDGET`, so single- and many-chunk sections both
+        /// occur.
+        fn term_set() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec(("[a-c]{1,6}", 0u8..3, 300usize..1200), 60..250).prop_map(
+                |specs| {
+                    let mut terms: Vec<String> = specs
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (core, kind, pad))| {
+                            let block = "z".repeat(pad);
+                            match kind {
+                                0 => format!("<http://ex/{core}/{i:05}>"),
+                                1 => format!("\"{block}{core}{i:05}\""),
+                                _ => format!("\"{core}{i:05}{block}\""),
+                            }
+                        })
+                        .collect();
+                    terms.sort();
+                    terms.dedup();
+                    terms
+                },
+            )
+        }
+
+        proptest! {
+            #[test]
+            fn prop_separator_keyed_section_answers_like_verbatim(
+                terms in term_set(),
+                extra in prop::collection::vec(any::<String>(), 0..8),
+            ) {
+                let raw = chunked_section_of(&terms);
+                let sep = encode_chunked_dict_section(&raw, CODEC_NONE);
+                let ver = verbatim_keyed_twin(&sep, CODEC_NONE);
+                prop_assert!(sep.len() <= ver.len());
+
+                // The separator invariant, against the real chunk contents.
+                let (_m, es) = parse_chunked_dict_dir(&sep, sep.len() as u64).unwrap();
+                let bounds = chunk_bounds_of(&sep, CODEC_NONE);
+                prop_assert!(es[0].key.is_empty());
+                for i in 1..es.len() {
+                    prop_assert!(es[i].key.as_slice() > bounds[i - 1].1.as_slice());
+                    prop_assert!(es[i].key <= bounds[i].0);
+                    prop_assert!(es[i].key > es[i - 1].key);
+                }
+
+                let sec_s = decode_chunked_dict_section(&sep, CODEC_NONE).unwrap();
+                let sec_v = decode_chunked_dict_section(&ver, CODEC_NONE).unwrap();
+
+                for (i, t) in terms.iter().enumerate() {
+                    prop_assert_eq!(sec_s.id(t), Some(i as u32 + 1));
+                    prop_assert_eq!(sec_v.id(t), Some(i as u32 + 1));
+                    prop_assert_eq!(sec_s.term(i as u32 + 1), sec_v.term(i as u32 + 1));
+                }
+
+                // Probes: arbitrary strings, plus mutations of every boundary.
+                let mut probes: Vec<String> = extra;
+                probes.push(String::new());
+                for (first, last) in &bounds {
+                    for base in [first, last] {
+                        if let Ok(s) = std::str::from_utf8(base) {
+                            probes.push(s.to_string());
+                            probes.push(format!("{s}\u{1}"));
+                            probes.push(s[..s.len() - s.chars().next_back()
+                                .map(char::len_utf8).unwrap_or(0)].to_string());
+                        }
+                    }
+                }
+                for e in &es {
+                    if let Ok(s) = std::str::from_utf8(&e.key) {
+                        probes.push(s.to_string());
+                    }
+                }
+                for p in &probes {
+                    prop_assert_eq!(sec_s.id(p), sec_v.id(p), "probe diverged: {:?}", p);
+                }
+            }
+        }
     }
 
     /// The TEXT_INDEX section is inside the content hash: a freshly built

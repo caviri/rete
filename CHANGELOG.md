@@ -225,6 +225,56 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **The dictionary's chunk directory stores a shortest separator, not the
+  chunk's first term (#198).** Writer-side only, on by default, no flag, no
+  generation bump. Each directory entry keeps its framing — `Δfirst_run`,
+  `key_len`, `key`, `clen` — but `key` is now the shortest byte string `s` with
+  `last_term(chunk i-1) < s <= first_term(chunk i)`, i.e. the chunk's first term
+  truncated one byte past where it diverges from its predecessor's last term.
+  Chunk 0's key is empty. That was already the whole contract:
+  `ChunkedSection::id` routes with `partition_point(|c| c.key <= term)` and
+  reads the key nowhere else, so **an unmodified older reader routes a
+  separator-keyed file correctly** — the verbatim first term is the degenerate
+  separator.
+
+  Measured by rebuilding real datasets with **both** writers and parsing the
+  directories back out of the two files:
+
+  | dataset | chunks | chunk directory | after | | longest key |
+  |---|--:|--:|--:|--:|--:|
+  | `proteinbase` (10.8 MB) | 238 | 244,979 B | **26,432 B** | 9.3× | 6,793 → 942 B |
+  | `tree-city-inventory` (19.4 MB) | 330 | 26,826 B | **10,426 B** | 2.6× | 80 → 67 B |
+  | `dance` (325 KB) | 7 | 345 B | **51 B** | 6.8× | 52 → 7 B |
+
+  Across 147 local generation-`0x05` files ≤400 MB — directories parsed and every
+  chunk decompressed to find its real boundary terms — 28,393,024 B of directory
+  becomes 4,436,838 B (6.40×). Read the **distribution**, not the aggregate:
+  median 6.38×, p10 1.93×, min 1.30× (`tracking`), max 1,175× (`ramon_llull`),
+  and two files are 53.5% of all the directory bytes. The saving is proportional
+  to how much of a boundary term is *not* shared with its predecessor, so
+  free-text and blob literals gain 15–1,000× (`geoadmin` 102.7×, `postscriptum`
+  75.3×, `swissubase-demo` 38.4×, `davidrumsey` 261,271 → 48,009 B) while one IRI
+  namespace gains almost nothing (`openalex-entities` 1.6×, `bph` 1.4×) and
+  kilobyte-prefixed WKT is the weak case (`ohm-full` 4.0×, and still the corpus's
+  largest directory afterwards at 3,053,714 B). Build cost is noise. The chunk
+  bodies, the ids, the term order and every query answer are unchanged; the
+  content hash is not, so a rebuilt file will not match a previously published
+  hash.
+
+  Existing published files keep their large directories until they are rebuilt —
+  this buys nothing without a rebuild, and it does not oblige one.
+
+  The one way this bites is a future reader treating the key as a term.
+  `SectionChunk::first_term` is renamed to `key` and documents the invariant, and
+  a test asserts the key is *not* the first term, because that failure is silent:
+  `id → term`, `dump` and `export` route by `Δfirst_run` and stay byte-perfect
+  while only `term → id` lies. Verified against binaries built from unmodified
+  `origin/main`: 78 checks over two graphs × six build variants
+  (in-RAM, `--text-index`, `--permutations 3`, `--memory-budget-mb`) × two reader
+  paths × 2,854 boundary probes, 0 failures — and a negative control writing
+  #198's rejected truncated key gives 398 wrong `term → id` answers at 8 bytes
+  with a byte-identical `export`.
+
 - **No backwards-compatibility promise before 1.0.0 — the one made earlier in
   this cycle is withdrawn.** Earlier in this same unreleased cycle the project
   promised that "generation-1 files stay readable, and no flag-day rebuild is

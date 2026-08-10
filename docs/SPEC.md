@@ -378,17 +378,40 @@ section payload:  varint header_len, raw §5.1 header (term count, restart
                   offsets stay valid in the section's coordinate space)
                   varint num_chunks
                   per chunk: varint Δfirst_run        # Δ from previous chunk
-                             varint first_term_len, first_term bytes
+                             varint key_len, key bytes # routing separator
                              varint clen               # compressed chunk length
                   chunks:    run-aligned body slices, compressed individually
 ```
 
 Chunks hold whole front-coded runs (~64 KiB of body per chunk), and the
-directory embeds each chunk's first term — so `term → id` binary-searches the
-directory locally and faults exactly **one** chunk, and `id → term` computes
-its chunk arithmetically and faults one. A lazily-opened remote file therefore
-pays the section headers + directories (KBs) up front and O(touched chunks)
-afterwards, instead of the whole dictionary container.
+directory carries one **routing key** per chunk — so `term → id`
+binary-searches the directory locally and faults exactly **one** chunk, and
+`id → term` computes its chunk arithmetically and faults one. A lazily-opened
+remote file therefore pays the section headers + directories (KBs) up front and
+O(touched chunks) afterwards, instead of the whole dictionary container.
+
+The key is a **separator, not a term**. Its only contract is
+
+```
+last_term(chunk i-1)  <  key(i)  <=  first_term(chunk i)
+```
+
+with chunk 0's key empty (`b"" <= anything`). A reader routes by
+`partition_point(|c| c.key <= term)`, which needs nothing else; a term that
+falls in the gap `key(i) <= term < first_term(i)` lands on chunk `i`, finds no
+match, and is correctly reported absent. Writers store the **shortest** such
+string — `first_term(i)` truncated one byte past where it diverges from
+`last_term(i-1)` — which on a graph of long literals is a few bytes where the
+term is kilobytes. Files written before 2026-08 store the chunk's first term
+verbatim; that is the degenerate separator, so **both vintages route
+identically and no version check is involved.** An existing file keeps its
+larger directory until it is rebuilt.
+
+Two consequences a future reader must respect: the key may not be reconstructed
+into a term, compared for equality with one, or reported as one; and a key that
+is *not* a separator (a truncation, a fixed-size hash) mis-routes **silently** —
+`id → term`, `dump` and `export` route by `Δfirst_run` and stay byte-perfect
+while `term → id` returns wrong answers.
 
 ### 6.3 Full-text index (TEXT_INDEX section, optional)
 
@@ -642,11 +665,14 @@ separate directory/footer round-trip is needed:
     skip the index entirely and return an empty result.
 ```
 
-<img src="img/remote-open-cost.svg" alt="What a cold remote open costs, measured with rete cost on the published davidrumsey.rete — 74.8 MB, 5,001,983 triples. Each track is the whole file; the solid part is what crosses the wire. Reading the dataset card costs 2 requests and 61 KB, 0.08 percent. Opening lazily for a query costs 65 requests and 407 KB, 0.54 percent, because only tile directories are read. But routing one triple pattern costs 2 requests and 16.1 MB, 21.5 percent, and the overview costs 3 requests and 17.4 MB, 23.3 percent — both because resolving a term to an id pulls the whole dictionary, whose chunk directory stores every chunk's first term verbatim. Reading the file whole costs 74.7 MB, 99.9 percent.">
+<img src="img/remote-open-cost.svg" alt="What a cold remote open costs, measured with rete cost on the published davidrumsey.rete — 74.8 MB, 5,001,983 triples. Each track is the whole file; the solid part is what crosses the wire. Reading the dataset card costs 2 requests and 61 KB, 0.08 percent. Opening lazily for a query costs 65 requests and 407 KB, 0.54 percent, because only tile directories are read. But routing one triple pattern costs 2 requests and 16.1 MB, 21.5 percent, and the overview costs 3 requests and 17.4 MB, 23.3 percent — both because resolving a term to an id pulls the whole dictionary. Reading the file whole costs 74.7 MB, 99.9 percent.">
 
 *The same file, five ways in. The lazy path is 0.54% of the file; the two paths
-that must resolve a constant term to an id pay for the whole dictionary, whose
-chunk directory still stores every chunk's first term verbatim (#198).*
+that must resolve a constant term to an id pay for the whole dictionary. This
+file predates separator keys, so its chunk directory also stores every chunk's
+first term verbatim — 261,271 B, which a rebuild takes to 48,009 B (#198). On
+this graph that is a rounding error inside a 16 MB dictionary; on a graph of
+long literals it is most of the open.*
 
 A full open touches ≤4 ranges (header, dict, index, pyramid-meta); the overview
 path touches 3 and skips the index entirely. The routed single-pattern path reads

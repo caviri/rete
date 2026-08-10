@@ -903,16 +903,36 @@ impl RawSectionWriter {
         let comp_path = tmp.path(&format!("{out_name}.chunks"));
         let mut comp_out = BufWriter::new(File::create(&comp_path)?);
         let mut dir: Vec<(usize, Vec<u8>, u64)> = Vec::with_capacity(bounds.len());
-        for &(first_run, start, end) in &bounds {
+        // The previous chunk's last term — the separator's lower bound. Kept in
+        // lockstep with `encode_chunked_dict_section`; the two writers must emit
+        // byte-identical directories for the same input.
+        let mut prev_last: Option<Vec<u8>> = None;
+        for (i, &(first_run, start, end)) in bounds.iter().enumerate() {
             body.seek(SeekFrom::Start(start))?;
             let mut raw = vec![0u8; (end - start) as usize];
             body.read_exact(&mut raw)?;
             // the chunk's first run entry is a restart: [0][len][full term]
             let first_term = read_restart_term(&raw)
                 .ok_or(ExtBuildError::Internal("restart entry unreadable"))?;
+            // Routing key = the shortest separator, not the first term; chunk 0
+            // needs none. See `crate::dict::SectionChunk::key`.
+            let key = if i == 0 {
+                Vec::new()
+            } else {
+                match &prev_last {
+                    None => first_term,
+                    Some(pl) => crate::dict::shortest_separator(pl, &first_term),
+                }
+            };
+            if i + 1 < bounds.len() {
+                // This chunk's last run starts one run before the next chunk's;
+                // `raw` already holds the bytes, so decoding it is free of I/O.
+                let last_run_rel = (offs[bounds[i + 1].0 - 1] - start) as usize;
+                prev_last = crate::dict::run_last_term(&raw, last_run_rel, raw.len());
+            }
             let comp = crate::file::compress(codec, &raw);
             comp_out.write_all(&comp)?;
-            dir.push((first_run, first_term, comp.len() as u64));
+            dir.push((first_run, key, comp.len() as u64));
         }
         comp_out.flush()?;
         drop(body);
@@ -926,10 +946,10 @@ impl RawSectionWriter {
         head.extend_from_slice(&header);
         write_uvarint(&mut head, dir.len() as u64);
         let mut prev_run = 0usize;
-        for (first_run, first_term, comp_len) in &dir {
+        for (first_run, key, comp_len) in &dir {
             write_uvarint(&mut head, (*first_run - prev_run) as u64);
-            write_uvarint(&mut head, first_term.len() as u64);
-            head.extend_from_slice(first_term);
+            write_uvarint(&mut head, key.len() as u64);
+            head.extend_from_slice(key);
             write_uvarint(&mut head, *comp_len);
             prev_run = *first_run;
         }
@@ -1703,6 +1723,73 @@ mod tests {
         );
         drop(tmp);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The two dictionary writers must agree on the **separator keys**, not
+    /// just on everything else. `finish_chunked` and
+    /// `file::encode_chunked_dict_section` compute the previous chunk's last
+    /// term from different sources — a spill file read back in slices, versus
+    /// one contiguous buffer — so this is the place they can drift.
+    ///
+    /// The literals here are long enough that the object-only section really
+    /// splits into chunks; a short-IRI graph would compare two one-chunk
+    /// directories and prove nothing.
+    #[test]
+    fn separator_keyed_dictionary_is_byte_identical_across_writers() {
+        let blob = "w".repeat(1200);
+        let quads: Vec<RawQuad> = (0..900usize)
+            .map(|i| {
+                (
+                    format!("<http://ex/s{i:04}>"),
+                    "<http://ex/note>".to_string(),
+                    // half share a long prefix (long separators), half diverge
+                    // in their first bytes (one-byte separators)
+                    if i % 2 == 0 {
+                        format!("\"{blob}{i:04}\"")
+                    } else {
+                        format!("\"{i:04}{blob}\"")
+                    },
+                    None,
+                )
+            })
+            .collect();
+
+        let reference = build_reference(quads.clone());
+        let (bytes, _) = build_ext(quads, 0);
+        assert_eq!(
+            bytes, reference,
+            "the external builder's chunk directory drifted from the in-RAM one"
+        );
+
+        // …and the directory they agree on really is multi-chunk and keyed by
+        // separators, not by the 1,206-byte literals it used to copy.
+        let keys = crate::file::dict_chunk_keys_for_test(&bytes);
+        let obj = &keys[2]; // section 2 = object-only, the one with the literals
+        assert!(
+            obj.len() > 4,
+            "object-only section has {} chunks",
+            obj.len()
+        );
+        assert!(obj[0].is_empty(), "chunk 0 must carry no separator");
+        let longest = obj.iter().map(Vec::len).max().unwrap();
+        assert!(
+            longest < 1_200,
+            "longest key is {longest} B — that is a stored term, not a separator"
+        );
+
+        // Every object term still resolves: the routing works in the merged file.
+        let rete = crate::Rete::open(&bytes).unwrap();
+        for i in (0..900usize).step_by(7) {
+            let o = if i % 2 == 0 {
+                format!("\"{blob}{i:04}\"")
+            } else {
+                format!("\"{i:04}{blob}\"")
+            };
+            assert!(
+                rete.dictionary().object_id(&o).is_some(),
+                "object {i} lost by the chunk directory"
+            );
+        }
     }
 
     /// The external file must open and answer queries like any other build.

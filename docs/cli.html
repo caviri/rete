@@ -1223,10 +1223,14 @@ sections), and stops: no permutation tile directories, no pyramid, no index.
 per posting list; the bare prefix mode faults the pyramid instead, where the
 label index lives.</p>
 <p>That narrowness is the point, because on a literal-heavy graph the dictionary is
-most of the file and its <strong>object-only chunk directory</strong> — which carries every
-chunk's first term verbatim — is most of what a normal open costs. Searching
-<code>epfl-infoscience.rete</code> (1.64 GB; a 1.35 GB dictionary, a 186 MB text index over
-titles and 132k abstracts) for <code>photosynthesis</code>:</p>
+most of the file, and on a file built before 2026-08 its <strong>object-only chunk
+directory</strong> — which carried every chunk's first term verbatim — is most of what a
+normal open costs. (Newer builds key that directory by the shortest <em>separator</em>
+instead, a few bytes per chunk: on <code>epfl-infoscience</code> that is 234 MB of routing
+keys against ~600 KB. It is a write-side change, so a published file keeps its
+large directory until it is rebuilt — the figures below are the published one.)
+Searching <code>epfl-infoscience.rete</code> (1.64 GB; a 1.35 GB dictionary, a 186 MB text
+index over titles and 132k abstracts) for <code>photosynthesis</code>:</p>
 <table><thead><tr><th></th><th>bytes fetched</th><th>requests</th><th>time</th></tr></thead><tbody>
 <tr><td><code>sparql-url</code> with <code>FILTER(CONTAINS(…))</code></td><td>334 MB</td><td>83</td><td>28.6 s</td></tr>
 <tr><td><code>search-url --contains</code></td><td><strong>29.5 MB</strong></td><td><strong>5</strong></td><td><strong>4.8 s</strong></td></tr>
