@@ -15,6 +15,10 @@ command -v wasm-opt >/dev/null || {
   echo "wasm-opt is required (use the devcontainer image)" >&2
   exit 1
 }
+command -v node >/dev/null || {
+  echo "node is required (use the devcontainer image)" >&2
+  exit 1
+}
 
 if [[ -z "${RETE_SOURCE_REVISION:-}" ]]; then
   if [[ -n "${GITHUB_SHA:-}" ]]; then
@@ -35,6 +39,7 @@ export RETE_BUILD_STAMP="${RETE_BUILD_STAMP:-$RETE_SOURCE_REVISION}"
 # builds explicitly skip wasm-opt. Rust's release profile still optimizes them.
 wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg --no-opt
 wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
+node tests/gate/checks/check_wasm_boot.mjs
 # docs/engine/ is the tracked ESM copy the standalone docs pages import
 # (anatomy/bim-pair/building). It used to be a hand-copy with no producer —
 # refresh it here so the CI parity diff below can actually guard it.

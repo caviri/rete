@@ -12,7 +12,7 @@ requests:
 The page still includes a user-initiated URL loader for custom `.rete` files.
 
 Prerequisites (all via Docker, see CLAUDE.md / docs):
-  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
   rete build examples/<x>.nt -o web/<x>.rete      # for each dataset below
 
 Run (deterministic):

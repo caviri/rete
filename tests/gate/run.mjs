@@ -70,6 +70,25 @@ function g0() {
       String(e.stderr || e.stdout || e).slice(-160),
     );
   }
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_wasm_boot.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "web and no-modules WASM boot",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? "" : out.slice(-160),
+    );
+  } catch (e) {
+    record(
+      "G0",
+      "web and no-modules WASM boot",
+      false,
+      String(e.stderr || e.stdout || e).slice(-160),
+    );
+  }
 
   // The asyncify glue must normalize every wasm pointer it dereferences: above
   // 2 GiB an `i32` import arrives sign-extended and `mem.set` throws. The browser

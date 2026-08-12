@@ -7,8 +7,12 @@ can query either an in-memory `.rete` image or a remote range-readable file.
 ## Build
 
 ```sh
-wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
+wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg --no-opt
 ```
+
+The repository's pinned Binaryen v108 corrupts current wasm-bindgen externref
+table exports, so regular browser builds must skip its post-pass. From the
+repository root, `docker compose run --rm wasm` is the canonical full build.
 
 ## In-memory graph
 

@@ -335,8 +335,7 @@ docker compose run --rm dev cargo test -p rete-core --no-default-features
 docker compose run --rm dev cargo build -p rete-core --all-features
 docker compose run --rm dev cargo build -p rete-bench
 docker compose run --rm dev bash scripts/smoke.sh
-docker compose run --rm wasm wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
-docker compose run --rm wasm wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+docker compose run --rm wasm
 ```
 
 Focused tests, benchmark harness tests, generated-document checks, and browser

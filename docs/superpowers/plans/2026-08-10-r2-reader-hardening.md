@@ -427,7 +427,7 @@
 - Regenerate: `docs/BENCHMARK.html`
 - Create benchmark artifacts under ignored `target/bench/` only; do not commit raw samples or binaries.
 
-- [ ] **Step 1: Build the release candidate and record its identity**
+- [x] **Step 1: Build the release candidate and record its identity**
 
   ```powershell
   docker compose run --rm dev cargo build --release -p rete-cli
@@ -438,7 +438,7 @@
 
   Copy the executable to uniquely named ignored paths before comparing configurations so every sample group identifies immutable bytes. The same executable may be used for threshold 0 and 8; mode separation comes from `RETE_EAGER_MAX_MB`.
 
-- [ ] **Step 2: Verify live R2 object identities before timing**
+- [x] **Step 2: Verify live R2 object identities before timing**
 
   Check `HEAD`, `Accept-Ranges`, `Content-Length`, and ETag for Chemotion, BOE, ChEBI Full, and all six Wikidata XXL shards. Required shard pins are:
 
@@ -453,7 +453,7 @@
 
   Total observed sharded size is 4,872,958,617 bytes. Stop rather than benchmark if any pin changed; update a workload only after inspecting the replacement dataset and revalidating deterministic result hashes.
 
-- [ ] **Step 3: Re-run Chemotion, then sample BOE and ChEBI Full**
+- [x] **Step 3: Re-run Chemotion, then sample BOE and ChEBI Full**
 
   Use 15 fresh-process samples per query/mode. First re-run the existing pinned Chemotion three-query comparison so the remediation is checked against its accepted 50.5-73.7% median wins. BOE compares thresholds 0 and 8, demonstrating the small-object one-GET path. ChEBI Full compares the same thresholds and must remain lazy in both modes because it is larger than 8 MiB.
 
@@ -465,14 +465,12 @@
 
   Preserve output hashes and assert transfer counts are stable within every query/mode group. Report median and nearest-rank p90 wall time, bytes, GET count, and median/p90/max peak RSS. Compute the time win as `(lazy_median - adaptive_median) / lazy_median × 100%`; report negative values as regressions, not wins.
 
-- [ ] **Step 4: Validate the browser/WASM six-shard catalog path**
+- [x] **Step 4: Validate the browser/WASM six-shard catalog path**
 
   First build both browser targets and the playground:
 
   ```powershell
-  docker compose run --rm wasm wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
-  docker compose run --rm wasm wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
-  docker compose run --rm dev uv run python scripts/build_playground.py
+  docker compose run --rm wasm
   ```
 
   Run the existing live catalog gate restricted to Wikidata XXL:
@@ -491,7 +489,7 @@
 
   Require the first query to transfer a strict subset of 223,233 bytes and the second identical query to add zero requests and zero bytes. This proves the native <=8 MiB one-GET policy did not leak into the shared/resident browser reader.
 
-- [ ] **Step 5: Document measured results and scope**
+- [x] **Step 5: Document measured results and scope**
 
   Add a dated section to `docs/BENCHMARK.md` containing:
 
@@ -510,7 +508,7 @@
   docker compose run --rm dev cargo run -q -p docgen
   ```
 
-- [ ] **Step 6: Run the complete verification matrix**
+- [x] **Step 6: Run the complete verification matrix**
 
   ```powershell
   docker compose run --rm dev cargo fmt --all -- --check
@@ -520,13 +518,11 @@
   docker compose run --rm dev cargo build -p rete-core --all-features
   docker compose run --rm dev cargo build -p rete-bench
   docker compose run --rm dev bash scripts/smoke.sh
-  docker compose run --rm wasm wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
-  docker compose run --rm wasm wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
-  docker compose run --rm dev uv run python scripts/build_playground.py
+  docker compose run --rm wasm
   git status --short
   ```
 
-- [ ] **Step 7: Final review and commit Task 5**
+- [x] **Step 7: Final review and commit Task 5**
 
   Review the full branch diff against `docs/superpowers/specs/2026-08-10-r2-reader-hardening-design.md`. Confirm there are no new format bytes, public API changes, unbounded open-time named tile decompressions, unpinned benchmark claims, or generated-file drift.
 
@@ -539,7 +535,7 @@
 
 ## Final Branch Gate
 
-- [ ] Ask a fresh reviewer agent to compare the committed branch with the approved design and this plan.
-- [ ] Resolve every correctness, safety, compatibility, or reproducibility issue; rerun the affected focused checks.
-- [ ] Rerun the complete verification matrix after the last code change.
-- [ ] Confirm `git status --short` is clean and report commits, benchmark deltas, browser/shared compatibility, and the explicit remaining zstd limitation to the user.
+- [x] Ask a fresh reviewer agent to compare the committed branch with the approved design and this plan.
+- [x] Resolve every correctness, safety, compatibility, or reproducibility issue; rerun the affected focused checks.
+- [x] Rerun the complete verification matrix after the last code change.
+- [x] Confirm `git status --short` is clean and report commits, benchmark deltas, browser/shared compatibility, and the explicit remaining zstd limitation to the user.

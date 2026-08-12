@@ -210,8 +210,9 @@ pre-change binary, `delegated_lazy` is the candidate forced lazy with
 `eager_8` harness label means one eager *transfer*, not an eager parser: the
 compressed file is retained in a bounded owned memory reader and opened with
 `Rete::open_ranged_lazy`, so dictionary chunks, default-graph index tiles, the
-pyramid, and text-index decompression remain demand-driven. Named graphs still
-decode during open.
+pyramid, and text-index decompression remain demand-driven. That 2026-08-07
+candidate still decoded named graphs during open; the current behavior measured
+below opens their framing and directories without decoding tile payloads.
 The selective workload orders by `?name ?formula ?smiles` before `LIMIT 200`:
 without `ORDER BY`, SPARQL permits either plan to return a different valid
 200-row subset, which is unsuitable for an exact output-hash benchmark.
@@ -257,8 +258,9 @@ improvement (the gate required two), none regresses in median or p90, and every
 eligible sample performs exactly one data GET. Peak process RSS was **28,700
 KiB (28.0 MiB)**: the process retains the validated 7.22 MiB compressed image,
 but demand-decodes only the touched dictionary chunks and default-graph tiles;
-pyramid/text-index data stay deferred. Named graphs would still decode during
-open rather than on first query use.
+pyramid/text-index data stay deferred. That candidate still decoded named graphs
+during open rather than on first query use; the later named-tile work described
+below removes that open-time decode.
 
 Every sample for a query produced one byte-identical JSON hash across all
 modes:
@@ -308,6 +310,185 @@ python3 scripts/bench_cold_r2.py \
   --source https://data.graphplaza.com/chemotion/chemotion.rete \
   --out /target/bench/cold-r2-final-fix-thresholds.jsonl
 ```
+
+### Pinned R2 remediation matrix (2026-08-10)
+
+This rerun uses git revision
+`74aa48fb21c172f9df140f22baa5cf33b94ab0ab` and one immutable `rete 0.3.2`
+release executable with SHA-256
+`8f315597073222a66c6288bd568f2e76bcfafbc818ca71b5b1d1628d094625bc`.
+Every cell is 15 fresh processes. Threshold 0 forces native remote-lazy reads;
+threshold 8 permits native `sparql-url` to fetch an object at or below 8 MiB in
+one exact GET into owned memory, while parsing and tile decompression remain
+lazy. Before/after probes matched every length and ETag below, and all objects
+advertised `Accept-Ranges: bytes`.
+
+| object | URL | bytes | ETag |
+|---|---|---:|---|
+| Chemotion | `https://data.graphplaza.com/chemotion/chemotion.rete` | 7,566,404 | `"6cefd111dee3c59c063f0bede9cd60f9"` |
+| BOE | `https://data.graphplaza.com/boe/boe.rete` | 6,958,628 | `"460709f1f8c26dd15a02e5df5dbfecfa"` |
+| ChEBI Full | `https://data.graphplaza.com/chebi-full/chebi-full.rete` | 164,832,053 | `"2954435cf2b9677c9a38f84964b93668-3"` |
+
+The exact queries are the three built-in Chemotion queries in
+[`bench_cold_r2.py`](https://github.com/caviri/rete/blob/main/scripts/bench_cold_r2.py),
+the two-query pinned
+[`boe.json`](https://github.com/caviri/rete/blob/main/scripts/cold-r2-workloads/boe.json),
+and the selective pinned
+[`chebi-full.json`](https://github.com/caviri/rete/blob/main/scripts/cold-r2-workloads/chebi-full.json).
+Every limited
+`SELECT` has a complete deterministic `ORDER BY`.
+
+| dataset / query | threshold | bytes / GETs | wall median / p90 | VmHWM median / p90 / max | median change vs 0 |
+|---|---:|---:|---:|---:|---:|
+| Chemotion / molecules | 0 MiB | 2,032,640 / 26 | 2,437 / 2,605 ms | 19,644 / 19,772 / 19,780 KiB | — |
+|  | **8 MiB** | **7,566,404 / 1** | **708 / 801 ms** | 22,372 / 22,568 / 22,572 KiB | **70.9% faster** |
+| Chemotion / formulas | 0 MiB | 1,246,208 / 19 | 1,818 / 2,049 ms | 12,492 / 12,764 / 12,772 KiB | — |
+|  | **8 MiB** | **7,566,404 / 1** | **672 / 784 ms** | 18,752 / 19,016 / 19,028 KiB | **63.0% faster** |
+| Chemotion / spectroscopy path | 0 MiB | 2,491,392 / 37 | 3,443 / 3,848 ms | 22,828 / 22,988 / 23,284 KiB | — |
+|  | **8 MiB** | **7,566,404 / 1** | **871 / 975 ms** | 27,548 / 27,956 / 27,964 KiB | **74.7% faster** |
+| BOE / bound law | 0 MiB | 1,049,600 / 16 | 1,642 / 3,798 ms | 11,556 / 11,784 / 11,800 KiB | — |
+|  | **8 MiB** | **6,958,628 / 1** | **737 / 1,529 ms** | 17,176 / 17,480 / 17,608 KiB | **55.1% faster** |
+| BOE / type counts | 0 MiB | 852,992 / 14 | 1,482 / 1,746 ms | 10,952 / 11,432 / 11,452 KiB | — |
+|  | **8 MiB** | **6,958,628 / 1** | **714 / 5,386 ms** | 17,192 / 17,372 / 17,464 KiB | **51.8% faster** |
+| ChEBI Full / bound entity | 0 MiB | 5,374,976 / 39 | 3,830 / 5,001 ms | 20,512 / 20,644 / 20,768 KiB | — |
+|  | 8 MiB | 5,374,976 / 39 | 3,655 / 4,069 ms | 20,512 / 20,616 / 20,712 KiB | 4.6% observed |
+
+The five eligible small-object queries reduce the median by 51.8–74.7%, at the
+cost of retaining the compressed object and therefore raising RSS. BOE type
+counts also had a 5,386 ms threshold-8 p90 despite its faster median; this is a
+live-network tail, not a claim that one GET removes network variance. ChEBI Full
+is above the threshold, so both modes used exactly the same 39 GETs and bytes.
+Its 4.6% median difference is timing noise, not an adaptive-opening win.
+
+Against the accepted 2026-08-07 Chemotion threshold-8 cells above, two current
+medians improved and the path median was 3.2% slower; no current p90 was more
+than 4.7% higher. Peak RSS was within 36 KiB or lower, and the overall maximum
+fell from 28,700 to 27,964 KiB. The larger movement is on the multi-request lazy
+side, consistent with a different live-network sample rather than more query
+work or changed output.
+
+Within every query/mode group, transfer counts were stable and all 15 result
+hashes agreed. The per-query SHA-256 values were:
+
+- Chemotion molecules: `9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`
+- Chemotion formulas: `43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640`
+- Chemotion path: `359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc`
+- BOE bound law: `41c39d4d9bab9dd76633033e447e0f89538e2ac8c6f5baa2a91b752c05169bf4`
+- BOE type counts: `2515c9e778b81e2fa06a760d77178d83af4608b2ec4b9c83e6f0c33fc9f75d4a`
+- ChEBI Full bound entity: `29cea6b6cc8b29a2f2a5e5e7203d9941d302b5abe636caa04e5660c29b65c534`
+
+The ignored JSONL files are
+`chemotion-remediation-r2-20260810T093241Z.jsonl`,
+`boe-r2-20260810T093241Z.jsonl`, and
+`chebi-full-r2-20260810T093241Z.jsonl`; their SHA-256 values are respectively
+`2257521cc57d983e86906086a1a4e69dc763dbf76f107667d4810f16860c168b`,
+`f057065493525aa8b0a38698bc75dabc9b92021827405671040c65cb0a1802ae`, and
+`2341eab6ad57564f3d68b32b4facc13f61e2f821859bb00a2b6eef26b791ffb4`.
+
+#### Browser, shared reader, and sharding
+
+The freshly regenerated browser artifact opened all six Wikidata XXL shards and answered
+both:
+
+```sparql
+ASK WHERE { <http://www.wikidata.org/entity/Q42> ?p ?o }
+
+SELECT ?p ?o WHERE {
+  <http://www.wikidata.org/entity/Q42> ?p ?o
+} ORDER BY ?p ?o LIMIT 10
+```
+
+The UI reported `ASK true` and exactly 10 rows, with
+`federated 6 source(s)` for both. The canonical ordered table header/cell text
+had SHA-256
+`d79d99c8b992ef900847b75f136ec410c5b36ac87a8cba292540638d21b6f026`.
+Every data response was a 206 range response; there was no full or unranged GET.
+
+| shard | pinned bytes | ETag | bytes read / GETs |
+|---:|---:|---|---:|
+| 0000 | 949,270,267 | `"c4b8ad492c00fc88f44cd4bcd505f25f-15"` | 75,283,195 / 141 |
+| 0001 | 554,800,567 | `"0674b3b74fd9a14a7754effbfc929c79-9"` | 6,396,343 / 14 |
+| 0002 | 708,499,856 | `"8b99a440d2f2e505b93b6953a2d98538-11"` | 6,479,248 / 14 |
+| 0003 | 849,908,311 | `"bbcc87cef8be7e23f0929df0c265b41f-13"` | 7,378,519 / 15 |
+| 0004 | 867,722,504 | `"27fad16c0ffd0b813f49d8d512f2cb8b-13"` | 8,939,784 / 18 |
+| 0005 | 942,757,112 | `"66fc645cb02c604146ec9138f1de1eb6-15"` | 7,428,344 / 16 |
+| **total** | **4,872,958,617** | — | **111,905,433 / 218** |
+
+The two deterministic checks therefore transferred 2.30% of the six pinned
+objects. HEAD probes before and after the queries matched all six pinned
+lengths/ETags and reported `Accept-Ranges: bytes`. The complete ignored evidence
+is `wikidata-xxl-browser-evidence-canonical-20260810T111500Z.json` (8,077 bytes,
+SHA-256
+`7f083e31cc4e18d74b5d8e87e621d731fbd894550d5fb8403ef82914a53d7e1c`).
+It includes both identity snapshots, canonical row content/hash, per-shard
+traffic, request failures, page errors, and the final verdict. The existing live
+catalog sweep also passed all four Wikidata XXL examples and reported all six
+sources. Its ignored report is
+`tests/gate/.cache/catalog-report-chromium-all-wikidata-xxl.json` (SHA-256
+`633ce58f4ccfa2eb3b4ac19c4d62ef139ddb2f417161fa1519acf116cd1c2ead`).
+Those broader examples ranged 6.5–333.0 MB per query and are compatibility
+coverage, not the deterministic transfer measurement above.
+
+The resident Asyncify harness was then run twice against pinned Imaging Plaza
+(223,233 bytes, ETag `"777c82386811e330ab755b7603d062d6"`). In both fresh
+sessions, open fetched 224,257 bytes in three requests: the complete object via
+two cache blocks plus the separate precise 1 KiB header read. The first ordered
+triple query added zero requests, and the identical second query added **0 bytes
+/ 0 requests**. This proves resident cache reuse, but the object is too small to
+prove a strict-subset open: two 128 KiB cache blocks cover it completely. Both
+before/after HEAD pairs matched the expected pin and the ten-row result SHA-256
+was `966bc8aa88807b4f723d273eff2ed78199b7a0be2390901d0a5363e841864aa2`.
+The ignored evidence files are
+`imaging-plaza-resident-evidence-canonical-1-20260810T112000Z.json` (SHA-256
+`9d0bb778b4d7fb94341337e5bf17c8e82636de34070b0bcdde6bfc70abbea519`)
+and `imaging-plaza-resident-evidence-canonical-2-20260810T112000Z.json` (SHA-256
+`69c17cf4b858860672ff20badd6b2e2dde34915b85cb2dddc2b5d9f5115d6e3a`).
+
+For that strict-subset control, pinned Jonas
+(`https://data.graphplaza.com/jonas/jonas.rete`, 2,163,156 bytes, ETag
+`"afe8ebf6962fc3af9b92eae1327352b1"`) ran this catalog-derived deterministic
+query through one resident remote graph:
+
+```sparql
+SELECT ?w ?siglum WHERE {
+  ?t <http://www.w3.org/2000/01/rdf-schema#label> "Lancelot" .
+  ?w <https://lostma-erc.github.io/jonas/prop/is_manifestation_of> ?t ;
+     <https://lostma-erc.github.io/jonas/prop/preferred_siglum> ?siglum .
+} ORDER BY ?w ?siglum LIMIT 50
+```
+
+Open read 1,049,600 bytes in nine requests; the first query read another 393,216
+bytes in three requests and returned 49 rows. Cumulative transfer was 1,442,816
+bytes (66.70% of the file), strictly below the object length. The second
+identical query added
+**0 bytes / 0 requests**. The production Asyncify host attaches `Range` to every
+data GET and rejects any status other than 206, so this successful run also
+rules out a silent full GET.
+Before/after HEAD probes both matched the Jonas pin, and the 49-row result
+SHA-256 was
+`0657bd63ff1331eebd7f7448b2fb38b327a0293dd1cbd3b078e78f08d8e13aa6`.
+The complete ignored evidence is
+`jonas-resident-evidence-canonical-20260810T112000Z.json` (SHA-256
+`46db5c7a302217e33d09a2c6c72c32573dd70941254def1c21d9395105f5d39d`).
+
+These final browser checks use the branch's freshly regenerated production
+playground and Asyncify artifacts. A diagnostic bare `wasm-pack build` first
+reproduced `WebAssembly.Table.grow(): failed to grow table by 4`: the pinned
+Binaryen v108 post-pass exported wasm-bindgen's fixed funcref table under the
+externref-table name. The canonical build already skips that incompatible pass
+with `--no-opt`; a new build/gate regression now boots both freshly generated
+`web` and `no-modules` artifacts through their JavaScript initializers. The
+canonical rebuild passed that check, and the live measurements above were then
+rerun against its output.
+
+The scope boundary is deliberate: the at-or-below-8-MiB one-GET policy belongs
+only to native `rete sparql-url`; `RETE_EAGER_MAX_MB=0` forces it off. Larger
+native objects remain lazy, the browser remains range-lazy even for eligible
+small objects, browser catalog sharding remains six-source fan-out, and the
+separate native `rete federate` command is unchanged. Named-graph tile laziness
+now avoids payload reads and decompression at lazy open, but query-triggered
+zstd tile decompression retains its existing uncapped-output behavior. This is
+not a global decompression hardening claim.
 
 ### Experimental unchecked decoding
 

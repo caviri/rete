@@ -17,7 +17,7 @@ No dataset is embedded: remote files are read over HTTP range, local files
 stay in browser memory.
 
 Prereqs (via Docker, same as the playground / explorer):
-  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
 
 Usage:
   python scripts/build_yasgui.py [--out docs/yasgui.html]

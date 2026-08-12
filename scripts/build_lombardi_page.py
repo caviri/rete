@@ -13,7 +13,7 @@ IDE it ships as ONE file:
   - the page's own app.js.
 
 Rebuild the wasm first if the engine changed:
-  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
 """
 import argparse
 import base64

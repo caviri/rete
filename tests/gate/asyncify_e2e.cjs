@@ -9,6 +9,13 @@
 //
 //   RETE_URL='https://…/wikidata.rete?token=…' node dev/asyncify-e2e.cjs
 const fs = require('fs');
+const crypto = require('node:crypto');
+const {
+  buildResidentReport,
+  parseExpectedPin,
+  validateRemotePin,
+  writeExclusiveJsonReport,
+} = require('./asyncify_e2e_report.cjs');
 
 // ---- the patch: replaces `const import1 = require("env");` in the glue --------
 const ASYNC_ENV_JS = `
@@ -106,6 +113,22 @@ const ASYNC_ENV_JS = `
 const URL_ = process.env.RETE_URL;
 if (!URL_) { console.error('set RETE_URL'); process.exit(1); }
 
+async function probeRemotePin(url, expected) {
+  const pin = { url, expected, actual: {} };
+  try {
+    const response = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+    pin.actual = {
+      status: response.status,
+      contentLength: response.headers.get('content-length') || '',
+      etag: response.headers.get('etag') || '',
+      acceptRanges: response.headers.get('accept-ranges') || '',
+    };
+  } catch (error) {
+    pin.actual = { error: String(error) };
+  }
+  return pin;
+}
+
 // Prefer the PRODUCTION-patched glue (docs/, written by build_playground.py) so this
 // tests the exact shipped artifact; fall back to patching the raw glue in-memory.
 let src, WASM;
@@ -126,36 +149,82 @@ new Function('module', 'exports', 'require', 'fetch', 'TextDecoder', 'WebAssembl
 const wb = m.exports;
 
 (async () => {
-  const wasmBytes = fs.readFileSync(WASM);
-  await wb({ module_or_path: wasmBytes }).catch(() => wb(wasmBytes)); // init (new or legacy signature)
-
   const q = process.env.RETE_Q ||
     'PREFIX wdt: <http://www.wikidata.org/prop/direct/>\n' +
     'PREFIX wd: <http://www.wikidata.org/entity/>\n' +
     'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n' +
     'SELECT ?p ?who WHERE { ?p wdt:P737 wd:Q859 ; rdfs:label ?who . FILTER(LANG(?who)="en") } LIMIT 5';
+  const expectedPin = parseExpectedPin(
+    process.env.RETE_EXPECT_LENGTH,
+    process.env.RETE_EXPECT_ETAG,
+  );
+  let pinsBefore = null;
+  let pinsAfter = null;
+  let pinErrors = [];
+  if (expectedPin) {
+    pinsBefore = await probeRemotePin(URL_, expectedPin);
+    pinErrors = validateRemotePin(pinsBefore).map((error) => `before: ${error}`);
+    if (pinErrors.length > 0) {
+      const report = {
+        verdict: 'FAIL',
+        url: URL_,
+        query: q,
+        pinsBefore,
+        pinsAfter,
+        pinErrors,
+      };
+      writeExclusiveJsonReport(process.env.RETE_REPORT_PATH, report);
+      console.log(`evidence ${JSON.stringify(report)}`);
+      process.exit(1);
+      return;
+    }
+  }
+
+  const wasmBytes = fs.readFileSync(WASM);
+  await wb({ module_or_path: wasmBytes }).catch(() => wb(wasmBytes)); // init (new or legacy signature)
 
   // Resident session: open ONCE, query TWICE (the 2nd must hit the cache).
   const t0 = performance.now();
   const g = await wb.reteOpenRemote(URL_);
-  const openMs = (performance.now() - t0).toFixed(0);
+  const openMs = Math.round(performance.now() - t0);
   const s0 = JSON.parse(g.stats());
 
   const t1 = performance.now();
   const out = await (wb.reteQueryRemote ? wb.reteQueryRemote(g, q, 'table', false) : wb.reteDrive(() => g.query(q, 'table')));
-  const q1ms = (performance.now() - t1).toFixed(0);
+  const q1ms = Math.round(performance.now() - t1);
   const s1 = JSON.parse(g.stats());
 
   const t2 = performance.now();
   await (wb.reteQueryRemote ? wb.reteQueryRemote(g, q, 'table', false) : wb.reteDrive(() => g.query(q, 'table')));
-  const q2ms = (performance.now() - t2).toFixed(0);
+  const q2ms = Math.round(performance.now() - t2);
   const s2 = JSON.parse(g.stats());
 
   const parsed = JSON.parse(out);
   const rows = (parsed.rows || []).length;
+  if (expectedPin) {
+    pinsAfter = await probeRemotePin(URL_, expectedPin);
+    pinErrors.push(...validateRemotePin(pinsAfter).map((error) => `after: ${error}`));
+  }
+  const report = buildResidentReport({
+    url: URL_,
+    query: q,
+    openMs,
+    query1Ms: q1ms,
+    query2Ms: q2ms,
+    stats0: s0,
+    stats1: s1,
+    stats2: s2,
+    result: parsed,
+    resultSha256: crypto.createHash('sha256').update(out).digest('hex'),
+    pinsBefore,
+    pinsAfter,
+    pinErrors,
+  });
+  writeExclusiveJsonReport(process.env.RETE_REPORT_PATH, report);
   console.log(`open ${openMs} ms (${s0.bytes} B) · query1 ${q1ms} ms (+${s1.bytes - s0.bytes} B, ${s1.requests - s0.requests} reqs) · query2 ${q2ms} ms (+${s2.bytes - s1.bytes} B ${s2.requests - s1.requests} reqs = cache reuse)`);
   console.log(`result kind=${parsed.kind} vars=${JSON.stringify(parsed.vars)} rows=${rows}`);
   console.log(out.slice(0, 360));
   console.log((s2.requests - s1.requests) === 0 ? '\n✓ resident session works: 2nd query served from cache (0 new requests)' : '\n(note: 2nd query refetched — cache check)');
-  process.exit(0);
+  console.log(`evidence ${JSON.stringify(report)}`);
+  process.exit(report.verdict === 'PASS' ? 0 : 1);
 })().catch((e) => { console.error('E2E FAILED:', e); process.exit(1); });

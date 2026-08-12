@@ -53,10 +53,13 @@ docker compose run --rm dev bash scripts/smoke.sh
 For browser bindings:
 
 ```sh
-docker compose run --rm wasm wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg
-docker compose run --rm wasm wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
-docker compose run --rm dev uv run python scripts/build_playground.py
+docker compose run --rm wasm
 ```
+
+This canonical build deliberately disables Binaryen's post-pass for the regular
+`web` and `no-modules` artifacts; the pinned Binaryen v108 corrupts modern
+wasm-bindgen extern-reference table exports. Do not replace it with a bare
+`wasm-pack build` unless that command includes `--no-opt`.
 
 ## Documentation
 
