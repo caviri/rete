@@ -1198,6 +1198,7 @@ fn split_range_response(
     Ok(out)
 }
 
+#[cfg(any(feature = "adaptive-read-bench", test))]
 fn millis_to_micros(millis: Option<f64>) -> Option<u64> {
     let millis = millis.filter(|value| value.is_finite() && *value >= 0.0)?;
     let micros = millis * 1000.0;
@@ -1208,6 +1209,7 @@ fn millis_to_micros(millis: Option<f64>) -> Option<u64> {
     }
 }
 
+#[cfg(any(feature = "adaptive-read-bench", all(test, target_arch = "wasm32")))]
 fn performance_now_micros() -> Option<u64> {
     let global = js_sys::global();
     let performance = js_sys::Reflect::get(&global, &JsValue::from_str("performance")).ok()?;
@@ -1220,7 +1222,15 @@ fn performance_now_micros() -> Option<u64> {
 }
 
 fn make_remote_cache<R: RangeReader>(reader: R, block: u64) -> BlockCacheReader<R> {
-    BlockCacheReader::new(reader, block).with_adaptive_clock(performance_now_micros)
+    let cache = BlockCacheReader::new(reader, block);
+    #[cfg(feature = "adaptive-read-bench")]
+    {
+        cache.with_adaptive_clock(performance_now_micros)
+    }
+    #[cfg(not(feature = "adaptive-read-bench"))]
+    {
+        cache
+    }
 }
 
 #[cfg(test)]
@@ -1241,9 +1251,12 @@ mod async_range_tests {
     }
 
     #[test]
-    fn remote_cache_construction_enables_one_session_controller() {
+    fn remote_cache_is_static_in_default_wasm_builds() {
         let bytes = [0u8; 8192];
         let cache = make_remote_cache(SliceReader::new(&bytes), 4096);
+        #[cfg(not(feature = "adaptive-read-bench"))]
+        assert!(cache.adaptive_controller().is_none());
+        #[cfg(feature = "adaptive-read-bench")]
         assert!(cache.adaptive_controller().is_some());
     }
 

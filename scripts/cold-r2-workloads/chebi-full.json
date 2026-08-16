@@ -7,6 +7,10 @@
     {
       "name": "bound-entity",
       "sparql": "SELECT ?p ?o WHERE { <http://purl.obolibrary.org/obo/CHEBI_15355> ?p ?o } ORDER BY ?p ?o LIMIT 200"
+    },
+    {
+      "name": "predicate-counts-full",
+      "sparql": "SELECT ?p (COUNT(*) AS ?count) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY ?p"
     }
   ]
 }

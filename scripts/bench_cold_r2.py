@@ -142,6 +142,8 @@ class Mode:
     name: str
     executable: pathlib.Path
     eager_max_mb: int
+    read_policy: str
+    git_revision: str
 
 
 def parse_transfer_stats(stderr):
@@ -239,6 +241,7 @@ def run_one(mode, source, query):
     environment = os.environ.copy()
     environment.pop("RETE_BLOCK_KB", None)
     environment["RETE_EAGER_MAX_MB"] = str(mode.eager_max_mb)
+    environment["RETE_BENCH_READ_POLICY"] = mode.read_policy
     command = [str(mode.executable), "sparql-url", source, query, "--json"]
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         start = time.monotonic_ns()
@@ -290,24 +293,43 @@ def parse_thresholds(raw):
 
 def build_modes(arguments):
     candidate = pathlib.Path(arguments.candidate)
+    candidate_revision = require_nonblank_string(
+        arguments.candidate_revision, "candidate revision"
+    )
     if arguments.thresholds is not None:
         return [
-            Mode(f"threshold_{threshold}", candidate, threshold)
+            Mode(
+                f"threshold_{threshold}",
+                candidate,
+                threshold,
+                "static_lazy" if threshold == 0 else "owned_memory",
+                candidate_revision,
+            )
             for threshold in arguments.thresholds
         ]
     if arguments.baseline is None:
         raise ValueError("--baseline is required unless --thresholds is supplied")
+    baseline_revision = require_nonblank_string(
+        arguments.baseline_revision, "baseline revision"
+    )
     return [
-        Mode("baseline_lazy", pathlib.Path(arguments.baseline), 0),
-        Mode("delegated_lazy", candidate, 0),
-        Mode("eager_8", candidate, 8),
+        Mode(
+            "baseline_lazy",
+            pathlib.Path(arguments.baseline),
+            0,
+            "static_lazy",
+            baseline_revision,
+        ),
+        Mode("adaptive_lazy", candidate, 0, "adaptive_lazy", candidate_revision),
     ]
 
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline")
+    parser.add_argument("--baseline-revision")
     parser.add_argument("--candidate", required=True)
+    parser.add_argument("--candidate-revision", required=True)
     parser.add_argument("--thresholds", type=parse_thresholds)
     parser.add_argument("--samples", type=int, default=15)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -317,6 +339,8 @@ def parse_arguments():
     arguments = parser.parse_args()
     if arguments.samples <= 0:
         parser.error("--samples must be positive")
+    if arguments.thresholds is None and arguments.baseline_revision is None:
+        parser.error("--baseline-revision is required with --baseline")
     return arguments
 
 
@@ -353,11 +377,21 @@ def main():
         ),
         flush=True,
     )
-    for path in dict.fromkeys(mode.executable for mode in modes):
+    executable_hashes = {
+        path: executable_sha256(path)
+        for path in dict.fromkeys(mode.executable for mode in modes)
+    }
+    for mode in modes:
         print(
             "EXECUTABLE "
             + json.dumps(
-                {"path": str(path), "sha256": executable_sha256(path)},
+                {
+                    "mode": mode.name,
+                    "path": str(mode.executable),
+                    "sha256": executable_hashes[mode.executable],
+                    "git_revision": mode.git_revision,
+                    "read_policy": mode.read_policy,
+                },
                 sort_keys=True,
             ),
             flush=True,
@@ -381,6 +415,9 @@ def main():
                         "workload": workload.name,
                         "query": label,
                         "mode": mode.name,
+                        "read_policy": mode.read_policy,
+                        "git_revision": mode.git_revision,
+                        "executable_sha256": executable_hashes[mode.executable],
                         "run": run,
                         "wall_ms": wall_ms,
                         "bytes": byte_count,
@@ -415,6 +452,9 @@ def main():
                 "workload": workload.name,
                 "query": label,
                 "mode": mode.name,
+                "read_policy": mode.read_policy,
+                "git_revision": mode.git_revision,
+                "executable_sha256": executable_hashes[mode.executable],
                 **summarize(sample),
             }
             print("SUMMARY " + json.dumps(summary, sort_keys=True), flush=True)

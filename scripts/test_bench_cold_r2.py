@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import types
 import unittest
 
 
@@ -50,6 +51,42 @@ def write_workload(directory, payload):
 
 
 class BenchColdR2Tests(unittest.TestCase):
+    def test_comparison_modes_carry_explicit_revision_and_policy_identity(self):
+        bench = load_harness()
+        arguments = types.SimpleNamespace(
+            baseline="/tmp/baseline",
+            baseline_revision="6562251d",
+            candidate="/tmp/candidate",
+            candidate_revision="45dfdf00",
+            thresholds=None,
+        )
+
+        modes = bench.build_modes(arguments)
+
+        self.assertEqual(
+            [(mode.name, mode.read_policy, mode.git_revision) for mode in modes],
+            [
+                ("baseline_lazy", "static_lazy", "6562251d"),
+                ("adaptive_lazy", "adaptive_lazy", "45dfdf00"),
+            ],
+        )
+        arguments.candidate_revision = "  "
+        with self.assertRaisesRegex(ValueError, "candidate revision"):
+            bench.build_modes(arguments)
+
+    def test_chebi_full_covers_selective_and_complete_aggregate_reads(self):
+        bench = load_harness()
+        workload = bench.load_workload(WORKLOADS / "chebi-full.json")
+        queries = dict(workload.queries)
+
+        self.assertEqual(set(queries), {"bound-entity", "predicate-counts-full"})
+        self.assertIn("CHEBI_15355", queries["bound-entity"])
+        aggregate = queries["predicate-counts-full"].upper()
+        self.assertIn("COUNT(*)", aggregate)
+        self.assertIn("GROUP BY ?P", aggregate)
+        self.assertIn("ORDER BY ?P", aggregate)
+        self.assertNotIn("LIMIT", aggregate)
+
     def test_every_limited_select_has_its_complete_approved_ordering(self):
         bench = load_harness()
         workloads = (
@@ -211,6 +248,8 @@ class BenchColdR2Tests(unittest.TestCase):
                 str(HARNESS),
                 "--candidate",
                 str(directory / "candidate"),
+                "--candidate-revision",
+                "candidate-test-revision",
                 "--thresholds",
                 "0",
                 "--samples",
@@ -305,6 +344,8 @@ sys.stderr.write("(fetched 321 bytes in 2 range request(s); file is 4321 bytes)\
                         str(HARNESS),
                         "--candidate",
                         str(executable),
+                        "--candidate-revision",
+                        "candidate-test-revision",
                         "--thresholds",
                         "0,8",
                         "--samples",
@@ -350,6 +391,15 @@ sys.stderr.write("(fetched 321 bytes in 2 range request(s); file is 4321 bytes)\
         self.assertEqual({record["mode"] for record in records}, {"threshold_0", "threshold_8"})
         self.assertEqual({record["length"] for record in records}, {expected_length})
         self.assertEqual({record["etag"] for record in records}, {expected_etag})
+        self.assertEqual(
+            {record["read_policy"] for record in records},
+            {"static_lazy", "owned_memory"},
+        )
+        self.assertEqual(
+            {record["git_revision"] for record in records},
+            {"candidate-test-revision"},
+        )
+        self.assertEqual(len({record["executable_sha256"] for record in records}), 1)
         for query_name in ("alpha", "beta"):
             self.assertEqual(
                 len(
@@ -428,8 +478,12 @@ sys.stderr.write("(fetched 100 bytes in 2 range request(s); file is 7566404 byte
                         str(HARNESS),
                         "--baseline",
                         str(executable),
+                        "--baseline-revision",
+                        "baseline-test-revision",
                         "--candidate",
                         str(executable),
+                        "--candidate-revision",
+                        "candidate-test-revision",
                         "--samples",
                         "1",
                         "--source",
@@ -455,7 +509,7 @@ sys.stderr.write("(fetched 100 bytes in 2 range request(s); file is 7566404 byte
                 (7_566_404, '"6cefd111dee3c59c063f0bede9cd60f9"'),
             ],
         )
-        self.assertEqual(len(records), 9)
+        self.assertEqual(len(records), 6)
         self.assertEqual({record["workload"] for record in records}, {"chemotion"})
         self.assertEqual(
             len({record["sha256"] for record in records if record["query"] == "select"}),
@@ -486,11 +540,11 @@ import os
 import sys
 import time
 time.sleep(0.03)
-eager = os.environ.get("RETE_EAGER_MAX_MB") == "8"
-sys.stdout.write("eager output\\n" if eager else "lazy output\\n")
+adaptive = os.environ.get("RETE_BENCH_READ_POLICY") == "adaptive_lazy"
+sys.stdout.write("adaptive output\\n" if adaptive else "static output\\n")
 sys.stderr.write(
     "(fetched 7566404 bytes in 1 range request(s); file is 7566404 bytes)\\n"
-    if eager
+    if adaptive
     else "(fetched 100 bytes in 2 range request(s); file is 7566404 bytes)\\n"
 )
 """,
@@ -505,8 +559,12 @@ sys.stderr.write(
                         str(HARNESS),
                         "--baseline",
                         str(executable),
+                        "--baseline-revision",
+                        "baseline-test-revision",
                         "--candidate",
                         str(executable),
+                        "--candidate-revision",
+                        "candidate-test-revision",
                         "--samples",
                         "1",
                         "--source",
@@ -528,8 +586,7 @@ sys.stderr.write(
         self.assertIn("output hash mismatch", result.stderr)
         self.assertEqual([record["mode"] for record in records], [
             "baseline_lazy",
-            "delegated_lazy",
-            "eager_8",
+            "adaptive_lazy",
         ])
 
     def test_head_metadata_identifies_the_benchmark_client(self):

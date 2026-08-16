@@ -100,16 +100,24 @@ fn make_block_cache<R: RangeReader>(
     reader: R,
     block: u64,
     is_http: bool,
+    adaptive_read_bench: bool,
 ) -> Option<BlockCacheReader<R>> {
     if block == 0 {
         return None;
     }
     let cache = BlockCacheReader::new(reader, block);
-    if !is_http {
+    if !is_http || !adaptive_read_bench {
         return Some(cache);
     }
     let origin = std::time::Instant::now();
     Some(cache.with_adaptive_clock(move || u64::try_from(origin.elapsed().as_micros()).ok()))
+}
+
+/// The session-local scheduler remains an internal benchmark experiment until
+/// its live R2 acceptance gates pass. Normal CLI invocations therefore retain
+/// the proven static range policy; the benchmark harness opts in explicitly.
+fn adaptive_read_bench_enabled(raw: Option<&OsStr>) -> bool {
+    raw.and_then(OsStr::to_str) == Some("adaptive_lazy")
 }
 
 /// Fetch just the embedded Dataset Card over HTTP — the index-free CARD tier.
@@ -251,7 +259,9 @@ pub(crate) fn sparql_url(
                 .ok_or_else(|| anyhow::anyhow!("RETE_BLOCK_KB overflows u64"))?,
             None => auto_block(total),
         };
-        match make_block_cache(reader.clone(), block, is_http) {
+        let adaptive_read_bench =
+            adaptive_read_bench_enabled(std::env::var_os("RETE_BENCH_READ_POLICY").as_deref());
+        match make_block_cache(reader.clone(), block, is_http, adaptive_read_bench) {
             None => Rete::open_ranged_lazy(reader.clone())?,
             Some(cache) => Rete::open_ranged_lazy(std::sync::Arc::new(cache))?,
         }
@@ -319,6 +329,7 @@ pub(crate) fn why_url(
         reader.clone(),
         block,
         crate::commands::range_source::is_url(url),
+        adaptive_read_bench_enabled(std::env::var_os("RETE_BENCH_READ_POLICY").as_deref()),
     ) {
         None => Rete::open_ranged_lazy(reader.clone())?,
         Some(cache) => Rete::open_ranged_lazy(std::sync::Arc::new(cache))?,
@@ -376,17 +387,28 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_cache_is_http_only_and_respects_disabled_blocks() {
+    fn remote_cache_is_static_by_default_and_respects_disabled_blocks() {
         use rete_core::SliceReader;
 
         let bytes = vec![0u8; 8192];
-        let http = make_block_cache(SliceReader::new(&bytes), 4096, true).unwrap();
-        assert!(http.adaptive_controller().is_some());
+        let http = make_block_cache(SliceReader::new(&bytes), 4096, true, false).unwrap();
+        assert!(http.adaptive_controller().is_none());
 
-        let local = make_block_cache(SliceReader::new(&bytes), 4096, false).unwrap();
+        let adaptive = make_block_cache(SliceReader::new(&bytes), 4096, true, true).unwrap();
+        assert!(adaptive.adaptive_controller().is_some());
+
+        let local = make_block_cache(SliceReader::new(&bytes), 4096, false, true).unwrap();
         assert!(local.adaptive_controller().is_none());
 
-        assert!(make_block_cache(SliceReader::new(&bytes), 0, true).is_none());
+        assert!(make_block_cache(SliceReader::new(&bytes), 0, true, true).is_none());
+        assert!(!adaptive_read_bench_enabled(None));
+        assert!(!adaptive_read_bench_enabled(Some(OsStr::new(
+            "static_lazy"
+        ))));
+        assert!(!adaptive_read_bench_enabled(Some(OsStr::new("adaptive"))));
+        assert!(adaptive_read_bench_enabled(Some(OsStr::new(
+            "adaptive_lazy"
+        ))));
         assert!(should_eager_open(
             "https://host/g.rete",
             DEFAULT_EAGER_MAX_BYTES,
