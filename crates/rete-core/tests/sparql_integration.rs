@@ -710,6 +710,22 @@ fn property_path_zero_length_semantics() {
 }
 
 #[test]
+fn reverse_transitive_path_returns_each_predecessor_once() {
+    let triples = [
+        ("<http://ex/n1>", "<http://ex/p>", "<http://ex/n0>"),
+        ("<http://ex/n2>", "<http://ex/p>", "<http://ex/n1>"),
+        ("<http://ex/n3>", "<http://ex/p>", "<http://ex/n1>"),
+        ("<http://ex/n3>", "<http://ex/p>", "<http://ex/n2>"),
+    ];
+    let rete = Rete::open(&build(&triples)).unwrap();
+
+    assert_eq!(
+        col(&rete, "SELECT ?x WHERE { ?x ex:p+ ex:n0 } ORDER BY ?x", "x"),
+        vec![iri("n1"), iri("n2"), iri("n3")]
+    );
+}
+
+#[test]
 fn subquery_evaluates_and_joins_with_the_outer_pattern() {
     // A nested SELECT is evaluated independently; its projected solutions join
     // with the surrounding pattern on shared variables.

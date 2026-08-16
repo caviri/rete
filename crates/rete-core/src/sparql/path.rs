@@ -5,17 +5,155 @@
 //! down so an unbounded path never enumerates the whole graph.
 
 use crate::bgp::PatternTerm;
-use crate::index::GraphIndex;
+use crate::dictionary::Dictionary;
+use crate::index::{GraphIndex, IndexPermutation};
 use crate::row::{Ctx, Row, Val};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use super::{reverse, PathAst, Rep};
+use super::{PathAst, Rep};
 
 /// Per-start-node successor cache keyed by `(predicate-or-negated-set, reversed,
 /// start node)`. Only the edges a path actually traverses are read and kept, so
 /// it never materializes a predicate's **whole** adjacency — a full predicate
 /// scan over a planet-scale graph (e.g. every `geo:asWKT`) buries a 32-bit WASM
 /// heap and was the cause of an intermittent `RuntimeError: unreachable`.
-type AdjCache = std::collections::HashMap<(String, bool, u32), Vec<u32>>;
+type AdjCache = HashMap<(u32, u32), Vec<u32>>;
+
+enum ResolvedPathAst {
+    Pred {
+        key: u32,
+        predicate: Option<u32>,
+        reversed: bool,
+    },
+    NegatedSet {
+        key: u32,
+        excluded: HashSet<u32>,
+        reversed: bool,
+    },
+    Rep(Box<ResolvedPathAst>, Rep),
+    Seq(Box<ResolvedPathAst>, Box<ResolvedPathAst>),
+    Alt(Box<ResolvedPathAst>, Box<ResolvedPathAst>),
+}
+
+impl ResolvedPathAst {
+    /// Push a reverse through the already-resolved tree without repeating any
+    /// dictionary lookup. Sequence order reverses under relational inversion.
+    fn reversed(&self) -> Self {
+        match self {
+            Self::Pred {
+                key,
+                predicate,
+                reversed,
+            } => Self::Pred {
+                key: *key,
+                predicate: *predicate,
+                reversed: !reversed,
+            },
+            Self::NegatedSet {
+                key,
+                excluded,
+                reversed,
+            } => Self::NegatedSet {
+                key: *key,
+                excluded: excluded.clone(),
+                reversed: !reversed,
+            },
+            Self::Rep(inner, rep) => Self::Rep(Box::new(inner.reversed()), *rep),
+            Self::Seq(a, b) => Self::Seq(Box::new(b.reversed()), Box::new(a.reversed())),
+            Self::Alt(a, b) => Self::Alt(Box::new(a.reversed()), Box::new(b.reversed())),
+        }
+    }
+}
+
+struct PathResolver<'a> {
+    dict: &'a Dictionary,
+    ids: HashMap<String, Option<u32>>,
+    next_key: u32,
+    #[cfg(test)]
+    predicate_resolutions: u64,
+}
+
+impl<'a> PathResolver<'a> {
+    fn new(dict: &'a Dictionary) -> Self {
+        Self {
+            dict,
+            ids: HashMap::new(),
+            next_key: 0,
+            #[cfg(test)]
+            predicate_resolutions: 0,
+        }
+    }
+
+    fn key(&mut self) -> u32 {
+        let key = self.next_key;
+        self.next_key = self.next_key.saturating_add(1);
+        key
+    }
+
+    fn predicate(&mut self, lexical: &str) -> Option<u32> {
+        if let Some(id) = self.ids.get(lexical) {
+            return *id;
+        }
+        let id = self.dict.predicate_id(lexical);
+        self.ids.insert(lexical.to_owned(), id);
+        #[cfg(test)]
+        {
+            self.predicate_resolutions += 1;
+        }
+        id
+    }
+
+    fn resolve(&mut self, ast: &PathAst) -> ResolvedPathAst {
+        match ast {
+            PathAst::Pred(predicate, reversed) => ResolvedPathAst::Pred {
+                key: self.key(),
+                predicate: self.predicate(predicate),
+                reversed: *reversed,
+            },
+            PathAst::NegatedSet(predicates, reversed) => {
+                let excluded = predicates
+                    .iter()
+                    .filter_map(|predicate| self.predicate(predicate))
+                    .collect();
+                ResolvedPathAst::NegatedSet {
+                    key: self.key(),
+                    excluded,
+                    reversed: *reversed,
+                }
+            }
+            PathAst::Rep(inner, rep) => ResolvedPathAst::Rep(Box::new(self.resolve(inner)), *rep),
+            PathAst::Seq(a, b) => {
+                ResolvedPathAst::Seq(Box::new(self.resolve(a)), Box::new(self.resolve(b)))
+            }
+            PathAst::Alt(a, b) => {
+                ResolvedPathAst::Alt(Box::new(self.resolve(a)), Box::new(self.resolve(b)))
+            }
+        }
+    }
+}
+
+struct ResolvedPath {
+    ast: ResolvedPathAst,
+    #[cfg(test)]
+    predicate_resolutions: u64,
+}
+
+impl ResolvedPath {
+    fn new(dict: &Dictionary, ast: &PathAst) -> Self {
+        let mut resolver = PathResolver::new(dict);
+        let ast = resolver.resolve(ast);
+        Self {
+            ast,
+            #[cfg(test)]
+            predicate_resolutions: resolver.predicate_resolutions,
+        }
+    }
+
+    #[cfg(test)]
+    fn predicate_resolutions(&self) -> u64 {
+        self.predicate_resolutions
+    }
+}
 
 /// Successor nodes of `start` along a single predicate — a **targeted** routed
 /// read of just this node's edges (forward: `start` as subject; reverse: `start`
@@ -24,37 +162,37 @@ fn successors(
     ctx: &Ctx,
     index: &GraphIndex,
     cache: &mut AdjCache,
-    pred: &str,
-    rev: bool,
+    key: u32,
+    predicate: Option<u32>,
+    reversed: bool,
     start: u32,
 ) -> Vec<u32> {
-    let key = (pred.to_string(), rev, start);
-    if let Some(v) = cache.get(&key) {
+    if let Some(v) = cache.get(&(key, start)) {
         return v.clone();
     }
     let dict = ctx.rete.dictionary();
-    let succ: Vec<u32> = match dict.predicate_id(pred) {
-        // forward: out-edges of `start` (one tile, not the predicate's whole index)
-        Some(pid) if !rev => match dict.node_as_subject_id(start) {
-            Some(sid) => index
-                .match_pattern((Some(sid), Some(pid), None))
-                .into_iter()
-                .map(|(_s, _p, o)| dict.object_node(o))
-                .collect(),
-            None => Vec::new(),
-        },
-        // reverse: in-edges of `start` (it appears as the object)
-        Some(pid) => match dict.node_as_object_id(start) {
-            Some(oid) => index
-                .match_pattern((None, Some(pid), Some(oid)))
-                .into_iter()
-                .map(|(s, _p, _o)| dict.subject_node(s))
-                .collect(),
-            None => Vec::new(),
-        },
+    let succ: Vec<u32> = match predicate {
+        Some(pid) if !reversed => dict
+            .node_as_subject_id(start)
+            .map(|sid| {
+                index
+                    .scan_prefix2(IndexPermutation::Spo, sid, pid)
+                    .map(|oid| dict.object_node(oid))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Some(pid) => dict
+            .node_as_object_id(start)
+            .map(|oid| {
+                index
+                    .scan_prefix2(IndexPermutation::Ops, oid, pid)
+                    .map(|sid| dict.subject_node(sid))
+                    .collect()
+            })
+            .unwrap_or_default(),
         None => Vec::new(),
     };
-    cache.insert(key, succ.clone());
+    cache.insert((key, start), succ.clone());
     succ
 }
 
@@ -65,20 +203,18 @@ fn negated_successors(
     ctx: &Ctx,
     index: &GraphIndex,
     cache: &mut AdjCache,
-    set: &[String],
-    rev: bool,
+    key: u32,
+    excluded: &HashSet<u32>,
+    reversed: bool,
     start: u32,
 ) -> Vec<u32> {
-    let key = (format!("!\u{1}{}", set.join("\u{1}")), rev, start);
-    if let Some(v) = cache.get(&key) {
+    if let Some(v) = cache.get(&(key, start)) {
         return v.clone();
     }
     let dict = ctx.rete.dictionary();
-    let excluded: std::collections::HashSet<u32> =
-        set.iter().filter_map(|p| dict.predicate_id(p)).collect();
     // Read only `start`'s own edges (any predicate), then drop the excluded ones —
     // never a scan of every triple in the graph.
-    let succ: Vec<u32> = if !rev {
+    let succ: Vec<u32> = if !reversed {
         match dict.node_as_subject_id(start) {
             Some(sid) => index
                 .match_pattern((Some(sid), None, None))
@@ -99,7 +235,7 @@ fn negated_successors(
             None => Vec::new(),
         }
     };
-    cache.insert(key, succ.clone());
+    cache.insert((key, start), succ.clone());
     succ
 }
 
@@ -108,24 +244,31 @@ fn negated_successors(
 fn reach_from(
     ctx: &Ctx,
     index: &GraphIndex,
-    ast: &PathAst,
+    ast: &ResolvedPathAst,
     start: u32,
     cache: &mut AdjCache,
-) -> std::collections::BTreeSet<u32> {
-    use std::collections::BTreeSet;
+) -> BTreeSet<u32> {
     match ast {
-        PathAst::Pred(p, rev) => successors(ctx, index, cache, p, *rev, start)
+        ResolvedPathAst::Pred {
+            key,
+            predicate,
+            reversed,
+        } => successors(ctx, index, cache, *key, *predicate, *reversed, start)
             .into_iter()
             .collect(),
-        PathAst::NegatedSet(set, rev) => negated_successors(ctx, index, cache, set, *rev, start)
+        ResolvedPathAst::NegatedSet {
+            key,
+            excluded,
+            reversed,
+        } => negated_successors(ctx, index, cache, *key, excluded, *reversed, start)
             .into_iter()
             .collect(),
-        PathAst::Alt(a, b) => {
+        ResolvedPathAst::Alt(a, b) => {
             let mut r = reach_from(ctx, index, a, start, cache);
             r.extend(reach_from(ctx, index, b, start, cache));
             r
         }
-        PathAst::Seq(a, b) => {
+        ResolvedPathAst::Seq(a, b) => {
             let mids = reach_from(ctx, index, a, start, cache);
             let mut out = BTreeSet::new();
             for m in &mids {
@@ -133,7 +276,7 @@ fn reach_from(
             }
             out
         }
-        PathAst::Rep(inner, rep) => match rep {
+        ResolvedPathAst::Rep(inner, rep) => match rep {
             Rep::One => reach_from(ctx, index, inner, start, cache),
             Rep::ZeroOrOne => {
                 let mut r = reach_from(ctx, index, inner, start, cache);
@@ -230,6 +373,7 @@ pub(super) fn eval_path(
     obj: &PatternTerm,
 ) -> Vec<Row> {
     let dict = ctx.rete.dictionary();
+    let resolved = ResolvedPath::new(dict, ast);
     let mut cache = AdjCache::new();
     let mut out = Vec::new();
 
@@ -249,7 +393,7 @@ pub(super) fn eval_path(
                 PatternTerm::Const(o) => Some(dict.node_of_term(o)),
                 _ => None,
             };
-            for e in reach_from(ctx, index, ast, sn, &mut cache) {
+            for e in reach_from(ctx, index, &resolved.ast, sn, &mut cache) {
                 if let Some(on) = obj_node {
                     if on != Some(e) {
                         continue;
@@ -270,7 +414,7 @@ pub(super) fn eval_path(
                 }
                 return out;
             };
-            let rev = reverse(ast.clone());
+            let rev = resolved.ast.reversed();
             for s in reach_from(ctx, index, &rev, on, &mut cache) {
                 if let Some(b) = bind_pair(ctx, subj, obj, s, on) {
                     out.push(b);
@@ -280,7 +424,7 @@ pub(super) fn eval_path(
         // Both unbound: enumerate from every node (inherently expensive).
         (PatternTerm::Var(_), PatternTerm::Var(_)) => {
             for start in 0..dict.node_count() {
-                for e in reach_from(ctx, index, ast, start, &mut cache) {
+                for e in reach_from(ctx, index, &resolved.ast, start, &mut cache) {
                     if let Some(b) = bind_pair(ctx, subj, obj, start, e) {
                         out.push(b);
                     }
@@ -334,6 +478,23 @@ mod tests {
         PathAst::Pred(name.to_string(), false)
     }
 
+    fn reachable(ctx: &Ctx, index: &GraphIndex, ast: &PathAst, start: u32) -> BTreeSet<u32> {
+        let resolved = ResolvedPath::new(ctx.rete.dictionary(), ast);
+        reach_from(ctx, index, &resolved.ast, start, &mut AdjCache::new())
+    }
+
+    #[test]
+    fn resolved_path_resolves_each_distinct_predicate_once() {
+        let rete = fixture();
+        let ast = PathAst::Alt(
+            Box::new(pred("<p>")),
+            Box::new(PathAst::Seq(Box::new(pred("<p>")), Box::new(pred("<q>")))),
+        );
+
+        let resolved = ResolvedPath::new(rete.dictionary(), &ast);
+        assert_eq!(resolved.predicate_resolutions(), 2);
+    }
+
     #[test]
     fn reach_handles_predicate_reverse_negation_composition_and_repetition() {
         let rete = fixture();
@@ -343,91 +504,88 @@ mod tests {
         let b = rete.dictionary().node_of_term("<B>").unwrap();
         let c = rete.dictionary().node_of_term("<C>").unwrap();
         let object_only = rete.dictionary().node_of_term("<object-only>").unwrap();
+        let p = rete.dictionary().predicate_id("<p>");
         let mut cache = AdjCache::new();
 
-        let first = successors(&ctx, index, &mut cache, "<p>", false, a);
+        let first = successors(&ctx, index, &mut cache, 0, p, false, a);
         assert!(first.contains(&b) && first.contains(&object_only));
-        assert_eq!(successors(&ctx, index, &mut cache, "<p>", false, a), first);
-        assert!(successors(&ctx, index, &mut cache, "<missing>", false, a).is_empty());
-        assert!(successors(&ctx, index, &mut cache, "<p>", false, object_only).is_empty());
-        assert!(successors(&ctx, index, &mut cache, "<p>", true, a).contains(&c));
-        assert_eq!(successors(&ctx, index, &mut cache, "<p>", true, b), vec![a]);
+        assert_eq!(successors(&ctx, index, &mut cache, 0, p, false, a), first);
+        assert!(successors(&ctx, index, &mut cache, 1, None, false, a).is_empty());
+        assert!(successors(&ctx, index, &mut cache, 0, p, false, object_only).is_empty());
+        assert!(successors(&ctx, index, &mut cache, 2, p, true, a).contains(&c));
+        assert_eq!(successors(&ctx, index, &mut cache, 2, p, true, b), vec![a]);
 
-        let not_p = negated_successors(&ctx, index, &mut cache, &["<p>".into()], false, a);
+        let excluded_p = HashSet::from([p.unwrap()]);
+        let not_p = negated_successors(&ctx, index, &mut cache, 3, &excluded_p, false, a);
         assert_eq!(not_p, vec![c]);
         assert_eq!(
-            negated_successors(&ctx, index, &mut cache, &["<p>".into()], false, a),
+            negated_successors(&ctx, index, &mut cache, 3, &excluded_p, false, a),
             not_p
         );
         assert!(
-            negated_successors(&ctx, index, &mut cache, &["<p>".into()], true, a)
+            negated_successors(&ctx, index, &mut cache, 4, &excluded_p, true, a)
                 .iter()
                 .any(|n| *n == rete.dictionary().node_of_term("<D>").unwrap())
         );
-        assert!(negated_successors(&ctx, index, &mut cache, &[], false, object_only).is_empty());
-
-        assert!(reach_from(
+        assert!(negated_successors(
             &ctx,
             index,
-            &PathAst::Pred("<p>".into(), false),
-            a,
-            &mut cache
+            &mut cache,
+            5,
+            &HashSet::new(),
+            false,
+            object_only
         )
-        .contains(&b));
-        assert!(reach_from(
+        .is_empty());
+
+        assert!(reachable(&ctx, index, &PathAst::Pred("<p>".into(), false), a).contains(&b));
+        assert!(reachable(
             &ctx,
             index,
             &PathAst::NegatedSet(vec!["<p>".into()], false),
-            a,
-            &mut cache
+            a
         )
         .contains(&c));
-        assert!(reach_from(
+        assert!(reachable(
             &ctx,
             index,
             &PathAst::Alt(Box::new(pred("<p>")), Box::new(pred("<q>"))),
-            a,
-            &mut cache
+            a
         )
         .contains(&c));
-        assert!(reach_from(
+        assert!(reachable(
             &ctx,
             index,
             &PathAst::Seq(Box::new(pred("<q>")), Box::new(pred("<p>"))),
-            a,
-            &mut cache
+            a
         )
         .contains(&a));
-        assert!(reach_from(
+        assert!(reachable(
             &ctx,
             index,
             &PathAst::Rep(Box::new(pred("<p>")), Rep::One),
-            a,
-            &mut cache
+            a
         )
         .contains(&b));
-        assert!(reach_from(
+        assert!(reachable(
             &ctx,
             index,
             &PathAst::Rep(Box::new(pred("<p>")), Rep::ZeroOrOne),
-            a,
-            &mut cache
+            a
         )
         .contains(&a));
-        let plus = reach_from(
+        let plus = reachable(
             &ctx,
             index,
             &PathAst::Rep(Box::new(pred("<p>")), Rep::OneOrMore),
             a,
-            &mut cache,
         );
         assert!(plus.contains(&a) && plus.contains(&b) && plus.contains(&c));
-        let star = reach_from(
+        let star = reachable(
             &ctx,
             index,
             &PathAst::Rep(Box::new(pred("<missing>")), Rep::ZeroOrMore),
             a,
-            &mut cache,
         );
         assert_eq!(star.into_iter().collect::<Vec<_>>(), vec![a]);
     }
