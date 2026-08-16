@@ -1198,9 +1198,60 @@ fn split_range_response(
     Ok(out)
 }
 
+fn millis_to_micros(millis: Option<f64>) -> Option<u64> {
+    let millis = millis.filter(|value| value.is_finite() && *value >= 0.0)?;
+    let micros = millis * 1000.0;
+    if micros >= u64::MAX as f64 {
+        Some(u64::MAX)
+    } else {
+        Some(micros as u64)
+    }
+}
+
+fn performance_now_micros() -> Option<u64> {
+    let global = js_sys::global();
+    let performance = js_sys::Reflect::get(&global, &JsValue::from_str("performance")).ok()?;
+    if performance.is_null() || performance.is_undefined() {
+        return None;
+    }
+    let now = js_sys::Reflect::get(&performance, &JsValue::from_str("now")).ok()?;
+    let now = now.dyn_into::<js_sys::Function>().ok()?;
+    millis_to_micros(now.call0(&performance).ok()?.as_f64())
+}
+
+fn make_remote_cache<R: RangeReader>(reader: R, block: u64) -> BlockCacheReader<R> {
+    BlockCacheReader::new(reader, block).with_adaptive_clock(performance_now_micros)
+}
+
 #[cfg(test)]
 mod async_range_tests {
-    use super::{checked_async_layout, split_range_response};
+    #[cfg(target_arch = "wasm32")]
+    use super::performance_now_micros;
+    use super::{checked_async_layout, make_remote_cache, millis_to_micros, split_range_response};
+    use rete_core::SliceReader;
+
+    #[test]
+    fn performance_milliseconds_are_validated_and_saturated() {
+        assert_eq!(millis_to_micros(None), None);
+        assert_eq!(millis_to_micros(Some(-1.0)), None);
+        assert_eq!(millis_to_micros(Some(f64::NAN)), None);
+        assert_eq!(millis_to_micros(Some(f64::INFINITY)), None);
+        assert_eq!(millis_to_micros(Some(1.25)), Some(1250));
+        assert_eq!(millis_to_micros(Some(f64::MAX)), Some(u64::MAX));
+    }
+
+    #[test]
+    fn remote_cache_construction_enables_one_session_controller() {
+        let bytes = [0u8; 8192];
+        let cache = make_remote_cache(SliceReader::new(&bytes), 4096);
+        assert!(cache.adaptive_controller().is_some());
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn browser_global_exposes_a_valid_monotonic_clock() {
+        assert!(performance_now_micros().is_some());
+    }
 
     #[test]
     fn rejects_a_range_larger_than_the_wasm32_length_type() {
@@ -1622,10 +1673,7 @@ fn open_url(url: &str) -> Result<(std::sync::Arc<CountingReader<XhrRangeReader>>
     // `read_many`, so a multi-range host coalesces them further. The block size
     // is auto-tuned from the file size (known at open, no download).
     let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
-    let cached = std::sync::Arc::new(BlockCacheReader::new(
-        reader.clone(),
-        auto_block(reader.len()),
-    ));
+    let cached = std::sync::Arc::new(make_remote_cache(reader.clone(), auto_block(reader.len())));
     let mut rete = Rete::open_ranged_lazy(cached).map_err(err)?;
     // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
     rete.set_service_client(Box::new(XhrServiceClient));

@@ -96,6 +96,22 @@ fn should_eager_open(source: &str, len: u64, max: u64) -> bool {
     crate::commands::range_source::is_url(source) && len != 0 && max != 0 && len <= max
 }
 
+fn make_block_cache<R: RangeReader>(
+    reader: R,
+    block: u64,
+    is_http: bool,
+) -> Option<BlockCacheReader<R>> {
+    if block == 0 {
+        return None;
+    }
+    let cache = BlockCacheReader::new(reader, block);
+    if !is_http {
+        return Some(cache);
+    }
+    let origin = std::time::Instant::now();
+    Some(cache.with_adaptive_clock(move || u64::try_from(origin.elapsed().as_micros()).ok()))
+}
+
 /// Fetch just the embedded Dataset Card over HTTP — the index-free CARD tier.
 /// Reads only the 128-byte header and the metadata range (two small range
 /// requests), never the dictionary, index, or pyramid: the cold-start
@@ -212,11 +228,8 @@ pub(crate) fn sparql_url(
     // full-transfer threshold is an HTTP policy, so local sources must not parse
     // or depend on its environment setting. For HTTP(S), threshold validation
     // still precedes the HEAD probe and range GETs.
-    let eager_max = if crate::commands::range_source::is_url(url) {
-        eager_max_bytes()?
-    } else {
-        0
-    };
+    let is_http = crate::commands::range_source::is_url(url);
+    let eager_max = if is_http { eager_max_bytes()? } else { 0 };
     // `reader` always counts the PHYSICAL HTTP fetches. A read-through block
     // cache (client-side; works over any single-range backend incl. S3) sits
     // above it, so a query's scattered range reads coalesce into a few aligned
@@ -238,13 +251,9 @@ pub(crate) fn sparql_url(
                 .ok_or_else(|| anyhow::anyhow!("RETE_BLOCK_KB overflows u64"))?,
             None => auto_block(total),
         };
-        if block == 0 {
-            Rete::open_ranged_lazy(reader.clone())?
-        } else {
-            Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
-                reader.clone(),
-                block,
-            )))?
+        match make_block_cache(reader.clone(), block, is_http) {
+            None => Rete::open_ranged_lazy(reader.clone())?,
+            Some(cache) => Rete::open_ranged_lazy(std::sync::Arc::new(cache))?,
         }
     };
     #[cfg(feature = "unsafe-decode-bench")]
@@ -306,13 +315,13 @@ pub(crate) fn why_url(
         Some(kb) => kb * 1024,
         None => auto_block(total),
     };
-    let rete = if block == 0 {
-        Rete::open_ranged_lazy(reader.clone())?
-    } else {
-        Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
-            reader.clone(),
-            block,
-        )))?
+    let rete = match make_block_cache(
+        reader.clone(),
+        block,
+        crate::commands::range_source::is_url(url),
+    ) {
+        None => Rete::open_ranged_lazy(reader.clone())?,
+        Some(cache) => Rete::open_ranged_lazy(std::sync::Arc::new(cache))?,
     };
     let results =
         rete.query_with_provenance(subject.as_deref(), predicate.as_deref(), object.as_deref());
@@ -364,6 +373,25 @@ mod tests {
         assert!(!should_eager_open("https://host/g.rete", max + 1, max));
         assert!(!should_eager_open("graph.rete", 1024, max));
         assert!(!should_eager_open("https://host/g.rete", 1024, 0));
+    }
+
+    #[test]
+    fn adaptive_cache_is_http_only_and_respects_disabled_blocks() {
+        use rete_core::SliceReader;
+
+        let bytes = vec![0u8; 8192];
+        let http = make_block_cache(SliceReader::new(&bytes), 4096, true).unwrap();
+        assert!(http.adaptive_controller().is_some());
+
+        let local = make_block_cache(SliceReader::new(&bytes), 4096, false).unwrap();
+        assert!(local.adaptive_controller().is_none());
+
+        assert!(make_block_cache(SliceReader::new(&bytes), 0, true).is_none());
+        assert!(should_eager_open(
+            "https://host/g.rete",
+            DEFAULT_EAGER_MAX_BYTES,
+            DEFAULT_EAGER_MAX_BYTES
+        ));
     }
 
     #[test]

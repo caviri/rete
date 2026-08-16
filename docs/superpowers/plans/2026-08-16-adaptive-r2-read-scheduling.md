@@ -469,14 +469,14 @@ git commit -m "perf(core): adapt remote scan prefetch to demand"
   - browser worker monotonic microseconds from `globalThis.performance.now()`;
   - default adaptive construction for remote-lazy HTTP only.
 
-- [ ] **Step 1: Write a failing native opener contract test**
+- [x] **Step 1: Write a failing native opener contract test**
 
 Factor a small helper that constructs the cache from `(reader, block, is_http)`.
 Assert HTTP returns a cache with a controller, while local-path use and block=0
 do not. Assert an at-or-below-8-MiB HTTP source still takes the owned-memory
 one-transfer branch and never constructs the adaptive cache.
 
-- [ ] **Step 2: Implement the native monotonic clock wiring**
+- [x] **Step 2: Implement the native monotonic clock wiring**
 
 Capture `Instant::now()` only in the HTTP remote-lazy branch:
 
@@ -490,25 +490,25 @@ let cached = BlockCacheReader::new(reader, block).with_adaptive_clock(move || {
 Do not put an unconditional `Instant::now()` in `rete-core` or any wasm-compiled
 path. Apply the helper to `sparql-url` and `why-url`; keep local lazy open static.
 
-- [ ] **Step 3: Write a failing WASM clock/controller test**
+- [x] **Step 3: Write a failing WASM clock/controller test**
 
-Add a host-independent test for the helper's missing/invalid performance object
-fallback, and a wasm-bindgen/browser test asserting `RemoteGraph::new` creates an
-adaptive source when `performance.now()` is available.
+Add host-independent validation tests for missing/invalid clock values and for
+the exact cache-construction helper used by `RemoteGraph::new`; add a
+wasm-bindgen/browser test asserting `performance.now()` is available and valid.
 
-- [ ] **Step 4: Implement the browser clock**
+- [x] **Step 4: Implement the browser clock**
 
 Use `js_sys::global()` plus `Reflect`/`Function::call0` to invoke
 `globalThis.performance.now()` in both Window and Worker contexts. Convert finite,
 non-negative milliseconds to saturated integer microseconds; return `None` on
 missing/non-callable/NaN values. Pass it to `with_adaptive_clock` in `open_url`.
 
-- [ ] **Step 5: Verify browser and native surfaces**
+- [x] **Step 5: Verify browser and native surfaces**
 
 ```sh
 docker compose run --rm dev cargo test -p rete-cli
 docker compose run --rm dev cargo test -p rete-wasm
-docker compose run --rm wasm wasm-pack build crates/rete-wasm --target web --out-dir ../../target/adaptive-wasm-web -- --no-default-features
+docker compose run --rm wasm wasm-pack build crates/rete-wasm --target web --out-dir ../../target/adaptive-wasm-web --no-opt -- --no-default-features
 docker compose run --rm gate node checks/check_wasm_boot.mjs
 ```
 
