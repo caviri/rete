@@ -590,11 +590,15 @@ and the final one-sample 0/8 pinned check to
 <code>60fff7d0234fe662c788daf51c3fc772caac64304ef9ec5d783ed5b5ccfb7de1</code>):</p>
 <pre><code class="language-sh">python3 scripts/bench_cold_r2.py \
   --baseline /target/bench/rete-cold-r2-baseline \
-  --candidate /target/release/rete --samples 15 \
+  --baseline-revision &lt;baseline-git-sha&gt; \
+  --candidate /target/release/rete \
+  --candidate-revision &lt;candidate-git-sha&gt; --samples 15 \
   --source https://data.graphplaza.com/chemotion/chemotion.rete \
   --out /target/bench/cold-r2-final-fix-15.jsonl
 python3 scripts/bench_cold_r2.py \
-  --candidate /target/release/rete --thresholds 0,4,8,16 --samples 15 \
+  --candidate /target/release/rete \
+  --candidate-revision &lt;candidate-git-sha&gt; \
+  --thresholds 0,4,8,16 --samples 15 \
   --source https://data.graphplaza.com/chemotion/chemotion.rete \
   --out /target/bench/cold-r2-final-fix-thresholds.jsonl
 </code></pre>
@@ -664,6 +668,71 @@ hashes agreed. The per-query SHA-256 values were:</p>
 <code>2257521cc57d983e86906086a1a4e69dc763dbf76f107667d4810f16860c168b</code>,
 <code>f057065493525aa8b0a38698bc75dabc9b92021827405671040c65cb0a1802ae</code>, and
 <code>2341eab6ad57564f3d68b32b4facc13f61e2f821859bb00a2b6eef26b791ffb4</code>.</p>
+<h3>Experimental adaptive R2 scheduler (2026-08-16)</h3>
+<p>A follow-up experiment replaced fixed remote batching decisions with a
+session-local controller. It times validated physical cache misses, labels
+already-routed work as selective, bounded, full-scan, or dictionary demand, and
+can adjust coalescing and scan windows. It does not change <code>.rete</code> bytes, admit
+an unrouted tile, relax validation, or add <code>unsafe</code> code.</p>
+<p>The static baseline was git
+<code>6562251d74f2158765844762c867bf92cf39f782</code>, executable SHA-256
+<code>8f315597073222a66c6288bd568f2e76bcfafbc818ca71b5b1d1628d094625bc</code>.
+The adaptive candidate was git
+<code>45dfdf00f82a133082b5a4024ef52edd7582c82e</code>, executable SHA-256
+<code>9845d225f8922bb3cd6b117181fbc9bf63739d41aefcb50c1b24479f81649269</code>.
+Both forced native remote-lazy reads with <code>RETE_EAGER_MAX_MB=0</code>. Each cell below
+is 15 rotating, fresh-process samples. The harness matched length and ETag
+before and after each complete matrix; these are the pinned Chemotion and ChEBI
+Full R2 objects listed above, both serving byte ranges.</p>
+<table><thead><tr><th>dataset / query</th><th>policy</th><th style="text-align: right">bytes / GETs</th><th style="text-align: right">wall median / p90</th><th style="text-align: right">VmHWM median / p90 / max</th><th style="text-align: right">median change</th></tr></thead><tbody>
+<tr><td>ChEBI Full / bound entity</td><td>static</td><td style="text-align: right">5,374,976 / 39</td><td style="text-align: right">3,813 / 4,869 ms</td><td style="text-align: right">20,596 / 20,708 / 20,780 KiB</td><td style="text-align: right">—</td></tr>
+<tr><td></td><td>adaptive</td><td style="text-align: right">5,374,976 / 39</td><td style="text-align: right">3,673 / 4,527 ms</td><td style="text-align: right">20,700 / 20,932 / 20,992 KiB</td><td style="text-align: right">3.7% faster</td></tr>
+<tr><td>ChEBI Full / predicate counts (complete scan)</td><td>static</td><td style="text-align: right">16,385,024 / 32</td><td style="text-align: right">5,742 / 7,588 ms</td><td style="text-align: right">105,428 / 106,156 / 106,408 KiB</td><td style="text-align: right">—</td></tr>
+<tr><td></td><td>adaptive</td><td style="text-align: right">16,385,024 / 36</td><td style="text-align: right">5,382 / 6,566 ms</td><td style="text-align: right">110,412 / 112,740 / 112,884 KiB</td><td style="text-align: right">6.3% faster</td></tr>
+<tr><td>Chemotion / molecules</td><td>static</td><td style="text-align: right">2,032,640 / 26</td><td style="text-align: right">2,545 / 3,046 ms</td><td style="text-align: right">19,764 / 19,984 / 20,004 KiB</td><td style="text-align: right">—</td></tr>
+<tr><td></td><td>adaptive</td><td style="text-align: right">2,032,640 / 26</td><td style="text-align: right">2,465 / 3,816 ms</td><td style="text-align: right">19,856 / 20,036 / 20,092 KiB</td><td style="text-align: right">3.1% faster</td></tr>
+<tr><td>Chemotion / formulas</td><td>static</td><td style="text-align: right">1,246,208 / 19</td><td style="text-align: right">1,880 / 2,941 ms</td><td style="text-align: right">12,688 / 12,844 / 12,848 KiB</td><td style="text-align: right">—</td></tr>
+<tr><td></td><td>adaptive</td><td style="text-align: right">1,246,208 / 19</td><td style="text-align: right">2,054 / 2,801 ms</td><td style="text-align: right">12,800 / 13,008 / 13,072 KiB</td><td style="text-align: right"><strong>9.3% slower</strong></td></tr>
+<tr><td>Chemotion / spectroscopy path</td><td>static</td><td style="text-align: right">2,491,392 / 37</td><td style="text-align: right">3,632 / 3,975 ms</td><td style="text-align: right">22,876 / 23,048 / 23,104 KiB</td><td style="text-align: right">—</td></tr>
+<tr><td></td><td>adaptive</td><td style="text-align: right">2,491,392 / 37</td><td style="text-align: right">3,532 / 4,337 ms</td><td style="text-align: right">23,032 / 23,256 / 23,268 KiB</td><td style="text-align: right">2.8% faster</td></tr>
+</tbody></table>
+<p>The acceptance gate failed. No selective median reached the required 15%
+improvement; the complete ChEBI scan improved its median by only 6.3% and added
+four physical GETs; and the Chemotion aggregate regressed 9.3%, beyond the 5%
+guardrail. Identical transfer work on all three Chemotion queries also shows
+that their small timing movements are live-network noise rather than a changed
+read plan. Result hashes were identical throughout, RSS stayed within the 10%
+limit, and deterministic tests kept the 2 MiB span, 256 KiB gap-overfetch, and
+256 MiB cache bounds.</p>
+<p>The output SHA-256 values were
+<code>29cea6b6cc8b29a2f2a5e5e7203d9941d302b5abe636caa04e5660c29b65c534</code>
+(ChEBI bound entity),
+<code>428ae8a4141531c9ed54f0707cc089712f8cd32e3ef95be563d21d75f0710323</code>
+(ChEBI predicate counts),
+<code>9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8</code>
+(Chemotion molecules),
+<code>43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640</code>
+(Chemotion formulas), and
+<code>359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc</code>
+(Chemotion path).</p>
+<p>Accordingly, adaptive scheduling is <strong>not enabled by default</strong>. Normal native
+HTTP and browser artifacts retain the static policy. The native benchmark can
+opt in with the internal <code>RETE_BENCH_READ_POLICY=adaptive_lazy</code> environment
+value; browser A/B builds use the non-default <code>rete-wasm/adaptive-read-bench</code>
+feature. A same-binary isolation check at git
+<code>4244878a4e6ba2fb7860e9efcc52ea1aafe7f362</code> (executable SHA-256
+<code>fee607d1f916f223ce7135e68eff527f654d055d086d0fd0104e8050651657ac</code>)
+reproduced static/adaptive ChEBI traffic as 39/39 GETs for the bound query and
+32/36 GETs for the complete scan. Browser live A/B was deliberately stopped
+after the native promotion gates had already failed; the default browser reader
+therefore remains the previously validated static implementation.</p>
+<p>The ignored raw sample files are
+<code>adaptive-chebi-full-20260816T120000Z.jsonl</code> (SHA-256
+<code>9dd3fc11bedf8473ad68e7b28ac7afdb54a9960e7c8ce75f7f782a87956e898f</code>),
+<code>adaptive-chemotion-20260816T121000Z.jsonl</code> (SHA-256
+<code>5d39e56b767c0e848ba1342820248f011b55ef7f2137034ee9fbda2586335b6e</code>),
+and <code>adaptive-chebi-policy-isolation-20260816T123000Z.jsonl</code> (SHA-256
+<code>34efb52c0b3eeb0aa87255e15461e05c554f7c4fe043b66509fa6aaec70d4436</code>).</p>
 <h4>Browser, shared reader, and sharding</h4>
 <p>The freshly regenerated browser artifact opened all six Wikidata XXL shards and answered
 both:</p>

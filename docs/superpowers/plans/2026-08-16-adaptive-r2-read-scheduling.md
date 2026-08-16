@@ -515,7 +515,7 @@ docker compose run --rm gate node checks/check_wasm_boot.mjs
 Expected: CLI tests pass; WASM builds; current generated production packages
 still boot. Do not regenerate checked-in packages until Task 7.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```sh
 git add crates/rete-cli/src/commands/url.rs crates/rete-wasm/src/lib.rs crates/rete-wasm/tests tests/gate/checks/check_wasm_boot.mjs
@@ -538,30 +538,32 @@ git commit -m "perf: enable adaptive reads for HTTP and WASM"
 - Produces: exclusive-created JSONL/JSON evidence with executable/artifact hashes,
   before/after R2 pins, exact query/output hashes, timing, bytes, GETs, and RSS.
 
-- [ ] **Step 1: Add a failing workload-coverage test**
+- [x] **Step 1: Add a failing workload-coverage test**
 
 Require `chebi-full.json` to contain both its bound-entity selective query and a
 deterministic broad aggregate/full-scan query. Keep every limited SELECT's complete
 approved ordering in the existing ordering gate.
 
-- [ ] **Step 2: Extend the native harness identity schema**
+- [x] **Step 2: Extend the native harness identity schema**
 
 Record git revision and an explicit `read_policy` label for each executable mode.
 Reject duplicate/blank identity fields. Preserve exclusive `open("x")`, rotating
 mode order, 15 fresh processes, exact result hashes, and before/after pins.
 
-- [ ] **Step 3: Build immutable baseline and candidate binaries**
+- [x] **Step 3: Build immutable baseline and candidate binaries**
 
 Use separate target directories and copy binaries to timestamped, non-overwritten
 paths under `target/bench/`. Record SHA-256 and git revision. Both ChEBI modes use
 `RETE_EAGER_MAX_MB=0`, so the comparison is static lazy versus adaptive lazy.
 
-- [ ] **Step 4: Run native ChEBI selective and scan samples**
+- [x] **Step 4: Run native ChEBI selective and scan samples**
 
 ```sh
 docker compose run --rm dev uv run python scripts/bench_cold_r2.py \
   --baseline /work/target/bench/rete-baseline-6562251d \
+  --baseline-revision 6562251d74f2158765844762c867bf92cf39f782 \
   --candidate /work/target/bench/rete-candidate-adaptive \
+  --candidate-revision 45dfdf00f82a133082b5a4024ef52edd7582c82e \
   --workload scripts/cold-r2-workloads/chebi-full.json \
   --samples 15 \
   --out target/bench/adaptive-chebi-20260816.jsonl
@@ -570,13 +572,16 @@ docker compose run --rm dev uv run python scripts/bench_cold_r2.py \
 Require stable pins/transfer counts and identical result hashes. Compute median,
 nearest-rank p90, bytes, GETs, and median/p90/max RSS.
 
-- [ ] **Step 5: Build baseline and candidate WASM artifacts canonically**
+- [x] **Step 5: Stop browser promotion after the native gate failure**
 
-Use the repository's `--no-opt`/canonical scripts in isolated output directories.
-Run the boot check against both before any live query. Do not use Debian Binaryen
-v108's corrupting optimized wasm-pack path.
+The native matrix already failed both the selective improvement and regression
+guards, so a browser promotion build would not change the rollout decision. Keep
+normal WASM construction static, retain `adaptive-read-bench` as a non-default
+feature, and defer live browser A/B until the controller is redesigned. The
+isolated default and feature test builds still use `--no-opt`; do not use Debian
+Binaryen v108's corrupting optimized wasm-pack path.
 
-- [ ] **Step 6: Run browser strict-subset and six-shard comparisons**
+- [x] **Step 6: Record browser A/B as not run after rejection**
 
 For pinned Jonas (`https://data.graphplaza.com/jonas/jonas.rete`, length
 2,163,156, ETag `"afe8ebf6962fc3af9b92eae1327352b1"`), run this exact query
@@ -591,13 +596,13 @@ SELECT ?w ?siglum WHERE {
 } ORDER BY ?w ?siglum LIMIT 50
 ```
 
-The result must remain 49 rows with SHA-256
+If a redesigned controller is promoted later, the result must remain 49 rows with SHA-256
 `0657bd63ff1331eebd7f7448b2fb38b327a0293dd1cbd3b078e78f08d8e13aa6`.
 For Wikidata XXL, require ASK true, exact 10 ordered rows/output SHA, all six
 sources, only 206 ranged GETs, no full GET, and exact before/after
 length/ETag/Accept-Ranges pins.
 
-- [ ] **Step 7: Evaluate the acceptance gates rather than assuming a win**
+- [x] **Step 7: Evaluate the acceptance gates rather than assuming a win**
 
 - two selective remote-lazy workloads: candidate median at least 15% faster;
 - one scan/aggregate: median latency or physical GET count at least 10% better;
@@ -610,7 +615,7 @@ If these do not pass, keep adaptive construction non-default and use the capture
 evidence to tune or reject the policy. Do not describe a failed experiment as an
 optimization.
 
-- [ ] **Step 8: Commit only tracked harness/workload changes**
+- [x] **Step 8: Commit tracked harness/workload and experimental-gating changes**
 
 ```sh
 git add scripts/bench_cold_r2.py scripts/test_bench_cold_r2.py scripts/cold-r2-workloads/chebi-full.json tests/gate/checks
@@ -630,7 +635,7 @@ git commit -m "bench: compare adaptive R2 scheduling"
 - Consumes: verified Task 6 evidence and all prior commits.
 - Produces: exact reproducible benchmark prose, generated HTML/WASM, and a clean verified branch.
 
-- [ ] **Step 1: Document measured results with candid scope**
+- [x] **Step 1: Document measured results with candid scope**
 
 Record candidate/baseline git and binary/WASM hashes, R2 pins, query links/text,
 output hashes, all median/p90/bytes/GET/RSS values, browser physical traffic, and
