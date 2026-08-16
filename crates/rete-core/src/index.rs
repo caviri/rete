@@ -15,6 +15,7 @@
 
 use std::sync::OnceLock;
 
+use crate::adaptive::ReadIntent;
 use crate::triples::{encode_sorted_unique, GroupDirectory, Triple, TripleBlock};
 use crate::varint::uvarint_len;
 
@@ -72,7 +73,8 @@ pub type TileLoader = Box<dyn Fn(usize, usize) -> Option<Vec<u8>> + Send + Sync>
 /// full-section scan costs a handful of requests instead of one per tile.
 /// `None` = the batch failed as a whole; callers fall back to the per-tile
 /// [`TileLoader`] (which records per-tile failures).
-pub type TileBulkLoader = Box<dyn Fn(usize, &[usize]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
+pub type TileBulkLoader =
+    Box<dyn Fn(usize, &[usize], ReadIntent) -> Option<Vec<Vec<u8>>> + Send + Sync>;
 
 /// One tile of a permutation section: a fully self-contained [`TripleBlock`]
 /// over a consecutive run of whole a-groups, plus the leading-id range it
@@ -657,11 +659,11 @@ impl GraphIndex {
     /// (a single missing tile costs the same either way). A failed batch is
     /// not an error here: the tiles stay unloaded and the per-tile loader
     /// retries each one (recording failures) when the scan reaches it.
-    fn prefetch_span(&self, section: usize, start: usize, end: usize) {
+    fn prefetch_span(&self, section: usize, start: usize, end: usize, intent: ReadIntent) {
         let missing: Vec<usize> = (start..end)
             .filter(|&ti| self.sections[section][ti].data.get().is_none())
             .collect();
-        self.bulk_fault(section, &missing);
+        self.bulk_fault(section, &missing, intent);
     }
 
     /// Bulk-fault a set of (possibly scattered, ascending) missing tile indices in
@@ -670,12 +672,12 @@ impl GraphIndex {
     /// costs the same via the per-tile loader). A failed batch leaves the tiles
     /// unloaded for the per-tile loader to retry. Shared by the consecutive-span
     /// scan prefetch and the scattered batch-probe prefetch.
-    fn bulk_fault(&self, section: usize, tiles: &[usize]) {
+    fn bulk_fault(&self, section: usize, tiles: &[usize], intent: ReadIntent) {
         if tiles.len() < 2 {
             return;
         }
         let Some(bulk) = &self.bulk else { return };
-        if let Some(images) = bulk(section, tiles) {
+        if let Some(images) = bulk(section, tiles, intent) {
             if images.len() == tiles.len() {
                 for (&ti, img) in tiles.iter().zip(images) {
                     let _ = self.sections[section][ti].data.set(img);
@@ -712,7 +714,7 @@ impl GraphIndex {
         }
         for (si, set) in want.iter().enumerate() {
             let tiles: Vec<usize> = set.iter().copied().collect();
-            self.bulk_fault(si, &tiles);
+            self.bulk_fault(si, &tiles, ReadIntent::SelectiveProbe);
         }
     }
 
@@ -743,7 +745,7 @@ impl GraphIndex {
     /// Total triple count (sum of the SPO tiles' zone counts). For a remote
     /// index this faults in the SPO tiles — prefer the header's quad count.
     pub fn triple_count(&self) -> u32 {
-        self.prefetch_span(0, 0, self.sections[0].len());
+        self.prefetch_span(0, 0, self.sections[0].len(), ReadIntent::FullScan);
         (0..self.sections[0].len())
             .filter_map(|ti| TripleBlock::parse(self.tile_data(0, ti)).ok())
             .map(|b| b.zone().count)
@@ -906,7 +908,7 @@ impl GraphIndex {
                 // matching groups.
                 if self.sections[si][ti].data.get().is_none() {
                     let w = window.get();
-                    self.prefetch_span(si, ti, (ti + w).min(end));
+                    self.prefetch_span(si, ti, (ti + w).min(end), ReadIntent::BoundedScan);
                     window.set(w.saturating_mul(2).min(PREFETCH_WINDOW_MAX));
                 }
                 let tile = &self.sections[si][ti];

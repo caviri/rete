@@ -7,6 +7,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
+use crate::adaptive::ReadIntent;
 use crate::varint::{read_uvarint, write_uvarint};
 
 /// Default restart interval: a full term every `R` entries.
@@ -258,7 +259,7 @@ pub type ChunkLoader = Box<dyn Fn(usize) -> Option<Vec<u8>> + Send + Sync>;
 /// single range reads — a full-dictionary sweep (export, dump) costs a few
 /// requests per section instead of one per chunk. `None` = the batch failed;
 /// callers fall back to the per-chunk [`ChunkLoader`].
-pub type ChunkBulkLoader = Box<dyn Fn(&[usize]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
+pub type ChunkBulkLoader = Box<dyn Fn(&[usize], ReadIntent) -> Option<Vec<Vec<u8>>> + Send + Sync>;
 
 /// One chunk: a run-aligned slice of the section body. `body_start` is the
 /// offset (in the section's coordinate space — the same space
@@ -418,7 +419,10 @@ impl ChunkedSection {
     /// failed batch leaves the chunks unloaded for the per-chunk loader to
     /// retry (and record failures) lookup by lookup.
     pub fn prefetch_all(&self) {
-        self.prefetch_chunks(&(0..self.chunks.len()).collect::<Vec<_>>());
+        self.prefetch_chunks_with_intent(
+            &(0..self.chunks.len()).collect::<Vec<_>>(),
+            ReadIntent::FullScan,
+        );
     }
 
     /// Batch-fault a *specific* set of chunks (the subset a bounded query's
@@ -428,6 +432,10 @@ impl ChunkedSection {
     /// missing chunk is left for the per-chunk loader, and a failed batch leaves
     /// the chunks unloaded for that loader to retry (and record failures).
     pub fn prefetch_chunks(&self, cis: &[usize]) {
+        self.prefetch_chunks_with_intent(cis, ReadIntent::DictionaryResolve);
+    }
+
+    fn prefetch_chunks_with_intent(&self, cis: &[usize], intent: ReadIntent) {
         let Some(bulk) = &self.bulk else { return };
         let missing: Vec<usize> = cis
             .iter()
@@ -437,7 +445,7 @@ impl ChunkedSection {
         if missing.len() < 2 {
             return;
         }
-        if let Some(bodies) = bulk(&missing) {
+        if let Some(bodies) = bulk(&missing, intent) {
             if bodies.len() == missing.len() {
                 for (&ci, body) in missing.iter().zip(bodies) {
                     let _ = self.chunks[ci].data.set(body);

@@ -14,6 +14,7 @@
 //! the permutation container (`root_dir_offset/len`); routed readers can fetch a
 //! single permutation payload from that container.
 
+use crate::adaptive::ReadIntent;
 use crate::dictionary::Dictionary;
 use crate::header::{
     Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC,
@@ -417,20 +418,35 @@ const TILE_COALESCE_GAP: u64 = 4096;
 /// cheaper than another request's RTT.
 const DICT_COALESCE_GAP: u64 = 64 * 1024;
 
-/// Fetch a set of ascending, disjoint byte ranges, coalescing ranges whose gap
-/// is at most `gap` into one span, then fetching the spans through
-/// [`RangeReader::read_many`] (which a parallelizable reader issues
-/// concurrently). Returns each requested range's bytes in order; `None` if any
-/// read fails.
+/// Fetch a set of ascending, disjoint byte ranges, coalescing ranges according
+/// to the physical source's session-local adaptive plan. Readers without a
+/// controller retain the legacy static-gap behavior. Returns each requested
+/// range's bytes in order; `None` if any read fails or the input ranges are not
+/// ascending and disjoint.
 fn read_coalesced<R: RangeReader + ?Sized>(
     reader: &R,
     ranges: &[ByteRange],
-    gap: u64,
+    static_gap: u64,
+    intent: ReadIntent,
 ) -> Option<Vec<Vec<u8>>> {
+    let known_bytes = ranges
+        .iter()
+        .try_fold(0u64, |sum, range| sum.checked_add(range.len))?;
+    let adaptive = reader.adaptive_controller();
+    let plan = adaptive
+        .as_ref()
+        .map(|controller| controller.plan(intent, known_bytes, static_gap, reader.concurrency()));
+    let coalesce_gap = plan.as_ref().map_or(static_gap, |plan| plan.coalesce_gap);
+    let max_span = plan.as_ref().map_or(u64::MAX, |plan| plan.max_span);
+    let gap_budget = plan
+        .as_ref()
+        .map_or(u64::MAX, |_| (known_bytes / 4).min(256 * 1024));
+
     // Build the coalesced spans and remember which span each input range maps
     // into, so the fetched span blobs can be sliced back apart in order.
     let mut spans: Vec<(u64, u64)> = Vec::new();
     let mut span_of: Vec<usize> = Vec::with_capacity(ranges.len());
+    let mut gap_bytes = 0u64;
     let mut i = 0;
     while i < ranges.len() {
         let start = ranges[i].offset;
@@ -438,10 +454,18 @@ fn read_coalesced<R: RangeReader + ?Sized>(
         let mut j = i + 1;
         while j < ranges.len() {
             let r = &ranges[j];
-            if r.offset < end || r.offset - end > gap {
+            if r.offset < end {
+                return None;
+            }
+            let next_end = r.offset.checked_add(r.len)?;
+            let next_gap = r.offset - end;
+            let next_gap_bytes = gap_bytes.checked_add(next_gap)?;
+            let next_span = next_end.checked_sub(start)?;
+            if next_gap > coalesce_gap || next_gap_bytes > gap_budget || next_span > max_span {
                 break;
             }
-            end = r.offset.checked_add(r.len)?;
+            gap_bytes = next_gap_bytes;
+            end = next_end;
             j += 1;
         }
         let si = spans.len();
@@ -451,7 +475,7 @@ fn read_coalesced<R: RangeReader + ?Sized>(
         }
         i = j;
     }
-    let blobs = reader.read_many(&spans).ok()?;
+    let blobs = reader.read_many_with_intent(&spans, intent).ok()?;
     if blobs.len() != spans.len() {
         return None;
     }
@@ -1420,13 +1444,13 @@ fn open_remote_graph_index<R: RangeReader + Send + Sync + 'static>(
     });
     let bulk_ranges = tile_ranges.clone();
     let bulk_reader = reader;
-    let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
+    let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis, intent| {
         let section = bulk_ranges.get(si)?;
         let want: Option<Vec<ByteRange>> = tis
             .iter()
             .map(|&ti| section.get(ti).map(|&(_, _, range)| range))
             .collect();
-        let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
+        let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP, intent)?;
         blobs
             .iter()
             .map(|blob| {
@@ -2835,10 +2859,11 @@ impl Rete {
             // Full-section sweeps (export/dump) batch their chunk fetches:
             // adjacent chunk ranges coalesce into a handful of range reads.
             let bulk_reader = reader.clone();
-            let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis| {
+            let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis, intent| {
                 let want: Option<Vec<ByteRange>> =
                     cis.iter().map(|&ci| ranges.get(ci).copied()).collect();
-                let blobs = read_coalesced(bulk_reader.as_ref(), &want?, DICT_COALESCE_GAP)?;
+                let blobs =
+                    read_coalesced(bulk_reader.as_ref(), &want?, DICT_COALESCE_GAP, intent)?;
                 blobs.iter().map(|b| decompress(codec, b).ok()).collect()
             });
             dict_sections.push(
@@ -3637,9 +3662,11 @@ pub fn read_schema_summary_ranged<R: RangeReader>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adaptive::{AdaptiveReadController, ReadIntent, ReadObservation};
     use crate::dictionary::DictionaryBuilder;
     use crate::index::GraphIndexBuilder;
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
 
     struct SparseReader {
         len: u64,
@@ -3649,6 +3676,64 @@ mod tests {
     struct SynopsisProbeReader {
         normal_reads: std::sync::Mutex<Vec<(u64, u64)>>,
         precise_reads: std::sync::Mutex<Vec<(u64, u64)>>,
+    }
+
+    struct AdaptiveRecordingReader {
+        bytes: Vec<u8>,
+        controller: Option<Arc<AdaptiveReadController>>,
+        reads: Mutex<Vec<(u64, u64)>>,
+    }
+
+    impl AdaptiveRecordingReader {
+        fn new(len: usize, controller: Option<Arc<AdaptiveReadController>>) -> Self {
+            Self {
+                bytes: vec![0x5e; len],
+                controller,
+                reads: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn reads(&self) -> Vec<(u64, u64)> {
+            self.reads.lock().unwrap().clone()
+        }
+    }
+
+    impl RangeReader for AdaptiveRecordingReader {
+        fn len(&self) -> u64 {
+            self.bytes.len() as u64
+        }
+
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            self.reads.lock().unwrap().push((offset, len));
+            Ok(self.bytes[offset as usize..(offset + len) as usize].to_vec())
+        }
+
+        fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+            ranges
+                .iter()
+                .map(|&(offset, len)| self.read_at(offset, len))
+                .collect()
+        }
+
+        fn concurrency(&self) -> usize {
+            8
+        }
+
+        fn adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>> {
+            self.controller.clone()
+        }
+    }
+
+    fn train_network(controller: &AdaptiveReadController, bytes: u64, elapsed_micros: u64) {
+        for _ in 0..2 {
+            controller.observe(ReadObservation {
+                requested_bytes: bytes,
+                returned_bytes: bytes,
+                physical_ranges: 1,
+                elapsed_micros: Some(elapsed_micros),
+                success: true,
+            });
+        }
     }
 
     impl SynopsisProbeReader {
@@ -3830,17 +3915,85 @@ mod tests {
         ];
         // Tight gap (16): nothing merges → one read per range.
         let r = CountingReader::new(SliceReader::new(&bytes));
-        let out = read_coalesced(&r, &ranges, 16).unwrap();
+        let out = read_coalesced(&r, &ranges, 16, ReadIntent::SelectiveProbe).unwrap();
         assert_eq!(out.len(), 3);
         assert_eq!(r.requests(), 3);
         // Gap 64 merges A+B (gap 32) but not C (gap 1024) → two reads.
         let r = CountingReader::new(SliceReader::new(&bytes));
-        read_coalesced(&r, &ranges, 64).unwrap();
+        read_coalesced(&r, &ranges, 64, ReadIntent::SelectiveProbe).unwrap();
         assert_eq!(r.requests(), 2);
         // Gap 4096 merges all three into one read, over-fetching the gaps.
         let r = CountingReader::new(SliceReader::new(&bytes));
-        read_coalesced(&r, &ranges, 4096).unwrap();
+        read_coalesced(&r, &ranges, 4096, ReadIntent::SelectiveProbe).unwrap();
         assert_eq!(r.requests(), 1);
+    }
+
+    #[test]
+    fn adaptive_coalescing_uses_the_observed_network_break_even() {
+        let ranges = [
+            ByteRange {
+                offset: 0,
+                len: 64 * 1024,
+            },
+            ByteRange {
+                offset: 96 * 1024,
+                len: 64 * 1024,
+            },
+            ByteRange {
+                offset: 672 * 1024,
+                len: 64 * 1024,
+            },
+        ];
+
+        let fast_high_rtt = Arc::new(AdaptiveReadController::new());
+        train_network(&fast_high_rtt, 1024 * 1024, 120_000);
+        let high = AdaptiveRecordingReader::new(1024 * 1024, Some(fast_high_rtt));
+        let out = read_coalesced(&high, &ranges, 4096, ReadIntent::SelectiveProbe).unwrap();
+        assert_eq!(out, vec![vec![0x5e; 64 * 1024]; 3]);
+        assert_eq!(high.reads(), vec![(0, 160 * 1024), (672 * 1024, 64 * 1024)]);
+
+        let slow_low_rtt = Arc::new(AdaptiveReadController::new());
+        train_network(&slow_low_rtt, 4 * 1024, 20_000);
+        let low = AdaptiveRecordingReader::new(1024 * 1024, Some(slow_low_rtt));
+        read_coalesced(&low, &ranges, 4096, ReadIntent::SelectiveProbe).unwrap();
+        assert_eq!(
+            low.reads(),
+            vec![
+                (0, 64 * 1024),
+                (96 * 1024, 64 * 1024),
+                (672 * 1024, 64 * 1024),
+            ]
+        );
+    }
+
+    #[test]
+    fn adaptive_coalescing_honors_gap_and_span_caps() {
+        let controller = Arc::new(AdaptiveReadController::new());
+        train_network(&controller, 1024 * 1024, 120_000);
+        let reader = AdaptiveRecordingReader::new(4 * 1024 * 1024, Some(controller));
+        let ranges = [
+            ByteRange {
+                offset: 0,
+                len: 1024 * 1024,
+            },
+            ByteRange {
+                offset: 1024 * 1024,
+                len: 1024 * 1024,
+            },
+            ByteRange {
+                offset: 2 * 1024 * 1024,
+                len: 1024 * 1024,
+            },
+        ];
+
+        read_coalesced(&reader, &ranges, 64 * 1024, ReadIntent::FullScan).unwrap();
+
+        let reads = reader.reads();
+        assert_eq!(
+            reads,
+            vec![(0, 2 * 1024 * 1024), (2 * 1024 * 1024, 1024 * 1024)]
+        );
+        assert!(reads.iter().all(|&(_, len)| len <= 2 * 1024 * 1024));
     }
 
     fn build_image() -> Vec<u8> {

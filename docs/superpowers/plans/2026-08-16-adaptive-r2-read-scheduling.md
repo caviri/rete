@@ -307,7 +307,7 @@ git commit -m "perf(core): time and batch adaptive cache reads"
   - `ChunkBulkLoader = Box<dyn Fn(&[usize], ReadIntent) -> Option<Vec<Vec<u8>>> + Send + Sync>`;
   - `GraphIndex` and `ChunkedSection` calls that label selective, bounded/full scan, and dictionary batches.
 
-- [ ] **Step 1: Write failing coalescing-oracle tests**
+- [x] **Step 1: Write failing coalescing-oracle tests**
 
 Train a controller with synthetic high-RTT samples, pass sorted disjoint ranges
 through `read_coalesced`, and assert nearby known-needed ranges merge. Train a
@@ -321,7 +321,7 @@ assert!(physical_spans.iter().all(|(_, len)| *len <= 2 * 1024 * 1024));
 Retain the existing fixed-gap test using a reader with no controller and assert
 its ranges are byte-identical to the pre-change plan.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```sh
 docker compose run --rm dev cargo test -p rete-core file::tests::adaptive_coalescing -- --nocapture
@@ -329,7 +329,7 @@ docker compose run --rm dev cargo test -p rete-core file::tests::adaptive_coales
 
 Expected: compile failure because `read_coalesced` has no intent/controller path.
 
-- [ ] **Step 3: Implement adaptive coalescing over already-eligible ranges**
+- [x] **Step 3: Implement adaptive coalescing over already-eligible ranges**
 
 Compute `known_bytes` with checked/saturating addition, ask the shared controller
 for a plan, and merge only while cumulative gap-only bytes and span length remain
@@ -338,7 +338,7 @@ the original range outputs exactly as today. Never sort or invent ranges inside
 the helper: reject/return `None` for overlap or overflow as the current callers
 already provide ascending disjoint input.
 
-- [ ] **Step 4: Thread `ReadIntent` through tile bulk loads**
+- [x] **Step 4: Thread `ReadIntent` through tile bulk loads**
 
 - `prefetch_probe_tiles` calls `bulk_fault(..., ReadIntent::SelectiveProbe)`.
 - scan prefetch calls `ReadIntent::BoundedScan` unless the caller explicitly uses
@@ -347,21 +347,21 @@ already provide ascending disjoint input.
   permutation prefetch call `ReadIntent::FullScan`.
 - single-tile loader behavior stays exact and retryable.
 
-- [ ] **Step 5: Thread intent through dictionary bulk loads**
+- [x] **Step 5: Thread intent through dictionary bulk loads**
 
 - `prefetch_chunks` uses `DictionaryResolve`;
 - `prefetch_all` uses `FullScan`;
 - individual chunk lookup remains a single exact lazy load;
 - update `file.rs` bulk closures to pass the intent into adaptive coalescing.
 
-- [ ] **Step 6: Add default/named/dictionary sharing tests**
+- [x] **Step 6: Add default/named/dictionary sharing tests**
 
 Open a multi-tile file with named graphs through one adaptive block cache. Assert
 the default index, named indexes, and dictionary bulk paths advance the same
 controller's observations, while lazy open still has zero reads overlapping any
 named tile payload.
 
-- [ ] **Step 7: Run core matrices**
+- [x] **Step 7: Run core matrices**
 
 ```sh
 docker compose run --rm dev cargo test -p rete-core

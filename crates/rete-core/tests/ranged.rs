@@ -7,7 +7,7 @@
 //!   * `Rete::open_ranged` opens in a small bounded number of requests â€” never a
 //!     linear scan proportional to the triple count.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use rete_core::{
@@ -456,6 +456,57 @@ fn single_tile_named_graph_image() -> Vec<u8> {
     )
 }
 
+fn adaptive_shared_source_image() -> Vec<u8> {
+    let p = "<http://ex/p>".to_string();
+    let node = |scope: &str, n: u32| {
+        format!(
+            "<http://ex/{scope}/{:08x}/{:08x}/{n:05}>",
+            n.wrapping_mul(0x9E37_79B9),
+            n.wrapping_mul(0x85EB_CA6B) ^ 0x5151_5151
+        )
+    };
+    let default: Vec<_> = (0..8000u32)
+        .flat_map(|i| {
+            [
+                (
+                    node("default", i),
+                    p.clone(),
+                    node("default", (i + 1) % 8000),
+                ),
+                (
+                    node("default", i),
+                    p.clone(),
+                    node("default", (i + 17) % 8000),
+                ),
+            ]
+        })
+        .collect();
+    let named: Vec<_> = (0..512u32)
+        .map(|i| (node("named", i), p.clone(), node("named", (i + 1) % 512)))
+        .collect();
+
+    let mut db = DictionaryBuilder::new();
+    for (s, p, o) in default.iter().chain(&named) {
+        db.observe(s, p, o);
+    }
+    let dict = db.build();
+    let build_index = |triples: &[(String, String, String)]| {
+        let mut builder = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, p, o) in triples {
+            builder.push(dict.encode(s, p, o).unwrap());
+        }
+        builder.build()
+    };
+    write_dataset(
+        &dict,
+        &build_index(&default),
+        &[("<http://ex/named>".to_string(), build_index(&named))],
+        true,
+        &[],
+        0,
+    )
+}
+
 #[test]
 fn lazy_open_reads_named_graph_directories_but_no_named_tile_payloads() {
     let image = named_graph_image();
@@ -528,6 +579,57 @@ fn lazy_open_through_block_cache_physically_skips_named_tile_payloads() {
             );
         }
     }
+}
+
+#[test]
+fn adaptive_default_named_and_dictionary_reads_train_one_source_controller() {
+    let image = adaptive_shared_source_image();
+    let layout = named_graph_layout(&image);
+    let physical = std::sync::Arc::new(RecordingReader::new(image));
+    let now = std::sync::Arc::new(AtomicU64::new(0));
+    let tick = now.clone();
+    let cache = BlockCacheReader::new(physical.clone(), 4096)
+        .with_adaptive_clock(move || Some(tick.fetch_add(100_000, Ordering::SeqCst)));
+    let controller = cache.adaptive_controller().unwrap();
+    let cached = std::sync::Arc::new(cache);
+
+    let rete = Rete::open_ranged_lazy(cached).unwrap();
+    assert_eq!(controller.successful_samples(), 0);
+    for tile in layout.iter().flat_map(|graph| graph.tiles.iter().flatten()) {
+        assert!(
+            !physical
+                .reads()
+                .iter()
+                .any(|&read| overlaps(read, (tile.offset, tile.end()))),
+            "adaptive lazy open crossed named tile payload {tile:?}"
+        );
+    }
+
+    assert_eq!(rete.default_index().triple_count(), 16_000);
+    let after_default = controller.successful_samples();
+    assert!(
+        after_default > 0,
+        "default tiles did not train the controller"
+    );
+
+    assert_eq!(
+        rete.graph_index("<http://ex/named>")
+            .unwrap()
+            .triple_count(),
+        512
+    );
+    let after_named = controller.successful_samples();
+    assert!(
+        after_named > after_default,
+        "named tiles did not advance the shared controller"
+    );
+
+    rete.dictionary().prefetch_all();
+    assert!(
+        controller.successful_samples() > after_named,
+        "dictionary batches did not advance the shared controller"
+    );
+    assert!(!rete.index_incomplete());
 }
 
 #[test]
