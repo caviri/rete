@@ -203,13 +203,13 @@ git commit -m "feat(core): add adaptive range policy"
   - `BlockCacheReader::with_adaptive_clock<F>(self, clock: F) -> Self where F: Fn() -> Option<u64> + Send + Sync + 'static`;
   - `BlockCacheReader::adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>>` for deterministic tests and loader sharing.
 
-- [ ] **Step 1: Write failing forwarding tests in `reader.rs`**
+- [x] **Step 1: Write failing forwarding tests in `reader.rs`**
 
 Create a distinguishing reader whose intent method increments an atomic and whose
 controller is an `Arc`. Assert `Arc<CountingReader<R>>` forwards both the intent
 call and the identical controller pointer.
 
-- [ ] **Step 2: Write a failing deterministic-clock block-cache test**
+- [x] **Step 2: Write a failing deterministic-clock block-cache test**
 
 Use a fake physical reader plus an `AtomicU64` clock:
 
@@ -225,7 +225,7 @@ assert!(cache.adaptive_controller().unwrap().successful_samples() >= 1);
 Also assert an ordinary `BlockCacheReader::new` exposes no controller and retains
 the pre-change request plan.
 
-- [ ] **Step 3: Run focused tests and verify RED**
+- [x] **Step 3: Run focused tests and verify RED**
 
 Run:
 
@@ -235,14 +235,14 @@ docker compose run --rm dev cargo test -p rete-core reader::tests block_cache::t
 
 Expected: compile failures for the new trait methods and builder.
 
-- [ ] **Step 4: Add the trait defaults and forwarding implementations**
+- [x] **Step 4: Add the trait defaults and forwarding implementations**
 
 `read_many_with_intent` must be correctness-equivalent to `read_many` for readers
 that do not opt in. `CountingReader` must count constituent returned ranges once,
 not count both its intent method and delegated `read_many`. `read_at_precise`
 remains unchanged.
 
-- [ ] **Step 5: Add optional controller/clock state to `BlockCacheReader`**
+- [x] **Step 5: Add optional controller/clock state to `BlockCacheReader`**
 
 Store:
 
@@ -256,14 +256,14 @@ around each call to the *inner* `read_many`/fallback `read_at`. Report a success
 only after exact-length validation; report failure on any transport/count/length
 error. Do not time cache hits and do not observe `read_at_precise`.
 
-- [ ] **Step 6: Split physical runs by the controller's `max_span`**
+- [x] **Step 6: Split physical runs by the controller's `max_span`**
 
 Change `ensure` to accept `ReadIntent`. Split a consecutive missing-block run
 before it exceeds `ReadPlan::max_span`; then issue chunks of spans no wider than
 `ReadPlan::max_in_flight`. Cache insertion stays all-or-nothing for each returned
 batch and keeps shared-backing accounting unchanged.
 
-- [ ] **Step 7: Add failure and precise-boundary regressions**
+- [x] **Step 7: Add failure and precise-boundary regressions**
 
 Assert:
 
@@ -274,7 +274,7 @@ Assert:
 - cache bytes remain at or below the configured cap after every completed read;
 - no planned physical span exceeds 2 MiB.
 
-- [ ] **Step 8: Run focused, ranged, and clippy gates**
+- [x] **Step 8: Run focused, ranged, and clippy gates**
 
 ```sh
 docker compose run --rm dev cargo test -p rete-core block_cache::tests reader::tests -- --nocapture
@@ -282,7 +282,7 @@ docker compose run --rm dev cargo test -p rete-core --test ranged -- --nocapture
 docker compose run --rm dev cargo clippy -p rete-core --all-targets -- -D warnings
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```sh
 git add crates/rete-core/src/reader.rs crates/rete-core/src/block_cache.rs

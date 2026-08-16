@@ -6,7 +6,9 @@
 //! `Range` client. [`CountingReader`] wraps any reader to measure how few bytes
 //! a given access pattern actually touches.
 
+use crate::adaptive::{AdaptiveReadController, ReadIntent};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Something that can serve arbitrary byte ranges of a `.rete` resource.
 pub trait RangeReader {
@@ -44,6 +46,25 @@ pub trait RangeReader {
             .collect()
     }
 
+    /// Read several ranges while preserving why the engine requested this
+    /// batch. Readers without adaptive scheduling simply delegate to
+    /// [`read_many`](Self::read_many); wrappers may use the intent to select a
+    /// bounded physical plan without changing returned bytes.
+    fn read_many_with_intent(
+        &self,
+        ranges: &[(u64, u64)],
+        _intent: ReadIntent,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
+        self.read_many(ranges)
+    }
+
+    /// Session-local adaptive controller attached to this physical source, if
+    /// any. Wrappers must forward the same [`Arc`] so indexes and dictionaries
+    /// learn from the cache's physical reads rather than separate models.
+    fn adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>> {
+        None
+    }
+
     /// How many ranges this reader can usefully have in flight at once — the
     /// planner's hint for probe-vs-scan and batch-size decisions (a phone's
     /// serial sync-XHR reader reports 1; the CLI's threaded HTTP client and the
@@ -71,6 +92,18 @@ impl<R: RangeReader + ?Sized> RangeReader for std::sync::Arc<R> {
 
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
         (**self).read_many(ranges)
+    }
+
+    fn read_many_with_intent(
+        &self,
+        ranges: &[(u64, u64)],
+        intent: ReadIntent,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
+        (**self).read_many_with_intent(ranges, intent)
+    }
+
+    fn adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>> {
+        (**self).adaptive_controller()
     }
 
     fn concurrency(&self) -> usize {
@@ -166,6 +199,22 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
         Ok(out)
     }
 
+    fn read_many_with_intent(
+        &self,
+        ranges: &[(u64, u64)],
+        intent: ReadIntent,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
+        let out = self.inner.read_many_with_intent(ranges, intent)?;
+        self.requests.fetch_add(out.len() as u64, Ordering::Relaxed);
+        self.bytes
+            .fetch_add(out.iter().map(|b| b.len() as u64).sum(), Ordering::Relaxed);
+        Ok(out)
+    }
+
+    fn adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>> {
+        self.inner.adaptive_controller()
+    }
+
     fn concurrency(&self) -> usize {
         self.inner.concurrency()
     }
@@ -174,8 +223,15 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AdaptiveReadController, ReadIntent};
+    use std::sync::Arc;
 
     struct DistinguishingReader;
+
+    struct IntentReader {
+        controller: Arc<AdaptiveReadController>,
+        intent_reads: AtomicU64,
+    }
 
     impl RangeReader for DistinguishingReader {
         fn len(&self) -> u64 {
@@ -188,6 +244,32 @@ mod tests {
 
         fn read_at_precise(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
             Ok(vec![0x22; len as usize])
+        }
+    }
+
+    impl RangeReader for IntentReader {
+        fn len(&self) -> u64 {
+            32
+        }
+
+        fn read_at(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            Ok(vec![0x33; len as usize])
+        }
+
+        fn read_many_with_intent(
+            &self,
+            ranges: &[(u64, u64)],
+            _intent: ReadIntent,
+        ) -> std::io::Result<Vec<Vec<u8>>> {
+            self.intent_reads.fetch_add(1, Ordering::Relaxed);
+            ranges
+                .iter()
+                .map(|&(_, len)| Ok(vec![0x44; len as usize]))
+                .collect()
+        }
+
+        fn adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>> {
+            Some(self.controller.clone())
         }
     }
 
@@ -216,5 +298,28 @@ mod tests {
         assert_eq!(r.read_at_precise(3, 4).unwrap(), vec![0x22; 4]);
         assert_eq!(r.requests(), 1);
         assert_eq!(r.bytes_read(), 4);
+    }
+
+    #[test]
+    fn arc_and_counting_reader_forward_intent_and_controller() {
+        let controller = Arc::new(AdaptiveReadController::new());
+        let inner = Arc::new(IntentReader {
+            controller: controller.clone(),
+            intent_reads: AtomicU64::new(0),
+        });
+        let reader = Arc::new(CountingReader::new(inner.clone()));
+
+        let out = reader
+            .read_many_with_intent(&[(0, 3), (8, 2)], ReadIntent::SelectiveProbe)
+            .unwrap();
+
+        assert_eq!(out, vec![vec![0x44; 3], vec![0x44; 2]]);
+        assert_eq!(inner.intent_reads.load(Ordering::Relaxed), 1);
+        assert_eq!(reader.requests(), 2);
+        assert_eq!(reader.bytes_read(), 5);
+        assert!(Arc::ptr_eq(
+            &reader.adaptive_controller().unwrap(),
+            &controller
+        ));
     }
 }
