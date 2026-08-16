@@ -18,6 +18,8 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[doc(hidden)]
+pub mod adaptive;
+#[doc(hidden)]
 pub mod bgp;
 #[doc(hidden)]
 pub mod block_cache;
@@ -109,6 +111,7 @@ pub mod query {
 
 /// Stable byte-range and lazy-open API for local or remote `.rete` files.
 pub mod range {
+    pub use crate::adaptive::{AdaptiveReadController, ReadIntent, ReadObservation, ReadPlan};
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
         read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged, ByteRange,
@@ -135,6 +138,8 @@ pub mod reasoning {
     pub use crate::sparql::{eval_query_reasoned, eval_sparql_reasoned};
 }
 
+#[doc(hidden)]
+pub use adaptive::{AdaptiveReadController, ReadIntent, ReadObservation, ReadPlan};
 #[doc(hidden)]
 pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
 #[doc(hidden)]

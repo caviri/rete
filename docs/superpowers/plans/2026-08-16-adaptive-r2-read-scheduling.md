@@ -44,7 +44,7 @@
   - `AdaptiveReadController::successful_samples(&self) -> u32`
 - Consumes: no reader or HTTP types; this module is a pure policy/state unit.
 
-- [ ] **Step 1: Write failing cold-start and network-tier tests**
+- [x] **Step 1: Write failing cold-start and network-tier tests**
 
 Add focused tests that express the static fallback and two-sample warm-up:
 
@@ -77,7 +77,7 @@ fn high_rtt_fast_link_merges_more_after_two_samples() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -87,7 +87,7 @@ docker compose run --rm dev cargo test -p rete-core adaptive::tests -- --nocaptu
 
 Expected: compile failure because `adaptive` and its types do not exist.
 
-- [ ] **Step 3: Add failing cap, hysteresis, failure, and consumption tests**
+- [x] **Step 3: Add failing cap, hysteresis, failure, and consumption tests**
 
 Cover these exact invariants:
 
@@ -151,7 +151,7 @@ fn low_bounded_scan_consumption_shrinks_next_window() {
 }
 ```
 
-- [ ] **Step 4: Implement the minimal deterministic controller**
+- [x] **Step 4: Implement the minimal deterministic controller**
 
 Use a `Mutex<ControllerState>` with integer/fixed-point EWMAs. Two valid timed
 samples are required before adaptation. Compute the break-even byte gap from
@@ -161,13 +161,13 @@ factor, then clamp it to `known_bytes / 4` and 256 KiB. Keep the static gap and
 hysteresis; invalid/overflowing observations are ignored. Recover a poisoned
 mutex with `into_inner()` and return the static plan if state cannot be used.
 
-- [ ] **Step 5: Export the policy types without widening the stable query API**
+- [x] **Step 5: Export the policy types without widening the stable query API**
 
 Add `#[doc(hidden)] pub mod adaptive;` and hidden root re-exports in `lib.rs`.
 The `range` facade may export the four policy types because `RangeReader` will
 refer to them in Task 2; do not add CLI-facing configuration.
 
-- [ ] **Step 6: Run focused and no-default tests**
+- [x] **Step 6: Run focused and no-default tests**
 
 Run:
 
@@ -179,7 +179,7 @@ docker compose run --rm dev cargo fmt --all -- --check
 
 Expected: all adaptive tests pass and both feature modes compile.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```sh
 git add crates/rete-core/src/adaptive.rs crates/rete-core/src/lib.rs
