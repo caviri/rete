@@ -394,7 +394,7 @@ git commit -m "perf(core): adapt tile and dictionary range batches"
   - explicit bounded/full scan intent selection;
   - adaptive `prefetch_start`/`prefetch_cap` while retaining `4..512` static behavior.
 
-- [ ] **Step 1: Write failing bounded-limit tests**
+- [x] **Step 1: Write failing bounded-limit tests**
 
 Build a many-tile remote fixture and compare physical reads for:
 
@@ -406,39 +406,39 @@ versus a full unbound scan. Assert the bounded query never begins a second
 window after producing its row, reports low consumption, and returns the same row
 as eager/static evaluation.
 
-- [ ] **Step 2: Write failing full-consumption tests**
+- [x] **Step 2: Write failing full-consumption tests**
 
 Feed two fully consumed scan windows and assert the next plan grows, remains at
 or below 512 tiles, and uses `FullScan` for blocking aggregate/`ORDER BY` paths.
 Add an `ORDER BY ... LIMIT` regression proving it is not mislabeled streaming.
 
-- [ ] **Step 3: Run focused tests and verify RED**
+- [x] **Step 3: Run focused tests and verify RED**
 
 ```sh
 docker compose run --rm dev cargo test -p rete-core index::tests::adaptive_scan sparql::eval::tests::adaptive_scan -- --nocapture
 ```
 
-- [ ] **Step 4: Attach the shared controller to remote `GraphIndex` objects**
+- [x] **Step 4: Attach the shared controller to remote `GraphIndex` objects**
 
 During `open_remote_graph_index`, obtain `reader.adaptive_controller()` and store
 it in the remote index. Local indexes keep `None`. The controller pointer must be
 shared, not copied into per-index state.
 
-- [ ] **Step 5: Replace the fixed scan cells with a feedback guard**
+- [x] **Step 5: Replace the fixed scan cells with a feedback guard**
 
 The iterator begins with the plan's `prefetch_start`, doubles only after consuming
 the previous offered window, clamps to `prefetch_cap`, and reports its final
 consumption when dropped. The guard must not borrow the iterator or reader and
 must be safe to drop during error/early-limit unwinding.
 
-- [ ] **Step 6: Label query paths without changing semantics**
+- [x] **Step 6: Label query paths without changing semantics**
 
 Use `Ctx::limit_hint` only for genuinely streaming limits. Aggregation,
 `DISTINCT`, `ORDER BY`, and other blocking modifiers remain full consumers.
 Do not start background work or add cancellation threads; iterator demand remains
 the only trigger for prefetch.
 
-- [ ] **Step 7: Run SPARQL/ranged parity**
+- [x] **Step 7: Run SPARQL/ranged parity**
 
 ```sh
 docker compose run --rm dev cargo test -p rete-core --test ranged -- --nocapture

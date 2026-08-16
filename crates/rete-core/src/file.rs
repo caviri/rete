@@ -1379,6 +1379,7 @@ fn open_remote_graph_index<R: RangeReader + Send + Sync + 'static>(
     read_concurrency: usize,
     exact_payload_boundaries: bool,
 ) -> Result<RemoteGraphIndex, FileError> {
+    let adaptive_controller = reader.adaptive_controller();
     let section_ranges = if exact_payload_boundaries {
         locate_container_sections_ranged_exact::<R, NUM_PERMS>(reader.as_ref(), container)?
     } else {
@@ -1468,6 +1469,7 @@ fn open_remote_graph_index<R: RangeReader + Send + Sync + 'static>(
             .collect()
     }));
     index.set_read_concurrency(read_concurrency);
+    index.set_adaptive_controller(adaptive_controller);
 
     Ok(RemoteGraphIndex {
         index,

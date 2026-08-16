@@ -13,9 +13,10 @@
 //! independently, so a ranged reader can fetch just the tiles a query needs.
 //! v0.1 single-block sections are still read (one tile per permutation).
 
-use std::sync::OnceLock;
+use std::cell::Cell;
+use std::sync::{Arc, OnceLock};
 
-use crate::adaptive::ReadIntent;
+use crate::adaptive::{AdaptiveReadController, ReadIntent};
 use crate::triples::{encode_sorted_unique, GroupDirectory, Triple, TripleBlock};
 use crate::varint::uvarint_len;
 
@@ -39,6 +40,40 @@ pub const INDEX_TILE_BUDGET: usize = 64 * 1024;
 /// scan still coalesces into a handful of range reads.
 const PREFETCH_WINDOW_START: usize = 4;
 const PREFETCH_WINDOW_MAX: usize = 512;
+
+struct ScanFeedback {
+    controller: Option<Arc<AdaptiveReadController>>,
+    intent: ReadIntent,
+    consumed: Cell<usize>,
+    offered: Cell<usize>,
+}
+
+impl ScanFeedback {
+    fn new(controller: Option<Arc<AdaptiveReadController>>, intent: ReadIntent) -> Self {
+        Self {
+            controller,
+            intent,
+            consumed: Cell::new(0),
+            offered: Cell::new(0),
+        }
+    }
+
+    fn consume_tile(&self) {
+        self.consumed.set(self.consumed.get().saturating_add(1));
+    }
+
+    fn offer_tiles(&self, count: usize) {
+        self.offered.set(self.offered.get().saturating_add(count));
+    }
+}
+
+impl Drop for ScanFeedback {
+    fn drop(&mut self) {
+        if let Some(controller) = &self.controller {
+            controller.report_consumption(self.intent, self.consumed.get(), self.offered.get());
+        }
+    }
+}
 
 #[cfg(feature = "unsafe-decode-bench")]
 enum DecodeCursor<'a> {
@@ -528,6 +563,8 @@ pub struct GraphIndex {
     /// The reader's concurrent-range fan-out (1 = strictly sequential) — see
     /// [`set_read_concurrency`](Self::set_read_concurrency).
     read_concurrency: usize,
+    /// Session policy shared with sibling indexes and the dictionary reader.
+    adaptive_controller: Option<Arc<AdaptiveReadController>>,
     /// Research-only selection of the unchecked cursor. Default artifacts do
     /// not contain this field or its decoder.
     #[cfg(feature = "unsafe-decode-bench")]
@@ -542,6 +579,7 @@ impl GraphIndex {
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
+            adaptive_controller: None,
             #[cfg(feature = "unsafe-decode-bench")]
             unchecked_decode: false,
         }
@@ -580,6 +618,7 @@ impl GraphIndex {
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
+            adaptive_controller: None,
             #[cfg(feature = "unsafe-decode-bench")]
             unchecked_decode: false,
         }
@@ -625,6 +664,13 @@ impl GraphIndex {
         self.read_concurrency = c.max(1);
     }
 
+    pub(crate) fn set_adaptive_controller(
+        &mut self,
+        controller: Option<Arc<AdaptiveReadController>>,
+    ) {
+        self.adaptive_controller = controller;
+    }
+
     /// The reader's concurrent-range fan-out (1 = strictly sequential).
     pub(crate) fn read_concurrency(&self) -> usize {
         self.read_concurrency
@@ -659,11 +705,13 @@ impl GraphIndex {
     /// (a single missing tile costs the same either way). A failed batch is
     /// not an error here: the tiles stay unloaded and the per-tile loader
     /// retries each one (recording failures) when the scan reaches it.
-    fn prefetch_span(&self, section: usize, start: usize, end: usize, intent: ReadIntent) {
+    fn prefetch_span(&self, section: usize, start: usize, end: usize, intent: ReadIntent) -> usize {
         let missing: Vec<usize> = (start..end)
             .filter(|&ti| self.sections[section][ti].data.get().is_none())
             .collect();
+        let offered = missing.len();
         self.bulk_fault(section, &missing, intent);
+        offered
     }
 
     /// Bulk-fault a set of (possibly scattered, ascending) missing tile indices in
@@ -840,7 +888,9 @@ impl GraphIndex {
     /// permutation's order, which differs from canonical once `perm.back`
     /// permutes the free components).
     pub fn match_pattern(&self, pattern: Pattern) -> Vec<Triple> {
-        let mut out: Vec<Triple> = self.scan_iter(pattern).collect();
+        let mut out: Vec<Triple> = self
+            .scan_iter_with_intent(pattern, ReadIntent::FullScan)
+            .collect();
         out.sort_unstable();
         out
     }
@@ -852,7 +902,15 @@ impl GraphIndex {
     /// [`TripleBlock::scan`]); a malformed/absent block yields nothing rather
     /// than panicking. The permutation is chosen for the longest bound prefix.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
-        self.scan_iter_with(pattern, Self::best_permutation(pattern))
+        self.scan_iter_with_intent(pattern, ReadIntent::BoundedScan)
+    }
+
+    pub(crate) fn scan_iter_with_intent(
+        &self,
+        pattern: Pattern,
+        intent: ReadIntent,
+    ) -> impl Iterator<Item = Triple> + '_ {
+        self.scan_iter_with(pattern, Self::best_permutation(pattern), intent)
     }
 
     /// Stream `pattern`'s matches **sorted on the canonical column `sort_col`**
@@ -867,7 +925,11 @@ impl GraphIndex {
         pattern: Pattern,
         sort_col: usize,
     ) -> Option<impl Iterator<Item = Triple> + '_> {
-        Some(self.scan_iter_with(pattern, Self::permutation_sorted_on(pattern, sort_col)?))
+        Some(self.scan_iter_with(
+            pattern,
+            Self::permutation_sorted_on(pattern, sort_col)?,
+            ReadIntent::FullScan,
+        ))
     }
 
     /// Stream `pattern`'s matches using a **specific** permutation `perm`; the
@@ -877,6 +939,7 @@ impl GraphIndex {
         &self,
         pattern: Pattern,
         perm: IndexPermutation,
+        intent: ReadIntent,
     ) -> impl Iterator<Item = Triple> + '_ {
         // Route: a bound leading id binary-searches the tile directory to exactly
         // one tile (groups are never split across tiles); an unbound one chains
@@ -893,7 +956,18 @@ impl GraphIndex {
         // handful of coalesced reads (4, 8, 16, … tiles). A bound leading scan
         // spans a single tile, so the prefetch no-ops and it faults just that
         // one tile, unchanged.
-        let window = std::cell::Cell::new(PREFETCH_WINDOW_START);
+        let known_bytes = self.sections[si][start..end]
+            .iter()
+            .fold(0u64, |total, tile| total.saturating_add(tile.len as u64));
+        let plan = self
+            .adaptive_controller
+            .as_ref()
+            .map(|controller| controller.plan(intent, known_bytes, 0, self.read_concurrency));
+        let window = Cell::new(plan.map_or(PREFETCH_WINDOW_START, |plan| plan.prefetch_start));
+        let window_cap = plan.map_or(PREFETCH_WINDOW_MAX, |plan| plan.prefetch_cap);
+        let window_offered = Cell::new(0usize);
+        let window_consumed = Cell::new(0usize);
+        let feedback = ScanFeedback::new(self.adaptive_controller.clone(), intent);
         (start..end)
             // Synopsis pre-fault prune: drop a routed tile the directory proves
             // can't match a bound secondary component, **without fetching it**
@@ -907,10 +981,18 @@ impl GraphIndex {
                 // malformed), and zone-prune per tile, then stream the
                 // matching groups.
                 if self.sections[si][ti].data.get().is_none() {
-                    let w = window.get();
-                    self.prefetch_span(si, ti, (ti + w).min(end), ReadIntent::BoundedScan);
-                    window.set(w.saturating_mul(2).min(PREFETCH_WINDOW_MAX));
+                    let mut w = window.get();
+                    if window_offered.get() > 0 && window_consumed.get() >= window_offered.get() {
+                        w = w.saturating_mul(2).min(window_cap);
+                    }
+                    let offered = self.prefetch_span(si, ti, (ti + w).min(end), intent);
+                    feedback.offer_tiles(offered);
+                    window.set(w);
+                    window_offered.set(offered);
+                    window_consumed.set(0);
                 }
+                feedback.consume_tile();
+                window_consumed.set(window_consumed.get().saturating_add(1));
                 let tile = &self.sections[si][ti];
                 TripleBlock::parse(self.tile_data(si, ti))
                     .ok()
@@ -990,6 +1072,8 @@ impl GraphIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adaptive::{AdaptiveReadController, ReadObservation};
+    use std::sync::{Arc, Mutex};
 
     fn graph() -> (GraphIndex, Vec<Triple>) {
         let data = vec![
@@ -1005,6 +1089,119 @@ mod tests {
             b.push(t);
         }
         (b.build(), data)
+    }
+
+    #[test]
+    fn adaptive_bounded_scan_reports_unused_prefetch_on_drop() {
+        let mut blocks = Vec::new();
+        let mut spo = Vec::new();
+        for id in 1..=12u32 {
+            let mut builder = TripleBlockBuilder::new();
+            builder.push((id, 1, id + 100));
+            blocks.push(builder.build());
+            spo.push((id, id, None));
+        }
+        let images = Arc::new(blocks);
+        let single = images.clone();
+        let loader: TileLoader = Box::new(move |_section, tile| single.get(tile).cloned());
+        let batches = Arc::new(Mutex::new(Vec::new()));
+        let recorded = batches.clone();
+        let bulk_images = images.clone();
+        let bulk: TileBulkLoader = Box::new(move |_section, tiles, intent| {
+            recorded.lock().unwrap().push((tiles.to_vec(), intent));
+            tiles
+                .iter()
+                .map(|&tile| bulk_images.get(tile).cloned())
+                .collect()
+        });
+        let mut dirs = std::array::from_fn(|_| Vec::new());
+        dirs[0] = spo;
+        let controller = Arc::new(AdaptiveReadController::new());
+        for _ in 0..2 {
+            controller.observe(ReadObservation {
+                requested_bytes: 1024 * 1024,
+                returned_bytes: 1024 * 1024,
+                physical_ranges: 1,
+                elapsed_micros: Some(120_000),
+                success: true,
+            });
+        }
+        let mut index = GraphIndex::from_remote_directories(dirs, loader).with_bulk_loader(bulk);
+        index.set_adaptive_controller(Some(controller.clone()));
+
+        let first = index
+            .scan_iter_with_intent((None, None, None), ReadIntent::BoundedScan)
+            .next();
+        assert_eq!(first, Some((1, 1, 101)));
+
+        let batches = batches.lock().unwrap();
+        assert_eq!(batches.len(), 1, "LIMIT-like demand began a second window");
+        assert_eq!(batches[0].0.len(), 8);
+        assert_eq!(batches[0].1, ReadIntent::BoundedScan);
+        drop(batches);
+        let next = controller.plan(ReadIntent::BoundedScan, 1024 * 1024, 4096, 8);
+        assert_eq!(next.prefetch_start, 2, "unused window was not reported");
+    }
+
+    #[test]
+    fn adaptive_full_scan_uses_full_intent_and_consumes_every_tile() {
+        let mut blocks = Vec::new();
+        let mut spo = Vec::new();
+        for id in 1..=40u32 {
+            let mut builder = TripleBlockBuilder::new();
+            builder.push((id, 1, id + 100));
+            blocks.push(builder.build());
+            spo.push((id, id, None));
+        }
+        let images = Arc::new(blocks);
+        let single = images.clone();
+        let loader: TileLoader = Box::new(move |_section, tile| single.get(tile).cloned());
+        let batches = Arc::new(Mutex::new(Vec::new()));
+        let recorded = batches.clone();
+        let bulk_images = images.clone();
+        let bulk: TileBulkLoader = Box::new(move |_section, tiles, intent| {
+            recorded.lock().unwrap().push((tiles.to_vec(), intent));
+            tiles
+                .iter()
+                .map(|&tile| bulk_images.get(tile).cloned())
+                .collect()
+        });
+        let mut dirs = std::array::from_fn(|_| Vec::new());
+        dirs[0] = spo;
+        let controller = Arc::new(AdaptiveReadController::new());
+        for _ in 0..2 {
+            controller.observe(ReadObservation {
+                requested_bytes: 1024 * 1024,
+                returned_bytes: 1024 * 1024,
+                physical_ranges: 1,
+                elapsed_micros: Some(120_000),
+                success: true,
+            });
+        }
+        let mut index = GraphIndex::from_remote_directories(dirs, loader).with_bulk_loader(bulk);
+        index.set_adaptive_controller(Some(controller));
+
+        assert_eq!(
+            index
+                .scan_iter_with_intent((None, None, None), ReadIntent::FullScan)
+                .count(),
+            40
+        );
+        let batches = batches.lock().unwrap();
+        assert_eq!(
+            batches
+                .iter()
+                .map(|(tiles, _)| tiles.len())
+                .collect::<Vec<_>>(),
+            vec![8, 16, 16]
+        );
+        assert_eq!(
+            batches.iter().map(|(tiles, _)| tiles.len()).sum::<usize>(),
+            40
+        );
+        assert!(batches
+            .iter()
+            .all(|(_, intent)| *intent == ReadIntent::FullScan));
     }
 
     /// Brute-force reference for a pattern.

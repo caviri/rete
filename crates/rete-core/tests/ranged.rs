@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use rete_core::{
-    build_pyramid_meta, eval_query, validate_shacl, write_dataset, write_file, BlockCacheReader,
-    ByteRange, CountingReader, DataGraph, DictionaryBuilder, GraphIndexBuilder, Header,
-    QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes, SliceReader, SummaryView,
-    DEFAULT_TILE_BUDGET, HEADER_LEN,
+    build_pyramid_meta, eval_query, validate_shacl, write_dataset, write_file,
+    AdaptiveReadController, BlockCacheReader, ByteRange, CountingReader, DataGraph,
+    DictionaryBuilder, GraphIndexBuilder, Header, QueryOutput, RangeReader, ReadIntent, Rete,
+    ReteGraph, ShaclShapes, SliceReader, SummaryView, DEFAULT_TILE_BUDGET, HEADER_LEN,
 };
 
 /// A `RangeReader` over an in-memory image that records each `(offset, len)`,
@@ -77,6 +77,59 @@ impl RangeReader for RecordingReader {
             end
         };
         Ok(self.data[start..returned_end].to_vec())
+    }
+}
+
+struct IntentReader<R> {
+    inner: R,
+    intents: Mutex<Vec<ReadIntent>>,
+}
+
+impl<R> IntentReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            intents: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn intents(&self) -> Vec<ReadIntent> {
+        self.intents.lock().unwrap().clone()
+    }
+}
+
+impl<R: RangeReader> RangeReader for IntentReader<R> {
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.inner.read_at(offset, len)
+    }
+
+    fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.inner.read_at_precise(offset, len)
+    }
+
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        self.inner.read_many(ranges)
+    }
+
+    fn read_many_with_intent(
+        &self,
+        ranges: &[(u64, u64)],
+        intent: ReadIntent,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
+        self.intents.lock().unwrap().push(intent);
+        self.inner.read_many_with_intent(ranges, intent)
+    }
+
+    fn adaptive_controller(&self) -> Option<std::sync::Arc<AdaptiveReadController>> {
+        self.inner.adaptive_controller()
+    }
+
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
     }
 }
 
@@ -1112,6 +1165,49 @@ fn small_limit_does_not_fetch_the_whole_index() {
         index_bytes_read < index_len / 4,
         "LIMIT 1 read {index_bytes_read} of {index_len} index bytes over \
          {spo_tiles} tiles — expected only the first prefetch window"
+    );
+}
+
+#[test]
+fn streaming_limit_is_bounded_but_order_and_aggregate_are_full_scans() {
+    let image = multi_tile_image();
+    let run = |query: &str| {
+        let physical = std::sync::Arc::new(RecordingReader::new(image.clone()));
+        let now = std::sync::Arc::new(AtomicU64::new(0));
+        let tick = now.clone();
+        let cached = BlockCacheReader::new(physical, 4096)
+            .with_adaptive_clock(move || Some(tick.fetch_add(100_000, Ordering::SeqCst)));
+        let intent_reader = std::sync::Arc::new(IntentReader::new(cached));
+        let rete = Rete::open_ranged_lazy(intent_reader.clone()).unwrap();
+        let _ = eval_query(&rete, query).unwrap();
+        assert!(!rete.index_incomplete());
+        intent_reader.intents()
+    };
+
+    let bounded = run("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1");
+    assert!(
+        bounded.contains(&ReadIntent::BoundedScan),
+        "streaming LIMIT intents: {bounded:?}"
+    );
+
+    let ordered = run("SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s LIMIT 1");
+    assert!(
+        ordered.contains(&ReadIntent::FullScan),
+        "ORDER BY must consume the scan before LIMIT: {ordered:?}"
+    );
+    assert!(
+        !ordered.contains(&ReadIntent::BoundedScan),
+        "ORDER BY was mislabeled as streaming: {ordered:?}"
+    );
+
+    let aggregate = run("SELECT (COUNT(*) AS ?count) WHERE { ?s ?p ?o }");
+    assert!(
+        aggregate.contains(&ReadIntent::FullScan),
+        "aggregate must consume the complete scan: {aggregate:?}"
+    );
+    assert!(
+        !aggregate.contains(&ReadIntent::BoundedScan),
+        "aggregate was mislabeled as bounded: {aggregate:?}"
     );
 }
 
