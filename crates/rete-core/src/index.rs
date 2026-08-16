@@ -941,12 +941,27 @@ impl GraphIndex {
         perm: IndexPermutation,
         intent: ReadIntent,
     ) -> impl Iterator<Item = Triple> + '_ {
+        let [pa, pb, pc] = perm.order_pattern(pattern);
+        self.scan_permuted_with(perm, pa, pb, pc, intent)
+            .map(move |abc| perm.back(abc))
+    }
+
+    /// Stream triples in their stored permutation order. Keeping this below
+    /// the canonical mapping lets prefix-2 consumers project the neighbor ID
+    /// directly without constructing or reordering canonical triples.
+    fn scan_permuted_with(
+        &self,
+        perm: IndexPermutation,
+        pa: Option<u32>,
+        pb: Option<u32>,
+        pc: Option<u32>,
+        intent: ReadIntent,
+    ) -> impl Iterator<Item = Triple> + '_ {
         // Route: a bound leading id binary-searches the tile directory to exactly
         // one tile (groups are never split across tiles); an unbound one chains
         // every tile's cursor. Within a tile, a bound leading scan jumps to its
         // a-group via the tile's lazily-built group directory — built on first
         // use, costing one walk of that (budget-sized) tile.
-        let [pa, pb, pc] = perm.order_pattern(pattern);
         let si = perm.section_index();
         let (start, end) = self.tile_span(si, pa);
         // Coalesce tile faults, but ramp the prefetch window geometrically as
@@ -1044,7 +1059,25 @@ impl GraphIndex {
                     .into_iter()
                     .flatten()
             })
-            .map(move |abc| perm.back(abc))
+    }
+
+    /// Stream the stored third-component IDs for one exact `(a, b)` prefix.
+    /// This retains ordinary tile routing, lazy faulting, corruption handling,
+    /// and split-group chaining while avoiding canonical triple materialization.
+    pub(crate) fn scan_prefix2(
+        &self,
+        permutation: IndexPermutation,
+        a: u32,
+        b: u32,
+    ) -> impl Iterator<Item = u32> + '_ {
+        self.scan_permuted_with(
+            permutation,
+            Some(a),
+            Some(b),
+            None,
+            ReadIntent::SelectiveProbe,
+        )
+        .map(|(_, _, c)| c)
     }
 
     /// The tile index span a scan must visit: every tile when the leading
@@ -1277,6 +1310,59 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn prefix2_neighbor_scan_matches_each_permutation() {
+        let (index, data) = graph();
+        for permutation in ALL_PERMS {
+            let stored: Vec<_> = data
+                .iter()
+                .copied()
+                .map(|triple| permutation.forward(triple))
+                .collect();
+            let mut prefixes: Vec<_> = stored.iter().map(|&(a, b, _)| (a, b)).collect();
+            prefixes.push((u32::MAX, u32::MAX));
+            prefixes.sort_unstable();
+            prefixes.dedup();
+            for (a, b) in prefixes {
+                let mut want: Vec<_> = stored
+                    .iter()
+                    .filter(|&&(x, y, _)| x == a && y == b)
+                    .map(|&(_, _, c)| c)
+                    .collect();
+                want.sort_unstable();
+                assert_eq!(
+                    index.scan_prefix2(permutation, a, b).collect::<Vec<_>>(),
+                    want,
+                    "{} ({a}, {b})",
+                    permutation.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prefix2_neighbor_scan_chains_a_split_group() {
+        let mut builder = GraphIndexBuilder::new().with_tile_budget(128);
+        let want: Vec<u32> = (10_000..50_000).collect();
+        for &object in &want {
+            builder.push((7, 11, object));
+        }
+        let index = builder.build();
+
+        assert!(
+            index
+                .tile_span(IndexPermutation::Spo.section_index(), Some(7))
+                .1
+                > 1
+        );
+        assert_eq!(
+            index
+                .scan_prefix2(IndexPermutation::Spo, 7, 11)
+                .collect::<Vec<_>>(),
+            want
+        );
     }
 
     #[test]
