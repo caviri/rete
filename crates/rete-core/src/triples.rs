@@ -6,7 +6,9 @@
 //! `a=subject, b=predicate, c=object`; for POS, `a=predicate, b=object,
 //! c=subject`; and so on. The encoding is role-agnostic.
 
-use crate::varint::{read_uvarint, uvarint_len, write_uvarint};
+#[cfg(test)]
+use crate::varint::read_uvarint;
+use crate::varint::{uvarint_len, write_uvarint};
 
 /// A triple of dictionary IDs in some permutation's component order.
 pub type Triple = (u32, u32, u32);
@@ -213,9 +215,7 @@ impl<'a> TripleBlock<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self, TripleError> {
         let mut pos = 0;
         let take = |pos: &mut usize| -> Result<u32, TripleError> {
-            let (v, n) = read_uvarint(&bytes[*pos..]).ok_or(TripleError::Malformed("truncated"))?;
-            *pos += n;
-            Ok(v as u32)
+            read_u32_at(bytes, pos).ok_or(TripleError::Malformed("truncated"))
         };
         let zone = ZoneMap {
             min_a: take(&mut pos)?,
@@ -250,11 +250,7 @@ impl<'a> TripleBlock<'a> {
         // buffer length is a safe capacity ceiling (avoids an OOM on a bogus count).
         let mut out = Vec::with_capacity((self.zone.count as usize).min(self.bytes.len()));
         let mut pos = self.body_start;
-        let g = |pos: &mut usize| -> Option<u32> {
-            let (v, n) = read_uvarint(self.bytes.get(*pos..)?)?;
-            *pos += n;
-            Some(v as u32)
-        };
+        let g = |pos: &mut usize| read_u32_at(self.bytes, pos);
         let num_a = g(&mut pos)?;
         let mut a = 0u32;
         for _ in 0..num_a {
@@ -501,9 +497,50 @@ impl<'a> TripleBlock<'a> {
 /// mirroring the decoder inside [`TripleBlock::try_triples`].
 #[inline]
 fn rd(bytes: &[u8], pos: &mut usize) -> Option<u32> {
-    let (v, n) = read_uvarint(bytes.get(*pos..)?)?;
-    *pos += n;
-    Some(v as u32)
+    read_u32_at(bytes, pos)
+}
+
+/// Decode one builder-emitted u32 LEB128 without leaving `*pos` advanced on a
+/// malformed value. The overwhelmingly common one-byte value takes one checked
+/// load and one branch; longer values are unrolled to the u32 maximum of five
+/// bytes. The fifth byte may carry only four payload bits.
+#[inline(always)]
+fn read_u32_at(bytes: &[u8], pos: &mut usize) -> Option<u32> {
+    let start = *pos;
+    let b0 = *bytes.get(start)?;
+    if b0 < 0x80 {
+        *pos = start + 1;
+        return Some(u32::from(b0));
+    }
+
+    let b1 = *bytes.get(start + 1)?;
+    let mut value = u32::from(b0 & 0x7f) | (u32::from(b1 & 0x7f) << 7);
+    if b1 < 0x80 {
+        *pos = start + 2;
+        return Some(value);
+    }
+
+    let b2 = *bytes.get(start + 2)?;
+    value |= u32::from(b2 & 0x7f) << 14;
+    if b2 < 0x80 {
+        *pos = start + 3;
+        return Some(value);
+    }
+
+    let b3 = *bytes.get(start + 3)?;
+    value |= u32::from(b3 & 0x7f) << 21;
+    if b3 < 0x80 {
+        *pos = start + 4;
+        return Some(value);
+    }
+
+    let b4 = *bytes.get(start + 4)?;
+    if b4 & 0xf0 != 0 {
+        return None;
+    }
+    value |= u32::from(b4) << 28;
+    *pos = start + 5;
+    Some(value)
 }
 
 /// Read one builder-emitted u32 LEB128 without bounds or termination checks.
@@ -740,6 +777,61 @@ impl Iterator for UncheckedBlockCursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_u32_decoder_covers_one_through_five_bytes() {
+        let cases: &[(u32, &[u8])] = &[
+            (0, &[0x00]),
+            (127, &[0x7f]),
+            (128, &[0x80, 0x01]),
+            (16_384, &[0x80, 0x80, 0x01]),
+            (1 << 21, &[0x80, 0x80, 0x80, 0x01]),
+            (u32::MAX, &[0xff, 0xff, 0xff, 0xff, 0x0f]),
+        ];
+        for &(want, bytes) in cases {
+            let mut pos = 0;
+            assert_eq!(read_u32_at(bytes, &mut pos), Some(want));
+            assert_eq!(pos, bytes.len());
+        }
+    }
+
+    #[test]
+    fn checked_u32_decoder_rejects_truncation_and_overflow_without_consuming() {
+        for bytes in [
+            &[0x80][..],
+            &[0x80, 0x80][..],
+            &[0x80, 0x80, 0x80][..],
+            &[0x80, 0x80, 0x80, 0x80][..],
+            &[0x80, 0x80, 0x80, 0x80, 0x80][..],
+            &[0xff, 0xff, 0xff, 0xff, 0x10][..],
+        ] {
+            let mut pos = 0;
+            assert_eq!(read_u32_at(bytes, &mut pos), None);
+            assert_eq!(pos, 0);
+        }
+    }
+
+    #[test]
+    fn checked_u32_decoder_matches_generic_varint_for_builder_values() {
+        for value in [
+            0,
+            1,
+            127,
+            128,
+            16_383,
+            16_384,
+            1 << 21,
+            u32::MAX - 1,
+            u32::MAX,
+        ] {
+            let mut encoded = Vec::new();
+            write_uvarint(&mut encoded, value as u64);
+            let mut pos = 0;
+            assert_eq!(read_u32_at(&encoded, &mut pos), Some(value));
+            assert_eq!(pos, encoded.len());
+            assert_eq!(read_uvarint(&encoded), Some((value as u64, encoded.len())));
+        }
+    }
 
     fn sample() -> Vec<Triple> {
         // Unsorted, with a duplicate, multiple b's per a and c's per b.
