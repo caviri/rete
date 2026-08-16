@@ -462,6 +462,115 @@ The ignored raw sample files are
 and `adaptive-chebi-policy-isolation-20260816T123000Z.jsonl` (SHA-256
 `34efb52c0b3eeb0aa87255e15461e05c554f7c4fe043b66509fa6aaec70d4436`).
 
+### Safe local and WASM property-path acceleration (2026-08-16)
+
+The next experiment targeted CPU work after a `.rete` file is resident. It
+kept the file format, on-disk bytes, query semantics, and default safe reader
+unchanged. The implementation adds a checked, fixed-width u32 LEB128 decoder
+for triple blocks; a per-tile `(a,b)` directory with a hard 64 KiB cap and
+safe a-only fallback; a neighbor-ID scan that retains normal tile routing; and
+one-time predicate resolution for each property-path tree. It adds no
+production `unsafe` block. Truncated/overflowing varints, corrupt directories,
+split groups, lazy read failures, reverse paths, and unsupported path shapes
+continue through checked error or fallback paths.
+
+The pinned input was the same Chemotion R2 object used above: 7,566,404 bytes,
+ETag `"6cefd111dee3c59c063f0bede9cd60f9"`, copied locally with SHA-256
+`b7cca2e3ebe5364e767fb1f34c138d7e100b3997db172357eb4ecf3a9adfa83a`.
+The exact path query was:
+
+```sparql
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?name WHERE {
+  ?sub rdfs:subClassOf+
+       <http://purl.obolibrary.org/obo/CHMO_0000228> ;
+       rdfs:label ?name
+}
+ORDER BY ?name LIMIT 200
+```
+
+#### Native fresh-process comparison
+
+The untouched baseline was git
+`6a776e42aee68d44bee1651774c6dcd3e46e4b26`, executable SHA-256
+`d16ff45a630735dd08073c9028c2b0828a86475ee7486a231e2b0e9a070409fe`.
+The safe candidate was git
+`c36b8276981c90e30c361c31bede573e6df7426a`, executable SHA-256
+`e877284995dea98e80c6c380f1e5d901a462c78dd10f9752072860d64563ff41`.
+Each row is one warm-up followed by 15 alternating fresh processes; hashes had
+to match before timing was accepted.
+
+| workload | baseline median / p90 | candidate median / p90 | median change | output SHA-256 |
+|---|---:|---:|---:|---|
+| property path | 280 / 301 ms | **149 / 165 ms** | **46.8% faster** | `359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc` |
+| full triple count | 243 / 272 ms | **212 / 248 ms** | **12.8% faster** | `2556a29086cbd8324331ec3beabf7351ffe403f54cf56f7494ed05fa4025ed9d` |
+| selective molecule query | 158 / 171 ms | **126 / 134 ms** | **20.3% faster** | `9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8` |
+| formula aggregate | 149 / 164 ms | **118 / 123 ms** | **20.8% faster** | `43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640` |
+
+The path samples in sample-number order were:
+
+- baseline: `290, 285, 279, 280, 286, 277, 270, 269, 269, 285, 272, 272, 314, 301, 286` ms;
+- candidate: `155, 156, 153, 155, 149, 144, 143, 145, 144, 145, 148, 146, 156, 167, 165` ms.
+
+The controls did not expose a speed-for-correctness tradeoff: all four output
+hashes were identical between binaries, and every control became faster. The
+complete 120-row TSV is
+`safe-path-native-evidence-20260816.tsv` (10,788 bytes, SHA-256
+`28a4731460b52face15e84040ebc5819ff0b3cd7bd60a44f1e4c1259f277f5c8`).
+
+#### In-process counters
+
+The benchmark-only `read-path-metrics` feature is disabled in normal native
+and WASM artifacts. In one resident process, 15 sorted samples were
+`32.722792, 33.334517, 33.428173, 33.523684, 33.749006, 33.774301,
+33.875918, 34.395488, 34.455466, 34.649892, 34.658398, 34.877306,
+35.575910, 36.399107, 37.155320` ms: median **34.40 ms**, p90 **36.40
+ms**, and peak measured heap **0.19 MiB**. The result SHA-256 was
+`0de6b95111d573dc9904ba78513614f944c0b4d23f734726e7ea7d205ee96f2e`.
+
+The warm query decoded 4,262,047 varints, skipped 982,353 c-values, issued
+69,184 path probes, resolved one predicate, built 49 directories totalling
+221,040 bytes, retained at most **58,116 bytes in one tile**, and touched 49
+tiles. A steady query decoded 2,080,429 varints with the same skipped values,
+probes, one predicate resolution, and 49 touched tiles; it built zero new
+directories because the bounded per-tile directories were already cached.
+Thus the observed maximum stayed below the 65,536-byte cap. Local resident
+execution has no HTTP ranges to count. The complete output is
+`safe-path-inprocess-evidence-20260816.txt` (987 bytes, SHA-256
+`d524d7838a73849accaec9440935cbe488f2d1f934acd3e24be1b2f33b5f87b3`).
+
+#### Real-browser WASM comparison
+
+Both revisions were built as release `wasm-bindgen` web packages with
+`--no-opt`, avoiding the pinned Binaryen v108 multi-table issue documented
+below. Chrome 151 on Windows ran one resident `Graph`, one warm-up, and 15
+timed `graph.query(query, "json")` calls in a module Worker. The source
+length/hash was checked before opening, and every result had to equal the warm
+output byte for byte.
+
+| artifact | wasm bytes / SHA-256 | median / p90 | change |
+|---|---|---:|---:|
+| untouched baseline | 3,182,305 / `5231a352c9d4fc03bccfc4c090bcb494b16c1eae1ecfe4eb85186af323460c54` | 255.5 / 302.7 ms | — |
+| safe candidate | 3,191,348 / `2da81cdaa067063fd6cff8d1d74cf0b0880a36e1167830a9330415b5fd017510` | **54.9 / 67.7 ms** | **78.5% faster** |
+
+The final alternating pair's sorted samples were:
+
+- baseline: `231.9, 238.2, 238.3, 240.3, 242.1, 249.5, 250.6, 255.5, 257.8, 266.2, 282.7, 284.8, 296.0, 302.7, 309.7` ms;
+- candidate: `50.0, 50.3, 51.7, 51.7, 51.9, 53.8, 54.2, 54.9, 55.6, 55.9, 56.1, 57.5, 62.2, 67.7, 70.1` ms.
+
+Both produced 11,739-byte JSON with SHA-256
+`28ced2dd569eb12f1fb5888381bb2fe697b0234c7d714828182516af4a28b27e`.
+The candidate wasm grew 9,043 bytes (0.28%). The complete ignored report is
+`safe-path-wasm-evidence-20260816.json` (1,916 bytes, SHA-256
+`a8dc7aa28581dcdc26a0f2302389b67b224a1b778951284372d547546229b821`).
+
+**Verdict:** accepted for the default safe local and WASM paths. The primary
+native path cleared the 30% gate, all native controls beat the 3% regression
+guardrail, the per-tile memory cap held, browser output remained identical,
+and WASM improved substantially. This is independent of the experimental
+adaptive R2 scheduler and of the hidden unsafe decoder benchmark; neither is
+enabled to obtain these gains.
+
 #### Browser, shared reader, and sharding
 
 The freshly regenerated browser artifact opened all six Wikidata XXL shards and answered

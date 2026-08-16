@@ -50,6 +50,18 @@ for i in "${!names[@]}"; do
   done
 done
 
+if [[ -n "${RETE_RAW_OUT:-}" ]]; then
+  python3 -P - "$raw" "$RETE_RAW_OUT" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+with destination.open("xb") as output:
+    output.write(source.read_bytes())
+PY
+fi
+
 python3 -P - "$raw" <<'PY'
 import collections
 import math

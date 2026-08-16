@@ -38,7 +38,7 @@
 
 **Interfaces:** Produces the same feature-enabled release executable used by the existing safe/unchecked benchmark.
 
-- [ ] **Step 1: Build the untouched release binary**
+- [x] **Step 1: Build the untouched release binary**
 
 ~~~sh
 docker compose run --rm   -e CARGO_TARGET_DIR=/target/read-path-baseline   dev cargo build --release -p rete-cli --features unsafe-decode-bench
@@ -63,7 +63,7 @@ fn read_u32_at(bytes: &[u8], pos: &mut usize) -> Option<u32>;
 
 Failure leaves pos unchanged; success advances one through five bytes. Generic read_uvarint and feature-only rd_unchecked remain.
 
-- [ ] **Step 1: Write failing boundary/equivalence tests**
+- [x] **Step 1: Write failing boundary/equivalence tests**
 
 ~~~rust
 #[test]
@@ -102,7 +102,7 @@ fn checked_u32_decoder_rejects_truncation_and_overflow_without_consuming() {
 
 Add an encoded sample loop comparing successful values and consumed lengths with read_uvarint.
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core   triples::tests::checked_u32_decoder -- --nocapture
@@ -110,7 +110,7 @@ docker compose run --rm dev cargo test -p rete-core   triples::tests::checked_u3
 
 Expected: compile failure because read_u32_at is missing.
 
-- [ ] **Step 3: Implement the safe fixed-width decoder**
+- [x] **Step 3: Implement the safe fixed-width decoder**
 
 ~~~rust
 #[inline(always)]
@@ -141,7 +141,7 @@ fn read_u32_at(bytes: &[u8], pos: &mut usize) -> Option<u32> {
 
 Make rd call this helper and use it for all triple-block u32 fields. Do not change non-triple varint callers.
 
-- [ ] **Step 4: Verify correctness and commit**
+- [x] **Step 4: Verify correctness and commit**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core triples::tests
@@ -177,7 +177,7 @@ struct BDirEntry {
 
 GroupDirectory retains a entries and an optional boxed b-entry array. scan_from automatically uses it when pa and pb are bound.
 
-- [ ] **Step 1: Write failing indexed/fallback tests**
+- [x] **Step 1: Write failing indexed/fallback tests**
 
 ~~~rust
 #[test]
@@ -218,7 +218,7 @@ fn prefix2_budget_overflow_falls_back_to_a_only() {
 
 Also exercise scan_from on every corrupted block accepted by TripleBlock::parse.
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core   triples::tests::prefix2_ -- --nocapture
@@ -226,7 +226,7 @@ docker compose run --rm dev cargo test -p rete-core   triples::tests::prefix2_ -
 
 Expected: compile failure for missing directory fields/helpers.
 
-- [ ] **Step 3: Define bounded storage**
+- [x] **Step 3: Define bounded storage**
 
 ~~~rust
 const MAX_B_DIR_ENTRIES: usize =
@@ -249,7 +249,7 @@ struct DirEntry {
 
 During the existing checked walk, record b, the u32-convertible position immediately after num_c, and c_count. If the cap, conversion, or complete walk fails, clear all b entries and b ranges but keep the valid a-prefix directory.
 
-- [ ] **Step 4: Add lookup and direct c-list arming**
+- [x] **Step 4: Add lookup and direct c-list arming**
 
 ~~~rust
 fn find_prefix2(&self, a: u32, b: u32) -> Option<&BDirEntry> {
@@ -265,7 +265,7 @@ fn find_prefix2(&self, a: u32, b: u32) -> Option<&BDirEntry> {
 
 When found, scan_from sets pos=c_pos, a=pa, b=pb, c=0, c_rem=c_count, and all a/b remaining counts to zero. When indexed a exists but b does not, return the dead cursor. When prefix-2 data is absent, use the original a-only logic. The unsafe research directory remains a-only.
 
-- [ ] **Step 5: Verify fallback, mega-groups, feature build, and commit**
+- [x] **Step 5: Verify fallback, mega-groups, feature build, and commit**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core triples::tests
@@ -300,7 +300,7 @@ pub(crate) fn scan_prefix2(
 
 It yields stored c IDs, with no canonical Triple allocation or sort, while retaining tile routing, synopsis pruning, lazy faults, failure flags, mega-group spans, and feature-only cursor choice.
 
-- [ ] **Step 1: Write failing permutation and split-group tests**
+- [x] **Step 1: Write failing permutation and split-group tests**
 
 ~~~rust
 #[test]
@@ -320,7 +320,7 @@ fn prefix2_neighbor_scan_matches_each_permutation() {
 
 Add a 40,000-c-value mega-group with a tiny tile budget and require all values from the chained iterator.
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core   index::tests::prefix2_neighbor_scan -- --nocapture
@@ -328,7 +328,7 @@ docker compose run --rm dev cargo test -p rete-core   index::tests::prefix2_neig
 
 Expected: compile failure because scan_prefix2 is missing.
 
-- [ ] **Step 3: Extract stored-order scan logic**
+- [x] **Step 3: Extract stored-order scan logic**
 
 Move the body of scan_iter_with into:
 
@@ -344,7 +344,7 @@ fn scan_permuted_with(
 
 It retains the current tile span, prefetch ramp, synopsis check, tile loading, parsing, zone check, directory OnceLock, and safe/feature cursor. scan_iter_with maps the returned stored triples through permutation.back.
 
-- [ ] **Step 4: Implement direct neighbor output**
+- [x] **Step 4: Implement direct neighbor output**
 
 ~~~rust
 pub(crate) fn scan_prefix2(
@@ -358,7 +358,7 @@ pub(crate) fn scan_prefix2(
 }
 ~~~
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core index::tests
@@ -385,7 +385,7 @@ git commit -m "perf(core): stream two-bound neighbor ids"
 - Forward uses SPO (subject,predicate,object); reverse uses OPS (object,predicate,subject).
 - Negated property sets retain general-pattern fallback.
 
-- [ ] **Step 1: Write failing resolution/reverse-path tests**
+- [x] **Step 1: Write failing resolution/reverse-path tests**
 
 ~~~rust
 #[test]
@@ -399,7 +399,7 @@ fn resolved_path_resolves_each_distinct_predicate_once() {
 
 Add an integration graph n1-p-n0, n2-p-n1, n3-p-n1, n3-p-n2 and require SELECT ?x WHERE { ?x <p>+ <n0> } to return n1,n2,n3 once.
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core   sparql::path::tests::resolved_path_resolves_each_distinct_predicate_once -- --exact
@@ -407,7 +407,7 @@ docker compose run --rm dev cargo test -p rete-core   sparql::path::tests::resol
 
 Expected: compile failure because ResolvedPath is missing.
 
-- [ ] **Step 3: Add the resolved representation**
+- [x] **Step 3: Add the resolved representation**
 
 ~~~rust
 enum ResolvedPathAst {
@@ -428,7 +428,7 @@ struct PathResolver<'a> {
 
 Resolve each lexical predicate only on cache miss. Reverse the resolved structure without dictionary work: toggle leaf directions, reverse sequence order, recurse through alternatives/repetition.
 
-- [ ] **Step 4: Replace predicate successor scans**
+- [x] **Step 4: Replace predicate successor scans**
 
 ~~~rust
 fn successors(
@@ -462,7 +462,7 @@ fn successors(
 
 Make reach_from consume ResolvedPathAst. Preserve BTreeSet/DFS/zero-length semantics. Resolve once at eval_path entry; bound-object traversal reverses the resolved tree. Negated sets use their pre-resolved exclusions with the existing match_pattern fallback.
 
-- [ ] **Step 5: Run unit, integration, differential, and robustness gates**
+- [x] **Step 5: Run unit, integration, differential, and robustness gates**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core sparql::path::tests
@@ -473,7 +473,7 @@ docker compose run --rm dev cargo test -p rete-core --test robustness
 
 Expected: forward, reverse, sequence, alternative, negation, repetition, absent endpoints, and zero-length behavior all PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ~~~sh
 git add crates/rete-core/src/sparql/path.rs   crates/rete-core/tests/sparql_integration.rs   crates/bench/tests/differential.rs
@@ -513,7 +513,7 @@ pub fn read_path_stats() -> ReadPathStats;
 
 Feature read-path-metrics is off by default. Counters are thread-local; normal hooks inline to no-ops.
 
-- [ ] **Step 1: Write a failing reset/unique-tile test**
+- [x] **Step 1: Write a failing reset/unique-tile test**
 
 ~~~rust
 #[test]
@@ -534,7 +534,7 @@ fn reset_clears_all_read_path_counters() {
 }
 ~~~
 
-- [ ] **Step 2: Run red test, implement feature, and instrument**
+- [x] **Step 2: Run red test, implement feature, and instrument**
 
 ~~~sh
 docker compose run --rm dev cargo test -p rete-core --features read-path-metrics   read_path_metrics::tests::reset_clears_all_read_path_counters -- --exact
@@ -544,11 +544,11 @@ Expected: compile failure for the missing feature/module.
 
 Add read-path-metrics = [] to core features. Record successful u32 decodes, skipped c values, completed directories/bytes, unique admitted tiles, uncached path probes, and predicate cache misses.
 
-- [ ] **Step 3: Add native benchmark mode and alternating shell harness**
+- [x] **Step 3: Add native benchmark mode and alternating shell harness**
 
 Add rete-bench --path-read FILE [samples]. Open once, warm once, run 15 samples, reset heap/counters per sample, require stable output, and report median/p90/heap/counters. scripts/bench_safe_path.sh compares baseline and candidate on the Chemotion path, full count, selective, and aggregate workloads with one warm-up and 15 alternating samples; fail on stdout hash mismatch.
 
-- [ ] **Step 4: Build and run native acceptance**
+- [x] **Step 4: Build and run native acceptance**
 
 ~~~sh
 docker compose run --rm -e CARGO_TARGET_DIR=/target/read-path-candidate   dev cargo build --release -p rete-cli --features unsafe-decode-bench
@@ -558,7 +558,7 @@ docker compose run --rm dev cargo run --release -p rete-bench --   --path-read /
 
 Acceptance: path is at most 100 ms or at least 30% faster than 145 ms; every control regresses at most 3%; max directory is 65,536 bytes; result hashes and touched ranges match.
 
-- [ ] **Step 5: Add and run a release WASM Worker harness**
+- [x] **Step 5: Add and run a release WASM Worker harness**
 
 The Worker constructs one Graph, warms the exact Chemotion path query, times 15 graph.query(query,"json") calls with performance.now(), sorts samples, and reports samples[7] median and samples[13] p90 plus output. scripts/bench_safe_path_wasm.html imports /target/path-bench/pkg/rete_wasm.js and starts /scripts/bench_safe_path_worker.js. Build and serve the repository root so both URLs resolve:
 
@@ -569,7 +569,7 @@ docker compose run --rm dev uv run python -m http.server 8008   --directory /wor
 
 Open http://localhost:8008/scripts/bench_safe_path_wasm.html. Expected: stable output and identical source bytes for baseline/candidate Worker runs. Record browser/version.
 
-- [ ] **Step 6: Verify default boundaries and commit the harness**
+- [x] **Step 6: Verify default boundaries and commit the harness**
 
 ~~~sh
 docker compose run --rm dev cargo build -p rete-core --no-default-features
@@ -590,11 +590,11 @@ Expected: all builds PASS; normal artifacts contain no enabled metrics.
 - Modify docs/BENCHMARK.md
 - Regenerate docs/BENCHMARK.html
 
-- [ ] **Step 1: Record exact measurements**
+- [x] **Step 1: Record exact measurements**
 
 Include dataset length/ETag/SHA, executable hashes, all 15 local and WASM samples, median/p90, control workloads, every metric, heap, browser/version, output hashes, touched ranges, directory memory, and explicit acceptance verdict. Do not claim a gain for any component that misses its gate.
 
-- [ ] **Step 2: Regenerate HTML and run focused gates**
+- [x] **Step 2: Regenerate HTML and run focused gates**
 
 ~~~sh
 docker compose run --rm dev cargo run -q -p docgen
@@ -609,7 +609,7 @@ docker compose run --rm dev cargo test -p rete-core --features unsafe-decode-ben
 
 Expected: all PASS.
 
-- [ ] **Step 3: Run repository gates and commit evidence**
+- [x] **Step 3: Run repository gates and commit evidence**
 
 ~~~sh
 docker compose run --rm dev cargo fmt --all -- --check
