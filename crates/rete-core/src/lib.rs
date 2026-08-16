@@ -51,6 +51,8 @@ pub mod pyramid;
 #[doc(hidden)]
 pub mod reach;
 #[doc(hidden)]
+pub mod read_path_metrics;
+#[doc(hidden)]
 pub mod reader;
 #[doc(hidden)]
 pub mod reason;
@@ -174,6 +176,8 @@ pub use pyramid::{
 };
 #[doc(hidden)]
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
+#[doc(hidden)]
+pub use read_path_metrics::{read_path_stats, reset_read_path_stats, ReadPathStats};
 #[doc(hidden)]
 pub use reader::{CountingReader, RangeReader, SliceReader};
 #[doc(hidden)]

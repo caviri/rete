@@ -34,6 +34,7 @@ use serde_json::{json, Value};
 mod buildmem;
 mod lubm;
 mod mem;
+mod pathread;
 mod querymem;
 
 /// Every allocation in this binary (both engines) goes through the counting
@@ -255,6 +256,17 @@ fn main() -> Result<()> {
             .context("--query-mem needs <file.rete> \"<sparql>\"")?;
         let query = raw.get(i + 2).context("--query-mem needs a SPARQL query")?;
         return querymem::run(path, query);
+    }
+    // Warm, in-process safe property-path profiler with decoder counters.
+    if let Some(i) = raw.iter().position(|a| a == "--path-read") {
+        let path = raw
+            .get(i + 1)
+            .context("--path-read needs a <file.rete> path")?;
+        let samples = raw
+            .get(i + 2)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(15);
+        return pathread::run(path, samples);
     }
 
     let (format, lubm_universities, rete_path, nt_path, seed_count) = parse_args()?;

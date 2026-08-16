@@ -725,6 +725,31 @@ fn reverse_transitive_path_returns_each_predecessor_once() {
     );
 }
 
+#[cfg(feature = "read-path-metrics")]
+#[test]
+fn correlated_path_join_resolves_its_predicate_once() {
+    let triples = [
+        ("<http://ex/n1>", "<http://ex/p>", "<http://ex/n0>"),
+        ("<http://ex/n2>", "<http://ex/p>", "<http://ex/n1>"),
+        ("<http://ex/n3>", "<http://ex/p>", "<http://ex/n2>"),
+        ("<http://ex/n1>", "<http://ex/label>", "\"one\""),
+        ("<http://ex/n2>", "<http://ex/label>", "\"two\""),
+        ("<http://ex/n3>", "<http://ex/label>", "\"three\""),
+    ];
+    let rete = Rete::open(&build(&triples)).unwrap();
+
+    rete_core::reset_read_path_stats();
+    assert_eq!(
+        col(
+            &rete,
+            "SELECT ?name WHERE { ?x ex:p+ ex:n0 ; ex:label ?name } ORDER BY ?name",
+            "name"
+        ),
+        vec!["\"one\"", "\"three\"", "\"two\""]
+    );
+    assert_eq!(rete_core::read_path_stats().predicate_resolutions, 1);
+}
+
 #[test]
 fn subquery_evaluates_and_joins_with_the_outer_pattern() {
     // A nested SELECT is evaluated independently; its projected solutions join

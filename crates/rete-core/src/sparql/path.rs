@@ -94,6 +94,7 @@ impl<'a> PathResolver<'a> {
         if let Some(id) = self.ids.get(lexical) {
             return *id;
         }
+        crate::read_path_metrics::record_predicate_resolution();
         let id = self.dict.predicate_id(lexical);
         self.ids.insert(lexical.to_owned(), id);
         #[cfg(test)]
@@ -132,18 +133,20 @@ impl<'a> PathResolver<'a> {
     }
 }
 
-struct ResolvedPath {
+pub(super) struct ResolvedPath {
     ast: ResolvedPathAst,
+    zero_length: bool,
     #[cfg(test)]
     predicate_resolutions: u64,
 }
 
 impl ResolvedPath {
-    fn new(dict: &Dictionary, ast: &PathAst) -> Self {
+    pub(super) fn new(dict: &Dictionary, ast: &PathAst) -> Self {
         let mut resolver = PathResolver::new(dict);
-        let ast = resolver.resolve(ast);
+        let resolved_ast = resolver.resolve(ast);
         Self {
-            ast,
+            ast: resolved_ast,
+            zero_length: matches_zero_length(ast),
             #[cfg(test)]
             predicate_resolutions: resolver.predicate_resolutions,
         }
@@ -170,6 +173,7 @@ fn successors(
     if let Some(v) = cache.get(&(key, start)) {
         return v.clone();
     }
+    crate::read_path_metrics::record_path_probe();
     let dict = ctx.rete.dictionary();
     let succ: Vec<u32> = match predicate {
         Some(pid) if !reversed => dict
@@ -211,6 +215,7 @@ fn negated_successors(
     if let Some(v) = cache.get(&(key, start)) {
         return v.clone();
     }
+    crate::read_path_metrics::record_path_probe();
     let dict = ctx.rete.dictionary();
     // Read only `start`'s own edges (any predicate), then drop the excluded ones —
     // never a scan of every triple in the graph.
@@ -372,8 +377,21 @@ pub(super) fn eval_path(
     ast: &PathAst,
     obj: &PatternTerm,
 ) -> Vec<Row> {
+    let resolved = ResolvedPath::new(ctx.rete.dictionary(), ast);
+    eval_resolved_path(ctx, index, subj, &resolved, obj)
+}
+
+/// Evaluate an already-resolved path for one set of endpoints. Correlated joins
+/// reuse the same value for every bound input row, avoiding repeated dictionary
+/// resolution and resolved-tree allocation.
+pub(super) fn eval_resolved_path(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    subj: &PatternTerm,
+    resolved: &ResolvedPath,
+    obj: &PatternTerm,
+) -> Vec<Row> {
     let dict = ctx.rete.dictionary();
-    let resolved = ResolvedPath::new(dict, ast);
     let mut cache = AdjCache::new();
     let mut out = Vec::new();
 
@@ -382,7 +400,7 @@ pub(super) fn eval_path(
         (PatternTerm::Const(s), _) => {
             let Some(sn) = dict.node_of_term(s) else {
                 // Absent from the graph: only a zero-length self-match is possible.
-                if matches_zero_length(ast) {
+                if resolved.zero_length {
                     if let Some(b) = bind_self_const(ctx, subj, obj, s) {
                         out.push(b);
                     }
@@ -407,7 +425,7 @@ pub(super) fn eval_path(
         // Bound object only: search backward along the reversed path.
         (PatternTerm::Var(_), PatternTerm::Const(o)) => {
             let Some(on) = dict.node_of_term(o) else {
-                if matches_zero_length(ast) {
+                if resolved.zero_length {
                     if let Some(b) = bind_self_const(ctx, subj, obj, o) {
                         out.push(b);
                     }

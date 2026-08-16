@@ -12,7 +12,7 @@
 
 use super::aggregate::aggregate;
 use super::expr::SortKey;
-use super::path::eval_path;
+use super::path::{eval_path, eval_resolved_path, ResolvedPath};
 use super::*;
 use crate::bgp::{
     bgp_exists, collect_pattern_slots, eval_bgp_rows, row_to_binding, BgpSolutions, Binding,
@@ -1690,6 +1690,7 @@ fn correlated_path_join<'q>(
     optional: bool,
     cond: Option<&'q FExpr>,
 ) -> RowIter<'q> {
+    let resolved = ResolvedPath::new(ctx.rete.dictionary(), spec);
     Box::new(eval_plan_iter(ctx, index, nf, bound).flat_map(move |lrow| {
         let (s2, o2) = (
             fix_endpoint(ctx, subj, &lrow),
@@ -1697,7 +1698,7 @@ fn correlated_path_join<'q>(
         );
         let mut cache = ExistsCache::new();
         let mut out: Vec<Row> = Vec::new();
-        for pr in eval_path(ctx, index, &s2, spec, &o2) {
+        for pr in eval_resolved_path(ctx, index, &s2, &resolved, &o2) {
             if let Some(m) = merge_rows(&lrow, &pr) {
                 if cond.is_none_or(|f| f.boolean(ctx, index, &m, &mut cache)) {
                     out.push(m);

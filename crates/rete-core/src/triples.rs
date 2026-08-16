@@ -338,6 +338,8 @@ impl<'a> TripleBlock<'a> {
                 entry.b_len = 0;
             }
         }
+        let prefix2_bytes = b_entries.len() * std::mem::size_of::<BDirEntry>();
+        crate::read_path_metrics::record_directory(prefix2_bytes);
         GroupDirectory {
             entries,
             b_entries: b_entries.into_boxed_slice(),
@@ -563,6 +565,7 @@ fn read_u32_at(bytes: &[u8], pos: &mut usize) -> Option<u32> {
     let start = *pos;
     let b0 = *bytes.get(start)?;
     if b0 < 0x80 {
+        crate::read_path_metrics::record_decoded_varint();
         *pos = start + 1;
         return Some(u32::from(b0));
     }
@@ -570,6 +573,7 @@ fn read_u32_at(bytes: &[u8], pos: &mut usize) -> Option<u32> {
     let b1 = *bytes.get(start + 1)?;
     let mut value = u32::from(b0 & 0x7f) | (u32::from(b1 & 0x7f) << 7);
     if b1 < 0x80 {
+        crate::read_path_metrics::record_decoded_varint();
         *pos = start + 2;
         return Some(value);
     }
@@ -577,6 +581,7 @@ fn read_u32_at(bytes: &[u8], pos: &mut usize) -> Option<u32> {
     let b2 = *bytes.get(start + 2)?;
     value |= u32::from(b2 & 0x7f) << 14;
     if b2 < 0x80 {
+        crate::read_path_metrics::record_decoded_varint();
         *pos = start + 3;
         return Some(value);
     }
@@ -584,6 +589,7 @@ fn read_u32_at(bytes: &[u8], pos: &mut usize) -> Option<u32> {
     let b3 = *bytes.get(start + 3)?;
     value |= u32::from(b3 & 0x7f) << 21;
     if b3 < 0x80 {
+        crate::read_path_metrics::record_decoded_varint();
         *pos = start + 4;
         return Some(value);
     }
@@ -593,6 +599,7 @@ fn read_u32_at(bytes: &[u8], pos: &mut usize) -> Option<u32> {
         return None;
     }
     value |= u32::from(b4) << 28;
+    crate::read_path_metrics::record_decoded_varint();
     *pos = start + 5;
     Some(value)
 }
@@ -762,6 +769,7 @@ impl Iterator for BlockCursor<'_> {
                 self.b = self.b.wrapping_add(rd(bytes, &mut self.pos)?);
                 let num_c = rd(bytes, &mut self.pos)?;
                 if self.pb.is_some_and(|y| y != self.b) {
+                    crate::read_path_metrics::record_skipped_c_values(num_c);
                     for _ in 0..num_c {
                         rd(bytes, &mut self.pos)?; // group-skip: advance, never emit
                     }
@@ -791,6 +799,7 @@ impl Iterator for BlockCursor<'_> {
                     for _ in 0..num_b {
                         rd(bytes, &mut self.pos)?; // delta_b
                         let nc = rd(bytes, &mut self.pos)?;
+                        crate::read_path_metrics::record_skipped_c_values(nc);
                         for _ in 0..nc {
                             rd(bytes, &mut self.pos)?;
                         }

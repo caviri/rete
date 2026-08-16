@@ -992,6 +992,7 @@ impl GraphIndex {
             // `syn_admits` keeps every tile, unchanged.
             .filter(move |&ti| self.sections[si][ti].syn_admits(pb, pc))
             .flat_map(move |ti| {
+                crate::read_path_metrics::record_tile(si, ti);
                 // Fault in (if remote), parse (untrusted bytes ⇒ `None` on
                 // malformed), and zone-prune per tile, then stream the
                 // matching groups.
