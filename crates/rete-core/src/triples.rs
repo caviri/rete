@@ -278,6 +278,8 @@ impl<'a> TripleBlock<'a> {
     pub fn group_directory(&self) -> GroupDirectory {
         let bytes = self.bytes;
         let mut entries = Vec::new();
+        let mut b_entries = Vec::new();
+        let mut prefix2_complete = true;
         let mut p = self.body_start;
         let mut walk = || -> Option<()> {
             let num_a = rd(bytes, &mut p)?;
@@ -288,24 +290,59 @@ impl<'a> TripleBlock<'a> {
             for i in 0..num_a {
                 a = a.wrapping_add(rd(bytes, &mut p)?);
                 let num_b = rd(bytes, &mut p)?;
+                let entry_index = entries.len();
+                let b_start = b_entries.len();
                 entries.push(DirEntry {
                     a,
                     pos: p,
                     num_b,
                     a_rem_after: num_a - 1 - i,
+                    b_start: 0,
+                    b_len: 0,
                 });
+                let mut b = 0u32;
                 for _ in 0..num_b {
-                    rd(bytes, &mut p)?; // delta_b
+                    b = b.wrapping_add(rd(bytes, &mut p)?);
                     let nc = rd(bytes, &mut p)?;
+                    if prefix2_complete {
+                        if b_entries.len() >= MAX_B_DIR_ENTRIES {
+                            prefix2_complete = false;
+                            b_entries.clear();
+                        } else if let Ok(c_pos) = u32::try_from(p) {
+                            b_entries.push(BDirEntry {
+                                b,
+                                c_pos,
+                                c_count: nc,
+                            });
+                        } else {
+                            prefix2_complete = false;
+                            b_entries.clear();
+                        }
+                    }
                     for _ in 0..nc {
                         rd(bytes, &mut p)?;
                     }
                 }
+                if prefix2_complete {
+                    entries[entry_index].b_start = u32::try_from(b_start).ok()?;
+                    entries[entry_index].b_len = u32::try_from(b_entries.len() - b_start).ok()?;
+                }
             }
             Some(())
         };
-        let _ = walk();
-        GroupDirectory { entries }
+        if walk().is_none() || !prefix2_complete {
+            prefix2_complete = false;
+            b_entries.clear();
+            for entry in &mut entries {
+                entry.b_start = 0;
+                entry.b_len = 0;
+            }
+        }
+        GroupDirectory {
+            entries,
+            b_entries: b_entries.into_boxed_slice(),
+            prefix2_complete,
+        }
     }
 
     /// Probe the block for a **bound leading component** `pa`, jumping straight
@@ -333,6 +370,17 @@ impl<'a> TripleBlock<'a> {
             pb,
             pc,
         };
+        if dir.prefix2_complete {
+            if let Some(bound_b) = pb {
+                if let Some(entry) = dir.find_prefix2(pa, bound_b) {
+                    cursor.pos = entry.c_pos as usize;
+                    cursor.a = pa;
+                    cursor.b = entry.b;
+                    cursor.c_rem = entry.c_count;
+                }
+                return cursor;
+            }
+        }
         if let Ok(i) = dir.entries.binary_search_by_key(&pa, |e| e.a) {
             let e = &dir.entries[i];
             // State as if the main cursor had just consumed this group's
@@ -409,6 +457,8 @@ impl<'a> TripleBlock<'a> {
                 pos: p,
                 num_b,
                 a_rem_after: num_a - 1 - i,
+                b_start: 0,
+                b_len: 0,
             });
             for _ in 0..num_b {
                 next(&mut p);
@@ -418,7 +468,11 @@ impl<'a> TripleBlock<'a> {
                 }
             }
         }
-        GroupDirectory { entries }
+        GroupDirectory {
+            entries,
+            b_entries: Box::default(),
+            prefix2_complete: false,
+        }
     }
 
     /// Jump to a directory-selected a-group using unchecked byte decoding.
@@ -569,12 +623,17 @@ unsafe fn rd_unchecked(bytes: &[u8], pos: &mut usize) -> u32 {
     }
 }
 
-/// A byte-offset directory of a block's a-groups: one entry per group, sorted
-/// by leading id (the storage order). Built once per block with
-/// [`TripleBlock::group_directory`]; [`TripleBlock::scan_from`] then
-/// binary-searches it to jump a probe straight to its group.
+const PREFIX2_DIRECTORY_BUDGET: usize = 64 * 1024;
+const MAX_B_DIR_ENTRIES: usize = PREFIX2_DIRECTORY_BUDGET / std::mem::size_of::<BDirEntry>();
+
+/// A byte-offset directory of a block's a-groups and, when it fits the fixed
+/// budget, its `(a, b)` prefixes. Built once per block with
+/// [`TripleBlock::group_directory`]; [`TripleBlock::scan_from`] then jumps a
+/// probe straight to its a-group or c-list.
 pub struct GroupDirectory {
     entries: Vec<DirEntry>,
+    b_entries: Box<[BDirEntry]>,
+    prefix2_complete: bool,
 }
 
 impl GroupDirectory {
@@ -586,6 +645,29 @@ impl GroupDirectory {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Resident bytes used by the optional `(a, b)` directory. This is always
+    /// bounded by 64 KiB; zero means probes use the a-only fallback.
+    pub fn prefix2_bytes(&self) -> usize {
+        self.b_entries.len() * std::mem::size_of::<BDirEntry>()
+    }
+
+    fn find_prefix2(&self, a: u32, b: u32) -> Option<&BDirEntry> {
+        if !self.prefix2_complete {
+            return None;
+        }
+        let a_entry = &self.entries[self
+            .entries
+            .binary_search_by_key(&a, |entry| entry.a)
+            .ok()?];
+        let start = a_entry.b_start as usize;
+        let end = start.checked_add(a_entry.b_len as usize)?;
+        let entries = self.b_entries.get(start..end)?;
+        entries
+            .binary_search_by_key(&b, |entry| entry.b)
+            .ok()
+            .map(|index| &entries[index])
+    }
 }
 
 /// One a-group: its leading id, the byte offset of its first b-group header
@@ -595,6 +677,15 @@ struct DirEntry {
     pos: usize,
     num_b: u32,
     a_rem_after: u32,
+    b_start: u32,
+    b_len: u32,
+}
+
+#[derive(Clone, Copy)]
+struct BDirEntry {
+    b: u32,
+    c_pos: u32,
+    c_count: u32,
 }
 
 /// A lazy cursor over a [`TripleBlock`] body produced by [`TripleBlock::scan`].
@@ -989,6 +1080,71 @@ mod tests {
                 if let Ok(blk) = TripleBlock::parse(&bad) {
                     let _ = blk.scan(None, None, None).count();
                     let _ = blk.scan(Some(1), None, None).count();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prefix2_directory_indexes_bound_b_groups() {
+        let mut builder = TripleBlockBuilder::new();
+        for b in 1..=40 {
+            for c in [1, 3, 9] {
+                builder.push((7, b, c));
+            }
+        }
+        let bytes = builder.build();
+        let block = TripleBlock::parse(&bytes).unwrap();
+        let dir = block.group_directory();
+
+        assert!(dir.prefix2_bytes() <= PREFIX2_DIRECTORY_BUDGET);
+        assert_eq!(
+            block.scan_from(&dir, 7, Some(31), None).collect::<Vec<_>>(),
+            vec![(7, 31, 1), (7, 31, 3), (7, 31, 9)]
+        );
+        assert!(block.scan_from(&dir, 7, Some(99), None).next().is_none());
+    }
+
+    #[test]
+    fn prefix2_budget_overflow_falls_back_to_a_only() {
+        let max = PREFIX2_DIRECTORY_BUDGET / std::mem::size_of::<BDirEntry>();
+        let mut builder = TripleBlockBuilder::new();
+        for b in 1..=(max as u32 + 1) {
+            builder.push((1, b, 1));
+        }
+        let bytes = builder.build();
+        let block = TripleBlock::parse(&bytes).unwrap();
+        let dir = block.group_directory();
+
+        assert_eq!(dir.prefix2_bytes(), 0);
+        assert_eq!(
+            block
+                .scan_from(&dir, 1, Some(max as u32), None)
+                .collect::<Vec<_>>(),
+            vec![(1, max as u32, 1)]
+        );
+    }
+
+    #[test]
+    fn prefix2_scan_from_never_panics_on_bad_bytes() {
+        let mut builder = TripleBlockBuilder::new();
+        for t in sample() {
+            builder.push(t);
+        }
+        let bytes = builder.build();
+        for len in 0..bytes.len() {
+            if let Ok(block) = TripleBlock::parse(&bytes[..len]) {
+                let dir = block.group_directory();
+                let _ = block.scan_from(&dir, 1, Some(1), None).count();
+            }
+        }
+        for i in 0..bytes.len() {
+            for value in [0x00, 0xff, 0x80, 0x7f] {
+                let mut bad = bytes.clone();
+                bad[i] = value;
+                if let Ok(block) = TripleBlock::parse(&bad) {
+                    let dir = block.group_directory();
+                    let _ = block.scan_from(&dir, 1, Some(1), None).count();
                 }
             }
         }
