@@ -215,12 +215,17 @@ rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE 
 rete sparql data.rete "SELECT ?o WHERE { ?o a <…/Aves> }" --entail    # ontology-aware
 ```
 
-**Memory & I/O.** Local files above 1 GiB open through the same lazy range
-reader the `-url` commands use (threshold: `RETE_LOCAL_LAZY_ABOVE_MB`, block
-size: `RETE_BLOCK_KB`, cache capped at 256 MiB), and aggregation streams
-through per-group accumulators — a `COUNT` over a 9.83 B-triple file runs in a
-2 GiB container ([benchmark](BENCHMARK.md)). Preview a query's byte cost with
-`rete cost`, and see the exact ranges a query read with `rete why`.
+**Memory & I/O.** Local query commands (`query`, `why`, `bgp`, `sparql`,
+`cypher`, `reach`, `shacl`, `communities`, and local `federate` sources) always
+open through the lazy positional reader: only dictionary chunks and index tiles
+selected by the operation are decoded, even for a small file. `RETE_BLOCK_KB`
+controls the block cache (capped at 256 MiB; `0` disables it). Commands that
+intentionally traverse or rewrite the complete file retain the size-adaptive
+policy (`RETE_LOCAL_LAZY_ABOVE_MB`, default 1 GiB), so small exports and merges
+can still use the faster eager path. Aggregation streams through per-group
+accumulators — a `COUNT` over a 9.83 B-triple file runs in a 2 GiB container
+([benchmark](BENCHMARK.md)). Preview a query's byte cost with `rete cost`, and
+see the exact ranges a query read with `rete why`.
 
 ### `rete serve <file> [--bind addr] [--token t] [--journal path]`
 Serve one `.rete` — or a [manifest](manifest.md) of segments (`.json`), whose
@@ -261,8 +266,8 @@ summary-based routing, and compares three access paths:
   triple index.
 - **routed pattern open** — for a single default-graph triple pattern, header +
   dictionary + the one selected permutation payload (the best of the six).
-- **full query open** — the current SPARQL engine path, which opens dictionary +
-  index (+ pyramid/named-graph metadata when present) before evaluation.
+- **lazy query open** — dictionary/index framing and directories, with actual
+  dictionary chunks and index tiles faulted only when evaluation selects them.
 
 ```sh
 rete cost data.rete "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"

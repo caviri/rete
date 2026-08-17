@@ -139,6 +139,56 @@ impl RangeReader for SliceReader<'_> {
     }
 }
 
+/// A [`RangeReader`] that owns a complete in-memory `.rete` image.
+///
+/// Unlike [`SliceReader`], this reader is `'static`, so a lazily opened
+/// [`Rete`](crate::Rete) can retain it and fault dictionary chunks or index
+/// tiles from the resident image on demand.
+pub struct OwnedMemoryRangeReader {
+    data: Vec<u8>,
+    len: u64,
+}
+
+impl OwnedMemoryRangeReader {
+    /// Wrap an owned file image for exact positional reads.
+    pub fn new(data: Vec<u8>) -> std::io::Result<Self> {
+        let len = u64::try_from(data.len()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "in-memory file length exceeds the ranged-reader limit",
+            )
+        })?;
+        Ok(Self { data, len })
+    }
+
+    fn out_of_bounds(&self, offset: u64, len: u64) -> std::io::Error {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "in-memory range out of bounds: requested {len} bytes at offset {offset} \
+                 from a {}-byte file",
+                self.len
+            ),
+        )
+    }
+}
+
+impl RangeReader for OwnedMemoryRangeReader {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        let end = offset
+            .checked_add(len)
+            .filter(|end| *end <= self.len)
+            .ok_or_else(|| self.out_of_bounds(offset, len))?;
+        let start = usize::try_from(offset).map_err(|_| self.out_of_bounds(offset, len))?;
+        let end = usize::try_from(end).map_err(|_| self.out_of_bounds(offset, len))?;
+        Ok(self.data[start..end].to_vec())
+    }
+}
+
 /// Wraps a reader and tallies how many ranges were requested and how many bytes
 /// were returned — the metric that matters for a range-streamed format.
 /// Atomically counted, so it stays `Sync` (a lazily-faulting remote index holds
@@ -280,6 +330,19 @@ mod tests {
         assert_eq!(r.len(), 256);
         assert_eq!(r.read_at(10, 4).unwrap(), vec![10, 11, 12, 13]);
         assert!(r.read_at(254, 10).is_err()); // overruns
+    }
+
+    #[test]
+    fn owned_memory_reader_serves_exact_ranges_and_rejects_overflow() {
+        let r = OwnedMemoryRangeReader::new(vec![10, 20, 30, 40]).unwrap();
+        assert_eq!(r.len(), 4);
+        assert_eq!(r.read_at(1, 2).unwrap(), vec![20, 30]);
+        assert_eq!(r.read_at(4, 0).unwrap(), Vec::<u8>::new());
+
+        let overrun = r.read_at(3, 2).unwrap_err();
+        assert_eq!(overrun.kind(), std::io::ErrorKind::UnexpectedEof);
+        let overflow = r.read_at(u64::MAX, 2).unwrap_err();
+        assert_eq!(overflow.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 
     #[test]

@@ -29,6 +29,10 @@ const result = JSON.parse(
 );
 ```
 
+`Graph` owns the supplied file image but decodes dictionary chunks and index
+tiles on demand. Repeated calls reuse the chunks and tiles already faulted by
+earlier queries.
+
 ## Remote graph
 
 `RemoteGraph` opens the header and lazily fetches only the ranges touched by a

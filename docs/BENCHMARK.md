@@ -571,6 +571,62 @@ and WASM improved substantially. This is independent of the experimental
 adaptive R2 scheduler and of the hidden unsafe decoder benchmark; neither is
 enabled to obtain these gains.
 
+### Query-specific local and resident-owned lazy opening (2026-08-17)
+
+Local query commands previously called the eager `Rete::open` path for files
+below 1 GiB, decoding all six index permutations before planning the query.
+They now use the same checked ranged-lazy opener as remote queries. Full-file
+operations such as export, merge, reasoning, verification, and repyramid retain
+their existing eager policy. The resident WASM `Graph` similarly owns the
+complete byte image but faults dictionary chunks and index tiles only when a
+query needs them; decoded data stays cached on that graph. This changes neither
+the file format nor validation and adds no `unsafe` code.
+
+The untouched baseline was git
+`b3697b1799306e20c85845998919655d13da289f`, executable SHA-256
+`8db290c498507c46039c3f5fb4c315ba37821ffea2010b526300343e06057d91`.
+The feature candidate was built from that revision plus the uncommitted lazy-
+opening diff, executable SHA-256
+`0c4b145ba9aa5131f988c9bd7d768ba939ecc287b50ef6e919fdd8e00a96a61a`.
+The pinned Chemotion and BOE R2 objects listed above were downloaded once and
+queried locally: respectively 7,566,404 bytes / SHA-256
+`b7cca2e3ebe5364e767fb1f34c138d7e100b3997db172357eb4ecf3a9adfa83a`
+and 6,958,628 bytes / SHA-256
+`b20d74cf407570dec47888348d0dac638565a457481ca6df4ea9dba71bde6a3b`.
+Each cell is 15 alternating fresh processes after two warm-ups. The OS file
+cache was not flushed, isolating open/decode/query CPU rather than disk latency.
+
+| dataset / query | eager median / p90 | lazy median / p90 | median change |
+|---|---:|---:|---:|
+| Chemotion / molecules | 150.5 / 160.8 ms | **63.2 / 69.2 ms** | **58.0% faster** |
+| Chemotion / formulas | 146.3 / 155.9 ms | **50.3 / 56.4 ms** | **65.6% faster** |
+| Chemotion / spectroscopy path | 170.9 / 183.3 ms | **101.0 / 105.0 ms** | **40.9% faster** |
+| BOE / bound law | 121.3 / 133.4 ms | **44.0 / 50.3 ms** | **63.7% faster** |
+| BOE / type counts | 125.8 / 130.0 ms | **46.3 / 52.3 ms** | **63.2% faster** |
+
+All 150 timed executions matched the established per-query output SHA-256
+values in the pinned R2 matrix above. The ignored raw report is
+`local-lazy-r2-evidence-20260817T210847Z.json` (SHA-256
+`afd704da4d0b9c2009015e84bf80790a0c3ac39bdfc22dabb2b258bc7e00dd2d`).
+
+The resident WASM constructor was measured separately on the BOE image. Both
+modules were initialized once; each `Graph` was then opened, its 447,128-quad
+header checked, and the handle freed. After two warm-ups, 15 alternating opens
+gave:
+
+| artifact | wasm bytes / SHA-256 | open median / p90 | change |
+|---|---|---:|---:|
+| eager baseline | 3,168,609 / `be60b8c67749abf9571b7f977f229331308cf9e86f72df1ce45270cccda83095` | 68.568 / 84.425 ms | — |
+| lazy owned candidate | 3,221,803 / `8ff781bb0a156cd8cb900dde03c4db64efd831f9523d2741a9dfb9f7066ac904` | **0.856 / 1.035 ms** | **98.75% faster** |
+
+This constructor number is deliberately not presented as an end-to-end query
+speedup: `Graph::new` still copies and owns the complete compressed image, and
+the first query pays to decode the tiles it selects. The win is removing all
+unselected permutation work from startup; selected tiles are then retained for
+later queries. The ignored report is
+`wasm-owned-lazy-evidence-20260817T211007Z.json` (SHA-256
+`ed3017ab355347cc70b270864e2c09e3e6174c3b27c05ecffc998fd073a8bb8e`).
+
 #### Browser, shared reader, and sharding
 
 The freshly regenerated browser artifact opened all six Wikidata XXL shards and answered

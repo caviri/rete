@@ -6,11 +6,12 @@ use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
     eval_query_reasoned, eval_select_communities, eval_sparql, project_graph, schema_classes,
     schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
-    ByteRange, CountingReader, DataGraph, Header, QueryOutput, RangeReader, Rete, ReteGraph,
-    ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TermTriple, TripleProvenance,
-    ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
+    ByteRange, CountingReader, DataGraph, Header, OwnedMemoryRangeReader, QueryOutput, RangeReader,
+    Rete, ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TermTriple,
+    TripleProvenance, ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
 };
 use std::rc::Rc;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 /// Version of Rete-owned JSON object envelopes exposed by the browser API.
@@ -218,15 +219,15 @@ pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
     Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
 }
 
-/// A `.rete` opened **once** and kept resident, so a client (the playground's
-/// cached/in-memory mode) can run many queries on a big file without re-copying
-/// the whole buffer into wasm and re-decoding its dictionary on every call. The
-/// methods mirror the free functions above but operate on the already-open
-/// [`Rete`]. The few index-free readers (`schema_packed`, `progressive_query`,
-/// `check_schema`) stay free functions — they read small ranges from the buffer
-/// and are called rarely (once at load / on demand), so a handle buys little.
+/// A `.rete` image owned **once** and kept resident, so a client (the
+/// playground's cached/in-memory mode) can run many queries without re-copying
+/// the buffer. Dictionary chunks and index tiles decode lazily, then stay
+/// cached on the [`Rete`] for later calls. The few index-free readers
+/// (`schema_packed`, `progressive_query`, `check_schema`) stay free functions —
+/// they read small ranges and are called rarely, so a handle buys little.
 #[wasm_bindgen]
 pub struct Graph {
+    reader: Arc<OwnedMemoryRangeReader>,
     rete: Rc<Rete>,
     file_len: usize,
 }
@@ -236,9 +237,12 @@ impl Graph {
     /// Open a `.rete` image and keep it resident for repeated querying.
     #[wasm_bindgen(constructor)]
     pub fn new(bytes: &[u8]) -> Result<Graph, JsValue> {
+        let file_len = bytes.len();
+        let (reader, rete) = open_owned(bytes.to_vec())?;
         Ok(Graph {
-            rete: Rc::new(open(bytes)?),
-            file_len: bytes.len(),
+            reader,
+            rete: Rc::new(rete),
+            file_len,
         })
     }
 
@@ -341,9 +345,10 @@ impl Graph {
 
     /// See [`card`] — the Dataset Card of the resident file.
     pub fn card(&self) -> Option<String> {
-        self.rete
-            .metadata()
-            .map(|b| String::from_utf8_lossy(b).into_owned())
+        rete_core::read_metadata_ranged(self.reader.as_ref())
+            .ok()
+            .flatten()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// See [`query_communities`].
@@ -2776,6 +2781,100 @@ fn open(bytes: &[u8]) -> Result<Rete, JsValue> {
     // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
     rete.set_service_client(Box::new(XhrServiceClient));
     Ok(rete)
+}
+
+fn open_owned(bytes: Vec<u8>) -> Result<(Arc<OwnedMemoryRangeReader>, Rete), JsValue> {
+    let reader = Arc::new(OwnedMemoryRangeReader::new(bytes).map_err(err)?);
+    let mut rete = Rete::open_ranged_lazy(reader.clone()).map_err(err)?;
+    // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
+    rete.set_service_client(Box::new(XhrServiceClient));
+    Ok((reader, rete))
+}
+
+#[cfg(test)]
+mod owned_graph_tests {
+    use super::*;
+
+    fn take_uvarint(bytes: &[u8], pos: &mut usize) -> usize {
+        let mut value = 0usize;
+        let mut shift = 0;
+        loop {
+            let byte = bytes[*pos];
+            *pos += 1;
+            value |= usize::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+            shift += 7;
+        }
+    }
+
+    fn corrupt_unused_ops_tile(image: &mut [u8]) {
+        let header = Header::from_bytes(&image[..rete_core::HEADER_LEN]).unwrap();
+        assert_eq!(header.block_codec, rete_core::CODEC_ZSTD);
+        let mut pos = usize::try_from(header.root_dir_offset).unwrap();
+        assert_eq!(take_uvarint(image, &mut pos), 6);
+        let ops = (0..6)
+            .find_map(|section| {
+                let len = take_uvarint(image, &mut pos);
+                let start = pos;
+                pos += len;
+                (section == 5).then_some((start, len))
+            })
+            .unwrap();
+        let mut dir = ops.0;
+        let tiles = take_uvarint(image, &mut dir);
+        assert!(tiles > 0);
+        let mut compressed_lens = Vec::with_capacity(tiles);
+        for _ in 0..tiles {
+            let _min_delta = take_uvarint(image, &mut dir);
+            let _leading_span = take_uvarint(image, &mut dir);
+            compressed_lens.push(take_uvarint(image, &mut dir));
+        }
+        let first_tile_end = dir + compressed_lens[0];
+        assert!(first_tile_end <= ops.0 + ops.1);
+        image[dir..first_tile_end].fill(0xff);
+    }
+
+    #[test]
+    fn owned_graph_open_does_not_decode_an_unused_permutation() {
+        let mut image = include_bytes!("../../rete-core/tests/fixtures/v1/minimal.rete").to_vec();
+        corrupt_unused_ops_tile(&mut image);
+        assert!(
+            Rete::open(&image).is_err(),
+            "the eager control must decode OPS"
+        );
+
+        let (_, graph) = open_owned(image).expect("the lazy owned opener must defer OPS");
+        assert_eq!(graph.header().quad_count, 3);
+    }
+
+    #[test]
+    fn resident_graph_reads_its_card_from_the_owned_image() {
+        const CARD: &[u8] = br#"{"title":"Resident fixture"}"#;
+        let triple = ("<http://ex/s>", "<http://ex/p>", "<http://ex/o>");
+        let mut dictionary = rete_core::DictionaryBuilder::new();
+        dictionary.observe(triple.0, triple.1, triple.2);
+        let dictionary = dictionary.build();
+        let mut index = rete_core::GraphIndexBuilder::new();
+        index.push(dictionary.encode(triple.0, triple.1, triple.2).unwrap());
+        let image = rete_core::write_dataset_with_metadata(
+            &dictionary,
+            &index.build(),
+            &[],
+            false,
+            &[],
+            0,
+            CARD,
+            &[],
+        );
+
+        let graph = Graph::new(&image).unwrap();
+        assert_eq!(
+            graph.card().as_deref(),
+            Some(r#"{"title":"Resident fixture"}"#)
+        );
+    }
 }
 
 fn err<E: std::fmt::Display>(e: E) -> JsValue {

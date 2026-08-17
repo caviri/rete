@@ -39,8 +39,8 @@
     lastProvenance: null,
     built: null,
     exploreClass: null,
-    // A resident wasm Graph handle for in-memory queries: opened once per load so
-    // repeated queries skip re-copying the buffer + re-decoding the dictionary.
+    // A resident wasm Graph handle for in-memory queries: owns the image once and
+    // reuses dictionary chunks + index tiles lazily faulted by earlier queries.
     graph: null,
     exploreReady: false,
     explorePage: 0,
@@ -1229,9 +1229,9 @@ self.onmessage = function (e) {
     if (source !== "cached") resetFed();
     updateSourcePill();
 
-    // Open the file ONCE into a resident handle; every later in-memory query
-    // reuses it instead of re-copying the buffer and re-decoding the dictionary.
-    if (onPhase) { onPhase("Opening file & loading dictionaries…"); await tick(); }
+    // Own the file ONCE in a resident handle; every later in-memory query reuses
+    // dictionary chunks and index tiles lazily faulted by earlier queries.
+    if (onPhase) { onPhase("Opening file & reading directories…"); await tick(); }
     if (state.graph) { state.graph.free(); state.graph = null; }
     state.graph = new (W().Graph)(bytes);
     const info = JSON.parse(state.graph.info());

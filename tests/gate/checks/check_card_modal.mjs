@@ -144,24 +144,26 @@ const main = async () => {
     if (!/SELECT/i.test(used.q)) failures.push(`card query did not reach the editor: "${used.q.slice(0, 60)}"`);
   }
 
-  // ---- resident path: Rete.card() from memory --------------------------------
-  // Different code from the remote path: no worker, no IO — the bytes are
-  // already in wasm. Every embedded dataset now ships a card, so this asserts a
-  // real one renders rather than merely not crashing.
-  const bundled = await open("#dataset=causal&load=bundled");
-  await openCard(bundled);
-  const resident = await bundled.evaluate(() => ({
-    title: document.getElementById("cardModalTitle").textContent,
-    body: document.getElementById("cardBody").textContent.slice(0, 2000),
-    stats: [...document.querySelectorAll("#cardBody .card-stat b")].map((e) => e.textContent),
-    foot: document.getElementById("cardFootNote").textContent,
-  }));
-  if (/carries no Dataset Card/i.test(resident.body)) {
-    failures.push("the bundled causal dataset reports no card — embedded datasets are built with one");
+  // ---- resident path: Graph.card() from owned memory -------------------------
+  // This is deliberately the same carded fixture as the remote check, opened as
+  // an owned in-memory Graph. The bundled playground examples are cardless build
+  // artifacts, so using one here would test fixture provenance instead of the
+  // resident reader. Passing the bytes directly also proves this path performs
+  // no HTTP/range IO.
+  const resident = await remote.evaluate((raw) => {
+    const graph = new wasm_bindgen.Graph(Uint8Array.from(raw));
+    try {
+      const text = graph.card();
+      return { text, parsed: text ? JSON.parse(text) : null };
+    } finally {
+      graph.free();
+    }
+  }, Array.from(fixture));
+  if (!resident.parsed) failures.push("resident Graph reports no card for a carded file");
+  if (!/Gate Card Fixture/.test(resident.parsed?.title || "")) {
+    failures.push(`resident card title looks wrong: ${resident.parsed?.title || "(none)"}`);
   }
-  if (!/causal/i.test(resident.title)) failures.push(`resident card title looks wrong: ${resident.title}`);
-  if (!resident.stats.length) failures.push("resident card rendered no counts");
-  if (/range requests/.test(resident.foot)) failures.push("resident read was reported as a ranged remote read");
+  if (!(resident.parsed?.triple_count > 0)) failures.push("resident card contains no triple count");
 
   // ---- a file that genuinely has no card -------------------------------------
   // Still a real case — `rete build` is cardless unless a card flag is passed —

@@ -59,6 +59,25 @@ pub(crate) fn open_local(path: &str) -> anyhow::Result<Rete> {
     if len <= lazy_threshold_bytes() {
         return Ok(Rete::open(&std::fs::read(path)?)?);
     }
+    open_local_lazy(path, len)
+}
+
+/// Open a local file for query-style work without eagerly decoding every
+/// dictionary chunk and all six index permutations.
+///
+/// The file remains resident on disk and the returned `Rete` owns a positional
+/// reader, so only chunks and tiles selected by the query are decoded. Commands
+/// that intentionally traverse or rewrite the complete file keep using
+/// [`open_local`] and its size-adaptive eager policy.
+pub(crate) fn open_local_for_query(path: &str) -> anyhow::Result<Rete> {
+    let len = std::fs::metadata(path)?.len();
+    if std::env::var("RETE_OPEN_DEBUG").is_ok() {
+        eprintln!("[open_local_for_query] {path}: len={len} -> LAZY");
+    }
+    open_local_lazy(path, len)
+}
+
+fn open_local_lazy(path: &str, len: u64) -> anyhow::Result<Rete> {
     let reader = std::sync::Arc::new(LocalRangeReader::open(path)?);
     // `RETE_BLOCK_KB` wins (0 disables), else auto-tune by length — same knob
     // and heuristic as the URL commands, so local and remote behave alike.

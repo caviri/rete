@@ -5,7 +5,7 @@ use rete_core::{
     ShaclShapes, ValidationReport, DEFAULT_BLOCK,
 };
 
-use crate::commands::range_source::open_local;
+use crate::commands::range_source::open_local_for_query;
 use crate::http::HttpRangeReader;
 
 pub(crate) fn shacl_cmd(
@@ -14,7 +14,7 @@ pub(crate) fn shacl_cmd(
     graph: Option<&str>,
     format: &str,
 ) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_for_query(file)?;
     let data = DataGraph::from_rete(&rete, graph);
     let shapes_text = std::fs::read_to_string(shapes_file)?;
     let shapes = ShaclShapes::parse_turtle(&shapes_text)?;

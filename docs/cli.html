@@ -283,7 +283,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
-        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -309,7 +308,6 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
-        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -504,12 +502,17 @@ rewritten evaluation. See <a href="reasoning.html#reasoning-by-query-rewriting-o
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
-<p><strong>Memory &amp; I/O.</strong> Local files above 1 GiB open through the same lazy range
-reader the <code>-url</code> commands use (threshold: <code>RETE_LOCAL_LAZY_ABOVE_MB</code>, block
-size: <code>RETE_BLOCK_KB</code>, cache capped at 256 MiB), and aggregation streams
-through per-group accumulators — a <code>COUNT</code> over a 9.83 B-triple file runs in a
-2 GiB container (<a href="BENCHMARK.html">benchmark</a>). Preview a query's byte cost with
-<code>rete cost</code>, and see the exact ranges a query read with <code>rete why</code>.</p>
+<p><strong>Memory &amp; I/O.</strong> Local query commands (<code>query</code>, <code>why</code>, <code>bgp</code>, <code>sparql</code>,
+<code>cypher</code>, <code>reach</code>, <code>shacl</code>, <code>communities</code>, and local <code>federate</code> sources) always
+open through the lazy positional reader: only dictionary chunks and index tiles
+selected by the operation are decoded, even for a small file. <code>RETE_BLOCK_KB</code>
+controls the block cache (capped at 256 MiB; <code>0</code> disables it). Commands that
+intentionally traverse or rewrite the complete file retain the size-adaptive
+policy (<code>RETE_LOCAL_LAZY_ABOVE_MB</code>, default 1 GiB), so small exports and merges
+can still use the faster eager path. Aggregation streams through per-group
+accumulators — a <code>COUNT</code> over a 9.83 B-triple file runs in a 2 GiB container
+(<a href="BENCHMARK.html">benchmark</a>). Preview a query's byte cost with <code>rete cost</code>, and
+see the exact ranges a query read with <code>rete why</code>.</p>
 <h3><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
 <p>Serve one <code>.rete</code> — or a <a href="manifest.html">manifest</a> of segments (<code>.json</code>), whose
 visible fold becomes the served state — as a live <strong>SPARQL 1.1 Protocol
@@ -547,8 +550,8 @@ summary-based routing, and compares three access paths:</p>
 triple index.</li>
 <li><strong>routed pattern open</strong> — for a single default-graph triple pattern, header +
 dictionary + the one selected permutation payload (the best of the six).</li>
-<li><strong>full query open</strong> — the current SPARQL engine path, which opens dictionary +
-index (+ pyramid/named-graph metadata when present) before evaluation.</li>
+<li><strong>lazy query open</strong> — dictionary/index framing and directories, with actual
+dictionary chunks and index tiles faulted only when evaluation selects them.</li>
 </ul>
 <pre><code class="language-sh">rete cost data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?y WHERE { e:Alice e:knows ?y }"
 rete cost https://host/data.rete "ASK { ?s &lt;http://ex/knows&gt; ?o }" --json

@@ -119,7 +119,7 @@ pub mod range {
         read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged, ByteRange,
         LayoutSegment, SummaryView,
     };
-    pub use crate::reader::{CountingReader, RangeReader, SliceReader};
+    pub use crate::reader::{CountingReader, OwnedMemoryRangeReader, RangeReader, SliceReader};
 }
 
 /// Stable integrity and SHACL validation API.
@@ -179,7 +179,7 @@ pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 #[doc(hidden)]
 pub use read_path_metrics::{read_path_stats, reset_read_path_stats, ReadPathStats};
 #[doc(hidden)]
-pub use reader::{CountingReader, RangeReader, SliceReader};
+pub use reader::{CountingReader, OwnedMemoryRangeReader, RangeReader, SliceReader};
 #[doc(hidden)]
 pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
 #[doc(hidden)]

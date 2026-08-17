@@ -1,6 +1,6 @@
 //! The `reach` command: multi-source transitive reachability over one relation.
 
-use crate::commands::range_source::open_local;
+use crate::commands::range_source::open_local_for_query;
 
 /// `rete reach`: multi-source transitive reachability over one relation. For
 /// each seed, the set of nodes it transitively reaches (or, with `--reverse`,
@@ -16,7 +16,7 @@ pub(crate) fn reach(
     count: bool,
 ) -> anyhow::Result<()> {
     use std::collections::HashMap;
-    let rete = open_local(file)?;
+    let rete = open_local_for_query(file)?;
     let dict = rete.dictionary();
 
     if let Some(path) = seeds_file {

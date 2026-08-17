@@ -1,13 +1,12 @@
 /* @ts-self-types="./rete_wasm.d.ts" */
 
 /**
- * A `.rete` opened **once** and kept resident, so a client (the playground's
- * cached/in-memory mode) can run many queries on a big file without re-copying
- * the whole buffer into wasm and re-decoding its dictionary on every call. The
- * methods mirror the free functions above but operate on the already-open
- * [`Rete`]. The few index-free readers (`schema_packed`, `progressive_query`,
- * `check_schema`) stay free functions — they read small ranges from the buffer
- * and are called rarely (once at load / on demand), so a handle buys little.
+ * A `.rete` image owned **once** and kept resident, so a client (the
+ * playground's cached/in-memory mode) can run many queries without re-copying
+ * the buffer. Dictionary chunks and index tiles decode lazily, then stay
+ * cached on the [`Rete`] for later calls. The few index-free readers
+ * (`schema_packed`, `progressive_query`, `check_schema`) stay free functions —
+ * they read small ranges and are called rarely, so a handle buys little.
  */
 export class Graph {
     __destroy_into_raw() {

@@ -2,16 +2,16 @@
 //! Summary and triple-pattern operations fetch only their required ranges.
 //! Native SPARQL adaptively transfers a small remote object once into owned
 //! memory, then still parses and evaluates it through the lazy ranged opener.
-//! Larger remote objects retain lazy transport and tile faulting. Normal local
-//! SPARQL opening follows `open_local`'s separate size policy and is not governed
-//! by this HTTP threshold. Each URL-command path wraps its transport in a
-//! `CountingReader` and reports bytes fetched + range-request count.
+//! Larger remote objects retain lazy transport and tile faulting. Local query
+//! commands likewise use a lazy positional reader at every file size; they are
+//! not governed by this HTTP threshold. Each URL-command path wraps its
+//! transport in a `CountingReader` and reports bytes fetched + request count.
 
 use std::ffi::OsStr;
 
 use rete_core::{
-    auto_block, eval_query, BlockCacheReader, CountingReader, Header, RangeReader, Rete,
-    SummaryView, HEADER_LEN,
+    auto_block, eval_query, BlockCacheReader, CountingReader, Header, OwnedMemoryRangeReader,
+    RangeReader, Rete, SummaryView, HEADER_LEN,
 };
 
 use crate::commands::card;
@@ -19,52 +19,6 @@ use crate::commands::range_source::RangedSourceReader;
 use crate::commands::render::print_query_output;
 
 const DEFAULT_EAGER_MAX_BYTES: u64 = 8 * 1024 * 1024;
-
-/// An owned in-memory range source for a file fetched in one bounded HTTP GET.
-/// The lazy `Rete` opener keeps this reader for demand-driven section decoding.
-struct OwnedMemoryRangeReader {
-    bytes: Vec<u8>,
-    len: u64,
-}
-
-impl OwnedMemoryRangeReader {
-    fn new(bytes: Vec<u8>) -> std::io::Result<Self> {
-        let len = u64::try_from(bytes.len()).map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "in-memory file length exceeds the ranged-reader limit",
-            )
-        })?;
-        Ok(Self { bytes, len })
-    }
-
-    fn out_of_bounds(&self, offset: u64, len: u64) -> std::io::Error {
-        std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            format!(
-                "in-memory range out of bounds: requested {len} bytes at offset {offset} \
-                 from a {}-byte file",
-                self.len
-            ),
-        )
-    }
-}
-
-impl RangeReader for OwnedMemoryRangeReader {
-    fn len(&self) -> u64 {
-        self.len
-    }
-
-    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
-        let end = offset
-            .checked_add(len)
-            .filter(|end| *end <= self.len)
-            .ok_or_else(|| self.out_of_bounds(offset, len))?;
-        let start = usize::try_from(offset).map_err(|_| self.out_of_bounds(offset, len))?;
-        let end = usize::try_from(end).map_err(|_| self.out_of_bounds(offset, len))?;
-        Ok(self.bytes[start..end].to_vec())
-    }
-}
 
 fn open_fetched_image(image: Vec<u8>) -> anyhow::Result<Rete> {
     Ok(Rete::open_ranged_lazy(OwnedMemoryRangeReader::new(image)?)?)

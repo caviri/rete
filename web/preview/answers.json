@@ -16029,6 +16029,460 @@
    "rows": [],
    "error": "dataset open failed: page.waitForFunction: Timeout 240000ms exceeded."
   },
+  "davidrumsey:0": {
+   "id": "davidrumsey:0",
+   "dataset": "davidrumsey",
+   "index": 0,
+   "view": "map",
+   "ok": true,
+   "qmeta": "40 mapped feature(s) | 21 range req · 9.0 MB of 72.9 MB fetched · 11.8 MB cached this session · 11328 ms",
+   "count": null,
+   "unit": "",
+   "columns": [],
+   "rows": [],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 11352,
+   "shot": "web/preview/shots/davidrumsey-0.png"
+  },
+  "davidrumsey:1": {
+   "id": "davidrumsey:1",
+   "dataset": "davidrumsey",
+   "index": 1,
+   "view": "table",
+   "ok": true,
+   "qmeta": "60 row(s) | 10 range req · 3.0 MB of 72.9 MB fetched · 14.8 MB cached this session · 1591 ms",
+   "count": 60,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Image",
+     "var": "img"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Year",
+     "var": "year"
+    },
+    {
+     "label": "Author",
+     "var": "author"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Title Page to) Cosmographica Petri Apiani, per gemmam Frisium apud Lovanienses Medicum & Mathematicum insi...",
+      "media": false
+     },
+     {
+      "text": "1553",
+      "media": false
+     },
+     {
+      "text": "Apian, Peter, 1495-1552",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Title Page to) Cosmographica Petri Apiani, per gemmam Frisium apud Lovanienses Medicum & Mathematicum insi...",
+      "media": false
+     },
+     {
+      "text": "1553",
+      "media": false
+     },
+     {
+      "text": "Gaultherot, Vivant",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Title Page to) Cosmographica Petri Apiani, per gemmam Frisium apud Lovanienses Medicum & Mathematicum insi...",
+      "media": false
+     },
+     {
+      "text": "1553",
+      "media": false
+     },
+     {
+      "text": "Gemma, Frisius, 1508-1555",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Text Page to) Prima pars huius libri de cosmographiæ & geographiæ principiis. (10)",
+      "media": false
+     },
+     {
+      "text": "1553",
+      "media": false
+     },
+     {
+      "text": "Apian, Peter, 1495-1552",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Text Page to) Prima pars huius libri de cosmographiæ & geographiæ principiis. (10)",
+      "media": false
+     },
+     {
+      "text": "1553",
+      "media": false
+     },
+     {
+      "text": "Gaultherot, Vivant",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Text Page to) Prima pars huius libri de cosmographiæ & geographiæ principiis. (10)",
+      "media": false
+     },
+     {
+      "text": "1553",
+      "media": false
+     },
+     {
+      "text": "Gemma, Frisius, 1508-1555",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Text Page to) Prima pars huius libri de cosmographiæ & geographiæ principiis. (11)",
+      "media": false
+     },
+     {
+      "text": "1553",
+      "media": false
+     },
+     {
+      "text": "Apian, Peter, 1495-1552",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Open image ↗",
+      "media": true
+     },
+     {
+      "text": "(Text Page to) Prima pars huius libri de cosmographiæ & geographiæ principiis. (11)",
+      "media": false
+     },
+     {
+      "text": "1553",
+      "media": false
+     },
+     {
+      "text": "Gaultherot, Vivant",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1649
+  },
+  "davidrumsey:2": {
+   "id": "davidrumsey:2",
+   "dataset": "davidrumsey",
+   "index": 2,
+   "view": "table",
+   "ok": true,
+   "qmeta": "56 row(s) | 0 range req · 0 B of 72.9 MB fetched — served from cache, 0 new bytes · 646 ms",
+   "count": 56,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Decade",
+     "var": "decade"
+    },
+    {
+     "label": "Items",
+     "var": "n"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "1400",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "1450",
+      "media": false
+     },
+     {
+      "text": "14",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "1490",
+      "media": false
+     },
+     {
+      "text": "313",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "1500",
+      "media": false
+     },
+     {
+      "text": "7",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "1510",
+      "media": false
+     },
+     {
+      "text": "16",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "1520",
+      "media": false
+     },
+     {
+      "text": "914",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "1530",
+      "media": false
+     },
+     {
+      "text": "7",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "1540",
+      "media": false
+     },
+     {
+      "text": "349",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 669
+  },
+  "davidrumsey:3": {
+   "id": "davidrumsey:3",
+   "dataset": "davidrumsey",
+   "index": 3,
+   "view": "table",
+   "ok": true,
+   "qmeta": "25 row(s) | 5 range req · 1.8 MB of 72.9 MB fetched · 16.5 MB cached this session · 772 ms",
+   "count": 25,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Publication",
+     "var": "title"
+    },
+    {
+     "label": "Date",
+     "var": "date"
+    },
+    {
+     "label": "Items in graph",
+     "var": "n"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "Unternehmen Seelöwe (Operation Sea Lion - the Original Nazi German Plan for the Invasion of Great Britain).",
+      "media": false
+     },
+     {
+      "text": "1940",
+      "media": false
+     },
+     {
+      "text": "2825",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Karte des Deutschen Reiches.",
+      "media": false
+     },
+     {
+      "text": "1893",
+      "media": false
+     },
+     {
+      "text": "1368",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Description De L'Égypte : Ou, Recueil Des Observations Et Des Recherches Qui Ont Été Faites En Égypte Penda...",
+      "media": false
+     },
+     {
+      "text": "1826",
+      "media": false
+     },
+     {
+      "text": "933",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Atlas Historique, Ou Nouvelle Introduction A l'Histoire, aÌ la Chronologie & aÌ la Geìographie Ancienne & M...",
+      "media": false
+     },
+     {
+      "text": "1720",
+      "media": false
+     },
+     {
+      "text": "877",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Walters Ms. W.658, Book on navigation, Kitāb-i baḥriye",
+      "media": false
+     },
+     {
+      "text": "1700",
+      "media": false
+     },
+     {
+      "text": "778",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Civitates Orbis Terrarum.",
+      "media": false
+     },
+     {
+      "text": "1640",
+      "media": false
+     },
+     {
+      "text": "754",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Ordnance Survey Maps, London, Five feet to the Mile.",
+      "media": false
+     },
+     {
+      "text": "1896",
+      "media": false
+     },
+     {
+      "text": "754",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Topographischer Atlas de Schweiz im Massstab der Original-Aufnahmen nach dem Bundesgesetze vom 18. Dezember...",
+      "media": false
+     },
+     {
+      "text": "1899",
+      "media": false
+     },
+     {
+      "text": "732",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 803
+  },
+  "davidrumsey:4": {
+   "id": "davidrumsey:4",
+   "dataset": "davidrumsey",
+   "index": 4,
+   "view": "table",
+   "ok": false,
+   "qmeta": "0 row(s) | 3 range req · 768.0 KB of 72.9 MB fetched · 17.3 MB cached this session · 1453 ms",
+   "count": 0,
+   "unit": "row",
+   "columns": [],
+   "rows": [],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1478
+  },
   "dblp:0": {
    "id": "dblp:0",
    "dataset": "dblp",
