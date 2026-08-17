@@ -19,6 +19,14 @@
       "cardUrl": "https://data.graphplaza.com/hugging-face/hugging-face.rete"
     },
     {
+      "key": "openalex-entities",
+      "url": "https://data.graphplaza.com/openalex/openalex-entities.rete",
+      "formatVersion": 5,
+      "contentHash": "c1767bab0caf02cdb8396b13736753fb",
+      "size": 264173236,
+      "cardUrl": "https://data.graphplaza.com/openalex/openalex-entities.rete"
+    },
+    {
       "key": "tree-city-inventory",
       "url": "https://data.graphplaza.com/tree-city-inventory/tree-city-inventory.rete",
       "formatVersion": 5,
