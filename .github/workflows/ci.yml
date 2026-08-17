@@ -58,7 +58,6 @@ jobs:
               - 'scripts/build_playground_async.sh'
               - 'scripts/stage_playground_datasets.py'
               - 'docs/playground.html'
-              - 'docs/explore-100mb.html'
               - 'docs/rete_wasm.js'
               - 'docs/rete_wasm_bg.wasm'
               - 'docs/rete_wasm_async.js'
@@ -198,11 +197,7 @@ jobs:
           # diff on them was a silent no-op) and docs/rete_wasm.js/_bg.wasm
           # never existed. docs/engine is refreshed by build_wasm.sh now, so
           # the ESM copy the standalone docs pages import is guarded too.
-          # web/explore-100mb.html was listed here and is gitignored too
-          # (.gitignore:17), so it was the same silent no-op; build_playground.py
-          # writes the identical string to both copies and the docs/ one — the
-          # published one — is diffed, so nothing is lost by not pretending.
-          GUARDED="docs/playground.html docs/engine docs/explore-100mb.html docs/rete_wasm_async.js docs/rete_wasm_async.wasm"
+          GUARDED="docs/playground.html docs/engine docs/rete_wasm_async.js docs/rete_wasm_async.wasm"
           if git diff --quiet -- $GUARDED; then
             echo "browser artifacts: byte-identical to this commit."
             exit 0

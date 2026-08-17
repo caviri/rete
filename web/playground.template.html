@@ -744,9 +744,8 @@ __PLAYGROUND_CSS__
           <h4>Remote <code>.rete</code> by URL (lazy, over HTTP range)</h4>
           <p class="microcopy">Connect to any <code>.rete</code> URL and query it <strong>without
             downloading it</strong> — the host must allow CORS and honor <code>Range</code> (S3,
-            R2, S3, and direct CDNs can do). Compare the
-            <a href="explore-100mb.html?dataset=wikidata-100MB">100&nbsp;MB</a> /
-            <a href="explore-100mb.html?dataset=wikidata-1GB">1&nbsp;GB</a> tiers in the lazy explorer.</p>
+            R2, S3, and direct CDNs can do). The prefilled URL is a 1&nbsp;GB Wikidata slice on
+            Cloudflare R2 — connecting to it downloads none of it.</p>
           <div class="url-loader">
             <input id="remoteUrl" type="text" spellcheck="false"
               placeholder="https://…/graph.rete"

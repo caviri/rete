@@ -43,12 +43,9 @@ from pathlib import Path
 
 # The set CI guards, used when no path is given. Keep in step with the `git
 # diff` in .github/workflows/ci.yml (which passes them explicitly).
-# web/explore-100mb.html is deliberately absent: it is gitignored, so it can
-# never appear in a diff.
 GUARDED = [
     "docs/playground.html",
     "docs/engine",
-    "docs/explore-100mb.html",
     "docs/rete_wasm_async.js",
     "docs/rete_wasm_async.wasm",
 ]

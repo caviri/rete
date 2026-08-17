@@ -8,7 +8,7 @@
   "links": [
     {"title": "SPARQL playground", "url": "https://caviri.github.io/rete/playground.html", "desc": "Query, validate, reason and explore example graphs — entirely offline in WASM."},
     {"title": "Historical atlas", "url": "https://caviri.github.io/rete/atlas-app.html", "desc": "A GeoSPARQL map over time: borders, events and 80+ overlay layers."},
-    {"title": "Lazy explorer", "url": "https://caviri.github.io/rete/explore-100mb.html", "desc": "Browse a 100 MB / 1 GB Wikidata graph by HTTP Range — no full download."},
+    {"title": "Graph explorer", "url": "https://caviri.github.io/rete/explorer.html", "desc": "Walk any .rete graph node by node over HTTP Range — no index build, no download."},
     {"title": "Documentation", "url": "https://caviri.github.io/rete/", "desc": "The file format, query engine, range model and CLI — the full reference."},
     {"title": "GitHub", "url": "https://github.com/caviri/rete", "desc": "Source, the Rust workspace, issues and the build/CI for the project."}
   ]

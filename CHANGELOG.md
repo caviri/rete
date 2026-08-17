@@ -277,6 +277,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
     is **byte-identical** to the in-RAM `--no-pyramid` build of the same graph
     — and finished in 36 s against 56 s.
 
+### Removed
+
+- **The `explore-100mb.html` lazy explorer is gone.** The standalone
+  "Explore 100 MB of Wikidata in the browser" page — its template, its generator
+  branch in `scripts/build_playground.py`, its social card, and the CI
+  byte-parity guard on its output — has been deleted. Everything it
+  demonstrated (lazy HTTP-range querying of a remote `.rete`, and the same graph
+  through the DuckDB/SQLite companions) is in the playground: connect any URL
+  under **Advanced → Remote `.rete` by URL**, and switch backends with **SQL
+  Explore**. `docs/explore-100mb.html` remains as a one-line redirect to the
+  playground, because the page was linked from the front page, the gateway
+  landing page and the frozen ISWC-2026 demo site.
+
 ### Changed
 
 - **Dataset Card derivation moved into `rete-core`, so every client can derive
