@@ -26,7 +26,7 @@ try {
   // never started). Keeping it is deliberate — it is the tripwire that makes a
   // catalog change visible — but the number is only ever as fresh as the last
   // run of this gate.
-  t.equal("allQueries", all.length, 680, "every catalog query must be in the exhaustive matrix");
+  t.equal("allQueries", all.length, 685, "every catalog query must be in the exhaustive matrix");
   t.equal("embeddedQueries", embedded.length, 69, "the deterministic tier must cover every embedded query");
   t.equal("uniqueCaseIds", new Set(all.map((entry) => entry.id)).size, all.length, "case ids must be unique");
   t.ok("everyCaseHasSparql", all.every((entry) => entry.query.trim()), "every case must carry executable SPARQL");
@@ -34,7 +34,7 @@ try {
 
   allGroups = catalogDatasetGroups("all");
   embeddedGroups = catalogDatasetGroups("embedded");
-  t.equal("allDatasets", allGroups.length, 100, "the exhaustive tier must cover every dataset");
+  t.equal("allDatasets", allGroups.length, 101, "the exhaustive tier must cover every dataset");
   t.equal("embeddedDatasets", embeddedGroups.length, 10, "the deterministic tier must cover every embedded dataset");
   t.deepEqual(
     "groupingOrder",
