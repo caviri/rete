@@ -341,18 +341,55 @@ for r in "${sized[@]}"; do
   fi
 
   # -- 1. download ----------------------------------------------------------
+  #
+  # A 60 GiB single GET does not survive. crossref died at 13.18 of 60.22 GiB
+  # with `curl: (18) end of response with 47044388127 bytes missing` -- the CDN
+  # closed the connection early, which is ordinary at this size and duration.
+  # The fix is not more --retry: it is to KEEP the partial file and resume into
+  # it with `-C -`, over and over, until the byte count matches. Deleting the
+  # partial on failure (which this did at first) throws away the only thing that
+  # makes the next attempt cheaper than the last.
+  #
+  # Give up only when three consecutive attempts move ZERO bytes; anything that
+  # is still making progress, however slowly, is still worth resuming.
   if [ "$downloaded" = "1" ]; then
     say "GET      $name ($(gb "$len") GiB) <- $url"
-    # -C - resumes a partial file, so a killed run does not re-fetch 60 GiB.
-    # --no-progress-meter: curl's meter is one line per second of carriage
-    # returns, which drowns the log this script's progress is read from.
-    curl -fL --no-progress-meter --retry 5 --retry-delay 5 -C - -o "$src" "$url"; rc=$?
+    rc=1; stalls=0; attempt=0
+    while [ "$attempt" -lt 20 ]; do
+      attempt=$((attempt+1))
+      before="$(fsize "$src")"
+      if [ "$before" = "$len" ]; then rc=0; break; fi
+      # --retry-all-errors so curl itself retries a mid-transfer close (18);
+      # --speed-limit/--speed-time abort a transfer that has gone quiet rather
+      # than block the whole sequential sweep on one dead socket;
+      # --no-progress-meter because curl's meter is a carriage-return per second
+      # and would drown the log this script's progress is read from.
+      curl -fL --no-progress-meter --retry 5 --retry-delay 5 --retry-all-errors \
+           --speed-limit 4096 --speed-time 120 -C - -o "$src" "$url"
+      rc=$?
+      after="$(fsize "$src")"
+      if [ "$after" = "$len" ]; then rc=0; break; fi
+      if [ "$after" = "$before" ]; then stalls=$((stalls+1)); else stalls=0; fi
+      say "RESUME   $name attempt $attempt: exit=$rc, $(gb "$after")/$(gb "$len") GiB (+$(gb $((after - before))) GiB, stalls=$stalls)"
+      if [ "$stalls" -ge 3 ]; then break; fi
+    done
     got="$(fsize "$src")"
     if [ "$rc" != "0" ] || [ "$got" != "$len" ]; then
-      say "FAIL     $name: download exit=$rc, got $got wanted $len"
-      echo "$name (download exit=$rc)" >> "$FAILURES"; record failed "$name" "$len" "" "" "$url"
-      failed=$((failed+1)); rm -f "$src"; continue
+      say "FAIL     $name: download gave up after $attempt attempt(s), exit=$rc, got $got wanted $len"
+      echo "$name (download exit=$rc after $attempt attempts)" >> "$FAILURES"
+      record failed "$name" "$len" "" "" "$url"
+      failed=$((failed+1))
+      # The partial IS the resume state, so it is kept when it is far enough
+      # along to be worth resuming; a barely-started one is just dead weight
+      # against the free-space check every later file has to pass.
+      if [ "$got" -lt $((len / 4)) ]; then
+        say "         discarding $(gb "$got") GiB partial (<25%)"; rm -f "$src"
+      else
+        say "         keeping $(gb "$got") GiB partial for a later resume"
+      fi
+      continue
     fi
+    say "GOT      $name: $got bytes in $attempt attempt(s)"
   fi
 
   # -- 2. export ------------------------------------------------------------
