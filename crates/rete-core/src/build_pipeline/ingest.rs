@@ -274,7 +274,7 @@ mod tests {
     use crate::dictionary::DictionaryBuilder;
     use crate::ingest::RawQuad;
 
-    use super::MemoryIngest;
+    use super::{next_provisional_id, BuildPipelineError, MemoryIngest};
 
     type CanonicalContent = (
         [Vec<u8>; 4],
@@ -306,6 +306,57 @@ mod tests {
         assert_eq!(built.dictionary.object_term(2).as_deref(), Some("<b>"));
         assert_eq!(built.stats.statements, 2);
         assert_eq!(built.stats.terms, 3);
+    }
+
+    #[test]
+    fn provisional_ids_reserve_u32_max_for_the_default_graph_sentinel() {
+        let last_usable = usize::try_from(u32::MAX - 1).unwrap();
+        let reserved = usize::try_from(u32::MAX).unwrap();
+
+        assert_eq!(next_provisional_id(last_usable).unwrap(), u32::MAX - 1);
+        assert!(matches!(
+            next_provisional_id(reserved),
+            Err(BuildPipelineError::TooManyTerms)
+        ));
+    }
+
+    #[test]
+    fn metadata_and_stats_cover_default_and_lexically_ordered_named_graphs() {
+        let mut ingest = MemoryIngest::new();
+        ingest
+            .push(q("<default-s>", "<p>", "<default-o>", None))
+            .unwrap();
+        ingest
+            .push(q("<z-s>", "<p>", "<z-o>", Some("<z-graph>")))
+            .unwrap();
+        ingest
+            .push(q("<a-s>", "<p>", "<a-o>", Some("<a-graph>")))
+            .unwrap();
+        ingest
+            .push(q("<a-s>", "<q>", "<a-second-o>", Some("<a-graph>")))
+            .unwrap();
+
+        let built = ingest
+            .finish(|stats| {
+                format!(
+                    "statements={};default={};named={}",
+                    stats.statements, stats.default_triples, stats.named_graphs
+                )
+                .into_bytes()
+            })
+            .unwrap();
+
+        assert_eq!(built.stats.statements, 4);
+        assert_eq!(built.stats.default_triples, 1);
+        assert_eq!(built.stats.named_graphs, 2);
+        assert_eq!(built.metadata, b"statements=4;default=1;named=2");
+        assert_eq!(built.default_triples.len(), 1);
+        assert_eq!(built.named["<a-graph>"].len(), 2);
+        assert_eq!(built.named["<z-graph>"].len(), 1);
+        assert_eq!(
+            built.named.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["<a-graph>", "<z-graph>"]
+        );
     }
 
     #[test]
