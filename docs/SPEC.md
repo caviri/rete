@@ -243,9 +243,12 @@ a truncating cast. This is a physical-ID limit, not a file-size limit.
 
 Aggregate counts and byte coordinates remain **u64**: header quad counts,
 section offsets/lengths, compressed payload lengths, cumulative record offsets,
-and aggregate graph totals may exceed `u32::MAX`. Readers validate every
-`u64 → usize` conversion, checked sum, and allocation bound against bytes that
-are already present before reserving storage.
+and aggregate graph totals may exceed `u32::MAX`. The staged `0x06` family
+decoder bounds its framed count/length conversions and capacities against bytes
+already present; dictionary restart reconstruction and chunk-run coordinates use
+checked `u64` arithmetic before conversion to their physical `u32`/`usize`
+domains. These are format-boundary guarantees, not a claim about every reader
+implementation path.
 
 ---
 
@@ -353,7 +356,10 @@ afterwards, instead of the whole dictionary container.
 The following is the exact internal contract for the next file generation. It
 is deliberately staged: this repository still writes and dispatches stable
 header generation `0x05` at this point. `0x06` is not emitted by production
-writers or selected by public readers until the explicit integration step.
+writers or selected by public readers. `CURRENT_FORMAT_VERSION` and the minimum
+stable read version both remain `0x05`. Task 11 will deliberately make the
+eventual `0x06`-only break and remove the `0x05` reader; that incompatibility is
+not part of this staged codec implementation.
 
 Its index root is exactly three uncompressed length-framed family payloads in
 **Subject, Predicate, Object** order. An empty graph is therefore
@@ -407,8 +413,10 @@ never serialized.
 Each synopsis trailer record is `min_b, max_b-min_b, min_c, max_c-min_c` and
 must equal its decompressed tile's zone map. Counts, flags, varint domains,
 ranges, continuation links, compressed slices, prefix-2 metadata, trailers,
-and trailing bytes are all exact framing checks. A decoder rejects malformed or
-truncated input before allocating from attacker-controlled counts.
+and trailing bytes are all exact framing checks. Family varints are canonical
+(at most ten bytes); prefix-2 blobs and decompressed tiles are each capped at
+64 KiB. A zstd record is exactly one fully consumed frame, and the staged
+decoder bounds count-dependent capacity by bytes already framed in the payload.
 
 ### 6.4 Full-text index (TEXT_INDEX section, optional)
 

@@ -140,6 +140,18 @@ pub struct SectionMeta {
 
 /// Parse only the header/restart table of a section.
 pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
+    parse_meta_inner(bytes, Some(bytes.len() as u64))
+}
+
+/// Parse a chunked container's standalone raw-section header.  Its restart
+/// offsets name the *decompressed* raw section, so a compressed container
+/// length cannot safely bound them; checked reconstruction, ordering, and the
+/// exact expected restart count still apply.
+pub(crate) fn parse_meta_header_fragment(bytes: &[u8]) -> Result<SectionMeta, DictError> {
+    parse_meta_inner(bytes, None)
+}
+
+fn parse_meta_inner(bytes: &[u8], section_end: Option<u64>) -> Result<SectionMeta, DictError> {
     let mut pos = 0;
     let take = |pos: &mut usize| -> Result<u64, DictError> {
         let (v, n) =
@@ -156,17 +168,38 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
     if restart_interval == 0 {
         return Err(DictError::Malformed("zero restart interval"));
     }
+    let expected_restarts = u64::from(term_count).div_ceil(u64::from(restart_interval));
+    if u64::try_from(num_restarts).ok() != Some(expected_restarts) {
+        return Err(DictError::Malformed(
+            "restart count does not match term count",
+        ));
+    }
     // `num_restarts` is untrusted; each restart is ≥1 byte, so cap the
     // pre-allocation at the buffer length to avoid an OOM on a bogus count.
     let mut rel = Vec::with_capacity(num_restarts.min(bytes.len()));
     for _ in 0..num_restarts {
         rel.push(take(&mut pos)?);
     }
-    let body_start = pos as u64;
+    let body_start = u64::try_from(pos).map_err(|_| DictError::Malformed("header too large"))?;
+    let mut restart_offsets = Vec::with_capacity(rel.len());
+    let mut previous = None;
+    for relative in rel {
+        let absolute = body_start
+            .checked_add(relative)
+            .ok_or(DictError::Malformed("restart offset overflows"))?;
+        if section_end.is_some_and(|end| absolute >= end) {
+            return Err(DictError::Malformed("restart offset outside section"));
+        }
+        if previous.is_some_and(|last| absolute <= last) {
+            return Err(DictError::Malformed("restart offsets are not monotone"));
+        }
+        restart_offsets.push(absolute);
+        previous = Some(absolute);
+    }
     Ok(SectionMeta {
         term_count,
         restart_interval,
-        restart_offsets: rel.into_iter().map(|o| body_start + o).collect(),
+        restart_offsets,
     })
 }
 
@@ -236,16 +269,18 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
     }
     let run = lo - 1;
     let mut pos = run_entry_into(bytes, meta.restart_offsets[run] as usize, &mut buf)?;
-    let base_id = (run * meta.restart_interval as usize) as u32 + 1;
+    let interval = u64::from(meta.restart_interval);
+    let run = u64::try_from(run).ok()?;
+    let base_id = u32::try_from(run.checked_mul(interval)?.checked_add(1)?).ok()?;
     // saturating_sub: corrupt metadata where run*interval > term_count must not
     // underflow-panic.
     let run_len = meta.restart_interval.min(
         meta.term_count
-            .saturating_sub(run as u32 * meta.restart_interval),
+            .checked_sub(u32::try_from(run.checked_mul(interval)?).ok()?)?,
     );
     for step in 0..run_len {
         if buf.as_slice() == term.as_bytes() {
-            return Some(base_id + step);
+            return base_id.checked_add(step);
         }
         if buf.as_slice() > term.as_bytes() {
             return None;
@@ -526,7 +561,8 @@ impl ChunkedSection {
         if id == ABSENT || id > self.meta.term_count {
             return None;
         }
-        let run = (id - 1) as usize / self.meta.restart_interval as usize;
+        let run =
+            usize::try_from(u64::from(id - 1) / u64::from(self.meta.restart_interval)).ok()?;
         self.chunk_of_run(run)
     }
 
@@ -552,15 +588,17 @@ impl ChunkedSection {
 
     /// One past the last run index held by chunk `ci` (its run range is
     /// `[first_run, run_end)`).
-    fn run_end_of_chunk(&self, ci: usize, bytes: &[u8], ri: usize) -> usize {
+    fn run_end_of_chunk(&self, ci: usize, bytes: &[u8], ri: usize) -> Option<usize> {
         if let Some(next) = self.chunks.get(ci + 1) {
-            return next.first_run;
+            return Some(next.first_run);
         }
         let chunk = &self.chunks[ci];
         if self.meta.restart_offsets.is_empty() {
-            chunk.first_run + chunk.run_offsets(bytes, ri).len()
+            chunk
+                .first_run
+                .checked_add(chunk.run_offsets(bytes, ri).len())
         } else {
-            self.meta.restart_offsets.len()
+            Some(self.meta.restart_offsets.len())
         }
     }
 
@@ -571,7 +609,9 @@ impl ChunkedSection {
         if id == ABSENT || id > self.meta.term_count {
             return None;
         }
-        self.chunk_of_run((id - 1) as usize / self.meta.restart_interval as usize)
+        let run =
+            usize::try_from(u64::from(id - 1) / u64::from(self.meta.restart_interval)).ok()?;
+        self.chunk_of_run(run)
     }
 
     pub fn term(&self, id: u32) -> Option<String> {
@@ -614,7 +654,7 @@ impl ChunkedSection {
         let bytes = self.chunk_data(ci);
 
         // Binary search this chunk's runs by their first (full) term.
-        let run_end = self.run_end_of_chunk(ci, bytes, ri);
+        let run_end = self.run_end_of_chunk(ci, bytes, ri)?;
         let mut buf = Vec::new();
         let mut lo = first_run;
         let mut hi = run_end;
@@ -634,16 +674,18 @@ impl ChunkedSection {
         let run = lo - 1;
         let off = self.run_off_in_chunk(ci, run, bytes, ri)?;
         let mut pos = run_entry_into(bytes, off, &mut buf)?;
-        let base_id = (run * ri) as u32 + 1;
+        let interval = u64::from(self.meta.restart_interval);
+        let run_u64 = u64::try_from(run).ok()?;
+        let base_id = u32::try_from(run_u64.checked_mul(interval)?.checked_add(1)?).ok()?;
         // saturating_sub: corrupt metadata must not underflow-panic.
         let run_len = self.meta.restart_interval.min(
             self.meta
                 .term_count
-                .saturating_sub(run as u32 * self.meta.restart_interval),
+                .checked_sub(u32::try_from(run_u64.checked_mul(interval)?).ok()?)?,
         );
         for step in 0..run_len {
             if buf.as_slice() == term.as_bytes() {
-                return Some(base_id + step);
+                return base_id.checked_add(step);
             }
             if buf.as_slice() > term.as_bytes() {
                 return None;
@@ -806,6 +848,27 @@ mod tests {
             parse_meta(&bytes),
             Err(DictError::Malformed("restart interval exceeds u32"))
         ));
+    }
+
+    #[test]
+    fn parse_meta_rejects_overflowing_and_non_monotone_restart_offsets() {
+        let mut overflow = Vec::new();
+        write_uvarint(&mut overflow, 1);
+        write_uvarint(&mut overflow, 1);
+        write_uvarint(&mut overflow, 1);
+        write_uvarint(&mut overflow, u64::MAX);
+        let result = std::panic::catch_unwind(|| parse_meta(&overflow));
+        assert!(result.is_ok(), "untrusted restart offset must not panic");
+        assert!(result.unwrap().is_err());
+
+        let mut non_monotone = Vec::new();
+        write_uvarint(&mut non_monotone, 2);
+        write_uvarint(&mut non_monotone, 1);
+        write_uvarint(&mut non_monotone, 2);
+        write_uvarint(&mut non_monotone, 1);
+        write_uvarint(&mut non_monotone, 0);
+        non_monotone.extend_from_slice(&[0, 1, b'a', 0, 1, b'b']);
+        assert!(parse_meta(&non_monotone).is_err());
     }
 
     /// Property-style stress of the front-coded decode paths: a large
