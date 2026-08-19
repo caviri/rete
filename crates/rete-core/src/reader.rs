@@ -7,6 +7,7 @@
 //! a given access pattern actually touches.
 
 use crate::adaptive::{AdaptiveReadController, ReadIntent};
+use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -31,6 +32,56 @@ fn materializable_len_with_limit(len: u64, limit: usize) -> std::io::Result<usiz
 /// limited by `usize` and Rust's `isize::MAX` allocation contract.
 pub fn materializable_len(len: u64) -> std::io::Result<usize> {
     materializable_len_with_limit(len, isize::MAX as usize)
+}
+
+fn checked_resident_range_with_limit(
+    offset: u64,
+    len: u64,
+    available: usize,
+    address_limit: usize,
+) -> std::io::Result<Range<usize>> {
+    let end = offset.checked_add(len).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "resident range overflows")
+    })?;
+    let address_limit = u64::try_from(address_limit).unwrap_or(u64::MAX);
+    if offset > address_limit || end > address_limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "resident range does not fit this target's address space",
+        ));
+    }
+    let start = usize::try_from(offset).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "resident range offset does not fit this target's usize",
+        )
+    })?;
+    let end = usize::try_from(end).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "resident range end does not fit this target's usize",
+        )
+    })?;
+    if end > available {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "resident range out of bounds",
+        ));
+    }
+    Ok(start..end)
+}
+
+/// Validate an in-memory byte range without narrowing its wire coordinates.
+/// Offsets remain `u64` for ranged readers; callers that already hold a
+/// resident slice must also prove the range and resulting `Vec` fit this
+/// target before indexing it.
+pub fn checked_resident_range(
+    offset: u64,
+    len: u64,
+    available: usize,
+) -> std::io::Result<Range<usize>> {
+    materializable_len(len)?;
+    checked_resident_range_with_limit(offset, len, available, usize::MAX)
 }
 
 /// Something that can serve arbitrary byte ranges of a `.rete` resource.
@@ -151,14 +202,14 @@ impl RangeReader for SliceReader<'_> {
     }
 
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
-        let start = offset as usize;
-        let end = start
-            .checked_add(len as usize)
-            .filter(|&e| e <= self.data.len())
+        let range = checked_resident_range(offset, len, self.data.len())?;
+        Ok(self
+            .data
+            .get(range)
             .ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "range out of bounds")
-            })?;
-        Ok(self.data[start..end].to_vec())
+            })?
+            .to_vec())
     }
 }
 
@@ -385,6 +436,25 @@ mod tests {
             materializable_len_with_limit(17, u32::MAX as usize).unwrap(),
             17
         );
+    }
+
+    #[test]
+    fn resident_slice_bounds_simulate_32_bit_offsets_and_lengths() {
+        let max32 = u32::MAX as usize;
+        assert!(checked_resident_range_with_limit(u64::from(u32::MAX) + 1, 0, 16, max32,).is_err());
+        assert!(checked_resident_range_with_limit(0, u64::from(u32::MAX) + 7, 16, max32,).is_err());
+        assert_eq!(
+            checked_resident_range_with_limit(3, 4, 16, max32).unwrap(),
+            3..7
+        );
+    }
+
+    #[test]
+    fn slice_reader_rejects_unrepresentable_resident_coordinates() {
+        let data = [0u8; 16];
+        let r = SliceReader::new(&data);
+        assert!(r.read_at(u64::from(u32::MAX) + 1, 1).is_err());
+        assert!(r.read_at(0, u64::from(u32::MAX) + 7).is_err());
     }
 
     #[test]

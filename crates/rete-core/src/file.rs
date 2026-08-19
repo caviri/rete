@@ -24,7 +24,7 @@ use crate::header::{
 use crate::index::{GraphIndex, IndexPermutation, Pattern, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph, PyramidAlgo};
-use crate::reader::{materializable_len, RangeReader};
+use crate::reader::{checked_resident_range, materializable_len, RangeReader};
 use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
 use crate::triples::Triple;
 use crate::varint::{read_uvarint, write_uvarint};
@@ -554,14 +554,21 @@ fn encode_container(sections: &[&[u8]], codec: u8) -> Vec<u8> {
 }
 
 /// Decode a container into owned, decompressed sections.
-fn decode_container(bytes: &[u8], codec: u8) -> Result<Vec<Vec<u8>>, FileError> {
+fn decode_container(
+    bytes: &[u8],
+    codec: u8,
+    expected_sections: usize,
+) -> Result<Vec<Vec<u8>>, FileError> {
     let (n, mut pos) = read_uvarint(bytes).ok_or(FileError::Container("truncated count"))?;
-    // `n` is untrusted; each section needs â‰¥1 byte, so cap the pre-allocation at
-    // the buffer length rather than trusting the count (avoids an OOM on a bogus
-    // header pointing at a small region).
-    let n = materializable_len(n).map_err(|_| FileError::Container("section count too large"))?;
-    let mut out = Vec::with_capacity(n.min(bytes.len()));
-    for _ in 0..n {
+    if n != u64::try_from(expected_sections)
+        .map_err(|_| FileError::Container("expected section count too large"))?
+    {
+        return Err(FileError::Container("unexpected container section count"));
+    }
+    // Dictionary and index containers have fixed production section counts.
+    // Validate that count before reserving even one output element.
+    let mut out = Vec::with_capacity(expected_sections);
+    for _ in 0..expected_sections {
         let (len, used) = read_uvarint(bytes.get(pos..).unwrap_or(&[]))
             .ok_or(FileError::Container("truncated length"))?;
         pos = pos
@@ -1013,10 +1020,7 @@ fn decode_chunked_dict_section(
 }
 
 fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, FileError> {
-    let dsecs = decode_container(bytes, CODEC_NONE)?;
-    if dsecs.len() != 4 {
-        return Err(FileError::Container("expected 4 dictionary sections"));
-    }
+    let dsecs = decode_container(bytes, CODEC_NONE, 4)?;
     let mut sections = Vec::with_capacity(4);
     for sec in &dsecs {
         sections.push(decode_chunked_dict_section(sec, codec)?);
@@ -2182,10 +2186,7 @@ fn decode_tiled_section(payload: &[u8], codec: u8) -> Result<Vec<(u32, u32, Vec<
 /// Decode the index container: six raw tiled section payloads (one per
 /// permutation), each tile compressed individually.
 fn decode_index_container(bytes: &[u8], codec: u8) -> Result<GraphIndex, FileError> {
-    let mut isecs = decode_container(bytes, CODEC_NONE)?;
-    if isecs.len() != NUM_PERMS {
-        return Err(FileError::Container("expected 6 permutation sections"));
-    }
+    let mut isecs = decode_container(bytes, CODEC_NONE, NUM_PERMS)?;
     let mut sections: [Vec<(u32, u32, Vec<u8>)>; NUM_PERMS] = Default::default();
     for (i, sec) in isecs.iter_mut().enumerate() {
         sections[i] = decode_tiled_section(sec, codec)?;
@@ -3034,12 +3035,11 @@ impl Rete {
         // or corrupt from an arbitrary URL). Slice through a checked helper so a
         // bad region yields an error instead of panicking on an OOB index.
         let region = |off: u64, len: u64| -> Result<&[u8], FileError> {
-            let start = off as usize;
-            let end = start
-                .checked_add(len as usize)
-                .filter(|&e| e <= bytes.len())
-                .ok_or(FileError::Container("section range out of bounds"))?;
-            Ok(&bytes[start..end])
+            let range = checked_resident_range(off, len, bytes.len())
+                .map_err(|_| FileError::Container("section range out of bounds"))?;
+            bytes
+                .get(range)
+                .ok_or(FileError::Container("section range out of bounds"))
         };
 
         let dict = decode_dictionary_container(
@@ -5159,7 +5159,7 @@ mod tests {
     fn eager_container_rejects_unmaterializable_lengths_without_panicking() {
         let mut hostile = vec![1];
         write_uvarint(&mut hostile, u64::MAX);
-        let result = std::panic::catch_unwind(|| decode_container(&hostile, CODEC_NONE));
+        let result = std::panic::catch_unwind(|| decode_container(&hostile, CODEC_NONE, 1));
         assert!(
             result.is_ok(),
             "hostile eager container length must not panic"
@@ -5171,11 +5171,37 @@ mod tests {
     fn eager_container_rejects_unmaterializable_counts_without_panicking() {
         let mut hostile = Vec::new();
         write_uvarint(&mut hostile, u64::MAX);
-        let result = std::panic::catch_unwind(|| decode_container(&hostile, CODEC_NONE));
+        let result = std::panic::catch_unwind(|| decode_container(&hostile, CODEC_NONE, 1));
         assert!(
             result.is_ok(),
             "hostile eager container count must not panic"
         );
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn fixed_container_count_rejects_hostile_empty_sections_before_decode() {
+        let declared = 1024usize;
+        let mut hostile = Vec::new();
+        write_uvarint(&mut hostile, declared as u64);
+        hostile.extend(std::iter::repeat_n(0, declared));
+
+        let error = decode_container(&hostile, CODEC_NONE, 4).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unexpected container section count"));
+    }
+
+    #[test]
+    fn eager_open_rejects_unrepresentable_resident_section_offsets() {
+        let mut bytes = build_image();
+        let mut header = Header::from_bytes(&bytes).unwrap();
+        header.dictionary_offset = u64::from(u32::MAX) + 1;
+        header.dictionary_len = 1;
+        bytes[..HEADER_LEN].copy_from_slice(&header.to_bytes());
+
+        let result = std::panic::catch_unwind(|| Rete::open(&bytes));
+        assert!(result.is_ok());
         assert!(result.unwrap().is_err());
     }
 
@@ -5198,6 +5224,22 @@ mod tests {
     }
 
     #[test]
+    fn coalescing_rejects_an_unmaterializable_merged_span_before_io() {
+        let reader = NoMaterializeReader {
+            calls: std::sync::atomic::AtomicU64::new(0),
+        };
+        let ranges = [
+            ByteRange { offset: 0, len: 1 },
+            ByteRange {
+                offset: isize::MAX as u64,
+                len: 1,
+            },
+        ];
+        assert!(read_coalesced(&reader, &ranges, u64::MAX, ReadIntent::SelectiveProbe,).is_none());
+        assert_eq!(reader.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
     fn dictionary_directory_rejects_unmaterializable_chunk_before_loading() {
         let mut directory = Vec::new();
         write_uvarint(&mut directory, 1); // one chunk for one restart run
@@ -5207,6 +5249,26 @@ mod tests {
         write_uvarint(&mut directory, isize::MAX as u64 + 1);
 
         assert!(parse_chunk_dir_only(&directory, u64::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn eager_dictionary_directory_rejects_unmaterializable_chunk_before_loading() {
+        let mut header = Vec::new();
+        write_uvarint(&mut header, 1); // one term
+        write_uvarint(&mut header, 1); // restart interval
+        write_uvarint(&mut header, 1); // one restart offset
+        write_uvarint(&mut header, 0); // raw body begins immediately after header
+
+        let mut payload = Vec::new();
+        write_uvarint(&mut payload, header.len() as u64);
+        payload.extend_from_slice(&header);
+        write_uvarint(&mut payload, 1); // one chunk
+        write_uvarint(&mut payload, 0); // first run delta
+        write_uvarint(&mut payload, 1); // first term length
+        payload.push(b'x');
+        write_uvarint(&mut payload, isize::MAX as u64 + 1);
+
+        assert!(parse_chunked_dict_dir(&payload, u64::MAX).is_err());
     }
 
     #[test]
