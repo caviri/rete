@@ -274,7 +274,7 @@ mod tests {
     use crate::dictionary::DictionaryBuilder;
     use crate::ingest::RawQuad;
 
-    use super::{next_provisional_id, BuildPipelineError, MemoryIngest};
+    use super::{next_provisional_id, BuildPipelineError, MemoryIngest, DEFAULT_GRAPH_ID};
 
     type CanonicalContent = (
         [Vec<u8>; 4],
@@ -310,10 +310,14 @@ mod tests {
 
     #[test]
     fn provisional_ids_reserve_u32_max_for_the_default_graph_sentinel() {
-        let last_usable = usize::try_from(u32::MAX - 1).unwrap();
-        let reserved = usize::try_from(u32::MAX).unwrap();
+        assert_eq!(DEFAULT_GRAPH_ID, u32::MAX);
+        let last_usable = usize::try_from(DEFAULT_GRAPH_ID - 1).unwrap();
+        let reserved = usize::try_from(DEFAULT_GRAPH_ID).unwrap();
 
-        assert_eq!(next_provisional_id(last_usable).unwrap(), u32::MAX - 1);
+        assert_eq!(
+            next_provisional_id(last_usable).unwrap(),
+            DEFAULT_GRAPH_ID - 1
+        );
         assert!(matches!(
             next_provisional_id(reserved),
             Err(BuildPipelineError::TooManyTerms)
@@ -349,6 +353,8 @@ mod tests {
         assert_eq!(built.stats.statements, 4);
         assert_eq!(built.stats.default_triples, 1);
         assert_eq!(built.stats.named_graphs, 2);
+        assert_eq!(built.stats.terms, 9);
+        assert_eq!(built.stats.pyramid_levels, 0);
         assert_eq!(built.metadata, b"statements=4;default=1;named=2");
         assert_eq!(built.default_triples.len(), 1);
         assert_eq!(built.named["<a-graph>"].len(), 2);
