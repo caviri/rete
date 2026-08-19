@@ -40,7 +40,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::build_pipeline::ingest::ChunkedIngest;
+use crate::build_pipeline::spool::{BuildTemp, TripleSpool};
 use crate::build_pipeline::timing::{BuildCounters, BuildPhase, BuildTiming};
+use crate::build_pipeline::BuildPipelineError;
 use crate::dict::env_restart_interval;
 
 use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
@@ -104,10 +107,36 @@ pub enum ExtBuildError {
     Internal(&'static str),
 }
 
+impl ExtBuildError {
+    pub(crate) fn into_pipeline(self) -> BuildPipelineError {
+        match self {
+            Self::Ingest(error) => BuildPipelineError::Ingest(error),
+            Self::Io(error) => BuildPipelineError::Io(error),
+            Self::NamedGraph(graph) => BuildPipelineError::NamedGraph(graph),
+            Self::Internal(message) => BuildPipelineError::InvalidSpool(message),
+        }
+    }
+
+    fn from_pipeline(error: BuildPipelineError) -> Self {
+        match error {
+            BuildPipelineError::Ingest(error) => Self::Ingest(error),
+            BuildPipelineError::Io(error) => Self::Io(error),
+            BuildPipelineError::NamedGraph(graph) => Self::NamedGraph(graph),
+            BuildPipelineError::InvalidSpool(message) | BuildPipelineError::Overflow(message) => {
+                Self::Internal(message)
+            }
+            BuildPipelineError::TooManyTerms => Self::Internal("term id space exceeds u32"),
+            BuildPipelineError::File(_) => Self::Internal("shared chunk ingest file failure"),
+            #[cfg(test)]
+            BuildPipelineError::InjectedFailure(message) => Self::Internal(message),
+        }
+    }
+}
+
 /// Fraction of the budget a chunk's buffered raw quads may occupy before the
 /// chunk is sealed. The other half covers the chunk's transient dictionary +
 /// id-encode working set (~the same order as the buffered strings).
-const CHUNK_BUDGET_FRACTION: f64 = 0.5;
+pub(crate) const CHUNK_BUDGET_FRACTION: f64 = 0.5;
 /// Overhead charged per buffered quad on top of its term byte lengths (String
 /// headers, Vec slot, allocator slack) when estimating chunk residency.
 const PER_QUAD_OVERHEAD: u64 = 96;
@@ -132,7 +161,10 @@ where
         .clone()
         .or_else(|| output.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
-    let tmp = TmpDir::create(&tmp_parent)?;
+    let tmp = BuildTemp::new(&tmp_parent).map_err(|error| match error {
+        BuildPipelineError::Io(error) => ExtBuildError::Io(error),
+        _ => ExtBuildError::Internal("temporary directory creation failed"),
+    })?;
     let budget = opts.memory_budget.max(64 << 20); // floor: 64 MiB
 
     // ---- Phase 1: chunk the input ------------------------------------------
@@ -142,55 +174,32 @@ where
         budget >> 20,
         chunk_budget >> 20
     );
-    let mut chunker = Chunker::new(&tmp, chunk_budget);
-    stream(&mut |q: RawQuad| chunker.push(q))?;
-    let chunks = chunker.finish()?;
+    let mut chunked = ChunkedIngest::new(&tmp, budget);
+    stream(&mut |q: RawQuad| chunked.push(q).map_err(ExtBuildError::from_pipeline))?;
     timing.lap(BuildPhase::ParseIngest);
-    let statements: u64 = chunks.iter().map(|c| c.triple_count).sum();
+    let canonical = chunked
+        .finish(opts.metadata)
+        .map_err(ExtBuildError::from_pipeline)?;
+    let statements = u64::try_from(canonical.stats.statements)
+        .map_err(|_| ExtBuildError::Internal("statement count overflow"))?;
     eprintln!(
-        "extbuild: {} chunk(s), {} statement(s) spilled",
-        chunks.len(),
+        "extbuild: canonical spool contains {} statement(s)",
         statements
     );
 
-    // ---- Phase 2: merge chunk dictionaries into the global dictionary -------
-    let mut merged = merge_dictionaries(&tmp, &chunks)?;
+    // ---- Phase 2/3: shared chunk ingest merges dictionaries and remaps the
+    // per-chunk records into the canonical file-backed spool.
     timing.lap(BuildPhase::Canonicalize);
     eprintln!(
         "extbuild: merged dictionary — {} term(s)",
-        merged.term_count
+        canonical.dictionary.term_count
     );
-
-    // ---- Phase 3: remap chunk triples to global ids --------------------------
-    let remaps = std::mem::take(&mut merged.remaps);
-    let global_tri = tmp.path("global.tri");
-    {
-        let mut out = BufWriter::new(File::create(&global_tri)?);
-        for (ci, _chunk) in chunks.iter().enumerate() {
-            let maps = &remaps[ci];
-            let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")))?);
-            let mut buf = [0u8; 12];
-            loop {
-                match rd.read_exact(&mut buf) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                    Err(e) => return Err(e.into()),
-                }
-                let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-                let p = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-                let o = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-                let gs = maps.subj[(s - 1) as usize];
-                let gp = maps.pred[(p - 1) as usize];
-                let go = maps.obj[(o - 1) as usize];
-                out.write_all(&gs.to_le_bytes())?;
-                out.write_all(&gp.to_le_bytes())?;
-                out.write_all(&go.to_le_bytes())?;
-            }
-            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.tri")));
-        }
-        out.flush()?;
-    }
-    drop(remaps); // free the remap tables before the sort phase
+    let global_tri = canonical
+        .triples
+        .file_path()
+        .ok_or(ExtBuildError::Internal(
+            "external ingest did not spill triples",
+        ))?;
     timing.lap(BuildPhase::Remap);
 
     // ---- Phase 4: per-permutation external sort + streaming tiler -----------
@@ -200,7 +209,7 @@ where
     let mut perm_sections: Vec<SectionFile> = Vec::with_capacity(6);
     let mut deduped_count: Option<u64> = None;
     for perm in crate::index::ALL_PERMS {
-        let (section, n) = build_permutation_section(&tmp, &global_tri, perm, run_len, codec)?;
+        let (section, n) = build_permutation_section(&tmp, global_tri, perm, run_len, codec)?;
         // every permutation dedups the same multiset — counts must agree
         if let Some(prev) = deduped_count {
             if prev != n {
@@ -216,31 +225,31 @@ where
         perm_sections.push(section);
     }
     timing.lap(BuildPhase::SubjectFamily);
-    let _ = std::fs::remove_file(&global_tri);
+    let _ = std::fs::remove_file(global_tri);
     let quad_count = deduped_count.unwrap_or(0);
 
     // ---- Phase 5: stream the final file -------------------------------------
-    let mut stats = BuildStats {
-        statements: statements as usize,
-        default_triples: statements as usize,
-        named_graphs: 0,
-        terms: merged.term_count as usize,
-        pyramid_levels: 0,
-    };
-    let metadata = (opts.metadata)(&stats);
+    let mut stats = canonical.stats;
     write_final_file(
         output,
-        &metadata,
-        &merged,
+        &canonical.metadata,
+        &SpilledDictionaryRef {
+            section_paths: canonical.dictionary.section_paths.clone(),
+            term_count: canonical.dictionary.term_count,
+            has_quoted: canonical.dictionary.has_quoted_triples,
+        },
         &perm_sections,
         quad_count,
         codec,
     )?;
     timing.lap(BuildPhase::FinalWrite);
-    let spill_bytes = merged
-        .section_files
+    let spill_bytes = canonical
+        .dictionary
+        .section_paths
         .iter()
-        .map(|section| section.len)
+        .map(|section| std::fs::metadata(section).map(|entry| entry.len()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .chain(perm_sections.iter().map(|section| section.len))
         .sum();
     timing.set_counters(BuildCounters {
@@ -259,43 +268,18 @@ where
 // tmp-dir guard
 // ---------------------------------------------------------------------------
 
-struct TmpDir {
-    dir: PathBuf,
-}
-
-impl TmpDir {
-    fn create(parent: &Path) -> Result<Self, std::io::Error> {
-        // pid + a process-wide counter: two concurrent external builds in the
-        // same process (or parallel tests) must never share a spill directory.
-        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = parent.join(format!(".rete-extbuild-{}-{}", std::process::id(), seq));
-        std::fs::create_dir_all(&dir)?;
-        Ok(TmpDir { dir })
-    }
-    fn path(&self, name: &str) -> PathBuf {
-        self.dir.join(name)
-    }
-}
-
-impl Drop for TmpDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Phase 1: chunking
 // ---------------------------------------------------------------------------
 
-struct ChunkInfo {
-    triple_count: u64,
+pub(crate) struct ChunkInfo {
+    pub(crate) triple_count: u64,
     /// term counts per section file, in file order (shared, subj, obj, pred)
     section_terms: [u32; 4],
 }
 
-struct Chunker<'a> {
-    tmp: &'a TmpDir,
+pub(crate) struct Chunker<'a> {
+    tmp: &'a BuildTemp,
     chunk_budget: u64,
     acc_bytes: u64,
     quads: Vec<(String, String, String)>,
@@ -304,7 +288,7 @@ struct Chunker<'a> {
 }
 
 impl<'a> Chunker<'a> {
-    fn new(tmp: &'a TmpDir, chunk_budget: u64) -> Self {
+    pub(crate) fn new(tmp: &'a BuildTemp, chunk_budget: u64) -> Self {
         Chunker {
             tmp,
             chunk_budget,
@@ -315,7 +299,7 @@ impl<'a> Chunker<'a> {
         }
     }
 
-    fn push(&mut self, q: RawQuad) -> Result<(), ExtBuildError> {
+    pub(crate) fn push(&mut self, q: RawQuad) -> Result<(), ExtBuildError> {
         let (s, p, o, g) = q;
         if let Some(graph) = g {
             return Err(ExtBuildError::NamedGraph(graph));
@@ -405,7 +389,7 @@ impl<'a> Chunker<'a> {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<Vec<ChunkInfo>, ExtBuildError> {
+    pub(crate) fn finish(mut self) -> Result<Vec<ChunkInfo>, ExtBuildError> {
         self.seal()?;
         if self.chunks.is_empty() {
             // an empty input still produces one (empty) chunk so downstream
@@ -433,13 +417,36 @@ struct ChunkRemap {
     pred: Vec<u32>,
 }
 
-struct MergedDict {
+pub(crate) struct MergedDict {
     /// The four chunked-encoded dict section payloads, spilled to tmp files
     /// (shared, subjects, objects, predicates — the container order).
     section_files: [SectionFile; 4],
+    pub(crate) term_count: u64,
+    pub(crate) has_quoted: bool,
+    remaps: Vec<ChunkRemap>,
+}
+
+impl MergedDict {
+    pub(crate) fn section_paths(&self) -> [PathBuf; 4] {
+        self.section_files
+            .each_ref()
+            .map(|section| section.path.clone())
+    }
+
+    #[cfg(test)]
+    fn dictionary_ref(&self) -> SpilledDictionaryRef {
+        SpilledDictionaryRef {
+            section_paths: self.section_paths(),
+            term_count: self.term_count,
+            has_quoted: self.has_quoted,
+        }
+    }
+}
+
+struct SpilledDictionaryRef {
+    section_paths: [PathBuf; 4],
     term_count: u64,
     has_quoted: bool,
-    remaps: Vec<ChunkRemap>,
 }
 
 /// A finished section payload living in a tmp file.
@@ -623,7 +630,10 @@ const CLASS_SUBJ_ONLY: u32 = 0b01 << 30;
 const CLASS_OBJ_ONLY: u32 = 0b10 << 30;
 const CLASS_MASK: u32 = 0b11 << 30;
 
-fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, ExtBuildError> {
+pub(crate) fn merge_dictionaries(
+    tmp: &BuildTemp,
+    chunks: &[ChunkInfo],
+) -> Result<MergedDict, ExtBuildError> {
     let k = chunks.len();
 
     // remap tables, sized by each chunk's spaces
@@ -802,6 +812,88 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
     })
 }
 
+/// Remap each chunk's local triple file into one canonical 12-byte spool. This
+/// is deliberately sequential: the per-chunk remaps are bounded by the current
+/// chunk and are released before the external sort phase begins.
+pub(crate) fn remap_chunks_to_spool(
+    temp: &BuildTemp,
+    chunks: &[ChunkInfo],
+    merged: &mut MergedDict,
+) -> Result<TripleSpool, ExtBuildError> {
+    let count = chunks.iter().try_fold(0u64, |total, chunk| {
+        total
+            .checked_add(chunk.triple_count)
+            .ok_or(ExtBuildError::Internal("statement count overflow"))
+    })?;
+    let path = temp.path("global.tri");
+    let mut output = BufWriter::new(File::create(&path)?);
+    let remaps = std::mem::take(&mut merged.remaps);
+    for (chunk_index, _) in chunks.iter().enumerate() {
+        let maps = remaps
+            .get(chunk_index)
+            .ok_or(ExtBuildError::Internal("chunk remap missing"))?;
+        let chunk_path = temp.path(&format!("c{chunk_index}.tri"));
+        let mut input = BufReader::new(File::open(&chunk_path)?);
+        loop {
+            let mut record = [0u8; 12];
+            match input.read_exact(&mut record) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    let length = std::fs::metadata(&chunk_path)?.len();
+                    if length % 12 != 0 {
+                        return Err(ExtBuildError::Internal("partial chunk triple record"));
+                    }
+                    break;
+                }
+                Err(error) => return Err(error.into()),
+            }
+            let subject = u32::from_le_bytes(
+                record[0..4]
+                    .try_into()
+                    .map_err(|_| ExtBuildError::Internal("subject record width"))?,
+            );
+            let predicate = u32::from_le_bytes(
+                record[4..8]
+                    .try_into()
+                    .map_err(|_| ExtBuildError::Internal("predicate record width"))?,
+            );
+            let object = u32::from_le_bytes(
+                record[8..12]
+                    .try_into()
+                    .map_err(|_| ExtBuildError::Internal("object record width"))?,
+            );
+            let remap = |ids: &[u32], id: u32, space: &'static str| {
+                id.checked_sub(1)
+                    .and_then(|index| usize::try_from(index).ok())
+                    .and_then(|index| ids.get(index).copied())
+                    .filter(|mapped| *mapped != 0)
+                    .ok_or(ExtBuildError::Internal(space))
+            };
+            let subject = remap(&maps.subj, subject, "subject remap missing")?;
+            let predicate = remap(&maps.pred, predicate, "predicate remap missing")?;
+            let object = remap(&maps.obj, object, "object remap missing")?;
+            output.write_all(&subject.to_le_bytes())?;
+            output.write_all(&predicate.to_le_bytes())?;
+            output.write_all(&object.to_le_bytes())?;
+        }
+        let _ = std::fs::remove_file(chunk_path);
+    }
+    output.flush()?;
+    drop(output);
+    TripleSpool::from_file(path, count).map_err(|error| match error {
+        BuildPipelineError::Io(error) => ExtBuildError::Io(error),
+        BuildPipelineError::InvalidSpool(message) => ExtBuildError::Internal(message),
+        BuildPipelineError::Overflow(message) => ExtBuildError::Internal(message),
+        BuildPipelineError::Ingest(error) => ExtBuildError::Ingest(error),
+        BuildPipelineError::NamedGraph(graph) => ExtBuildError::NamedGraph(graph),
+        BuildPipelineError::File(_) | BuildPipelineError::TooManyTerms => {
+            ExtBuildError::Internal("triple spool construction failed")
+        }
+        #[cfg(test)]
+        BuildPipelineError::InjectedFailure(message) => ExtBuildError::Internal(message),
+    })
+}
+
 /// A raw front-coded dict-section body being streamed to a tmp file, exactly as
 /// [`crate::dict::DictSectionBuilder::build`] would lay it out — plus the
 /// restart-offset bookkeeping needed to emit the header and (later) the chunked
@@ -860,7 +952,7 @@ impl RawSectionWriter {
     /// tmp file, deleting the raw body.
     fn finish_chunked(
         mut self,
-        tmp: &TmpDir,
+        tmp: &BuildTemp,
         out_name: &str,
         codec: u8,
     ) -> Result<FinishedSection, ExtBuildError> {
@@ -976,7 +1068,7 @@ fn read_restart_term(raw: &[u8]) -> Option<Vec<u8>> {
 /// payload (byte-identical to `encode_tiled_section` over the same triples).
 /// Returns the section file + the deduped triple count.
 fn build_permutation_section(
-    tmp: &TmpDir,
+    tmp: &BuildTemp,
     global_tri: &Path,
     perm: crate::index::IndexPermutation,
     run_len: usize,
@@ -1117,7 +1209,7 @@ struct StreamingTiler {
 }
 
 impl StreamingTiler {
-    fn new(tmp: &TmpDir, name: &str, codec: u8) -> Result<Self, ExtBuildError> {
+    fn new(tmp: &BuildTemp, name: &str, codec: u8) -> Result<Self, ExtBuildError> {
         let comp_path = tmp.path(&format!("{name}.tiles"));
         Ok(StreamingTiler {
             tile_budget: INDEX_TILE_BUDGET,
@@ -1227,7 +1319,7 @@ impl StreamingTiler {
     }
 
     /// Close out and assemble the section payload file.
-    fn finish(mut self, tmp: &TmpDir) -> Result<(SectionFile, u64), ExtBuildError> {
+    fn finish(mut self, tmp: &BuildTemp) -> Result<(SectionFile, u64), ExtBuildError> {
         self.close_group()?;
         self.flush_tile()?;
         self.compress_pending()?;
@@ -1286,7 +1378,7 @@ impl StreamingTiler {
 fn write_final_file(
     output: &Path,
     metadata: &[u8],
-    dict: &MergedDict,
+    dictionary: &SpilledDictionaryRef,
     perm_sections: &[SectionFile],
     quad_count: u64,
     codec: u8,
@@ -1298,10 +1390,11 @@ fn write_final_file(
     write_uvarint(&mut dict_frame, 4);
     let mut dict_len = dict_frame.len() as u64;
     let mut dict_section_heads = Vec::with_capacity(4);
-    for s in &dict.section_files {
+    for s in &dictionary.section_paths {
         let mut h = Vec::new();
-        write_uvarint(&mut h, s.len);
-        dict_len += h.len() as u64 + s.len;
+        let len = std::fs::metadata(s)?.len();
+        write_uvarint(&mut h, len);
+        dict_len += h.len() as u64 + len;
         dict_section_heads.push(h);
     }
 
@@ -1342,9 +1435,9 @@ fn write_final_file(
         Ok(())
     };
     write_hashed(&mut out, &mut hasher, &dict_frame)?;
-    for (s, head) in dict.section_files.iter().zip(&dict_section_heads) {
+    for (s, head) in dictionary.section_paths.iter().zip(&dict_section_heads) {
         write_hashed(&mut out, &mut hasher, head)?;
-        copy_hashed(&s.path, &mut out, &mut hasher)?;
+        copy_hashed(s, &mut out, &mut hasher)?;
     }
 
     // index container
@@ -1366,7 +1459,7 @@ fn write_final_file(
     let header = Header {
         version: crate::header::CURRENT_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
-            | if dict.has_quoted {
+            | if dictionary.has_quoted {
                 FLAG_HAS_QUOTED_TRIPLES
             } else {
                 0
@@ -1383,7 +1476,7 @@ fn write_final_file(
         block_codec: codec,
         pyramid_levels: 0,
         quad_count,
-        term_count: dict.term_count,
+        term_count: dictionary.term_count,
         content_hash: hash,
         named_graphs_offset: 0,
         named_graphs_len: 0,
@@ -1558,7 +1651,7 @@ mod tests {
         let out = dir.join("out.rete");
 
         // drive the internals directly with a tiny chunk budget
-        let tmp = TmpDir::create(&dir).unwrap();
+        let tmp = BuildTemp::new(&dir).unwrap();
         let mut chunker = Chunker::new(&tmp, 4 * 1024); // ~4 KiB chunks
         for q in quads.iter().cloned() {
             chunker.push(q).unwrap();
@@ -1606,7 +1699,15 @@ mod tests {
             count = Some(n);
             sections.push(sec);
         }
-        write_final_file(&out, &[], &merged, &sections, count.unwrap(), codec).unwrap();
+        write_final_file(
+            &out,
+            &[],
+            &merged.dictionary_ref(),
+            &sections,
+            count.unwrap(),
+            codec,
+        )
+        .unwrap();
 
         let bytes = std::fs::read(&out).unwrap();
         assert_eq!(statements as usize, quads.len());
@@ -1675,7 +1776,7 @@ mod tests {
             has_quoted: false,
             remaps: Vec::new(),
         };
-        let tmp = TmpDir { dir: spill.clone() };
+        let tmp = BuildTemp::adopt_existing_for_resume(spill.clone());
         let global_tri = spill.join("global.tri");
         let codec = crate::file::writer_codec();
         // RETE_RESUME_BUDGET_MB (default 16384) sizes the sort runs — resume
@@ -1709,7 +1810,15 @@ mod tests {
             eprintln!("resume: {} done", perm.name());
             sections.push(s);
         }
-        write_final_file(&out, &metadata, &merged, &sections, quad_count, codec).unwrap();
+        write_final_file(
+            &out,
+            &metadata,
+            &merged.dictionary_ref(),
+            &sections,
+            quad_count,
+            codec,
+        )
+        .unwrap();
         eprintln!("resume: wrote {}", out.display());
         std::mem::forget(tmp); // keep the spill until the file is verified
     }

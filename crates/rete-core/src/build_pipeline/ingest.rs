@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use crate::ingest::{BuildStats, RawQuad};
 use crate::{Dictionary, Triple};
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::spool::{BuildTemp, TripleSpool};
 use super::BuildPipelineError;
 
 pub(crate) const DEFAULT_GRAPH_ID: u32 = u32::MAX;
@@ -44,6 +46,85 @@ pub(crate) struct MemoryIngest {
     predicates: HashMap<String, u32>,
     graphs: HashMap<String, u32>,
     records: Vec<ProvisionalQuad>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct SpilledDictionary {
+    pub(crate) section_paths: [std::path::PathBuf; 4],
+    pub(crate) term_count: u64,
+    pub(crate) has_quoted_triples: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct CanonicalSpilled {
+    pub(crate) dictionary: SpilledDictionary,
+    pub(crate) triples: TripleSpool,
+    pub(crate) metadata: Vec<u8>,
+    pub(crate) stats: BuildStats,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct ChunkedIngest<'a> {
+    temp: &'a BuildTemp,
+    chunker: crate::extbuild::Chunker<'a>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a> ChunkedIngest<'a> {
+    pub(crate) fn new(temp: &'a BuildTemp, memory_budget: u64) -> Self {
+        let budget = memory_budget.max(64 << 20);
+        let chunk_budget = (budget as f64 * crate::extbuild::CHUNK_BUDGET_FRACTION) as u64;
+        Self {
+            temp,
+            chunker: crate::extbuild::Chunker::new(temp, chunk_budget),
+        }
+    }
+
+    pub(crate) fn push(&mut self, quad: RawQuad) -> Result<(), BuildPipelineError> {
+        self.chunker
+            .push(quad)
+            .map_err(crate::extbuild::ExtBuildError::into_pipeline)
+    }
+
+    pub(crate) fn finish(
+        self,
+        metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
+    ) -> Result<CanonicalSpilled, BuildPipelineError> {
+        let chunks = self
+            .chunker
+            .finish()
+            .map_err(crate::extbuild::ExtBuildError::into_pipeline)?;
+        let statements = chunks.iter().try_fold(0u64, |total, chunk| {
+            total
+                .checked_add(chunk.triple_count)
+                .ok_or(BuildPipelineError::Overflow("statement count"))
+        })?;
+        let mut merged = crate::extbuild::merge_dictionaries(self.temp, &chunks)
+            .map_err(crate::extbuild::ExtBuildError::into_pipeline)?;
+        let stats = BuildStats {
+            statements: usize::try_from(statements)
+                .map_err(|_| BuildPipelineError::Overflow("statement count"))?,
+            default_triples: usize::try_from(statements)
+                .map_err(|_| BuildPipelineError::Overflow("statement count"))?,
+            named_graphs: 0,
+            terms: usize::try_from(merged.term_count)
+                .map_err(|_| BuildPipelineError::TooManyTerms)?,
+            pyramid_levels: 0,
+        };
+        let dictionary = SpilledDictionary {
+            section_paths: merged.section_paths(),
+            term_count: merged.term_count,
+            has_quoted_triples: merged.has_quoted,
+        };
+        let triples = crate::extbuild::remap_chunks_to_spool(self.temp, &chunks, &mut merged)
+            .map_err(crate::extbuild::ExtBuildError::into_pipeline)?;
+        Ok(CanonicalSpilled {
+            dictionary,
+            triples,
+            metadata: metadata(&stats),
+            stats,
+        })
+    }
 }
 
 struct CanonicalNodes {
@@ -274,7 +355,10 @@ mod tests {
     use crate::dictionary::DictionaryBuilder;
     use crate::ingest::RawQuad;
 
-    use super::{next_provisional_id, BuildPipelineError, MemoryIngest, DEFAULT_GRAPH_ID};
+    use super::{
+        next_provisional_id, BuildPipelineError, ChunkedIngest, MemoryIngest, DEFAULT_GRAPH_ID,
+    };
+    use crate::build_pipeline::spool::BuildTemp;
 
     type CanonicalContent = (
         [Vec<u8>; 4],
@@ -454,6 +538,90 @@ mod tests {
         assert_eq!(built.default_triples, reference_default);
         assert_eq!(built.named, reference_named);
         assert_eq!(built.stats.statements, quads.len());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn chunked_ingest_matches_memory_canonical_artifacts_across_chunk_boundaries() {
+        let quads: Vec<_> = (0..25_000)
+            .flat_map(|i| {
+                let pad = "x".repeat(700);
+                let subject = format!("<https://example.test/s/{i}/{pad}>");
+                let object = format!("<https://example.test/o/{}/{}>", i % 97, pad);
+                let predicate = format!("<https://example.test/p/{}>", i % 7);
+                [
+                    (subject.clone(), predicate.clone(), object.clone(), None),
+                    (subject, predicate, object, None),
+                ]
+            })
+            .collect();
+        let mut memory = MemoryIngest::new();
+        for quad in quads.iter().cloned() {
+            memory.push(quad).unwrap();
+        }
+        let expected = memory.finish(|_| b"metadata".to_vec()).unwrap();
+
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let parent = std::env::temp_dir().join(format!(
+            "rete-chunked-ingest-test-{}-{sequence}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&parent).unwrap();
+        let mut observed = None;
+        for budget in [64 << 20, 256 << 20] {
+            let temp = BuildTemp::new(&parent).unwrap();
+            let mut chunked = ChunkedIngest::new(&temp, budget);
+            for quad in quads.iter().cloned() {
+                chunked.push(quad).unwrap();
+            }
+            let spilled = chunked.finish(|_| b"metadata".to_vec()).unwrap();
+            let sections = spilled
+                .dictionary
+                .section_paths
+                .each_ref()
+                .map(|path| std::fs::read(path).unwrap());
+            let mut dictionary_bytes = Vec::new();
+            crate::varint::write_uvarint(&mut dictionary_bytes, 4);
+            for section in &sections {
+                crate::varint::write_uvarint(&mut dictionary_bytes, section.len() as u64);
+                dictionary_bytes.extend_from_slice(section);
+            }
+            assert_eq!(
+                dictionary_bytes,
+                crate::file::encode_dict_container(
+                    &expected.dictionary,
+                    crate::file::writer_codec(),
+                )
+            );
+            let mut triples = Vec::new();
+            spilled
+                .triples
+                .for_each_block(127, &mut |block| {
+                    triples.extend_from_slice(block);
+                    Ok(())
+                })
+                .unwrap();
+            triples.sort_unstable();
+            let mut expected_triples = expected.default_triples.clone();
+            expected_triples.sort_unstable();
+            assert_eq!(triples, expected_triples);
+            assert_eq!(spilled.metadata, b"metadata");
+            assert_eq!(spilled.stats.statements, expected.stats.statements);
+            assert_eq!(
+                spilled.stats.default_triples,
+                expected.stats.default_triples
+            );
+            assert_eq!(spilled.stats.named_graphs, expected.stats.named_graphs);
+            assert_eq!(spilled.stats.terms, expected.stats.terms);
+            assert_eq!(spilled.stats.pyramid_levels, expected.stats.pyramid_levels);
+            assert_eq!(
+                observed.get_or_insert(dictionary_bytes.clone()),
+                &dictionary_bytes
+            );
+            drop(temp);
+        }
+        std::fs::remove_dir(&parent).unwrap();
     }
 
     fn sorted_dictionary_and_deduped_triples(quads: Vec<RawQuad>) -> CanonicalContent {
