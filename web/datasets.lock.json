@@ -91,6 +91,14 @@
       "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete"
     },
     {
+      "key": "openalex-authors",
+      "url": "https://data.graphplaza.com/openalex/openalex-authors.rete",
+      "formatVersion": 5,
+      "contentHash": "782e8f26507817e0b72cbfa7769fa00d",
+      "size": 16821554545,
+      "cardUrl": "https://data.graphplaza.com/openalex/openalex-authors.rete"
+    },
+    {
       "key": "openalex-entities",
       "url": "https://data.graphplaza.com/openalex/openalex-entities.rete",
       "formatVersion": 5,

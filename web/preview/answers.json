@@ -1,4 +1,5 @@
 {
+ "generator": "scripts/preview/capture.mjs",
  "answers": {
   "aifdb-open:0": {
    "banner": "",
@@ -54308,8 +54309,237 @@
    "unit": "",
    "view": "graph"
   },
-  "openalex-entities:0": {
+  "openalex-authors:0": {
+   "id": "openalex-authors:0",
+   "dataset": "openalex-authors",
+   "index": 0,
+   "view": "table",
+   "ok": true,
+   "qmeta": "1 row(s) | 71 range req · 63.6 MB of 15.67 GB fetched (incl. opening the file) · 33.8 MB cached this session · 21167 ms",
+   "count": 1,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Author",
+     "var": "a"
+    },
+    {
+     "label": "Name",
+     "var": "name"
+    },
+    {
+     "label": "h-index",
+     "var": "h"
+    },
+    {
+     "label": "Citations",
+     "var": "cited"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://semopenalex.org/author/A5069587559",
+      "media": false
+     },
+     {
+      "text": "Haak Laurel",
+      "media": false
+     },
+     {
+      "text": "20",
+      "media": false
+     },
+     {
+      "text": "2947",
+      "media": false
+     }
+    ]
+   ],
    "banner": "",
+   "error": "",
+   "elapsedMs": 21342
+  },
+  "openalex-authors:1": {
+   "id": "openalex-authors:1",
+   "dataset": "openalex-authors",
+   "index": 1,
+   "view": "table",
+   "ok": true,
+   "qmeta": "1 row(s) | 5 range req · 3.5 MB of 15.67 GB fetched · 37.3 MB cached this session · 1055 ms",
+   "count": 1,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Author",
+     "var": "a"
+    },
+    {
+     "label": "h-index",
+     "var": "h"
+    },
+    {
+     "label": "Works",
+     "var": "works"
+    },
+    {
+     "label": "Citations",
+     "var": "cited"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://semopenalex.org/author/A5001226970",
+      "media": false
+     },
+     {
+      "text": "124",
+      "media": false
+     },
+     {
+      "text": "508",
+      "media": false
+     },
+     {
+      "text": "231727",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1088
+  },
+  "openalex-authors:2": {
+   "id": "openalex-authors:2",
+   "dataset": "openalex-authors",
+   "index": 2,
+   "view": "table",
+   "ok": true,
+   "qmeta": "1 row(s) | 0 range req · 0 B of 15.67 GB fetched — 0 new bytes, all served from this session's cache (37.3 MB) · 9 ms",
+   "count": 1,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Name",
+     "var": "name"
+    },
+    {
+     "label": "Last known institution",
+     "var": "inst"
+    },
+    {
+     "label": "Works",
+     "var": "works"
+    },
+    {
+     "label": "Citations",
+     "var": "cited"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "Yann LeCun",
+      "media": false
+     },
+     {
+      "text": "https://semopenalex.org/institution/I57206974",
+      "media": false
+     },
+     {
+      "text": "508",
+      "media": false
+     },
+     {
+      "text": "231727",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 32
+  },
+  "openalex-authors:3": {
+   "id": "openalex-authors:3",
+   "dataset": "openalex-authors",
+   "index": 3,
+   "view": "table",
+   "ok": true,
+   "qmeta": "25 row(s) | 23 range req · 14.0 MB of 15.67 GB fetched · 51.3 MB cached this session · 3387 ms",
+   "count": 25,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Alternative name",
+     "var": "alt"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "ALBERTO SANDOVAL RANGEL",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Adela Rahmah Ananta",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Ahmad Fauzan Hidayatullah",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Alessandra Macário de Oliveira Paiva",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Amat Amat",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Amirah Yasmin",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Ana Cunha",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "Anacleto Diogo",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 3398
+  },
+  "openalex-entities:0": {
+   "id": "openalex-entities:0",
+   "dataset": "openalex-entities",
+   "index": 0,
+   "view": "table",
+   "ok": true,
+   "qmeta": "20 row(s) | 49 range req · 37.4 MB of 251.9 MB fetched (incl. opening the file) · 30.4 MB cached this session · 15815 ms",
+   "count": 20,
+   "unit": "row",
    "columns": [
     {
      "label": "Institution",
@@ -54324,133 +54554,133 @@
      "var": "cited"
     }
    ],
-   "count": 20,
-   "dataset": "openalex-entities",
-   "elapsedMs": 15851,
-   "error": "",
-   "id": "openalex-entities:0",
-   "index": 0,
-   "ok": true,
-   "qmeta": "20 row(s) | 49 range req · 37.4 MB of 251.9 MB fetched (incl. opening the file) · 30.4 MB cached this session · 15815 ms",
    "rows": [
     [
      {
-      "media": false,
-      "text": "Centre National de la Recherche Scientifique"
+      "text": "Centre National de la Recherche Scientifique",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1088993"
+      "text": "1088993",
+      "media": false
      },
      {
-      "media": false,
-      "text": "34462184"
+      "text": "34462184",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "University of Michigan–Ann Arbor"
+      "text": "University of Michigan–Ann Arbor",
+      "media": false
      },
      {
-      "media": false,
-      "text": "926783"
+      "text": "926783",
+      "media": false
      },
      {
-      "media": false,
-      "text": "22289435"
+      "text": "22289435",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Chinese Academy of Sciences"
+      "text": "Chinese Academy of Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "839309"
+      "text": "839309",
+      "media": false
      },
      {
-      "media": false,
-      "text": "23616518"
+      "text": "23616518",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Harvard University"
+      "text": "Harvard University",
+      "media": false
      },
      {
-      "media": false,
-      "text": "668823"
+      "text": "668823",
+      "media": false
      },
      {
-      "media": false,
-      "text": "43293412"
+      "text": "43293412",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "University of Toronto"
+      "text": "University of Toronto",
+      "media": false
      },
      {
-      "media": false,
-      "text": "490687"
+      "text": "490687",
+      "media": false
      },
      {
-      "media": false,
-      "text": "19795442"
+      "text": "19795442",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "University College London"
+      "text": "University College London",
+      "media": false
      },
      {
-      "media": false,
-      "text": "473619"
+      "text": "473619",
+      "media": false
      },
      {
-      "media": false,
-      "text": "19071711"
+      "text": "19071711",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "University of Washington"
+      "text": "University of Washington",
+      "media": false
      },
      {
-      "media": false,
-      "text": "469675"
+      "text": "469675",
+      "media": false
      },
      {
-      "media": false,
-      "text": "22099320"
+      "text": "22099320",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Stanford University"
+      "text": "Stanford University",
+      "media": false
      },
      {
-      "media": false,
-      "text": "469620"
+      "text": "469620",
+      "media": false
      },
      {
-      "media": false,
-      "text": "27796963"
+      "text": "27796963",
+      "media": false
      }
     ]
    ],
-   "unit": "row",
-   "view": "table"
+   "banner": "",
+   "error": "",
+   "elapsedMs": 15851
   },
   "openalex-entities:1": {
-   "banner": "",
+   "id": "openalex-entities:1",
+   "dataset": "openalex-entities",
+   "index": 1,
+   "view": "table",
+   "ok": true,
+   "qmeta": "20 row(s) | 8 range req · 4.5 MB of 251.9 MB fetched · 34.9 MB cached this session · 1862 ms",
+   "count": 20,
+   "unit": "row",
    "columns": [
     {
      "label": "Domain",
@@ -54465,133 +54695,133 @@
      "var": "topics"
     }
    ],
-   "count": 20,
-   "dataset": "openalex-entities",
-   "elapsedMs": 1890,
-   "error": "",
-   "id": "openalex-entities:1",
-   "index": 1,
-   "ok": true,
-   "qmeta": "20 row(s) | 8 range req · 4.5 MB of 251.9 MB fetched · 34.9 MB cached this session · 1862 ms",
    "rows": [
     [
      {
-      "media": false,
-      "text": "Social Sciences"
+      "text": "Social Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "Social Sciences"
+      "text": "Social Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "764"
+      "text": "764",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Health Sciences"
+      "text": "Health Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "Medicine"
+      "text": "Medicine",
+      "media": false
      },
      {
-      "media": false,
-      "text": "692"
+      "text": "692",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Physical Sciences"
+      "text": "Physical Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "Engineering"
+      "text": "Engineering",
+      "media": false
      },
      {
-      "media": false,
-      "text": "560"
+      "text": "560",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Physical Sciences"
+      "text": "Physical Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "Computer Science"
+      "text": "Computer Science",
+      "media": false
      },
      {
-      "media": false,
-      "text": "302"
+      "text": "302",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Social Sciences"
+      "text": "Social Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "Arts and Humanities"
+      "text": "Arts and Humanities",
+      "media": false
      },
      {
-      "media": false,
-      "text": "266"
+      "text": "266",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Life Sciences"
+      "text": "Life Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "Biochemistry, Genetics and Molecular Biology"
+      "text": "Biochemistry, Genetics and Molecular Biology",
+      "media": false
      },
      {
-      "media": false,
-      "text": "248"
+      "text": "248",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Life Sciences"
+      "text": "Life Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "Agricultural and Biological Sciences"
+      "text": "Agricultural and Biological Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "235"
+      "text": "235",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Physical Sciences"
+      "text": "Physical Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "Environmental Science"
+      "text": "Environmental Science",
+      "media": false
      },
      {
-      "media": false,
-      "text": "202"
+      "text": "202",
+      "media": false
      }
     ]
    ],
-   "unit": "row",
-   "view": "table"
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1890
   },
   "openalex-entities:2": {
-   "banner": "",
+   "id": "openalex-entities:2",
+   "dataset": "openalex-entities",
+   "index": 2,
+   "view": "table",
+   "ok": true,
+   "qmeta": "20 row(s) | 1 range req · 512.0 KB of 251.9 MB fetched · 35.4 MB cached this session · 1378 ms",
+   "count": 20,
+   "unit": "row",
    "columns": [
     {
      "label": "Source",
@@ -54606,133 +54836,133 @@
      "var": "cited"
     }
    ],
-   "count": 20,
-   "dataset": "openalex-entities",
-   "elapsedMs": 1398,
-   "error": "",
-   "id": "openalex-entities:2",
-   "index": 2,
-   "ok": true,
-   "qmeta": "20 row(s) | 1 range req · 512.0 KB of 251.9 MB fetched · 35.4 MB cached this session · 1378 ms",
    "rows": [
     [
      {
-      "media": false,
-      "text": "Nature"
+      "text": "Nature",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1765"
+      "text": "1765",
+      "media": false
      },
      {
-      "media": false,
-      "text": "24887971"
+      "text": "24887971",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Science"
+      "text": "Science",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1695"
+      "text": "1695",
+      "media": false
      },
      {
-      "media": false,
-      "text": "21136362"
+      "text": "21136362",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "New England Journal of Medicine"
+      "text": "New England Journal of Medicine",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1433"
+      "text": "1433",
+      "media": false
      },
      {
-      "media": false,
-      "text": "11341947"
+      "text": "11341947",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Choice Reviews Online"
+      "text": "Choice Reviews Online",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1184"
+      "text": "1184",
+      "media": false
      },
      {
-      "media": false,
-      "text": "12677016"
+      "text": "12677016",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Cell"
+      "text": "Cell",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1178"
+      "text": "1178",
+      "media": false
      },
      {
-      "media": false,
-      "text": "8312630"
+      "text": "8312630",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "The Lancet"
+      "text": "The Lancet",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1134"
+      "text": "1134",
+      "media": false
      },
      {
-      "media": false,
-      "text": "9595301"
+      "text": "9595301",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Proceedings of the National Academy of Sciences"
+      "text": "Proceedings of the National Academy of Sciences",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1131"
+      "text": "1131",
+      "media": false
      },
      {
-      "media": false,
-      "text": "21458434"
+      "text": "21458434",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Springer eBooks"
+      "text": "Springer eBooks",
+      "media": false
      },
      {
-      "media": false,
-      "text": "1095"
+      "text": "1095",
+      "media": false
      },
      {
-      "media": false,
-      "text": "16881377"
+      "text": "16881377",
+      "media": false
      }
     ]
    ],
-   "unit": "row",
-   "view": "table"
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1398
   },
   "openalex-entities:3": {
-   "banner": "",
+   "id": "openalex-entities:3",
+   "dataset": "openalex-entities",
+   "index": 3,
+   "view": "table",
+   "ok": true,
+   "qmeta": "20 row(s) | 2 range req · 1.0 MB of 251.9 MB fetched · 36.4 MB cached this session · 1578 ms",
+   "count": 20,
+   "unit": "row",
    "columns": [
     {
      "label": "Funder",
@@ -54747,130 +54977,123 @@
      "var": "works"
     }
    ],
-   "count": 20,
-   "dataset": "openalex-entities",
-   "elapsedMs": 1599,
-   "error": "",
-   "id": "openalex-entities:3",
-   "index": 3,
-   "ok": true,
-   "qmeta": "20 row(s) | 2 range req · 1.0 MB of 251.9 MB fetched · 36.4 MB cached this session · 1578 ms",
    "rows": [
     [
      {
-      "media": false,
-      "text": "National Natural Science Foundation of China"
+      "text": "National Natural Science Foundation of China",
+      "media": false
      },
      {
-      "media": false,
-      "text": "CN"
+      "text": "CN",
+      "media": false
      },
      {
-      "media": false,
-      "text": "2131044"
+      "text": "2131044",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "National Science Foundation"
+      "text": "National Science Foundation",
+      "media": false
      },
      {
-      "media": false,
-      "text": "US"
+      "text": "US",
+      "media": false
      },
      {
-      "media": false,
-      "text": "387209"
+      "text": "387209",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "National Institutes of Health"
+      "text": "National Institutes of Health",
+      "media": false
      },
      {
-      "media": false,
-      "text": "US"
+      "text": "US",
+      "media": false
      },
      {
-      "media": false,
-      "text": "376373"
+      "text": "376373",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "National Key Research and Development Program of China"
+      "text": "National Key Research and Development Program of China",
+      "media": false
      },
      {
-      "media": false,
-      "text": "CN"
+      "text": "CN",
+      "media": false
      },
      {
-      "media": false,
-      "text": "312087"
+      "text": "312087",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Deutsche Forschungsgemeinschaft"
+      "text": "Deutsche Forschungsgemeinschaft",
+      "media": false
      },
      {
-      "media": false,
-      "text": "DE"
+      "text": "DE",
+      "media": false
      },
      {
-      "media": false,
-      "text": "234139"
+      "text": "234139",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Fundamental Research Funds for the Central Universities"
+      "text": "Fundamental Research Funds for the Central Universities",
+      "media": false
      },
      {
-      "media": false,
-      "text": "CN"
+      "text": "CN",
+      "media": false
      },
      {
-      "media": false,
-      "text": "224791"
+      "text": "224791",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "National Research Foundation of Korea"
+      "text": "National Research Foundation of Korea",
+      "media": false
      },
      {
-      "media": false,
-      "text": "KR"
+      "text": "KR",
+      "media": false
      },
      {
-      "media": false,
-      "text": "218771"
+      "text": "218771",
+      "media": false
      }
     ],
     [
      {
-      "media": false,
-      "text": "Japan Society for the Promotion of Science"
+      "text": "Japan Society for the Promotion of Science",
+      "media": false
      },
      {
-      "media": false,
-      "text": "JP"
+      "text": "JP",
+      "media": false
      },
      {
-      "media": false,
-      "text": "209997"
+      "text": "209997",
+      "media": false
      }
     ]
    ],
-   "unit": "row",
-   "view": "table"
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1599
   },
   "opencitations:0": {
    "banner": "",
@@ -78331,6 +78554,5 @@
    "unit": "",
    "view": "time"
   }
- },
- "generator": "scripts/preview/capture.mjs"
+ }
 }
