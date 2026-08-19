@@ -14,7 +14,6 @@
 __pycache__/
 # Built static pages rendered by scripts/build_playground.py (docs/ copies are
 # committed; the web/ copy is a local-serving convenience, regenerated).
-/web/explore-100mb.html
 /web/atlas-app.html
 
 # Built graph files are artifacts of the .nt/.nq sources in examples/ — rebuild

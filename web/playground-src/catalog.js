@@ -354,10 +354,10 @@ window.RETE_PLAYGROUND_CATALOG = {
 
   // Companion encodings: the lossless Parquet / DuckDB / SQLite per-class entity
   // tables that `scripts/rdf_to_entity_tables.py` produces alongside a `.rete`.
-  // These power the multi-backend lazy explorer (explore-100mb.html?dataset=<key>):
-  // the same graph, queried four ways (rete / DuckDB-WASM·Parquet / DuckDB·.duckdb /
-  // sql.js-httpvfs·SQLite), so you can compare which backend wins per query shape.
-  // Paths are relative to remoteBase; the explorer appends ?token=remoteToken.
+  // These power the SQL Explore backend switch (app.js): the same graph, queried
+  // four ways (rete / DuckDB-WASM·Parquet / DuckDB·.duckdb / sql.js-httpvfs·SQLite),
+  // so you can compare which backend wins per query shape.
+  // Paths are relative to remoteBase; the loader appends ?token=remoteToken.
   // A dataset with no entry here shows only the rete Graph backend (no companions).
   companions: {
     "hugging-face": {
@@ -591,7 +591,7 @@ window.RETE_PLAYGROUND_CATALOG = {
     },
 
     // wikidata-1GB (dataset key "wikidata"): companions live under wikidata-1GB/ in
-    // the bucket (not playground/), shared with explore-100mb.html. Tables are named
+    // the bucket (not playground/), beside the .rete itself. Tables are named
     // by Q-id (no trailing underscore in the DuckDB/SQLite tables; Parquet files keep
     // the underscore). Typed by wdt:P31.
     "wikidata": {

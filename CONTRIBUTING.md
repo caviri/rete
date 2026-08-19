@@ -39,9 +39,9 @@ fresh render (the **"Docs HTML in sync"** step): if you edit a `.md`, re-run
 `docgen` and commit the regenerated `.html` — ideally as its own commit
 (`docs: regenerate HTML`). Don't hand-edit the `.html`.
 
-A few nav entries (e.g. `playground.html`, `explore-100mb.html`) are *not*
-rendered by docgen — they are pre-built pages with inlined WASM (next section)
-and docgen only links to them.
+A few nav entries (e.g. `playground.html`, `yasgui.html`, `atlas-app.html`) are
+*not* rendered by docgen — they are pre-built pages with inlined WASM (next
+section) and docgen only links to them.
 
 A nav entry whose `.md` is missing is skipped *and* dropped from the sidebar, so
 listing a page in `SECTIONS` before committing it cannot leave 50 rendered pages
