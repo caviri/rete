@@ -1337,11 +1337,53 @@ fn extend_from_run(values: &mut Vec<Triple>, run: &FamilyRun) -> Result<(), Buil
     Ok(())
 }
 
-fn emit_file_continuations(
+#[cfg(test)]
+fn extend_from_run_with_live_resources(
+    values: &mut Vec<Triple>,
+    sibling_values: &Vec<Triple>,
+    run: &FamilyRun,
+    outer_reader_bytes: usize,
+) -> Result<(), BuildPipelineError> {
+    let count = usize::try_from(run.count).map_err(|_| overflow("family group count"))?;
+    values
+        .try_reserve(count)
+        .map_err(|_| overflow("family group buffer"))?;
+    let mut reader = RunReader::open(run)?;
+    while let Some(triple) = reader.next()? {
+        values.push(triple);
+    }
+    observe_file_live!(
+        &[values.capacity(), sibling_values.capacity()],
+        &[],
+        &[],
+        0,
+        reader.reader.capacity().saturating_add(outer_reader_bytes),
+        3,
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+macro_rules! extend_from_run {
+    ($values:expr, $sibling:expr, $run:expr, $outer_bytes:expr $(,)?) => {
+        extend_from_run_with_live_resources($values, $sibling, $run, $outer_bytes)
+    };
+}
+
+#[cfg(not(test))]
+macro_rules! extend_from_run {
+    ($values:expr, $sibling:expr, $run:expr, $outer_bytes:expr $(,)?) => {
+        extend_from_run($values, $run)
+    };
+}
+
+fn emit_file_continuations_core(
     first_run: &FamilyRun,
     second_run: &FamilyRun,
     budget: usize,
     tiles: &mut Vec<PairedTile>,
+    _outer_reader_bytes: usize,
+    _outer_descriptors: usize,
 ) -> Result<(), BuildPipelineError> {
     if first_run.count != second_run.count {
         return Err(BuildPipelineError::InvalidSpool(
@@ -1408,8 +1450,9 @@ fn emit_file_continuations(
                 first_reader
                     .reader
                     .capacity()
-                    .saturating_add(second_reader.reader.capacity()),
-                2,
+                    .saturating_add(second_reader.reader.capacity())
+                    .saturating_add(_outer_reader_bytes),
+                2usize.saturating_add(_outer_descriptors),
             );
             let first_size = first_sizer.encoded_size()?;
             let second_size = second_sizer.encoded_size()?;
@@ -1438,13 +1481,63 @@ fn emit_file_continuations(
             first_reader
                 .reader
                 .capacity()
-                .saturating_add(second_reader.reader.capacity()),
-            2,
+                .saturating_add(second_reader.reader.capacity())
+                .saturating_add(_outer_reader_bytes),
+            2usize.saturating_add(_outer_descriptors),
         );
         pending.extend(first_tail.into_iter().zip(second_tail));
         tiles.push(encode_pair(&first_values, &second_values, budget)?);
     }
     Ok(())
+}
+
+fn emit_file_continuations(
+    first_run: &FamilyRun,
+    second_run: &FamilyRun,
+    budget: usize,
+    tiles: &mut Vec<PairedTile>,
+) -> Result<(), BuildPipelineError> {
+    emit_file_continuations_core(first_run, second_run, budget, tiles, 0, 0)
+}
+
+#[cfg(test)]
+fn emit_file_continuations_with_outer_resources(
+    first_run: &FamilyRun,
+    second_run: &FamilyRun,
+    budget: usize,
+    tiles: &mut Vec<PairedTile>,
+    outer_reader_bytes: usize,
+    outer_descriptors: usize,
+) -> Result<(), BuildPipelineError> {
+    emit_file_continuations_core(
+        first_run,
+        second_run,
+        budget,
+        tiles,
+        outer_reader_bytes,
+        outer_descriptors,
+    )
+}
+
+#[cfg(test)]
+macro_rules! emit_file_continuations {
+    ($first:expr, $second:expr, $budget:expr, $tiles:expr, $outer_bytes:expr, $outer_descriptors:expr $(,)?) => {
+        emit_file_continuations_with_outer_resources(
+            $first,
+            $second,
+            $budget,
+            $tiles,
+            $outer_bytes,
+            $outer_descriptors,
+        )
+    };
+}
+
+#[cfg(not(test))]
+macro_rules! emit_file_continuations {
+    ($first:expr, $second:expr, $budget:expr, $tiles:expr, $outer_bytes:expr, $outer_descriptors:expr $(,)?) => {
+        emit_file_continuations($first, $second, $budget, $tiles)
+    };
 }
 
 fn build_file_family(
@@ -1507,8 +1600,24 @@ fn build_file_family(
                 if next_first.encoded_size()? <= tile_budget
                     && next_second.encoded_size()? <= tile_budget
                 {
-                    extend_from_run(&mut current_first, &first_group)?;
-                    extend_from_run(&mut current_second, &second_group)?;
+                    extend_from_run!(
+                        &mut current_first,
+                        &current_second,
+                        &first_group,
+                        first_reader
+                            .reader
+                            .capacity()
+                            .saturating_add(second_reader.reader.capacity()),
+                    )?;
+                    extend_from_run!(
+                        &mut current_second,
+                        &current_first,
+                        &second_group,
+                        first_reader
+                            .reader
+                            .capacity()
+                            .saturating_add(second_reader.reader.capacity()),
+                    )?;
                     observe_file_live!(
                         &[current_first.capacity(), current_second.capacity()],
                         &[],
@@ -1538,8 +1647,24 @@ fn build_file_family(
                 if single_first.encoded_size()? <= tile_budget
                     && single_second.encoded_size()? <= tile_budget
                 {
-                    extend_from_run(&mut current_first, &first_group)?;
-                    extend_from_run(&mut current_second, &second_group)?;
+                    extend_from_run!(
+                        &mut current_first,
+                        &current_second,
+                        &first_group,
+                        first_reader
+                            .reader
+                            .capacity()
+                            .saturating_add(second_reader.reader.capacity()),
+                    )?;
+                    extend_from_run!(
+                        &mut current_second,
+                        &current_first,
+                        &second_group,
+                        first_reader
+                            .reader
+                            .capacity()
+                            .saturating_add(second_reader.reader.capacity()),
+                    )?;
                     observe_file_live!(
                         &[current_first.capacity(), current_second.capacity()],
                         &[],
@@ -1554,7 +1679,17 @@ fn build_file_family(
                     first_summary = single_first;
                     second_summary = single_second;
                 } else {
-                    emit_file_continuations(&first_group, &second_group, tile_budget, &mut tiles)?;
+                    emit_file_continuations!(
+                        &first_group,
+                        &second_group,
+                        tile_budget,
+                        &mut tiles,
+                        first_reader
+                            .reader
+                            .capacity()
+                            .saturating_add(second_reader.reader.capacity()),
+                        2,
+                    )?;
                 }
                 std::fs::remove_file(&first_group.path)?;
                 std::fs::remove_file(&second_group.path)?;
