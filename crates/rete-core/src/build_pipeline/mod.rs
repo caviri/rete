@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+pub(crate) mod ingest;
 pub(crate) mod timing;
 
 #[allow(dead_code)]

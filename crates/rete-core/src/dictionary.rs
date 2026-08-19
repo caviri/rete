@@ -126,6 +126,24 @@ pub struct Dictionary {
 }
 
 impl Dictionary {
+    /// Build from already-sorted, disjoint role partitions produced by the
+    /// canonical ingest path. Each vector is moved directly into its front-coded
+    /// section; the usual builder remains responsible for sorting arbitrary input.
+    #[allow(dead_code)]
+    pub(crate) fn from_role_terms(
+        shared: Vec<String>,
+        subjects: Vec<String>,
+        objects: Vec<String>,
+        predicates: Vec<String>,
+        has_quoted_triples: bool,
+    ) -> Self {
+        let sections = [shared, subjects, objects, predicates]
+            .map(|terms| DictSectionBuilder::from_sorted_unique(terms).build_sorted_unique());
+        let mut dictionary = Self::from_sections(sections);
+        dictionary.has_quoted_triples = has_quoted_triples;
+        dictionary
+    }
+
     /// Rebuild from four serialized sections (shared, subjects, objects,
     /// predicates), e.g. when reading a `.rete` file.
     pub fn from_sections(sections: [Vec<u8>; 4]) -> Self {

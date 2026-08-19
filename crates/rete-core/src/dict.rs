@@ -71,6 +71,20 @@ impl DictSectionBuilder {
     pub fn build(mut self) -> Vec<u8> {
         self.terms.sort_unstable();
         self.terms.dedup();
+        self.build_sorted_unique()
+    }
+
+    /// Serialize terms that are already sorted and unique. This keeps the
+    /// canonicalizer from repeating either operation after role partitioning.
+    #[allow(dead_code)]
+    pub(crate) fn from_sorted_unique(terms: Vec<String>) -> Self {
+        Self {
+            terms,
+            restart_interval: env_restart_interval(),
+        }
+    }
+
+    pub(crate) fn build_sorted_unique(self) -> Vec<u8> {
         let r = self.restart_interval as usize;
         let n = self.terms.len();
         let num_restarts = n.div_ceil(r);
