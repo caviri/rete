@@ -70,6 +70,18 @@ fn decoded(index: &crate::index::GraphIndex) -> Vec<Vec<Triple>> {
         .collect()
 }
 
+/// Capture elapsed construction time before any payload identity work. Keeping
+/// the index alive in the returned pair gives both benchmark arms identical
+/// post-timing hashing and deallocation lifetimes.
+fn timed_construction(
+    build: impl FnOnce() -> crate::index::GraphIndex,
+) -> (Duration, crate::index::GraphIndex) {
+    let started = Instant::now();
+    let index = build();
+    black_box(&index);
+    (started.elapsed(), index)
+}
+
 /// Run the reproducible paired-family preflight and panic if it misses 1.5x.
 pub fn run() {
     let triples = workload();
@@ -94,17 +106,20 @@ pub fn run() {
     let mut reference_times = Vec::with_capacity(ACCEPTED);
     for sample in 0..WARMUPS + ACCEPTED {
         for paired_turn in [sample % 2 == 0, sample % 2 != 0] {
-            let started = Instant::now();
-            let index = if paired_turn {
-                GraphIndexBuilder::from_triples(triples.clone())
-                    .with_tile_budget(TILE_BUDGET)
-                    .build_families()
-                    .expect("paired family build")
-            } else {
-                GraphIndexBuilder::from_triples(triples.clone())
-                    .with_tile_budget(TILE_BUDGET)
-                    .build()
-            };
+            let (elapsed, index) = timed_construction(|| {
+                if paired_turn {
+                    GraphIndexBuilder::from_triples(triples.clone())
+                        .with_tile_budget(TILE_BUDGET)
+                        .build_families()
+                        .expect("paired family build")
+                } else {
+                    GraphIndexBuilder::from_triples(triples.clone())
+                        .with_tile_budget(TILE_BUDGET)
+                        .build()
+                }
+            });
+            // This identity pass is deliberately after `timed_construction`:
+            // timing covers construction plus `black_box(&index)` only.
             black_box(payload_hash(&index));
             if sample >= WARMUPS {
                 (if paired_turn {
@@ -112,7 +127,7 @@ pub fn run() {
                 } else {
                     &mut reference_times
                 })
-                .push(started.elapsed());
+                .push(elapsed);
             }
         }
     }

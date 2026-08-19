@@ -209,7 +209,9 @@ pub(crate) fn encode_sorted_unique_with_header(
         return Ok(vec![0; 8]);
     }
 
-    let mut out = Vec::with_capacity(encoded_len);
+    let mut out = Vec::new();
+    out.try_reserve_exact(encoded_len)
+        .map_err(|_| TripleError::SizeOverflow("encoded block allocation"))?;
     for value in [
         zone.min_a, zone.max_a, zone.min_b, zone.max_b, zone.min_c, zone.max_c, zone.count,
     ] {
@@ -1092,6 +1094,11 @@ mod tests {
         assert!(encode(&unsorted, header, plan.num_a).is_err());
         let duplicate = [(1, 2, 3), (1, 2, 3), (2, 6, 7)];
         assert!(encode(&duplicate, header, plan.num_a).is_err());
+
+        assert!(matches!(
+            encode_sorted_unique_with_header(&sorted, header, plan.num_a, usize::MAX),
+            Err(TripleError::SizeOverflow("encoded block allocation"))
+        ));
     }
 
     #[test]
