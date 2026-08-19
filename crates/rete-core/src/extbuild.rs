@@ -40,7 +40,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::build_pipeline::ingest::ChunkedIngest;
+use crate::build_pipeline::ingest::{ChunkedIngest, ChunkedStage};
 use crate::build_pipeline::spool::{BuildTemp, TripleSpool};
 use crate::build_pipeline::timing::{BuildCounters, BuildPhase, BuildTiming};
 use crate::build_pipeline::BuildPipelineError;
@@ -133,6 +133,12 @@ impl ExtBuildError {
     }
 }
 
+impl From<BuildPipelineError> for ExtBuildError {
+    fn from(error: BuildPipelineError) -> Self {
+        Self::from_pipeline(error)
+    }
+}
+
 /// Fraction of the budget a chunk's buffered raw quads may occupy before the
 /// chunk is sealed. The other half covers the chunk's transient dictionary +
 /// id-encode working set (~the same order as the buffered strings).
@@ -176,9 +182,14 @@ where
     );
     let mut chunked = ChunkedIngest::new(&tmp, budget);
     stream(&mut |q: RawQuad| chunked.push(q).map_err(ExtBuildError::from_pipeline))?;
-    timing.lap(BuildPhase::ParseIngest);
     let canonical = chunked
-        .finish(opts.metadata)
+        .finish_with_stages(opts.metadata, |stage| {
+            timing.lap(match stage {
+                ChunkedStage::ParseIngest => BuildPhase::ParseIngest,
+                ChunkedStage::Canonicalize => BuildPhase::Canonicalize,
+                ChunkedStage::Remap => BuildPhase::Remap,
+            });
+        })
         .map_err(ExtBuildError::from_pipeline)?;
     let statements = u64::try_from(canonical.stats.statements)
         .map_err(|_| ExtBuildError::Internal("statement count overflow"))?;
@@ -189,7 +200,6 @@ where
 
     // ---- Phase 2/3: shared chunk ingest merges dictionaries and remaps the
     // per-chunk records into the canonical file-backed spool.
-    timing.lap(BuildPhase::Canonicalize);
     eprintln!(
         "extbuild: merged dictionary — {} term(s)",
         canonical.dictionary.term_count
@@ -200,7 +210,6 @@ where
         .ok_or(ExtBuildError::Internal(
             "external ingest did not spill triples",
         ))?;
-    timing.lap(BuildPhase::Remap);
 
     // ---- Phase 4: per-permutation external sort + streaming tiler -----------
     let codec = crate::file::writer_codec();
@@ -332,7 +341,7 @@ impl<'a> Chunker<'a> {
         }
 
         // local id-triples (subject-space id, predicate id, object-space id)
-        let mut tri = BufWriter::new(File::create(self.tmp.path(&format!("c{ci}.tri")))?);
+        let mut tri = BufWriter::new(File::create(self.tmp.path(&format!("c{ci}.tri"))?)?);
         for (s, p, o) in &quads {
             let (si, pi, oi) = dict
                 .encode(s, p, o)
@@ -360,7 +369,7 @@ impl<'a> Chunker<'a> {
                            count: u32,
                            term_of: &dyn Fn(u32) -> Option<String>|
          -> Result<(), ExtBuildError> {
-            let mut w = BufWriter::new(File::create(self.tmp.path(name))?);
+            let mut w = BufWriter::new(File::create(self.tmp.path(name)?)?);
             for i in 1..=count {
                 let t = term_of(i).ok_or(ExtBuildError::Internal("dict id out of range"))?;
                 w.write_all(t.as_bytes())?;
@@ -399,7 +408,7 @@ impl<'a> Chunker<'a> {
                 section_terms: [0, 0, 0, 0],
             });
             for name in ["c0.tri", "c0.shared", "c0.subj", "c0.obj", "c0.pred"] {
-                File::create(self.tmp.path(name))?;
+                File::create(self.tmp.path(name)?)?;
             }
         }
         Ok(self.chunks)
@@ -651,13 +660,13 @@ pub(crate) fn merge_dictionaries(
     let mut obj_streams = Vec::with_capacity(k);
     for (ci, c) in chunks.iter().enumerate() {
         subj_streams.push(SpaceStream::new(
-            TermFileReader::open(&tmp.path(&format!("c{ci}.shared")))?,
-            TermFileReader::open(&tmp.path(&format!("c{ci}.subj")))?,
+            TermFileReader::open(&tmp.path(&format!("c{ci}.shared"))?)?,
+            TermFileReader::open(&tmp.path(&format!("c{ci}.subj"))?)?,
             c.section_terms[0],
         )?);
         obj_streams.push(SpaceStream::new(
-            TermFileReader::open(&tmp.path(&format!("c{ci}.shared")))?,
-            TermFileReader::open(&tmp.path(&format!("c{ci}.obj")))?,
+            TermFileReader::open(&tmp.path(&format!("c{ci}.shared"))?)?,
+            TermFileReader::open(&tmp.path(&format!("c{ci}.obj"))?)?,
             c.section_terms[0],
         )?);
     }
@@ -666,9 +675,9 @@ pub(crate) fn merge_dictionaries(
 
     // The three node sections are written as raw front-coded bodies first; the
     // final chunked encoding needs term counts, so bodies spill to tmp.
-    let mut shared_sec = RawSectionWriter::create(tmp.path("g.shared.raw"))?;
-    let mut subj_sec = RawSectionWriter::create(tmp.path("g.subj.raw"))?;
-    let mut obj_sec = RawSectionWriter::create(tmp.path("g.obj.raw"))?;
+    let mut shared_sec = RawSectionWriter::create(tmp.path("g.shared.raw")?)?;
+    let mut subj_sec = RawSectionWriter::create(tmp.path("g.subj.raw")?)?;
+    let mut obj_sec = RawSectionWriter::create(tmp.path("g.obj.raw")?)?;
     let mut has_quoted = false;
 
     let mut ranks = [0u32; 3]; // shared, subj-only, obj-only
@@ -734,17 +743,19 @@ pub(crate) fn merge_dictionaries(
     let (n_shared, n_subj, n_obj) = (ranks[0], ranks[1], ranks[2]);
 
     // predicates: plain k-way merge over the pred term files
-    let mut pred_sec = RawSectionWriter::create(tmp.path("g.pred.raw"))?;
+    let mut pred_sec = RawSectionWriter::create(tmp.path("g.pred.raw")?)?;
     {
         let mut streams = Vec::with_capacity(k);
         for (ci, _) in chunks.iter().enumerate() {
             // empty shared reader + real pred reader => a plain single stream
             streams.push(SpaceStream::new(
-                TermFileReader::open(&tmp.path(&format!("c{ci}.pred")))?,
-                TermFileReader::open(&tmp.path(&format!("c{ci}.pred.empty",))).or_else(
+                TermFileReader::open(&tmp.path(&format!("c{ci}.pred"))?)?,
+                TermFileReader::open(&tmp.path(&format!("c{ci}.pred.empty",))?).or_else(
                     |_| -> Result<TermFileReader, std::io::Error> {
                         // create-once empty file per chunk
-                        let p = tmp.path(&format!("c{ci}.pred.empty"));
+                        let p = tmp.path(&format!("c{ci}.pred.empty")).map_err(|error| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
+                        })?;
                         File::create(&p)?;
                         TermFileReader::open(&p)
                     },
@@ -797,7 +808,7 @@ pub(crate) fn merge_dictionaries(
     // chunk term files are no longer needed
     for ci in 0..k {
         for suffix in ["shared", "subj", "obj", "pred", "pred.empty"] {
-            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.{suffix}")));
+            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.{suffix}"))?);
         }
     }
 
@@ -825,14 +836,14 @@ pub(crate) fn remap_chunks_to_spool(
             .checked_add(chunk.triple_count)
             .ok_or(ExtBuildError::Internal("statement count overflow"))
     })?;
-    let path = temp.path("global.tri");
+    let path = temp.path("global.tri")?;
     let mut output = BufWriter::new(File::create(&path)?);
     let remaps = std::mem::take(&mut merged.remaps);
     for (chunk_index, _) in chunks.iter().enumerate() {
         let maps = remaps
             .get(chunk_index)
             .ok_or(ExtBuildError::Internal("chunk remap missing"))?;
-        let chunk_path = temp.path(&format!("c{chunk_index}.tri"));
+        let chunk_path = temp.path(&format!("c{chunk_index}.tri"))?;
         let mut input = BufReader::new(File::open(&chunk_path)?);
         loop {
             let mut record = [0u8; 12];
@@ -880,7 +891,7 @@ pub(crate) fn remap_chunks_to_spool(
     }
     output.flush()?;
     drop(output);
-    TripleSpool::from_file(path, count).map_err(|error| match error {
+    TripleSpool::from_file(temp, path, count).map_err(|error| match error {
         BuildPipelineError::Io(error) => ExtBuildError::Io(error),
         BuildPipelineError::InvalidSpool(message) => ExtBuildError::Internal(message),
         BuildPipelineError::Overflow(message) => ExtBuildError::Internal(message),
@@ -992,7 +1003,7 @@ impl RawSectionWriter {
         let mut body = File::open(&self.path)?;
         // compress chunks (reading each body slice from disk), spill compressed
         // bytes to a scratch file, record dir entries
-        let comp_path = tmp.path(&format!("{out_name}.chunks"));
+        let comp_path = tmp.path(&format!("{out_name}.chunks"))?;
         let mut comp_out = BufWriter::new(File::create(&comp_path)?);
         let mut dir: Vec<(usize, Vec<u8>, u64)> = Vec::with_capacity(bounds.len());
         for &(first_run, start, end) in &bounds {
@@ -1011,7 +1022,7 @@ impl RawSectionWriter {
         let _ = std::fs::remove_file(&self.path);
 
         // assemble: [header_len][header][num_chunks][dir…][compressed chunks…]
-        let out_path = tmp.path(out_name);
+        let out_path = tmp.path(out_name)?;
         let mut out = BufWriter::new(File::create(&out_path)?);
         let mut head = Vec::new();
         write_uvarint(&mut head, header.len() as u64);
@@ -1095,7 +1106,7 @@ fn build_permutation_section(
             if run.len() >= run_len || (eof && !run.is_empty()) {
                 sort_triples(&mut run);
                 run.dedup();
-                let path = tmp.path(&format!("{}.run{}", perm.name(), runs.len()));
+                let path = tmp.path(&format!("{}.run{}", perm.name(), runs.len()))?;
                 let mut w = BufWriter::with_capacity(1 << 20, File::create(&path)?);
                 for &(a, b, c) in &run {
                     w.write_all(&a.to_le_bytes())?;
@@ -1210,7 +1221,7 @@ struct StreamingTiler {
 
 impl StreamingTiler {
     fn new(tmp: &BuildTemp, name: &str, codec: u8) -> Result<Self, ExtBuildError> {
-        let comp_path = tmp.path(&format!("{name}.tiles"));
+        let comp_path = tmp.path(&format!("{name}.tiles"))?;
         Ok(StreamingTiler {
             tile_budget: INDEX_TILE_BUDGET,
             codec,
@@ -1333,7 +1344,7 @@ impl StreamingTiler {
             .and_then(|n| n.to_str())
             .unwrap_or("perm")
             .to_string();
-        let out_path = tmp.path(&format!("{name}.sec"));
+        let out_path = tmp.path(&format!("{name}.sec"))?;
         let mut out = BufWriter::with_capacity(1 << 20, File::create(&out_path)?);
         let mut head = Vec::new();
         write_uvarint(&mut head, self.dir.len() as u64);
@@ -1665,12 +1676,13 @@ mod tests {
         let statements: u64 = chunks.iter().map(|c| c.triple_count).sum();
         let merged = merge_dictionaries(&tmp, &chunks).unwrap();
 
-        let global_tri = tmp.path("global.tri");
+        let global_tri = tmp.path("global.tri").unwrap();
         {
             let mut w = BufWriter::new(File::create(&global_tri).unwrap());
             for (ci, _c) in chunks.iter().enumerate() {
                 let maps = &merged.remaps[ci];
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri"))).unwrap());
+                let mut rd =
+                    BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")).unwrap()).unwrap());
                 let mut buf = [0u8; 12];
                 while rd.read_exact(&mut buf).is_ok() {
                     let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());

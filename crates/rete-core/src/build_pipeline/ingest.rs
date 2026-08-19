@@ -53,6 +53,7 @@ pub(crate) struct SpilledDictionary {
     pub(crate) section_paths: [std::path::PathBuf; 4],
     pub(crate) term_count: u64,
     pub(crate) has_quoted_triples: bool,
+    _session: BuildTemp,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -61,12 +62,35 @@ pub(crate) struct CanonicalSpilled {
     pub(crate) triples: TripleSpool,
     pub(crate) metadata: Vec<u8>,
     pub(crate) stats: BuildStats,
+    pub(crate) chunk_count: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChunkedStage {
+    ParseIngest,
+    Canonicalize,
+    Remap,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct ChunkedIngest<'a> {
     temp: &'a BuildTemp,
     chunker: crate::extbuild::Chunker<'a>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct SealedChunks<'a> {
+    temp: &'a BuildTemp,
+    chunks: Vec<crate::extbuild::ChunkInfo>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct CanonicalizingChunks<'a> {
+    temp: &'a BuildTemp,
+    chunks: Vec<crate::extbuild::ChunkInfo>,
+    merged: crate::extbuild::MergedDict,
+    stats: BuildStats,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -90,16 +114,44 @@ impl<'a> ChunkedIngest<'a> {
         self,
         metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
     ) -> Result<CanonicalSpilled, BuildPipelineError> {
+        self.finish_with_stages(metadata, |_| {})
+    }
+
+    pub(crate) fn finish_with_stages(
+        self,
+        metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
+        mut completed: impl FnMut(ChunkedStage),
+    ) -> Result<CanonicalSpilled, BuildPipelineError> {
+        let sealed = self.seal()?;
+        completed(ChunkedStage::ParseIngest);
+        let canonicalizing = sealed.canonicalize()?;
+        completed(ChunkedStage::Canonicalize);
+        let spilled = canonicalizing.remap(metadata)?;
+        completed(ChunkedStage::Remap);
+        Ok(spilled)
+    }
+
+    fn seal(self) -> Result<SealedChunks<'a>, BuildPipelineError> {
         let chunks = self
             .chunker
             .finish()
             .map_err(crate::extbuild::ExtBuildError::into_pipeline)?;
-        let statements = chunks.iter().try_fold(0u64, |total, chunk| {
+        Ok(SealedChunks {
+            temp: self.temp,
+            chunks,
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a> SealedChunks<'a> {
+    fn canonicalize(self) -> Result<CanonicalizingChunks<'a>, BuildPipelineError> {
+        let statements = self.chunks.iter().try_fold(0u64, |total, chunk| {
             total
                 .checked_add(chunk.triple_count)
                 .ok_or(BuildPipelineError::Overflow("statement count"))
         })?;
-        let mut merged = crate::extbuild::merge_dictionaries(self.temp, &chunks)
+        let merged = crate::extbuild::merge_dictionaries(self.temp, &self.chunks)
             .map_err(crate::extbuild::ExtBuildError::into_pipeline)?;
         let stats = BuildStats {
             statements: usize::try_from(statements)
@@ -111,18 +163,36 @@ impl<'a> ChunkedIngest<'a> {
                 .map_err(|_| BuildPipelineError::TooManyTerms)?,
             pyramid_levels: 0,
         };
+        Ok(CanonicalizingChunks {
+            temp: self.temp,
+            chunks: self.chunks,
+            merged,
+            stats,
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a> CanonicalizingChunks<'a> {
+    fn remap(
+        mut self,
+        metadata: impl FnOnce(&BuildStats) -> Vec<u8>,
+    ) -> Result<CanonicalSpilled, BuildPipelineError> {
         let dictionary = SpilledDictionary {
-            section_paths: merged.section_paths(),
-            term_count: merged.term_count,
-            has_quoted_triples: merged.has_quoted,
+            section_paths: self.merged.section_paths(),
+            term_count: self.merged.term_count,
+            has_quoted_triples: self.merged.has_quoted,
+            _session: self.temp.clone(),
         };
-        let triples = crate::extbuild::remap_chunks_to_spool(self.temp, &chunks, &mut merged)
-            .map_err(crate::extbuild::ExtBuildError::into_pipeline)?;
+        let triples =
+            crate::extbuild::remap_chunks_to_spool(self.temp, &self.chunks, &mut self.merged)
+                .map_err(crate::extbuild::ExtBuildError::into_pipeline)?;
         Ok(CanonicalSpilled {
             dictionary,
             triples,
-            metadata: metadata(&stats),
-            stats,
+            metadata: metadata(&self.stats),
+            stats: self.stats,
+            chunk_count: self.chunks.len(),
         })
     }
 }
@@ -356,7 +426,8 @@ mod tests {
     use crate::ingest::RawQuad;
 
     use super::{
-        next_provisional_id, BuildPipelineError, ChunkedIngest, MemoryIngest, DEFAULT_GRAPH_ID,
+        next_provisional_id, BuildPipelineError, ChunkedIngest, ChunkedStage, MemoryIngest,
+        DEFAULT_GRAPH_ID,
     };
     use crate::build_pipeline::spool::BuildTemp;
 
@@ -576,6 +647,7 @@ mod tests {
                 chunked.push(quad).unwrap();
             }
             let spilled = chunked.finish(|_| b"metadata".to_vec()).unwrap();
+            assert_eq!(spilled.chunk_count, if budget == 64 << 20 { 3 } else { 1 });
             let sections = spilled
                 .dictionary
                 .section_paths
@@ -622,6 +694,49 @@ mod tests {
             drop(temp);
         }
         std::fs::remove_dir(&parent).unwrap();
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn chunked_stages_report_parse_canonicalize_and_remap_in_order() {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let parent = std::env::temp_dir().join(format!(
+            "rete-chunked-stage-test-{}-{sequence}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&parent).unwrap();
+        let temp = BuildTemp::new(&parent).unwrap();
+        let mut chunked = ChunkedIngest::new(&temp, 64 << 20);
+        chunked.push(q("<s>", "<p>", "<o>", None)).unwrap();
+        let mut stages = Vec::new();
+        let spilled = chunked
+            .finish_with_stages(|_| Vec::new(), |stage| stages.push(stage))
+            .unwrap();
+
+        assert_eq!(
+            stages,
+            vec![
+                ChunkedStage::ParseIngest,
+                ChunkedStage::Canonicalize,
+                ChunkedStage::Remap
+            ]
+        );
+        let owned = temp.owned_path().to_path_buf();
+        drop(temp);
+        assert!(std::fs::read(spilled.dictionary.section_paths.first().unwrap()).is_ok());
+        let mut triples = Vec::new();
+        spilled
+            .triples
+            .for_each_block(1, &mut |block| {
+                triples.extend_from_slice(block);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(triples.len(), 1);
+        drop(spilled);
+        assert!(!owned.exists());
+        std::fs::remove_dir(parent).unwrap();
     }
 
     fn sorted_dictionary_and_deduped_triples(quads: Vec<RawQuad>) -> CanonicalContent {

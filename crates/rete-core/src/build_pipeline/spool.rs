@@ -1,6 +1,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::Triple;
 
@@ -12,7 +13,12 @@ const MAX_BLOCK_RECORDS: usize = 1 << 20;
 /// A private, uniquely-created spill directory which removes only the directory
 /// it created. Files are always closed before callers can replay them, which
 /// keeps cleanup compatible with Windows file-handle rules.
+#[derive(Clone)]
 pub(crate) struct BuildTemp {
+    inner: Arc<BuildTempInner>,
+}
+
+struct BuildTempInner {
     parent: PathBuf,
     owned: PathBuf,
     cleanup: bool,
@@ -29,9 +35,11 @@ impl BuildTemp {
             match std::fs::create_dir(&owned) {
                 Ok(()) => {
                     return Ok(Self {
-                        parent,
-                        owned,
-                        cleanup: true,
+                        inner: Arc::new(BuildTempInner {
+                            parent,
+                            owned,
+                            cleanup: true,
+                        }),
                     })
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -43,26 +51,38 @@ impl BuildTemp {
         ))
     }
 
-    pub(crate) fn path(&self, name: &str) -> PathBuf {
-        self.owned.join(name)
+    pub(crate) fn path(&self, name: &str) -> Result<PathBuf, BuildPipelineError> {
+        let mut components = Path::new(name).components();
+        if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+            || components.next().is_some()
+        {
+            return Err(BuildPipelineError::InvalidSpool("uncontained spool path"));
+        }
+        let path = self.inner.owned.join(name);
+        if !path.starts_with(&self.inner.owned) {
+            return Err(BuildPipelineError::InvalidSpool("uncontained spool path"));
+        }
+        Ok(path)
     }
 
     #[cfg(test)]
     pub(crate) fn owned_path(&self) -> &Path {
-        &self.owned
+        &self.inner.owned
     }
 
     #[cfg(test)]
     pub(crate) fn adopt_existing_for_resume(owned: PathBuf) -> Self {
         Self {
-            parent: owned.parent().unwrap_or(Path::new("")).to_path_buf(),
-            owned,
-            cleanup: false,
+            inner: Arc::new(BuildTempInner {
+                parent: owned.parent().unwrap_or(Path::new("")).to_path_buf(),
+                owned,
+                cleanup: false,
+            }),
         }
     }
 }
 
-impl Drop for BuildTemp {
+impl Drop for BuildTempInner {
     fn drop(&mut self) {
         if self.cleanup
             && self
@@ -79,7 +99,11 @@ impl Drop for BuildTemp {
 /// A replayable canonical `(subject, predicate, object)` record stream.
 pub(crate) enum TripleSpool {
     Resident(Vec<Triple>),
-    File { path: PathBuf, count: u64 },
+    File {
+        path: PathBuf,
+        count: u64,
+        _session: BuildTemp,
+    },
 }
 
 impl TripleSpool {
@@ -90,7 +114,7 @@ impl TripleSpool {
     ) -> Result<Self, BuildPipelineError> {
         let count = u64::try_from(triples.len())
             .map_err(|_| BuildPipelineError::Overflow("triple spool count"))?;
-        let path = temp.path(name);
+        let path = temp.path(name)?;
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -103,10 +127,18 @@ impl TripleSpool {
         }
         writer.flush()?;
         drop(writer);
-        Ok(Self::File { path, count })
+        Ok(Self::File {
+            path,
+            count,
+            _session: temp.clone(),
+        })
     }
 
-    pub(crate) fn from_file(path: PathBuf, count: u64) -> Result<Self, BuildPipelineError> {
+    pub(crate) fn from_file(
+        temp: &BuildTemp,
+        path: PathBuf,
+        count: u64,
+    ) -> Result<Self, BuildPipelineError> {
         let expected = count
             .checked_mul(TRIPLE_RECORD_BYTES as u64)
             .ok_or(BuildPipelineError::Overflow("triple spool byte length"))?;
@@ -119,7 +151,11 @@ impl TripleSpool {
                 "triple spool length does not match count",
             ));
         }
-        Ok(Self::File { path, count })
+        Ok(Self::File {
+            path,
+            count,
+            _session: temp.clone(),
+        })
     }
 
     pub(crate) fn count(&self) -> u64 {
@@ -145,7 +181,7 @@ impl TripleSpool {
                 }
                 Ok(())
             }
-            Self::File { path, count } => {
+            Self::File { path, count, .. } => {
                 let expected = count
                     .checked_mul(TRIPLE_RECORD_BYTES as u64)
                     .ok_or(BuildPipelineError::Overflow("triple spool byte length"))?;
@@ -246,6 +282,7 @@ mod tests {
 
         assert_eq!(collect_blocks(&spool, 2), expected);
         assert_eq!(spool.count(), 4);
+        drop(spool);
         drop(temp);
         std::fs::remove_dir(&parent).unwrap();
     }
@@ -269,8 +306,39 @@ mod tests {
             error,
             crate::build_pipeline::BuildPipelineError::InvalidSpool("partial triple record")
         ));
+        drop(spool);
         drop(temp);
         std::fs::remove_dir(&parent).unwrap();
+    }
+
+    #[test]
+    fn file_spool_keeps_its_temp_directory_alive_after_the_original_guard_drops() {
+        let parent = test_parent("artifact-owner");
+        let (spool, owned) = {
+            let temp = BuildTemp::new(&parent).unwrap();
+            let spool = TripleSpool::write_file(&temp, "canonical.tri", &triples()).unwrap();
+            (spool, temp.owned_path().to_path_buf())
+        };
+
+        assert!(owned.exists());
+        assert_eq!(collect_blocks(&spool, 2), triples());
+        drop(spool);
+        assert!(!owned.exists());
+        std::fs::remove_dir(parent).unwrap();
+    }
+
+    #[test]
+    fn build_temp_rejects_path_escapes() {
+        let parent = test_parent("contained-path");
+        let temp = BuildTemp::new(&parent).unwrap();
+        assert!(temp.path("canonical.tri").is_ok());
+        for escape in ["../escape", "/escape", "nested/file", ".", ""] {
+            assert!(temp.path(escape).is_err(), "accepted {escape:?}");
+        }
+        #[cfg(windows)]
+        assert!(temp.path(r"C:\\escape").is_err());
+        drop(temp);
+        std::fs::remove_dir(parent).unwrap();
     }
 
     #[test]
