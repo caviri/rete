@@ -10,7 +10,7 @@ use std::sync::Arc;
 use proptest::prelude::*;
 use rete_core::{
     build_pyramid_meta, eval_sparql, write_file, Binding, DictionaryBuilder, GraphIndexBuilder,
-    IndexPermutation, RangeReader, Rete, TripleBlock, DEFAULT_TILE_BUDGET,
+    RangeReader, Rete, DEFAULT_TILE_BUDGET,
 };
 
 /// An owned in-memory `RangeReader`: `SliceReader` borrows, but `open_ranged_lazy`
@@ -149,47 +149,6 @@ proptest! {
             prop_assert_eq!(rows(&eager, &q), rows(&lazy, &q), "lazy != eager for: {}", q);
         }
         prop_assert!(!lazy.index_incomplete(), "lazy open faulted incompletely");
-    }
-}
-
-proptest! {
-    /// The staged paired-family builder expands back into every logical order
-    /// exactly as six independently sorted permutation sections would.
-    #[test]
-    fn prop_paired_family_orders_match_reference_sort(
-        triples in prop::collection::vec((any::<u32>(), any::<u32>(), any::<u32>()), 0..80)
-    ) {
-        let index = GraphIndexBuilder::from_triples(triples.clone())
-            .with_tile_budget(96)
-            .build_families();
-        for permutation in [
-            IndexPermutation::Spo,
-            IndexPermutation::Pos,
-            IndexPermutation::Osp,
-            IndexPermutation::Sop,
-            IndexPermutation::Pso,
-            IndexPermutation::Ops,
-        ] {
-            let mut expected: Vec<_> = triples
-                .iter()
-                .copied()
-                .map(|(s, p, o)| match permutation {
-                    IndexPermutation::Spo => (s, p, o),
-                    IndexPermutation::Pos => (p, o, s),
-                    IndexPermutation::Osp => (o, s, p),
-                    IndexPermutation::Sop => (s, o, p),
-                    IndexPermutation::Pso => (p, s, o),
-                    IndexPermutation::Ops => (o, p, s),
-                })
-                .collect();
-            expected.sort_unstable();
-            expected.dedup();
-            let actual: Vec<_> = index.tile_sections()[permutation.section_index()]
-                .iter()
-                .flat_map(|tile| TripleBlock::parse(tile.bytes()).unwrap().triples())
-                .collect();
-            prop_assert_eq!(actual, expected, "{}", permutation.name());
-        }
     }
 }
 

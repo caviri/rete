@@ -230,6 +230,10 @@ impl TripleSpool {
         }
     }
 
+    pub(crate) const fn is_file_backed(&self) -> bool {
+        matches!(self, Self::File { .. })
+    }
+
     pub(crate) fn file_path(&self) -> Option<&Path> {
         match self {
             Self::File { path, .. } => Some(path),

@@ -260,7 +260,8 @@ impl IndexPermutation {
 
     /// The physical paired-family slot and sibling-order selector for this
     /// logical permutation. The stable six-section order remains unchanged.
-    pub const fn family_slot(self) -> (usize, bool) {
+    #[allow(dead_code)] // Staged paired-family metadata; exercised by crate tests.
+    pub(crate) const fn family_slot(self) -> (usize, bool) {
         match self {
             Self::Spo => (0, false),
             Self::Pos => (1, false),
@@ -427,15 +428,10 @@ impl GraphIndexBuilder {
         GraphIndex::from_sections(sections)
     }
 
-    /// Build through the paired-family path while preserving the established
-    /// six-section query representation. Intended for builder benchmarks and
-    /// staged pipeline integration; normal callers still select [`Self::build`].
-    pub fn build_families(self) -> GraphIndex {
-        self.try_build_families()
-            .expect("paired family build requires an encodable tile budget")
-    }
-
-    pub(crate) fn try_build_families(self) -> Result<GraphIndex, BuildPipelineError> {
+    /// Build through the staged paired-family path without making it a public
+    /// production API before the format writer is ready.
+    #[allow(dead_code)] // Staged until the format writer consumes paired families.
+    pub(crate) fn build_families(self) -> Result<GraphIndex, BuildPipelineError> {
         let spool = TripleSpool::Resident(self.triples);
         let families = [
             build_family(&spool, IndexFamily::Subject, self.tile_budget)?,
@@ -621,6 +617,7 @@ impl GraphIndex {
 
     /// Expand the three family pairs into `ALL_PERMS` section order: SPO, POS,
     /// OSP, SOP, PSO, OPS. Existing planners and loaders keep their APIs.
+    #[allow(dead_code)] // Staged until the format writer consumes paired families.
     pub(crate) fn from_families(families: [FamilyIndex; 3]) -> Self {
         let mut sections: [Vec<Tile>; NUM_PERMS] = std::array::from_fn(|_| Vec::new());
         for family in families {
@@ -1189,7 +1186,8 @@ mod tests {
         let (_, data) = graph();
         let paired = GraphIndexBuilder::from_triples(data.clone())
             .with_tile_budget(64)
-            .build_families();
+            .build_families()
+            .unwrap();
         for permutation in ALL_PERMS {
             let mut expected: Vec<_> = data
                 .iter()
