@@ -520,6 +520,12 @@ struct FileWorkingSet {
 #[cfg(test)]
 std::thread_local! {
     static FILE_PEAK_WORKING: std::cell::Cell<FileWorkingSet> = const { std::cell::Cell::new(FileWorkingSet { records: 0, bytes: 0, descriptors: 0, max_single_vec_records: 0 }) };
+    static FILE_OUTER_READERS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+#[cfg(test)]
+fn outer_reader_resources() -> (usize, usize) {
+    FILE_OUTER_READERS.with(|resources| resources.get())
 }
 
 #[cfg(test)]
@@ -1291,6 +1297,16 @@ fn next_file_group(
         .ok_or_else(|| overflow("family group name"))?;
     let path = temp.path(&name)?;
     let mut writer = create_scratch_writer(&path)?;
+    observe_file_live!(
+        &[],
+        &[],
+        &[],
+        std::mem::size_of::<FamilyRun>()
+            .saturating_add(path.capacity())
+            .saturating_add(name.capacity()),
+        writer.capacity().saturating_add(outer_reader_resources().0),
+        1usize.saturating_add(outer_reader_resources().1),
+    );
     let mut count = 0u64;
     write_triple(&mut writer, first)?;
     count = count
@@ -1382,8 +1398,6 @@ fn emit_file_continuations_core(
     second_run: &FamilyRun,
     budget: usize,
     tiles: &mut Vec<PairedTile>,
-    _outer_reader_bytes: usize,
-    _outer_descriptors: usize,
 ) -> Result<(), BuildPipelineError> {
     if first_run.count != second_run.count {
         return Err(BuildPipelineError::InvalidSpool(
@@ -1451,8 +1465,8 @@ fn emit_file_continuations_core(
                     .reader
                     .capacity()
                     .saturating_add(second_reader.reader.capacity())
-                    .saturating_add(_outer_reader_bytes),
-                2usize.saturating_add(_outer_descriptors),
+                    .saturating_add(outer_reader_resources().0),
+                2usize.saturating_add(outer_reader_resources().1),
             );
             let first_size = first_sizer.encoded_size()?;
             let second_size = second_sizer.encoded_size()?;
@@ -1482,8 +1496,8 @@ fn emit_file_continuations_core(
                 .reader
                 .capacity()
                 .saturating_add(second_reader.reader.capacity())
-                .saturating_add(_outer_reader_bytes),
-            2usize.saturating_add(_outer_descriptors),
+                .saturating_add(outer_reader_resources().0),
+            2usize.saturating_add(outer_reader_resources().1),
         );
         pending.extend(first_tail.into_iter().zip(second_tail));
         tiles.push(encode_pair(&first_values, &second_values, budget)?);
@@ -1497,7 +1511,7 @@ fn emit_file_continuations(
     budget: usize,
     tiles: &mut Vec<PairedTile>,
 ) -> Result<(), BuildPipelineError> {
-    emit_file_continuations_core(first_run, second_run, budget, tiles, 0, 0)
+    emit_file_continuations_core(first_run, second_run, budget, tiles)
 }
 
 #[cfg(test)]
@@ -1509,14 +1523,12 @@ fn emit_file_continuations_with_outer_resources(
     outer_reader_bytes: usize,
     outer_descriptors: usize,
 ) -> Result<(), BuildPipelineError> {
-    emit_file_continuations_core(
-        first_run,
-        second_run,
-        budget,
-        tiles,
-        outer_reader_bytes,
-        outer_descriptors,
-    )
+    FILE_OUTER_READERS.with(|resources| {
+        let previous = resources.replace((outer_reader_bytes, outer_descriptors));
+        let result = emit_file_continuations_core(first_run, second_run, budget, tiles);
+        resources.set(previous);
+        result
+    })
 }
 
 #[cfg(test)]
@@ -1551,6 +1563,16 @@ fn build_file_family(
         sorted_file_runs(spool, &scratch, family, tile_budget, &mut sequence)?;
     let mut first_reader = RunReader::open(&first_run)?;
     let mut second_reader = RunReader::open(&second_run)?;
+    #[cfg(test)]
+    FILE_OUTER_READERS.with(|resources| {
+        resources.set((
+            first_reader
+                .reader
+                .capacity()
+                .saturating_add(second_reader.reader.capacity()),
+            2,
+        ));
+    });
     let mut first_pending = None;
     let mut second_pending = None;
     let mut tiles = Vec::new();
