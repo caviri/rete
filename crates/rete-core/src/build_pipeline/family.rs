@@ -9,7 +9,9 @@ use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 use crate::index::Tile;
-use crate::triples::{encode_sorted_unique, encode_sorted_unique_with_header, TripleBlock, ZoneMap};
+use crate::triples::{
+    encode_sorted_unique, encode_sorted_unique_with_header, TripleBlock, ZoneMap,
+};
 use crate::varint::uvarint_len;
 use crate::Triple;
 
@@ -307,8 +309,7 @@ fn partition_by_leading(
         .map_err(|_| overflow("family leading counts"))?;
     counts.resize(dense_len, 0usize);
     for &triple in input.iter() {
-        let slot = usize::try_from(triple.0)
-            .map_err(|_| overflow("family leading count index"))?;
+        let slot = usize::try_from(triple.0).map_err(|_| overflow("family leading count index"))?;
         counts[slot] = counts[slot]
             .checked_add(1)
             .ok_or_else(|| overflow("family leading count"))?;
@@ -326,13 +327,15 @@ fn partition_by_leading(
             .ok_or_else(|| overflow("family leading offsets"))?;
     }
     if next != input.len() {
-        return Err(BuildPipelineError::InvalidSpool("family leading partition length"));
+        return Err(BuildPipelineError::InvalidSpool(
+            "family leading partition length",
+        ));
     }
     scratch.clear();
     scratch.resize(input.len(), (0, 0, 0));
     for &triple in input.iter() {
-        let bucket = usize::try_from(triple.0)
-            .map_err(|_| overflow("family leading scatter index"))?;
+        let bucket =
+            usize::try_from(triple.0).map_err(|_| overflow("family leading scatter index"))?;
         let slot = offsets[bucket];
         scratch[slot] = triple;
         offsets[bucket] = slot
@@ -548,15 +551,16 @@ impl TileSummary {
 /// been partitioned. Mapping a sorted `(a, x, y)` group to `(a, y, x)` leaves
 /// `x` in ascending order, so a stable sort by `y` alone yields the complete
 /// `(a, y, x)` order without comparing the old tie-breaker again.
-fn sort_sibling_group(group: &mut [Triple], scratch: &mut Vec<Triple>) -> Result<(), BuildPipelineError> {
+fn sort_sibling_group(
+    group: &mut [Triple],
+    scratch: &mut Vec<Triple>,
+) -> Result<(), BuildPipelineError> {
     const INSERTION_LIMIT: usize = 16;
     if group.len() <= INSERTION_LIMIT {
         for index in 1..group.len() {
             let value = group[index];
             let mut slot = index;
-            while slot != 0
-                && group[slot - 1].1 > value.1
-            {
+            while slot != 0 && group[slot - 1].1 > value.1 {
                 group[slot] = group[slot - 1];
                 slot -= 1;
             }
@@ -2155,6 +2159,9 @@ pub(crate) fn build_family(
     family: IndexFamily,
     tile_budget: usize,
 ) -> Result<FamilyIndex, BuildPipelineError> {
+    if tile_budget == 0 {
+        return Err(BuildPipelineError::InvalidSpool("zero family tile budget"));
+    }
     if spool.is_file_backed() {
         if spool.count() != 0 && tile_budget < MIN_FAMILY_TILE_BUDGET {
             return Err(BuildPipelineError::InvalidSpool(
@@ -2178,16 +2185,15 @@ mod tests {
 
     use crate::build_pipeline::spool::BuildTemp;
     use crate::build_pipeline::spool::TripleSpool;
+    use crate::index::GraphIndexBuilder;
     use crate::triples::TripleBlock;
     use crate::Triple;
-    use crate::index::GraphIndexBuilder;
 
     use super::{
         build_family, build_family_from_slice, file_run_record_cap, merge_runs,
         partition_by_leading, reset_resident_profile, resident_profile,
-        set_resident_profile_active, sorted_file_runs, sort_sibling_group, write_run,
-        IndexFamily, LeadingPartition,
-        RunReader, FILE_PEAK_WORKING,
+        set_resident_profile_active, sort_sibling_group, sorted_file_runs, write_run, IndexFamily,
+        LeadingPartition, RunReader, FILE_PEAK_WORKING,
     };
 
     fn fixture() -> Vec<Triple> {
@@ -2450,13 +2456,31 @@ mod tests {
     }
 
     #[test]
+    fn zero_budget_rejects_empty_resident_and_file_spools_equally() {
+        let resident = TripleSpool::Resident(Vec::new());
+        assert!(matches!(
+            build_family(&resident, IndexFamily::Subject, 0),
+            Err(crate::build_pipeline::BuildPipelineError::InvalidSpool(
+                "zero family tile budget"
+            ))
+        ));
+        let parent = family_parent("zero-budget-empty-file");
+        let temp = BuildTemp::new(&parent).unwrap();
+        let file = TripleSpool::write_file(&temp, "empty", &[]).unwrap();
+        assert!(matches!(
+            build_family(&file, IndexFamily::Subject, 0),
+            Err(crate::build_pipeline::BuildPipelineError::InvalidSpool(
+                "zero family tile budget"
+            ))
+        ));
+        drop(file);
+        drop(temp);
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
     fn sparse_high_leading_ids_use_bounded_radix_partition() {
-        let mut triples = vec![
-            (u32::MAX, 9, 1),
-            (3, 2, 8),
-            (u32::MAX - 1, 0, 7),
-            (3, 1, 9),
-        ];
+        let mut triples = vec![(u32::MAX, 9, 1), (3, 2, 8), (u32::MAX - 1, 0, 7), (3, 1, 9)];
         let mut scratch = Vec::new();
         assert_eq!(
             partition_by_leading(&mut triples, &mut scratch).unwrap(),
@@ -2655,9 +2679,11 @@ mod tests {
             triples.push((person, 0, 18 + person % 60));
             triples.push((person, 1, person));
             for edge in 0..5u32 {
-                state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
                 let random = (state >> 32) as u32;
-                let target = if random % 10 != 0 {
+                let target = if !random.is_multiple_of(10) {
                     (person / 100) * 100 + random % 100
                 } else {
                     random % 400_000
@@ -2678,7 +2704,11 @@ mod tests {
         // record; the production default-feature builder remains parallel.
         set_resident_profile_active(true);
         let mut profile_families = Vec::new();
-        for family in [IndexFamily::Subject, IndexFamily::Predicate, IndexFamily::Object] {
+        for family in [
+            IndexFamily::Subject,
+            IndexFamily::Predicate,
+            IndexFamily::Object,
+        ] {
             reset_resident_profile();
             let family_index = build_family_from_slice(&triples, family, budget).unwrap();
             profile_families.push(family_index);
@@ -2688,10 +2718,12 @@ mod tests {
         let _: crate::index::GraphIndex = crate::index::GraphIndex::from_families(
             profile_families.try_into().map_err(|_| ()).unwrap(),
         );
-        eprintln!("task5-profile family-expansion={:?}", expansion_started.elapsed());
+        eprintln!(
+            "task5-profile family-expansion={:?}",
+            expansion_started.elapsed()
+        );
         let (_, reference_profile) = crate::index::build_reference_profile(&triples, budget);
-        for (permutation, profile) in crate::index::ALL_PERMS.into_iter().zip(reference_profile)
-        {
+        for (permutation, profile) in crate::index::ALL_PERMS.into_iter().zip(reference_profile) {
             eprintln!("task5-profile reference={permutation:?} {profile:?}");
         }
         set_resident_profile_active(false);
@@ -2735,13 +2767,19 @@ mod tests {
                         .with_tile_budget(budget)
                         .build()
                 };
-                let hash = index.sections.iter().flatten().fold(0usize, |hash, tile| {
-                    hash ^ tile.bytes().len()
-                });
+                let hash = index
+                    .sections
+                    .iter()
+                    .flatten()
+                    .fold(0usize, |hash, tile| hash ^ tile.bytes().len());
                 black_box(hash);
                 if sample >= 2 {
-                    (if paired_turn { &mut paired_times } else { &mut reference_times })
-                        .push(start.elapsed());
+                    (if paired_turn {
+                        &mut paired_times
+                    } else {
+                        &mut reference_times
+                    })
+                    .push(start.elapsed());
                 }
             }
         }

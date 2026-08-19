@@ -17,7 +17,9 @@ use std::cell::Cell;
 use std::sync::{Arc, OnceLock};
 
 use crate::adaptive::{AdaptiveReadController, ReadIntent};
-use crate::build_pipeline::family::{build_family_from_slice, FamilyIndex, FamilyView, IndexFamily};
+use crate::build_pipeline::family::{
+    build_family_from_slice, FamilyIndex, FamilyView, IndexFamily,
+};
 use crate::build_pipeline::BuildPipelineError;
 use crate::triples::{encode_sorted_unique, GroupDirectory, Triple, TripleBlock};
 use crate::varint::uvarint_len;
@@ -436,10 +438,18 @@ impl GraphIndexBuilder {
         let families = {
             let (subject, predicate_object) = rayon::join(
                 || build_family_from_slice(triples, IndexFamily::Subject, self.tile_budget),
-                || rayon::join(
-                    || build_family_from_slice(triples, IndexFamily::Predicate, self.tile_budget),
-                    || build_family_from_slice(triples, IndexFamily::Object, self.tile_budget),
-                ),
+                || {
+                    rayon::join(
+                        || {
+                            build_family_from_slice(
+                                triples,
+                                IndexFamily::Predicate,
+                                self.tile_budget,
+                            )
+                        },
+                        || build_family_from_slice(triples, IndexFamily::Object, self.tile_budget),
+                    )
+                },
             );
             [subject?, predicate_object.0?, predicate_object.1?]
         };

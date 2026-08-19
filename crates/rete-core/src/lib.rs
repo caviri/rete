@@ -9,6 +9,11 @@
 
 mod build_pipeline;
 
+/// Non-default construction benchmark hook, used only by the release example.
+#[cfg(feature = "build-pipeline-bench")]
+#[doc(hidden)]
+pub mod preflight_bench;
+
 /// The engine version, as published on crates.io.
 ///
 /// Language bindings re-export this so a caller can always tell which engine is

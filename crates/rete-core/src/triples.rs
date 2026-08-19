@@ -190,29 +190,28 @@ pub(crate) fn encode_sorted_unique_with_header(
     num_a: u64,
     encoded_len: usize,
 ) -> Result<Vec<u8>, TripleError> {
-    if usize::try_from(zone.count).ok() != Some(t.len()) {
-        return Err(TripleError::Malformed("zone count does not match triples"));
-    }
     if t.is_empty() {
-        if encoded_len != 8 || num_a != 0 {
+        if encoded_len != 8
+            || num_a != 0
+            || zone
+                != (ZoneMap {
+                    min_a: 0,
+                    max_a: 0,
+                    min_b: 0,
+                    max_b: 0,
+                    min_c: 0,
+                    max_c: 0,
+                    count: 0,
+                })
+        {
             return Err(TripleError::Malformed("empty block summary"));
         }
         return Ok(vec![0; 8]);
     }
-    if t[0].0 != zone.min_a || t[t.len() - 1].0 != zone.max_a {
-        return Err(TripleError::Malformed("zone leading bounds do not match triples"));
-    }
-    debug_assert!(t.windows(2).all(|pair| pair[0] < pair[1]));
 
     let mut out = Vec::with_capacity(encoded_len);
     for value in [
-        zone.min_a,
-        zone.max_a,
-        zone.min_b,
-        zone.max_b,
-        zone.min_c,
-        zone.max_c,
-        zone.count,
+        zone.min_a, zone.max_a, zone.min_b, zone.max_b, zone.min_c, zone.max_c, zone.count,
     ] {
         write_uvarint(&mut out, value as u64);
     }
@@ -220,8 +219,23 @@ pub(crate) fn encode_sorted_unique_with_header(
 
     let mut prev_a = 0u32;
     let mut i = 0usize;
+    let mut previous_a = None;
+    let mut previous_triple = None;
+    let mut actual_min_b = u32::MAX;
+    let mut actual_max_b = 0u32;
+    let mut actual_min_c = u32::MAX;
+    let mut actual_max_c = 0u32;
+    let mut actual_count = 0u64;
+    let mut actual_num_a = 0u64;
     while i < t.len() {
         let a = t[i].0;
+        if previous_a.is_some_and(|previous| a <= previous) {
+            return Err(TripleError::Malformed("triples are not sorted and unique"));
+        }
+        previous_a = Some(a);
+        actual_num_a = actual_num_a
+            .checked_add(1)
+            .ok_or(TripleError::SizeOverflow("leading count"))?;
         write_uvarint(&mut out, (a - prev_a) as u64);
         prev_a = a;
 
@@ -240,6 +254,9 @@ pub(crate) fn encode_sorted_unique_with_header(
         let mut prev_b = 0u32;
         while i < t.len() && t[i].0 == a {
             let b = t[i].1;
+            if b < prev_b {
+                return Err(TripleError::Malformed("triples are not sorted and unique"));
+            }
             write_uvarint(&mut out, (b - prev_b) as u64);
             prev_b = b;
             let start = i;
@@ -249,13 +266,38 @@ pub(crate) fn encode_sorted_unique_with_header(
             write_uvarint(&mut out, (i - start) as u64);
             let mut prev_c = 0u32;
             for &(_, _, c) in &t[start..i] {
+                let triple = (a, b, c);
+                if previous_triple.is_some_and(|previous| triple <= previous) {
+                    return Err(TripleError::Malformed("triples are not sorted and unique"));
+                }
+                previous_triple = Some(triple);
+                actual_min_b = actual_min_b.min(b);
+                actual_max_b = actual_max_b.max(b);
+                actual_min_c = actual_min_c.min(c);
+                actual_max_c = actual_max_c.max(c);
+                actual_count = actual_count
+                    .checked_add(1)
+                    .ok_or(TripleError::SizeOverflow("triple count"))?;
                 write_uvarint(&mut out, (c - prev_c) as u64);
                 prev_c = c;
             }
         }
     }
-    if out.len() != encoded_len {
-        return Err(TripleError::Malformed("block summary length does not match triples"));
+    let actual_count =
+        u32::try_from(actual_count).map_err(|_| TripleError::SizeOverflow("triple count"))?;
+    let actual_zone = ZoneMap {
+        min_a: t[0].0,
+        max_a: previous_a.unwrap_or(0),
+        min_b: actual_min_b,
+        max_b: actual_max_b,
+        min_c: actual_min_c,
+        max_c: actual_max_c,
+        count: actual_count,
+    };
+    if actual_zone != zone || actual_num_a != num_a || out.len() != encoded_len {
+        return Err(TripleError::Malformed(
+            "block summary length does not match triples",
+        ));
     }
     Ok(out)
 }
@@ -1013,6 +1055,43 @@ mod tests {
             encode_sorted_unique(&[(1, 2, 3), (1, 2, 5), (1, 4, 1), (3, 1, 2)]),
             vec![1, 3, 1, 4, 1, 5, 4, 2, 1, 2, 2, 2, 3, 2, 2, 1, 1, 2, 1, 1, 1, 2]
         );
+    }
+
+    #[test]
+    fn summary_encoder_rejects_false_same_width_summary_and_input() {
+        let sorted = [(1, 2, 3), (1, 4, 5), (2, 6, 7)];
+        let plan = plan_sorted_unique(&sorted).unwrap();
+        let header = ZoneMap {
+            min_a: plan.zone[0],
+            max_a: plan.zone[1],
+            min_b: plan.zone[2],
+            max_b: plan.zone[3],
+            min_c: plan.zone[4],
+            max_c: plan.zone[5],
+            count: plan.zone[6],
+        };
+        let encode = |triples: &[Triple], zone, num_a| {
+            encode_sorted_unique_with_header(triples, zone, num_a, plan.encoded_len)
+        };
+
+        let mut false_min_b = header;
+        false_min_b.min_b += 1; // still a one-byte varint
+        assert!(encode(&sorted, false_min_b, plan.num_a).is_err());
+        let mut false_max_b = header;
+        false_max_b.max_b -= 1; // still a one-byte varint
+        assert!(encode(&sorted, false_max_b, plan.num_a).is_err());
+        let mut false_min_c = header;
+        false_min_c.min_c += 1; // still a one-byte varint
+        assert!(encode(&sorted, false_min_c, plan.num_a).is_err());
+        let mut false_max_c = header;
+        false_max_c.max_c -= 1; // still a one-byte varint
+        assert!(encode(&sorted, false_max_c, plan.num_a).is_err());
+        assert!(encode(&sorted, header, plan.num_a + 1).is_err());
+
+        let unsorted = [(1, 4, 5), (1, 2, 3), (2, 6, 7)];
+        assert!(encode(&unsorted, header, plan.num_a).is_err());
+        let duplicate = [(1, 2, 3), (1, 2, 3), (2, 6, 7)];
+        assert!(encode(&duplicate, header, plan.num_a).is_err());
     }
 
     #[test]
