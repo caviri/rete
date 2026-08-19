@@ -234,6 +234,15 @@ impl TripleSpool {
         matches!(self, Self::File { .. })
     }
 
+    /// Family construction owns all derived runs beside the canonical file so
+    /// the spool session's cleanup policy covers every scratch artifact.
+    pub(crate) fn build_temp(&self) -> Option<BuildTemp> {
+        match self {
+            Self::File { _session, .. } => Some(_session.clone()),
+            Self::Resident(_) => None,
+        }
+    }
+
     pub(crate) fn file_path(&self) -> Option<&Path> {
         match self {
             Self::File { path, .. } => Some(path),

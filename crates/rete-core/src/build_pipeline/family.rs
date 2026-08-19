@@ -1,5 +1,4 @@
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
@@ -371,148 +370,63 @@ fn group_ranges(sorted: &[Triple]) -> Vec<std::ops::Range<usize>> {
     ranges
 }
 
-fn split_group(
-    sorted: &[Triple],
+/// The only header term that can shrink while extending a sorted fixed-leading
+/// segment is the width of `min_c`, from five uvarint bytes to one.
+const MAX_APPEND_RECOVERY_BYTES: usize = 4;
+
+type PairSlice = (std::ops::Range<usize>, std::ops::Range<usize>);
+
+/// Synchronously segment sibling orders by rank. Every accepted boundary was
+/// observed to fit in both orders; after either size exceeds the budget plus
+/// the only possible future header recovery, it cannot become valid again.
+fn synchronous_slices(
+    first: &[Triple],
+    second: &[Triple],
     budget: usize,
-) -> Result<Vec<std::ops::Range<usize>>, BuildPipelineError> {
-    let mut ranges = Vec::new();
+) -> Result<Vec<PairSlice>, BuildPipelineError> {
+    if first.len() != second.len() {
+        return Err(BuildPipelineError::InvalidSpool(
+            "family sibling lengths differ",
+        ));
+    }
+    if first.is_empty() {
+        return Ok(Vec::new());
+    }
+    let recovery_limit = budget
+        .checked_add(MAX_APPEND_RECOVERY_BYTES)
+        .ok_or_else(|| overflow("family recovery budget"))?;
+    let mut slices = Vec::new();
     let mut start = 0usize;
-    while start < sorted.len() {
-        let single = encoded_sorted_unique_len(&sorted[start..start + 1])
-            .map_err(|_| BuildPipelineError::InvalidSpool("invalid family continuation"))?;
-        if single > budget {
-            return Err(BuildPipelineError::InvalidSpool(
-                "tile budget smaller than one encoded triple",
-            ));
-        }
-        let mut low = start + 1;
-        let mut high = sorted.len();
-        while low < high {
-            let middle = low + (high - low).div_ceil(2);
-            let size = encoded_sorted_unique_len(&sorted[start..middle])
-                .map_err(|_| BuildPipelineError::InvalidSpool("invalid family continuation"))?;
-            if size <= budget {
-                low = middle;
-            } else {
-                high = middle - 1;
+    while start < first.len() {
+        let mut first_sizer = SegmentSizer::new(first[start].0);
+        let mut second_sizer = SegmentSizer::new(second[start].0);
+        let mut end = start;
+        let mut last_valid = None;
+        loop {
+            if end == first.len() {
+                break;
+            }
+            first_sizer.push(first[end])?;
+            second_sizer.push(second[end])?;
+            end = end
+                .checked_add(1)
+                .ok_or_else(|| overflow("family continuation end"))?;
+            let first_size = first_sizer.encoded_size()?;
+            let second_size = second_sizer.encoded_size()?;
+            if first_size <= budget && second_size <= budget {
+                last_valid = Some(end);
+            }
+            if first_size > recovery_limit || second_size > recovery_limit {
+                break;
             }
         }
-        ranges.push(start..low);
-        start = low;
+        let cut = last_valid.ok_or(BuildPipelineError::InvalidSpool(
+            "family continuation has no common bounded prefix",
+        ))?;
+        slices.push((start..cut, start..cut));
+        start = cut;
     }
-    Ok(ranges)
-}
-
-fn align_slices(
-    sorted: &[Triple],
-    ranges: &mut Vec<std::ops::Range<usize>>,
-    wanted: usize,
-    budget: usize,
-) -> Result<(), BuildPipelineError> {
-    let mut candidates = BinaryHeap::new();
-    let mut generations = vec![0usize; ranges.len()];
-    for (index, range) in ranges.iter().enumerate() {
-        candidates.push((range.len(), Reverse(index), generations[index]));
-    }
-    while ranges.len() < wanted {
-        let (index, range) = loop {
-            observe_alignment_pop();
-            let (len, Reverse(index), generation) = candidates.pop().ok_or(
-                BuildPipelineError::InvalidSpool("unalignable family continuation"),
-            )?;
-            let range = ranges
-                .get(index)
-                .filter(|range| {
-                    generation == generations[index] && range.len() == len && range.len() > 1
-                })
-                .cloned();
-            if let Some(range) = range {
-                break (index, range);
-            }
-        };
-        let split = legal_split(sorted, &range, budget)?;
-        let left = range.start..split;
-        let right = split..range.end;
-        ranges[index] = left.clone();
-        generations[index] = generations[index]
-            .checked_add(1)
-            .ok_or_else(|| overflow("family continuation generation"))?;
-        let right_index = ranges.len();
-        ranges.push(right.clone());
-        generations.push(0);
-        candidates.push((left.len(), Reverse(index), generations[index]));
-        candidates.push((right.len(), Reverse(right_index), generations[right_index]));
-    }
-    ranges.sort_by_key(|range| range.start);
-    Ok(())
-}
-
-#[cfg(test)]
-std::thread_local! {
-    static ALIGNMENT_HEAP_POPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn observe_alignment_pop() {
-    #[cfg(test)]
-    {
-        ALIGNMENT_HEAP_POPS.with(|pops| pops.set(pops.get() + 1));
-    }
-}
-
-/// Choose a deterministic nonempty cut for an already-budgeted continuation.
-/// Prefix size is monotone as records are appended and suffix size is monotone
-/// as records are removed, so two binary searches find a legal interval without
-/// rescanning every candidate cut or relying on a midpoint being legal.
-fn legal_split(
-    sorted: &[Triple],
-    range: &std::ops::Range<usize>,
-    budget: usize,
-) -> Result<usize, BuildPipelineError> {
-    if range.len() < 2 {
-        return Err(BuildPipelineError::InvalidSpool(
-            "unalignable family continuation",
-        ));
-    }
-    let mut low = range.start + 1;
-    let mut high = range.end - 1;
-    let mut largest_prefix = None;
-    while low <= high {
-        let middle = low + (high - low) / 2;
-        let size = encoded_sorted_unique_len(&sorted[range.start..middle])
-            .map_err(|_| BuildPipelineError::InvalidSpool("invalid family continuation"))?;
-        if size <= budget {
-            largest_prefix = Some(middle);
-            low = middle + 1;
-        } else {
-            high = middle - 1;
-        }
-    }
-    let largest_prefix = largest_prefix.ok_or(BuildPipelineError::InvalidSpool(
-        "oversize family continuation",
-    ))?;
-    let mut low = range.start + 1;
-    let mut high = range.end - 1;
-    let mut smallest_suffix = None;
-    while low <= high {
-        let middle = low + (high - low) / 2;
-        let size = encoded_sorted_unique_len(&sorted[middle..range.end])
-            .map_err(|_| BuildPipelineError::InvalidSpool("invalid family continuation"))?;
-        if size <= budget {
-            smallest_suffix = Some(middle);
-            high = middle - 1;
-        } else {
-            low = middle + 1;
-        }
-    }
-    let smallest_suffix = smallest_suffix.ok_or(BuildPipelineError::InvalidSpool(
-        "oversize family continuation",
-    ))?;
-    if smallest_suffix > largest_prefix {
-        return Err(BuildPipelineError::InvalidSpool(
-            "unalignable family continuation",
-        ));
-    }
-    Ok(largest_prefix)
+    Ok(slices)
 }
 
 fn encode_pair(
@@ -571,6 +485,14 @@ fn encode_pair(
 
 const FILE_RUN_FANIN: usize = 16;
 
+/// A nonempty raw triple block has seven zone/count varints and six body
+/// varints. Six arbitrary u32 extrema need five bytes each, the count and
+/// three group counts need one byte each, and the three deltas need five bytes
+/// each: `6 * 5 + 1 + 3 + 3 * 5 = 49` bytes. Below this, a singleton can be
+/// temporarily unencodable even when a larger neighbor-sharing segment fits,
+/// which has no bounded common-partition guarantee for the staged builder.
+const MIN_FAMILY_TILE_BUDGET: usize = 49;
+
 /// Explicit bounded working-set cap for file-backed family construction. Every
 /// generated radix run holds no more than this many triples; it scales with the
 /// requested tile budget rather than the spool's total statement count.
@@ -579,17 +501,32 @@ fn file_run_record_cap(tile_budget: usize) -> usize {
 }
 
 #[cfg(test)]
-std::thread_local! {
-    static FILE_PEAK_RECORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+#[derive(Clone, Copy, Default)]
+struct FileWorkingSet {
+    records: usize,
+    bytes: usize,
+    descriptors: usize,
 }
 
-fn observe_file_records(records: usize) {
+#[cfg(test)]
+std::thread_local! {
+    static FILE_PEAK_WORKING: std::cell::Cell<FileWorkingSet> = const { std::cell::Cell::new(FileWorkingSet { records: 0, bytes: 0, descriptors: 0 }) };
+}
+
+fn observe_file_working(records: usize, bytes: usize, descriptors: usize) {
     #[cfg(test)]
     {
-        FILE_PEAK_RECORDS.with(|peak| peak.set(peak.get().max(records)));
+        FILE_PEAK_WORKING.with(|peak| {
+            let previous = peak.get();
+            peak.set(FileWorkingSet {
+                records: previous.records.max(records),
+                bytes: previous.bytes.max(bytes),
+                descriptors: previous.descriptors.max(descriptors),
+            });
+        });
     }
     #[cfg(not(test))]
-    let _ = records;
+    let _ = (records, bytes, descriptors);
 }
 
 #[derive(Clone)]
@@ -612,7 +549,11 @@ fn write_run(
 ) -> Result<FamilyRun, BuildPipelineError> {
     radix_sort(&mut triples, &[2, 1, 0])?;
     triples.dedup();
-    observe_file_records(triples.len());
+    observe_file_working(
+        triples.len().saturating_mul(2),
+        triples.len().saturating_mul(24),
+        1,
+    );
     let count = u64::try_from(triples.len()).map_err(|_| overflow("family run count"))?;
     let path = temp.path(name)?;
     let mut writer = BufWriter::new(File::create(&path)?);
@@ -631,6 +572,16 @@ struct RunReader {
 
 impl RunReader {
     fn open(run: &FamilyRun) -> Result<Self, BuildPipelineError> {
+        let expected = run
+            .count
+            .checked_mul(12)
+            .ok_or_else(|| overflow("family run byte length"))?;
+        let actual = std::fs::metadata(&run.path)?.len();
+        if actual != expected {
+            return Err(BuildPipelineError::InvalidSpool(
+                "family run length does not match count",
+            ));
+        }
         let mut reader = Self {
             reader: BufReader::new(File::open(&run.path)?),
             remaining: run.count,
@@ -695,7 +646,11 @@ fn merge_runs(
         .iter()
         .map(RunReader::open)
         .collect::<Result<_, _>>()?;
-    observe_file_records(readers.len());
+    observe_file_working(
+        readers.len(),
+        readers.len().saturating_mul(12),
+        readers.len().saturating_add(1),
+    );
     let path = temp.path(name)?;
     let mut writer = BufWriter::new(File::create(&path)?);
     let mut last = None;
@@ -722,47 +677,241 @@ fn merge_runs(
     Ok(FamilyRun { path, count })
 }
 
+#[derive(Clone, Copy)]
+struct ManagedRun {
+    id: u64,
+    count: u64,
+}
+
+const MANIFEST_RECORD_BYTES: u64 = 16;
+
+fn managed_run_name(label: &str, id: u64) -> String {
+    format!("family-{label}-run-{id}")
+}
+
+fn managed_run_path(
+    temp: &BuildTemp,
+    label: &str,
+    run: ManagedRun,
+) -> Result<PathBuf, BuildPipelineError> {
+    temp.path(&managed_run_name(label, run.id))
+}
+
+struct RunManifestWriter {
+    writer: BufWriter<File>,
+}
+
+impl RunManifestWriter {
+    fn create(path: &std::path::Path) -> Result<Self, BuildPipelineError> {
+        Ok(Self {
+            writer: BufWriter::new(File::create(path)?),
+        })
+    }
+
+    fn append(&mut self, run: ManagedRun) -> Result<(), BuildPipelineError> {
+        self.writer.write_all(&run.id.to_le_bytes())?;
+        self.writer.write_all(&run.count.to_le_bytes())?;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), BuildPipelineError> {
+        self.writer.flush()?;
+        Ok(())
+    }
+}
+
+struct RunManifestReader {
+    reader: BufReader<File>,
+    remaining: u64,
+}
+
+impl RunManifestReader {
+    fn open(path: &std::path::Path) -> Result<Self, BuildPipelineError> {
+        let remaining = std::fs::metadata(path)?.len();
+        if remaining % MANIFEST_RECORD_BYTES != 0 {
+            return Err(BuildPipelineError::InvalidSpool(
+                "partial family run manifest",
+            ));
+        }
+        Ok(Self {
+            reader: BufReader::new(File::open(path)?),
+            remaining,
+        })
+    }
+
+    fn next(&mut self) -> Result<Option<ManagedRun>, BuildPipelineError> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        let mut bytes = [0u8; MANIFEST_RECORD_BYTES as usize];
+        self.reader.read_exact(&mut bytes).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                BuildPipelineError::InvalidSpool("partial family run manifest")
+            } else {
+                error.into()
+            }
+        })?;
+        self.remaining -= MANIFEST_RECORD_BYTES;
+        Ok(Some(ManagedRun {
+            id: u64::from_le_bytes(
+                bytes[0..8]
+                    .try_into()
+                    .map_err(|_| overflow("family run manifest id"))?,
+            ),
+            count: u64::from_le_bytes(
+                bytes[8..16]
+                    .try_into()
+                    .map_err(|_| overflow("family run manifest count"))?,
+            ),
+        }))
+    }
+}
+
+fn next_run_id(sequence: &mut u64) -> Result<u64, BuildPipelineError> {
+    let id = *sequence;
+    *sequence = sequence
+        .checked_add(1)
+        .ok_or_else(|| overflow("family run id"))?;
+    Ok(id)
+}
+
+fn write_managed_run(
+    temp: &BuildTemp,
+    label: &str,
+    sequence: &mut u64,
+    triples: Vec<Triple>,
+) -> Result<ManagedRun, BuildPipelineError> {
+    let id = next_run_id(sequence)?;
+    let run = write_run(temp, &managed_run_name(label, id), triples)?;
+    Ok(ManagedRun {
+        id,
+        count: run.count,
+    })
+}
+
+fn merge_managed_runs(
+    temp: &BuildTemp,
+    label: &str,
+    sequence: &mut u64,
+    inputs: &[ManagedRun],
+) -> Result<ManagedRun, BuildPipelineError> {
+    let mut resolved = Vec::with_capacity(inputs.len());
+    for &input in inputs {
+        resolved.push(FamilyRun {
+            path: managed_run_path(temp, label, input)?,
+            count: input.count,
+        });
+    }
+    let id = next_run_id(sequence)?;
+    let merged = merge_runs(temp, &managed_run_name(label, id), &resolved)?;
+    for input in resolved {
+        std::fs::remove_file(input.path)?;
+    }
+    Ok(ManagedRun {
+        id,
+        count: merged.count,
+    })
+}
+
+fn consolidate_manifest(
+    temp: &BuildTemp,
+    label: &str,
+    mut manifest: PathBuf,
+    sequence: &mut u64,
+) -> Result<FamilyRun, BuildPipelineError> {
+    loop {
+        let next_manifest = temp.path(&format!(
+            "family-{label}-manifest-{}",
+            next_run_id(sequence)?
+        ))?;
+        let mut reader = RunManifestReader::open(&manifest)?;
+        let mut writer = RunManifestWriter::create(&next_manifest)?;
+        let mut outputs = 0usize;
+        let mut only = None;
+        loop {
+            let mut batch = Vec::with_capacity(FILE_RUN_FANIN);
+            while batch.len() < FILE_RUN_FANIN {
+                let Some(run) = reader.next()? else { break };
+                batch.push(run);
+            }
+            if batch.is_empty() {
+                break;
+            }
+            // A manifest reader and writer remain open around the bounded
+            // run merge, whose own output writer is also live.
+            observe_file_working(0, 0, batch.len().saturating_add(3));
+            let merged = merge_managed_runs(temp, label, sequence, &batch)?;
+            writer.append(merged)?;
+            outputs = outputs
+                .checked_add(1)
+                .ok_or_else(|| overflow("family merge batch count"))?;
+            only = Some(merged);
+        }
+        writer.flush()?;
+        drop(writer);
+        drop(reader);
+        std::fs::remove_file(&manifest)?;
+        if outputs == 0 {
+            std::fs::remove_file(&next_manifest)?;
+            let empty = write_managed_run(temp, label, sequence, Vec::new())?;
+            return Ok(FamilyRun {
+                path: managed_run_path(temp, label, empty)?,
+                count: empty.count,
+            });
+        }
+        if outputs == 1 {
+            std::fs::remove_file(&next_manifest)?;
+            let run = only.ok_or(BuildPipelineError::InvalidSpool("missing family run"))?;
+            return Ok(FamilyRun {
+                path: managed_run_path(temp, label, run)?,
+                count: run.count,
+            });
+        }
+        manifest = next_manifest;
+    }
+}
+
 fn sorted_file_runs(
     spool: &TripleSpool,
     temp: &BuildTemp,
     family: IndexFamily,
     tile_budget: usize,
-    sequence: &mut usize,
+    sequence: &mut u64,
 ) -> Result<(FamilyRun, FamilyRun), BuildPipelineError> {
     let cap = file_run_record_cap(tile_budget);
     let mut first_buffer = Vec::with_capacity(cap);
     let mut second_buffer = Vec::with_capacity(cap);
-    let mut first_runs = Vec::new();
-    let mut second_runs = Vec::new();
+    let first_manifest = temp.path(&format!("family-first-manifest-{}", next_run_id(sequence)?))?;
+    let second_manifest = temp.path(&format!(
+        "family-second-manifest-{}",
+        next_run_id(sequence)?
+    ))?;
+    let mut first_runs = RunManifestWriter::create(&first_manifest)?;
+    let mut second_runs = RunManifestWriter::create(&second_manifest)?;
     spool.for_each_block(cap, &mut |block| {
         for &triple in block {
             first_buffer.push(family.first(triple));
             second_buffer.push(family.second(triple));
-            observe_file_records(
-                block
-                    .len()
-                    .saturating_add(first_buffer.len())
-                    .saturating_add(second_buffer.len()),
-            );
+            let records = block
+                .len()
+                .saturating_add(first_buffer.len())
+                .saturating_add(second_buffer.len());
+            // The source reader and the two manifests stay live while a run
+            // is generated; a run writer makes four descriptors at a flush.
+            observe_file_working(records, records.saturating_mul(12), 4);
             if first_buffer.len() == cap {
-                let first_name = format!("family-first-run-{}", *sequence);
-                *sequence = sequence
-                    .checked_add(1)
-                    .ok_or_else(|| overflow("family run name"))?;
-                let second_name = format!("family-second-run-{}", *sequence);
-                *sequence = sequence
-                    .checked_add(1)
-                    .ok_or_else(|| overflow("family run name"))?;
-                first_runs.push(write_run(
+                first_runs.append(write_managed_run(
                     temp,
-                    &first_name,
+                    "first",
+                    sequence,
                     std::mem::take(&mut first_buffer),
-                )?);
-                second_runs.push(write_run(
+                )?)?;
+                second_runs.append(write_managed_run(
                     temp,
-                    &second_name,
+                    "second",
+                    sequence,
                     std::mem::take(&mut second_buffer),
-                )?);
+                )?)?;
                 first_buffer = Vec::with_capacity(cap);
                 second_buffer = Vec::with_capacity(cap);
             }
@@ -770,38 +919,16 @@ fn sorted_file_runs(
         Ok(())
     })?;
     if !first_buffer.is_empty() {
-        let first_name = format!("family-first-run-{}", *sequence);
-        *sequence = sequence
-            .checked_add(1)
-            .ok_or_else(|| overflow("family run name"))?;
-        let second_name = format!("family-second-run-{}", *sequence);
-        *sequence = sequence
-            .checked_add(1)
-            .ok_or_else(|| overflow("family run name"))?;
-        first_runs.push(write_run(temp, &first_name, first_buffer)?);
-        second_runs.push(write_run(temp, &second_name, second_buffer)?);
+        first_runs.append(write_managed_run(temp, "first", sequence, first_buffer)?)?;
+        second_runs.append(write_managed_run(temp, "second", sequence, second_buffer)?)?;
     }
-    let consolidate = |mut runs: Vec<FamilyRun>, label: &str, sequence: &mut usize| {
-        if runs.is_empty() {
-            return write_run(temp, &format!("family-{label}-empty"), Vec::new());
-        }
-        while runs.len() > 1 {
-            let mut merged = Vec::new();
-            for chunk in runs.chunks(FILE_RUN_FANIN) {
-                let name = format!("family-{label}-merge-{}", *sequence);
-                *sequence = sequence
-                    .checked_add(1)
-                    .ok_or_else(|| overflow("family merge name"))?;
-                merged.push(merge_runs(temp, &name, chunk)?);
-            }
-            runs = merged;
-        }
-        runs.pop()
-            .ok_or(BuildPipelineError::InvalidSpool("missing family run"))
-    };
+    first_runs.flush()?;
+    second_runs.flush()?;
+    drop(first_runs);
+    drop(second_runs);
     Ok((
-        consolidate(first_runs, "first", sequence)?,
-        consolidate(second_runs, "second", sequence)?,
+        consolidate_manifest(temp, "first", first_manifest, sequence)?,
+        consolidate_manifest(temp, "second", second_manifest, sequence)?,
     ))
 }
 
@@ -818,61 +945,6 @@ struct SegmentSizer {
     current_b: Option<u32>,
     num_c: u64,
     previous_c: u32,
-}
-
-struct SegmentRun {
-    path: PathBuf,
-    count: u64,
-}
-
-fn write_segment(writer: &mut BufWriter<File>, bytes: &[u8]) -> Result<(), BuildPipelineError> {
-    let len = u32::try_from(bytes.len()).map_err(|_| overflow("family segment length"))?;
-    writer.write_all(&len.to_le_bytes())?;
-    writer.write_all(bytes)?;
-    Ok(())
-}
-
-struct SegmentReader {
-    reader: BufReader<File>,
-    remaining: u64,
-}
-
-impl SegmentReader {
-    fn open(run: &SegmentRun) -> Result<Self, BuildPipelineError> {
-        Ok(Self {
-            reader: BufReader::new(File::open(&run.path)?),
-            remaining: run.count,
-        })
-    }
-
-    fn next(&mut self) -> Result<Option<Vec<u8>>, BuildPipelineError> {
-        if self.remaining == 0 {
-            return Ok(None);
-        }
-        let mut width = [0u8; 4];
-        self.reader.read_exact(&mut width).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                BuildPipelineError::InvalidSpool("partial family segment length")
-            } else {
-                error.into()
-            }
-        })?;
-        let len = u32::from_le_bytes(width) as usize;
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(len)
-            .map_err(|_| overflow("family segment buffer"))?;
-        bytes.resize(len, 0);
-        self.reader.read_exact(&mut bytes).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                BuildPipelineError::InvalidSpool("partial family segment")
-            } else {
-                error.into()
-            }
-        })?;
-        self.remaining -= 1;
-        Ok(Some(bytes))
-    }
 }
 
 impl SegmentSizer {
@@ -961,16 +1033,36 @@ impl SegmentSizer {
         .try_fold(0usize, |sum, part| sum.checked_add(part))
         .ok_or_else(|| overflow("family segment size"))
     }
+
+    fn group_summary(&self) -> Result<GroupSummary, BuildPipelineError> {
+        if self.current_b.is_none() {
+            return Err(BuildPipelineError::InvalidSpool("empty family group"));
+        }
+        let body_without_a = self
+            .body
+            .checked_sub(uvarint_len(self.a as u64))
+            .and_then(|size| size.checked_add(uvarint_len(self.num_c)))
+            .and_then(|size| size.checked_add(uvarint_len(self.num_b)))
+            .ok_or_else(|| overflow("family group summary"))?;
+        Ok(GroupSummary {
+            a: self.a,
+            min_b: self.min_b,
+            max_b: self.max_b,
+            min_c: self.min_c,
+            max_c: self.max_c,
+            count: self.count,
+            body_without_a,
+        })
+    }
 }
 
 fn next_file_group(
     reader: &mut RunReader,
     pending: &mut Option<Triple>,
-    budget: usize,
     temp: &BuildTemp,
     label: &str,
-    sequence: &mut usize,
-) -> Result<Option<(u32, SegmentRun)>, BuildPipelineError> {
+    sequence: &mut u64,
+) -> Result<Option<(u32, FamilyRun)>, BuildPipelineError> {
     let first = match pending.take() {
         Some(triple) => Some(triple),
         None => reader.next()?,
@@ -986,16 +1078,11 @@ fn next_file_group(
         .ok_or_else(|| overflow("family group name"))?;
     let path = temp.path(&name)?;
     let mut writer = BufWriter::new(File::create(&path)?);
-    let mut values = Vec::new();
-    let mut sizer = SegmentSizer::new(a);
-    sizer.push(first)?;
-    values.push(first);
-    if sizer.encoded_size()? > budget {
-        return Err(BuildPipelineError::InvalidSpool(
-            "tile budget smaller than one encoded triple",
-        ));
-    }
     let mut count = 0u64;
+    write_triple(&mut writer, first)?;
+    count = count
+        .checked_add(1)
+        .ok_or_else(|| overflow("family group count"))?;
     loop {
         let next = reader.next()?;
         let Some(triple) = next else { break };
@@ -1003,118 +1090,126 @@ fn next_file_group(
             *pending = Some(triple);
             break;
         }
-        let mut candidate = sizer.clone();
-        candidate.push(triple)?;
-        if candidate.encoded_size()? > budget {
-            observe_file_records(values.len());
-            write_segment(&mut writer, &encode_sorted_unique(&values))?;
-            count = count
-                .checked_add(1)
-                .ok_or_else(|| overflow("family segment count"))?;
-            values.clear();
-            sizer = SegmentSizer::new(a);
-            sizer.push(triple)?;
-            if sizer.encoded_size()? > budget {
-                return Err(BuildPipelineError::InvalidSpool(
-                    "tile budget smaller than one encoded triple",
-                ));
-            }
-        } else {
-            sizer = candidate;
-        }
-        values.push(triple);
-    }
-    if !values.is_empty() {
-        observe_file_records(values.len());
-        write_segment(&mut writer, &encode_sorted_unique(&values))?;
+        write_triple(&mut writer, triple)?;
         count = count
             .checked_add(1)
-            .ok_or_else(|| overflow("family segment count"))?;
+            .ok_or_else(|| overflow("family group count"))?;
     }
     writer.flush()?;
-    Ok(Some((a, SegmentRun { path, count })))
+    Ok(Some((a, FamilyRun { path, count })))
 }
 
-fn split_encoded_segment(
-    bytes: Vec<u8>,
-    wanted: usize,
+fn group_summary_from_run(run: &FamilyRun) -> Result<GroupSummary, BuildPipelineError> {
+    let mut reader = RunReader::open(run)?;
+    let first = reader
+        .next()?
+        .ok_or(BuildPipelineError::InvalidSpool("empty family group"))?;
+    let mut summary = SegmentSizer::new(first.0);
+    summary.push(first)?;
+    while let Some(triple) = reader.next()? {
+        summary.push(triple)?;
+    }
+    summary.group_summary()
+}
+
+fn extend_from_run(values: &mut Vec<Triple>, run: &FamilyRun) -> Result<(), BuildPipelineError> {
+    let count = usize::try_from(run.count).map_err(|_| overflow("family group count"))?;
+    values
+        .try_reserve(count)
+        .map_err(|_| overflow("family group buffer"))?;
+    let mut reader = RunReader::open(run)?;
+    while let Some(triple) = reader.next()? {
+        values.push(triple);
+    }
+    Ok(())
+}
+
+fn emit_file_continuations(
+    first_run: &FamilyRun,
+    second_run: &FamilyRun,
     budget: usize,
-) -> Result<Vec<Vec<u8>>, BuildPipelineError> {
-    let triples = TripleBlock::parse(&bytes)
-        .map_err(|_| BuildPipelineError::InvalidSpool("invalid encoded family segment"))?
-        .triples();
-    if wanted == 0 || wanted > triples.len() {
+    tiles: &mut Vec<PairedTile>,
+) -> Result<(), BuildPipelineError> {
+    if first_run.count != second_run.count {
         return Err(BuildPipelineError::InvalidSpool(
-            "unalignable family continuation",
+            "family sibling lengths differ",
         ));
     }
-    let mut ranges = Vec::with_capacity(wanted);
-    ranges.push(0..triples.len());
-    align_slices(&triples, &mut ranges, wanted, budget)?;
-    Ok(ranges
-        .into_iter()
-        .map(|range| encode_sorted_unique(&triples[range]))
-        .collect())
-}
-
-struct SegmentEmitter {
-    reader: SegmentReader,
-    sources_left: u64,
-    extras_left: u64,
-    budget: usize,
-    pending: VecDeque<Vec<u8>>,
-}
-
-impl SegmentEmitter {
-    fn new(run: SegmentRun, wanted: u64, budget: usize) -> Result<Self, BuildPipelineError> {
-        if wanted < run.count {
-            return Err(BuildPipelineError::InvalidSpool(
-                "unalignable family continuation",
-            ));
-        }
-        Ok(Self {
-            reader: SegmentReader::open(&run)?,
-            sources_left: run.count,
-            extras_left: wanted - run.count,
-            budget,
-            pending: VecDeque::new(),
-        })
-    }
-
-    fn next(&mut self) -> Result<Option<Vec<u8>>, BuildPipelineError> {
-        if let Some(bytes) = self.pending.pop_front() {
-            return Ok(Some(bytes));
-        }
-        let Some(bytes) = self.reader.next()? else {
-            if self.extras_left != 0 {
-                return Err(BuildPipelineError::InvalidSpool(
-                    "unalignable family continuation",
-                ));
-            }
-            return Ok(None);
+    let recovery_limit = budget
+        .checked_add(MAX_APPEND_RECOVERY_BYTES)
+        .ok_or_else(|| overflow("family recovery budget"))?;
+    let mut first_reader = RunReader::open(first_run)?;
+    let mut second_reader = RunReader::open(second_run)?;
+    let mut pending = VecDeque::new();
+    loop {
+        let start = match pending.pop_front() {
+            Some(pair) => Some(pair),
+            None => match (first_reader.next()?, second_reader.next()?) {
+                (None, None) => None,
+                (Some(first), Some(second)) => Some((first, second)),
+                _ => {
+                    return Err(BuildPipelineError::InvalidSpool(
+                        "family sibling lengths differ",
+                    ))
+                }
+            },
         };
-        self.sources_left = self
-            .sources_left
-            .checked_sub(1)
-            .ok_or_else(|| overflow("family segment source count"))?;
-        let triples = TripleBlock::parse(&bytes)
-            .map_err(|_| BuildPipelineError::InvalidSpool("invalid encoded family segment"))?
-            .triples();
-        observe_file_records(triples.len());
-        let available = u64::try_from(triples.len().saturating_sub(1))
-            .map_err(|_| overflow("family segment split capacity"))?;
-        let extra = available.min(self.extras_left);
-        self.extras_left -= extra;
-        let wanted = usize::try_from(
-            extra
-                .checked_add(1)
-                .ok_or_else(|| overflow("family segment split count"))?,
-        )
-        .map_err(|_| overflow("family segment split count"))?;
-        self.pending
-            .extend(split_encoded_segment(bytes, wanted, self.budget)?);
-        Ok(self.pending.pop_front())
+        let Some((first_start, second_start)) = start else {
+            break;
+        };
+        let mut first_sizer = SegmentSizer::new(first_start.0);
+        let mut second_sizer = SegmentSizer::new(second_start.0);
+        let mut first_values = vec![first_start];
+        let mut second_values = vec![second_start];
+        first_sizer.push(first_start)?;
+        second_sizer.push(second_start)?;
+        let mut last_valid =
+            if first_sizer.encoded_size()? <= budget && second_sizer.encoded_size()? <= budget {
+                Some(1)
+            } else {
+                None
+            };
+        loop {
+            let next = match pending.pop_front() {
+                Some(pair) => Some(pair),
+                None => match (first_reader.next()?, second_reader.next()?) {
+                    (None, None) => None,
+                    (Some(first), Some(second)) => Some((first, second)),
+                    _ => {
+                        return Err(BuildPipelineError::InvalidSpool(
+                            "family sibling lengths differ",
+                        ))
+                    }
+                },
+            };
+            let Some((first, second)) = next else { break };
+            first_sizer.push(first)?;
+            second_sizer.push(second)?;
+            first_values.push(first);
+            second_values.push(second);
+            let records = first_values
+                .len()
+                .saturating_add(second_values.len())
+                .saturating_add(pending.len().saturating_mul(2));
+            observe_file_working(records, records.saturating_mul(12), 2);
+            let first_size = first_sizer.encoded_size()?;
+            let second_size = second_sizer.encoded_size()?;
+            if first_size <= budget && second_size <= budget {
+                last_valid = Some(first_values.len());
+            }
+            if first_size > recovery_limit || second_size > recovery_limit {
+                break;
+            }
+        }
+        let cut = last_valid.ok_or(BuildPipelineError::InvalidSpool(
+            "family continuation has no common bounded prefix",
+        ))?;
+        let first_tail = first_values.split_off(cut);
+        let second_tail = second_values.split_off(cut);
+        pending.extend(first_tail.into_iter().zip(second_tail));
+        tiles.push(encode_pair(&first_values, &second_values, budget)?);
     }
+    Ok(())
 }
 
 fn build_file_family(
@@ -1122,8 +1217,10 @@ fn build_file_family(
     family: IndexFamily,
     tile_budget: usize,
 ) -> Result<FamilyIndex, BuildPipelineError> {
-    let scratch = BuildTemp::new(&std::env::temp_dir())?;
-    let mut sequence = 0usize;
+    let scratch = spool.build_temp().ok_or(BuildPipelineError::InvalidSpool(
+        "missing file spool scratch",
+    ))?;
+    let mut sequence = 0u64;
     let (first_run, second_run) =
         sorted_file_runs(spool, &scratch, family, tile_budget, &mut sequence)?;
     let mut first_reader = RunReader::open(&first_run)?;
@@ -1154,7 +1251,6 @@ fn build_file_family(
         let first = next_file_group(
             &mut first_reader,
             &mut first_pending,
-            tile_budget,
             &scratch,
             "first",
             &mut sequence,
@@ -1162,64 +1258,28 @@ fn build_file_family(
         let second = next_file_group(
             &mut second_reader,
             &mut second_pending,
-            tile_budget,
             &scratch,
             "second",
             &mut sequence,
         )?;
         match (first, second) {
             (None, None) => break,
-            (Some((first_a, first_segments)), Some((second_a, second_segments)))
+            (Some((first_a, first_group)), Some((second_a, second_group)))
                 if first_a == second_a =>
             {
-                if first_segments.count == 1 && second_segments.count == 1 {
-                    let first_bytes = SegmentReader::open(&first_segments)?.next()?.ok_or(
-                        BuildPipelineError::InvalidSpool("missing first family group"),
-                    )?;
-                    let second_bytes = SegmentReader::open(&second_segments)?.next()?.ok_or(
-                        BuildPipelineError::InvalidSpool("missing second family group"),
-                    )?;
-                    let first_group = TripleBlock::parse(&first_bytes)
-                        .map_err(|_| {
-                            BuildPipelineError::InvalidSpool("invalid first family group")
-                        })?
-                        .triples();
-                    let second_group = TripleBlock::parse(&second_bytes)
-                        .map_err(|_| {
-                            BuildPipelineError::InvalidSpool("invalid second family group")
-                        })?
-                        .triples();
-                    let first_group_summary = GroupSummary::from_sorted(&first_group)?;
-                    let second_group_summary = GroupSummary::from_sorted(&second_group)?;
-                    let next_first = first_summary.with_group(first_group_summary)?;
-                    let next_second = second_summary.with_group(second_group_summary)?;
-                    if next_first.encoded_size()? <= tile_budget
-                        && next_second.encoded_size()? <= tile_budget
-                    {
-                        current_first.extend_from_slice(&first_group);
-                        current_second.extend_from_slice(&second_group);
-                        first_summary = next_first;
-                        second_summary = next_second;
-                        continue;
-                    }
-                    flush(
-                        &mut tiles,
-                        &mut current_first,
-                        &mut current_second,
-                        &mut first_summary,
-                        &mut second_summary,
-                    )?;
-                    let single_first = first_summary.with_group(first_group_summary)?;
-                    let single_second = second_summary.with_group(second_group_summary)?;
-                    if single_first.encoded_size()? > tile_budget
-                        || single_second.encoded_size()? > tile_budget
-                    {
-                        return Err(BuildPipelineError::InvalidSpool("oversize family group"));
-                    }
-                    current_first.extend_from_slice(&first_group);
-                    current_second.extend_from_slice(&second_group);
-                    first_summary = single_first;
-                    second_summary = single_second;
+                let first_group_summary = group_summary_from_run(&first_group)?;
+                let second_group_summary = group_summary_from_run(&second_group)?;
+                let next_first = first_summary.with_group(first_group_summary)?;
+                let next_second = second_summary.with_group(second_group_summary)?;
+                if next_first.encoded_size()? <= tile_budget
+                    && next_second.encoded_size()? <= tile_budget
+                {
+                    extend_from_run(&mut current_first, &first_group)?;
+                    extend_from_run(&mut current_second, &second_group)?;
+                    first_summary = next_first;
+                    second_summary = next_second;
+                    std::fs::remove_file(&first_group.path)?;
+                    std::fs::remove_file(&second_group.path)?;
                     continue;
                 }
                 flush(
@@ -1229,37 +1289,20 @@ fn build_file_family(
                     &mut first_summary,
                     &mut second_summary,
                 )?;
-                let wanted = first_segments.count.max(second_segments.count);
-                let mut first_segments = SegmentEmitter::new(first_segments, wanted, tile_budget)?;
-                let mut second_segments =
-                    SegmentEmitter::new(second_segments, wanted, tile_budget)?;
-                for _ in 0..wanted {
-                    let first = first_segments
-                        .next()?
-                        .ok_or(BuildPipelineError::InvalidSpool(
-                            "short first family continuation",
-                        ))?;
-                    let second =
-                        second_segments
-                            .next()?
-                            .ok_or(BuildPipelineError::InvalidSpool(
-                                "short second family continuation",
-                            ))?;
-                    let first_triples = TripleBlock::parse(&first)
-                        .map_err(|_| {
-                            BuildPipelineError::InvalidSpool("invalid first family segment")
-                        })?
-                        .triples();
-                    let second_triples = TripleBlock::parse(&second)
-                        .map_err(|_| {
-                            BuildPipelineError::InvalidSpool("invalid second family segment")
-                        })?
-                        .triples();
-                    tiles.push(encode_pair(&first_triples, &second_triples, tile_budget)?);
+                let single_first = first_summary.with_group(first_group_summary)?;
+                let single_second = second_summary.with_group(second_group_summary)?;
+                if single_first.encoded_size()? <= tile_budget
+                    && single_second.encoded_size()? <= tile_budget
+                {
+                    extend_from_run(&mut current_first, &first_group)?;
+                    extend_from_run(&mut current_second, &second_group)?;
+                    first_summary = single_first;
+                    second_summary = single_second;
+                } else {
+                    emit_file_continuations(&first_group, &second_group, tile_budget, &mut tiles)?;
                 }
-                if first_segments.next()?.is_some() || second_segments.next()?.is_some() {
-                    return Err(BuildPipelineError::InvalidSpool("long family continuation"));
-                }
+                std::fs::remove_file(&first_group.path)?;
+                std::fs::remove_file(&second_group.path)?;
             }
             _ => {
                 return Err(BuildPipelineError::InvalidSpool(
@@ -1275,6 +1318,10 @@ fn build_file_family(
         &mut first_summary,
         &mut second_summary,
     )?;
+    drop(first_reader);
+    drop(second_reader);
+    std::fs::remove_file(first_run.path)?;
+    std::fs::remove_file(second_run.path)?;
     Ok(FamilyIndex { family, tiles })
 }
 
@@ -1288,6 +1335,11 @@ pub(crate) fn build_family(
 ) -> Result<FamilyIndex, BuildPipelineError> {
     if tile_budget == 0 {
         return Err(BuildPipelineError::InvalidSpool("zero family tile budget"));
+    }
+    if spool.count() != 0 && tile_budget < MIN_FAMILY_TILE_BUDGET {
+        return Err(BuildPipelineError::InvalidSpool(
+            "family tile budget below the minimum of 49 bytes",
+        ));
     }
     if spool.is_file_backed() {
         return build_file_family(spool, family, tile_budget);
@@ -1390,12 +1442,9 @@ pub(crate) fn build_family(
             }
         }
 
-        let mut first_slices = split_group(first_group, tile_budget)?;
-        let mut second_slices = split_group(second_group, tile_budget)?;
-        let target = first_slices.len().max(second_slices.len());
-        align_slices(first_group, &mut first_slices, target, tile_budget)?;
-        align_slices(second_group, &mut second_slices, target, tile_budget)?;
-        for (first_slice, second_slice) in first_slices.into_iter().zip(second_slices) {
+        for (first_slice, second_slice) in
+            synchronous_slices(first_group, second_group, tile_budget)?
+        {
             tiles.push(encode_pair(
                 &first_group[first_slice],
                 &second_group[second_slice],
@@ -1423,8 +1472,8 @@ mod tests {
     use crate::Triple;
 
     use super::{
-        align_slices, build_family, file_run_record_cap, merge_runs, sorted_file_runs, split_group,
-        write_run, IndexFamily, RunReader, ALIGNMENT_HEAP_POPS, FILE_PEAK_RECORDS,
+        build_family, file_run_record_cap, merge_runs, sorted_file_runs, write_run, IndexFamily,
+        RunReader, FILE_PEAK_WORKING,
     };
 
     fn fixture() -> Vec<Triple> {
@@ -1593,44 +1642,45 @@ mod tests {
     }
 
     #[test]
-    fn alignment_finds_the_legal_two_plus_one_split_not_the_midpoint() {
+    fn nonempty_budget_below_family_minimum_is_rejected_before_partitioning() {
         let triples = vec![(7, 0, 127), (7, 16_384, 127), (7, u32::MAX - 1, 127)];
-        let family = build_family(
-            &TripleSpool::Resident(triples.clone()),
-            IndexFamily::Subject,
-            25,
-        )
-        .expect("the legal 2+1 continuation partition fits");
-        assert_eq!(
-            decode(&images(&family, true)),
-            expected(triples.clone(), IndexFamily::Subject, false)
-        );
-        assert_eq!(
-            decode(&images(&family, false)),
-            expected(triples.clone(), IndexFamily::Subject, true)
-        );
-        assert_eq!(family.tiles.len(), 2);
-        assert_eq!(ranges(&family, true), vec![(7, 7), (7, 7)]);
-        assert_eq!(ranges(&family, true), ranges(&family, false));
-        assert!(family
-            .tiles
-            .iter()
-            .all(|tile| tile.first.len() <= 25 && tile.second.len() <= 25));
+        let result = build_family(&TripleSpool::Resident(triples), IndexFamily::Subject, 25);
+        assert!(matches!(
+            result,
+            Err(crate::build_pipeline::BuildPipelineError::InvalidSpool(
+                "family tile budget below the minimum of 49 bytes"
+            ))
+        ));
     }
 
     #[test]
-    fn hot_alignment_uses_bounded_heap_selection() {
-        let triples: Vec<_> = (0..8_192).map(|id| (7, id / 5, id)).collect();
-        let mut ranges = split_group(&triples, 64).unwrap();
-        let initial = ranges.len();
-        let wanted = initial * 2;
-        ALIGNMENT_HEAP_POPS.with(|pops| pops.set(0));
-        align_slices(&triples, &mut ranges, wanted, 64).unwrap();
-        let pops = ALIGNMENT_HEAP_POPS.with(|pops| pops.get());
-        assert_eq!(ranges.len(), wanted);
-        // Each split adds at most two candidates, so selection remains
-        // O(k log k), unlike repeatedly rescanning all current slices.
-        assert!(pops <= initial + 2 * (wanted - initial));
+    fn suffix_heavy_fixture_below_family_minimum_is_rejected_cleanly() {
+        let triples = vec![
+            (7, 126, 3),
+            (7, 126, 16_383),
+            (7, 126, 16_385),
+            (7, 16_385, u32::MAX),
+        ];
+        let result = build_family(&TripleSpool::Resident(triples), IndexFamily::Subject, 30);
+        assert!(matches!(
+            result,
+            Err(crate::build_pipeline::BuildPipelineError::InvalidSpool(
+                "family tile budget below the minimum of 49 bytes"
+            ))
+        ));
+    }
+
+    #[test]
+    fn maximum_width_singleton_fits_at_the_family_minimum() {
+        let triple = (u32::MAX, u32::MAX, u32::MAX);
+        let family = build_family(
+            &TripleSpool::Resident(vec![triple]),
+            IndexFamily::Subject,
+            49,
+        )
+        .unwrap();
+        assert_eq!(images(&family, true)[0].len(), 49);
+        assert_eq!(images(&family, false)[0].len(), 49);
     }
 
     #[test]
@@ -1732,6 +1782,40 @@ mod tests {
     }
 
     #[test]
+    fn run_reader_rejects_declared_count_overflow_and_trailing_records() {
+        let parent =
+            std::env::temp_dir().join(format!("rete-family-run-corrupt-{}", std::process::id()));
+        let temp = BuildTemp::new(&parent).unwrap();
+        let overflow_path = temp.path("overflow").unwrap();
+        std::fs::write(&overflow_path, [0u8; 12]).unwrap();
+        assert!(matches!(
+            RunReader::open(&super::FamilyRun {
+                path: overflow_path,
+                count: u64::from(u32::MAX),
+            }),
+            Err(crate::build_pipeline::BuildPipelineError::InvalidSpool(_))
+                | Err(crate::build_pipeline::BuildPipelineError::Overflow(_))
+        ));
+        let partial_manifest = temp.path("partial-manifest").unwrap();
+        std::fs::write(&partial_manifest, [0u8; 15]).unwrap();
+        assert!(matches!(
+            super::RunManifestReader::open(&partial_manifest),
+            Err(crate::build_pipeline::BuildPipelineError::InvalidSpool(_))
+        ));
+        let trailing_path = temp.path("trailing").unwrap();
+        std::fs::write(&trailing_path, [0u8; 24]).unwrap();
+        assert!(matches!(
+            RunReader::open(&super::FamilyRun {
+                path: trailing_path,
+                count: 1,
+            }),
+            Err(crate::build_pipeline::BuildPipelineError::InvalidSpool(_))
+        ));
+        drop(temp);
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
     fn paired_run_generation_normalizes_both_orders_without_dropping_records() {
         let parent = std::env::temp_dir().join(format!("rete-family-runs-{}", std::process::id()));
         let temp = BuildTemp::new(&parent).unwrap();
@@ -1769,7 +1853,7 @@ mod tests {
         ));
         let temp = BuildTemp::new(&parent).unwrap();
         let file = TripleSpool::write_file(&temp, "hot.tri", &triples).unwrap();
-        FILE_PEAK_RECORDS.with(|peak| peak.set(0));
+        FILE_PEAK_WORKING.with(|peak| peak.set(super::FileWorkingSet::default()));
         let family = build_family(&file, IndexFamily::Subject, budget).unwrap();
         assert!(family.tiles.len() > 1);
         assert_eq!(
@@ -1784,9 +1868,58 @@ mod tests {
             .tiles
             .iter()
             .all(|tile| tile.first.len() <= budget && tile.second.len() <= budget));
-        let peak = FILE_PEAK_RECORDS.with(|peak| peak.get());
-        assert!(peak < triples.len());
-        assert!(peak <= 3 * file_run_record_cap(budget) + 2 * budget + super::FILE_RUN_FANIN);
+        let peak = FILE_PEAK_WORKING.with(|peak| peak.get());
+        assert!(peak.records < triples.len());
+        assert!(
+            peak.records <= 3 * file_run_record_cap(budget) + 2 * budget + super::FILE_RUN_FANIN
+        );
+        assert!(peak.bytes <= peak.records * 12);
+        assert!(peak.descriptors <= super::FILE_RUN_FANIN + 3);
+        drop(file);
+        drop(temp);
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn file_family_reuses_the_spool_owner_for_scratch_and_cleanup() {
+        let parent =
+            std::env::temp_dir().join(format!("rete-family-owned-scratch-{}", std::process::id()));
+        let temp = BuildTemp::new(&parent).unwrap();
+        let owned = temp.owned_path().to_path_buf();
+        let file = TripleSpool::write_file(&temp, "source", &hot_subject(128)).unwrap();
+        build_family(&file, IndexFamily::Subject, 64).unwrap();
+        let files: Vec<_> = std::fs::read_dir(&owned)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(files, vec![owned.join("source")]);
+        assert!(files.iter().all(|path| path.starts_with(&owned)));
+        drop(file);
+        drop(temp);
+        assert!(!owned.exists());
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn hot_group_file_and_resident_tiles_are_byte_identical() {
+        let triples = hot_subject(256);
+        let resident = build_family(
+            &TripleSpool::Resident(triples.clone()),
+            IndexFamily::Subject,
+            64,
+        )
+        .unwrap();
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let parent = std::env::temp_dir().join(format!(
+            "rete-family-parity-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let temp = BuildTemp::new(&parent).unwrap();
+        let file = TripleSpool::write_file(&temp, "hot.tri", &triples).unwrap();
+        let replayed = build_family(&file, IndexFamily::Subject, 64).unwrap();
+        assert_eq!(images(&replayed, true), images(&resident, true));
+        assert_eq!(images(&replayed, false), images(&resident, false));
         drop(file);
         drop(temp);
         std::fs::remove_dir_all(parent).unwrap();
