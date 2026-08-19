@@ -40,6 +40,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::build_pipeline::timing::{BuildCounters, BuildPhase, BuildTiming};
 use crate::dict::env_restart_interval;
 
 use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
@@ -125,6 +126,7 @@ pub fn build_external<S>(
 where
     S: FnMut(&mut dyn FnMut(RawQuad) -> Result<(), ExtBuildError>) -> Result<(), ExtBuildError>,
 {
+    let mut timing = BuildTiming::new();
     let tmp_parent = opts
         .tmp_dir
         .clone()
@@ -143,6 +145,7 @@ where
     let mut chunker = Chunker::new(&tmp, chunk_budget);
     stream(&mut |q: RawQuad| chunker.push(q))?;
     let chunks = chunker.finish()?;
+    timing.lap(BuildPhase::ParseIngest);
     let statements: u64 = chunks.iter().map(|c| c.triple_count).sum();
     eprintln!(
         "extbuild: {} chunk(s), {} statement(s) spilled",
@@ -152,6 +155,7 @@ where
 
     // ---- Phase 2: merge chunk dictionaries into the global dictionary -------
     let mut merged = merge_dictionaries(&tmp, &chunks)?;
+    timing.lap(BuildPhase::Canonicalize);
     eprintln!(
         "extbuild: merged dictionary — {} term(s)",
         merged.term_count
@@ -187,6 +191,7 @@ where
         out.flush()?;
     }
     drop(remaps); // free the remap tables before the sort phase
+    timing.lap(BuildPhase::Remap);
 
     // ---- Phase 4: per-permutation external sort + streaming tiler -----------
     let codec = crate::file::writer_codec();
@@ -210,6 +215,7 @@ where
         );
         perm_sections.push(section);
     }
+    timing.lap(BuildPhase::SubjectFamily);
     let _ = std::fs::remove_file(&global_tri);
     let quad_count = deduped_count.unwrap_or(0);
 
@@ -230,6 +236,21 @@ where
         quad_count,
         codec,
     )?;
+    timing.lap(BuildPhase::FinalWrite);
+    let spill_bytes = merged
+        .section_files
+        .iter()
+        .map(|section| section.len)
+        .chain(perm_sections.iter().map(|section| section.len))
+        .sum();
+    timing.set_counters(BuildCounters {
+        statements,
+        input_bytes: None,
+        spill_bytes,
+        output_bytes: std::fs::metadata(output)?.len(),
+        family_runs: [2, 2, 2],
+    });
+    timing.finish();
     stats.pyramid_levels = 0;
     Ok(stats)
 }

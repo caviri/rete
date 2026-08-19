@@ -71,53 +71,22 @@ pub fn build_pyramid_meta_algo(
     type_override: Option<&str>,
     algo: PyramidAlgo,
 ) -> (Vec<u8>, u16) {
-    // Optional sub-phase timing (set RETE_BUILD_TIMING=1) — the pyramid build is
-    // the dominant cost of a big `rete build`; this shows where inside it.
-    // `Instant::now()` must stay behind the flag: `std::time` is unsupported on
-    // `wasm32-unknown-unknown` and panics ("time not implemented"), so an
-    // unconditional clock read would break every in-browser `build()`.
-    let timing = std::env::var_os("RETE_BUILD_TIMING").is_some();
-    let mut t = timing.then(std::time::Instant::now);
-    let mut lap = |label: &str| {
-        if let Some(t0) = &mut t {
-            eprintln!(
-                "  [pyramid] {label}: {:.0} ms",
-                t0.elapsed().as_secs_f64() * 1000.0
-            );
-            *t0 = std::time::Instant::now();
-        }
-    };
-
     // The community partition — the only step that differs by algorithm.
-    let louvain = |lap: &mut dyn FnMut(&str)| {
+    let louvain = || {
         let g = project_graph(dict, triples);
-        lap("project_graph");
-        let d = build_dendrogram(&g);
-        lap("build_dendrogram (Louvain)");
-        d
+        build_dendrogram(&g)
     };
     let dend = match algo {
-        PyramidAlgo::Louvain => louvain(&mut lap),
+        PyramidAlgo::Louvain => louvain(),
         PyramidAlgo::Types => {
             match crate::schema_pyramid::build_type_dendrogram(dict, triples, type_override) {
-                Some(d) => {
-                    lap("build_type_dendrogram");
-                    d
-                }
-                None => {
-                    eprintln!(
-                        "  [pyramid] --pyramid-algo types: no usable rdf:type \
-                         predicate — falling back to louvain"
-                    );
-                    louvain(&mut lap)
-                }
+                Some(d) => d,
+                None => louvain(),
             }
         }
     };
     let round = choose_round_for_budget(dict, triples, &dend, budget);
-    lap("choose_round_for_budget");
     let summary = summarize(dict, triples, &dend, round);
-    lap("summarize");
     // Attach the v2 schema pyramid (the non-exclusive subClassOf DAG + per-level
     // type rollups + per-level lateral class relations + per-community
     // descriptors). Empty when the graph has no usable typing, in which case the
@@ -129,13 +98,9 @@ pub fn build_pyramid_meta_algo(
         round,
         type_override,
     );
-    lap("build_schema_pyramid");
     let predicate_stats = compute_predicate_stats(triples);
-    lap("compute_predicate_stats");
     let char_sets = compute_char_sets(triples);
-    lap("compute_char_sets");
     let label_index = compute_label_index(dict, triples);
-    lap("compute_label_index");
     let meta = PyramidMeta::new(round as u32, summary, &[])
         .with_schema(
             sp.class_hierarchy,
@@ -149,9 +114,7 @@ pub fn build_pyramid_meta_algo(
         .with_predicate_stats(predicate_stats)
         .with_char_sets(char_sets)
         .with_label_index(label_index);
-    let out = (meta.encode(), dend.rounds() as u16);
-    lap("encode");
-    out
+    (meta.encode(), dend.rounds() as u16)
 }
 
 /// The label predicates a [`compute_label_index`] entry can come from — the

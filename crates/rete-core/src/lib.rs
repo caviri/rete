@@ -7,6 +7,8 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![warn(missing_docs)]
 
+mod build_pipeline;
+
 /// The engine version, as published on crates.io.
 ///
 /// Language bindings re-export this so a caller can always tell which engine is

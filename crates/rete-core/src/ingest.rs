@@ -13,6 +13,7 @@
 //! feature (e.g. on wasm) sections are written with the `NONE` codec — larger
 //! files, byte-compatible readers.
 
+use crate::build_pipeline::timing::{BuildCounters, BuildPhase, BuildTiming};
 use crate::{
     build_pyramid_meta_algo, Dictionary, DictionaryBuilder, GraphIndexBuilder, PyramidAlgo,
     DEFAULT_TILE_BUDGET,
@@ -406,11 +407,13 @@ pub fn assemble_dataset_with_opts_algo(
 ) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
 
+    let mut timing = BuildTiming::new();
     let mut db = DictionaryBuilder::new();
     for (s, p, o, _) in &quads {
         db.observe(s, p, o);
     }
     let dict = db.build();
+    timing.lap(BuildPhase::Canonicalize);
 
     let mut default_triples = Vec::new();
     let mut named: BTreeMap<String, Vec<(u32, u32, u32)>> = BTreeMap::new();
@@ -450,6 +453,7 @@ pub fn assemble_dataset_with_opts_algo(
         algo,
         blob,
         stats,
+        &mut timing,
     )
 }
 
@@ -503,11 +507,14 @@ where
 {
     use std::collections::BTreeMap;
 
+    let mut timing = BuildTiming::new();
     // Pass 1: observe every term (the dictionary dedups; the string quads are
     // freed line by line and never collected).
     let mut db = DictionaryBuilder::new();
     stream(&mut |(s, p, o, _g)| db.observe(&s, &p, &o))?;
+    timing.lap(BuildPhase::ParseIngest);
     let dict = db.build();
+    timing.lap(BuildPhase::Canonicalize);
 
     // Pass 2: encode each quad to an id-triple, bucketing named graphs.
     let mut default_triples: Vec<(u32, u32, u32)> = Vec::new();
@@ -519,6 +526,7 @@ where
             Some(graph) => named.entry(graph).or_default().push(t),
         }
     })?;
+    timing.lap(BuildPhase::ParseIngest);
 
     let statements = default_triples.len() + named.values().map(Vec::len).sum::<usize>();
     let stats = BuildStats {
@@ -539,6 +547,7 @@ where
         algo,
         blob,
         stats,
+        &mut timing,
     ))
 }
 
@@ -557,6 +566,7 @@ fn finish_assembly(
     algo: PyramidAlgo,
     blob: Vec<u8>,
     mut stats: BuildStats,
+    timing: &mut BuildTiming,
 ) -> (Vec<u8>, BuildStats) {
     let has_named = !named.is_empty();
 
@@ -573,6 +583,9 @@ fn finish_assembly(
     } else {
         (Vec::new(), 0)
     };
+    if with_pyramid {
+        timing.lap(BuildPhase::Pyramid);
+    }
     stats.pyramid_levels = levels;
 
     let text_index = if with_text_index {
@@ -580,6 +593,9 @@ fn finish_assembly(
     } else {
         Vec::new()
     };
+    if with_text_index {
+        timing.lap(BuildPhase::TextIndex);
+    }
 
     // From here the dictionary is only needed for its own serialized bytes. Encode
     // it, capture the header term count, then DROP it before building the
@@ -612,6 +628,7 @@ fn finish_assembly(
         .into_iter()
         .map(|(g, ts)| (g, build_index(ts)))
         .collect();
+    timing.lap(BuildPhase::SubjectFamily);
 
     let bytes = crate::file::write_dataset_from_parts(
         &dict_container,
@@ -626,6 +643,15 @@ fn finish_assembly(
         &text_index,
         codec,
     );
+    timing.lap(BuildPhase::FinalWrite);
+    timing.set_counters(BuildCounters {
+        statements: stats.statements as u64,
+        input_bytes: None,
+        spill_bytes: 0,
+        output_bytes: bytes.len() as u64,
+        family_runs: [1, 1, 1],
+    });
+    timing.finish();
     (bytes, stats)
 }
 
