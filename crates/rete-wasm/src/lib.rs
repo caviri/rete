@@ -2,6 +2,7 @@
 //! it entirely in the browser — the same engine the native CLI uses, compiled
 //! to wasm. Results come back as JSON strings.
 
+use rete_core::reader::materializable_len;
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
     eval_query_reasoned, eval_select_communities, eval_sparql, project_graph, schema_classes,
@@ -1149,12 +1150,19 @@ fn checked_async_layout(ranges: &[(u64, u64)]) -> std::io::Result<(Vec<u64>, Vec
     let lens: Vec<u32> = ranges
         .iter()
         .map(|&(_, len)| {
-            u32::try_from(len).map_err(|_| {
+            let len = u32::try_from(len).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!("range length {len} exceeds the wasm32 u32 length type"),
                 )
-            })
+            })?;
+            materializable_len(u64::from(len)).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "range length exceeds the wasm target's Vec limit",
+                )
+            })?;
+            Ok(len)
         })
         .collect::<std::io::Result<_>>()?;
     let total = lens.iter().try_fold(0usize, |sum, &len| {
@@ -1169,6 +1177,18 @@ fn checked_async_layout(ranges: &[(u64, u64)]) -> std::io::Result<(Vec<u64>, Vec
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "range response exceeds the wasm32 address space",
+        )
+    })?;
+    materializable_len(u64::try_from(total).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "range response total does not fit u64",
+        )
+    })?)
+    .map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "range response exceeds the wasm target's Vec limit",
         )
     })?;
     Ok((offs, lens, total))
@@ -1196,8 +1216,17 @@ fn split_range_response(
     let mut out = Vec::with_capacity(ranges.len());
     let mut pos = 0usize;
     for len in lens {
-        let end = pos + len as usize;
-        out.push(dst[pos..end].to_vec());
+        let end = pos.checked_add(len as usize).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "range response offset overflow",
+            )
+        })?;
+        out.push(
+            dst.get(pos..end)
+                .ok_or_else(|| std::io::Error::other("range response slice out of bounds"))?
+                .to_vec(),
+        );
         pos = end;
     }
     Ok(out)
@@ -1497,12 +1526,18 @@ impl RangeReader for XhrRangeReader {
         #[cfg(not(feature = "asyncify"))]
         {
             let js = |e: JsValue| std::io::Error::other(format!("XHR error: {e:?}"));
-            let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
-            xhr.open_with_async("GET", &self.url, false).map_err(js)?;
-            xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
+            let requested = materializable_len(len).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "range exceeds wasm target memory",
+                )
+            })?;
             let end = offset
                 .checked_add(len - 1)
                 .ok_or_else(|| std::io::Error::other("HTTP range end overflow"))?;
+            let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
+            xhr.open_with_async("GET", &self.url, false).map_err(js)?;
+            xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
             xhr.set_request_header("Range", &format!("bytes={offset}-{end}"))
                 .map_err(js)?;
             xhr.send().map_err(js)?;
@@ -1526,8 +1561,6 @@ impl RangeReader for XhrRangeReader {
                     self.url
                 )));
             }
-            let requested = usize::try_from(len)
-                .map_err(|_| std::io::Error::other("range exceeds wasm32 memory"))?;
             buf.truncate(requested);
             // Report this fetch to an optional progress hook so a worker can stream
             // live "N requests · M bytes" updates to the UI *during* the otherwise

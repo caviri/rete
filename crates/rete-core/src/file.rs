@@ -24,7 +24,7 @@ use crate::header::{
 use crate::index::{GraphIndex, IndexPermutation, Pattern, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph, PyramidAlgo};
-use crate::reader::RangeReader;
+use crate::reader::{materializable_len, RangeReader};
 use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
 use crate::triples::Triple;
 use crate::varint::{read_uvarint, write_uvarint};
@@ -400,6 +400,12 @@ fn read_coalesced<R: RangeReader + ?Sized>(
     static_gap: u64,
     intent: ReadIntent,
 ) -> Option<Vec<Vec<u8>>> {
+    // Every requested range is later returned as its own Vec. Reject a length
+    // this target cannot represent before asking a cache or network reader to
+    // enumerate/materialize it.
+    for range in ranges {
+        materializable_len(range.len).ok()?;
+    }
     let known_bytes = ranges
         .iter()
         .try_fold(0u64, |sum, range| sum.checked_add(range.len))?;
@@ -440,7 +446,9 @@ fn read_coalesced<R: RangeReader + ?Sized>(
             j += 1;
         }
         let si = spans.len();
-        spans.push((start, end - start));
+        let span_len = end.checked_sub(start)?;
+        materializable_len(span_len).ok()?;
+        spans.push((start, span_len));
         for _ in i..j {
             span_of.push(si);
         }
@@ -454,8 +462,8 @@ fn read_coalesced<R: RangeReader + ?Sized>(
     for (k, r) in ranges.iter().enumerate() {
         let (span_start, _) = spans[span_of[k]];
         let blob = &blobs[span_of[k]];
-        let lo = (r.offset - span_start) as usize;
-        let hi = lo.checked_add(r.len as usize)?;
+        let lo = usize::try_from(r.offset.checked_sub(span_start)?).ok()?;
+        let hi = lo.checked_add(materializable_len(r.len).ok()?)?;
         out.push(blob.get(lo..hi)?.to_vec());
     }
     Some(out)
@@ -551,16 +559,23 @@ fn decode_container(bytes: &[u8], codec: u8) -> Result<Vec<Vec<u8>>, FileError> 
     // `n` is untrusted; each section needs â‰¥1 byte, so cap the pre-allocation at
     // the buffer length rather than trusting the count (avoids an OOM on a bogus
     // header pointing at a small region).
-    let mut out = Vec::with_capacity((n as usize).min(bytes.len()));
+    let n = materializable_len(n).map_err(|_| FileError::Container("section count too large"))?;
+    let mut out = Vec::with_capacity(n.min(bytes.len()));
     for _ in 0..n {
-        let (len, used) =
-            read_uvarint(&bytes[pos..]).ok_or(FileError::Container("truncated length"))?;
-        pos += used;
-        let end = pos + len as usize;
-        if end > bytes.len() {
-            return Err(FileError::Container("section overruns buffer"));
-        }
-        out.push(decompress(codec, &bytes[pos..end])?);
+        let (len, used) = read_uvarint(bytes.get(pos..).unwrap_or(&[]))
+            .ok_or(FileError::Container("truncated length"))?;
+        pos = pos
+            .checked_add(used)
+            .ok_or(FileError::Container("section offset overflows"))?;
+        let len = materializable_len(len)
+            .map_err(|_| FileError::Container("section length too large"))?;
+        let end = pos
+            .checked_add(len)
+            .ok_or(FileError::Container("section range overflows"))?;
+        let payload = bytes
+            .get(pos..end)
+            .ok_or(FileError::Container("section overruns buffer"))?;
+        out.push(decompress(codec, payload)?);
         pos = end;
     }
     Ok(out)
@@ -701,6 +716,8 @@ fn parse_chunked_dict_dir(
             .to_vec();
         pos = term_end;
         let clen = take(&mut pos)?;
+        materializable_len(clen)
+            .map_err(|_| FileError::Container("dict chunk length too large"))?;
         let first_run = prev_run
             .unwrap_or(0u64)
             .checked_add(drun)
@@ -858,6 +875,8 @@ fn read_dict_dir_ranged<R: RangeReader>(
         .ok_or(FileError::Container("dict directory offset overflows"))?;
     let mut prefetch = 4096u64.min(dir_total).max(1);
     loop {
+        materializable_len(prefetch)
+            .map_err(|_| FileError::Container("dict directory length too large"))?;
         let dir = reader.read_at(directory_offset, prefetch)?;
         match parse_chunk_dir_only(
             &dir,
@@ -917,6 +936,8 @@ fn parse_chunk_dir_only(
             .to_vec();
         pos = term_end;
         let clen = take(&mut pos)?;
+        materializable_len(clen)
+            .map_err(|_| FileError::Container("dict chunk length too large"))?;
         let first_run = prev_run
             .unwrap_or(0u64)
             .checked_add(drun)
@@ -3728,11 +3749,20 @@ impl Rete {
             };
             let ranges: Vec<ByteRange> = entries
                 .iter()
-                .map(|e| ByteRange {
-                    offset: section.offset + e.start,
-                    len: (e.end - e.start),
+                .map(|e| {
+                    let offset = section
+                        .offset
+                        .checked_add(e.start)
+                        .ok_or(FileError::Container("dict chunk offset overflows"))?;
+                    let len = e
+                        .end
+                        .checked_sub(e.start)
+                        .ok_or(FileError::Container("dict chunk range overflows"))?;
+                    materializable_len(len)
+                        .map_err(|_| FileError::Container("dict chunk length too large"))?;
+                    Ok(ByteRange { offset, len })
                 })
-                .collect();
+                .collect::<Result<_, FileError>>()?;
             let chunks: Vec<crate::dict::SectionChunk> = entries
                 .into_iter()
                 .map(|e| crate::dict::SectionChunk::remote(e.first_run, e.first_term, e.body_start))
@@ -3742,6 +3772,7 @@ impl Rete {
             let loader_ranges = ranges.clone();
             let loader: crate::dict::ChunkLoader = Box::new(move |ci| {
                 let range = loader_ranges.get(ci)?;
+                materializable_len(range.len).ok()?;
                 let bytes = chunk_reader.read_at(range.offset, range.len).ok()?;
                 decompress(codec, &bytes).ok()
             });
@@ -4162,7 +4193,14 @@ fn fetch_routed_matches<R: RangeReader>(
         // mega-group; one otherwise).
         Some(a) => {
             for e in dir.iter().filter(|e| e.min_a <= a && a <= e.max_a) {
-                let bytes = reader.read_at(routed.section.offset + e.start, e.end - e.start)?;
+                let offset = checked_end(routed.section.offset, e.start)?;
+                let len = e
+                    .end
+                    .checked_sub(e.start)
+                    .ok_or(FileError::Container("tile range overflows"))?;
+                materializable_len(len)
+                    .map_err(|_| FileError::Container("tile length too large"))?;
+                let bytes = reader.read_at(offset, len)?;
                 let tile = decompress(codec, &bytes)?;
                 out.extend(GraphIndex::match_serialized_block(
                     &tile,
@@ -4176,11 +4214,31 @@ fn fetch_routed_matches<R: RangeReader>(
         None => {
             if let (Some(first), Some(last)) = (dir.first(), dir.last()) {
                 let base = first.start;
-                let body = reader.read_at(routed.section.offset + base, last.end - base)?;
+                let body_offset = checked_end(routed.section.offset, base)?;
+                let body_len = last
+                    .end
+                    .checked_sub(base)
+                    .ok_or(FileError::Container("tile range overflows"))?;
+                materializable_len(body_len)
+                    .map_err(|_| FileError::Container("tile body too large"))?;
+                let body = reader.read_at(body_offset, body_len)?;
                 for e in &dir {
+                    let start = usize::try_from(
+                        e.start
+                            .checked_sub(base)
+                            .ok_or(FileError::Container("tile range overflows"))?,
+                    )
+                    .map_err(|_| FileError::Container("tile offset too large"))?;
+                    let end = usize::try_from(
+                        e.end
+                            .checked_sub(base)
+                            .ok_or(FileError::Container("tile range overflows"))?,
+                    )
+                    .map_err(|_| FileError::Container("tile offset too large"))?;
                     let tile = decompress(
                         codec,
-                        &body[(e.start - base) as usize..(e.end - base) as usize],
+                        body.get(start..end)
+                            .ok_or(FileError::Container("tile overruns body"))?,
                     )?;
                     out.extend(GraphIndex::match_serialized_block(
                         &tile,
@@ -4571,6 +4629,32 @@ mod tests {
         bytes: Vec<u8>,
         controller: Option<Arc<AdaptiveReadController>>,
         reads: Mutex<Vec<(u64, u64)>>,
+    }
+
+    struct NoMaterializeReader {
+        calls: std::sync::atomic::AtomicU64,
+    }
+
+    impl RangeReader for NoMaterializeReader {
+        fn len(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn read_at(&self, _offset: u64, _len: u64) -> std::io::Result<Vec<u8>> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(std::io::Error::other("must not materialize hostile range"))
+        }
+
+        fn read_many_with_intent(
+            &self,
+            _ranges: &[(u64, u64)],
+            _intent: ReadIntent,
+        ) -> std::io::Result<Vec<Vec<u8>>> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(std::io::Error::other("must not materialize hostile ranges"))
+        }
     }
 
     impl AdaptiveRecordingReader {
@@ -5069,6 +5153,60 @@ mod tests {
                 1, 0, 1, 0, // second synopsis trailer
             ]
         );
+    }
+
+    #[test]
+    fn eager_container_rejects_unmaterializable_lengths_without_panicking() {
+        let mut hostile = vec![1];
+        write_uvarint(&mut hostile, u64::MAX);
+        let result = std::panic::catch_unwind(|| decode_container(&hostile, CODEC_NONE));
+        assert!(
+            result.is_ok(),
+            "hostile eager container length must not panic"
+        );
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn eager_container_rejects_unmaterializable_counts_without_panicking() {
+        let mut hostile = Vec::new();
+        write_uvarint(&mut hostile, u64::MAX);
+        let result = std::panic::catch_unwind(|| decode_container(&hostile, CODEC_NONE));
+        assert!(
+            result.is_ok(),
+            "hostile eager container count must not panic"
+        );
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn coalesced_reads_reject_unmaterializable_range_before_physical_io() {
+        let reader = NoMaterializeReader {
+            calls: std::sync::atomic::AtomicU64::new(0),
+        };
+        assert!(read_coalesced(
+            &reader,
+            &[ByteRange {
+                offset: 0,
+                len: u64::MAX,
+            }],
+            0,
+            ReadIntent::SelectiveProbe,
+        )
+        .is_none());
+        assert_eq!(reader.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn dictionary_directory_rejects_unmaterializable_chunk_before_loading() {
+        let mut directory = Vec::new();
+        write_uvarint(&mut directory, 1); // one chunk for one restart run
+        write_uvarint(&mut directory, 0); // first run delta
+        write_uvarint(&mut directory, 1); // first-term length
+        directory.push(b'x');
+        write_uvarint(&mut directory, isize::MAX as u64 + 1);
+
+        assert!(parse_chunk_dir_only(&directory, u64::MAX, 1).is_err());
     }
 
     #[test]

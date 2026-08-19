@@ -28,7 +28,7 @@
 //! chunks) that is an out-of-memory crash, not a slowdown.
 
 use crate::adaptive::{AdaptiveReadController, ReadIntent, ReadObservation};
-use crate::reader::RangeReader;
+use crate::reader::{materializable_len, RangeReader};
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
@@ -511,6 +511,7 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
             return Ok(Vec::new());
         }
         self.bounds(offset, len)?;
+        materializable_len(len)?;
         let want: BTreeSet<u64> = (offset / self.block..=(offset + len - 1) / self.block).collect();
         self.ensure(&want, ReadIntent::SelectiveProbe)?;
         let out = self.assemble(offset, len, ReadIntent::SelectiveProbe)?;
@@ -523,6 +524,7 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
             return Ok(Vec::new());
         }
         self.bounds(offset, len)?;
+        materializable_len(len)?;
         let out = self.inner.read_at_precise(offset, len)?;
         if out.len() as u64 != len {
             let (kind, mismatch) = if (out.len() as u64) < len {
@@ -556,6 +558,7 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
                 continue;
             }
             self.bounds(o, l)?;
+            materializable_len(l)?;
             for b in o / self.block..=(o + l - 1) / self.block {
                 want.insert(b);
             }
@@ -603,6 +606,10 @@ mod tests {
 
     struct MaxLengthReader;
 
+    struct NeverMaterializeReader {
+        calls: AtomicU64,
+    }
+
     impl RangeReader for ShortReader {
         fn len(&self) -> u64 {
             self.len
@@ -644,6 +651,19 @@ mod tests {
 
         fn read_at(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
             Ok(vec![0x8d; len as usize])
+        }
+    }
+
+    impl RangeReader for NeverMaterializeReader {
+        fn len(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn read_at(&self, _offset: u64, _len: u64) -> std::io::Result<Vec<u8>> {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            Err(std::io::Error::other(
+                "hostile range reached backing reader",
+            ))
         }
     }
 
@@ -764,6 +784,28 @@ mod tests {
     fn last_partial_block_of_a_u64_max_source_does_not_overflow() {
         let cache = BlockCacheReader::new(MaxLengthReader, 4096);
         assert_eq!(cache.read_at(u64::MAX - 8, 8).unwrap(), vec![0x8d; 8]);
+    }
+
+    #[test]
+    fn hostile_unmaterializable_ranges_do_not_enumerate_or_fetch_blocks() {
+        let physical = Arc::new(NeverMaterializeReader {
+            calls: AtomicU64::new(0),
+        });
+        let cache = BlockCacheReader::new(physical.clone(), 4096);
+
+        assert!(cache.read_at(0, u64::MAX).is_err());
+        assert!(cache.read_at_precise(0, u64::MAX).is_err());
+        assert!(cache
+            .read_many_with_intent(&[(0, u64::MAX)], ReadIntent::SelectiveProbe)
+            .is_err());
+        assert_eq!(physical.calls.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[test]
+    fn small_reads_at_offsets_past_u32_remain_valid() {
+        let cache = BlockCacheReader::new(MaxLengthReader, 4096);
+        let offset = u64::from(u32::MAX) + 4096;
+        assert_eq!(cache.read_at(offset, 8).unwrap(), vec![0x8d; 8]);
     }
 
     #[test]

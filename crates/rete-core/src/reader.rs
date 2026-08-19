@@ -10,6 +10,29 @@ use crate::adaptive::{AdaptiveReadController, ReadIntent};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+fn materializable_len_with_limit(len: u64, limit: usize) -> std::io::Result<usize> {
+    let len = usize::try_from(len).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "range length does not fit this target's usize",
+        )
+    })?;
+    if len > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "range length exceeds this target's Vec limit",
+        ));
+    }
+    Ok(len)
+}
+
+/// Convert a wire length into a length that this target can safely materialize
+/// as a `Vec`.  File offsets stay `u64`; only an actual in-memory range is
+/// limited by `usize` and Rust's `isize::MAX` allocation contract.
+pub fn materializable_len(len: u64) -> std::io::Result<usize> {
+    materializable_len_with_limit(len, isize::MAX as usize)
+}
+
 /// Something that can serve arbitrary byte ranges of a `.rete` resource.
 pub trait RangeReader {
     /// Total resource length in bytes.
@@ -343,6 +366,25 @@ mod tests {
         assert_eq!(overrun.kind(), std::io::ErrorKind::UnexpectedEof);
         let overflow = r.read_at(u64::MAX, 2).unwrap_err();
         assert_eq!(overflow.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn materializable_length_accepts_vec_boundary_and_rejects_larger() {
+        assert_eq!(
+            materializable_len(isize::MAX as u64).unwrap(),
+            isize::MAX as usize
+        );
+        assert!(materializable_len(isize::MAX as u64 + 1).is_err());
+    }
+
+    #[test]
+    fn materializable_length_simulates_a_32_bit_target_without_aliasing() {
+        let too_wide = u64::from(u32::MAX) + 1;
+        assert!(materializable_len_with_limit(too_wide, u32::MAX as usize).is_err());
+        assert_eq!(
+            materializable_len_with_limit(17, u32::MAX as usize).unwrap(),
+            17
+        );
     }
 
     #[test]
