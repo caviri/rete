@@ -1,6 +1,7 @@
 # Unified Compact Build Pipeline Design
 
-**Status:** Approved design, pending implementation plan
+**Status:** Approved; implementation plan at
+[`../plans/2026-08-19-unified-build-pipeline.md`](../plans/2026-08-19-unified-build-pipeline.md)
 
 **Date:** 2026-08-19
 
