@@ -417,6 +417,9 @@ and trailing bytes are all exact framing checks. Family varints are canonical
 (at most ten bytes); prefix-2 blobs and decompressed tiles are each capped at
 64 KiB. A zstd record is exactly one fully consumed frame, and the staged
 decoder bounds count-dependent capacity by bytes already framed in the payload.
+Its frame header is checked before decoder construction: both declared window
+and any nonzero declared content size are at most 64 KiB; the staged encoder
+uses the same 64 KiB window limit.
 
 ### 6.4 Full-text index (TEXT_INDEX section, optional)
 
@@ -458,9 +461,11 @@ SPARQL never touches this section, so a query open neither fetches nor pays for 
 **Compatibility:** `0x05` is stable format generation 1 and the compatibility
 baseline for Rete 1.x. Every stable reader from Rete 1.0.0 onward reads `0x05`.
 Optional sections and flags may extend it without changing its required semantics.
-A required layout change uses a new format byte, keeps `0x05` read support, and
-ships with a documented rebuild or migration path. Experimental formats `0x01`
-through `0x04` are a clean break and must be rebuilt from RDF source.
+A required layout change normally uses a new format byte and ships with a
+documented rebuild or migration path. The staged paired-family plan is the
+explicit exception: Task 11 deliberately moves to `0x06` only and removes the
+`0x05` reader. Experimental formats `0x01` through `0x04` are a clean break
+and must be rebuilt from RDF source.
 
 ---
 

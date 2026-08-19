@@ -776,10 +776,34 @@ fn read_dict_dir_ranged<R: RangeReader>(
     let hbase = n0; // first byte of the header body
     let (term_count, n1) = read_uvarint(head.get(hbase..).unwrap_or(&[]))
         .ok_or(FileError::Container("truncated dict term_count"))?;
-    let (restart_interval, _n2) = read_uvarint(head.get(hbase + n1..).unwrap_or(&[]))
+    let interval_start = hbase
+        .checked_add(n1)
+        .ok_or(FileError::Container("dict header offset overflows"))?;
+    let (restart_interval, n2) = read_uvarint(head.get(interval_start..).unwrap_or(&[]))
         .ok_or(FileError::Container("truncated dict interval"))?;
     if restart_interval == 0 {
         return Err(FileError::Container("zero restart interval"));
+    }
+    let header_len_usize = usize::try_from(header_len)
+        .map_err(|_| FileError::Container("dict header length too large"))?;
+    let header_end = hbase
+        .checked_add(header_len_usize)
+        .ok_or(FileError::Container("dict header offset overflows"))?;
+    let restart_count_start = interval_start
+        .checked_add(n2)
+        .ok_or(FileError::Container("dict header offset overflows"))?;
+    let (num_restarts, n3) = read_uvarint(head.get(restart_count_start..).unwrap_or(&[]))
+        .ok_or(FileError::Container("truncated dict restart count"))?;
+    let restart_count_end = restart_count_start
+        .checked_add(n3)
+        .filter(|&end| end <= header_end)
+        .ok_or(FileError::Container("dict restart count overruns header"))?;
+    if u64::try_from(header_end - restart_count_end)
+        .ok()
+        .filter(|&available| available >= num_restarts)
+        .is_none()
+    {
+        return Err(FileError::Container("dict restart table overruns header"));
     }
     // The chunk directory begins right after the header body — i.e. past the
     // `header_len` bytes, which include the restart table we never materialize.
@@ -795,6 +819,12 @@ fn read_dict_dir_ranged<R: RangeReader>(
             .map_err(|_| FileError::Container("dict restart interval exceeds u32"))?,
         restart_offsets: Vec::new(),
     };
+    let expected_restarts = u64::from(meta.term_count).div_ceil(u64::from(meta.restart_interval));
+    if num_restarts != expected_restarts {
+        return Err(FileError::Container(
+            "dict restart count disagrees with term count",
+        ));
+    }
     let finish = |mut entries: Vec<DictChunkEntry>| {
         for e in &mut entries {
             e.start = e
@@ -1041,7 +1071,13 @@ fn family_compress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
         CODEC_ZSTD => {
             #[cfg(feature = "compression")]
             {
-                Ok(compress(codec, bytes))
+                use std::io::Write;
+                let mut encoder =
+                    zstd::stream::Encoder::new(Vec::new(), ZSTD_LEVEL).map_err(FileError::Io)?;
+                // Match the staged decoder's fixed physical-tile window.
+                encoder.window_log(16).map_err(FileError::Io)?;
+                encoder.write_all(bytes).map_err(FileError::Io)?;
+                encoder.finish().map_err(FileError::Io)
             }
             #[cfg(not(feature = "compression"))]
             {
@@ -1453,6 +1489,25 @@ fn decompress_family_tile_exact(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, File
         }
         CODEC_ZSTD => {
             use std::io::Read;
+            // ruzstd allocates its declared window while constructing the
+            // streaming decoder, so inspect the tiny frame header first.
+            let (frame, _) = ruzstd::frame::read_frame_header(bytes)
+                .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
+            let window = frame
+                .header
+                .window_size()
+                .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
+            if window > FAMILY_TILE_DECOMPRESSED_MAX as u64 {
+                return Err(FileError::Container(
+                    "family zstd window exceeds fixed limit",
+                ));
+            }
+            let content_size = frame.header.frame_content_size();
+            if content_size != 0 && content_size > FAMILY_TILE_DECOMPRESSED_MAX as u64 {
+                return Err(FileError::Container(
+                    "family zstd content size exceeds fixed limit",
+                ));
+            }
             let mut decoder = ruzstd::StreamingDecoder::new(bytes)
                 .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
             let mut out = Vec::with_capacity(FAMILY_TILE_DECOMPRESSED_MAX.min(bytes.len()));
@@ -4792,6 +4847,61 @@ mod tests {
     }
 
     #[test]
+    fn ranged_dictionary_rejects_wrong_restart_count_like_eager_decode() {
+        let mut builder = crate::dict::DictSectionBuilder::new().with_restart_interval(1);
+        for i in 0..300u32 {
+            builder.push(format!("<http://example.org/{i:03}>"));
+        }
+        let raw = builder.build();
+        let mut encoded = encode_chunked_dict_section(&raw, CODEC_NONE);
+        let (header_len, header_start) = read_uvarint(&encoded).unwrap();
+        assert!(header_len >= 300);
+        assert!(parse_chunked_dict_dir(&encoded, encoded.len() as u64).is_ok());
+        let reader = crate::reader::SliceReader::new(&encoded);
+        assert!(read_dict_dir_ranged(
+            &reader,
+            ByteRange {
+                offset: 0,
+                len: encoded.len() as u64
+            },
+        )
+        .is_ok());
+        let (_, term_used) = read_uvarint(&encoded[header_start..]).unwrap();
+        let (_, interval_used) = read_uvarint(&encoded[header_start + term_used..]).unwrap();
+        let restart_count_pos = header_start + term_used + interval_used;
+        // 300 and 301 have the same two-byte LEB128 width, preserving framing.
+        encoded[restart_count_pos] = 0xad;
+        assert!(parse_chunked_dict_dir(&encoded, encoded.len() as u64).is_err());
+        let reader = crate::reader::SliceReader::new(&encoded);
+        assert!(read_dict_dir_ranged(
+            &reader,
+            ByteRange {
+                offset: 0,
+                len: encoded.len() as u64
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ranged_dictionary_rejects_restart_table_shorter_than_declared_count() {
+        // `[header_len=3][term_count=3][interval=1][restart_count=3]` names
+        // three restart offsets but has no room for even one. The following
+        // bytes form a superficially valid one-chunk directory.
+        let malformed = [3, 3, 1, 3, 1, 0, 0, 0];
+        assert!(parse_chunked_dict_dir(&malformed, malformed.len() as u64).is_err());
+        let reader = crate::reader::SliceReader::new(&malformed);
+        assert!(read_dict_dir_ranged(
+            &reader,
+            ByteRange {
+                offset: 0,
+                len: malformed.len() as u64
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
     fn allocation_sized_untrusted_tile_count_is_a_clean_error() {
         let count = (isize::MAX as usize / std::mem::size_of::<TileDirEntry>()) + 1;
         assert!(count.checked_mul(3).is_some());
@@ -5057,6 +5167,20 @@ mod tests {
     #[cfg(feature = "compression")]
     #[test]
     fn family_zstd_requires_one_bounded_exact_frame() {
+        use std::io::Write;
+
+        let mut high_window_encoder = zstd::stream::Encoder::new(Vec::new(), 0).unwrap();
+        high_window_encoder.include_contentsize(false).unwrap();
+        high_window_encoder.window_log(20).unwrap();
+        high_window_encoder.write_all(&[1; 13]).unwrap();
+        let high_window = high_window_encoder.finish().unwrap();
+        assert!(matches!(
+            decompress_family_tile_exact(CODEC_ZSTD, &high_window),
+            Err(FileError::Container(
+                "family zstd window exceeds fixed limit"
+            ))
+        ));
+
         let compressed = compress(CODEC_ZSTD, &[1; 13]);
         let mut garbage = compressed.clone();
         garbage.extend_from_slice(b"garbage");
@@ -5068,6 +5192,13 @@ mod tests {
 
         let huge = compress(CODEC_ZSTD, &vec![0; FAMILY_TILE_DECOMPRESSED_MAX + 1]);
         assert!(decompress_family_tile_exact(CODEC_ZSTD, &huge).is_err());
+
+        let boundary = vec![0x5a; FAMILY_TILE_DECOMPRESSED_MAX];
+        let boundary_frame = family_compress(CODEC_ZSTD, &boundary).unwrap();
+        assert_eq!(
+            decompress_family_tile_exact(CODEC_ZSTD, &boundary_frame).unwrap(),
+            boundary
+        );
     }
 
     #[test]

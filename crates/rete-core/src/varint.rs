@@ -32,10 +32,14 @@ pub fn read_uvarint(buf: &[u8]) -> Option<(u64, usize)> {
     let mut value: u64 = 0;
     let mut shift = 0u32;
     for (i, &byte) in buf.iter().enumerate() {
-        if shift >= 64 {
+        if i >= 10 || shift >= 64 {
             return None; // overflow
         }
-        value |= ((byte & 0x7f) as u64) << shift;
+        let payload = u64::from(byte & 0x7f);
+        if i == 9 && payload > 1 {
+            return None; // tenth byte may carry only bit 63
+        }
+        value |= payload << shift;
         if byte & 0x80 == 0 {
             return Some((value, i + 1));
         }
@@ -62,6 +66,17 @@ mod tests {
     #[test]
     fn truncated_is_none() {
         assert!(read_uvarint(&[0x80]).is_none());
+    }
+
+    #[test]
+    fn tenth_byte_payload_above_one_is_overflow() {
+        let mut overflow = vec![0x80; 9];
+        overflow.push(0x02);
+        assert!(read_uvarint(&overflow).is_none());
+
+        let mut overlong = vec![0x80; 10];
+        overlong.push(0);
+        assert!(read_uvarint(&overlong).is_none());
     }
 
     #[test]

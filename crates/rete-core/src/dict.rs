@@ -212,16 +212,16 @@ fn parse_meta_inner(bytes: &[u8], section_end: Option<u64>) -> Result<SectionMet
 #[inline]
 fn entry_into(bytes: &[u8], pos: usize, buf: &mut Vec<u8>) -> Option<usize> {
     let (shared, n1) = read_uvarint(bytes.get(pos..)?)?;
-    let p = pos + n1;
+    let shared = usize::try_from(shared).ok()?;
+    let p = pos.checked_add(n1)?;
     let (suf, n2) = read_uvarint(bytes.get(p..)?)?;
-    let start = p + n2;
-    let end = start
-        .checked_add(suf as usize)
-        .filter(|&e| e <= bytes.len())?;
-    if shared as usize > buf.len() {
+    let suffix = usize::try_from(suf).ok()?;
+    let start = p.checked_add(n2)?;
+    let end = start.checked_add(suffix).filter(|&e| e <= bytes.len())?;
+    if shared > buf.len() {
         return None;
     }
-    buf.truncate(shared as usize);
+    buf.truncate(shared);
     buf.extend_from_slice(&bytes[start..end]);
     Some(end)
 }
@@ -238,11 +238,15 @@ pub fn section_term(bytes: &[u8], meta: &SectionMeta, id: u32) -> Option<String>
     if id == ABSENT || id > meta.term_count {
         return None;
     }
-    let idx = (id - 1) as usize;
-    let run = idx / meta.restart_interval as usize;
-    let steps = idx % meta.restart_interval as usize;
+    let idx = usize::try_from(id - 1).ok()?;
+    let interval = usize::try_from(meta.restart_interval).ok()?;
+    let run = idx / interval;
+    let steps = idx % interval;
     let mut buf = Vec::new();
-    let mut pos = run_entry_into(bytes, *meta.restart_offsets.get(run)? as usize, &mut buf)?;
+    let restart = usize::try_from(*meta.restart_offsets.get(run)?)
+        .ok()
+        .filter(|&offset| offset < bytes.len())?;
+    let mut pos = run_entry_into(bytes, restart, &mut buf)?;
     for _ in 0..steps {
         pos = entry_into(bytes, pos, &mut buf)?;
     }
@@ -257,7 +261,10 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
     let mut hi = meta.restart_offsets.len();
     while lo < hi {
         let mid = (lo + hi) / 2;
-        run_entry_into(bytes, meta.restart_offsets[mid] as usize, &mut buf)?;
+        let restart = usize::try_from(meta.restart_offsets[mid])
+            .ok()
+            .filter(|&offset| offset < bytes.len())?;
+        run_entry_into(bytes, restart, &mut buf)?;
         if buf.as_slice() <= term.as_bytes() {
             lo = mid + 1;
         } else {
@@ -268,7 +275,10 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
         return None; // smaller than every term
     }
     let run = lo - 1;
-    let mut pos = run_entry_into(bytes, meta.restart_offsets[run] as usize, &mut buf)?;
+    let restart = usize::try_from(meta.restart_offsets[run])
+        .ok()
+        .filter(|&offset| offset < bytes.len())?;
+    let mut pos = run_entry_into(bytes, restart, &mut buf)?;
     let interval = u64::from(meta.restart_interval);
     let run = u64::try_from(run).ok()?;
     let base_id = u32::try_from(run.checked_mul(interval)?.checked_add(1)?).ok()?;
@@ -578,11 +588,14 @@ impl ChunkedSection {
                 .get(run.checked_sub(chunk.first_run)?)
                 .copied()
         } else {
-            self.meta
+            let offset = self
+                .meta
                 .restart_offsets
                 .get(run)?
-                .checked_sub(chunk.body_start)
-                .map(|o| o as usize)
+                .checked_sub(chunk.body_start)?;
+            usize::try_from(offset)
+                .ok()
+                .filter(|&offset| offset < bytes.len())
         }
     }
 
@@ -848,6 +861,34 @@ mod tests {
             parse_meta(&bytes),
             Err(DictError::Malformed("restart interval exceeds u32"))
         ));
+    }
+
+    #[test]
+    fn parse_meta_rejects_tenth_byte_u64_overflow() {
+        // `[term_count=1][interval=1][restart_count=1][restart_offset]`
+        // followed by one complete front-coded entry.  The old shared parser
+        // accepted this overflowing restart offset as zero.
+        let mut bytes = vec![1, 1, 1];
+        bytes.extend_from_slice(&[0x80; 9]);
+        bytes.push(0x02);
+        bytes.extend_from_slice(&[0, 1, b'a']);
+        assert!(parse_meta(&bytes).is_err());
+    }
+
+    #[test]
+    fn hostile_entry_and_restart_offsets_do_not_alias_usize() {
+        let mut hostile = Vec::new();
+        write_uvarint(&mut hostile, u64::MAX);
+        write_uvarint(&mut hostile, u64::MAX);
+        assert!(entry_into(&hostile, 0, &mut Vec::new()).is_none());
+
+        let meta = SectionMeta {
+            term_count: 1,
+            restart_interval: 1,
+            restart_offsets: vec![u64::MAX],
+        };
+        assert_eq!(section_term(&[0, 1, b'x'], &meta, 1), None);
+        assert_eq!(section_id(&[0, 1, b'x'], &meta, "x"), None);
     }
 
     #[test]
