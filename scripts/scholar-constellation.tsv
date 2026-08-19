@@ -1,0 +1,56 @@
+crossref	crossref	https://data.graphplaza.com/crossref/crossref.rete
+datacite	datacite	https://data.graphplaza.com/datacite/datacite.rete
+opencitations	opencitations	https://data.graphplaza.com/opencitations/opencitations.rete
+orcid	orcid	https://data.graphplaza.com/orcid/orcid.rete
+openalex	openalex-authors	https://data.graphplaza.com/openalex/openalex-authors.rete
+dblp	dblp	https://data.graphplaza.com/dblp/dblp.rete
+zenodo-records	zenodo-records	https://data.graphplaza.com/zenodo-records/zenodo-records.rete
+gotriple	gotriple	https://data.graphplaza.com/gotriple/gotriple.rete
+ror	ror	https://data.graphplaza.com/ror/ror.rete
+openaire-2021	openaire-2021-publication	https://data.graphplaza.com/openaire-2021/openaire-2021-publication.rete
+openaire-2021	openaire-2021-relation	https://data.graphplaza.com/openaire-2021/openaire-2021-relation.rete
+openaire-2021	openaire-2021-dataset	https://data.graphplaza.com/openaire-2021/openaire-2021-dataset.rete
+openaire-2021	openaire-2021-otherresearchproduct	https://data.graphplaza.com/openaire-2021/openaire-2021-otherresearchproduct.rete
+openaire-2021	openaire-2021-project	https://data.graphplaza.com/openaire-2021/openaire-2021-project.rete
+openaire-2021	openaire-2021-software	https://data.graphplaza.com/openaire-2021/openaire-2021-software.rete
+openaire-2021	openaire-2021-organization	https://data.graphplaza.com/openaire-2021/openaire-2021-organization.rete
+openaire-2021	openaire-2021-datasource	https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete
+epfl-graph	epfl-graph	https://data.graphplaza.com/epfl-graph/epfl-graph.rete
+biosyslit	biosyslit	https://data.graphplaza.com/biosyslit/biosyslit.rete
+epfl-infoscience	epfl-infoscience	https://data.graphplaza.com/epfl-infoscience/epfl-infoscience.rete
+hugging-face	hugging-face	https://data.graphplaza.com/hugging-face/hugging-face.rete
+cordis	cordis	https://data.graphplaza.com/cordis/cordis.rete
+figshare	figshare	https://data.graphplaza.com/figshare/figshare.rete
+ethz-research-collection	ethz-research-collection	https://data.graphplaza.com/ethz-research-collection/ethz-research-collection.rete
+open-pulse	open-pulse	https://data.graphplaza.com/open-pulse/open-pulse.rete
+swissubase	swissubase	https://data.graphplaza.com/swissubase/swissubase.rete
+orkg	orkg	https://data.graphplaza.com/orkg/orkg.rete
+imaging-plaza	imaging-plaza	https://data.graphplaza.com/imaging-plaza/imaging-plaza.rete
+enac-it4research	enac-it4research	https://data.graphplaza.com/enac-it4research/enac-it4research.rete
+ecosyste-ms-science	ecosyste-ms-science	https://data.graphplaza.com/ecosyste-ms-science/ecosyste-ms-science.rete
+ecosyste-ms-papers	ecosyste-ms-papers	https://data.graphplaza.com/ecosyste-ms-papers/ecosyste-ms-papers.rete
+ecosyste-ms-services	ecosyste-ms-services	https://data.graphplaza.com/ecosyste-ms-services/ecosyste-ms-services.rete
+deps-dev	deps-dev-npm-0	https://data.graphplaza.com/deps-dev/deps-dev-npm-0.rete
+deps-dev	deps-dev-npm-1	https://data.graphplaza.com/deps-dev/deps-dev-npm-1.rete
+deps-dev	deps-dev-go	https://data.graphplaza.com/deps-dev/deps-dev-go.rete
+deps-dev	deps-dev-maven	https://data.graphplaza.com/deps-dev/deps-dev-maven.rete
+deps-dev	deps-dev-pypi	https://data.graphplaza.com/deps-dev/deps-dev-pypi.rete
+deps-dev	deps-dev-nuget	https://data.graphplaza.com/deps-dev/deps-dev-nuget.rete
+deps-dev	deps-dev-cargo	https://data.graphplaza.com/deps-dev/deps-dev-cargo.rete
+deps-dev	deps-dev-rubygems	https://data.graphplaza.com/deps-dev/deps-dev-rubygems.rete
+gharchive	gharchive-2025-07	https://data.graphplaza.com/gharchive/gharchive-2025-07.rete
+gharchive	gharchive-2026-06	https://data.graphplaza.com/gharchive/gharchive-2026-06.rete
+wikidata-zenodo	wikidata-zenodo	https://data.graphplaza.com/wikidata-zenodo/wikidata-zenodo.rete
+openalex	openalex-entities	https://data.graphplaza.com/openalex/openalex-entities.rete
+# DELIBERATELY ABSENT: the 16 openalex works-*-of-10 shards (322.6 GB of .rete,
+# 24.4 B triples). Disk is not the blocker -- 32 GB in + ~27 GB out per shard
+# fits. The blockers are that ~238 GB of it would have to be downloaded, and
+# that 24.4 B quads is not a thing anyone bulk-loads from a bucket prefix: at a
+# generous 500k quads/s an Oxigraph load is ~14 hours and a multi-TB store.
+# That corpus is what the federated range-read .rete set is FOR:
+#   rete federate "<query>" https://data.graphplaza.com/openalex/works-0{1..7}-of-10.rete \
+#     https://data.graphplaza.com/openalex/works-{08,09,10}{a,b,c}-of-10.rete
+# openalex-authors (2.735 B) and openalex-entities are exported: together they
+# are the identity + venue/institution spine, which is what a "load this into my
+# store" user actually wants. Exporting only the 8 shards that happen to be on
+# local disk was rejected: a half corpus that looks whole is worse than none.
