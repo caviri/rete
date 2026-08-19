@@ -40,6 +40,8 @@ impl ZoneMap {
 pub enum TripleError {
     #[error("malformed triple block: {0}")]
     Malformed(&'static str),
+    #[error("triple block size overflow: {0}")]
+    SizeOverflow(&'static str),
 }
 
 /// Accumulates triples and serializes a block.
@@ -80,8 +82,8 @@ struct EncodingPlan {
 }
 
 /// Plan the exact encoded size without materializing the nested a/b/c groups.
-fn plan_sorted_unique(t: &[Triple]) -> EncodingPlan {
-    let count = u32::try_from(t.len()).expect("triple block count exceeds u32::MAX");
+fn plan_sorted_unique(t: &[Triple]) -> Result<EncodingPlan, TripleError> {
+    let count = u32::try_from(t.len()).map_err(|_| TripleError::SizeOverflow("triple count"))?;
     let (mut min_b, mut max_b) = (u32::MAX, 0u32);
     let (mut min_c, mut max_c) = (u32::MAX, 0u32);
     for &(_, b, c) in t {
@@ -91,10 +93,12 @@ fn plan_sorted_unique(t: &[Triple]) -> EncodingPlan {
         max_c = max_c.max(c);
     }
     let zone = [t[0].0, t[t.len() - 1].0, min_b, max_b, min_c, max_c, count];
-    let mut encoded_len = zone
-        .iter()
-        .map(|&value| uvarint_len(value as u64))
-        .sum::<usize>();
+    let mut encoded_len = 0usize;
+    for &value in &zone {
+        encoded_len = encoded_len
+            .checked_add(uvarint_len(value as u64))
+            .ok_or(TripleError::SizeOverflow("zone map"))?;
+    }
 
     let mut num_a = 0u64;
     let mut prev_a = 0u32;
@@ -104,7 +108,7 @@ fn plan_sorted_unique(t: &[Triple]) -> EncodingPlan {
         num_a += 1;
         encoded_len = encoded_len
             .checked_add(uvarint_len((a - prev_a) as u64))
-            .expect("encoded triple block length overflow");
+            .ok_or(TripleError::SizeOverflow("leading delta"))?;
         prev_a = a;
 
         let mut num_b = 0u64;
@@ -114,7 +118,7 @@ fn plan_sorted_unique(t: &[Triple]) -> EncodingPlan {
             num_b += 1;
             encoded_len = encoded_len
                 .checked_add(uvarint_len((b - prev_b) as u64))
-                .expect("encoded triple block length overflow");
+                .ok_or(TripleError::SizeOverflow("secondary delta"))?;
             prev_b = b;
 
             let start = i;
@@ -122,27 +126,40 @@ fn plan_sorted_unique(t: &[Triple]) -> EncodingPlan {
             while i < t.len() && t[i].0 == a && t[i].1 == b {
                 encoded_len = encoded_len
                     .checked_add(uvarint_len((t[i].2 - prev_c) as u64))
-                    .expect("encoded triple block length overflow");
+                    .ok_or(TripleError::SizeOverflow("tertiary delta"))?;
                 prev_c = t[i].2;
                 i += 1;
             }
             encoded_len = encoded_len
                 .checked_add(uvarint_len((i - start) as u64))
-                .expect("encoded triple block length overflow");
+                .ok_or(TripleError::SizeOverflow("tertiary count"))?;
         }
         encoded_len = encoded_len
             .checked_add(uvarint_len(num_b))
-            .expect("encoded triple block length overflow");
+            .ok_or(TripleError::SizeOverflow("secondary count"))?;
     }
     encoded_len = encoded_len
         .checked_add(uvarint_len(num_a))
-        .expect("encoded triple block length overflow");
+        .ok_or(TripleError::SizeOverflow("leading count"))?;
 
-    EncodingPlan {
+    Ok(EncodingPlan {
         zone,
         num_a,
         encoded_len,
+    })
+}
+
+/// Return the exact encoded length of sorted, duplicate-free triples without
+/// allocating their block image. Family builders use this to enforce a strict
+/// uncompressed tile budget before accepting a continuation segment.
+pub(crate) fn encoded_sorted_unique_len(t: &[Triple]) -> Result<usize, TripleError> {
+    if !t.windows(2).all(|pair| pair[0] < pair[1]) {
+        return Err(TripleError::Malformed("triples are not sorted and unique"));
     }
+    if t.is_empty() {
+        return Ok(8);
+    }
+    Ok(plan_sorted_unique(t)?.encoded_len)
 }
 
 /// Encode a lexicographically sorted, duplicate-free triple slice directly.
@@ -157,7 +174,7 @@ pub(crate) fn encode_sorted_unique(t: &[Triple]) -> Vec<u8> {
         return vec![0; 8];
     }
 
-    let plan = plan_sorted_unique(t);
+    let plan = plan_sorted_unique(t).expect("encoded triple block length overflow");
     let mut out = Vec::with_capacity(plan.encoded_len);
     for value in plan.zone {
         write_uvarint(&mut out, value as u64);

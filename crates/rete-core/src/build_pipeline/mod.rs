@@ -1,4 +1,6 @@
 #[allow(dead_code)]
+pub(crate) mod family;
+#[allow(dead_code)]
 pub(crate) mod ingest;
 #[allow(dead_code)]
 pub(crate) mod spool;

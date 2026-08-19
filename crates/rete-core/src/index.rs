@@ -17,6 +17,9 @@ use std::cell::Cell;
 use std::sync::{Arc, OnceLock};
 
 use crate::adaptive::{AdaptiveReadController, ReadIntent};
+use crate::build_pipeline::family::{build_family, FamilyIndex, FamilyView, IndexFamily};
+use crate::build_pipeline::spool::TripleSpool;
+use crate::build_pipeline::BuildPipelineError;
 use crate::triples::{encode_sorted_unique, GroupDirectory, Triple, TripleBlock};
 use crate::varint::uvarint_len;
 
@@ -255,6 +258,19 @@ impl IndexPermutation {
         }
     }
 
+    /// The physical paired-family slot and sibling-order selector for this
+    /// logical permutation. The stable six-section order remains unchanged.
+    pub const fn family_slot(self) -> (usize, bool) {
+        match self {
+            Self::Spo => (0, false),
+            Self::Pos => (1, false),
+            Self::Osp => (2, false),
+            Self::Sop => (0, true),
+            Self::Pso => (1, true),
+            Self::Ops => (2, true),
+        }
+    }
+
     /// The canonical `(s, p, o)` roles in this permutation's `(a, b, c)` slots,
     /// as indices (0=s, 1=p, 2=o). The single source of truth for `forward` /
     /// `back` / `order_pattern`.
@@ -409,6 +425,24 @@ impl GraphIndexBuilder {
         #[cfg(not(feature = "parallel"))]
         let sections: [Vec<Tile>; NUM_PERMS] = perms.map(build_one);
         GraphIndex::from_sections(sections)
+    }
+
+    /// Build through the paired-family path while preserving the established
+    /// six-section query representation. Intended for builder benchmarks and
+    /// staged pipeline integration; normal callers still select [`Self::build`].
+    pub fn build_families(self) -> GraphIndex {
+        self.try_build_families()
+            .expect("paired family build requires an encodable tile budget")
+    }
+
+    pub(crate) fn try_build_families(self) -> Result<GraphIndex, BuildPipelineError> {
+        let spool = TripleSpool::Resident(self.triples);
+        let families = [
+            build_family(&spool, IndexFamily::Subject, self.tile_budget)?,
+            build_family(&spool, IndexFamily::Predicate, self.tile_budget)?,
+            build_family(&spool, IndexFamily::Object, self.tile_budget)?,
+        ];
+        Ok(GraphIndex::from_families(families))
     }
 }
 
@@ -582,6 +616,31 @@ impl GraphIndex {
             adaptive_controller: None,
             #[cfg(feature = "unsafe-decode-bench")]
             unchecked_decode: false,
+        }
+    }
+
+    /// Expand the three family pairs into `ALL_PERMS` section order: SPO, POS,
+    /// OSP, SOP, PSO, OPS. Existing planners and loaders keep their APIs.
+    pub(crate) fn from_families(families: [FamilyIndex; 3]) -> Self {
+        let mut sections: [Vec<Tile>; NUM_PERMS] = std::array::from_fn(|_| Vec::new());
+        for family in families {
+            let slot = family.family.slot();
+            for tile in family.tiles {
+                sections[slot].push(Tile::local(tile.min_a, tile.max_a, tile.first));
+                sections[slot + 3].push(Tile::local(tile.min_a, tile.max_a, tile.second));
+            }
+        }
+        Self::from_sections(sections)
+    }
+
+    /// Borrow the two logical sections which make up one physical family.
+    #[allow(dead_code)]
+    pub(crate) fn family_view(&self, family: IndexFamily) -> FamilyView<'_> {
+        let slot = family.slot();
+        FamilyView {
+            family,
+            first: &self.sections[slot],
+            second: &self.sections[slot + 3],
         }
     }
 
@@ -1123,6 +1182,44 @@ mod tests {
             b.push(t);
         }
         (b.build(), data)
+    }
+
+    #[test]
+    fn paired_families_expand_to_every_existing_permutation_view() {
+        let (_, data) = graph();
+        let paired = GraphIndexBuilder::from_triples(data.clone())
+            .with_tile_budget(64)
+            .build_families();
+        for permutation in ALL_PERMS {
+            let mut expected: Vec<_> = data
+                .iter()
+                .copied()
+                .map(|triple| permutation.forward(triple))
+                .collect();
+            expected.sort_unstable();
+            expected.dedup();
+            let section = paired.tile_sections()[permutation.section_index()];
+            let actual: Vec<_> = section
+                .iter()
+                .flat_map(|tile| TripleBlock::parse(tile.bytes()).unwrap().triples())
+                .collect();
+            assert_eq!(actual, expected, "{}", permutation.name());
+            let (slot, second) = permutation.family_slot();
+            let family = [
+                IndexFamily::Subject,
+                IndexFamily::Predicate,
+                IndexFamily::Object,
+            ][slot];
+            let view = paired.family_view(family);
+            let selected = if second { view.second } else { view.first };
+            assert_eq!(
+                selected.iter().map(Tile::bytes).collect::<Vec<_>>(),
+                section.iter().map(Tile::bytes).collect::<Vec<_>>(),
+                "{} family slot",
+                permutation.name()
+            );
+            assert_eq!(view.family, family);
+        }
     }
 
     #[test]
