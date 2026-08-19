@@ -1,0 +1,9 @@
+{
+  "name": "chemotion-types-card",
+  "input": "chemotion/chemotion.nq",
+  "sha256": "a60b7da39192fd2a1bef5b302d22d97291222f1a9805cbab9cc709c24b28c950",
+  "mode": "standard",
+  "args": ["--pyramid-algo", "types", "--card"],
+  "gateClass": "primary",
+  "queries": []
+}

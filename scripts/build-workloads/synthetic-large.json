@@ -1,0 +1,9 @@
+{
+  "name": "synthetic-400k-no-pyramid",
+  "input": "synthetic/social-400k.nt",
+  "sha256": "92cba43189f742f1b441be85cfdb935711a558caac35fce34c7e89665940cc23",
+  "mode": "standard",
+  "args": ["--no-pyramid"],
+  "gateClass": "primary",
+  "queries": []
+}

@@ -1,0 +1,9 @@
+{
+  "name": "worldcup2026-small",
+  "input": "fixtures/worldcup2026.nt",
+  "sha256": "1d71ecfc9a57e287f75b29d927fcf52a9c8e6a583535681062d492d3f881f7ab",
+  "mode": "standard",
+  "args": [],
+  "gateClass": "small-overhead",
+  "queries": []
+}

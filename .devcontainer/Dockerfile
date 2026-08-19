@@ -20,7 +20,7 @@ ENV PATH="/usr/local/cargo/bin:${PATH}"
 # Base tooling + things our crates need (zstd headers, clang for bindgen, etc.)
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get install -y --no-install-recommends \
-        git curl ca-certificates pkg-config \
+        git curl ca-certificates pkg-config time \
         build-essential clang lld \
         libzstd-dev \
         python3 python3-pip python3-venv \
