@@ -254,6 +254,14 @@ impl TripleSpool {
         matches!(self, Self::File { .. })
     }
 
+    #[cfg(test)]
+    pub(crate) fn file_reader_buffer_capacity(&self) -> Result<usize, BuildPipelineError> {
+        match self {
+            Self::File { path, .. } => Ok(BufReader::new(File::open(path)?).capacity()),
+            Self::Resident(_) => Ok(0),
+        }
+    }
+
     /// Family construction receives an isolated child of the canonical spool
     /// owner. Its runs cannot share a namespace with the source or a concurrent
     /// family build, while the parent session still owns all cleanup roots.

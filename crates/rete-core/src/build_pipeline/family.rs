@@ -522,6 +522,7 @@ std::thread_local! {
     static FILE_PEAK_WORKING: std::cell::Cell<FileWorkingSet> = const { std::cell::Cell::new(FileWorkingSet { records: 0, bytes: 0, descriptors: 0, max_single_vec_records: 0 }) };
 }
 
+#[cfg(test)]
 fn observe_file_live(
     triple_capacities: &[usize],
     additional_triple_capacities: &[usize],
@@ -547,6 +548,7 @@ fn observe_file_live(
         .saturating_add(io_buffer_bytes);
     let max_single_vec_records = triple_capacities
         .iter()
+        .chain(additional_triple_capacities)
         .copied()
         .chain(
             pair_capacities
@@ -556,26 +558,36 @@ fn observe_file_live(
         )
         .max()
         .unwrap_or(0);
-    #[cfg(test)]
-    {
-        FILE_PEAK_WORKING.with(|peak| {
-            let previous = peak.get();
-            peak.set(FileWorkingSet {
-                records: previous.records.max(records),
-                bytes: previous.bytes.max(bytes),
-                descriptors: previous.descriptors.max(descriptors),
-                max_single_vec_records: previous.max_single_vec_records.max(max_single_vec_records),
-            });
+    FILE_PEAK_WORKING.with(|peak| {
+        let previous = peak.get();
+        peak.set(FileWorkingSet {
+            records: previous.records.max(records),
+            bytes: previous.bytes.max(bytes),
+            descriptors: previous.descriptors.max(descriptors),
+            max_single_vec_records: previous.max_single_vec_records.max(max_single_vec_records),
         });
-    }
-    #[cfg(not(test))]
-    let _ = (records, bytes, descriptors, max_single_vec_records);
+    });
+}
+
+#[cfg(test)]
+macro_rules! observe_file_live {
+    ($($argument:expr),+ $(,)?) => { observe_file_live($($argument),+) };
+}
+
+#[cfg(not(test))]
+macro_rules! observe_file_live {
+    ($($argument:expr),+ $(,)?) => {{}};
 }
 
 #[derive(Clone)]
 struct FamilyRun {
     path: PathBuf,
     count: u64,
+}
+
+#[cfg(test)]
+fn family_run_storage_bytes(run: &FamilyRun) -> usize {
+    std::mem::size_of::<FamilyRun>().saturating_add(run.path.capacity())
 }
 
 fn write_triple(writer: &mut BufWriter<File>, (a, b, c): Triple) -> Result<(), BuildPipelineError> {
@@ -596,9 +608,20 @@ fn write_run(
     name: &str,
     triples: Vec<Triple>,
 ) -> Result<FamilyRun, BuildPipelineError> {
-    write_run_with_live(temp, name, triples, &[], 0, 0)
+    let mut triples = triples;
+    radix_sort(&mut triples, &[2, 1, 0])?;
+    triples.dedup();
+    let count = u64::try_from(triples.len()).map_err(|_| overflow("family run count"))?;
+    let path = temp.path(name)?;
+    let mut writer = create_scratch_writer(&path)?;
+    for triple in triples {
+        write_triple(&mut writer, triple)?;
+    }
+    writer.flush()?;
+    Ok(FamilyRun { path, count })
 }
 
+#[cfg(test)]
 fn write_run_with_live(
     temp: &BuildTemp,
     name: &str,
@@ -613,7 +636,7 @@ fn write_run_with_live(
     let count = u64::try_from(triples.len()).map_err(|_| overflow("family run count"))?;
     let path = temp.path(name)?;
     let mut writer = create_scratch_writer(&path)?;
-    observe_file_live(
+    observe_file_live!(
         &[triples.capacity(), radix_scratch.capacity()],
         additional_triple_capacities,
         &[],
@@ -712,16 +735,20 @@ fn merge_runs(
         .collect::<Result<_, _>>()?;
     let path = temp.path(name)?;
     let mut writer = create_scratch_writer(&path)?;
+    #[cfg(test)]
     let io_buffer_bytes = readers.iter().fold(writer.capacity(), |total, reader| {
         total.saturating_add(reader.reader.capacity())
     });
-    observe_file_live(
+    observe_file_live!(
         &[],
         &[],
         &[],
         readers
             .capacity()
-            .saturating_mul(std::mem::size_of::<RunReader>()),
+            .saturating_mul(std::mem::size_of::<RunReader>())
+            .saturating_add(inputs.iter().fold(0usize, |total, run| {
+                total.saturating_add(family_run_storage_bytes(run))
+            })),
         io_buffer_bytes,
         readers.len().saturating_add(1),
     );
@@ -853,9 +880,15 @@ fn write_managed_run(
     sequence: &mut u64,
     triples: Vec<Triple>,
 ) -> Result<ManagedRun, BuildPipelineError> {
-    write_managed_run_with_live(temp, label, sequence, triples, &[], 0, 0)
+    let id = next_run_id(sequence)?;
+    let run = write_run(temp, &managed_run_name(label, id), triples)?;
+    Ok(ManagedRun {
+        id,
+        count: run.count,
+    })
 }
 
+#[cfg(test)]
 fn write_managed_run_with_live(
     temp: &BuildTemp,
     label: &str,
@@ -878,6 +911,28 @@ fn write_managed_run_with_live(
         id,
         count: run.count,
     })
+}
+
+#[cfg(test)]
+macro_rules! write_generated_run {
+    ($temp:expr, $label:expr, $sequence:expr, $triples:expr, $capacities:expr, $io:expr, $descriptors:expr $(,)?) => {
+        write_managed_run_with_live(
+            $temp,
+            $label,
+            $sequence,
+            $triples,
+            $capacities,
+            $io,
+            $descriptors,
+        )
+    };
+}
+
+#[cfg(not(test))]
+macro_rules! write_generated_run {
+    ($temp:expr, $label:expr, $sequence:expr, $triples:expr, $capacities:expr, $io:expr, $descriptors:expr $(,)?) => {
+        write_managed_run($temp, $label, $sequence, $triples)
+    };
 }
 
 fn merge_managed_runs(
@@ -931,14 +986,16 @@ fn consolidate_manifest(
             // The manifest reader/writer stay live around the bounded merge.
             // Its run readers use the same actual BufReader capacity as this
             // manifest reader, and its output uses the writer capacity.
-            observe_file_live(
+            observe_file_live!(
                 &[],
                 &[],
                 &[],
                 batch
                     .capacity()
                     .saturating_mul(std::mem::size_of::<ManagedRun>())
-                    .saturating_add(batch.len().saturating_mul(std::mem::size_of::<FamilyRun>())),
+                    .saturating_add(batch.len().saturating_mul(std::mem::size_of::<FamilyRun>()))
+                    .saturating_add(manifest.capacity())
+                    .saturating_add(next_manifest.capacity()),
                 reader
                     .reader
                     .capacity()
@@ -986,6 +1043,8 @@ fn sorted_file_runs(
     sequence: &mut u64,
 ) -> Result<(FamilyRun, FamilyRun), BuildPipelineError> {
     let cap = file_run_record_cap(tile_budget);
+    #[cfg(test)]
+    let source_reader_buffer_bytes = spool.file_reader_buffer_capacity()?;
     let mut first_buffer = Vec::with_capacity(cap);
     let mut second_buffer = Vec::with_capacity(cap);
     let first_manifest = temp.path(&format!("family-first-manifest-{}", next_run_id(sequence)?))?;
@@ -1003,7 +1062,7 @@ fn sorted_file_runs(
             // buffers and the two live manifests contribute their actual
             // capacities. A moved buffer's radix scratch is observed inside
             // `write_run` at the same allocation boundary.
-            observe_file_live(
+            observe_file_live!(
                 &[cap, first_buffer.capacity(), second_buffer.capacity()],
                 &[],
                 &[],
@@ -1011,11 +1070,12 @@ fn sorted_file_runs(
                 first_runs
                     .writer
                     .capacity()
-                    .saturating_add(second_runs.writer.capacity()),
+                    .saturating_add(second_runs.writer.capacity())
+                    .saturating_add(source_reader_buffer_bytes),
                 3,
             );
             if first_buffer.len() == cap {
-                first_runs.append(write_managed_run_with_live(
+                first_runs.append(write_generated_run!(
                     temp,
                     "first",
                     sequence,
@@ -1024,10 +1084,11 @@ fn sorted_file_runs(
                     first_runs
                         .writer
                         .capacity()
-                        .saturating_add(second_runs.writer.capacity()),
+                        .saturating_add(second_runs.writer.capacity())
+                        .saturating_add(source_reader_buffer_bytes),
                     3,
                 )?)?;
-                second_runs.append(write_managed_run_with_live(
+                second_runs.append(write_generated_run!(
                     temp,
                     "second",
                     sequence,
@@ -1036,7 +1097,8 @@ fn sorted_file_runs(
                     first_runs
                         .writer
                         .capacity()
-                        .saturating_add(second_runs.writer.capacity()),
+                        .saturating_add(second_runs.writer.capacity())
+                        .saturating_add(source_reader_buffer_bytes),
                     3,
                 )?)?;
                 first_buffer = Vec::with_capacity(cap);
@@ -1046,7 +1108,7 @@ fn sorted_file_runs(
         Ok(())
     })?;
     if !first_buffer.is_empty() {
-        first_runs.append(write_managed_run_with_live(
+        first_runs.append(write_generated_run!(
             temp,
             "first",
             sequence,
@@ -1055,10 +1117,11 @@ fn sorted_file_runs(
             first_runs
                 .writer
                 .capacity()
-                .saturating_add(second_runs.writer.capacity()),
+                .saturating_add(second_runs.writer.capacity())
+                .saturating_add(source_reader_buffer_bytes),
             3,
         )?)?;
-        second_runs.append(write_managed_run_with_live(
+        second_runs.append(write_generated_run!(
             temp,
             "second",
             sequence,
@@ -1067,7 +1130,8 @@ fn sorted_file_runs(
             first_runs
                 .writer
                 .capacity()
-                .saturating_add(second_runs.writer.capacity()),
+                .saturating_add(second_runs.writer.capacity())
+                .saturating_add(source_reader_buffer_bytes),
             3,
         )?)?;
     }
@@ -1336,7 +1400,7 @@ fn emit_file_continuations(
             second_sizer.push(second)?;
             first_values.push(first);
             second_values.push(second);
-            observe_file_live(
+            observe_file_live!(
                 &[first_values.capacity(), second_values.capacity()],
                 &[],
                 &[pending.capacity()],
@@ -1361,6 +1425,22 @@ fn emit_file_continuations(
         ))?;
         let first_tail = first_values.split_off(cut);
         let second_tail = second_values.split_off(cut);
+        observe_file_live!(
+            &[
+                first_values.capacity(),
+                second_values.capacity(),
+                first_tail.capacity(),
+                second_tail.capacity(),
+            ],
+            &[],
+            &[pending.capacity()],
+            0,
+            first_reader
+                .reader
+                .capacity()
+                .saturating_add(second_reader.reader.capacity()),
+            2,
+        );
         pending.extend(first_tail.into_iter().zip(second_tail));
         tiles.push(encode_pair(&first_values, &second_values, budget)?);
     }
@@ -1429,6 +1509,17 @@ fn build_file_family(
                 {
                     extend_from_run(&mut current_first, &first_group)?;
                     extend_from_run(&mut current_second, &second_group)?;
+                    observe_file_live!(
+                        &[current_first.capacity(), current_second.capacity()],
+                        &[],
+                        &[],
+                        0,
+                        first_reader
+                            .reader
+                            .capacity()
+                            .saturating_add(second_reader.reader.capacity()),
+                        2,
+                    );
                     first_summary = next_first;
                     second_summary = next_second;
                     std::fs::remove_file(&first_group.path)?;
@@ -1449,6 +1540,17 @@ fn build_file_family(
                 {
                     extend_from_run(&mut current_first, &first_group)?;
                     extend_from_run(&mut current_second, &second_group)?;
+                    observe_file_live!(
+                        &[current_first.capacity(), current_second.capacity()],
+                        &[],
+                        &[],
+                        0,
+                        first_reader
+                            .reader
+                            .capacity()
+                            .saturating_add(second_reader.reader.capacity()),
+                        2,
+                    );
                     first_summary = single_first;
                     second_summary = single_second;
                 } else {
@@ -2054,6 +2156,14 @@ mod tests {
         drop(file);
         drop(temp);
         std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn file_tracker_counts_additional_live_triple_vec_capacity() {
+        FILE_PEAK_WORKING.with(|peak| peak.set(super::FileWorkingSet::default()));
+        super::observe_file_live(&[1], &[73], &[], 0, 0, 0);
+        let peak = FILE_PEAK_WORKING.with(|peak| peak.get());
+        assert_eq!(peak.max_single_vec_records, 73);
     }
 
     #[test]
