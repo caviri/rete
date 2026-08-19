@@ -3,8 +3,13 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 
+#[cfg(test)]
+use std::cell::Cell;
+#[cfg(test)]
+use std::time::{Duration, Instant};
+
 use crate::index::Tile;
-use crate::triples::{encode_sorted_unique, encoded_sorted_unique_len, TripleBlock};
+use crate::triples::{encode_sorted_unique, encode_sorted_unique_with_header, TripleBlock, ZoneMap};
 use crate::varint::uvarint_len;
 use crate::Triple;
 
@@ -73,6 +78,76 @@ pub(crate) struct FamilyView<'a> {
 
 fn overflow(what: &'static str) -> BuildPipelineError {
     BuildPipelineError::Overflow(what)
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+struct ResidentProfile {
+    normalization: Duration,
+    lead_sort: Duration,
+    sibling_order: Duration,
+    segmentation: Duration,
+    encode: Duration,
+    triple_vec_capacity: usize,
+    encoded_allocations: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESIDENT_PROFILE: Cell<ResidentProfile> = Cell::new(ResidentProfile::default());
+    static RESIDENT_PROFILE_ACTIVE: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+fn reset_resident_profile() {
+    RESIDENT_PROFILE.with(|profile| profile.set(ResidentProfile::default()));
+}
+
+#[cfg(test)]
+fn set_resident_profile_active(active: bool) {
+    RESIDENT_PROFILE_ACTIVE.with(|enabled| enabled.set(active));
+}
+
+#[cfg(test)]
+fn resident_profile_active() -> bool {
+    RESIDENT_PROFILE_ACTIVE.with(Cell::get)
+}
+
+#[cfg(test)]
+fn resident_profile() -> ResidentProfile {
+    RESIDENT_PROFILE.with(Cell::get)
+}
+
+#[cfg(test)]
+fn record_resident_phase(update: impl FnOnce(&mut ResidentProfile)) {
+    if !resident_profile_active() {
+        return;
+    }
+    RESIDENT_PROFILE.with(|profile| {
+        let mut value = profile.get();
+        update(&mut value);
+        profile.set(value);
+    });
+}
+
+macro_rules! resident_profile_phase {
+    ($field:ident, $body:block) => {{
+        #[cfg(test)]
+        {
+            if resident_profile_active() {
+                let started = Instant::now();
+                let value = { $body };
+                record_resident_phase(|profile| profile.$field += started.elapsed());
+                value
+            } else {
+                $body
+            }
+        }
+        #[cfg(not(test))]
+        {
+            $body
+        }
+    }};
 }
 
 fn radix_pass(
@@ -190,6 +265,99 @@ fn radix_sort_slice(
         }
     }
     Ok(())
+}
+
+/// The dense leading-ID scatter is deliberately capped independently from the
+/// input length. Sparse canonical IDs must use the radix fallback rather than
+/// turning one high ID into a giant counts allocation.
+const DENSE_LEADING_COUNT_CAP: usize = 1 << 20;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LeadingPartition {
+    Dense,
+    Radix,
+}
+
+/// Stably partition triples by their leading component only. Tail order is
+/// established separately inside each resulting group, avoiding a full tuple
+/// comparison sort for the common many-small-groups shape.
+fn partition_by_leading(
+    input: &mut Vec<Triple>,
+    scratch: &mut Vec<Triple>,
+) -> Result<LeadingPartition, BuildPipelineError> {
+    let Some(maximum) = input.iter().map(|triple| triple.0).max() else {
+        return Ok(LeadingPartition::Dense);
+    };
+    let dense_len = usize::try_from(maximum)
+        .ok()
+        .and_then(|maximum| maximum.checked_add(1));
+    let dense_limit = input
+        .len()
+        .checked_mul(4)
+        .unwrap_or(DENSE_LEADING_COUNT_CAP)
+        .min(DENSE_LEADING_COUNT_CAP);
+    let Some(dense_len) = dense_len.filter(|&length| length <= dense_limit) else {
+        radix_sort_with_scratch(input, &[0], scratch)?;
+        return Ok(LeadingPartition::Radix);
+    };
+
+    let mut counts = Vec::new();
+    counts
+        .try_reserve_exact(dense_len)
+        .map_err(|_| overflow("family leading counts"))?;
+    counts.resize(dense_len, 0usize);
+    for &triple in input.iter() {
+        let slot = usize::try_from(triple.0)
+            .map_err(|_| overflow("family leading count index"))?;
+        counts[slot] = counts[slot]
+            .checked_add(1)
+            .ok_or_else(|| overflow("family leading count"))?;
+    }
+    let mut offsets = Vec::new();
+    offsets
+        .try_reserve_exact(dense_len)
+        .map_err(|_| overflow("family leading offsets"))?;
+    offsets.resize(dense_len, 0usize);
+    let mut next = 0usize;
+    for (offset, count) in offsets.iter_mut().zip(counts) {
+        *offset = next;
+        next = next
+            .checked_add(count)
+            .ok_or_else(|| overflow("family leading offsets"))?;
+    }
+    if next != input.len() {
+        return Err(BuildPipelineError::InvalidSpool("family leading partition length"));
+    }
+    scratch.clear();
+    scratch.resize(input.len(), (0, 0, 0));
+    for &triple in input.iter() {
+        let bucket = usize::try_from(triple.0)
+            .map_err(|_| overflow("family leading scatter index"))?;
+        let slot = offsets[bucket];
+        scratch[slot] = triple;
+        offsets[bucket] = slot
+            .checked_add(1)
+            .ok_or_else(|| overflow("family leading scatter offset"))?;
+    }
+    std::mem::swap(input, scratch);
+    Ok(LeadingPartition::Dense)
+}
+
+fn sort_first_group(group: &mut [Triple]) {
+    const INSERTION_LIMIT: usize = 16;
+    if group.len() <= INSERTION_LIMIT {
+        for index in 1..group.len() {
+            let value = group[index];
+            let mut slot = index;
+            while slot != 0 && (group[slot - 1].1, group[slot - 1].2) > (value.1, value.2) {
+                group[slot] = group[slot - 1];
+                slot -= 1;
+            }
+            group[slot] = value;
+        }
+    } else {
+        group.sort_unstable_by_key(|triple| (triple.1, triple.2));
+    }
 }
 
 fn collect_spool(spool: &TripleSpool) -> Result<Vec<Triple>, BuildPipelineError> {
@@ -361,21 +529,43 @@ impl TileSummary {
         .try_fold(0usize, |total, part| total.checked_add(part))
         .ok_or_else(|| overflow("family tile size"))
     }
+
+    fn zone(self) -> Result<ZoneMap, BuildPipelineError> {
+        Ok(ZoneMap {
+            min_a: self.min_a,
+            max_a: self.max_a,
+            min_b: self.min_b,
+            max_b: self.max_b,
+            min_c: self.min_c,
+            max_c: self.max_c,
+            count: u32::try_from(self.count)
+                .map_err(|_| BuildPipelineError::Overflow("family tile count"))?,
+        })
+    }
 }
 
-fn group_ranges(sorted: &[Triple]) -> Vec<std::ops::Range<usize>> {
-    let mut ranges = Vec::new();
-    let mut start = 0usize;
-    while start < sorted.len() {
-        let a = sorted[start].0;
-        let mut end = start + 1;
-        while end < sorted.len() && sorted[end].0 == a {
-            end += 1;
+/// Stably sort a sibling tail after its common leading component has already
+/// been partitioned. Mapping a sorted `(a, x, y)` group to `(a, y, x)` leaves
+/// `x` in ascending order, so a stable sort by `y` alone yields the complete
+/// `(a, y, x)` order without comparing the old tie-breaker again.
+fn sort_sibling_group(group: &mut [Triple], scratch: &mut Vec<Triple>) -> Result<(), BuildPipelineError> {
+    const INSERTION_LIMIT: usize = 16;
+    if group.len() <= INSERTION_LIMIT {
+        for index in 1..group.len() {
+            let value = group[index];
+            let mut slot = index;
+            while slot != 0
+                && group[slot - 1].1 > value.1
+            {
+                group[slot] = group[slot - 1];
+                slot -= 1;
+            }
+            group[slot] = value;
         }
-        ranges.push(start..end);
-        start = end;
+    } else {
+        radix_sort_slice(group, &[1], scratch)?;
     }
-    ranges
+    Ok(())
 }
 
 /// The only header term that can shrink while extending a sorted fixed-leading
@@ -442,20 +632,62 @@ fn encode_pair(
     second: &[Triple],
     budget: usize,
 ) -> Result<PairedTile, BuildPipelineError> {
-    let first_expected = encoded_sorted_unique_len(first)
+    resident_profile_phase!(encode, {
+        let first_bytes = encode_sorted_unique(first);
+        let second_bytes = encode_sorted_unique(second);
+        #[cfg(test)]
+        record_resident_phase(|profile| {
+            profile.encoded_allocations = profile.encoded_allocations.saturating_add(2)
+        });
+        paired_tile_from_bytes(first_bytes, second_bytes, budget)
+    })
+}
+
+fn encode_pair_with_summaries(
+    first: &[Triple],
+    second: &[Triple],
+    first_summary: TileSummary,
+    second_summary: TileSummary,
+    budget: usize,
+) -> Result<PairedTile, BuildPipelineError> {
+    resident_profile_phase!(encode, {
+        let first_size = first_summary.encoded_size()?;
+        let second_size = second_summary.encoded_size()?;
+        if first_size > budget || second_size > budget {
+            return Err(BuildPipelineError::InvalidSpool(
+                "family tile exceeds budget",
+            ));
+        }
+        let first_bytes = encode_sorted_unique_with_header(
+            first,
+            first_summary.zone()?,
+            first_summary.groups,
+            first_size,
+        )
         .map_err(|_| BuildPipelineError::InvalidSpool("invalid first family order"))?;
-    let second_expected = encoded_sorted_unique_len(second)
+        let second_bytes = encode_sorted_unique_with_header(
+            second,
+            second_summary.zone()?,
+            second_summary.groups,
+            second_size,
+        )
         .map_err(|_| BuildPipelineError::InvalidSpool("invalid second family order"))?;
-    if first_expected > budget || second_expected > budget {
+        #[cfg(test)]
+        record_resident_phase(|profile| {
+            profile.encoded_allocations = profile.encoded_allocations.saturating_add(2)
+        });
+        paired_tile_from_bytes(first_bytes, second_bytes, budget)
+    })
+}
+
+fn paired_tile_from_bytes(
+    first_bytes: Vec<u8>,
+    second_bytes: Vec<u8>,
+    budget: usize,
+) -> Result<PairedTile, BuildPipelineError> {
+    if first_bytes.len() > budget || second_bytes.len() > budget {
         return Err(BuildPipelineError::InvalidSpool(
             "family tile exceeds budget",
-        ));
-    }
-    let first_bytes = encode_sorted_unique(first);
-    let second_bytes = encode_sorted_unique(second);
-    if first_bytes.len() != first_expected || second_bytes.len() != second_expected {
-        return Err(BuildPipelineError::InvalidSpool(
-            "family tile accounting mismatch",
         ));
     }
     let first_block = TripleBlock::parse(&first_bytes)
@@ -1740,104 +1972,146 @@ fn build_file_family(
 /// Construct both physical orders for one leading component from one replay of
 /// a canonical spool. Full leading groups stay together; only oversize groups
 /// become aligned continuation pairs.
-pub(crate) fn build_family(
-    spool: &TripleSpool,
+pub(crate) fn build_family_from_slice(
+    source: &[Triple],
     family: IndexFamily,
     tile_budget: usize,
 ) -> Result<FamilyIndex, BuildPipelineError> {
     if tile_budget == 0 {
         return Err(BuildPipelineError::InvalidSpool("zero family tile budget"));
     }
-    if spool.count() != 0 && tile_budget < MIN_FAMILY_TILE_BUDGET {
+    if !source.is_empty() && tile_budget < MIN_FAMILY_TILE_BUDGET {
         return Err(BuildPipelineError::InvalidSpool(
             "family tile budget below the minimum of 49 bytes",
         ));
     }
-    if spool.is_file_backed() {
-        return build_file_family(spool, family, tile_budget);
-    }
-    let source = collect_spool(spool)?;
     let mut first = Vec::new();
-    first
-        .try_reserve(source.len())
-        .map_err(|_| overflow("first family order"))?;
-    first.extend(source.into_iter().map(|triple| family.first(triple)));
-    radix_sort(&mut first, &[2, 1, 0])?;
+    resident_profile_phase!(normalization, {
+        first
+            .try_reserve(source.len())
+            .map_err(|_| overflow("first family order"))?;
+        first.extend(source.iter().copied().map(|triple| family.first(triple)));
+        Ok::<(), BuildPipelineError>(())
+    })?;
+    let mut leading_scratch = Vec::new();
+    resident_profile_phase!(lead_sort, {
+        partition_by_leading(&mut first, &mut leading_scratch)?;
+        let mut start = 0usize;
+        while start < first.len() {
+            let leading = first[start].0;
+            let mut end = start + 1;
+            while end < first.len() && first[end].0 == leading {
+                end += 1;
+            }
+            sort_first_group(&mut first[start..end]);
+            start = end;
+        }
+        Ok::<(), BuildPipelineError>(())
+    })?;
     first.dedup();
     let mut second = Vec::new();
-    second
-        .try_reserve(first.len())
-        .map_err(|_| overflow("second family order"))?;
-    let first_groups = group_ranges(&first);
-    second.extend(first.iter().copied().map(|(a, x, y)| (a, y, x)));
-    // Tail-only sorts save four leading-key passes per hot group. For graphs
-    // dominated by tiny groups, their fixed 256-bucket setup costs more than a
-    // single full sibling pass, so retain the same deterministic radix order
-    // without paying that per-group overhead.
-    if first_groups.len() > first.len() / 8 {
-        radix_sort(&mut second, &[2, 1, 0])?;
-    } else {
-        let mut tail_scratch = Vec::new();
-        for group in &first_groups {
-            if group.len() > 1 {
-                // `first` is already partitioned by leading id. Sorting only
-                // this group's tail keys retains that partition.
-                radix_sort_slice(&mut second[group.clone()], &[2, 1], &mut tail_scratch)?;
+    resident_profile_phase!(sibling_order, {
+        second
+            .try_reserve(first.len())
+            .map_err(|_| overflow("second family order"))?;
+        second.extend(first.iter().copied().map(|(a, x, y)| (a, y, x)));
+        // Walk ranges by index instead of retaining one Range allocation per
+        // leading value. The mapped sibling preserves those rank boundaries.
+        let mut start = 0usize;
+        while start < first.len() {
+            let leading = first[start].0;
+            let mut end = start + 1;
+            while end < first.len() && first[end].0 == leading {
+                end += 1;
             }
+            if end - start > 1 {
+                sort_sibling_group(&mut second[start..end], &mut leading_scratch)?;
+            }
+            start = end;
         }
-    }
-    let second_groups = group_ranges(&second);
-    if first_groups.len() != second_groups.len() {
-        return Err(BuildPipelineError::InvalidSpool(
-            "family leading groups differ",
-        ));
-    }
+        Ok::<(), BuildPipelineError>(())
+    })?;
+    #[cfg(test)]
+    record_resident_phase(|profile| {
+        profile.triple_vec_capacity = profile
+            .triple_vec_capacity
+            .saturating_add(first.capacity())
+            .saturating_add(second.capacity());
+    });
     let mut tiles = Vec::new();
-    let mut current_first = Vec::new();
-    let mut current_second = Vec::new();
+    // Both sibling vectors were derived in-place from the same leading-group
+    // ranges. Keep pending ordinary tiles as matching source ranges instead of
+    // copying every triple into two additional buffers.
+    let mut current_start = None;
+    let mut current_end = 0usize;
     let mut first_summary = TileSummary::empty();
     let mut second_summary = TileSummary::empty();
     let flush = |tiles: &mut Vec<PairedTile>,
-                 current_first: &mut Vec<Triple>,
-                 current_second: &mut Vec<Triple>,
+                 current_start: &mut Option<usize>,
+                 current_end: &mut usize,
                  first_summary: &mut TileSummary,
                  second_summary: &mut TileSummary|
      -> Result<(), BuildPipelineError> {
-        if !first_summary.empty {
-            tiles.push(encode_pair(current_first, current_second, tile_budget)?);
-            current_first.clear();
-            current_second.clear();
+        if let Some(start) = *current_start {
+            tiles.push(encode_pair_with_summaries(
+                &first[start..*current_end],
+                &second[start..*current_end],
+                *first_summary,
+                *second_summary,
+                tile_budget,
+            )?);
+            *current_start = None;
+            *current_end = 0;
             *first_summary = TileSummary::empty();
             *second_summary = TileSummary::empty();
         }
         Ok(())
     };
 
-    for (first_range, second_range) in first_groups.into_iter().zip(second_groups) {
-        let first_group = &first[first_range];
-        let second_group = &second[second_range];
+    let mut group_start = 0usize;
+    while group_start < first.len() {
+        let leading = first[group_start].0;
+        let mut group_end = group_start + 1;
+        while group_end < first.len() && first[group_end].0 == leading {
+            group_end += 1;
+        }
+        let first_range = group_start..group_end;
+        let first_group = &first[first_range.clone()];
+        let second_group = &second[first_range.clone()];
         if first_group.first().map(|triple| triple.0) != second_group.first().map(|triple| triple.0)
         {
             return Err(BuildPipelineError::InvalidSpool(
                 "family leading id differs",
             ));
         }
-        let first_group_summary = GroupSummary::from_sorted(first_group)?;
-        let second_group_summary = GroupSummary::from_sorted(second_group)?;
-        let next_first = first_summary.with_group(first_group_summary)?;
-        let next_second = second_summary.with_group(second_group_summary)?;
+        let (first_group_summary, second_group_summary, next_first, next_second) =
+            resident_profile_phase!(segmentation, {
+                let first_group_summary = GroupSummary::from_sorted(first_group)?;
+                let second_group_summary = GroupSummary::from_sorted(second_group)?;
+                let next_first = first_summary.with_group(first_group_summary)?;
+                let next_second = second_summary.with_group(second_group_summary)?;
+                Ok::<_, BuildPipelineError>((
+                    first_group_summary,
+                    second_group_summary,
+                    next_first,
+                    next_second,
+                ))
+            })?;
         if next_first.encoded_size()? <= tile_budget && next_second.encoded_size()? <= tile_budget {
-            current_first.extend_from_slice(first_group);
-            current_second.extend_from_slice(second_group);
+            if current_start.is_none() {
+                current_start = Some(first_range.start);
+            }
+            current_end = first_range.end;
             first_summary = next_first;
             second_summary = next_second;
+            group_start = group_end;
             continue;
         }
         if !first_summary.empty {
             flush(
                 &mut tiles,
-                &mut current_first,
-                &mut current_second,
+                &mut current_start,
+                &mut current_end,
                 &mut first_summary,
                 &mut second_summary,
             )?;
@@ -1846,10 +2120,11 @@ pub(crate) fn build_family(
             if single_first.encoded_size()? <= tile_budget
                 && single_second.encoded_size()? <= tile_budget
             {
-                current_first.extend_from_slice(first_group);
-                current_second.extend_from_slice(second_group);
+                current_start = Some(first_range.start);
+                current_end = first_range.end;
                 first_summary = single_first;
                 second_summary = single_second;
+                group_start = group_end;
                 continue;
             }
         }
@@ -1863,28 +2138,55 @@ pub(crate) fn build_family(
                 tile_budget,
             )?);
         }
+        group_start = group_end;
     }
     flush(
         &mut tiles,
-        &mut current_first,
-        &mut current_second,
+        &mut current_start,
+        &mut current_end,
         &mut first_summary,
         &mut second_summary,
     )?;
     Ok(FamilyIndex { family, tiles })
 }
 
+pub(crate) fn build_family(
+    spool: &TripleSpool,
+    family: IndexFamily,
+    tile_budget: usize,
+) -> Result<FamilyIndex, BuildPipelineError> {
+    if spool.is_file_backed() {
+        if spool.count() != 0 && tile_budget < MIN_FAMILY_TILE_BUDGET {
+            return Err(BuildPipelineError::InvalidSpool(
+                "family tile budget below the minimum of 49 bytes",
+            ));
+        }
+        return build_file_family(spool, family, tile_budget);
+    }
+    match spool {
+        TripleSpool::Resident(source) => build_family_from_slice(source, family, tile_budget),
+        TripleSpool::File { .. } => unreachable!("file spool handled above"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use proptest::prelude::*;
 
     use crate::build_pipeline::spool::BuildTemp;
     use crate::build_pipeline::spool::TripleSpool;
     use crate::triples::TripleBlock;
     use crate::Triple;
+    use crate::index::GraphIndexBuilder;
 
     use super::{
-        build_family, file_run_record_cap, merge_runs, sorted_file_runs, write_run, IndexFamily,
+        build_family, build_family_from_slice, file_run_record_cap, merge_runs,
+        partition_by_leading, reset_resident_profile, resident_profile,
+        set_resident_profile_active, sorted_file_runs, sort_sibling_group, write_run,
+        IndexFamily, LeadingPartition,
         RunReader, FILE_PEAK_WORKING,
     };
 
@@ -2148,6 +2450,23 @@ mod tests {
     }
 
     #[test]
+    fn sparse_high_leading_ids_use_bounded_radix_partition() {
+        let mut triples = vec![
+            (u32::MAX, 9, 1),
+            (3, 2, 8),
+            (u32::MAX - 1, 0, 7),
+            (3, 1, 9),
+        ];
+        let mut scratch = Vec::new();
+        assert_eq!(
+            partition_by_leading(&mut triples, &mut scratch).unwrap(),
+            LeadingPartition::Radix
+        );
+        assert!(triples.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        assert!(scratch.capacity() <= triples.len());
+    }
+
+    #[test]
     fn file_spool_replay_matches_resident_for_every_family() {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let parent = std::env::temp_dir().join(format!(
@@ -2324,6 +2643,117 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "release-only paired-family preflight benchmark"]
+    fn paired_family_preflight_benchmark() {
+        // Equivalent canonical-ID form of `gen_graph.py 400000 5 100`: two
+        // attributes per person and five deterministic, 90%-within-community
+        // edges. The LCG is the documented in-memory stand-in for Python's
+        // seeded generator; input generation stays outside timed samples.
+        let mut triples = Vec::with_capacity(2_800_000);
+        let mut state = 42u64;
+        for person in 0..400_000u32 {
+            triples.push((person, 0, 18 + person % 60));
+            triples.push((person, 1, person));
+            for edge in 0..5u32 {
+                state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let random = (state >> 32) as u32;
+                let target = if random % 10 != 0 {
+                    (person / 100) * 100 + random % 100
+                } else {
+                    random % 400_000
+                };
+                if target != person {
+                    triples.push((person, 2, target));
+                }
+                black_box(edge);
+            }
+        }
+        let workload_hash = triples.iter().fold(0u64, |hash, &(s, p, o)| {
+            hash.rotate_left(7) ^ u64::from(s).wrapping_mul(31) ^ u64::from(p) ^ u64::from(o)
+        });
+        assert!(triples.len() >= 2_780_000);
+        let budget = 16 * 1024;
+        // This representative profile is deliberately outside the timed gate.
+        // It uses sequential calls so each family owns one thread-local phase
+        // record; the production default-feature builder remains parallel.
+        set_resident_profile_active(true);
+        let mut profile_families = Vec::new();
+        for family in [IndexFamily::Subject, IndexFamily::Predicate, IndexFamily::Object] {
+            reset_resident_profile();
+            let family_index = build_family_from_slice(&triples, family, budget).unwrap();
+            profile_families.push(family_index);
+            eprintln!("task5-profile family={family:?} {:?}", resident_profile());
+        }
+        let expansion_started = Instant::now();
+        let _: crate::index::GraphIndex = crate::index::GraphIndex::from_families(
+            profile_families.try_into().map_err(|_| ()).unwrap(),
+        );
+        eprintln!("task5-profile family-expansion={:?}", expansion_started.elapsed());
+        let (_, reference_profile) = crate::index::build_reference_profile(&triples, budget);
+        for (permutation, profile) in crate::index::ALL_PERMS.into_iter().zip(reference_profile)
+        {
+            eprintln!("task5-profile reference={permutation:?} {profile:?}");
+        }
+        set_resident_profile_active(false);
+        let decode = |index: &crate::index::GraphIndex| {
+            index
+                .sections
+                .iter()
+                .map(|section| {
+                    section
+                        .iter()
+                        .flat_map(|tile| TripleBlock::parse(tile.bytes()).unwrap().triples())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        let reference = GraphIndexBuilder::from_triples(triples.clone())
+            .with_tile_budget(budget)
+            .build();
+        let paired = GraphIndexBuilder::from_triples(triples.clone())
+            .with_tile_budget(budget)
+            .build_families()
+            .unwrap();
+        assert_eq!(decode(&paired), decode(&reference));
+        let mut paired_times = Vec::new();
+        let mut reference_times = Vec::new();
+        let accepted = std::env::var("RETE_PREFLIGHT_ACCEPTED")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(15);
+        for sample in 0..accepted + 2 {
+            let paired_first = sample % 2 == 0;
+            for paired_turn in [paired_first, !paired_first] {
+                let start = Instant::now();
+                let index = if paired_turn {
+                    GraphIndexBuilder::from_triples(triples.clone())
+                        .with_tile_budget(budget)
+                        .build_families()
+                        .unwrap()
+                } else {
+                    GraphIndexBuilder::from_triples(triples.clone())
+                        .with_tile_budget(budget)
+                        .build()
+                };
+                let hash = index.sections.iter().flatten().fold(0usize, |hash, tile| {
+                    hash ^ tile.bytes().len()
+                });
+                black_box(hash);
+                if sample >= 2 {
+                    (if paired_turn { &mut paired_times } else { &mut reference_times })
+                        .push(start.elapsed());
+                }
+            }
+        }
+        paired_times.sort_unstable();
+        reference_times.sort_unstable();
+        let median = |samples: &[std::time::Duration]| samples[samples.len() / 2];
+        let ratio = median(&reference_times).as_secs_f64() / median(&paired_times).as_secs_f64();
+        eprintln!("task5-preflight candidate={} workload={} hash={workload_hash:016x} paired={paired_times:?} reference={reference_times:?} ratio={ratio:.3}", env!("CARGO_PKG_VERSION"), triples.len());
+        assert!(ratio >= 1.5, "paired/reference median ratio {ratio:.3}");
+    }
+
+    #[test]
     fn file_family_reuses_the_spool_owner_for_scratch_and_cleanup() {
         let parent =
             std::env::temp_dir().join(format!("rete-family-owned-scratch-{}", std::process::id()));
@@ -2433,6 +2863,37 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn sparse_high_id_families_match_all_six_tuple_orders(
+            triples in prop::collection::vec((any::<u32>(), any::<u32>(), any::<u32>()), 0..100)
+        ) {
+            for family in [IndexFamily::Subject, IndexFamily::Predicate, IndexFamily::Object] {
+                assert_family(triples.clone(), family, 128);
+            }
+        }
+
+        #[test]
+        fn stable_sibling_key_order_matches_full_tuple_order(
+            a in any::<u32>(),
+            tails in prop::collection::vec((any::<u32>(), any::<u32>()), 0..160)
+        ) {
+            let mut first: Vec<Triple> = tails
+                .into_iter()
+                .map(|(x, y)| (a, x, y))
+                .collect();
+            first.sort_unstable();
+            first.dedup();
+            let mut sibling: Vec<Triple> = first
+                .iter()
+                .map(|&(leading, x, y)| (leading, y, x))
+                .collect();
+            let mut expected = sibling.clone();
+            expected.sort_unstable();
+            let mut scratch = Vec::new();
+            sort_sibling_group(&mut sibling, &mut scratch).unwrap();
+            prop_assert_eq!(sibling, expected);
+        }
+
         #[test]
         fn radix_orders_match_sort_unstable_for_all_families(
             triples in prop::collection::vec((any::<u32>(), any::<u32>(), any::<u32>()), 0..80)

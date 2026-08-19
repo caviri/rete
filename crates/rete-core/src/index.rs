@@ -17,8 +17,7 @@ use std::cell::Cell;
 use std::sync::{Arc, OnceLock};
 
 use crate::adaptive::{AdaptiveReadController, ReadIntent};
-use crate::build_pipeline::family::{build_family, FamilyIndex, FamilyView, IndexFamily};
-use crate::build_pipeline::spool::TripleSpool;
+use crate::build_pipeline::family::{build_family_from_slice, FamilyIndex, FamilyView, IndexFamily};
 use crate::build_pipeline::BuildPipelineError;
 use crate::triples::{encode_sorted_unique, GroupDirectory, Triple, TripleBlock};
 use crate::varint::uvarint_len;
@@ -432,11 +431,23 @@ impl GraphIndexBuilder {
     /// production API before the format writer is ready.
     #[allow(dead_code)] // Staged until the format writer consumes paired families.
     pub(crate) fn build_families(self) -> Result<GraphIndex, BuildPipelineError> {
-        let spool = TripleSpool::Resident(self.triples);
+        let triples = &self.triples;
+        #[cfg(feature = "parallel")]
+        let families = {
+            let (subject, predicate_object) = rayon::join(
+                || build_family_from_slice(triples, IndexFamily::Subject, self.tile_budget),
+                || rayon::join(
+                    || build_family_from_slice(triples, IndexFamily::Predicate, self.tile_budget),
+                    || build_family_from_slice(triples, IndexFamily::Object, self.tile_budget),
+                ),
+            );
+            [subject?, predicate_object.0?, predicate_object.1?]
+        };
+        #[cfg(not(feature = "parallel"))]
         let families = [
-            build_family(&spool, IndexFamily::Subject, self.tile_budget)?,
-            build_family(&spool, IndexFamily::Predicate, self.tile_budget)?,
-            build_family(&spool, IndexFamily::Object, self.tile_budget)?,
+            build_family_from_slice(triples, IndexFamily::Subject, self.tile_budget)?,
+            build_family_from_slice(triples, IndexFamily::Predicate, self.tile_budget)?,
+            build_family_from_slice(triples, IndexFamily::Object, self.tile_budget)?,
         ];
         Ok(GraphIndex::from_families(families))
     }
@@ -525,6 +536,10 @@ fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
     #[cfg(not(feature = "parallel"))]
     triples.sort_unstable();
     triples.dedup();
+    build_tiles_sorted(&triples, budget)
+}
+
+fn build_tiles_sorted(triples: &[Triple], budget: usize) -> Vec<Tile> {
     if triples.is_empty() {
         return Vec::new();
     }
@@ -574,6 +589,61 @@ fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
         tiles.push(make_tile(&triples[tile_start..]));
     }
     tiles
+}
+
+#[cfg(test)]
+#[allow(dead_code)] // The ignored preflight harness prints the aggregate Debug view.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ReferencePermutationProfile {
+    pub normalization: std::time::Duration,
+    pub sort: std::time::Duration,
+    pub encode: std::time::Duration,
+    pub input_records: usize,
+    pub output_tiles: usize,
+}
+
+/// Test-only phase split of the unchanged six-order reference construction.
+/// Kept outside the production builder so it cannot affect its timing or API.
+#[cfg(test)]
+pub(crate) fn build_reference_profile(
+    triples: &[Triple],
+    budget: usize,
+) -> (GraphIndex, [ReferencePermutationProfile; NUM_PERMS]) {
+    let mut sections = Vec::with_capacity(NUM_PERMS);
+    let mut profiles = Vec::with_capacity(NUM_PERMS);
+    for permutation in ALL_PERMS {
+        let normalized_started = std::time::Instant::now();
+        let mut permuted: Vec<Triple> = triples
+            .iter()
+            .map(|&triple| permutation.forward(triple))
+            .collect();
+        let normalization = normalized_started.elapsed();
+        let sort_started = std::time::Instant::now();
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::slice::ParallelSliceMut;
+            permuted.par_sort_unstable();
+        }
+        #[cfg(not(feature = "parallel"))]
+        permuted.sort_unstable();
+        permuted.dedup();
+        let sort = sort_started.elapsed();
+        let encode_started = std::time::Instant::now();
+        let tiles = build_tiles_sorted(&permuted, budget);
+        let encode = encode_started.elapsed();
+        profiles.push(ReferencePermutationProfile {
+            normalization,
+            sort,
+            encode,
+            input_records: permuted.len(),
+            output_tiles: tiles.len(),
+        });
+        sections.push(tiles);
+    }
+    let sections: [Vec<Tile>; NUM_PERMS] = sections.try_into().map_err(|_| ()).unwrap();
+    let profiles: [ReferencePermutationProfile; NUM_PERMS] =
+        profiles.try_into().map_err(|_| ()).unwrap();
+    (GraphIndex::from_sections(sections), profiles)
 }
 
 /// The six tiled permutation sections, queryable by triple pattern.

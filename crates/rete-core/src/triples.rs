@@ -149,19 +149,6 @@ fn plan_sorted_unique(t: &[Triple]) -> Result<EncodingPlan, TripleError> {
     })
 }
 
-/// Return the exact encoded length of sorted, duplicate-free triples without
-/// allocating their block image. Family builders use this to enforce a strict
-/// uncompressed tile budget before accepting a continuation segment.
-pub(crate) fn encoded_sorted_unique_len(t: &[Triple]) -> Result<usize, TripleError> {
-    if !t.windows(2).all(|pair| pair[0] < pair[1]) {
-        return Err(TripleError::Malformed("triples are not sorted and unique"));
-    }
-    if t.is_empty() {
-        return Ok(8);
-    }
-    Ok(plan_sorted_unique(t)?.encoded_len)
-}
-
 /// Encode a lexicographically sorted, duplicate-free triple slice directly.
 /// Tile builders already establish this precondition, avoiding their previous
 /// copy, re-sort, dedup, nested grouping allocations, and output growth.
@@ -175,11 +162,61 @@ pub(crate) fn encode_sorted_unique(t: &[Triple]) -> Vec<u8> {
     }
 
     let plan = plan_sorted_unique(t).expect("encoded triple block length overflow");
-    let mut out = Vec::with_capacity(plan.encoded_len);
-    for value in plan.zone {
+    encode_sorted_unique_with_header(
+        t,
+        ZoneMap {
+            min_a: plan.zone[0],
+            max_a: plan.zone[1],
+            min_b: plan.zone[2],
+            max_b: plan.zone[3],
+            min_c: plan.zone[4],
+            max_c: plan.zone[5],
+            count: plan.zone[6],
+        },
+        plan.num_a,
+        plan.encoded_len,
+    )
+    .expect("encoded triple block plan mismatch")
+}
+
+/// Encode a sorted, unique block with summary data already established by a
+/// caller's exact incremental size accounting. This is intentionally a
+/// crate-private trusted-builder primitive: it avoids re-planning the same
+/// groups immediately before serialization, while still checking the supplied
+/// count and final byte length without unchecked indexing.
+pub(crate) fn encode_sorted_unique_with_header(
+    t: &[Triple],
+    zone: ZoneMap,
+    num_a: u64,
+    encoded_len: usize,
+) -> Result<Vec<u8>, TripleError> {
+    if usize::try_from(zone.count).ok() != Some(t.len()) {
+        return Err(TripleError::Malformed("zone count does not match triples"));
+    }
+    if t.is_empty() {
+        if encoded_len != 8 || num_a != 0 {
+            return Err(TripleError::Malformed("empty block summary"));
+        }
+        return Ok(vec![0; 8]);
+    }
+    if t[0].0 != zone.min_a || t[t.len() - 1].0 != zone.max_a {
+        return Err(TripleError::Malformed("zone leading bounds do not match triples"));
+    }
+    debug_assert!(t.windows(2).all(|pair| pair[0] < pair[1]));
+
+    let mut out = Vec::with_capacity(encoded_len);
+    for value in [
+        zone.min_a,
+        zone.max_a,
+        zone.min_b,
+        zone.max_b,
+        zone.min_c,
+        zone.max_c,
+        zone.count,
+    ] {
         write_uvarint(&mut out, value as u64);
     }
-    write_uvarint(&mut out, plan.num_a);
+    write_uvarint(&mut out, num_a);
 
     let mut prev_a = 0u32;
     let mut i = 0usize;
@@ -217,8 +254,10 @@ pub(crate) fn encode_sorted_unique(t: &[Triple]) -> Vec<u8> {
             }
         }
     }
-    debug_assert_eq!(out.len(), plan.encoded_len);
-    out
+    if out.len() != encoded_len {
+        return Err(TripleError::Malformed("block summary length does not match triples"));
+    }
+    Ok(out)
 }
 
 /// A parsed triple block.
