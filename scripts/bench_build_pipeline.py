@@ -398,8 +398,8 @@ class IdentityLedger:
 
     def __init__(self, executable_sha256: dict[str, str]):
         self.executable_sha256 = executable_sha256
-        self.output_sha256: str | None = None
-        self.query_sha256: dict[str, str] | None = None
+        self.output_sha256: dict[str, str] = {}
+        self.query_sha256: dict[str, dict[str, str]] = {}
 
     def verify(self, row: dict) -> None:
         implementation = row.get("implementation")
@@ -409,17 +409,15 @@ class IdentityLedger:
         if row.get("executableSha256") != expected_executable:
             raise ValueError(f"executable SHA-256 drift for {implementation}")
         output_sha256 = row.get("outputSha256")
-        if self.output_sha256 is None:
-            self.output_sha256 = output_sha256
-        elif output_sha256 != self.output_sha256:
-            raise ValueError("output hash drift across benchmark matrix")
+        expected_output = self.output_sha256.setdefault(implementation, output_sha256)
+        if output_sha256 != expected_output:
+            raise ValueError(f"output hash drift for {implementation} across benchmark matrix")
         query_sha256 = {query["name"]: query["resultSha256"] for query in row.get("queries", [])}
         if len(query_sha256) != len(row.get("queries", [])):
             raise ValueError("duplicate query result name in sample")
-        if self.query_sha256 is None:
-            self.query_sha256 = query_sha256
-        elif query_sha256 != self.query_sha256:
-            raise ValueError("query hash drift across benchmark matrix")
+        expected_queries = self.query_sha256.setdefault(implementation, query_sha256)
+        if query_sha256 != expected_queries:
+            raise ValueError(f"query hash drift for {implementation} across benchmark matrix")
 
 
 def _run_query(executable: pathlib.Path, query: Query, output_path: pathlib.Path) -> dict:
@@ -490,6 +488,9 @@ def run_sample(
         raise ValueError(f"executable SHA-256 drift for {implementation}")
     if not output_path.is_file():
         raise RuntimeError(f"build completed without output: {output_path}")
+    queries = [_run_query(executable, query, output_path) for query in workload.queries]
+    if sha256_file(executable) != executable_sha256:
+        raise ValueError(f"executable SHA-256 drift for {implementation}")
     result = {
         "schemaVersion": SCHEMA_VERSION,
         "kind": "SAMPLE",
@@ -504,7 +505,7 @@ def run_sample(
         "peakRssKiB": peak_rss_kib,
         "outputSha256": sha256_file(output_path),
         "outputBytes": output_path.stat().st_size,
-        "queries": [_run_query(executable, query, output_path) for query in workload.queries],
+        "queries": queries,
     }
     if budget is not None:
         result["memoryBudgetMb"] = budget

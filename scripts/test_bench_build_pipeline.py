@@ -250,6 +250,34 @@ class BenchBuildPipelineTests(unittest.TestCase):
                     expected_executable_sha256=expected,
                 )
 
+    def test_run_sample_rejects_an_executable_changed_by_final_query(self) -> None:
+        """A query must not leave a different binary behind after a sample."""
+        input_root, workload = self.make_input_workload()
+        workload = dataclasses.replace(
+            workload, queries=(Query("mutating", (), "0" * 64),)
+        )
+        executable = self.make_executable("stable")
+        expected = hashlib.sha256(executable.read_bytes()).hexdigest()
+        artifacts = self.root / "artifacts"
+        artifacts.mkdir()
+
+        def build_output(_command):
+            (artifacts / "fixture-baseline-r0.rete").write_bytes(b"rete")
+            return 1, 2
+
+        def mutate_final_query(_exe, _query, _output):
+            executable.write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+            executable.chmod(executable.stat().st_mode | 0o111)
+            return {"name": "mutating", "wallMs": 1, "resultSha256": "0" * 64}
+
+        with mock.patch.object(harness, "_run_build", side_effect=build_output):
+            with mock.patch.object(harness, "_run_query", side_effect=mutate_final_query):
+                with self.assertRaisesRegex(ValueError, "executable SHA-256 drift"):
+                    run_sample(
+                        executable, workload, input_root, artifacts, "baseline", 0,
+                        expected_executable_sha256=expected,
+                    )
+
     def test_query_substitutes_output_as_one_literal_argv_member(self) -> None:
         """The output placeholder must reach the child unchanged and without a shell."""
         output = self.root / "file with spaces.rete"
@@ -379,7 +407,10 @@ class BenchBuildPipelineTests(unittest.TestCase):
         return {
             "schemaVersion": 1, "kind": "SAMPLE", "implementation": implementation,
             "repetition": repetition, "executableSha256": executable_sha256, "wallMs": 1,
-            "peakRssKiB": 2, "outputSha256": "same", "outputBytes": 3, "queries": [],
+            "peakRssKiB": 2, "outputSha256": f"{implementation}-output", "outputBytes": 3,
+            "queries": [
+                {"name": "probe", "wallMs": 1, "resultSha256": f"{implementation}-query"}
+            ],
         }
 
 
