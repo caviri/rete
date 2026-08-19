@@ -147,9 +147,12 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
         *pos += n;
         Ok(v)
     };
-    let term_count = take(&mut pos)? as u32;
-    let restart_interval = take(&mut pos)? as u32;
-    let num_restarts = take(&mut pos)? as usize;
+    let term_count = u32::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("term count exceeds u32"))?;
+    let restart_interval = u32::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("restart interval exceeds u32"))?;
+    let num_restarts = usize::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("restart count too large"))?;
     if restart_interval == 0 {
         return Err(DictError::Malformed("zero restart interval"));
     }
@@ -782,6 +785,27 @@ mod tests {
         assert_eq!(sec.id("http://ex.org/Alic"), None); // prefix, not present
         assert_eq!(sec.term(0), None);
         assert_eq!(sec.term(9999), None);
+    }
+
+    #[test]
+    fn parse_meta_rejects_dictionary_ids_and_counts_above_u32() {
+        let mut bytes = Vec::new();
+        write_uvarint(&mut bytes, u32::MAX as u64 + 1);
+        write_uvarint(&mut bytes, 1);
+        write_uvarint(&mut bytes, 0);
+        assert!(matches!(
+            parse_meta(&bytes),
+            Err(DictError::Malformed("term count exceeds u32"))
+        ));
+
+        let mut bytes = Vec::new();
+        write_uvarint(&mut bytes, 0);
+        write_uvarint(&mut bytes, u32::MAX as u64 + 1);
+        write_uvarint(&mut bytes, 0);
+        assert!(matches!(
+            parse_meta(&bytes),
+            Err(DictError::Malformed("restart interval exceeds u32"))
+        ));
     }
 
     /// Property-style stress of the front-coded decode paths: a large

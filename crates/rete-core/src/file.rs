@@ -15,9 +15,11 @@
 //! single permutation payload from that container.
 
 use crate::adaptive::ReadIntent;
+use crate::build_pipeline::family::{FamilyView, IndexFamily, Synopsis};
 use crate::dictionary::Dictionary;
 use crate::header::{
-    Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC,
+    Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN,
+    LEGACY_FORMAT_VERSION, MAGIC, NEXT_FORMAT_VERSION,
 };
 use crate::index::{GraphIndex, IndexPermutation, Pattern, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
@@ -655,31 +657,48 @@ fn parse_chunked_dict_dir(
     let take = |pos: &mut usize| -> Result<u64, FileError> {
         let (v, n) = read_uvarint(bytes.get(*pos..).unwrap_or(&[]))
             .ok_or(FileError::Container("truncated dict chunk directory"))?;
-        *pos += n;
+        *pos = pos
+            .checked_add(n)
+            .ok_or(FileError::Container("dict directory offset overflows"))?;
         Ok(v)
     };
-    let header_len = take(&mut pos)? as usize;
+    let header_len = usize::try_from(take(&mut pos)?)
+        .map_err(|_| FileError::Container("dict header length too large"))?;
+    let header_end = pos
+        .checked_add(header_len)
+        .ok_or(FileError::Container("dict directory offset overflows"))?;
     let header = bytes
-        .get(pos..pos.saturating_add(header_len))
+        .get(pos..header_end)
         .ok_or(FileError::Container("truncated dict header"))?;
     let meta = crate::dict::parse_meta(header)
         .map_err(|_| FileError::Container("malformed dict header"))?;
-    pos += header_len;
+    pos = header_end;
 
-    let num_chunks = take(&mut pos)? as usize;
+    let num_chunks = usize::try_from(take(&mut pos)?)
+        .map_err(|_| FileError::Container("dict chunk count too large"))?;
+    if num_chunks > bytes.len().saturating_sub(pos) / 3 {
+        return Err(FileError::Container("dict chunk count exceeds directory"));
+    }
     let mut entries = Vec::with_capacity(num_chunks.min(bytes.len()));
     let mut lens = Vec::with_capacity(num_chunks.min(bytes.len()));
     let mut prev_run = 0usize;
     for _ in 0..num_chunks {
-        let drun = take(&mut pos)? as usize;
-        let tlen = take(&mut pos)? as usize;
+        let drun = usize::try_from(take(&mut pos)?)
+            .map_err(|_| FileError::Container("dict chunk run delta too large"))?;
+        let tlen = usize::try_from(take(&mut pos)?)
+            .map_err(|_| FileError::Container("dict chunk term length too large"))?;
+        let term_end = pos
+            .checked_add(tlen)
+            .ok_or(FileError::Container("dict directory offset overflows"))?;
         let term = bytes
-            .get(pos..pos.saturating_add(tlen))
+            .get(pos..term_end)
             .ok_or(FileError::Container("truncated dict chunk first term"))?
             .to_vec();
-        pos += tlen;
+        pos = term_end;
         let clen = take(&mut pos)?;
-        let first_run = prev_run + drun;
+        let first_run = prev_run
+            .checked_add(drun)
+            .ok_or(FileError::Container("dict chunk run overflows"))?;
         let body_start = meta
             .restart_offsets
             .get(first_run)
@@ -695,7 +714,8 @@ fn parse_chunked_dict_dir(
         lens.push(clen);
         prev_run = first_run;
     }
-    let mut start = pos as u64;
+    let mut start =
+        u64::try_from(pos).map_err(|_| FileError::Container("dict directory offset too large"))?;
     for (e, len) in entries.iter_mut().zip(lens) {
         let end = start
             .checked_add(len)
@@ -750,8 +770,10 @@ fn read_dict_dir_ranged<R: RangeReader>(
         .ok_or(FileError::Container("dict header overruns section"))?;
     let dir_total = total - dir_start;
     let meta = crate::dict::SectionMeta {
-        term_count: term_count as u32,
-        restart_interval: restart_interval as u32,
+        term_count: u32::try_from(term_count)
+            .map_err(|_| FileError::Container("dict term count exceeds u32"))?,
+        restart_interval: u32::try_from(restart_interval)
+            .map_err(|_| FileError::Container("dict restart interval exceeds u32"))?,
         restart_offsets: Vec::new(),
     };
     let finish = |mut entries: Vec<DictChunkEntry>| {
@@ -764,7 +786,9 @@ fn read_dict_dir_ranged<R: RangeReader>(
     // Fast path: the directory already sits in the prefix we read (small section
     // — its restart table is tiny, so the ~few KiB over-read is negligible).
     if dir_start < head.len() as u64 {
-        if let Ok(entries) = parse_chunk_dir_only(&head[dir_start as usize..], dir_total) {
+        let dir_start_usize = usize::try_from(dir_start)
+            .map_err(|_| FileError::Container("dict directory offset too large"))?;
+        if let Ok(entries) = parse_chunk_dir_only(&head[dir_start_usize..], dir_total) {
             return Ok(finish(entries));
         }
     }
@@ -791,23 +815,36 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<Vec<DictChunkEntry
     let take = |pos: &mut usize| -> Result<u64, FileError> {
         let (v, n) = read_uvarint(dir.get(*pos..).unwrap_or(&[]))
             .ok_or(FileError::Container("truncated dict chunk directory"))?;
-        *pos += n;
+        *pos = pos
+            .checked_add(n)
+            .ok_or(FileError::Container("dict directory offset overflows"))?;
         Ok(v)
     };
-    let num_chunks = take(&mut pos)? as usize;
+    let num_chunks = usize::try_from(take(&mut pos)?)
+        .map_err(|_| FileError::Container("dict chunk count too large"))?;
+    if num_chunks > dir.len().saturating_sub(pos) / 3 {
+        return Err(FileError::Container("dict chunk count exceeds directory"));
+    }
     let mut entries = Vec::with_capacity(num_chunks.min(dir.len()));
     let mut lens = Vec::with_capacity(num_chunks.min(dir.len()));
     let mut prev_run = 0usize;
     for _ in 0..num_chunks {
-        let drun = take(&mut pos)? as usize;
-        let tlen = take(&mut pos)? as usize;
+        let drun = usize::try_from(take(&mut pos)?)
+            .map_err(|_| FileError::Container("dict chunk run delta too large"))?;
+        let tlen = usize::try_from(take(&mut pos)?)
+            .map_err(|_| FileError::Container("dict chunk term length too large"))?;
+        let term_end = pos
+            .checked_add(tlen)
+            .ok_or(FileError::Container("dict directory offset overflows"))?;
         let term = dir
-            .get(pos..pos.saturating_add(tlen))
+            .get(pos..term_end)
             .ok_or(FileError::Container("truncated dict chunk first term"))?
             .to_vec();
-        pos += tlen;
+        pos = term_end;
         let clen = take(&mut pos)?;
-        let first_run = prev_run + drun;
+        let first_run = prev_run
+            .checked_add(drun)
+            .ok_or(FileError::Container("dict chunk run overflows"))?;
         entries.push(DictChunkEntry {
             first_run,
             first_term: term,
@@ -818,7 +855,8 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<Vec<DictChunkEntry
         lens.push(clen);
         prev_run = first_run;
     }
-    let mut start = pos as u64;
+    let mut start =
+        u64::try_from(pos).map_err(|_| FileError::Container("dict directory offset too large"))?;
     for (e, len) in entries.iter_mut().zip(lens) {
         let end = start
             .checked_add(len)
@@ -846,7 +884,18 @@ fn decode_chunked_dict_section(
                 e.first_run,
                 e.first_term,
                 e.body_start,
-                decompress(codec, &payload[e.start as usize..e.end as usize])?,
+                decompress(
+                    codec,
+                    payload
+                        .get(
+                            usize::try_from(e.start)
+                                .map_err(|_| FileError::Container("dict chunk offset too large"))?
+                                ..usize::try_from(e.end).map_err(|_| {
+                                    FileError::Container("dict chunk offset too large")
+                                })?,
+                        )
+                        .ok_or(FileError::Container("dict chunk overruns section"))?,
+                )?,
             ))
         })
         .collect::<Result<Vec<_>, FileError>>()?;
@@ -866,6 +915,626 @@ fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, Fi
         .try_into()
         .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
     Ok(Dictionary::from_chunked_sections(arr))
+}
+
+// --- Staged 0x06 paired-family container ------------------------------------
+//
+// This codec intentionally has no production writer or header dispatch in this
+// commit. Its byte contract is pinned here before Task 7 switches any reader.
+
+#[allow(dead_code)]
+const PREFIX2_FORMAT_BUDGET: usize = 64 * 1024;
+#[allow(dead_code)]
+const FAMILY_FLAG_CONTINUES_PREVIOUS: u8 = 0b0000_0001;
+#[allow(dead_code)]
+const FAMILY_FLAG_CONTINUES_NEXT: u8 = 0b0000_0010;
+#[allow(dead_code)]
+const FAMILY_FLAG_MASK: u8 = FAMILY_FLAG_CONTINUES_PREVIOUS | FAMILY_FLAG_CONTINUES_NEXT;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct Prefix2Group {
+    pub a: u32,
+    pub a_body_offset: u32,
+    pub b_entries: Vec<(u32, u32, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[allow(dead_code)]
+pub(crate) struct Prefix2Meta {
+    pub groups: Vec<Prefix2Group>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[allow(dead_code)]
+pub(crate) struct FamilyDirectory {
+    pub ranges: Vec<(u32, u32)>,
+    pub first_flags: Vec<u8>,
+    pub second_flags: Vec<u8>,
+    pub first_lengths: Vec<u64>,
+    pub second_lengths: Vec<u64>,
+    pub first_prefix2_lengths: Vec<u64>,
+    pub second_prefix2_lengths: Vec<u64>,
+    pub first_prefix2: Vec<Prefix2Meta>,
+    pub second_prefix2: Vec<Prefix2Meta>,
+    pub first_synopses: Vec<Synopsis>,
+    pub second_synopses: Vec<Synopsis>,
+    pub first_records_offset: u64,
+    pub second_records_offset: u64,
+}
+
+#[allow(dead_code)]
+pub(crate) struct DecodedFamily {
+    pub first: Vec<crate::index::Tile>,
+    pub second: Vec<crate::index::Tile>,
+    pub directory: FamilyDirectory,
+}
+
+#[allow(dead_code)]
+fn family_compress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
+    match codec {
+        CODEC_NONE => Ok(bytes.to_vec()),
+        CODEC_ZSTD => {
+            #[cfg(feature = "compression")]
+            {
+                Ok(compress(codec, bytes))
+            }
+            #[cfg(not(feature = "compression"))]
+            {
+                let _ = bytes;
+                Err(FileError::UnknownCodec(codec))
+            }
+        }
+        other => Err(FileError::UnknownCodec(other)),
+    }
+}
+
+#[allow(dead_code)]
+fn family_continuation_flags(ranges: &[(u32, u32)]) -> Vec<u8> {
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(i, &(min_a, max_a))| {
+            let repeated_previous = i > 0 && ranges[i - 1] == (min_a, max_a);
+            let repeated_next = ranges.get(i + 1).copied() == Some((min_a, max_a));
+            let mut flags = 0;
+            if repeated_previous {
+                flags |= FAMILY_FLAG_CONTINUES_PREVIOUS;
+            }
+            if repeated_next {
+                flags |= FAMILY_FLAG_CONTINUES_NEXT;
+            }
+            flags
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+fn encode_prefix2(tile: &crate::index::Tile) -> Result<Vec<u8>, FileError> {
+    let block = crate::triples::TripleBlock::parse(tile.bytes())
+        .map_err(|_| FileError::Container("malformed tile for prefix-2"))?;
+    block
+        .validate_complete()
+        .map_err(|_| FileError::Container("malformed tile for prefix-2"))?;
+    let Some(groups) = block.group_directory().complete_prefix2() else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    write_uvarint(&mut out, groups.len() as u64);
+    let mut previous_a = 0u32;
+    for (a, a_body_offset, b_entries) in groups {
+        let a_delta = a
+            .checked_sub(previous_a)
+            .ok_or(FileError::Container("non-monotone prefix-2 a"))?;
+        write_uvarint(&mut out, a_delta as u64);
+        write_uvarint(&mut out, a_body_offset as u64);
+        write_uvarint(&mut out, b_entries.len() as u64);
+        previous_a = a;
+        let mut previous_b = 0u32;
+        for (b, c_body_offset, c_count) in b_entries {
+            let b_delta = b
+                .checked_sub(previous_b)
+                .ok_or(FileError::Container("non-monotone prefix-2 b"))?;
+            write_uvarint(&mut out, b_delta as u64);
+            write_uvarint(&mut out, c_body_offset as u64);
+            write_uvarint(&mut out, c_count as u64);
+            previous_b = b;
+        }
+    }
+    if out.len() > PREFIX2_FORMAT_BUDGET {
+        return Ok(Vec::new());
+    }
+    Ok(out)
+}
+
+#[allow(dead_code)]
+fn synopsis_for(tile: &crate::index::Tile) -> Result<Synopsis, FileError> {
+    let block = crate::triples::TripleBlock::parse(tile.bytes())
+        .map_err(|_| FileError::Container("malformed family tile"))?;
+    block
+        .validate_complete()
+        .map_err(|_| FileError::Container("malformed family tile"))?;
+    let zone = block.zone();
+    Ok((zone.min_b, zone.max_b, zone.min_c, zone.max_c))
+}
+
+/// Encode one paired physical family. The payload contains its own shared
+/// ranges, sibling directories, records, and synopsis trailers.
+#[allow(dead_code)]
+pub(crate) fn encode_family_container(
+    family: FamilyView<'_>,
+    codec: u8,
+) -> Result<Vec<u8>, FileError> {
+    debug_assert_eq!(NEXT_FORMAT_VERSION, LEGACY_FORMAT_VERSION + 1);
+    if family.first.len() != family.second.len() {
+        return Err(FileError::Container("family tile count mismatch"));
+    }
+    let count = family.first.len();
+    let mut ranges = Vec::with_capacity(count);
+    for (first, second) in family.first.iter().zip(family.second) {
+        let range = first.leading_range();
+        if range != second.leading_range() {
+            return Err(FileError::Container("family sibling ranges differ"));
+        }
+        ranges.push(range);
+    }
+    for pair in ranges.windows(2) {
+        if pair[0] == pair[1] {
+            if pair[1].0 != pair[1].1 {
+                return Err(FileError::Container(
+                    "continuation range is not a single leading group",
+                ));
+            }
+        } else if pair[1].0 <= pair[0].1 {
+            return Err(FileError::Container("family ranges overlap"));
+        }
+    }
+    let flags = family_continuation_flags(&ranges);
+    let mut first_prefix2 = Vec::with_capacity(count);
+    let mut second_prefix2 = Vec::with_capacity(count);
+    let mut first_payloads = Vec::with_capacity(count);
+    let mut second_payloads = Vec::with_capacity(count);
+    let mut first_synopses = Vec::with_capacity(count);
+    let mut second_synopses = Vec::with_capacity(count);
+    for tile in family.first {
+        first_prefix2.push(encode_prefix2(tile)?);
+        first_payloads.push(family_compress(codec, tile.bytes())?);
+        first_synopses.push(synopsis_for(tile)?);
+    }
+    for tile in family.second {
+        second_prefix2.push(encode_prefix2(tile)?);
+        second_payloads.push(family_compress(codec, tile.bytes())?);
+        second_synopses.push(synopsis_for(tile)?);
+    }
+
+    let mut out = Vec::new();
+    write_uvarint(&mut out, count as u64);
+    let mut previous_min = 0u32;
+    for &(min_a, max_a) in &ranges {
+        let delta = min_a
+            .checked_sub(previous_min)
+            .ok_or(FileError::Container("family ranges are not monotone"))?;
+        let span = max_a
+            .checked_sub(min_a)
+            .ok_or(FileError::Container("family range underflows"))?;
+        write_uvarint(&mut out, delta as u64);
+        write_uvarint(&mut out, span as u64);
+        previous_min = min_a;
+    }
+    for ((&flag, payload), prefix2) in flags.iter().zip(&first_payloads).zip(&first_prefix2) {
+        write_uvarint(&mut out, flag as u64);
+        write_uvarint(&mut out, payload.len() as u64);
+        write_uvarint(&mut out, prefix2.len() as u64);
+    }
+    for ((&flag, payload), prefix2) in flags.iter().zip(&second_payloads).zip(&second_prefix2) {
+        write_uvarint(&mut out, flag as u64);
+        write_uvarint(&mut out, payload.len() as u64);
+        write_uvarint(&mut out, prefix2.len() as u64);
+    }
+    for (prefix2, payload) in first_prefix2.iter().zip(&first_payloads) {
+        out.extend_from_slice(prefix2);
+        out.extend_from_slice(payload);
+    }
+    for (prefix2, payload) in second_prefix2.iter().zip(&second_payloads) {
+        out.extend_from_slice(prefix2);
+        out.extend_from_slice(payload);
+    }
+    for &(min_b, max_b, min_c, max_c) in &first_synopses {
+        write_uvarint(&mut out, min_b as u64);
+        write_uvarint(&mut out, (max_b - min_b) as u64);
+        write_uvarint(&mut out, min_c as u64);
+        write_uvarint(&mut out, (max_c - min_c) as u64);
+    }
+    for &(min_b, max_b, min_c, max_c) in &second_synopses {
+        write_uvarint(&mut out, min_b as u64);
+        write_uvarint(&mut out, (max_b - min_b) as u64);
+        write_uvarint(&mut out, min_c as u64);
+        write_uvarint(&mut out, (max_c - min_c) as u64);
+    }
+    Ok(out)
+}
+
+/// Encode the internal root container: exactly Subject, Predicate, Object
+/// family payloads, individually length-framed and never independently
+/// compressed. The production `0x05` root container remains untouched.
+#[allow(dead_code)]
+pub(crate) fn encode_family_index_container(
+    index: &GraphIndex,
+    codec: u8,
+) -> Result<Vec<u8>, FileError> {
+    let payloads = [
+        encode_family_container(index.family_view(IndexFamily::Subject), codec)?,
+        encode_family_container(index.family_view(IndexFamily::Predicate), codec)?,
+        encode_family_container(index.family_view(IndexFamily::Object), codec)?,
+    ];
+    let mut out = Vec::new();
+    write_uvarint(&mut out, payloads.len() as u64);
+    for payload in &payloads {
+        write_uvarint(&mut out, payload.len() as u64);
+        out.extend_from_slice(payload);
+    }
+    Ok(out)
+}
+
+#[allow(dead_code)]
+fn family_varint(bytes: &[u8], pos: &mut usize, what: &'static str) -> Result<u64, FileError> {
+    let (value, used) =
+        read_uvarint(bytes.get(*pos..).unwrap_or(&[])).ok_or(FileError::Container(what))?;
+    *pos = pos
+        .checked_add(used)
+        .ok_or(FileError::Container("family offset overflows"))?;
+    Ok(value)
+}
+
+#[allow(dead_code)]
+fn family_u32(bytes: &[u8], pos: &mut usize, what: &'static str) -> Result<u32, FileError> {
+    u32::try_from(family_varint(bytes, pos, what)?).map_err(|_| FileError::Container(what))
+}
+
+#[allow(dead_code)]
+fn family_bytes<'a>(
+    bytes: &'a [u8],
+    pos: &mut usize,
+    len: u64,
+    what: &'static str,
+) -> Result<&'a [u8], FileError> {
+    let len = usize::try_from(len).map_err(|_| FileError::Container(what))?;
+    let end = pos
+        .checked_add(len)
+        .ok_or(FileError::Container("family offset overflows"))?;
+    let result = bytes.get(*pos..end).ok_or(FileError::Container(what))?;
+    *pos = end;
+    Ok(result)
+}
+
+#[allow(dead_code)]
+fn decode_prefix2(bytes: &[u8]) -> Result<Prefix2Meta, FileError> {
+    let mut pos = 0usize;
+    let group_count = usize::try_from(family_varint(bytes, &mut pos, "truncated prefix-2 count")?)
+        .map_err(|_| FileError::Container("prefix-2 count too large"))?;
+    if group_count > bytes.len() / 3 {
+        return Err(FileError::Container("prefix-2 count exceeds blob"));
+    }
+    let mut groups = Vec::with_capacity(group_count.min(bytes.len() / 3));
+    let mut previous_a = 0u32;
+    for _ in 0..group_count {
+        let delta = family_u32(bytes, &mut pos, "malformed prefix-2 a delta")?;
+        let a = previous_a
+            .checked_add(delta)
+            .ok_or(FileError::Container("prefix-2 a overflows u32"))?;
+        if !groups.is_empty() && a <= previous_a {
+            return Err(FileError::Container(
+                "prefix-2 a is not strictly increasing",
+            ));
+        }
+        let a_body_offset = family_u32(bytes, &mut pos, "malformed prefix-2 a offset")?;
+        let b_count = usize::try_from(family_varint(
+            bytes,
+            &mut pos,
+            "malformed prefix-2 b count",
+        )?)
+        .map_err(|_| FileError::Container("prefix-2 b count too large"))?;
+        if b_count > bytes.len().saturating_sub(pos) / 3 {
+            return Err(FileError::Container("prefix-2 b count exceeds blob"));
+        }
+        let mut b_entries = Vec::with_capacity(b_count.min(bytes.len().saturating_sub(pos) / 3));
+        let mut previous_b = 0u32;
+        for _ in 0..b_count {
+            let delta = family_u32(bytes, &mut pos, "malformed prefix-2 b delta")?;
+            let b = previous_b
+                .checked_add(delta)
+                .ok_or(FileError::Container("prefix-2 b overflows u32"))?;
+            if !b_entries.is_empty() && b <= previous_b {
+                return Err(FileError::Container(
+                    "prefix-2 b is not strictly increasing",
+                ));
+            }
+            let c_body_offset = family_u32(bytes, &mut pos, "malformed prefix-2 c offset")?;
+            let c_count = family_u32(bytes, &mut pos, "malformed prefix-2 c count")?;
+            b_entries.push((b, c_body_offset, c_count));
+            previous_b = b;
+        }
+        groups.push(Prefix2Group {
+            a,
+            a_body_offset,
+            b_entries,
+        });
+        previous_a = a;
+    }
+    if pos != bytes.len() {
+        return Err(FileError::Container("trailing prefix-2 bytes"));
+    }
+    Ok(Prefix2Meta { groups })
+}
+
+#[allow(dead_code)]
+fn validate_prefix2(meta: &Prefix2Meta, payload: &[u8]) -> Result<(), FileError> {
+    let block = crate::triples::TripleBlock::parse(payload)
+        .map_err(|_| FileError::Container("malformed family tile payload"))?;
+    block
+        .validate_complete()
+        .map_err(|_| FileError::Container("malformed family tile payload"))?;
+    for group in &meta.groups {
+        if usize::try_from(group.a_body_offset)
+            .ok()
+            .filter(|&offset| offset < payload.len())
+            .is_none()
+        {
+            return Err(FileError::Container("prefix-2 a offset outside tile"));
+        }
+        for &(_, c_body_offset, _) in &group.b_entries {
+            if usize::try_from(c_body_offset)
+                .ok()
+                .filter(|&offset| offset < payload.len())
+                .is_none()
+            {
+                return Err(FileError::Container("prefix-2 c offset outside tile"));
+            }
+        }
+    }
+    let Some(expected) = block.group_directory().complete_prefix2() else {
+        return Err(FileError::Container(
+            "prefix-2 exceeds complete directory budget",
+        ));
+    };
+    let expected = Prefix2Meta {
+        groups: expected
+            .into_iter()
+            .map(|(a, a_body_offset, b_entries)| Prefix2Group {
+                a,
+                a_body_offset,
+                b_entries,
+            })
+            .collect(),
+    };
+    if &expected != meta {
+        return Err(FileError::Container(
+            "prefix-2 metadata does not match tile",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn decode_family_record(
+    bytes: &[u8],
+    pos: &mut usize,
+    prefix2_len: u64,
+    compressed_len: u64,
+    codec: u8,
+) -> Result<(Prefix2Meta, Vec<u8>), FileError> {
+    let prefix2 = family_bytes(bytes, pos, prefix2_len, "prefix-2 blob overruns family")?;
+    let compressed = family_bytes(bytes, pos, compressed_len, "tile payload overruns family")?;
+    let payload = decompress(codec, compressed)?;
+    let meta = if prefix2.is_empty() {
+        Prefix2Meta::default()
+    } else {
+        let meta = decode_prefix2(prefix2)?;
+        validate_prefix2(&meta, &payload)?;
+        meta
+    };
+    let block = crate::triples::TripleBlock::parse(&payload)
+        .map_err(|_| FileError::Container("malformed family tile payload"))?;
+    block
+        .validate_complete()
+        .map_err(|_| FileError::Container("malformed family tile payload"))?;
+    Ok((meta, payload))
+}
+
+#[allow(dead_code)]
+fn decode_family_synopses(
+    bytes: &[u8],
+    pos: &mut usize,
+    count: usize,
+) -> Result<Vec<Synopsis>, FileError> {
+    let mut synopses = Vec::with_capacity(count.min(bytes.len().saturating_sub(*pos) / 4));
+    for _ in 0..count {
+        let min_b = family_u32(bytes, pos, "truncated family synopsis")?;
+        let span_b = family_u32(bytes, pos, "truncated family synopsis")?;
+        let min_c = family_u32(bytes, pos, "truncated family synopsis")?;
+        let span_c = family_u32(bytes, pos, "truncated family synopsis")?;
+        synopses.push((
+            min_b,
+            min_b
+                .checked_add(span_b)
+                .ok_or(FileError::Container("family synopsis b overflows u32"))?,
+            min_c,
+            min_c
+                .checked_add(span_c)
+                .ok_or(FileError::Container("family synopsis c overflows u32"))?,
+        ));
+    }
+    Ok(synopses)
+}
+
+/// Decode and fully validate one paired family payload. All count-dependent
+/// allocations are bounded by bytes already present in this payload.
+#[allow(dead_code)]
+pub(crate) fn decode_family_container(bytes: &[u8], codec: u8) -> Result<DecodedFamily, FileError> {
+    if !matches!(codec, CODEC_NONE | CODEC_ZSTD) {
+        return Err(FileError::UnknownCodec(codec));
+    }
+    let mut pos = 0usize;
+    let count = usize::try_from(family_varint(
+        bytes,
+        &mut pos,
+        "truncated family tile count",
+    )?)
+    .map_err(|_| FileError::Container("family tile count too large"))?;
+    // Every pair needs two range varints, six directory varints, and eight
+    // trailer varints, even when both payloads and prefix blobs are empty.
+    if count > bytes.len().saturating_sub(pos) / 16 {
+        return Err(FileError::Container("family tile count exceeds payload"));
+    }
+    let mut directory = FamilyDirectory {
+        ranges: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_flags: Vec::with_capacity(count.min(bytes.len() / 16)),
+        second_flags: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_lengths: Vec::with_capacity(count.min(bytes.len() / 16)),
+        second_lengths: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_prefix2_lengths: Vec::with_capacity(count.min(bytes.len() / 16)),
+        second_prefix2_lengths: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_prefix2: Vec::with_capacity(count.min(bytes.len() / 16)),
+        second_prefix2: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_synopses: Vec::new(),
+        second_synopses: Vec::new(),
+        first_records_offset: 0,
+        second_records_offset: 0,
+    };
+    let mut previous_min = 0u32;
+    for _ in 0..count {
+        let delta = family_u32(bytes, &mut pos, "malformed family minimum delta")?;
+        let span = family_u32(bytes, &mut pos, "malformed family range span")?;
+        let min_a = previous_min
+            .checked_add(delta)
+            .ok_or(FileError::Container("family minimum overflows u32"))?;
+        let max_a = min_a
+            .checked_add(span)
+            .ok_or(FileError::Container("family maximum overflows u32"))?;
+        directory.ranges.push((min_a, max_a));
+        previous_min = min_a;
+    }
+    for _ in 0..count {
+        let flags = u8::try_from(family_varint(
+            bytes,
+            &mut pos,
+            "truncated first family directory",
+        )?)
+        .map_err(|_| FileError::Container("first family flags exceed u8"))?;
+        if flags & !FAMILY_FLAG_MASK != 0 {
+            return Err(FileError::Container("reserved first family flags"));
+        }
+        directory.first_flags.push(flags);
+        directory.first_lengths.push(family_varint(
+            bytes,
+            &mut pos,
+            "truncated first family length",
+        )?);
+        directory.first_prefix2_lengths.push(family_varint(
+            bytes,
+            &mut pos,
+            "truncated first prefix-2 length",
+        )?);
+    }
+    for _ in 0..count {
+        let flags = u8::try_from(family_varint(
+            bytes,
+            &mut pos,
+            "truncated second family directory",
+        )?)
+        .map_err(|_| FileError::Container("second family flags exceed u8"))?;
+        if flags & !FAMILY_FLAG_MASK != 0 {
+            return Err(FileError::Container("reserved second family flags"));
+        }
+        directory.second_flags.push(flags);
+        directory.second_lengths.push(family_varint(
+            bytes,
+            &mut pos,
+            "truncated second family length",
+        )?);
+        directory.second_prefix2_lengths.push(family_varint(
+            bytes,
+            &mut pos,
+            "truncated second prefix-2 length",
+        )?);
+    }
+    for i in 0..count {
+        if directory.first_flags[i] != directory.second_flags[i] {
+            return Err(FileError::Container("sibling continuation flags differ"));
+        }
+        let repeated_previous = i > 0 && directory.ranges[i - 1] == directory.ranges[i];
+        let repeated_next = i + 1 < count && directory.ranges[i + 1] == directory.ranges[i];
+        if repeated_previous && directory.ranges[i].0 != directory.ranges[i].1 {
+            return Err(FileError::Container(
+                "continuation range is not a single leading group",
+            ));
+        }
+        let flags = directory.first_flags[i];
+        if (flags & FAMILY_FLAG_CONTINUES_PREVIOUS != 0) != repeated_previous
+            || (flags & FAMILY_FLAG_CONTINUES_NEXT != 0) != repeated_next
+        {
+            return Err(FileError::Container("impossible family continuation"));
+        }
+        if i > 0 && !repeated_previous && directory.ranges[i].0 <= directory.ranges[i - 1].1 {
+            return Err(FileError::Container("family ranges overlap"));
+        }
+    }
+    directory.first_records_offset =
+        u64::try_from(pos).map_err(|_| FileError::Container("family offset too large"))?;
+    let mut first_records = Vec::with_capacity(count.min(bytes.len() / 16));
+    for i in 0..count {
+        first_records.push(decode_family_record(
+            bytes,
+            &mut pos,
+            directory.first_prefix2_lengths[i],
+            directory.first_lengths[i],
+            codec,
+        )?);
+    }
+    directory.second_records_offset =
+        u64::try_from(pos).map_err(|_| FileError::Container("family offset too large"))?;
+    let mut second_records = Vec::with_capacity(count.min(bytes.len() / 16));
+    for i in 0..count {
+        second_records.push(decode_family_record(
+            bytes,
+            &mut pos,
+            directory.second_prefix2_lengths[i],
+            directory.second_lengths[i],
+            codec,
+        )?);
+    }
+    directory.first_synopses = decode_family_synopses(bytes, &mut pos, count)?;
+    directory.second_synopses = decode_family_synopses(bytes, &mut pos, count)?;
+    if pos != bytes.len() {
+        return Err(FileError::Container("trailing family bytes"));
+    }
+    let first = first_records
+        .into_iter()
+        .zip(directory.ranges.iter().copied())
+        .zip(directory.first_synopses.iter().copied())
+        .map(|(((meta, payload), (min_a, max_a)), syn)| {
+            let mut tile = crate::index::Tile::local(min_a, max_a, payload);
+            tile.syn = Some(syn);
+            (meta, tile)
+        })
+        .collect::<Vec<_>>();
+    let second = second_records
+        .into_iter()
+        .zip(directory.ranges.iter().copied())
+        .zip(directory.second_synopses.iter().copied())
+        .map(|(((meta, payload), (min_a, max_a)), syn)| {
+            let mut tile = crate::index::Tile::local(min_a, max_a, payload);
+            tile.syn = Some(syn);
+            (meta, tile)
+        })
+        .collect::<Vec<_>>();
+    directory.first_prefix2 = first.iter().map(|(meta, _)| meta.clone()).collect();
+    directory.second_prefix2 = second.iter().map(|(meta, _)| meta.clone()).collect();
+    Ok(DecodedFamily {
+        first: first.into_iter().map(|(_, tile)| tile).collect(),
+        second: second.into_iter().map(|(_, tile)| tile).collect(),
+        directory,
+    })
 }
 
 /// Encode one permutation's tiled section payload (format v0.2):
@@ -3850,6 +4519,37 @@ mod tests {
     }
 
     #[test]
+    fn chunked_dictionary_directory_rejects_untrusted_u64_ids_and_counts() {
+        let mut overlong_header = Vec::new();
+        write_uvarint(&mut overlong_header, 3);
+        write_uvarint(&mut overlong_header, u32::MAX as u64 + 1);
+        write_uvarint(&mut overlong_header, 1);
+        write_uvarint(&mut overlong_header, 0);
+        assert!(parse_chunked_dict_dir(&overlong_header, overlong_header.len() as u64).is_err());
+
+        let reader = crate::reader::SliceReader::new(&overlong_header);
+        assert!(read_dict_dir_ranged(
+            &reader,
+            ByteRange {
+                offset: 0,
+                len: overlong_header.len() as u64,
+            },
+        )
+        .is_err());
+
+        let mut overlong_count = Vec::new();
+        write_uvarint(&mut overlong_count, u64::MAX);
+        assert!(parse_chunk_dir_only(&overlong_count, overlong_count.len() as u64).is_err());
+
+        let mut overlong_run = Vec::new();
+        write_uvarint(&mut overlong_run, 1);
+        write_uvarint(&mut overlong_run, 0);
+        write_uvarint(&mut overlong_run, u64::MAX);
+        write_uvarint(&mut overlong_run, 0);
+        assert!(parse_chunk_dir_only(&overlong_run, overlong_run.len() as u64).is_err());
+    }
+
+    #[test]
     fn allocation_sized_untrusted_tile_count_is_a_clean_error() {
         let count = (isize::MAX as usize / std::mem::size_of::<TileDirEntry>()) + 1;
         assert!(count.checked_mul(3).is_some());
@@ -3987,6 +4687,172 @@ mod tests {
 
         let (meta, levels) = build_pyramid_meta(&dict, &triples_ids(&dict), DEFAULT_TILE_BUDGET);
         write_file(&dict, &index, false, &meta, levels)
+    }
+
+    fn tiny_family_index() -> GraphIndex {
+        let mut builder = GraphIndexBuilder::new();
+        builder.push((1, 1, 1));
+        builder.build()
+    }
+
+    #[test]
+    fn family_container_matches_literal_bytes() {
+        assert_eq!(NEXT_FORMAT_VERSION, 0x06);
+        let index = tiny_family_index();
+        assert_eq!(
+            encode_family_container(
+                index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+                CODEC_NONE,
+            )
+            .unwrap(),
+            vec![
+                1, 1, 0, // pair count; shared leading range delta/span
+                0, 13, 7, // first order: flags, compressed length, prefix-2 length
+                0, 13, 7, // second order: flags, compressed length, prefix-2 length
+                1, 1, 10, 1, 1, 12, 1, // first complete prefix-2 directory
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // first TripleBlock
+                1, 1, 10, 1, 1, 12, 1, // second complete prefix-2 directory
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // second TripleBlock
+                1, 0, 1, 0, // first synopsis trailer
+                1, 0, 1, 0, // second synopsis trailer
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_family_root_is_three_zero_count_families() {
+        let index = GraphIndexBuilder::new().build();
+        assert_eq!(
+            encode_family_index_container(&index, CODEC_NONE).unwrap(),
+            vec![3, 1, 0, 1, 0, 1, 0]
+        );
+    }
+
+    #[test]
+    fn family_container_round_trips_prefix2_and_both_orders() {
+        let index = tiny_family_index();
+        let bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+        let decoded = decode_family_container(&bytes, CODEC_NONE).unwrap();
+        assert_eq!(decoded.first.len(), 1);
+        assert_eq!(decoded.second.len(), 1);
+        assert_eq!(decoded.first[0].bytes(), &[1; 13]);
+        assert_eq!(decoded.second[0].bytes(), &[1; 13]);
+        assert_eq!(
+            decoded.directory.first_prefix2[0].groups[0].a_body_offset,
+            10
+        );
+        assert_eq!(
+            decoded.directory.second_prefix2[0].groups[0].b_entries[0],
+            (1, 12, 1)
+        );
+    }
+
+    #[test]
+    fn family_container_rejects_malformed_directory_before_payload_allocation() {
+        let malformed = [
+            &[0x80][..],                                  // truncated count
+            &[1, 1, 0, 4, 0, 0, 0, 0, 0][..],             // reserved first-order flag
+            &[1, 1, 0, 0x80, 0x80, 0x80, 0x80, 0x10][..], // compressed length overflows u32
+            &[0xff, 0xff, 0xff, 0xff, 0x0f][..],          // huge count with no directory bytes
+        ];
+        for bytes in malformed {
+            let result = std::panic::catch_unwind(|| decode_family_container(bytes, CODEC_NONE));
+            assert!(result.is_ok(), "malformed family bytes must not panic");
+            assert!(result.unwrap().is_err(), "malformed family bytes must fail");
+        }
+    }
+
+    #[test]
+    fn family_container_rejects_bad_continuations_payloads_prefix2_and_trailers() {
+        let index = tiny_family_index();
+        let mut bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+
+        bytes[3] = 4; // reserved flag
+        assert!(decode_family_container(&bytes, CODEC_NONE).is_err());
+
+        let mut bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+        bytes[5] = 6; // prefix-2 blob now ends before its final c-count
+        assert!(decode_family_container(&bytes, CODEC_NONE).is_err());
+
+        let mut bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+        let first_payload = 9 + 7;
+        bytes[first_payload] = 0; // corrupt the leading zone map, conflicting with the directory range
+        assert!(decode_family_container(&bytes, CODEC_NONE).is_err());
+
+        let mut bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] = 0x80; // truncated second synopsis trailer
+        assert!(decode_family_container(&bytes, CODEC_NONE).is_err());
+
+        let mut continuation = Vec::new();
+        write_uvarint(&mut continuation, 2);
+        write_uvarint(&mut continuation, 1);
+        write_uvarint(&mut continuation, 0);
+        write_uvarint(&mut continuation, 0);
+        write_uvarint(&mut continuation, 0);
+        for flags in [2u8, 1] {
+            write_uvarint(&mut continuation, flags as u64);
+            write_uvarint(&mut continuation, 13);
+            write_uvarint(&mut continuation, 0);
+        }
+        for flags in [2u8, 1] {
+            write_uvarint(&mut continuation, flags as u64);
+            write_uvarint(&mut continuation, 13);
+            write_uvarint(&mut continuation, 0);
+        }
+        for _ in 0..4 {
+            continuation.extend_from_slice(&[1; 13]);
+        }
+        for _ in 0..4 {
+            continuation.extend_from_slice(&[1, 0, 1, 0]);
+        }
+        assert!(decode_family_container(&continuation, CODEC_NONE).is_ok());
+        continuation[11] = 0; // second-order first flag no longer matches its sibling.
+        assert!(decode_family_container(&continuation, CODEC_NONE).is_err());
+    }
+
+    #[test]
+    fn family_container_codec_rules_cover_none_and_zstd_without_encoder_feature() {
+        let index = tiny_family_index();
+        assert!(encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE
+        )
+        .is_ok());
+        if cfg!(feature = "compression") {
+            let encoded = encode_family_container(
+                index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+                CODEC_ZSTD,
+            )
+            .unwrap();
+            assert!(decode_family_container(&encoded, CODEC_ZSTD).is_ok());
+        } else {
+            assert!(encode_family_container(
+                index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+                CODEC_ZSTD
+            )
+            .is_err());
+        }
     }
 
     fn triples_ids(dict: &Dictionary) -> Vec<(u32, u32, u32)> {

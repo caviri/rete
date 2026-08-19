@@ -337,6 +337,26 @@ impl<'a> TripleBlock<'a> {
         &self.zone
     }
 
+    /// Validate that this is exactly one complete canonical block. This is the
+    /// strict boundary used by a format directory: unlike query cursors, it
+    /// rejects a truncated body, mismatched zone map, non-canonical order, or
+    /// trailing bytes rather than treating an invalid prefix as a partial scan.
+    #[allow(dead_code)]
+    pub(crate) fn validate_complete(&self) -> Result<(), TripleError> {
+        let triples = self
+            .try_triples()
+            .ok_or(TripleError::Malformed("truncated block body"))?;
+        if !triples.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Err(TripleError::Malformed(
+                "block triples are not sorted and unique",
+            ));
+        }
+        if encode_sorted_unique(&triples) != self.bytes {
+            return Err(TripleError::Malformed("block bytes are not canonical"));
+        }
+        Ok(())
+    }
+
     /// Decode all triples in ascending order. The bytes may be corrupt (a block
     /// from an untrusted file), so decoding is bounds-safe and stops gracefully
     /// at the first malformed varint rather than panicking — returning whatever
@@ -733,6 +753,11 @@ unsafe fn rd_unchecked(bytes: &[u8], pos: &mut usize) -> u32 {
 const PREFIX2_DIRECTORY_BUDGET: usize = 64 * 1024;
 const MAX_B_DIR_ENTRIES: usize = PREFIX2_DIRECTORY_BUDGET / std::mem::size_of::<BDirEntry>();
 
+/// Complete serializable `(a, a-body, b-directory)` entry. Kept separate from
+/// the private in-memory directory records so the file codec cannot observe a
+/// partial prefix-2 directory.
+pub(crate) type CompletePrefix2Group = (u32, u32, Vec<(u32, u32, u32)>);
+
 /// A byte-offset directory of a block's a-groups and, when it fits the fixed
 /// budget, its `(a, b)` prefixes. Built once per block with
 /// [`TripleBlock::group_directory`]; [`TripleBlock::scan_from`] then jumps a
@@ -757,6 +782,29 @@ impl GroupDirectory {
     /// bounded by 64 KiB; zero means probes use the a-only fallback.
     pub fn prefix2_bytes(&self) -> usize {
         self.b_entries.len() * std::mem::size_of::<BDirEntry>()
+    }
+
+    /// Return the complete compact `(a, a-body, [(b, c-body, c-count)])`
+    /// directory if this block fit the fixed prefix-2 budget. Incomplete
+    /// directories deliberately return `None`: callers must encode the
+    /// bounded a-only fallback, never a partial prefix-2 index.
+    #[allow(dead_code)]
+    pub(crate) fn complete_prefix2(&self) -> Option<Vec<CompletePrefix2Group>> {
+        if !self.prefix2_complete {
+            return None;
+        }
+        let mut groups = Vec::with_capacity(self.entries.len());
+        for entry in &self.entries {
+            let start = usize::try_from(entry.b_start).ok()?;
+            let end = start.checked_add(usize::try_from(entry.b_len).ok()?)?;
+            let entries = self.b_entries.get(start..end)?;
+            let mut bs = Vec::with_capacity(entries.len());
+            for b in entries {
+                bs.push((b.b, b.c_pos, b.c_count));
+            }
+            groups.push((entry.a, u32::try_from(entry.pos).ok()?, bs));
+        }
+        Some(groups)
     }
 
     fn find_prefix2(&self, a: u32, b: u32) -> Option<&BDirEntry> {

@@ -139,7 +139,7 @@ pub struct Tile {
 }
 
 impl Tile {
-    fn local(min_a: u32, max_a: u32, bytes: Vec<u8>) -> Self {
+    pub(crate) fn local(min_a: u32, max_a: u32, bytes: Vec<u8>) -> Self {
         let len = bytes.len().min(u32::MAX as usize) as u32;
         let data = OnceLock::new();
         let _ = data.set(bytes);
