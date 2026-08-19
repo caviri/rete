@@ -38,3 +38,23 @@ fn ordinary_and_external_builds_report_common_phases() {
             );
     }
 }
+
+#[test]
+fn types_pyramid_fallback_is_reported_without_timing() {
+    let fixture = common::fixture();
+    let output = fixture.path("types.rete");
+
+    common::rete()
+        .env_remove("RETE_BUILD_TIMING")
+        .arg("build")
+        .arg(&fixture.source)
+        .arg("-o")
+        .arg(output)
+        .args(["--pyramid-algo", "types"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "  [pyramid] --pyramid-algo types: no usable rdf:type predicate \
+             — falling back to louvain",
+        ));
+}

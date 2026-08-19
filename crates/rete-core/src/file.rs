@@ -81,7 +81,13 @@ pub fn build_pyramid_meta_algo(
         PyramidAlgo::Types => {
             match crate::schema_pyramid::build_type_dendrogram(dict, triples, type_override) {
                 Some(d) => d,
-                None => louvain(),
+                None => {
+                    eprintln!(
+                        "  [pyramid] --pyramid-algo types: no usable rdf:type \
+                         predicate — falling back to louvain"
+                    );
+                    louvain()
+                }
             }
         }
     };
