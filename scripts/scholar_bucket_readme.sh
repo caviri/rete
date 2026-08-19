@@ -8,16 +8,18 @@
 # The table is built from the bucket ITSELF (`hf buckets ls`), not from the
 # export run's state file: the README must describe what is actually there, and
 # a run that failed halfway must not publish a list of files nobody can fetch.
-# Quad counts and source URLs come from dev/scholar-nq/done.tsv when it has
+# Quad counts and source URLs come from dev/scholar-nq/state.tsv when it has
 # them, and are left blank when it does not.
 #
-# Options: --bucket NS/NAME  --prefix P  --state FILE  --local-only
+# Options: --bucket NS/NAME  --prefix P  --state FILE  --manifest FILE  --out FILE
+#          --local-only
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUCKET="${RETE_HF_BUCKET:-katospiegel/rete-public}"
 PREFIX="scholar"
 STATE="$ROOT/dev/scholar-nq/state.tsv"
+MANIFEST="$ROOT/scripts/scholar-constellation.tsv"
 OUT="$ROOT/dev/scholar-nq/README.md"
 LOCAL_ONLY=0
 
@@ -26,6 +28,7 @@ while [ $# -gt 0 ]; do
     --bucket) BUCKET="${2:?}"; shift 2 ;;
     --prefix) PREFIX="${2:?}"; shift 2 ;;
     --state)  STATE="${2:?}"; shift 2 ;;
+    --manifest) MANIFEST="${2:?}"; shift 2 ;;
     --out)    OUT="${2:?}"; shift 2 ;;
     --local-only) LOCAL_ONLY=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -149,6 +152,45 @@ cat <<'FTR'
 Sizes are exact bytes, so a download can be checked against the number in this
 table. Quad counts are the line count of the decompressed dump — the number the
 loader will report when it finishes.
+FTR
+
+# What the manifest lists but the bucket does not have. A reader who cannot see
+# this has no way to tell "not exported yet" from "does not exist", and the
+# whole point of the page is that it answers questions without this repository.
+missing="$(awk -F'\t' 'NF>=3 && $1 !~ /^#/ {print $2 "\t" $3}' "$MANIFEST" \
+  | while IFS=$'\t' read -r n u; do
+      printf '%s\n' "$objects" | grep -q "/$n\.nq\.gz	" || printf '| `%s` | %s |\n' "$n" "$u"
+    done)"
+if [ -n "$missing" ]; then
+  echo
+  echo "### Not here yet"
+  echo
+  echo "Listed in the constellation, not yet exported. Each is a published"
+  echo "\`.rete\` you can query over HTTP range reads today."
+  echo
+  echo "| dataset | source \`.rete\` |"
+  echo "|---|---|"
+  printf '%s\n' "$missing"
+fi
+
+cat <<'FTR'
+
+### Deliberately absent: the OpenAlex `works-*-of-10` shards
+
+Sixteen shards, 322.6 GB of `.rete`, 24.4 billion triples. They are not here
+because 24.4 B quads is not something anyone bulk-loads from a bucket prefix —
+at a generous 500k quads/s that is a ~14-hour load into a multi-TB store. That
+corpus is what the federated range-read `.rete` set is for:
+
+```sh
+rete federate "SELECT ?w WHERE { ?w a <https://semopenalex.org/ontology/Work> } LIMIT 10" \
+  https://data.graphplaza.com/openalex/works-0{1,2,3,4,5,6,7}-of-10.rete \
+  https://data.graphplaza.com/openalex/works-{08,09,10}{a,b,c}-of-10.rete
+```
+
+`openalex-authors` (2.735 B triples) and `openalex-entities` are exported: they
+are the identity and venue/institution spine, which is what a "load this into
+my own store" question usually means.
 
 ## Provenance and licence
 
