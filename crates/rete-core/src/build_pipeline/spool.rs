@@ -9,6 +9,7 @@ use super::BuildPipelineError;
 
 const TRIPLE_RECORD_BYTES: usize = 12;
 const MAX_BLOCK_RECORDS: usize = 1 << 20;
+static TEMP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A private, uniquely-created spill directory which removes only the directory
 /// it created. Files are always closed before callers can replay them, which
@@ -28,10 +29,29 @@ impl BuildTemp {
     pub(crate) fn new(parent: &Path) -> Result<Self, BuildPipelineError> {
         std::fs::create_dir_all(parent)?;
         let parent = std::fs::canonicalize(parent)?;
-        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self::create_unique(parent, "build")
+    }
+
+    /// Allocate a separate, owned namespace below this session. The child has
+    /// its own cleanup guard, so independent consumers of one canonical spool
+    /// never share scratch names or overwrite the canonical source.
+    pub(crate) fn child(&self, purpose: &str) -> Result<Self, BuildPipelineError> {
+        Self::create_unique(self.inner.owned.clone(), purpose)
+    }
+
+    fn create_unique(parent: PathBuf, purpose: &str) -> Result<Self, BuildPipelineError> {
+        if purpose.is_empty()
+            || !purpose
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            return Err(BuildPipelineError::InvalidSpool(
+                "invalid temporary purpose",
+            ));
+        }
         for _ in 0..1024 {
-            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let owned = parent.join(format!(".rete-build-{}-{seq}", std::process::id()));
+            let seq = TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let owned = parent.join(format!(".rete-{purpose}-{}-{seq}", std::process::id()));
             match std::fs::create_dir(&owned) {
                 Ok(()) => {
                     return Ok(Self {
@@ -234,12 +254,15 @@ impl TripleSpool {
         matches!(self, Self::File { .. })
     }
 
-    /// Family construction owns all derived runs beside the canonical file so
-    /// the spool session's cleanup policy covers every scratch artifact.
-    pub(crate) fn build_temp(&self) -> Option<BuildTemp> {
+    /// Family construction receives an isolated child of the canonical spool
+    /// owner. Its runs cannot share a namespace with the source or a concurrent
+    /// family build, while the parent session still owns all cleanup roots.
+    pub(crate) fn family_build_temp(&self) -> Result<BuildTemp, BuildPipelineError> {
         match self {
-            Self::File { _session, .. } => Some(_session.clone()),
-            Self::Resident(_) => None,
+            Self::File { _session, .. } => _session.child("family"),
+            Self::Resident(_) => Err(BuildPipelineError::InvalidSpool(
+                "missing file spool scratch",
+            )),
         }
     }
 

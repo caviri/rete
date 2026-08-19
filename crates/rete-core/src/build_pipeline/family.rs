@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 
@@ -153,12 +153,20 @@ fn radix_pass_slice(
 /// are supplied from least to most significant key (e.g. `[2, 1, 0]`).
 fn radix_sort(input: &mut Vec<Triple>, components: &[usize]) -> Result<(), BuildPipelineError> {
     let mut scratch = Vec::new();
+    radix_sort_with_scratch(input, components, &mut scratch)
+}
+
+fn radix_sort_with_scratch(
+    input: &mut Vec<Triple>,
+    components: &[usize],
+    scratch: &mut Vec<Triple>,
+) -> Result<(), BuildPipelineError> {
     for &component in components {
         if component >= 3 {
             return Err(BuildPipelineError::InvalidSpool("radix component"));
         }
         for shift in [0u32, 8, 16, 24] {
-            radix_pass(input, &mut scratch, |triple| {
+            radix_pass(input, scratch, |triple| {
                 (([triple.0, triple.1, triple.2][component] >> shift) & 0xff) as u8
             })?;
         }
@@ -506,14 +514,48 @@ struct FileWorkingSet {
     records: usize,
     bytes: usize,
     descriptors: usize,
+    max_single_vec_records: usize,
 }
 
 #[cfg(test)]
 std::thread_local! {
-    static FILE_PEAK_WORKING: std::cell::Cell<FileWorkingSet> = const { std::cell::Cell::new(FileWorkingSet { records: 0, bytes: 0, descriptors: 0 }) };
+    static FILE_PEAK_WORKING: std::cell::Cell<FileWorkingSet> = const { std::cell::Cell::new(FileWorkingSet { records: 0, bytes: 0, descriptors: 0, max_single_vec_records: 0 }) };
 }
 
-fn observe_file_working(records: usize, bytes: usize, descriptors: usize) {
+fn observe_file_live(
+    triple_capacities: &[usize],
+    additional_triple_capacities: &[usize],
+    pair_capacities: &[usize],
+    metadata_bytes: usize,
+    io_buffer_bytes: usize,
+    descriptors: usize,
+) {
+    let triple_records = triple_capacities
+        .iter()
+        .chain(additional_triple_capacities)
+        .copied()
+        .fold(0usize, usize::saturating_add);
+    let pair_records = pair_capacities
+        .iter()
+        .copied()
+        .fold(0usize, usize::saturating_add);
+    let records = triple_records.saturating_add(pair_records.saturating_mul(2));
+    let bytes = triple_records
+        .saturating_mul(std::mem::size_of::<Triple>())
+        .saturating_add(pair_records.saturating_mul(std::mem::size_of::<(Triple, Triple)>()))
+        .saturating_add(metadata_bytes)
+        .saturating_add(io_buffer_bytes);
+    let max_single_vec_records = triple_capacities
+        .iter()
+        .copied()
+        .chain(
+            pair_capacities
+                .iter()
+                .copied()
+                .map(|capacity| capacity.saturating_mul(2)),
+        )
+        .max()
+        .unwrap_or(0);
     #[cfg(test)]
     {
         FILE_PEAK_WORKING.with(|peak| {
@@ -522,11 +564,12 @@ fn observe_file_working(records: usize, bytes: usize, descriptors: usize) {
                 records: previous.records.max(records),
                 bytes: previous.bytes.max(bytes),
                 descriptors: previous.descriptors.max(descriptors),
+                max_single_vec_records: previous.max_single_vec_records.max(max_single_vec_records),
             });
         });
     }
     #[cfg(not(test))]
-    let _ = (records, bytes, descriptors);
+    let _ = (records, bytes, descriptors, max_single_vec_records);
 }
 
 #[derive(Clone)]
@@ -542,21 +585,42 @@ fn write_triple(writer: &mut BufWriter<File>, (a, b, c): Triple) -> Result<(), B
     Ok(())
 }
 
+fn create_scratch_writer(path: &std::path::Path) -> Result<BufWriter<File>, BuildPipelineError> {
+    Ok(BufWriter::new(
+        OpenOptions::new().write(true).create_new(true).open(path)?,
+    ))
+}
+
 fn write_run(
     temp: &BuildTemp,
     name: &str,
-    mut triples: Vec<Triple>,
+    triples: Vec<Triple>,
 ) -> Result<FamilyRun, BuildPipelineError> {
-    radix_sort(&mut triples, &[2, 1, 0])?;
+    write_run_with_live(temp, name, triples, &[], 0, 0)
+}
+
+fn write_run_with_live(
+    temp: &BuildTemp,
+    name: &str,
+    mut triples: Vec<Triple>,
+    additional_triple_capacities: &[usize],
+    additional_io_bytes: usize,
+    additional_descriptors: usize,
+) -> Result<FamilyRun, BuildPipelineError> {
+    let mut radix_scratch = Vec::new();
+    radix_sort_with_scratch(&mut triples, &[2, 1, 0], &mut radix_scratch)?;
     triples.dedup();
-    observe_file_working(
-        triples.len().saturating_mul(2),
-        triples.len().saturating_mul(24),
-        1,
-    );
     let count = u64::try_from(triples.len()).map_err(|_| overflow("family run count"))?;
     let path = temp.path(name)?;
-    let mut writer = BufWriter::new(File::create(&path)?);
+    let mut writer = create_scratch_writer(&path)?;
+    observe_file_live(
+        &[triples.capacity(), radix_scratch.capacity()],
+        additional_triple_capacities,
+        &[],
+        0,
+        writer.capacity().saturating_add(additional_io_bytes),
+        1usize.saturating_add(additional_descriptors),
+    );
     for triple in triples {
         write_triple(&mut writer, triple)?;
     }
@@ -646,13 +710,21 @@ fn merge_runs(
         .iter()
         .map(RunReader::open)
         .collect::<Result<_, _>>()?;
-    observe_file_working(
-        readers.len(),
-        readers.len().saturating_mul(12),
+    let path = temp.path(name)?;
+    let mut writer = create_scratch_writer(&path)?;
+    let io_buffer_bytes = readers.iter().fold(writer.capacity(), |total, reader| {
+        total.saturating_add(reader.reader.capacity())
+    });
+    observe_file_live(
+        &[],
+        &[],
+        &[],
+        readers
+            .capacity()
+            .saturating_mul(std::mem::size_of::<RunReader>()),
+        io_buffer_bytes,
         readers.len().saturating_add(1),
     );
-    let path = temp.path(name)?;
-    let mut writer = BufWriter::new(File::create(&path)?);
     let mut last = None;
     let mut count = 0u64;
     loop {
@@ -704,7 +776,7 @@ struct RunManifestWriter {
 impl RunManifestWriter {
     fn create(path: &std::path::Path) -> Result<Self, BuildPipelineError> {
         Ok(Self {
-            writer: BufWriter::new(File::create(path)?),
+            writer: create_scratch_writer(path)?,
         })
     }
 
@@ -781,8 +853,27 @@ fn write_managed_run(
     sequence: &mut u64,
     triples: Vec<Triple>,
 ) -> Result<ManagedRun, BuildPipelineError> {
+    write_managed_run_with_live(temp, label, sequence, triples, &[], 0, 0)
+}
+
+fn write_managed_run_with_live(
+    temp: &BuildTemp,
+    label: &str,
+    sequence: &mut u64,
+    triples: Vec<Triple>,
+    additional_triple_capacities: &[usize],
+    additional_io_bytes: usize,
+    additional_descriptors: usize,
+) -> Result<ManagedRun, BuildPipelineError> {
     let id = next_run_id(sequence)?;
-    let run = write_run(temp, &managed_run_name(label, id), triples)?;
+    let run = write_run_with_live(
+        temp,
+        &managed_run_name(label, id),
+        triples,
+        additional_triple_capacities,
+        additional_io_bytes,
+        additional_descriptors,
+    )?;
     Ok(ManagedRun {
         id,
         count: run.count,
@@ -837,9 +928,25 @@ fn consolidate_manifest(
             if batch.is_empty() {
                 break;
             }
-            // A manifest reader and writer remain open around the bounded
-            // run merge, whose own output writer is also live.
-            observe_file_working(0, 0, batch.len().saturating_add(3));
+            // The manifest reader/writer stay live around the bounded merge.
+            // Its run readers use the same actual BufReader capacity as this
+            // manifest reader, and its output uses the writer capacity.
+            observe_file_live(
+                &[],
+                &[],
+                &[],
+                batch
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ManagedRun>())
+                    .saturating_add(batch.len().saturating_mul(std::mem::size_of::<FamilyRun>())),
+                reader
+                    .reader
+                    .capacity()
+                    .saturating_add(writer.writer.capacity())
+                    .saturating_add(reader.reader.capacity().saturating_mul(batch.len()))
+                    .saturating_add(writer.writer.capacity()),
+                batch.len().saturating_add(3),
+            );
             let merged = merge_managed_runs(temp, label, sequence, &batch)?;
             writer.append(merged)?;
             outputs = outputs
@@ -892,25 +999,45 @@ fn sorted_file_runs(
         for &triple in block {
             first_buffer.push(family.first(triple));
             second_buffer.push(family.second(triple));
-            let records = block
-                .len()
-                .saturating_add(first_buffer.len())
-                .saturating_add(second_buffer.len());
-            // The source reader and the two manifests stay live while a run
-            // is generated; a run writer makes four descriptors at a flush.
-            observe_file_working(records, records.saturating_mul(12), 4);
+            // The file spool allocates its callback Vec at `cap`; both sibling
+            // buffers and the two live manifests contribute their actual
+            // capacities. A moved buffer's radix scratch is observed inside
+            // `write_run` at the same allocation boundary.
+            observe_file_live(
+                &[cap, first_buffer.capacity(), second_buffer.capacity()],
+                &[],
+                &[],
+                0,
+                first_runs
+                    .writer
+                    .capacity()
+                    .saturating_add(second_runs.writer.capacity()),
+                3,
+            );
             if first_buffer.len() == cap {
-                first_runs.append(write_managed_run(
+                first_runs.append(write_managed_run_with_live(
                     temp,
                     "first",
                     sequence,
                     std::mem::take(&mut first_buffer),
+                    &[cap, second_buffer.capacity()],
+                    first_runs
+                        .writer
+                        .capacity()
+                        .saturating_add(second_runs.writer.capacity()),
+                    3,
                 )?)?;
-                second_runs.append(write_managed_run(
+                second_runs.append(write_managed_run_with_live(
                     temp,
                     "second",
                     sequence,
                     std::mem::take(&mut second_buffer),
+                    &[cap, first_buffer.capacity()],
+                    first_runs
+                        .writer
+                        .capacity()
+                        .saturating_add(second_runs.writer.capacity()),
+                    3,
                 )?)?;
                 first_buffer = Vec::with_capacity(cap);
                 second_buffer = Vec::with_capacity(cap);
@@ -919,8 +1046,30 @@ fn sorted_file_runs(
         Ok(())
     })?;
     if !first_buffer.is_empty() {
-        first_runs.append(write_managed_run(temp, "first", sequence, first_buffer)?)?;
-        second_runs.append(write_managed_run(temp, "second", sequence, second_buffer)?)?;
+        first_runs.append(write_managed_run_with_live(
+            temp,
+            "first",
+            sequence,
+            first_buffer,
+            &[cap, second_buffer.capacity()],
+            first_runs
+                .writer
+                .capacity()
+                .saturating_add(second_runs.writer.capacity()),
+            3,
+        )?)?;
+        second_runs.append(write_managed_run_with_live(
+            temp,
+            "second",
+            sequence,
+            second_buffer,
+            &[cap],
+            first_runs
+                .writer
+                .capacity()
+                .saturating_add(second_runs.writer.capacity()),
+            3,
+        )?)?;
     }
     first_runs.flush()?;
     second_runs.flush()?;
@@ -1077,7 +1226,7 @@ fn next_file_group(
         .checked_add(1)
         .ok_or_else(|| overflow("family group name"))?;
     let path = temp.path(&name)?;
-    let mut writer = BufWriter::new(File::create(&path)?);
+    let mut writer = create_scratch_writer(&path)?;
     let mut count = 0u64;
     write_triple(&mut writer, first)?;
     count = count
@@ -1187,11 +1336,17 @@ fn emit_file_continuations(
             second_sizer.push(second)?;
             first_values.push(first);
             second_values.push(second);
-            let records = first_values
-                .len()
-                .saturating_add(second_values.len())
-                .saturating_add(pending.len().saturating_mul(2));
-            observe_file_working(records, records.saturating_mul(12), 2);
+            observe_file_live(
+                &[first_values.capacity(), second_values.capacity()],
+                &[],
+                &[pending.capacity()],
+                0,
+                first_reader
+                    .reader
+                    .capacity()
+                    .saturating_add(second_reader.reader.capacity()),
+                2,
+            );
             let first_size = first_sizer.encoded_size()?;
             let second_size = second_sizer.encoded_size()?;
             if first_size <= budget && second_size <= budget {
@@ -1217,9 +1372,7 @@ fn build_file_family(
     family: IndexFamily,
     tile_budget: usize,
 ) -> Result<FamilyIndex, BuildPipelineError> {
-    let scratch = spool.build_temp().ok_or(BuildPipelineError::InvalidSpool(
-        "missing file spool scratch",
-    ))?;
+    let scratch = spool.family_build_temp()?;
     let mut sequence = 0u64;
     let (first_run, second_run) =
         sorted_file_runs(spool, &scratch, family, tile_budget, &mut sequence)?;
@@ -1610,6 +1763,17 @@ mod tests {
         (0..count).map(|id| (7, id / 7, id)).collect()
     }
 
+    fn family_parent(label: &str) -> std::path::PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let parent = std::env::temp_dir().join(format!(
+            "rete-family-{label}-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&parent).unwrap();
+        parent
+    }
+
     #[test]
     fn mega_group_continuations_are_bounded_and_complete_in_both_orders() {
         let hot = hot_subject(20_000);
@@ -1873,8 +2037,20 @@ mod tests {
         assert!(
             peak.records <= 3 * file_run_record_cap(budget) + 2 * budget + super::FILE_RUN_FANIN
         );
-        assert!(peak.bytes <= peak.records * 12);
+        assert!(
+            peak.bytes > peak.records * std::mem::size_of::<Triple>(),
+            "live-byte accounting includes allocation and I/O buffer capacity"
+        );
+        let byte_cap = 3 * file_run_record_cap(budget) * std::mem::size_of::<Triple>()
+            + (super::FILE_RUN_FANIN + 3) * 16 * 1024
+            + 4 * budget * std::mem::size_of::<Triple>()
+            + 4 * 1024;
+        assert!(peak.bytes <= byte_cap);
         assert!(peak.descriptors <= super::FILE_RUN_FANIN + 3);
+        assert!(
+            peak.max_single_vec_records <= file_run_record_cap(budget).max(2 * budget),
+            "no source, radix, or continuation Vec retains the full spool"
+        );
         drop(file);
         drop(temp);
         std::fs::remove_dir_all(parent).unwrap();
@@ -1897,6 +2073,70 @@ mod tests {
         drop(file);
         drop(temp);
         assert!(!owned.exists());
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn file_family_preserves_a_source_named_like_its_old_manifest() {
+        let parent = family_parent("source-namespace");
+        let temp = BuildTemp::new(&parent).unwrap();
+        let source_name = "family-first-manifest-0";
+        let source = TripleSpool::write_file(&temp, source_name, &hot_subject(128)).unwrap();
+        let source_path = temp.path(source_name).unwrap();
+        let before = std::fs::read(&source_path).unwrap();
+
+        let family = build_family(&source, IndexFamily::Subject, 64).unwrap();
+
+        assert!(!family.tiles.is_empty());
+        assert_eq!(std::fs::read(source_path).unwrap(), before);
+        drop(source);
+        drop(temp);
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn concurrent_file_family_builds_use_separate_scratch_and_leave_only_source() {
+        let parent = family_parent("concurrent-scratch");
+        let temp = BuildTemp::new(&parent).unwrap();
+        let triples = hot_subject(512);
+        let source = TripleSpool::write_file(&temp, "source", &triples).unwrap();
+        let resident =
+            build_family(&TripleSpool::Resident(triples), IndexFamily::Subject, 64).unwrap();
+        let (one, two) = std::thread::scope(|scope| {
+            let one = scope.spawn(|| build_family(&source, IndexFamily::Subject, 64));
+            let two = scope.spawn(|| build_family(&source, IndexFamily::Subject, 64));
+            (one.join().unwrap().unwrap(), two.join().unwrap().unwrap())
+        });
+
+        assert_eq!(images(&one, true), images(&resident, true));
+        assert_eq!(images(&one, false), images(&resident, false));
+        assert_eq!(images(&two, true), images(&resident, true));
+        assert_eq!(images(&two, false), images(&resident, false));
+        let files: Vec<_> = std::fs::read_dir(temp.owned_path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(files, vec![std::ffi::OsString::from("source")]);
+        drop(source);
+        drop(temp);
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn repeated_file_family_builds_do_not_overwrite_root_leftovers() {
+        let parent = family_parent("leftover-namespace");
+        let temp = BuildTemp::new(&parent).unwrap();
+        let source = TripleSpool::write_file(&temp, "source", &hot_subject(128)).unwrap();
+        let leftover = temp.path("family-first-run-2").unwrap();
+        let sentinel = b"preexisting root artifact";
+        std::fs::write(&leftover, sentinel).unwrap();
+
+        build_family(&source, IndexFamily::Subject, 64).unwrap();
+        build_family(&source, IndexFamily::Subject, 64).unwrap();
+
+        assert_eq!(std::fs::read(leftover).unwrap(), sentinel);
+        drop(source);
+        drop(temp);
         std::fs::remove_dir_all(parent).unwrap();
     }
 
