@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "gitCommit": "4c3794bd8a14d162230421a15d7a73821079dccd",
+  "gitCommit": "4db5c55cd9283d6018d11e78091f07bbbeea6bbf",
   "buildStamp": "0.3.2",
   "toolchain": {
     "rust": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
