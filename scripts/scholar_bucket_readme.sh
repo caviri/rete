@@ -38,11 +38,15 @@ mkdir -p "$(dirname "$OUT")"
 listing="$(hf buckets ls "$BUCKET/$PREFIX" --recursive --json 2>/dev/null)"
 [ -n "$listing" ] || { echo "cannot list $BUCKET/$PREFIX" >&2; exit 4; }
 
-# path<TAB>size for every .nq.gz currently in the prefix.
-objects="$(printf '%s' "$listing" | tr '{' '\n' \
-  | awk -F'"' '/"path"/ {p=""; s=""; for(i=1;i<=NF;i++){if($i=="path"){p=$(i+2)}}
-      if (match($0, /"size": *[0-9]+/)) { s=substr($0, RSTART, RLENGTH); sub(/.*: */, "", s) }
-      if (p ~ /\.nq\.gz$/ && s != "") print p "\t" s }' | LC_ALL=C sort)"
+# path<TAB>size for every .nq.gz currently in the prefix. `hf buckets ls --json`
+# pretty-prints one field per line, so a two-state awk over "path" then "size"
+# is enough and pulls in no JSON dependency.
+objects="$(printf '%s' "$listing" \
+  | awk -F'"' '
+      /"path"/ { p = $4 }
+      /"size"/ { if (match($3, /[0-9]+/) && p ~ /\.nq\.gz$/) {
+                   print p "\t" substr($3, RSTART, RLENGTH); p = "" } }' \
+  | LC_ALL=C sort)"
 
 n=$(printf '%s\n' "$objects" | grep -c . )
 tot=$(printf '%s\n' "$objects" | awk -F'\t' '{s+=$2} END{printf "%d", s}')
