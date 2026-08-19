@@ -35,6 +35,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 RANGE_RE = re.compile(r"^bytes=(\d+)-(\d+)$")
 EXTERNAL_BUDGETS = (64, 256, 1024)
+RANGE_CHUNK_BYTES = 64 * 1024
 
 
 @dataclasses.dataclass(frozen=True)
@@ -172,6 +173,13 @@ def open_exclusive(path: pathlib.Path):
     return path.open("x", encoding="utf-8", newline="\n")
 
 
+def claim_artifact_namespace(evidence_path: pathlib.Path) -> pathlib.Path:
+    """Atomically reserve one evidence stem's sample-artifact namespace."""
+    namespace = evidence_path.parent / f".{evidence_path.stem}.artifacts"
+    namespace.mkdir(parents=True)
+    return namespace
+
+
 def sha256_file(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -280,24 +288,27 @@ class StrictRangeServer:
                     owner._reject(self, size)
                     return
                 start, end = (int(match.group(1)), int(match.group(2)))
-                if start > end or end >= size:
+                if start > end or end >= size or (start == 0 and end == size - 1):
                     owner._reject(self, size)
                     return
                 length = end - start + 1
                 with owner.file_path.open("rb") as source:
                     source.seek(start)
-                    data = source.read(length)
-                if len(data) != length:
-                    owner._reject(self, size)
-                    return
-                owner.bytes_served += length
-                self.send_response(206)
-                self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-                self.send_header("Content-Length", str(length))
-                self.end_headers()
-                self.wfile.write(data)
+                    self.send_response(206)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+                    self.send_header("Content-Length", str(length))
+                    self.end_headers()
+                    remaining = length
+                    while remaining:
+                        chunk = source.read(min(RANGE_CHUNK_BYTES, remaining))
+                        if not chunk:
+                            owner._reject(self, size)
+                            return
+                        self.wfile.write(chunk)
+                        owner.bytes_served += len(chunk)
+                        remaining -= len(chunk)
 
         return Handler
 
@@ -382,6 +393,35 @@ def _sample_output_path(
     return output_dir / f"{workload.name}-{implementation}{suffix}-r{repetition}.rete"
 
 
+class IdentityLedger:
+    """Reject mutable executables and any output/query identity split immediately."""
+
+    def __init__(self, executable_sha256: dict[str, str]):
+        self.executable_sha256 = executable_sha256
+        self.output_sha256: str | None = None
+        self.query_sha256: dict[str, str] | None = None
+
+    def verify(self, row: dict) -> None:
+        implementation = row.get("implementation")
+        expected_executable = self.executable_sha256.get(implementation)
+        if expected_executable is None:
+            raise ValueError(f"sample has unknown implementation: {implementation}")
+        if row.get("executableSha256") != expected_executable:
+            raise ValueError(f"executable SHA-256 drift for {implementation}")
+        output_sha256 = row.get("outputSha256")
+        if self.output_sha256 is None:
+            self.output_sha256 = output_sha256
+        elif output_sha256 != self.output_sha256:
+            raise ValueError("output hash drift across benchmark matrix")
+        query_sha256 = {query["name"]: query["resultSha256"] for query in row.get("queries", [])}
+        if len(query_sha256) != len(row.get("queries", [])):
+            raise ValueError("duplicate query result name in sample")
+        if self.query_sha256 is None:
+            self.query_sha256 = query_sha256
+        elif query_sha256 != self.query_sha256:
+            raise ValueError("query hash drift across benchmark matrix")
+
+
 def _run_query(executable: pathlib.Path, query: Query, output_path: pathlib.Path) -> dict:
     has_url = "{url}" in query.args
     if has_url and "{output}" in query.args:
@@ -423,9 +463,13 @@ def run_sample(
     output_dir: pathlib.Path,
     implementation: str,
     repetition: int,
+    expected_executable_sha256: str | None = None,
 ) -> dict:
     """Run one isolated build and its isolated query processes."""
     executable = _require_executable(executable)
+    executable_sha256 = sha256_file(executable)
+    if expected_executable_sha256 is not None and executable_sha256 != expected_executable_sha256:
+        raise ValueError(f"executable SHA-256 drift for {implementation}")
     if not SAFE_NAME_RE.fullmatch(implementation):
         raise ValueError("implementation contains unsafe filename characters")
     input_path = _resolve_input(workload, input_root)
@@ -434,13 +478,16 @@ def run_sample(
         raise ValueError("external samples require --memory-budget-mb")
     if workload.mode == "standard" and budget is not None:
         raise ValueError("standard samples must not carry --memory-budget-mb")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not output_dir.is_dir():
+        raise ValueError(f"sample artifact namespace is not claimed: {output_dir}")
     output_path = _sample_output_path(workload, output_dir, implementation, repetition)
     if output_path.exists():
         raise FileExistsError(f"refusing to overwrite sample output: {output_path}")
     wall_ms, peak_rss_kib = _run_build(
         [str(executable), "build", str(input_path), "-o", str(output_path), *workload.args]
     )
+    if sha256_file(executable) != executable_sha256:
+        raise ValueError(f"executable SHA-256 drift for {implementation}")
     if not output_path.is_file():
         raise RuntimeError(f"build completed without output: {output_path}")
     result = {
@@ -452,7 +499,7 @@ def run_sample(
         "implementation": implementation,
         "repetition": repetition,
         "inputSha256": workload.sha256,
-        "executableSha256": sha256_file(executable),
+        "executableSha256": executable_sha256,
         "wallMs": wall_ms,
         "peakRssKiB": peak_rss_kib,
         "outputSha256": sha256_file(output_path),
@@ -511,14 +558,14 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--external-budgets is only valid for an external workload")
         else:
             budgets = (None,)
-        artifact_dir = args.output.parent / f"{args.output.stem}.artifacts"
-        if artifact_dir.exists():
-            raise FileExistsError(f"refusing to reuse sample artifact directory: {artifact_dir}")
         executables = {
             "baseline": _require_executable(args.baseline),
             "candidate": _require_executable(args.candidate),
         }
+        executable_sha256 = {name: sha256_file(path) for name, path in executables.items()}
+        identity = IdentityLedger(executable_sha256)
         with open_exclusive(args.output) as evidence:
+            artifact_dir = claim_artifact_namespace(args.output)
             _write_record(
                 evidence,
                 {
@@ -529,11 +576,11 @@ def main(argv: list[str] | None = None) -> int:
                     "inputSha256": workload.sha256,
                     "baseline": {
                         "path": str(executables["baseline"]),
-                        "sha256": sha256_file(executables["baseline"]),
+                        "sha256": executable_sha256["baseline"],
                     },
                     "candidate": {
                         "path": str(executables["candidate"]),
-                        "sha256": sha256_file(executables["candidate"]),
+                        "sha256": executable_sha256["candidate"],
                     },
                     "samples": args.samples,
                     "externalBudgets": list(budget for budget in budgets if budget is not None),
@@ -544,14 +591,16 @@ def main(argv: list[str] | None = None) -> int:
                 rows: dict[str, list[dict]] = {"baseline": [], "candidate": []}
                 for warmup in (-2, -1):
                     for implementation in _implementation_order(warmup):
-                        run_sample(
+                        warmup_row = run_sample(
                             executables[implementation],
                             configured,
                             args.input_root,
                             artifact_dir,
                             implementation,
                             warmup,
+                            expected_executable_sha256=executable_sha256[implementation],
                         )
+                        identity.verify(warmup_row)
                 for repetition in range(args.samples):
                     for implementation in _implementation_order(repetition):
                         row = run_sample(
@@ -561,7 +610,9 @@ def main(argv: list[str] | None = None) -> int:
                             artifact_dir,
                             implementation,
                             repetition,
+                            expected_executable_sha256=executable_sha256[implementation],
                         )
+                        identity.verify(row)
                         rows[implementation].append(row)
                         _write_record(evidence, row)
                 summary = {
