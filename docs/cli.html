@@ -661,6 +661,10 @@ by <code>rdf:type</code> instead — deterministic, self-naming communities that
 on graphs too large for the single-threaded Louvain build (it falls back to
 Louvain when the graph is untyped). All of these are opt-in; without them the
 output is byte-identical to a plain build.</p>
+<p><code>--strict</code> refuses input carrying an IRI that the N-Triples/N-Quads <code>IRIREF</code>
+grammar and RFC 3987 disallow. It is <strong>off</strong> by default and the build only
+<em>counts</em> them — see <a href="#invalid-iris">Invalid IRIs</a> for what that means and why the
+default is a warning.</p>
 <p><code>--permutations 3|6</code> (default <strong>6</strong>) chooses how many index permutations to
 store. <code>6</code> writes SPO, POS, OSP, SOP, PSO and OPS; <code>3</code> writes only SPO, POS and
 OSP — the orders that decide <em>routing</em>. Those three tie the longest bound prefix
@@ -735,13 +739,63 @@ consolidates shards, it does not re-decide how they were built.</p>
   --card --card-file curated.json
 </code></pre>
 <h2 id="validating">Validating</h2>
-<h3 id="rete-validate-inputs---format-ntnqttl"><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>
+<h3 id="rete-validate-inputs---format-ntnqttl---strict"><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl] [--strict]</code></h3>
 <p>Parse RDF input(s) without building, to check they are well-formed
 N-Triples/N-Quads/Turtle. Reports statement and named-graph counts, or exits
 non-zero with a precise parse error (file, line, column).</p>
 <pre><code class="language-sh">rete validate data.ttl
 curl -s https://host/data.nt | rete validate - --format nt
 </code></pre>
+<p>It also reports <strong>invalid IRIs</strong>, because "it parses" and "it is valid RDF" are
+different claims and only the second one predicts whether a dump will load
+anywhere else. <code>--strict</code> turns the report into a non-zero exit.</p>
+<h3 id="invalid-iris">Invalid IRIs</h3>
+<p>rete's N-Triples/N-Quads reader is deliberately tolerant: it stores whatever
+sits between <code>&lt;</code> and the next <code>&gt;</code>, so the file is a faithful container of what
+it was given. That tolerance is why every published dataset built — and it is
+also why <code>rete export --format nq</code> could emit something no strict parser
+accepts. <code>build</code> and <code>validate</code> now <strong>count</strong> what they ingested:</p>
+<pre><code>warning: 5 statement(s) carry an invalid IRI (5 IRI occurrence(s)).
+         They are stored verbatim, so `rete export --format nq` emits N-Quads that a
+         strict parser (Oxigraph, Jena, rapper) rejects — and a bulk loader rejects the
+         whole chunk, not the line.
+               2  '[' or ']' outside an IP-literal host
+                  e.g. &lt;http://example.org/a[b]&gt;
+               1  more than one '#'
+                  e.g. &lt;http://example.org/c#d#e&gt;
+               1  '%' not followed by two hex digits
+                  e.g. &lt;http://example.org/%x-template-artifact&gt;
+               1  a character the IRIREF grammar excludes (space, control, or one of &lt;&gt;"{}|^`\)
+                  e.g. &lt;http://example.org/a b&gt;
+</code></pre>
+<p>Five classes, from the <code>IRIREF</code> production
+(<code>'&lt;' ([^#x00-#x20&lt;&gt;"{}|^</code>] | UCHAR)* '&gt;'`) plus RFC 3987, which the same
+grammar requires the content to satisfy as an <strong>absolute</strong> IRI:</p>
+<table><thead><tr><th>class</th><th>example</th><th>repairable by escaping</th></tr></thead><tbody>
+<tr><td>no scheme (relative IRI)</td><td><code>&lt;noscheme/path&gt;</code></td><td><strong>no</strong></td></tr>
+<tr><td>an excluded character</td><td><code>&lt;http://ex/a b&gt;</code></td><td>yes</td></tr>
+<tr><td><code>[</code> / <code>]</code> outside an IP-literal host</td><td><code>&lt;http://ex/a[b]&gt;</code></td><td>yes</td></tr>
+<tr><td>more than one <code>#</code></td><td><code>&lt;http://ex/c#d#e&gt;</code></td><td>yes</td></tr>
+<tr><td><code>%</code> not followed by two hex digits</td><td><code>&lt;http://ex/%x&gt;</code></td><td>yes</td></tr>
+</tbody></table>
+<p>What is <strong>not</strong> judged: non-ASCII (RFC 3987 <code>ucschar</code> is legal — <code>&lt;http://ex/café&gt;</code>
+is a valid IRI and is never touched), <code>UCHAR</code> escapes (<code>é</code>), and scheme
+semantics (<code>&lt;nonsense://x&gt;</code> is well-formed). Flagging something valid would mean
+percent-encoding an IRI that was fine, which is the one failure mode a sanitizer
+must not have.</p>
+<p>Three flags act on this, and they are separate on purpose:</p>
+<ul>
+<li><code>rete build --strict</code> / <code>rete validate --strict</code> — refuse the input, naming
+the IRI and the rule. <strong>Not</strong> the default: datasets that build today, including
+published ones, must keep building.</li>
+<li><code>rete export --sanitize-iris</code> — percent-encode the repairable classes on the
+way out. Also not the default, because it <strong>changes the data</strong>.</li>
+</ul>
+<p>An IRI with <strong>no scheme</strong> is reported and never rewritten. Escaping cannot
+repair it: resolving it needs a base IRI the <code>.rete</code> never recorded. This is the
+class that cost the most in the field — one such line made a bulk loader drop an
+entire ~102,000-line chunk — and the only honest thing a tool can do with it is
+say where it is.</p>
 <h2 id="inspecting">Inspecting</h2>
 <h3 id="rete-info-file"><code>rete info &lt;file&gt;</code></h3>
 <p>Print the decoded 1 KB header (the section directory, codecs, counts, content hash) — plus
@@ -804,7 +858,7 @@ section directory rather than read out of the card — see
 <code>rete info</code> shows the same catalog beneath the header when a card is present.</p>
 <h3 id="rete-graphs-file"><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
-<h3 id="rete-export-file---format-nqttljsonld---graph-g---subject-s---predicate-p---object-o"><code>rete export &lt;file&gt; [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O]</code></h3>
+<h3 id="rete-export-file---format-nqttljsonld---graph-g---subject-s---predicate-p---object-o---sanitize-iris"><code>rete export &lt;file&gt; [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris]</code></h3>
 <p>Serialize the dataset, or a slice of it. <code>nq</code> (the default) dumps every
 triple/quad as N-Quads (default graph + named graphs) — a lossless round-trip.
 <code>ttl</code> emits Turtle and <code>jsonld</code> emits expanded JSON-LD; both serialize a
@@ -815,6 +869,28 @@ whole dataset.</p>
 rete export data.rete --format ttl    # Turtle
 rete export data.rete --format jsonld # expanded JSON-LD
 </code></pre>
+<p><code>--sanitize-iris</code> percent-encodes IRIs that are outside the N-Triples/N-Quads
+grammar (see <a href="#invalid-iris">Invalid IRIs</a>), so the dump loads into a strict
+store instead of being rejected — and a bulk loader rejects the whole <em>chunk</em>,
+not the line, so one bad IRI is worth a hundred thousand good statements.</p>
+<p>It is <strong>off by default because it changes the data.</strong> <code>&lt;http://ex/a[b]&gt;</code> is
+written as <code>&lt;http://ex/a%5Bb%5D&gt;</code>, which is a different IRI: the dump no longer
+joins against the graph it came from, <code>rete → store → rete</code> stops being the
+identity, and if the graph happened to contain both spellings they collapse into
+one. Deciding to accept that is the exporter's call, which is why it is a flag.
+What it did goes to <strong>stderr</strong> (stdout is the dump), per class:</p>
+<pre><code>--sanitize-iris: percent-encoded 5 IRI occurrence(s). The dump's IRIs are NOT the
+                 file's IRIs: it no longer joins against the source graph, and
+                 rete → store → rete is no longer the identity.
+                       2  '[' or ']' outside an IP-literal host
+                       1  more than one '#'
+                       …
+</code></pre>
+<p>An IRI with no scheme cannot be repaired by escaping, so it is counted, named,
+and written <strong>verbatim</strong> — the dump is then still not valid N-Quads and the
+summary says exactly that rather than implying a fix it did not make. The
+<a href="interop.html">triple-store interop</a> page has the measured Oxigraph round-trip for
+all three cases.</p>
 <p><strong>Filters prune the file; they are not <code>| grep</code>.</strong> <code>--graph</code> /<code>--subject</code> /
 <code>--predicate</code> / <code>--object</code> become a triple pattern the engine routes: it picks
 the index permutation that sorts on the bound components, binary-searches its

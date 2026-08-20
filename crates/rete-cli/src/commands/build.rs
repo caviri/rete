@@ -306,10 +306,48 @@ fn looks_like_non_rdf_owl(text: &str) -> bool {
         || (!head.trim_start().starts_with('<') && head.contains("Ontology("))
 }
 
+/// What `--strict` refused, and the three ways forward. Printed under the
+/// parser's own message, which already names the offending IRI and the rule it
+/// breaks.
+const STRICT_HINT: &str = "hint: `--strict` refuses input carrying IRIs the N-Triples/N-Quads \
+     IRIREF grammar (RFC 3987) disallows.\n      Build without it to store them verbatim — the \
+     build then reports how many it ingested — or repair the source.\n      `rete export \
+     --sanitize-iris` percent-encodes the repairable classes on the way out.";
+
+/// The invalid-IRI audit a build runs: counting by default, refusing under
+/// `--strict`.
+fn iri_audit(strict: bool) -> ingest::IriAudit {
+    if strict {
+        ingest::IriAudit::refusing()
+    } else {
+        ingest::IriAudit::counting()
+    }
+}
+
+/// Present an ingest error, adding the `--strict` explanation when the refusal
+/// came from the invalid-IRI audit rather than from a malformed line.
+/// `IngestError::InvalidIri` is only ever produced by a strict audit, so the
+/// flag itself need not be threaded here.
+fn ingest_error(input: Option<&str>, e: ingest::IngestError) -> anyhow::Error {
+    let where_ = input.map(|i| format!("{i}: ")).unwrap_or_default();
+    match e {
+        ingest::IngestError::InvalidIri { .. } => anyhow::anyhow!("{where_}{e}\n{STRICT_HINT}"),
+        _ => anyhow::anyhow!("{where_}{e}"),
+    }
+}
+
 /// Parse one or more RDF inputs into quads (triples → default graph). Shared by
 /// `build` and `validate`. Returns a parse error (which input, what went wrong)
 /// if any input is malformed.
-fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<ingest::RawQuad>> {
+///
+/// `audit` is the invalid-IRI tally (see `rete_core::iri`): every input feeds the
+/// same one, so a multi-input build reports a single total. With
+/// `audit.strict` the first offending statement aborts the parse.
+fn parse_inputs(
+    inputs: &[String],
+    format: Option<&str>,
+    audit: &mut ingest::IriAudit,
+) -> anyhow::Result<Vec<ingest::RawQuad>> {
     let mut quads: Vec<ingest::RawQuad> = Vec::new();
     for input in inputs {
         let fmt = input_format(input, format);
@@ -322,11 +360,11 @@ fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<i
             let cap = std::fs::metadata(input)
                 .map(|m| (m.len() / 64) as usize)
                 .unwrap_or(0);
-            ingest::parse_reader(open_reader(input)?, fmt, cap)
-                .map_err(|e| anyhow::anyhow!("{input}: {e}"))?
+            ingest::parse_reader_audited(open_reader(input)?, fmt, cap, Some(audit))
+                .map_err(|e| ingest_error(Some(input), e))?
         } else {
             let text = read_input(input)?;
-            ingest::parse_statements(&text, fmt).map_err(|e| {
+            ingest::parse_statements_audited(&text, fmt, Some(audit)).map_err(|e| {
                 // OWL/XML and Functional Syntax look like ".owl" but are NOT RDF, so
                 // the RDF/XML reader rejects them. Point the user at the fix instead
                 // of leaving a cryptic XML error.
@@ -338,7 +376,7 @@ fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<i
                          `robot convert`, or Protégé → Save as → RDF/XML), then build that."
                     )
                 } else {
-                    anyhow::anyhow!("{input}: {e}")
+                    ingest_error(Some(input), e)
                 }
             })?
         };
@@ -355,8 +393,13 @@ fn parse_inputs(inputs: &[String], format: Option<&str>) -> anyhow::Result<Vec<i
 /// Parse inputs without building — report triple/quad and named-graph counts, or
 /// fail with a clear parse error. The way to check an RDF file (N-Triples /
 /// N-Quads / Turtle) is well-formed before ingesting it.
-pub(crate) fn validate(inputs: &[String], format: Option<&str>) -> anyhow::Result<()> {
-    let quads = parse_inputs(inputs, format)?;
+pub(crate) fn validate(
+    inputs: &[String],
+    format: Option<&str>,
+    strict: bool,
+) -> anyhow::Result<()> {
+    let mut audit = iri_audit(strict);
+    let quads = parse_inputs(inputs, format, &mut audit)?;
     let named: std::collections::BTreeSet<&String> =
         quads.iter().filter_map(|(_, _, _, g)| g.as_ref()).collect();
     let in_default = quads.iter().filter(|(_, _, _, g)| g.is_none()).count();
@@ -366,6 +409,9 @@ pub(crate) fn validate(inputs: &[String], format: Option<&str>) -> anyhow::Resul
         in_default,
         named.len()
     );
+    // "Parses" and "is valid RDF" are not the same claim, and `validate` is
+    // exactly where the difference should be visible.
+    crate::commands::iri_report::warn_after_build(&audit.report);
     Ok(())
 }
 
@@ -388,6 +434,7 @@ pub(crate) fn build(
     card_args: CardArgs,
     no_card_costs: bool,
     perms: rete_core::PermSet,
+    strict: bool,
 ) -> anyhow::Result<()> {
     // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
     // reasoning is requested, assemble by STREAMING the inputs twice instead of
@@ -420,17 +467,27 @@ pub(crate) fn build(
             .iter()
             .map(|i| (i.as_str(), input_format(i, format)))
             .collect();
+        // Invalid-IRI audit, shared across every input so the build reports one
+        // total. The assembler reads the inputs TWICE (observe terms, then
+        // encode), so the audit runs on the first pass only — auditing both
+        // would double every count. `--strict` aborts from inside that first
+        // pass, before any index work.
+        let audit = std::cell::RefCell::new(iri_audit(strict));
+        let pass = std::cell::Cell::new(0u32);
         // Re-readable source: each call re-opens and streams every input file. The
         // two-pass assembler invokes it once to observe terms, once to encode.
         let stream = |visit: &mut dyn FnMut(ingest::RawQuad)| -> Result<(), ingest::IngestError> {
+            let first = pass.replace(pass.get() + 1) == 0;
+            let mut guard = audit.borrow_mut();
+            let mut sink = if first { Some(&mut *guard) } else { None };
             for (path, fmt) in &inputs_fmt {
                 let rd = open_reader(path)
                     .map_err(|e| ingest::IngestError::Io(format!("{path}: {e}")))?;
                 if collapse_graphs {
                     let mut flatten = |q: ingest::RawQuad| visit((q.0, q.1, q.2, None));
-                    ingest::stream_reader(rd, fmt, &mut flatten)?;
+                    ingest::stream_reader_audited(rd, fmt, sink.as_deref_mut(), &mut flatten)?;
                 } else {
-                    ingest::stream_reader(rd, fmt, visit)?;
+                    ingest::stream_reader_audited(rd, fmt, sink.as_deref_mut(), visit)?;
                 }
             }
             Ok(())
@@ -467,7 +524,7 @@ pub(crate) fn build(
                 None => rete_core::ingest::DeferredMetadata::none(),
             },
         )
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .map_err(|e| ingest_error(None, e))?;
         let bytes = if card_requested {
             attach_build_record(
                 bytes,
@@ -485,11 +542,13 @@ pub(crate) fn build(
         };
         std::fs::write(output, &bytes)?;
         print_build_summary(output, &stats, bytes.len());
+        crate::commands::iri_report::warn_after_build(&audit.into_inner().report);
         return Ok(());
     }
 
     // 1. Parse every input into quads (triples → default graph, `None`).
-    let mut quads = parse_inputs(inputs, format)?;
+    let mut audit = iri_audit(strict);
+    let mut quads = parse_inputs(inputs, format, &mut audit)?;
     // 1a. `--collapse-graphs`: drop the graph term so everything lands in the
     // default graph. Done before reasoning, which only sees the default graph —
     // so collapsing a named-graph dump is also what makes it reasonable over.
@@ -592,6 +651,7 @@ pub(crate) fn build(
     };
     std::fs::write(output, &bytes)?;
     print_build_summary(output, &stats, bytes.len());
+    crate::commands::iri_report::warn_after_build(&audit.report);
     Ok(())
 }
 
@@ -622,6 +682,7 @@ pub(crate) fn build_external_cmd(
     collapse_graphs: bool,
     card_args: CardArgs,
     perms: rete_core::PermSet,
+    strict: bool,
 ) -> anyhow::Result<()> {
     if materialize || reason {
         anyhow::bail!(
@@ -692,8 +753,12 @@ pub(crate) fn build_external_cmd(
         Vec::new()
     };
     let out_path = std::path::Path::new(output).to_path_buf();
+    // The external build reads its input exactly once, so — unlike the two-pass
+    // streaming assembler — the audit needs no pass guard.
+    let audit = std::cell::RefCell::new(iri_audit(strict));
     let stats = rete_core::extbuild::build_external(
         |visit| {
+            let mut guard = audit.borrow_mut();
             for (path, fmt) in &inputs_fmt {
                 let mut err: Option<rete_core::extbuild::ExtBuildError> = None;
                 let mut on_quad = |q: ingest::RawQuad| {
@@ -713,7 +778,7 @@ pub(crate) fn build_external_cmd(
                         e.to_string(),
                     ))
                 })?;
-                let res = ingest::stream_reader(rd, fmt, &mut on_quad);
+                let res = ingest::stream_reader_audited(rd, fmt, Some(&mut *guard), &mut on_quad);
                 if let Some(e) = err {
                     return Err(e);
                 }
@@ -742,9 +807,13 @@ pub(crate) fn build_external_cmd(
             perms,
         },
     )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    .map_err(|e| match e {
+        rete_core::extbuild::ExtBuildError::Ingest(inner) => ingest_error(None, inner),
+        other => anyhow::anyhow!("{other}"),
+    })?;
     let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
     print_build_summary(output, &stats, byte_len);
+    crate::commands::iri_report::warn_after_build(&audit.into_inner().report);
     Ok(())
 }
 
@@ -910,6 +979,7 @@ mod tests {
             },
             !measure,
             rete_core::PermSet::ALL,
+            false,
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1099,6 +1169,7 @@ mod tests {
                 },
                 false,
                 rete_core::PermSet::ALL,
+                false,
             )
             .unwrap();
             std::fs::read(out).unwrap()
@@ -1191,6 +1262,7 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            false,
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1228,6 +1300,7 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            false,
         )
         .unwrap();
 
@@ -1251,6 +1324,7 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            false,
         )
         .unwrap();
         let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();

@@ -167,9 +167,25 @@ enum Command {
         /// anything published.
         #[arg(long = "permutations", value_parser = ["3", "6"], default_value = "6")]
         permutations: String,
+        /// Refuse input containing an IRI the N-Triples/N-Quads `IRIREF` grammar
+        /// and RFC 3987 disallow — a raw `[`/`]` outside an IP-literal host, a
+        /// second `#`, a space or one of ``<>"{}|^` \``, a `%` not followed by
+        /// two hex digits, or no scheme at all.
+        ///
+        /// **Off by default, and that is deliberate**: rete's reader is
+        /// tolerant, published datasets were built through it, and turning the
+        /// tolerance into a hard error would stop them building. Without this
+        /// flag such IRIs are stored verbatim and the build *reports how many*
+        /// it ingested — enough to know the file will not export as valid
+        /// N-Quads (see `rete export --sanitize-iris`). With it, the first
+        /// offending statement fails the build, naming the IRI and the rule.
+        #[arg(long)]
+        strict: bool,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
     /// RDF-XML, without building. Reports counts, or fails with a parse error.
+    /// Also reports invalid IRIs — parsing and being valid RDF are not the same
+    /// claim, and this is where the difference should be visible.
     Validate {
         /// Input files (or `-` for stdin).
         #[arg(required = true, num_args = 1..)]
@@ -177,6 +193,10 @@ enum Command {
         /// Force input format for all inputs: nt | nq | ttl | rdfxml.
         #[arg(long, value_parser = ["nt", "nq", "ttl", "rdfxml"])]
         format: Option<String>,
+        /// Fail on the first invalid IRI instead of counting them (same rule as
+        /// `rete build --strict`).
+        #[arg(long)]
+        strict: bool,
     },
     /// Estimate a build's output size, wall time and spill **before** running it.
     ///
@@ -438,6 +458,24 @@ enum Command {
         /// e.g. `'"text"@en'`).
         #[arg(long)]
         object: Option<String>,
+        /// Percent-encode IRIs the N-Triples/N-Quads grammar and RFC 3987
+        /// disallow, so the dump loads into a strict store (Oxigraph, Jena,
+        /// GraphDB) instead of being rejected — and a bulk loader rejects the
+        /// whole *chunk*, not the line.
+        ///
+        /// **Off by default because it changes the data.**
+        /// `<http://ex/a[b]>` is written as `<http://ex/a%5Bb%5D>`, which is a
+        /// different IRI: the dump no longer joins against the graph it came
+        /// from, and rete → store → rete stops being the identity. That is a
+        /// call for whoever exports, which is why it is a flag. What it did is
+        /// reported on stderr, per class.
+        ///
+        /// An IRI with **no scheme** cannot be repaired by escaping (resolving
+        /// it needs a base IRI the file never recorded). Those are counted,
+        /// reported, and written verbatim — the dump is then still not valid
+        /// N-Quads, and the summary says so.
+        #[arg(long = "sanitize-iris")]
+        sanitize_iris: bool,
     },
     /// Rebuild a `.rete`'s pyramid in place, reading triples straight from the
     /// file (no `export | build` N-Quads round-trip). Use to add a schema
@@ -1005,6 +1043,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             memory_budget_mb,
             tmp_dir,
             permutations,
+            strict,
         } => {
             let perms = match permutations.as_str() {
                 "3" => rete_core::PermSet::CORE,
@@ -1032,6 +1071,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     collapse_graphs,
                     card_args,
                     perms,
+                    strict,
                 )
             } else {
                 commands::build::build(
@@ -1048,12 +1088,15 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     card_args,
                     no_card_costs,
                     perms,
+                    strict,
                 )
             }
         }
-        Command::Validate { inputs, format } => {
-            commands::build::validate(&inputs, format.as_deref())
-        }
+        Command::Validate {
+            inputs,
+            format,
+            strict,
+        } => commands::build::validate(&inputs, format.as_deref(), strict),
         Command::Estimate {
             inputs,
             format,
@@ -1171,6 +1214,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             subject,
             predicate,
             object,
+            sanitize_iris,
         } => commands::export::export(
             &file,
             &format,
@@ -1182,6 +1226,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 predicate: predicate.as_deref().map(commands::export::canonical_term),
                 object: object.as_deref().map(commands::export::canonical_term),
             },
+            sanitize_iris,
         ),
         Command::Repyramid {
             file,

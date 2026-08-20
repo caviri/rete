@@ -650,6 +650,54 @@ $ curl -s "http://localhost:7878/query" \
     -H "Accept: application/sparql-results+json"
 {"head":{"vars":["n"]},"results":{"bindings":[{"n":{"type":"literal","value":"6","datatype":"http://www.w3.org/2001/XMLSchema#integer"}}]}}
 </code></pre>
+<h3 id="when-the-dump-does-not-load-invalid-iris">When the dump does not load: invalid IRIs</h3>
+<p>rete's N-Triples reader is deliberately tolerant — it stores whatever sits
+between <code>&lt;</code> and the next <code>&gt;</code>. Oxigraph's is not, and this is where the two
+disagree. Measured against <strong>Oxigraph 0.5.9 in Docker</strong>, on a 9-quad graph of
+which 5 statements carry an IRI outside the N-Triples <code>IRIREF</code> grammar:</p>
+<pre><code>$ oxigraph load --location ./store --file dump.nq
+Some files like Wikidata dumps contain invalid IRIs or language tags.
+If you want to load them anyway use the `--lenient` option.
+Error while loading file dump.nq: Parser error at line 1 between columns 1 and 42:
+  Invalid IRI percent encoding '%x-'
+
+$ oxigraph dump --location ./store --format nq | wc -l
+0
+</code></pre>
+<p>Two things to take from that.</p>
+<p><strong>A load is atomic — one bad IRI costs the whole file.</strong> Nine quads went in and
+zero came out, including the four that were perfectly good. This is why the same
+defect cost <code>openaire-2021-datasource</code> an entire ~102,000-line chunk to a single
+IRI with no scheme: the loader rejects the <em>chunk</em>, not the line.</p>
+<p><strong><code>oxigraph load</code> exits 0 even when it rejects the file.</strong> The message above goes
+to stderr and the process returns success, so a bulk-load script that only checks
+<code>$?</code> will report a clean import of an empty store. Check the quad count, not the
+exit code. (<code>tests/interop/oxigraph.sh</code> does exactly that.)</p>
+<p><code>rete build</code> now <strong>counts</strong> such IRIs as it ingests them, so the problem is
+visible where it enters rather than at the far end of someone else's loader:</p>
+<pre><code>warning: 5 statement(s) carry an invalid IRI (5 IRI occurrence(s)).
+               2  '[' or ']' outside an IP-literal host
+               1  more than one '#'
+               1  '%' not followed by two hex digits
+               1  a character the IRIREF grammar excludes …
+</code></pre>
+<p>For the dump itself, <code>--sanitize-iris</code> percent-encodes the repairable classes:</p>
+<pre><code class="language-sh">rete export data.rete --format nq --sanitize-iris &gt; dump.nq   # now loads
+</code></pre>
+<p>The same 9-quad graph then loads and Oxigraph holds <strong>9 quads</strong> — the count the
+dump carried. But this is not free, and it is opt-in for that reason:</p>
+<ul>
+<li>the escaped IRIs are <strong>different IRIs</strong>, so the dump no longer joins against
+the graph it came from, and rete → Oxigraph → rete is no longer the identity;</li>
+<li>an IRI with <strong>no scheme cannot be repaired at all</strong>. Escaping does nothing for
+it — resolving it needs a base IRI the <code>.rete</code> never recorded — so it is
+counted, named on stderr, and written verbatim. The dump is then <em>still</em>
+rejected (<code>No scheme found in an absolute IRI</code>, again with an empty store).
+Fix those at the source; nothing downstream can.</li>
+</ul>
+<p><code>rete build --strict</code> refuses such input outright, if you would rather find out
+at build time. Full rules and the five classes: <a href="cli.html#invalid-iris">CLI → Invalid
+IRIs</a>.</p>
 <h3 id="load-into-graphdb">Load into GraphDB</h3>
 <p>For big files use the server-side bulk importer (<code>importrdf</code>), pointing at
 a repository config:</p>
@@ -672,10 +720,20 @@ reverse direction is each store's native dump piped into a build:</p>
 <pre><code class="language-sh">oxigraph dump --location ./store --file dump.nq --format nq
 rete build dump.nq -o out.rete
 </code></pre>
-<p>Verified in Docker for this page: dump the Oxigraph store, rebuild the
-<code>.rete</code>, and the row-level answers match the original query for query —
-including the named graph, which survives the full
-rete → Oxigraph → rete cycle.</p>
+<p>Verified in Docker for this page, and re-verified against Oxigraph 0.5.9 by
+<code>tests/interop/oxigraph.sh</code>: dump the Oxigraph store, rebuild the <code>.rete</code>, and
+the row-level answers match the original query for query — including the named
+graph, which survives the full rete → Oxigraph → rete cycle. On a 6-quad
+dataset (3 default + 3 in one named graph) the cycle came back <strong>quad for quad
+identical</strong>.</p>
+<p>That is the result <strong>on clean data</strong>, which is what this page was originally
+written from. It is not the result on data with an invalid IRI — see below.</p>
+<p>One spelling does change even on clean data: an N-Triples <code>UCHAR</code> escape.
+<code>&lt;http://example.org/uchar/caf\u00E9&gt;</code> goes in and <code>&lt;http://example.org/uchar/café&gt;</code>
+comes back, because Oxigraph resolves the escape while rete stores the token
+verbatim. Same IRI, different dictionary key — worth knowing if you compare
+dumps byte for byte, or if a graph contains both spellings (they are one term
+after the round-trip and two before it).</p>
 <h3 id="from-graphdb">From GraphDB</h3>
 <pre><code class="language-sh"># The statements endpoint IS the dump (workbench "Export" does the same):
 curl -H "Accept: application/n-quads" \

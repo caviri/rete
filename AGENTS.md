@@ -124,6 +124,29 @@ Nothing in the gate downloads a fixture. If a check needs a file with particular
 properties, build it from a tracked source — a published dataset that merely
 shares a name is a different graph and will drift under you.
 
+### Interop against a real triple store
+
+`tests/interop/oxigraph.sh` is the one check that runs a *third-party* engine:
+it exports the fixtures in `tests/interop/fixtures/` and loads them into
+`oxigraph/oxigraph` in Docker, asserting that an export with invalid IRIs is
+**rejected**, that `--sanitize-iris` makes it load with a matching quad count,
+and that a dump whose only defect is a relative IRI is rejected even after
+sanitizing.
+
+```sh
+bash tests/interop/oxigraph.sh        # ~1 min; pulls oxigraph/oxigraph
+```
+
+It is deliberately **not** in `gate.sh`: the gate is the per-change browser
+matrix, and this pulls a third-party image, so it sits in the same opt-in tier
+as the W3C conformance run and has its own CI job (`interop`, on rust changes
+and `workflow_dispatch`). Two things it pins that are easy to get wrong when
+extending it: `oxigraph load` **exits 0 even when it rejects the file**, so
+assert on the quad count in the store rather than on `$?`; and Oxigraph resolves
+N-Triples `UCHAR` escapes while rete stores the token verbatim, so a fixture
+must not contain both spellings of one IRI or the round-trip count silently
+drops by one.
+
 ## Documentation
 
 - Edit Markdown in `docs/*.md`; then run `cargo run -q -p docgen` and commit the

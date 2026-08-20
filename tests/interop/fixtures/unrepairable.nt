@@ -1,0 +1,10 @@
+# The class escaping CANNOT repair: an IRI with no scheme. Resolving it needs a
+# base IRI the .rete never recorded, so `--sanitize-iris` counts it, says so, and
+# writes it verbatim — which means Oxigraph still rejects the dump. The test
+# asserts exactly that, so the sanitizer can never be read as a promise it does
+# not keep.
+#
+# 1 clean + 2 offending statements = 3 quads.
+<http://example.org/ok> <http://example.org/p> "fine" .
+<noscheme/path> <http://example.org/p> "no scheme at all" .
+<http://example.org/ok> <http://example.org/rel> </absolute/path/but/still/relative> .

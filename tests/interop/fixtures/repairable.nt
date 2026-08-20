@@ -1,0 +1,20 @@
+# Every class of invalid IRI that percent-encoding CAN repair, plus clean
+# controls that must survive untouched. Used by tests/interop/oxigraph.sh:
+# unsanitized, Oxigraph must REJECT this graph's N-Quads export; sanitized, it
+# must load it and count the same number of quads.
+#
+# The two Unicode controls sit on DIFFERENT paths on purpose. `é` and a raw
+# `é` are the same IRI to Oxigraph and two different dictionary keys to rete, so
+# putting them on one path would silently merge two quads into one and break the
+# count comparison for a reason that has nothing to do with sanitizing.
+#
+# 4 clean + 5 offending statements = 9 quads.
+<http://example.org/ok> <http://example.org/p> "fine" .
+<http://example.org/ok> <http://example.org/p> <http://example.org/also-fine> .
+<http://example.org/uchar/caf\u00E9> <http://example.org/p> "a UCHAR escape is legal IRIREF syntax" .
+<http://example.org/raw/café> <http://example.org/p> "and so is a raw RFC 3987 ucschar" .
+<http://example.org/a[b]> <http://example.org/p> "bracket in the path" .
+<http://example.org/c#d#e> <http://example.org/p> "a second raw '#'" .
+<http://example.org/%x-template-artifact> <http://example.org/p> "'%' not followed by two hex digits" .
+<http://example.org/a b> <http://example.org/p> "a raw space" .
+<http://example.org/ok> <http://example.org/badObject> <http://example.org/o["1"]> .

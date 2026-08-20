@@ -7,6 +7,55 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **`rete build` counts the invalid IRIs it ingests; `rete export
+  --sanitize-iris` can repair them on the way out (#233).** rete's
+  N-Triples/N-Quads reader stores whatever sits between `<` and the next `>`,
+  and `rete export --format nq` re-emitted it verbatim — so a file we called
+  N-Quads could be one no strict parser accepts. Loading the published
+  `scholar/` dumps into Oxigraph is where that bill arrived: 17,384 offending
+  lines in `epfl-infoscience`, 3,977 in `gotriple`, 466 in `open-pulse`, and —
+  because a bulk loader rejects the **chunk**, not the line —
+  `openaire-2021-datasource` lost an entire ~102,000-line chunk to one IRI with
+  no scheme.
+
+  **Invalid** now has one definition (`rete_core::iri`): the N-Triples `IRIREF`
+  production plus RFC 3987, which that grammar requires the content to satisfy
+  as an *absolute* IRI. Five classes — no scheme; a character `IRIREF` excludes
+  (`#x00`–`#x20`, `#x7F`, ``<>"{}|^`\``); `[`/`]` outside an IP-literal host;
+  more than one `#`; a `%` not followed by two hex digits. Non-ASCII is **not**
+  judged: RFC 3987 `ucschar` is legal, and `\uXXXX` escapes are legal, so both
+  pass through untouched — flagging a valid IRI is the one failure mode a
+  sanitizer must not have.
+
+  **The build warns; it does not refuse.** Datasets that build today, published
+  ones included, must keep building, so the default records a per-class count
+  with an example and carries on — the file is byte-identical to what it was
+  before. `rete build --strict` (and `rete validate --strict`) refuse instead,
+  naming the IRI and the rule. Every build path audits: the streaming one (on
+  its first pass only, so nothing is double-counted), the in-memory one, and the
+  memory-bounded external one.
+
+  **`rete export --sanitize-iris` percent-encodes the repairable classes**, and
+  is off by default because it changes the data: `<http://ex/a[b]>` becomes
+  `<http://ex/a%5Bb%5D>`, which is a different IRI. The dump stops joining
+  against the graph it came from, rete → store → rete stops being the identity,
+  and two IRIs that differed only by escaping collapse into one. That trade is
+  the exporter's to make, so it is a flag, and stderr says per class what was
+  rewritten. An IRI with **no scheme is never rewritten** — escaping cannot
+  repair it — so it is counted, named, and written verbatim, and the summary
+  says the dump is still not valid N-Quads rather than implying a fix it did not
+  make.
+
+  Proven against a real Oxigraph 0.5.9 in Docker (`tests/interop/oxigraph.sh`,
+  CI job `interop`), negative case included: the unsanitized dump of a 9-quad
+  graph is rejected and leaves **0** quads in the store — all nine, including
+  the four good ones — the sanitized dump loads all 9, and a dump whose only
+  defect is a relative IRI is still rejected after sanitizing. `oxigraph load`
+  **exits 0 even when it rejects the file**, so the harness asserts on the quad
+  count, not on `$?`. `docs/interop.md`'s rete → Oxigraph → rete claim was
+  re-run: quad-for-quad identical on clean data (which is what it was written
+  from), and it now records what happens when the data is not clean.
+
 - **The memory-bounded builder builds named graphs (#139)** — `rete build
   --memory-budget-mb` and `rete merge` no longer refuse a `.nq`/TriG input, or a
   shard that carries named graphs. `--collapse-graphs` becomes a modelling
