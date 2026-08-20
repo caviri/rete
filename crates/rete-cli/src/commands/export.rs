@@ -70,9 +70,24 @@ pub(crate) fn canonical_term(term: &str) -> String {
 
 /// `rete export <file> --format <fmt>`: write the graph — or a filtered slice of
 /// it — as N-Quads, Turtle, or JSON-LD.
-pub(crate) fn export(file: &str, format: &str, filter: &ExportFilter) -> anyhow::Result<()> {
+///
+/// `sanitize_iris` percent-encodes IRIs that are outside the N-Triples/N-Quads
+/// `IRIREF` grammar and RFC 3987 (see `rete_core::iri`), so the dump is
+/// something a strict store will actually load. It is **opt-in**: escaping
+/// changes the IRI, so a sanitized dump no longer joins against the file it came
+/// from. What it changed goes to stderr — stdout is the dump.
+pub(crate) fn export(
+    file: &str,
+    format: &str,
+    filter: &ExportFilter,
+    sanitize_iris: bool,
+) -> anyhow::Result<()> {
     let rete = open_local(file)?;
     let (s, p, o) = filter.terms();
+    // One report for the whole dump, so the summary is a single total across
+    // every graph slot. `None` when the flag is off: the terms then take the
+    // zero-cost `Cow::Borrowed` path and the export is byte-identical to before.
+    let mut iris = sanitize_iris.then(rete_core::iri::IriReport::default);
     match format {
         // N-Quads: lossless dump of the selected graph(s).
         // Streamed (dump_filtered_each) so a 100M+ triple file serializes in
@@ -84,11 +99,23 @@ pub(crate) fn export(file: &str, format: &str, filter: &ExportFilter) -> anyhow:
             for slot in filter.slots(&rete) {
                 match &slot {
                     None => rete.dump_filtered_each(None, s, p, o, |s, p, o| {
+                        let (s, p, o) = clean(&mut iris, s, p, o);
                         let _ = writeln!(out, "{s} {p} {o} .");
                     }),
-                    Some(g) => rete.dump_filtered_each(Some(g), s, p, o, |s, p, o| {
-                        let _ = writeln!(out, "{s} {p} {o} {g} .");
-                    }),
+                    Some(g) => {
+                        // The graph term labels every line of this slot, so it
+                        // is sanitized — and therefore counted — ONCE per graph,
+                        // not once per quad. The lookup keeps the original
+                        // token: it is the file's key, not the dump's text.
+                        let label = match iris.as_mut() {
+                            Some(r) => r.sanitize(g).into_owned(),
+                            None => g.clone(),
+                        };
+                        rete.dump_filtered_each(Some(g), s, p, o, |s, p, o| {
+                            let (s, p, o) = clean(&mut iris, s, p, o);
+                            let _ = writeln!(out, "{s} {p} {o} {label} .");
+                        })
+                    }
                 }
             }
             out.flush()?;
@@ -101,7 +128,17 @@ pub(crate) fn export(file: &str, format: &str, filter: &ExportFilter) -> anyhow:
                 None | Some(None) => None,
                 Some(Some(g)) => Some(canonical_graph(&rete, g)),
             };
-            let triples = rete.query_in_graph(g.as_deref(), s, p, o);
+            let mut triples = rete.query_in_graph(g.as_deref(), s, p, o);
+            if let Some(report) = iris.as_mut() {
+                for t in triples.iter_mut() {
+                    let (s, p, o) = (
+                        report.sanitize(&t.0).into_owned(),
+                        report.sanitize(&t.1).into_owned(),
+                        report.sanitize(&t.2).into_owned(),
+                    );
+                    *t = (s, p, o);
+                }
+            }
             if format == "ttl" {
                 print!("{}", export_turtle(&triples));
             } else {
@@ -110,7 +147,30 @@ pub(crate) fn export(file: &str, format: &str, filter: &ExportFilter) -> anyhow:
         }
         other => anyhow::bail!("unknown export format: {other}"),
     }
+    if let Some(report) = iris.as_ref() {
+        crate::commands::iri_report::report_sanitized(report);
+    }
     Ok(())
+}
+
+/// Sanitize one quad's three terms when the flag is on, or hand them straight
+/// back when it is off. Returned as owned `String`s only where a repair
+/// happened; `Cow` keeps the untouched (overwhelming) majority allocation-free.
+fn clean<'a>(
+    report: &mut Option<rete_core::iri::IriReport>,
+    s: &'a str,
+    p: &'a str,
+    o: &'a str,
+) -> (
+    std::borrow::Cow<'a, str>,
+    std::borrow::Cow<'a, str>,
+    std::borrow::Cow<'a, str>,
+) {
+    use std::borrow::Cow;
+    match report.as_mut() {
+        Some(r) => (r.sanitize(s), r.sanitize(p), r.sanitize(o)),
+        None => (Cow::Borrowed(s), Cow::Borrowed(p), Cow::Borrowed(o)),
+    }
 }
 
 /// Serialize a default-graph triple list (canonical N-Triples tokens) to Turtle.

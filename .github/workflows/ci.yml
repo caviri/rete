@@ -47,6 +47,7 @@ jobs:
               - 'deny.toml'
               - 'scripts/release_check.sh'
               - 'scripts/coverage.sh'
+              - 'tests/interop/**'
               - '.devcontainer/**'
               - '.github/workflows/ci.yml'
             wasm:
@@ -126,6 +127,43 @@ jobs:
             -e CARGO_TARGET_DIR=/work/target \
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh quality'
+
+  interop:
+    name: Oxigraph interop
+    # `rete export --format nq` names a grammar. This is the job that checks it
+    # emits one, against a real store rather than our own reader: an unsanitized
+    # export of a graph with invalid IRIs must be REJECTED by `oxigraph load`,
+    # the `--sanitize-iris` export must load with a matching quad count, and a
+    # dump whose only defect is an IRI with no scheme must still be rejected —
+    # so the sanitizer can never be read as a promise it does not keep.
+    #
+    # It pulls a third-party image, so it is NOT in `tests/gate/gate.sh` (the
+    # per-change browser matrix). It runs here on the same trigger as the other
+    # network-bound check, W3C conformance: rust changes and workflow_dispatch.
+    needs: [changes, image]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: Export into a real Oxigraph, both sanitized and not
+        env:
+          # The harness launches the dev container itself; point it at the
+          # pinned image this run already built instead of `docker compose`,
+          # which would rebuild it.
+          RETE_DEV_RUN: >-
+            docker run --rm --user root
+            -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup
+            -e CARGO_TARGET_DIR=/work/target
+            -v ${{ github.workspace }}:/work -w /work ${{ needs.image.outputs.tag }}
+        run: bash tests/interop/oxigraph.sh
 
   msrv:
     name: msrv

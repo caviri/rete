@@ -9,6 +9,11 @@
 //! canonical N-Triples surface (and is deliberately tolerant of IRIs a strict
 //! parser would reject), enough for v0 ingestion. Turtle goes through `oxttl`.
 //!
+//! That tolerance is *measured*, not silent: pass an [`IriAudit`] to any of the
+//! `*_audited` entry points and the parse counts every IRI outside the
+//! N-Triples `IRIREF` grammar / RFC 3987 (see [`crate::iri`]) — or, with
+//! `strict`, refuses the input on the first one. `rete build` always audits.
+//!
 //! Assembly degrades with the build features: without the `compression`
 //! feature (e.g. on wasm) sections are written with the `NONE` codec — larger
 //! files, byte-compatible readers.
@@ -50,6 +55,83 @@ pub enum IngestError {
     /// The input could not be read (streaming builds surface the path here).
     #[error("io: {0}")]
     Io(String),
+    /// An IRI outside the N-Triples/N-Quads `IRIREF` grammar / RFC 3987, refused
+    /// because the caller asked for a strict [`IriAudit`] (`rete build
+    /// --strict`). Without `strict` the same finding is only counted.
+    /// `location` is `line N` for the line-based syntaxes, the format name for
+    /// the others (oxttl reports its own positions).
+    #[error("{location}: invalid IRI {token} — {reason}")]
+    InvalidIri {
+        /// Where it was seen: `line 42`, or the format name.
+        location: String,
+        /// The offending term token, verbatim.
+        token: String,
+        /// Which rule it breaks ([`crate::iri::IriDefect::reason`]).
+        reason: &'static str,
+    },
+}
+
+/// Policy **and** tally for the invalid-IRI check that runs during ingest.
+///
+/// rete's reader is deliberately tolerant of IRIs a strict parser rejects (see
+/// [`crate::iri`]), which is what lets it hold every published dataset — and
+/// also what let three of the `scholar/` exports produce N-Quads Oxigraph
+/// refuses to load. Passing an audit makes the tolerance *visible*: the build
+/// still succeeds and stores exactly what it was given, but it can now say how
+/// much of what it stored is not valid RDF. `strict` turns the same finding into
+/// a refusal, on the first offending statement.
+#[derive(Debug, Default)]
+pub struct IriAudit {
+    /// Fail the parse on the first invalid IRI instead of counting it.
+    pub strict: bool,
+    /// What the parse saw. Constant memory — see [`crate::iri::IriReport`].
+    pub report: crate::iri::IriReport,
+}
+
+impl IriAudit {
+    /// Count invalid IRIs; never fail (`rete build`'s default).
+    pub fn counting() -> Self {
+        Self::default()
+    }
+
+    /// Refuse the input at the first invalid IRI (`rete build --strict`).
+    pub fn refusing() -> Self {
+        Self {
+            strict: true,
+            report: crate::iri::IriReport::default(),
+        }
+    }
+}
+
+/// Run one statement past the audit: record any invalid IRI, and in `strict`
+/// mode turn it into an error naming the offending token. `location` is only
+/// called on the error path, so the common case allocates nothing.
+fn audit_quad<F: FnOnce() -> String>(
+    audit: Option<&mut IriAudit>,
+    s: &str,
+    p: &str,
+    o: &str,
+    g: Option<&str>,
+    location: F,
+) -> Result<(), IngestError> {
+    let Some(a) = audit else { return Ok(()) };
+    let Some(defect) = a.report.observe_quad(s, p, o, g) else {
+        return Ok(());
+    };
+    if !a.strict {
+        return Ok(());
+    }
+    let token = [Some(s), Some(p), Some(o), g]
+        .into_iter()
+        .flatten()
+        .find(|t| crate::iri::term_defect(t).is_some())
+        .unwrap_or("<?>")
+        .to_string();
+    Err(IngestError::InvalidIri {
+        location: location(),
+        token,
+        reason: defect.reason(),
+    })
 }
 
 /// Estimate the statement count of an N-Triples/N-Quads text from its newline
@@ -67,7 +149,11 @@ fn bytecount_newlines(input: &str) -> usize {
 
 /// Parse one N-Quads line into a quad, or `None` for a blank/comment line.
 /// Shared by the whole-text [`parse_quads`] and the streaming [`parse_reader`].
-fn parse_nq_line(raw: &str, lineno: usize) -> Result<Option<RawQuad>, IngestError> {
+fn parse_nq_line(
+    raw: &str,
+    lineno: usize,
+    audit: Option<&mut IriAudit>,
+) -> Result<Option<RawQuad>, IngestError> {
     let line = raw.trim();
     if line.is_empty() || line.starts_with('#') {
         return Ok(None);
@@ -90,11 +176,18 @@ fn parse_nq_line(raw: &str, lineno: usize) -> Result<Option<RawQuad>, IngestErro
         }
         Some(g)
     };
+    audit_quad(audit, &s, &p, &o, graph.as_deref(), || {
+        format!("line {lineno}")
+    })?;
     Ok(Some((s, p, o, graph)))
 }
 
 /// Parse one N-Triples line into a triple, or `None` for a blank/comment line.
-fn parse_nt_line(raw: &str, lineno: usize) -> Result<Option<RawTriple>, IngestError> {
+fn parse_nt_line(
+    raw: &str,
+    lineno: usize,
+    audit: Option<&mut IriAudit>,
+) -> Result<Option<RawTriple>, IngestError> {
     let line = raw.trim();
     if line.is_empty() || line.starts_with('#') {
         return Ok(None);
@@ -110,14 +203,23 @@ fn parse_nt_line(raw: &str, lineno: usize) -> Result<Option<RawTriple>, IngestEr
     if !rest.trim().is_empty() {
         return Err(IngestError::Line(lineno, "trailing content after object"));
     }
+    audit_quad(audit, &s, &p, &o, None, || format!("line {lineno}"))?;
     Ok(Some((s, p, o)))
 }
 
 /// Parse N-Quads text: `subject predicate object [graph] .` per line.
 pub fn parse_quads(input: &str) -> Result<Vec<RawQuad>, IngestError> {
+    parse_quads_audited(input, None)
+}
+
+/// [`parse_quads`] with an optional [`IriAudit`].
+pub fn parse_quads_audited(
+    input: &str,
+    mut audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
     let mut out = Vec::with_capacity(estimate_statements(input));
     for (i, raw) in input.lines().enumerate() {
-        if let Some(q) = parse_nq_line(raw, i + 1)? {
+        if let Some(q) = parse_nq_line(raw, i + 1, audit.as_deref_mut())? {
             out.push(q);
         }
     }
@@ -126,9 +228,17 @@ pub fn parse_quads(input: &str) -> Result<Vec<RawQuad>, IngestError> {
 
 /// Parse N-Triples text into raw term-token triples, skipping blank/comment lines.
 pub fn parse(input: &str) -> Result<Vec<RawTriple>, IngestError> {
+    parse_audited(input, None)
+}
+
+/// [`parse`] with an optional [`IriAudit`].
+pub fn parse_audited(
+    input: &str,
+    mut audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawTriple>, IngestError> {
     let mut out = Vec::with_capacity(estimate_statements(input));
     for (i, raw) in input.lines().enumerate() {
-        if let Some(t) = parse_nt_line(raw, i + 1)? {
+        if let Some(t) = parse_nt_line(raw, i + 1, audit.as_deref_mut())? {
             out.push(t);
         }
     }
@@ -147,8 +257,18 @@ pub fn parse_reader<R: std::io::BufRead>(
     format: &str,
     cap: usize,
 ) -> Result<Vec<RawQuad>, IngestError> {
+    parse_reader_audited(reader, format, cap, None)
+}
+
+/// [`parse_reader`] with an optional [`IriAudit`].
+pub fn parse_reader_audited<R: std::io::BufRead>(
+    reader: R,
+    format: &str,
+    cap: usize,
+    audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
     let mut out = Vec::with_capacity(cap);
-    stream_reader(reader, format, &mut |q| out.push(q))?;
+    stream_reader_audited(reader, format, audit, &mut |q| out.push(q))?;
     Ok(out)
 }
 
@@ -171,15 +291,31 @@ pub fn stream_reader<R: std::io::BufRead>(
     format: &str,
     f: &mut dyn FnMut(RawQuad),
 ) -> Result<(), IngestError> {
+    stream_reader_audited(reader, format, None, f)
+}
+
+/// [`stream_reader`] with an optional [`IriAudit`].
+///
+/// Every syntax is audited, not only the line-based ones. `oxttl`/`oxrdfxml`
+/// validate IRIs themselves and reject an invalid one before it reaches us, so
+/// in practice the Turtle/TriG/RDF-XML tallies stay at zero — but auditing them
+/// too means the count is a property of the *file*, not of which reader happened
+/// to produce it, and a future parser change cannot silently reopen the hole.
+pub fn stream_reader_audited<R: std::io::BufRead>(
+    reader: R,
+    format: &str,
+    mut audit: Option<&mut IriAudit>,
+    f: &mut dyn FnMut(RawQuad),
+) -> Result<(), IngestError> {
     match format {
         "nt" | "nq" => {
             for (i, line) in reader.lines().enumerate() {
                 let line = line.map_err(|e| IngestError::Io(e.to_string()))?;
                 if format == "nq" {
-                    if let Some(q) = parse_nq_line(&line, i + 1)? {
+                    if let Some(q) = parse_nq_line(&line, i + 1, audit.as_deref_mut())? {
                         f(q);
                     }
-                } else if let Some((s, p, o)) = parse_nt_line(&line, i + 1)? {
+                } else if let Some((s, p, o)) = parse_nt_line(&line, i + 1, audit.as_deref_mut())? {
                     f((s, p, o, None));
                 }
             }
@@ -191,12 +327,16 @@ pub fn stream_reader<R: std::io::BufRead>(
                 .for_reader(reader)
             {
                 let t = r.map_err(|e| IngestError::Turtle(e.to_string()))?;
-                f((
+                let q = (
                     t.subject.to_string(),
                     t.predicate.to_string(),
                     t.object.to_string(),
                     None,
-                ));
+                );
+                audit_quad(audit.as_deref_mut(), &q.0, &q.1, &q.2, None, || {
+                    "turtle".into()
+                })?;
+                f(q);
             }
             Ok(())
         }
@@ -206,24 +346,37 @@ pub fn stream_reader<R: std::io::BufRead>(
                 .for_reader(reader)
             {
                 let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
-                f((
+                let q = (
                     q.subject.to_string(),
                     q.predicate.to_string(),
                     q.object.to_string(),
                     graph_token(&q.graph_name),
-                ));
+                );
+                audit_quad(
+                    audit.as_deref_mut(),
+                    &q.0,
+                    &q.1,
+                    &q.2,
+                    q.3.as_deref(),
+                    || "trig".into(),
+                )?;
+                f(q);
             }
             Ok(())
         }
         "rdfxml" => {
             for r in oxrdfxml::RdfXmlParser::new().for_reader(reader) {
                 let t = r.map_err(|e| IngestError::RdfXml(e.to_string()))?;
-                f((
+                let q = (
                     t.subject.to_string(),
                     t.predicate.to_string(),
                     t.object.to_string(),
                     None,
-                ));
+                );
+                audit_quad(audit.as_deref_mut(), &q.0, &q.1, &q.2, None, || {
+                    "rdf/xml".into()
+                })?;
+                f(q);
             }
             Ok(())
         }
@@ -302,23 +455,42 @@ pub fn parse_rdfxml(text: &str) -> Result<Vec<RawTriple>, IngestError> {
 /// Parse one text input by format name (`"nt"`, `"nq"`, `"ttl"`, `"trig"`, or
 /// `"rdfxml"`) into quads (triples land in the default graph).
 pub fn parse_statements(text: &str, format: &str) -> Result<Vec<RawQuad>, IngestError> {
-    match format {
-        "nq" => parse_quads(text),
-        "ttl" => Ok(parse_turtle(text)?
+    parse_statements_audited(text, format, None)
+}
+
+/// [`parse_statements`] with an optional [`IriAudit`]. The line-based syntaxes
+/// audit as they parse (so `strict` fails on the offending line); the others are
+/// audited over the parsed quads, which is where `oxttl` has already had its say.
+pub fn parse_statements_audited(
+    text: &str,
+    format: &str,
+    mut audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
+    let quads = match format {
+        "nq" => return parse_quads_audited(text, audit),
+        "nt" => {
+            return Ok(parse_audited(text, audit)?
+                .into_iter()
+                .map(|(s, p, o)| (s, p, o, None))
+                .collect())
+        }
+        "ttl" => parse_turtle(text)?
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
-            .collect()),
-        "trig" => parse_trig(text),
-        "rdfxml" => Ok(parse_rdfxml(text)?
+            .collect(),
+        "trig" => parse_trig(text)?,
+        "rdfxml" => parse_rdfxml(text)?
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
-            .collect()),
-        "nt" => Ok(parse(text)?
-            .into_iter()
-            .map(|(s, p, o)| (s, p, o, None))
-            .collect()),
-        other => Err(IngestError::UnknownFormat(other.to_string())),
+            .collect(),
+        other => return Err(IngestError::UnknownFormat(other.to_string())),
+    };
+    for (s, p, o, g) in &quads {
+        audit_quad(audit.as_deref_mut(), s, p, o, g.as_deref(), || {
+            format.to_string()
+        })?;
     }
+    Ok(quads)
 }
 
 /// Take one term from the front of `s`, returning `(term, remainder)`.

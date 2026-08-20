@@ -44,6 +44,7 @@ pub mod header;
 pub mod index;
 
 pub mod ingest;
+pub mod iri;
 pub mod manifest;
 #[doc(hidden)]
 pub mod meta;
@@ -211,6 +212,9 @@ pub use header::{
 };
 #[doc(hidden)]
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSet, ScanPlan};
+pub use iri::{
+    iri_content_defect, sanitize_iri_content, sanitize_term, term_defect, IriDefect, IriReport,
+};
 #[doc(hidden)]
 pub use meta::{
     CharSet, ClassNode, ClassRelation, CommunityDescriptor, LabelEntry, LevelLinks, LevelRollup,
