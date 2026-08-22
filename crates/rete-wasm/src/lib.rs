@@ -695,11 +695,14 @@ impl Graph {
     /// file, in the same envelope the remote path returns, so one caller
     /// handles both sources.
     pub fn card_and_build(&self) -> String {
-        let card = self
-            .rete
-            .metadata()
-            .filter(|b| !b.is_empty())
-            .map(|b| b.to_vec());
+        // `Graph` deliberately opens through the lazy owned-memory reader, so
+        // `Rete::metadata()` is empty by contract. Read the card's exact bytes
+        // from that owned image, as `Graph::card` does, instead of silently
+        // treating every browser-built card as absent.
+        let card = rete_core::read_metadata_ranged(self.reader.as_ref())
+            .ok()
+            .flatten()
+            .filter(|bytes| !bytes.is_empty());
         // A resident open already decoded the whole TEXT_INDEX section, so both
         // figures are free here.
         let text_index =
@@ -3803,6 +3806,27 @@ mod owned_graph_tests {
             graph.card().as_deref(),
             Some(r#"{"title":"Resident fixture"}"#)
         );
+    }
+
+    #[test]
+    fn browser_builder_writes_the_requested_card() {
+        let image = build_with_card(
+            "<http://ex/s> <http://ex/p> <http://ex/o> .",
+            "nt",
+            r#"{"title":"Written in a browser","keywords":["b","a"]}"#,
+        )
+        .unwrap();
+        let graph = Graph::new(&image).unwrap();
+        let envelope: serde_json::Value = serde_json::from_str(&graph.card_and_build()).unwrap();
+        let embedded = envelope["card"]
+            .as_str()
+            .expect("resident graph omitted the builder's card");
+        let embedded: serde_json::Value = serde_json::from_str(embedded).unwrap();
+        assert_eq!(embedded["title"], "Written in a browser");
+        assert_eq!(embedded["keywords"], serde_json::json!(["a", "b"]));
+        assert_eq!(embedded["triple_count"], 1);
+        assert_eq!(embedded["quad_count"], 1);
+        assert!(embedded["term_count"].as_u64().is_some());
     }
 }
 
