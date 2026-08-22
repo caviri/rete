@@ -225,20 +225,20 @@ git add -A
 git commit -m "merge: synchronize rust optimization with main"
 ```
 
-- [ ] **Step 3: Rebuild canonical browser artifacts against the merge revision**
+- [x] **Step 3: Rebuild canonical browser artifacts against the merge revision**
 
 ```powershell
 $reteRevision = git rev-parse HEAD
 docker compose run --rm -e RETE_SOURCE_REVISION=$reteRevision wasm
 ```
 
-- [ ] **Step 4: Run the browser regression gate because browser artifacts changed**
+- [x] **Step 4: Run the browser regression gate because browser artifacts changed**
 
 ```powershell
 docker compose run --rm dev bash tests/gate/gate.sh
 ```
 
-- [ ] **Step 5: Commit the reproducible generated artifacts separately**
+- [x] **Step 5: Commit the reproducible generated artifacts separately**
 
 ```powershell
 git add docs web
