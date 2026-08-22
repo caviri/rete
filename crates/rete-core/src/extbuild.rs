@@ -133,6 +133,8 @@ pub enum ExtBuildError {
     Io(#[from] std::io::Error),
     #[error("internal: {0}")]
     Internal(&'static str),
+    #[error("{0} count does not fit this target")]
+    CountOverflow(&'static str),
 }
 
 impl ExtBuildError {
@@ -141,8 +143,41 @@ impl ExtBuildError {
             Self::Ingest(error) => BuildPipelineError::Ingest(error),
             Self::Io(error) => BuildPipelineError::Io(error),
             Self::Internal(message) => BuildPipelineError::InvalidSpool(message),
+            Self::CountOverflow(message) => BuildPipelineError::Overflow(message),
         }
     }
+}
+
+fn pipeline_error_to_ext(error: BuildPipelineError) -> ExtBuildError {
+    match error {
+        BuildPipelineError::Io(error) => ExtBuildError::Io(error),
+        BuildPipelineError::Ingest(error) => ExtBuildError::Ingest(error),
+        BuildPipelineError::InvalidSpool(message) | BuildPipelineError::Overflow(message) => {
+            ExtBuildError::Internal(message)
+        }
+        BuildPipelineError::File(_)
+        | BuildPipelineError::TooManyTerms
+        | BuildPipelineError::NamedGraph(_) => {
+            ExtBuildError::Internal("external spill allocation failed")
+        }
+        #[cfg(test)]
+        BuildPipelineError::InjectedFailure(message) => ExtBuildError::Internal(message),
+    }
+}
+
+fn count_to_usize_with_limit(
+    value: u64,
+    limit: usize,
+    name: &'static str,
+) -> Result<usize, ExtBuildError> {
+    if value > limit as u64 {
+        return Err(ExtBuildError::CountOverflow(name));
+    }
+    usize::try_from(value).map_err(|_| ExtBuildError::CountOverflow(name))
+}
+
+fn count_to_usize(value: u64, name: &'static str) -> Result<usize, ExtBuildError> {
+    count_to_usize_with_limit(value, usize::MAX, name)
 }
 
 /// Bytes charged against the budget per triple of a named graph held resident
@@ -225,8 +260,8 @@ where
 
     // ---- Phase 3: remap chunk triples to global ids --------------------------
     let remaps = std::mem::take(&mut merged.remaps);
-    let global_tri = tmp.path("global.tri");
-    let global_qtri = tmp.path("global.qtri");
+    let global_tri = tmp.path("global.tri")?;
+    let global_qtri = tmp.path("global.qtri")?;
     {
         let mut out = BufWriter::new(File::create(&global_tri)?);
         // The named-quad spill is opened only when the input actually carries
@@ -239,7 +274,7 @@ where
         };
         for (ci, chunk) in chunks.iter().enumerate() {
             let maps = &remaps[ci];
-            let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")))?);
+            let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri"))?)?);
             let mut buf = [0u8; 12];
             loop {
                 match rd.read_exact(&mut buf) {
@@ -257,12 +292,12 @@ where
                 out.write_all(&gp.to_le_bytes())?;
                 out.write_all(&go.to_le_bytes())?;
             }
-            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.tri")));
+            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.tri"))?);
             if chunk.quad_count > 0 {
                 let qout = qout
                     .as_mut()
                     .ok_or(ExtBuildError::Internal("named quads without a spill"))?;
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri")))?);
+                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri"))?)?);
                 let mut buf = [0u8; 16];
                 loop {
                     match rd.read_exact(&mut buf) {
@@ -280,7 +315,7 @@ where
                     qout.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
                 }
             }
-            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.qtri")));
+            let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.qtri"))?);
         }
         out.flush()?;
         if let Some(mut q) = qout {
@@ -363,10 +398,10 @@ where
     // own file. They are equal whenever the input has no duplicates, which is
     // why the gap went unnoticed.
     let mut stats = BuildStats {
-        statements: quad_count as usize,
-        default_triples: default_count as usize,
-        named_graphs: named_graphs as usize,
-        terms: merged.term_count as usize,
+        statements: count_to_usize(quad_count, "statements")?,
+        default_triples: count_to_usize(default_count, "default triples")?,
+        named_graphs: count_to_usize(named_graphs, "named graphs")?,
+        terms: count_to_usize(merged.term_count, "terms")?,
         pyramid_levels: 0,
     };
     let metadata = (opts.metadata)(&stats);
@@ -416,27 +451,23 @@ fn spill_file_bytes(dir: &Path) -> Result<u64, std::io::Error> {
 }
 
 struct TmpDir {
+    temp: BuildTemp,
     dir: PathBuf,
 }
 
 impl TmpDir {
-    fn create(parent: &Path) -> Result<Self, std::io::Error> {
-        // pid + a process-wide counter: two concurrent external builds in the
-        // same process (or parallel tests) must never share a spill directory.
-        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = parent.join(format!(".rete-extbuild-{}-{}", std::process::id(), seq));
-        std::fs::create_dir_all(&dir)?;
-        Ok(TmpDir { dir })
+    fn create(parent: &Path) -> Result<Self, ExtBuildError> {
+        let temp = BuildTemp::new_named(parent, "extbuild").map_err(pipeline_error_to_ext)?;
+        Ok(Self::from_build_temp(temp))
     }
-    fn path(&self, name: &str) -> PathBuf {
-        self.dir.join(name)
-    }
-}
 
-impl Drop for TmpDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+    fn from_build_temp(temp: BuildTemp) -> Self {
+        let dir = temp.root().to_path_buf();
+        Self { temp, dir }
+    }
+
+    fn path(&self, name: &str) -> Result<PathBuf, ExtBuildError> {
+        self.temp.path(name).map_err(pipeline_error_to_ext)
     }
 }
 
@@ -1414,7 +1445,7 @@ fn build_permutation_section(
             if run.len() >= run_len || (eof && !run.is_empty()) {
                 sort_triples(&mut run);
                 run.dedup();
-                let path = tmp.path(&format!("{prefix}{}.run{}", perm.name(), runs.len()));
+                let path = tmp.path(&format!("{prefix}{}.run{}", perm.name(), runs.len()))?;
                 let mut w = BufWriter::with_capacity(1 << 20, File::create(&path)?);
                 for &(a, b, c) in &run {
                     w.write_all(&a.to_le_bytes())?;
@@ -1596,7 +1627,7 @@ fn build_named_graphs(
             if run.len() >= quad_run_len || (eof && !run.is_empty()) {
                 sort_quads(&mut run);
                 run.dedup();
-                let path = tmp.path(&format!("q.run{}", runs.len()));
+                let path = tmp.path(&format!("q.run{}", runs.len()))?;
                 let mut w = BufWriter::with_capacity(1 << 20, File::create(&path)?);
                 for &(g, s, p, o) in &run {
                     w.write_all(&g.to_le_bytes())?;
@@ -1615,7 +1646,7 @@ fn build_named_graphs(
     }
 
     // 2. k-way merge (dedup) → one contiguous run per graph
-    let body_path = tmp.path("named.body");
+    let body_path = tmp.path("named.body")?;
     let mut body = BufWriter::with_capacity(1 << 20, File::create(&body_path)?);
     let mut names = TermFileReader::open(graph_names)?;
     let mut emitted = 0u32;
@@ -1730,7 +1761,7 @@ impl GraphRun {
             return Ok(());
         }
         if self.spill.is_none() {
-            let path = tmp.path(&format!("ng{}.tri", self.graph));
+            let path = tmp.path(&format!("ng{}.tri", self.graph))?;
             let mut w = BufWriter::with_capacity(1 << 20, File::create(&path)?);
             for &(a, b, c) in &self.resident {
                 w.write_all(&a.to_le_bytes())?;
@@ -1859,7 +1890,7 @@ struct StreamingTiler {
 
 impl StreamingTiler {
     fn new(tmp: &TmpDir, name: &str, codec: u8) -> Result<Self, ExtBuildError> {
-        let comp_path = tmp.path(&format!("{name}.tiles"));
+        let comp_path = tmp.path(&format!("{name}.tiles"))?;
         Ok(StreamingTiler {
             tile_budget: INDEX_TILE_BUDGET,
             codec,
@@ -1989,7 +2020,7 @@ impl StreamingTiler {
             .and_then(|n| n.to_str())
             .unwrap_or("perm")
             .to_string();
-        let out_path = tmp.path(&format!("{name}.sec"));
+        let out_path = tmp.path(&format!("{name}.sec"))?;
         let mut out = BufWriter::with_capacity(1 << 20, File::create(&out_path)?);
         let mut head = Vec::new();
         write_uvarint(&mut head, self.dir.len() as u64);
@@ -2287,6 +2318,65 @@ mod tests {
         (bytes, stats)
     }
 
+    #[test]
+    fn external_build_counts_reject_target_width_overflow() {
+        assert_eq!(
+            count_to_usize_with_limit(u32::MAX as u64, u32::MAX as usize, "statements").unwrap(),
+            u32::MAX as usize
+        );
+        assert!(matches!(
+            count_to_usize_with_limit(u32::MAX as u64 + 1, u32::MAX as usize, "statements"),
+            Err(ExtBuildError::CountOverflow("statements"))
+        ));
+    }
+
+    #[test]
+    fn external_tmp_retries_an_occupied_candidate_and_contains_paths() {
+        let parent =
+            std::env::temp_dir().join(format!("rete-extbuild-collision-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir(&parent).unwrap();
+        let occupied = parent.join(format!(".rete-extbuild-{}-41", std::process::id()));
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("marker"), b"owned by somebody else").unwrap();
+
+        let temp =
+            BuildTemp::new_named_with_sequence_for_test(&parent, "extbuild", &[41, 42]).unwrap();
+        let tmp = TmpDir::from_build_temp(temp);
+        assert_ne!(tmp.dir, occupied);
+        assert_eq!(
+            std::fs::read(occupied.join("marker")).unwrap(),
+            b"owned by somebody else"
+        );
+        assert!(tmp.path("../escape").is_err());
+        drop(tmp);
+        assert!(occupied.exists());
+        std::fs::remove_dir_all(&parent).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_tmp_never_follows_an_occupied_symlink_candidate() {
+        use std::os::unix::fs::symlink;
+
+        let parent =
+            std::env::temp_dir().join(format!("rete-extbuild-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir(&parent).unwrap();
+        let outside = parent.join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let occupied = parent.join(format!(".rete-extbuild-{}-51", std::process::id()));
+        symlink(&outside, &occupied).unwrap();
+
+        let temp =
+            BuildTemp::new_named_with_sequence_for_test(&parent, "extbuild", &[51, 52]).unwrap();
+        let tmp = TmpDir::from_build_temp(temp);
+        std::fs::write(tmp.path("scratch").unwrap(), b"safe").unwrap();
+        assert!(!outside.join("scratch").exists());
+        drop(tmp);
+        std::fs::remove_dir_all(&parent).unwrap();
+    }
+
     /// A build-info payload is written as a kind-7 section, readable back, and
     /// leaves the content hash identical to a build without one — the external
     /// builder's version of the outside-the-hash property.
@@ -2414,12 +2504,13 @@ mod tests {
         let statements: u64 = chunks.iter().map(|c| c.triple_count).sum();
         let merged = merge_dictionaries(&tmp, &chunks).unwrap();
 
-        let global_tri = tmp.path("global.tri");
+        let global_tri = tmp.path("global.tri").unwrap();
         {
             let mut w = BufWriter::new(File::create(&global_tri).unwrap());
             for (ci, _c) in chunks.iter().enumerate() {
                 let maps = &merged.remaps[ci];
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri"))).unwrap());
+                let mut rd =
+                    BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")).unwrap()).unwrap());
                 let mut buf = [0u8; 12];
                 while rd.read_exact(&mut buf).is_ok() {
                     let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
@@ -2659,7 +2750,7 @@ mod tests {
             graph_names: None,
             graph_count: 0,
         };
-        let tmp = TmpDir { dir: spill.clone() };
+        let tmp = TmpDir::from_build_temp(BuildTemp::adopt_existing_for_resume(spill.clone()));
         let global_tri = spill.join("global.tri");
         let codec = crate::file::writer_codec();
         // RETE_RESUME_BUDGET_MB (default 16384) sizes the sort runs — resume
@@ -2950,8 +3041,8 @@ mod tests {
         let mut merged = merge_dictionaries(tmp, chunks)?;
         let remaps = std::mem::take(&mut merged.remaps);
         let has_named = chunks.iter().any(|c| c.quad_count > 0);
-        let global_tri = tmp.path("global.tri");
-        let global_qtri = tmp.path("global.qtri");
+        let global_tri = tmp.path("global.tri")?;
+        let global_qtri = tmp.path("global.qtri")?;
         {
             let mut w = BufWriter::new(File::create(&global_tri)?);
             let mut qw = if has_named {
@@ -2961,7 +3052,7 @@ mod tests {
             };
             for (ci, chunk) in chunks.iter().enumerate() {
                 let maps = &remaps[ci];
-                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")))?);
+                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri"))?)?);
                 let mut buf = [0u8; 12];
                 while rd.read_exact(&mut buf).is_ok() {
                     let s = u32::from_le_bytes(buf[0..4].try_into().unwrap());
@@ -2973,7 +3064,7 @@ mod tests {
                 }
                 if chunk.quad_count > 0 {
                     let qw = qw.as_mut().unwrap();
-                    let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri")))?);
+                    let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri"))?)?);
                     let mut buf = [0u8; 16];
                     while rd.read_exact(&mut buf).is_ok() {
                         let g = u32::from_le_bytes(buf[0..4].try_into().unwrap());

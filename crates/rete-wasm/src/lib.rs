@@ -694,24 +694,26 @@ impl Graph {
     /// See [`card_and_build`] — the card and the build record of the resident
     /// file, in the same envelope the remote path returns, so one caller
     /// handles both sources.
-    pub fn card_and_build(&self) -> String {
+    pub fn card_and_build(&self) -> Result<String, JsValue> {
+        self.card_and_build_result().map_err(err)
+    }
+
+    fn card_and_build_result(&self) -> Result<String, rete_core::format::FileError> {
         // `Graph` deliberately opens through the lazy owned-memory reader, so
         // `Rete::metadata()` is empty by contract. Read the card's exact bytes
         // from that owned image, as `Graph::card` does, instead of silently
         // treating every browser-built card as absent.
-        let card = rete_core::read_metadata_ranged(self.reader.as_ref())
-            .ok()
-            .flatten()
+        let card = rete_core::read_metadata_ranged(self.reader.as_ref())?
             .filter(|bytes| !bytes.is_empty());
         // A resident open already decoded the whole TEXT_INDEX section, so both
         // figures are free here.
         let text_index =
             text_index_json(self.rete.header(), self.rete.text_index_token_table_len());
-        card_build_envelope(
+        Ok(card_build_envelope(
             card,
             self.build_info.as_ref().map(|s| s.as_bytes().to_vec()),
             text_index,
-        )
+        ))
     }
 
     /// See [`query_communities`].
@@ -3817,7 +3819,8 @@ mod owned_graph_tests {
         )
         .unwrap();
         let graph = Graph::new(&image).unwrap();
-        let envelope: serde_json::Value = serde_json::from_str(&graph.card_and_build()).unwrap();
+        let envelope: serde_json::Value =
+            serde_json::from_str(&graph.card_and_build().unwrap()).unwrap();
         let embedded = envelope["card"]
             .as_str()
             .expect("resident graph omitted the builder's card");
@@ -3827,6 +3830,34 @@ mod owned_graph_tests {
         assert_eq!(embedded["triple_count"], 1);
         assert_eq!(embedded["quad_count"], 1);
         assert!(embedded["term_count"].as_u64().is_some());
+    }
+
+    #[test]
+    fn resident_card_and_build_reports_corrupt_metadata_ranges() {
+        const CARD: &[u8] = br#"{"title":"Resident fixture"}"#;
+        let triple = ("<http://ex/s>", "<http://ex/p>", "<http://ex/o>");
+        let mut dictionary = rete_core::DictionaryBuilder::new();
+        dictionary.observe(triple.0, triple.1, triple.2);
+        let dictionary = dictionary.build();
+        let mut index = rete_core::GraphIndexBuilder::new();
+        index.push(dictionary.encode(triple.0, triple.1, triple.2).unwrap());
+        let mut image = rete_core::write_dataset_with_metadata(
+            &dictionary,
+            &index.build(),
+            &[],
+            false,
+            &[],
+            0,
+            CARD,
+            &[],
+        );
+        let mut header = rete_core::Header::from_bytes(&image).unwrap();
+        header.metadata_offset = u64::MAX;
+        header.metadata_len = 1;
+        image[..rete_core::HEADER_LEN].copy_from_slice(&header.to_bytes());
+
+        let graph = Graph::new(&image).expect("lazy open must defer the card range");
+        assert!(graph.card_and_build_result().is_err());
     }
 }
 

@@ -27,9 +27,13 @@ struct BuildTempInner {
 
 impl BuildTemp {
     pub(crate) fn new(parent: &Path) -> Result<Self, BuildPipelineError> {
+        Self::new_named(parent, "build")
+    }
+
+    pub(crate) fn new_named(parent: &Path, purpose: &str) -> Result<Self, BuildPipelineError> {
         std::fs::create_dir_all(parent)?;
         let parent = std::fs::canonicalize(parent)?;
-        Self::create_unique(parent, "build")
+        Self::create_unique(parent, purpose)
     }
 
     /// Allocate a separate, owned namespace below this session. The child has
@@ -40,6 +44,16 @@ impl BuildTemp {
     }
 
     fn create_unique(parent: PathBuf, purpose: &str) -> Result<Self, BuildPipelineError> {
+        let candidates =
+            (0..1024).map(|_| TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        Self::create_unique_from_candidates(parent, purpose, candidates)
+    }
+
+    fn create_unique_from_candidates(
+        parent: PathBuf,
+        purpose: &str,
+        candidates: impl IntoIterator<Item = u64>,
+    ) -> Result<Self, BuildPipelineError> {
         if purpose.is_empty()
             || !purpose
                 .bytes()
@@ -49,8 +63,7 @@ impl BuildTemp {
                 "invalid temporary purpose",
             ));
         }
-        for _ in 0..1024 {
-            let seq = TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        for seq in candidates {
             let owned = parent.join(format!(".rete-{purpose}-{}-{seq}", std::process::id()));
             match std::fs::create_dir(&owned) {
                 Ok(()) => {
@@ -69,6 +82,17 @@ impl BuildTemp {
         Err(BuildPipelineError::InvalidSpool(
             "could not allocate a unique temporary directory",
         ))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_named_with_sequence_for_test(
+        parent: &Path,
+        purpose: &str,
+        candidates: &[u64],
+    ) -> Result<Self, BuildPipelineError> {
+        std::fs::create_dir_all(parent)?;
+        let parent = std::fs::canonicalize(parent)?;
+        Self::create_unique_from_candidates(parent, purpose, candidates.iter().copied())
     }
 
     pub(crate) fn path(&self, name: &str) -> Result<PathBuf, BuildPipelineError> {

@@ -131,6 +131,25 @@ function g0() {
     );
   }
   try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/test_url_normalize.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "remote URL normalization and scheme refusal",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? `${verdict.checks} cases` : out.slice(-160),
+    );
+  } catch (e) {
+    record(
+      "G0",
+      "remote URL normalization and scheme refusal",
+      false,
+      String(e.stderr || e.stdout || e).slice(-160),
+    );
+  }
+  try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/check_social_previews.mjs`, {
       encoding: "utf8",
     });

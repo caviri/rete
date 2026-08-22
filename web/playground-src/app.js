@@ -1913,8 +1913,26 @@ self.onmessage = function (e) {
   function normalizeReteUrl(raw) {
     const s = String(raw == null ? "" : raw).trim();
     if (!s) return null;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return /^https?:/i.test(s) ? s : null;
-    return "https://" + s.replace(/^\/+/, "");  // also covers //host/path
+    // A numeric port after a real host is not a URI scheme. Keep this case
+    // ahead of the scheme check, but deliberately require localhost, an IP
+    // literal, or a dotted DNS name so `javascript:80/...` stays a scheme.
+    const hostPort = /^(?:(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z0-9-]+):\d+|\[[0-9a-f:.]+\]:\d+)(?:[/?#]|$)/i;
+    let candidate;
+    if (s.startsWith("//")) candidate = "https:" + s;
+    else if (hostPort.test(s)) candidate = "https://" + s;
+    else if (/^[a-z][a-z0-9+.-]*:/i.test(s)) {
+      if (!/^https?:\/\//i.test(s) || /^https?:\/\/\//i.test(s)) return null;
+      candidate = s;
+    } else {
+      candidate = "https://" + s.replace(/^\/+/, "");
+    }
+    try {
+      const parsed = new URL(candidate);
+      if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname) return null;
+      return parsed.href;
+    } catch (_e) {
+      return null;
+    }
   }
 
   // The file name a remote URL actually points at ("nkod.rete") — the honest
