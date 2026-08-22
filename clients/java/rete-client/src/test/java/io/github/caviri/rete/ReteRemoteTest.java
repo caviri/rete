@@ -119,6 +119,39 @@ class ReteRemoteTest {
         }
     }
 
+    /**
+     * A streaming cursor over HTTP is the same cursor — the transport is the
+     * only difference. One row suspends the scan after a single batch; drained,
+     * it returns every quad.
+     */
+    @Test
+    void remoteCursorStreams() {
+        System.setProperty(Rete.SCAN_BATCH_PROPERTY, "64");
+        try {
+            try (Rete rete = Rete.openRemote(url)) {
+                try (QuadCursor rows = rete.scanCursor(null, null, null)) {
+                    assertTrue(rows.hasNext());
+                    assertEquals("<http://ex/p>", rows.next()[1]);
+                }
+                assertEquals(32, rete.rowsStreamed(), "one row cost more than the first batch");
+                assertEquals(0, rete.openCursorCount());
+            }
+            try (Rete rete = Rete.openRemote(url)) {
+                int n = 0;
+                try (QuadCursor rows = rete.scanCursor(null, null, null)) {
+                    while (rows.hasNext()) {
+                        rows.next();
+                        n++;
+                    }
+                }
+                assertEquals(N, n, "a drained remote cursor must return every quad");
+                assertTrue(rete.bytesFetched() > 0);
+            }
+        } finally {
+            System.clearProperty(Rete.SCAN_BATCH_PROPERTY);
+        }
+    }
+
     /** Minimal HTTP handler that honours {@code Range: bytes=start-end} with 206. */
     private static final class RangeHandler implements HttpHandler {
         private final byte[] data;

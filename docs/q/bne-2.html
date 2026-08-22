@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>BNE authorities that bridge to data.bnf.fr — bne</title>
-<meta name="description" content="The Spanish-to-French bridge: BNE authorities whose owl:sameAs points at a data.bnf.fr id (Alfaro -&gt; data.bnf.fr/10000803, etc.). Runs live in your browser over bne (267 M triples · 3.4 GB) — no server." />
+<meta name="description" content="Answer: 100 rows in 29.1 s. The Spanish-to-French bridge: BNE authorities whose owl:sameAs points at a data.bnf.fr id (Alfaro -&gt; data.bnf.fr/10000803, etc.). Runs live in your browser over bne (267 M triples · 3.4 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/bne-2.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="BNE authorities that bridge to data.bnf.fr — bne" />
-<meta property="og:description" content="The Spanish-to-French bridge: BNE authorities whose owl:sameAs points at a data.bnf.fr id (Alfaro -&gt; data.bnf.fr/10000803, etc.). Runs live in your browser over bne (267 M triples · 3.4 GB) — no server." />
+<meta property="og:description" content="Answer: 100 rows in 29.1 s. The Spanish-to-French bridge: BNE authorities whose owl:sameAs points at a data.bnf.fr id (Alfaro -&gt; data.bnf.fr/10000803, etc.). Runs live in your browser over bne (267 M triples · 3.4 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/bne-2.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/bne-2.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="BNE authorities that bridge to data.bnf.fr — bne" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="BNE authorities that bridge to data.bnf.fr — bne" />
-<meta name="twitter:description" content="The Spanish-to-French bridge: BNE authorities whose owl:sameAs points at a data.bnf.fr id (Alfaro -&gt; data.bnf.fr/10000803, etc.). Runs live in your browser over bne (267 M triples · 3.4 GB) — no server." />
+<meta name="twitter:description" content="Answer: 100 rows in 29.1 s. The Spanish-to-French bridge: BNE authorities whose owl:sameAs points at a data.bnf.fr id (Alfaro -&gt; data.bnf.fr/10000803, etc.). Runs live in your browser over bne (267 M triples · 3.4 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/bne-2.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"BNE authorities that bridge to data.bnf.fr","description":"The Spanish-to-French bridge: BNE authorities whose owl:sameAs points at a data.bnf.fr id (Alfaro -> data.bnf.fr/10000803, etc.). Runs live in your browser over bne (267 M triples · 3.4 GB) — no server.","url":"https://caviri.github.io/rete/q/bne-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"bne","url":"https://caviri.github.io/rete/d/bne.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"BNE authorities that bridge to data.bnf.fr","description":"Answer: 100 rows in 29.1 s. The Spanish-to-French bridge: BNE authorities whose owl:sameAs points at a data.bnf.fr id (Alfaro -> data.bnf.fr/10000803, etc.). Runs live in your browser over bne (267 M triples · 3.4 GB) — no server.","url":"https://caviri.github.io/rete/q/bne-2.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"bne","url":"https://caviri.github.io/rete/d/bne.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,14 +49,13 @@
       <div class="chip">Select</div>
     </div>
     <h1 class="title s1">BNE authorities that bridge to data.bnf.fr</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?name</span> <span class="v">?bnf</span> <span class="kw">WHERE</span> {
-  <span class="v">?p</span> bne:P5001 <span class="v">?name</span> ; owl:sameAs <span class="v">?bnf</span> .
-  <span class="kw">FILTER</span>(STRSTARTS(STR(<span class="v">?bnf</span>), &quot;http://data.bnf.fr/&quot;))
-} <span class="kw">LIMIT</span> 100</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Name</th><th>Bnf</th></tr></thead><tbody><tr><td class="">&#39;Abdu l-Bahà</td><td class="">12110346</td></tr><tr><td class="">&#39;Abdu l-Bahà</td><td class="">16725393</td></tr><tr><td class="">A&#39;Beckett, Gilbert Abbott</td><td class="">16449880</td></tr><tr><td class="">A. C. Bhaktivedanta Swami Pra…</td><td class="">11891897</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🇪🇸</div>
       <div class="key">bne</div>
       <div class="facts"><b>267 M</b> triples · 3.4 GB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">100 rows</div>
+        <div class="sub">203 range requests · 110.5 MB of 3.40 GB read</div>
+        <div class="sub">in 29.1 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -66,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=bne&amp;load=lazy&amp;mode=sparql&amp;ex=2">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">100 rows · 29.1 s · 110.5 MB of 3.40 GB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX owl: &lt;http://www.w3.org/2002/07/owl#&gt;
 PREFIX bne: &lt;https://datos.bne.es/def/&gt;

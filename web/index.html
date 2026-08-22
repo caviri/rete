@@ -136,9 +136,6 @@ SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 50</textarea>
 
   <section>
     <h3 style="margin-top:0">Remote SPARQL <span class="muted">— lazy HTTP-range queries from a Web Worker (no full download)</span></h3>
-    <p class="note">New: <a href="explore-100mb.html"><strong>Wikidata-100MB lazy explorer</strong></a> —
-      query the same graph as a <code>.rete</code> (rete) <em>and</em> as columnar Parquet
-      (DuckDB-WASM), both lazily over HTTP range, side by side.</p>
     <p class="muted">
       Runs SPARQL against a <code>.rete</code> URL fetching only the header, the chunk/tile
       directories, and the dictionary chunks and index tiles the query touches — full scans
@@ -495,7 +492,12 @@ SELECT ?title (COUNT(?citing) AS ?citations) WHERE {
       let fetched = 0, reqs = 0;
       const get = async (o, l) => { fetched += l; reqs++; return range(o, l); };
 
-      const header = await get(0, 128);
+      // rete_core::HEADER_LEN. `header_ranges` calls Header::from_bytes, which
+      // rejects anything shorter outright ("buffer too small: need 1024 bytes"),
+      // so the 128 this used to fetch — the pre-v0.3 header size — failed this
+      // button on every file. Keep in step with HEADER_LEN if the format grows.
+      const HEADER_LEN = 1024;
+      const header = await get(0, HEADER_LEN);
       const r = JSON.parse(header_ranges(header));
       const sparse = new Uint8Array(total);
       sparse.set(header, 0);

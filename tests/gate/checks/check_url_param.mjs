@@ -71,6 +71,61 @@ const main = async () => {
     return page;
   };
 
+  // What the UI may CLAIM to have open for this off-catalog file: its own
+  // file name, or — once the async card read lands — the Dataset Card title
+  // embedded in the fixture (the causal demo file). Anything else means the
+  // page is asserting a different dataset is open than the one that is: the
+  // key fallback used to resolve unknown keys to the FIRST catalog entry, so
+  // an nkod.rete URL sat under a "hugging-face.rete — …" header, and a real
+  // report chased the wrong dataset because of it.
+  const FILE_LABEL = "not-in-the-catalog.rete";
+  const CARD_TITLE = "cardiometabolic causal model (confounders, mediators, colliders, loops)";
+  const claimed = (page) => page.evaluate(() => ({
+    dsName: ((document.getElementById("dsName") || {}).textContent || "").trim(),
+    dsTitle: ((document.getElementById("dsTitle") || {}).textContent || "").trim(),
+    pill: ((document.getElementById("sourcePill") || {}).textContent || "").trim(),
+    // The SOURCES self chip — the THIRD door this bug walked through: the chip
+    // resolved an off-catalog key through the catalog fallback ("scholar.rete")
+    // and kept the kind badge it was painted with BEFORE remote mode was
+    // entered ("IN-MEMORY" for a lazy remote).
+    fedName: ((document.querySelector("#fedChips .fed-self .fed-chip-name") || {}).textContent || "").trim(),
+    fedKind: ((document.querySelector("#fedChips .fed-self .fed-chip-kind") || {}).textContent || "").trim(),
+  }));
+  const assertClaims = async (page, where) => {
+    // The filename label paints synchronously; the card title may replace it
+    // once the worker has read the card. Wait for either accepted value, then
+    // reject everything else — asserting on what the UI claims, not merely
+    // that it did not crash.
+    await page.waitForFunction(
+      ([a, b]) => {
+        const t = ((document.getElementById("dsName") || {}).textContent || "").trim();
+        return t === a || t === b;
+      },
+      [FILE_LABEL, CARD_TITLE],
+      { timeout: 60000 },
+    ).catch(() => { /* fall through to the explicit report below */ });
+    const c = await claimed(page);
+    if (c.dsName !== FILE_LABEL && c.dsName !== CARD_TITLE) {
+      failures.push(`${where}: dataset chip claims "${c.dsName.slice(0, 90)}" for ${FILE_LABEL}`);
+    }
+    if (c.dsTitle !== FILE_LABEL && c.dsTitle !== CARD_TITLE) {
+      failures.push(`${where}: header title claims "${c.dsTitle.slice(0, 90)}" for ${FILE_LABEL}`);
+    }
+    if (c.pill !== "remote (lazy)") {
+      failures.push(`${where}: source pill says "${c.pill}", expected "remote (lazy)"`);
+    }
+    // SOURCES chip: must name the file that is open (or its card title), and
+    // its kind badge must say lazy — the reported wrong pair was
+    // "scholar.rete" + "in-memory" over a lazy off-catalog remote.
+    if (c.fedName !== FILE_LABEL && c.fedName !== CARD_TITLE) {
+      failures.push(`${where}: SOURCES chip claims "${c.fedName.slice(0, 90)}" for ${FILE_LABEL}`);
+    }
+    if (c.fedKind !== "lazy") {
+      failures.push(`${where}: SOURCES chip kind says "${c.fedKind}", expected "lazy"`);
+    }
+    return c;
+  };
+
   // 1. Happy path: the deep link alone opens the off-catalog file and a query
   //    answers from it.
   const page = await open(`#url=${encodeURIComponent(fixtureUrl)}`);
@@ -80,11 +135,32 @@ const main = async () => {
     { timeout: 30000 },
   ).catch(() => failures.push("#url= did not populate the remote URL field"));
 
+  // 1a. The page must name what it actually loaded (chip + header + pill).
+  await assertClaims(page, "#url= open");
+
   await page.waitForFunction(() => window.PlaygroundEditor, { timeout: 60000 });
   await page.evaluate(() => window.PlaygroundEditor.setText("q", "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5"));
   const res = await runWithRetry(page, { steps: 60 });
   if (res.errBlock) failures.push(`query over #url= errored: ${res.errText.slice(0, 160)}`);
   if (res.rows < 1) failures.push(`query over #url= returned ${res.rows} rows (qmeta: ${res.qmeta.slice(0, 60)})`);
+
+  // 1c. Running a query must not relabel the view either.
+  const afterQuery = await assertClaims(page, "after query");
+
+  // 1d. A remote connected BY HAND (Build → advanced → paste a URL → Connect,
+  //     which passes datasetKey = null) used to keep the PREVIOUS dataset's
+  //     name on the chip — same wrong claim, different door.
+  const manual = await open("");
+  const before = await claimed(manual);
+  await manual.evaluate((u) => {
+    document.getElementById("remoteUrl").value = u;
+    document.getElementById("remoteConnect").click();
+  }, fixtureUrl);
+  const manualClaim = await assertClaims(manual, "manual Connect");
+  if (manualClaim.dsName === before.dsName) {
+    failures.push(`manual Connect kept the previous dataset's name: "${before.dsName.slice(0, 90)}"`);
+  }
+  await manual.close();
 
   // 2. Share must round-trip. updateHash() used to emit dataset=<key> for every
   //    view, so sharing an off-catalog remote handed out a link to whatever
@@ -135,8 +211,9 @@ const main = async () => {
   const pass = failures.length === 0;
   console.log(JSON.stringify({
     verdict: pass ? "PASS" : "FAIL",
-    note: "#url= opens an off-catalog .rete; share round-trips; javascript: refused",
+    note: "#url= opens an off-catalog .rete; UI names the actual file (chip/header/pill/SOURCES chip + lazy badge); share round-trips; javascript: refused",
     rows: res.rows,
+    claimedAfterQuery: afterQuery,
     fixture: fixtureUrl,
     failures,
   }, null, 2));

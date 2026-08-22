@@ -4,11 +4,14 @@
 // `pkg-nomodules` build, which exposes a global `wasm_bindgen` carrying the
 // `Graph` / `RemoteGraph` classes (the reduced ESM `web/pkg` build has neither).
 //
-// Two handles cover both ways of opening an archive:
-//   • wasm_bindgen.Graph(bytes)     — a file dropped onto the page.
-//   • wasm_bindgen.RemoteGraph(url) — a file on R2, read lazily over HTTP range.
-// The remote handle reads with synchronous XHR, which browsers permit only
-// inside a worker — the reason this file exists at all.
+// Two handles cover every way of opening an archive:
+//   • wasm_bindgen.Graph(bytes)     — a small file dropped onto the page.
+//   • wasm_bindgen.RemoteGraph(url) — a file on R2, read lazily over HTTP range,
+//     OR a big LOCAL file registered under a `rete-local:` URL and read lazily
+//     with Blob.slice() + FileReaderSync (issue #102). One reader, two
+//     transports: the only difference is where the bytes come from.
+// Both lazy paths read synchronously (sync XHR / FileReaderSync), which browsers
+// permit only inside a worker — the reason this file exists at all.
 //
 // It also reports traffic. `RemoteGraph.stats()` is cumulative, so every reply
 // carries the running byte/request totals: the page can honestly say "you
@@ -49,7 +52,15 @@ self.onmessage = async (e) => {
     await ready;
 
     if (m.type === "open") {
-      remote = m.mode === "remote";
+      if (m.mode === "local-lazy") {
+        if (typeof wasm_bindgen.register_local_file !== "function") {
+          throw new Error("this engine build cannot read a local file lazily (no register_local_file export)");
+        }
+        // Registered per open: bootWorker() replaces the worker (and its wasm
+        // instance) on every archive.
+        wasm_bindgen.register_local_file(m.url, m.file);
+      }
+      remote = m.mode === "remote" || m.mode === "local-lazy";
       graph = remote
         ? new wasm_bindgen.RemoteGraph(m.url)
         : new wasm_bindgen.Graph(new Uint8Array(m.bytes));

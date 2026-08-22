@@ -142,25 +142,64 @@ ASYNC_ENV_JS = """
         }
         async function __reteDoLen(urlPtr, urlLen, outPtr) {
           const url = __reteStr(urlPtr, urlLen);
-          // The FIRST cross-origin request to a cold object can transiently come back
-          // with no readable length (CORS preflight, CDN cold-start) — which is why a
-          // fresh load fails once ("could not determine length") then works on retry.
-          // The sync reader already retries; do the same here (the asyncify path used
-          // to give up after one attempt). HEAD first: Content-Length is the full size
-          // and CORS-safelisted, so it is readable even when the host hides
-          // Content-Range (e.g. Zenodo); fall back to a bytes=0-0 GET's Content-Range
-          // for hosts that reject HEAD (HF signed storage). `!(total > 0)` also treats
-          // a NaN (e.g. Content-Range "bytes 0-0/*") as "keep trying".
+          // No HTTP length signal survives every host (issue #95): a
+          // transparently-compressing host (GitHub Pages) advertises the GZIP
+          // size in HEAD's Content-Length (58 MB for a 71 MB .rete) while range
+          // requests address the identity bytes — and Content-Encoding is not
+          // CORS-safelisted, so JS cannot even see the lie. Content-Range names
+          // the true total but is HIDDEN unless the host opts in via
+          // Access-Control-Expose-Headers (GitHub Pages does not). So read the
+          // file's OWN first KiB — the .rete header, whose section directory
+          // pins the exact length (sections are back-to-back; the file ends
+          // with the 4-byte RETE footer) — and only fall back to the
+          // transport's numbers when the resource is not a .rete. A 206's
+          // Content-Length is NEVER believed (it is the partial body's size).
+          const headerLen = (bytes) => { // max(section offset+len) + 4, or 0
+            if (!bytes || bytes.length < 1024) return 0;
+            if (bytes[0] !== 0x52 || bytes[1] !== 0x45 || bytes[2] !== 0x54 || bytes[3] !== 0x45) return 0; // "RETE"
+            const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            const n = dv.getUint16(44, true);
+            if (64 + n * 24 > 1024) return 0;
+            let end = 1024n;
+            for (let i = 0; i < n; i++) {
+              const off = dv.getBigUint64(64 + i * 24 + 8, true), len = dv.getBigUint64(64 + i * 24 + 16, true);
+              if (len > 0n && off + len > end) end = off + len;
+            }
+            const t = Number(end + 4n);
+            return Number.isSafeInteger(t) ? t : 0;
+          };
+          // The FIRST cross-origin request to a cold object can transiently come
+          // back unreadable (CORS preflight, CDN cold-start), so retry like the
+          // sync reader does.
           let total = 0;
           for (let attempt = 0; attempt < 4 && !(total > 0); attempt++) {
             if (attempt) await new Promise((r) => setTimeout(r, 150 * attempt)); // 150, 300, 450 ms
-            try { const h = await fetch(url, { method: 'HEAD' }); if (h.ok) total = Number(h.headers.get('content-length') || 0); } catch (e) { /* fall back */ }
-            if (!(total > 0)) {
-              try {
-                const r = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-                const cr = r.headers.get('content-range');
-                total = cr ? Number(cr.split('/')[1]) : Number(r.headers.get('content-length') || 0);
-              } catch (e) { /* retry the whole probe */ }
+            try {
+              const r = await fetch(url, { headers: { Range: 'bytes=0-1023' } });
+              const cr = r.status === 206 ? r.headers.get('content-range') : null;
+              const crTotal = cr ? Number(cr.split('/')[1]) : 0; // NaN on "bytes a-b/*" → not > 0
+              if (r.status === 206) {
+                const derived = headerLen(new Uint8Array(await r.arrayBuffer()));
+                if (derived > 0 && crTotal === derived) total = derived; // transport agrees — done
+                else if (derived > 0) {
+                  // Validate against the file itself: its last 4 bytes are the
+                  // RETE footer. One extra 4-byte request, only on hosts whose
+                  // headers are unusable or disagree.
+                  const t = await fetch(url, { headers: { Range: 'bytes=' + (derived - 4) + '-' + (derived - 1) } });
+                  const tb = t.status === 206 ? new Uint8Array(await t.arrayBuffer()) : new Uint8Array(0);
+                  if (tb.length === 4 && tb[0] === 0x52 && tb[1] === 0x45 && tb[2] === 0x54 && tb[3] === 0x45) total = derived;
+                  else if (crTotal > 0) total = crTotal; // truncated .rete on an honest host
+                } else if (crTotal > 0) total = crTotal; // not a .rete header — trust a visible total
+              } else if (r.status === 200) {
+                // Host ignored Range; it cannot serve range reads at all, but a
+                // positive length lets the first read fail with the clearer
+                // 'Range status 200 (host must support HTTP range)' error.
+                total = Number(r.headers.get('content-length') || 0);
+                if (r.body && r.body.cancel) r.body.cancel().catch(() => {});
+              }
+            } catch (e) { /* retry the whole probe */ }
+            if (!(total > 0)) { // last resort: HEAD's CORS-safelisted Content-Length
+              try { const h = await fetch(url, { method: 'HEAD' }); if (h.ok) total = Number(h.headers.get('content-length') || 0); } catch (e) { /* retry */ }
             }
           }
           new DataView(wasm.memory.buffer).setBigUint64(__reteP(outPtr), BigInt(total > 0 ? total : 0), true);
@@ -219,12 +258,18 @@ ASYNC_ENV_JS = """
           try { return getStringFromWasm0(ret[0], ret[1]); }
           finally { wasm.__wbindgen_free(ret[0], ret[1], 1); }
         }
-        exports.reteQueryRemote = function (g, query, format, reasoned) {
+        exports.reteQueryRemote = function (g, query, format, reasoned, unionDefault) {
           return __reteSerial(function () {
             const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len0 = WASM_VECTOR_LEN;
             const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
+            // The union-default-graph toggle routes through query_opts (reason +
+            // union as i32 flags). The plain/reasoned exports stay the proven
+            // path when the toggle is off — same marshal-once, raw-driven shape.
+            if (unionDefault) {
+              return __reteCallRaw(function () { return wasm.remotegraph_query_opts(g.__wbg_ptr, ptr0, len0, ptr1, len1, reasoned ? 1 : 0, 1); }, true);
+            }
             const raw = reasoned ? wasm.remotegraph_query_reasoned : wasm.remotegraph_query;
             return __reteCallRaw(function () { return raw(g.__wbg_ptr, ptr0, len0, ptr1, len1); }, true);
           });
@@ -234,6 +279,17 @@ ASYNC_ENV_JS = """
             const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len0 = WASM_VECTOR_LEN;
             return __reteCallRaw(function () { return wasm.remotegraph_prefix_search(g.__wbg_ptr, ptr0, len0, limit); }, true);
+          });
+        };
+        // Full-text search, same raw shape. text_search_one takes ONE phrase
+        // (the wasm side splits it into AND-ed words) precisely so this stays a
+        // single string in / single string out: marshaling a JS array raw is
+        // what produced the signature-mismatch traps above.
+        exports.reteTextSearchRemote = function (g, phrase, limit) {
+          return __reteSerial(function () {
+            const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            return __reteCallRaw(function () { return wasm.remotegraph_text_search_one(g.__wbg_ptr, ptr0, len0, limit); }, true);
           });
         };
         // RAW-driven generic *_url call (schema_url, check_schema_url, shacl_url,
@@ -296,12 +352,6 @@ SRC = WEB / "playground-src"
 NOMOD = WEB / "pkg-nomodules"
 TEMPLATE = WEB / "playground.template.html"
 OUT = ROOT / "docs" / "playground.html"
-# The Wikidata-100MB lazy explorer: a self-contained static page (inlines the
-# wasm glue + binary; rete worker built from a blob; DuckDB-WASM from CDN).
-# Rendered into both docs/ (the published site) and web/ (local serving, so the
-# index.html link works there too).
-EXPLORE_TEMPLATE = WEB / "explore-100mb.template.html"
-EXPLORE_OUTS = (ROOT / "docs" / "explore-100mb.html", WEB / "explore-100mb.html")
 
 GLUE_JS = NOMOD / "rete_wasm.js"
 WASM = NOMOD / "rete_wasm_bg.wasm"
@@ -463,30 +513,14 @@ def main() -> None:
     print(f"  datasets: {sizes}")
     print(f"  output: {OUT.stat().st_size} bytes")
 
-    # The lazy explorer: inline the same glue + wasm + shared widgets module.
-    if EXPLORE_TEMPLATE.exists():
-        widgets = (SRC / "widgets.js").read_text(encoding="utf-8").rstrip()
-        ex = (
-            EXPLORE_TEMPLATE.read_text(encoding="utf-8")
-            .replace("__GLUE_JS__", glue)
-            .replace("__WASM_B64__", wasm_b64)
-            .replace("__WIDGETS_JS__", widgets)
-        )
-        leftover = [p for p in ("__GLUE_JS__", "__WASM_B64__", "__WIDGETS_JS__") if p in ex]
-        if leftover:
-            die("unreplaced explore placeholder(s): " + ", ".join(leftover))
-        # The COI service worker must sit beside the explorer (same origin) so
-        # the page can register it to gain cross-origin isolation (→ parallel
-        # range reads). Copy it next to each explorer output.
-        coi_src = WEB / "coi-serviceworker.js"
-        coi_text = coi_src.read_text(encoding="utf-8") if coi_src.exists() else None
-        for out in EXPLORE_OUTS:
-            out.write_text(ex, encoding="utf-8")
-            print(f"  explorer: wrote {out} ({out.stat().st_size} bytes)")
-            if coi_text is not None:
-                coi_out = out.parent / "coi-serviceworker.js"
-                coi_out.write_text(coi_text, encoding="utf-8")
-                print(f"  explorer: wrote {coi_out}")
+    # The COI service worker must sit beside the page (same origin) so
+    # `playground.html?parallel=1` can register it to gain cross-origin isolation
+    # (→ parallel range reads). web/ holds the source; docs/ gets the copy.
+    coi_src = WEB / "coi-serviceworker.js"
+    if coi_src.exists():
+        coi_out = OUT.parent / "coi-serviceworker.js"
+        coi_out.write_text(coi_src.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"  coi: wrote {coi_out}")
 
     # The asyncified wasm variant (opt-in "Concurrent reads" toggle): a separate
     # glue + .wasm beside the page, fetched only when the toggle is on (so the

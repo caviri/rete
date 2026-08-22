@@ -14,7 +14,7 @@ hierarchy. There is no flag to remember and nothing extra to host — it travels
 the file's pyramid section and is served over the same range-request transport as
 everything else.
 
-<img src="img/semantic-zoom.svg" alt="A four-band pyramid, narrow abstract level at the top widening to detailed leaf classes at the base. Level 0: Agent ×4. Level 1: Person ×3, Organisation ×1. Level 2: Scientist ×2, Artist ×1, Organisation ×1. Level 3: Astronomer ×2, Artist ×1, Organisation ×1. A footer notes it is read index-free from the pyramid-meta over HTTP.">
+<img src="img/semantic-zoom.svg" alt="A four-level schema pyramid over the six-class subClassOf hierarchy in a small people graph. Level 0 is Agent times 4; level 1 is Person times 3 and Organisation times 1; level 2 is Scientist times 2, Artist times 1 and Organisation times 1; level 3, the leaves, is Astronomer times 2, Artist times 1 and Organisation times 1. Every level re-partitions the same four instances, so the counts conserve, and rete summary --level k reads any one level without touching the triple index. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.">
 
 *Each level is one type histogram. Read top to bottom and the same instances
 resolve from abstract classes into leaves — and the whole stack is fetched
@@ -40,7 +40,7 @@ Three things make this work, and they're really one idea:
   clients fetch *without* the triple index — so it is **index-free and instant**,
   the cheapest tier of the [three-tier exploration model](dataset-cards.md#the-three-tier-exploration-model).
 
-<img src="img/schema-rollup.svg" alt="The subClassOf tree laid out by depth — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — with instance dots at the leaves (ada and edwin are Astronomers, frida an Artist, nasa an Organisation). A panel shows each instance's type rolled up the chain to depth d to form level d's histogram.">
+<img src="img/schema-rollup.svg" alt="How one level of the schema pyramid is built. Six classes hang off a subClassOf chain — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — and the four instances sit at the leaves: ada and edwin are Astronomers, frida an Artist, nasa an Organisation. Rolling each instance's type up to depth d gives level d's histogram: Agent times 4 at depth 0; Person times 3 and Organisation times 1 at depth 1; Scientist times 2, Artist times 1 and Organisation times 1 at depth 2; Astronomer times 2, Artist times 1 and Organisation times 1 at depth 3. Every level totals the same four instances. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.">
 
 *The `subClassOf` chain is the zoom function: instances live at the leaves, and
 rolling their types up to depth `d` produces level `d`'s histogram — `Astronomer`
@@ -151,15 +151,18 @@ This is the selling point. The schema pyramid lives in the pyramid-meta section,
 `summary-url` fetches it **without downloading the file and without touching the
 triple index** — only the header, dictionary, and pyramid:
 
-<img src="img/zoom-fetch.svg" alt="A range client over HTTP draws fetch arrows to three small on-disk sections — HEADER, DICTIONARY, and PYRAMID-META (highlighted) — while the large TRIPLE INDEX section is marked 'never fetched'. Caption: the whole leveled legend in a few KB and 3 range requests; the index stays on the server.">
+<img src="img/zoom-fetch.svg" alt="What rete summary-url pulls over HTTP: three range requests and no more. First the 1024-byte header, whose section directory gives every other section's offset and length; then the dictionary, for the term strings; then the pyramid, section kind 4, which carries every level, the subClassOf DAG and the per-community descriptors. The triple index — the triples themselves, in every permutation — is never requested and stays on the server.">
 
-*A range client pulls only the header, dictionary, and pyramid-meta. The large
-triple index never leaves the server — so the leveled legend costs the same few
-kilobytes whether the file is a megabyte or a gigabyte.*
+*A range client pulls only the header, dictionary and pyramid-meta — three
+ranges, and never the triple index.*
 
-(The transcript above is from a larger published file — hence the bigger counts —
-to show the real at-scale byte cost: the whole leveled legend in **27 KB and 3
-range requests**, with the triple index untouched.)
+What that costs is set by the **dictionary**, not by the size of the graph. The
+pyramid itself scales with the number of classes and stays small — 1.3 MB on the
+published `davidrumsey.rete` — but resolving those class IRIs back to strings
+pulls the dictionary along with it, so the three reads total **17.4 MB of a
+74.8 MB file (23.3 %)**, measured with `rete cost`. On a small file the same
+three reads are tens of kilobytes. Either way the permutation indexes — 56.9 %
+of that file, and the majority of every published one — are never requested.
 
 ```text
 $ rete summary-url https://host/people.rete
@@ -208,7 +211,7 @@ pyramid straight off a URL.
 A real ontology isn't a strict tree. Two things break the "every class sits in
 exactly one branch" assumption, and the schema pyramid keeps **both**:
 
-<img src="img/ontology-graph.svg" alt="Class nodes laid out by depth. Solid blue subClassOf edges form the is-a hierarchy, including Astronaut which has TWO parents (Scientist and Explorer). A dashed green edge shows a lateral 'memberOf' relation from Person to Organisation. A legend distinguishes is-a edges from lateral relation edges.">
+<img src="img/ontology-graph.svg" alt="The shipped class hierarchy is a directed acyclic graph, not a tree. Astronaut has two subClassOf parents — Scientist and Explorer — and both are kept; a single canonical parent only decides its depth. Classes are also joined by lateral, non-is-a relations: Person memberOf Organisation, drawn as a dashed edge to keep it distinguishable without relying on colour. Those lateral relations are rolled up per level too, so at level 1 the pyramid records Person memberOf Organisation and at level 0 the same edge generalises to Agent memberOf Agent — never dropped.">
 
 **1. Non-exclusive `subClassOf` (multiple inheritance).** A class can be a subclass
 of several others — `Astronaut ⊑ Scientist` *and* `Astronaut ⊑ Explorer`. The
@@ -275,7 +278,7 @@ The ontology isn't a sidecar — it is **derived once at build time and written 
 the file's own sections**, where range clients read it without the triple index.
 Three *orthogonal* structures are embedded, each answering a different question:
 
-<img src="img/ontology-embedding.svg" alt="A .rete file's two index-free sections. The METADATA/Dataset Card section holds class_links (the leaf class-relation graph), class/predicate/datatype histograms, and starter queries (read by card-url). The PYRAMID-META section holds the non-exclusive subClassOf DAG, the per-level type histogram, the per-level lateral class-relation graph, and the community super-edges plus descriptors (read by summary-url). A dashed TRIPLE INDEX box is marked 'not needed to read the ontology'.">
+<img src="img/ontology-embedding.svg" alt="Where a .rete file keeps its ontology, on the published davidrumsey.rete — 74.8 MB across 6 sections. The dataset card, section kind 1, holds class_links (the leaf class-to-predicate-to-class graph), the class, predicate and datatype histograms, and the starter queries; rete card-url reads it. The pyramid, section kind 4, holds the subClassOf DAG with each class's parents and depth, the per-level type and relation rollups, and the community super-edges and descriptors; rete summary-url reads it, and it is absent whenever the graph has no rdf:type. The triple index, section kind 3, is never opened to read any of this.">
 
 | Structure | Question it answers | Where it lives | Read by |
 |---|---|---|---|
@@ -296,7 +299,7 @@ A few properties that make the embedding work:
 - **Physically additive (pyramid-meta v2).** The schema block is appended after the
   v1 summary and written **only when the graph has types**, so a typeless file is
   byte-identical to a v1 build and an older reader silently ignores the new bytes.
-  See [the format spec §7.4](SPEC.md#7-4-the-schema-pyramid-semantic-zoom-v2) for
+  See [the format spec §7.4](SPEC.md#74-the-schema-pyramid--semantic-zoom-v2) for
   the exact byte layout.
 - **Provenance.** The `subClassOf` axioms come straight from the data, from a merged
   ontology file, or from `rete build --materialize` (the RDFS/OWL-RL reasoner). The
@@ -325,8 +328,8 @@ drop it (`--no-pyramid`) when you only serve selective queries at scale.**
 - **Publishing a dataset** people will explore cold — the schema pyramid is the
   zoomable legend that tells them what to ask.
 - **A browser/edge client** that should show "the shape of the data" before
-  running a single SPARQL query — render level 0 from a few KB, drill down on
-  demand.
+  running a single SPARQL query — render level 0 without touching the triple
+  index, drill down on demand.
 - **Faceted / drill-down UIs** — wire the levels to a type facet that starts
   abstract and refines as the user narrows.
 
@@ -337,4 +340,4 @@ single flat level); everything else here still applies.
 
 See also: [Dataset Cards](dataset-cards.md) (the self-describing card + starter
 queries that ride the same index-free path), [Reasoning](reasoning.md)
-(`--materialize` to infer `subClassOf`), and [the format spec](SPEC.md#7-the-pyramid-community-summarization).
+(`--materialize` to infer `subClassOf`), and [the format spec](SPEC.md#7-the-pyramid--community-summarization).

@@ -118,17 +118,23 @@ pub extern "C" fn rete_version() -> *mut u8 {
     pack(STATUS_OK, env!("CARGO_PKG_VERSION").as_bytes())
 }
 
-// --- remote (lazy, range-read) support --------------------------------------
+// --- ranged (lazy) support ---------------------------------------------------
 //
-// A remote `.rete` is queried without loading the whole file: the engine's
-// range reads are satisfied by a single host import the runtime supplies. Unlike
-// the browser (which needs Asyncify to fetch), a JVM host function is
-// synchronous — it can do a blocking HTTP Range GET and return — so the sync
-// engine "just works" over it.
+// A `.rete` is queried **without loading the whole file**: the engine's range
+// reads are satisfied by a single host import the runtime supplies, so the file
+// image never enters wasm32 linear memory. Unlike the browser (which needs
+// Asyncify to fetch), a JVM host function is synchronous — it can do a blocking
+// HTTP Range GET *or* a blocking `FileChannel.read` and return — so the sync
+// engine "just works" over either.
+//
+// Nothing below knows or cares where the bytes come from: `rete_host_read_range`
+// is the whole seam, and the host decides whether it is HTTP or a local file.
+// That is why the local-file path needed no new reader here — exactly as the
+// browser's local path is `XhrRangeReader` with a `Blob` under it (PR #200).
 
 #[link(wasm_import_module = "env")]
 extern "C" {
-    /// The host reads `len` bytes at `offset` of the remote resource and writes
+    /// The host reads `len` bytes at `offset` of the backing resource and writes
     /// them to `dest`, returning the number of bytes written (`len` on success;
     /// anything else is treated as a failed read).
     fn rete_host_read_range(offset: u64, len: u32, dest: *mut u8) -> u32;
@@ -179,9 +185,10 @@ fn auto_block(len: u64) -> u64 {
     mult * DEFAULT_BLOCK
 }
 
-/// Open a remote `.rete` of total size `file_len` lazily: a block-caching reader
-/// over the host range backend, faulting only the ranges a query touches.
-fn open_remote(file_len: u64) -> Result<Rete, String> {
+/// Open a `.rete` of total size `file_len` lazily over the host range backend:
+/// a block-caching reader that faults in only the ranges a query touches. The
+/// backend may be HTTP or a local file — this code cannot tell.
+fn open_ranged(file_len: u64) -> Result<Rete, String> {
     let cached = std::sync::Arc::new(BlockCacheReader::new(
         HostRangeReader { total: file_len },
         auto_block(file_len),
@@ -189,7 +196,7 @@ fn open_remote(file_len: u64) -> Result<Rete, String> {
     Rete::open_ranged_lazy(cached).map_err(|e| e.to_string())
 }
 
-/// Turn a partial lazy fetch into an error: a remote op must never return a
+/// Turn a partial lazy fetch into an error: a ranged op must never return a
 /// result computed over silently incomplete data.
 fn guard_complete(rete: &Rete) -> Result<(), String> {
     if rete.index_incomplete() {
@@ -474,12 +481,12 @@ pub unsafe extern "C" fn rete_query(
     }
 }
 
-// --- resident remote handles ------------------------------------------------
+// --- resident ranged handles -------------------------------------------------
 //
-// A remote `.rete` is opened once (`rete_remote_open`) into a resident handle
-// whose block cache stays warm across calls, then queried by id. This is what a
+// A `.rete` is opened once (`rete_ranged_open`) into a resident handle whose
+// block cache stays warm across calls, then queried by id. This is what a
 // consumer that issues many scans — an RDF4J `Sail` evaluating a SPARQL query —
-// needs: re-opening per scan would re-fetch the header/dictionary every time.
+// needs: re-opening per scan would re-read the header/dictionary every time.
 // The engine is single-threaded, so a thread-local registry is sufficient.
 
 thread_local! {
@@ -488,12 +495,16 @@ thread_local! {
     static NEXT_HANDLE: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
 }
 
-/// Open a remote `.rete` of total size `file_len` into a resident handle. The
-/// success payload is the 4-byte LE handle id; close it with
-/// [`rete_handle_close`]. Range reads route through [`rete_host_read_range`].
+/// Open a `.rete` of total size `file_len` into a resident handle, reading it
+/// lazily through [`rete_host_read_range`]. The success payload is the 4-byte LE
+/// handle id; close it with [`rete_handle_close`].
+///
+/// **Source-agnostic**: the host decides what backs the ranges (an HTTP `Range`
+/// GET, a `FileChannel`, a memory-mapped buffer, …). Nothing in this module
+/// distinguishes them.
 #[no_mangle]
-pub extern "C" fn rete_remote_open(file_len: u64) -> *mut u8 {
-    match open_remote(file_len) {
+pub extern "C" fn rete_ranged_open(file_len: u64) -> *mut u8 {
+    match open_ranged(file_len) {
         Ok(rete) => {
             let id = NEXT_HANDLE.with(|n| {
                 let id = n.get();
@@ -507,9 +518,19 @@ pub extern "C" fn rete_remote_open(file_len: u64) -> *mut u8 {
     }
 }
 
-/// Drop a resident remote handle (idempotent).
+/// Former name of [`rete_ranged_open`], kept so a host built against the old
+/// ABI still links. Identical behaviour.
+#[no_mangle]
+pub extern "C" fn rete_remote_open(file_len: u64) -> *mut u8 {
+    rete_ranged_open(file_len)
+}
+
+/// Drop a resident ranged handle (idempotent). Every scan cursor still open on
+/// that handle goes with it — a host that forgot to close one cannot leave a
+/// dangling cursor behind, and a `Rete.close()` is always a full release.
 #[no_mangle]
 pub extern "C" fn rete_handle_close(id: u32) -> *mut u8 {
+    CURSORS.with(|c| c.borrow_mut().retain(|_, cur| cur.handle != id));
     HANDLES.with(|h| h.borrow_mut().remove(&id));
     pack(STATUS_OK, &[])
 }
@@ -518,11 +539,11 @@ pub extern "C" fn rete_handle_close(id: u32) -> *mut u8 {
 fn with_handle<F: FnOnce(&Rete) -> *mut u8>(id: u32, f: F) -> *mut u8 {
     HANDLES.with(|h| match h.borrow().get(&id) {
         Some(rete) => f(rete),
-        None => pack(STATUS_ERR, b"invalid or closed remote handle"),
+        None => pack(STATUS_ERR, b"invalid or closed ranged handle"),
     })
 }
 
-/// Header summary of a remote handle (see [`rete_info`]).
+/// Header summary of a ranged handle (see [`rete_info`]).
 #[no_mangle]
 pub extern "C" fn rete_handle_info(id: u32) -> *mut u8 {
     with_handle(id, |rete| {
@@ -538,7 +559,7 @@ pub extern "C" fn rete_handle_info(id: u32) -> *mut u8 {
     })
 }
 
-/// SPARQL over a remote handle (see [`rete_query`]); refuses incomplete results.
+/// SPARQL over a ranged handle (see [`rete_query`]); refuses incomplete results.
 ///
 /// # Safety
 /// The query pointer/length must describe readable module memory.
@@ -557,7 +578,7 @@ pub unsafe extern "C" fn rete_handle_query(id: u32, q_ptr: *const u8, q_len: u32
     })
 }
 
-/// Named graphs of a remote handle (see [`rete_graphs`]).
+/// Named graphs of a ranged handle (see [`rete_graphs`]).
 #[no_mangle]
 pub extern "C" fn rete_handle_graphs(id: u32) -> *mut u8 {
     with_handle(id, |rete| {
@@ -572,7 +593,7 @@ pub extern "C" fn rete_handle_graphs(id: u32) -> *mut u8 {
     })
 }
 
-/// Graph-scoped triple-pattern scan over a remote handle (see
+/// Graph-scoped triple-pattern scan over a ranged handle (see
 /// [`rete_scan_in_graph`]). Refuses incomplete results.
 ///
 /// # Safety
@@ -615,7 +636,7 @@ pub unsafe extern "C" fn rete_handle_scan_in_graph(
     })
 }
 
-/// All-graphs quad scan over a remote handle (see [`rete_scan_quads`]). Refuses
+/// All-graphs quad scan over a ranged handle (see [`rete_scan_quads`]). Refuses
 /// incomplete results.
 ///
 /// # Safety
@@ -659,4 +680,267 @@ pub unsafe extern "C" fn rete_handle_scan_quads(
         }
         pack(STATUS_OK, &out)
     })
+}
+
+// --- streaming scan cursors --------------------------------------------------
+//
+// `rete_handle_scan_quads` above answers a scan by building the WHOLE result
+// inside linear memory before the host sees a row. For a bounded pattern that is
+// fine; for `(?s ?p ?o)` it is the wall issue #115 is about — RDF4J asks a Sail
+// for exactly that pattern to answer `SELECT ?s ?p ?o … LIMIT 1`, because the
+// LIMIT sits above the triple source and the Sail never sees it. On a
+// 26-million-quad file that meant the engine exhausted wasm32's address space
+// before the first row crossed the boundary.
+//
+// A cursor fixes it: open once, pull bounded batches, close. The state that has
+// to survive between calls is deliberately NOT a suspended Rust iterator (which
+// would have to borrow the `Rete` stored beside it — a self-referential struct
+// whose soundness rests on drop order and on this crate's lazily-faulted caches
+// staying write-once). It is a `u64` resume token plus a graph slot, exactly as
+// `Rete::query_batch` was built to take. So a cursor holds no borrow, an
+// abandoned cursor leaks a few dozen bytes rather than pinning the engine, and
+// closing the handle can drop every cursor on it unconditionally.
+
+/// How many named graphs one `rete_handle_scan_next` may skip past before
+/// returning an empty (non-final) batch. A quads scan visits the default graph
+/// and then every named graph; a file with hundreds of thousands of graphs that
+/// the pattern misses would otherwise make one call run unboundedly long. The
+/// host just calls again.
+const GRAPH_SKIP_BUDGET: usize = 64;
+
+/// A suspended scan over one open handle: the pattern, where in the graph
+/// sequence it is, and the opaque per-graph resume token.
+struct ScanCursor {
+    handle: u32,
+    s: Option<String>,
+    p: Option<String>,
+    o: Option<String>,
+    /// `true` = the quads scan: the default graph, then every named graph.
+    /// `false` = one graph only, named by `graph`.
+    all_graphs: bool,
+    /// Named-graph IRIs, materialized only once the default graph is exhausted —
+    /// a scan that stops in the default graph never walks the graph directory.
+    names: Option<Vec<String>>,
+    /// 0 = default graph; `i` = `names[i - 1]`.
+    slot: usize,
+    /// Single-graph mode's target (`None` = the default graph).
+    graph: Option<String>,
+    cursor: u64,
+    done: bool,
+}
+
+thread_local! {
+    static CURSORS: std::cell::RefCell<std::collections::HashMap<u32, ScanCursor>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static NEXT_CURSOR: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
+}
+
+/// Open a streaming scan over a ranged handle. `all_graphs != 0` scans the
+/// default graph and every named graph, tagging each row with its graph (the
+/// quad scan); otherwise the scan is scoped to `g` — zero-length for the default
+/// graph, a named-graph IRI otherwise.
+///
+/// The success payload is the 4-byte LE cursor id. Pull with
+/// [`rete_handle_scan_next`] until it reports done, and release with
+/// [`rete_handle_scan_close`] — or let [`rete_handle_close`] take it.
+///
+/// # Safety
+/// Every pointer/length pair must describe readable module memory.
+#[allow(clippy::too_many_arguments)]
+#[no_mangle]
+pub unsafe extern "C" fn rete_handle_scan_open(
+    id: u32,
+    s_ptr: *const u8,
+    s_len: u32,
+    p_ptr: *const u8,
+    p_len: u32,
+    o_ptr: *const u8,
+    o_len: u32,
+    g_ptr: *const u8,
+    g_len: u32,
+    all_graphs: u32,
+) -> *mut u8 {
+    let term = |ptr, len| -> Result<Option<String>, std::str::Utf8Error> {
+        if len == 0 {
+            Ok(None)
+        } else {
+            std::str::from_utf8(borrow(ptr, len)).map(|t| Some(t.to_string()))
+        }
+    };
+    let (s, p, o, g) = match (
+        term(s_ptr, s_len),
+        term(p_ptr, p_len),
+        term(o_ptr, o_len),
+        term(g_ptr, g_len),
+    ) {
+        (Ok(s), Ok(p), Ok(o), Ok(g)) => (s, p, o, g),
+        _ => return pack(STATUS_ERR, b"pattern term is not utf-8"),
+    };
+    if !HANDLES.with(|h| h.borrow().contains_key(&id)) {
+        return pack(STATUS_ERR, b"invalid or closed ranged handle");
+    }
+    let cursor = ScanCursor {
+        handle: id,
+        s,
+        p,
+        o,
+        all_graphs: all_graphs != 0,
+        names: None,
+        slot: 0,
+        graph: g,
+        cursor: 0,
+        done: false,
+    };
+    let cid = NEXT_CURSOR.with(|n| {
+        let v = n.get();
+        n.set(v.wrapping_add(1).max(1));
+        v
+    });
+    CURSORS.with(|c| c.borrow_mut().insert(cid, cursor));
+    pack(STATUS_OK, &cid.to_le_bytes())
+}
+
+/// Pull the next batch of at most ~`max_rows` rows from a scan cursor. Payload:
+///
+/// ```text
+/// [count: u32 LE][done: u32 LE] then count × ( 3 × [termLen][term] , [graphLen][graph] )
+/// ```
+///
+/// A zero-length graph field is the default graph. `done != 0` means the scan is
+/// finished and no further call is needed. `max_rows` is a floor — a batch ends
+/// on a group boundary — and a batch may be empty while `done` is 0 (the call
+/// skipped past its budget of empty graphs); the host simply calls again.
+#[no_mangle]
+pub extern "C" fn rete_handle_scan_next(cursor_id: u32, max_rows: u32) -> *mut u8 {
+    let max_rows = (max_rows as usize).max(1);
+    CURSORS.with(|cursors| {
+        let mut cursors = cursors.borrow_mut();
+        let Some(cur) = cursors.get_mut(&cursor_id) else {
+            return pack(STATUS_ERR, b"invalid or closed scan cursor");
+        };
+        HANDLES.with(|handles| {
+            let handles = handles.borrow();
+            let Some(rete) = handles.get(&cur.handle) else {
+                return pack(
+                    STATUS_ERR,
+                    b"the ranged handle this cursor scans was closed",
+                );
+            };
+            match advance(cur, rete, max_rows) {
+                Ok((rows, done)) => {
+                    let mut out = Vec::new();
+                    out.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+                    out.extend_from_slice(&(done as u32).to_le_bytes());
+                    for ((rs, rp, ro), graph) in &rows {
+                        for t in [rs, rp, ro] {
+                            out.extend_from_slice(&(t.len() as u32).to_le_bytes());
+                            out.extend_from_slice(t.as_bytes());
+                        }
+                        let g = graph.as_deref().unwrap_or("");
+                        out.extend_from_slice(&(g.len() as u32).to_le_bytes());
+                        out.extend_from_slice(g.as_bytes());
+                    }
+                    pack(STATUS_OK, &out)
+                }
+                Err(e) => pack(STATUS_ERR, e.as_bytes()),
+            }
+        })
+    })
+}
+
+/// Advance `cur` by one batch, stepping to the next graph when the current one
+/// runs out. Returns the rows (each tagged with its graph) and whether the whole
+/// scan is finished.
+#[allow(clippy::type_complexity)]
+fn advance(
+    cur: &mut ScanCursor,
+    rete: &Rete,
+    max_rows: usize,
+) -> Result<(Vec<((String, String, String), Option<String>)>, bool), String> {
+    let mut skipped = 0usize;
+    loop {
+        if cur.done {
+            return Ok((Vec::new(), true));
+        }
+        // Which graph is this batch in? Slot 0 is always the default graph, so a
+        // scan that finds its rows there never touches the graph directory.
+        let graph: Option<String> = if cur.all_graphs {
+            if cur.slot == 0 {
+                None
+            } else {
+                let names = cur.names.get_or_insert_with(|| {
+                    rete.graph_names().iter().map(|g| g.to_string()).collect()
+                });
+                match names.get(cur.slot - 1) {
+                    Some(name) => Some(name.clone()),
+                    None => {
+                        cur.done = true;
+                        return Ok((Vec::new(), true));
+                    }
+                }
+            }
+        } else {
+            cur.graph.clone()
+        };
+
+        let (rows, next, done) = rete.query_batch(
+            graph.as_deref(),
+            cur.s.as_deref(),
+            cur.p.as_deref(),
+            cur.o.as_deref(),
+            cur.cursor,
+            max_rows,
+        );
+        guard_complete(rete)?;
+
+        if done {
+            // This graph is finished. In quads mode step to the next one.
+            let more = cur.all_graphs && {
+                let names = cur.names.get_or_insert_with(|| {
+                    rete.graph_names().iter().map(|g| g.to_string()).collect()
+                });
+                cur.slot < names.len()
+            };
+            if more {
+                cur.slot += 1;
+                cur.cursor = 0;
+            } else {
+                cur.done = true;
+            }
+        } else {
+            cur.cursor = next;
+        }
+
+        if !rows.is_empty() {
+            let done = cur.done;
+            return Ok((rows.into_iter().map(|t| (t, graph.clone())).collect(), done));
+        }
+        if cur.done {
+            return Ok((Vec::new(), true));
+        }
+        // The graph held nothing for this pattern. Move on — but bound how many
+        // we walk through in a single call so one FFI call stays short.
+        skipped += 1;
+        if skipped >= GRAPH_SKIP_BUDGET {
+            return Ok((Vec::new(), false));
+        }
+    }
+}
+
+/// Release a scan cursor (idempotent — closing an unknown or already-closed id
+/// is a no-op, which is what lets a host reap abandoned cursors without
+/// bookkeeping).
+#[no_mangle]
+pub extern "C" fn rete_handle_scan_close(cursor_id: u32) -> *mut u8 {
+    CURSORS.with(|c| c.borrow_mut().remove(&cursor_id));
+    pack(STATUS_OK, &[])
+}
+
+/// How many scan cursors are currently open (all handles). The host's leak
+/// check: an RDF4J `Sail` that forgets one `close()` per query is a slow leak,
+/// and this is how the tests prove it does not happen.
+#[no_mangle]
+pub extern "C" fn rete_open_cursors() -> *mut u8 {
+    let n = CURSORS.with(|c| c.borrow().len()) as u32;
+    pack(STATUS_OK, &n.to_le_bytes())
 }

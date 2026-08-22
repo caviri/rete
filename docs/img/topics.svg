@@ -1,69 +1,133 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 360" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">From communities to topics: three node communities feed an LDA topic model that produces three human-readable topic cards of keywords</title>
-  <rect width="800" height="360" fill="#ffffff"/>
-  <text x="400" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1b1f24">From communities to topics (LDA)</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 602" role="img" aria-labelledby="t">
+  <title id="t">Three structural communities found by Louvain in the 9-paper examples/papers.nt graph feed an LDA topic model, which returns three topics of keywords: topic 0 is network, neural, improves, query; topic 1 is using, study, model, tree; topic 2 is protein, gene, genome, dna. Assigning each community its dominant topic, communities 0 and 1 both land on topic 0 and community 2 on topic 2, so topic 1 is claimed by no community — with only three documents LDA cannot separate the machine-learning cluster from the database one. Communities come from link topology; topics come from the text on the nodes, and the two only partly agree.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .ann{font-size:13px;fill:var(--muted)}
+    .onchip{fill:var(--on-chip);font-size:13px;font-weight:700}
+    .node{fill:var(--data)}
+    .cold{fill:var(--cold);stroke:var(--line)}
+    .coldtx{fill:var(--coldfg);font-size:13px}
+  </style>
 
   <defs>
-    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/>
+    <marker id="fl" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--muted)"/>
     </marker>
   </defs>
 
-  <!-- Community 1 (accent blue) -->
-  <circle cx="105" cy="92" r="38" fill="#ffffff" stroke="#2a6df4" stroke-width="1.5"/>
-  <g fill="#2a6df4">
-    <circle cx="92" cy="80" r="4"/><circle cx="116" cy="84" r="4"/><circle cx="100" cy="98" r="4"/>
-    <circle cx="118" cy="102" r="4"/><circle cx="88" cy="100" r="4"/>
+  <rect x="1" y="1" width="558" height="600" rx="14" fill="var(--surface)" stroke="var(--line)"/>
+
+  <text class="title" x="26" y="40">From communities to topics (LDA)</text>
+  <text class="deck" x="26" y="62">Louvain finds the clusters; LDA names them from the text on their nodes</text>
+
+  <!-- specimen chip -->
+  <rect x="26" y="76" width="146" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/>
+  <text class="mono body" x="40" y="95" font-weight="700">examples/papers.nt</text>
+  <text class="ann" x="184" y="95">9 papers · 3 citation clusters</text>
+
+  <!-- ============ communities ============ -->
+  <text class="sect" x="26" y="140">communities — structural, from the link topology</text>
+
+  <g fill="var(--panel)" stroke="var(--line)">
+    <circle cx="108" cy="190" r="32"/>
+    <circle cx="280" cy="190" r="32"/>
+    <circle cx="452" cy="190" r="32"/>
   </g>
-  <text x="105" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#2a6df4">community 1</text>
-
-  <!-- Community 2 (navy) -->
-  <circle cx="105" cy="184" r="38" fill="#ffffff" stroke="#0f1620" stroke-width="1.5"/>
-  <g fill="#0f1620">
-    <circle cx="92" cy="172" r="4"/><circle cx="116" cy="176" r="4"/><circle cx="100" cy="190" r="4"/>
-    <circle cx="118" cy="194" r="4"/><circle cx="88" cy="192" r="4"/>
+  <g stroke="var(--line)" stroke-width="1" fill="none">
+    <path d="M94,178 L118,181 M118,181 L104,195 M104,195 L121,198 M94,178 L104,195"/>
+    <path d="M266,178 L290,181 M290,181 L276,195 M276,195 L293,198 M266,178 L276,195"/>
+    <path d="M438,178 L462,181 M462,181 L448,195 M448,195 L465,198 M438,178 L448,195"/>
   </g>
-  <text x="105" y="242" text-anchor="middle" font-size="12" font-weight="700" fill="#0f1620">community 2</text>
-
-  <!-- Community 3 (muted) -->
-  <circle cx="105" cy="276" r="38" fill="#ffffff" stroke="#5b6570" stroke-width="1.5"/>
-  <g fill="#5b6570">
-    <circle cx="92" cy="264" r="4"/><circle cx="116" cy="268" r="4"/><circle cx="100" cy="282" r="4"/>
-    <circle cx="118" cy="286" r="4"/><circle cx="88" cy="284" r="4"/>
+  <g class="node">
+    <circle cx="94" cy="178" r="4.5"/><circle cx="118" cy="181" r="4.5"/><circle cx="104" cy="195" r="4.5"/>
+    <circle cx="121" cy="198" r="4.5"/><circle cx="92" cy="200" r="4.5"/>
+    <circle cx="266" cy="178" r="4.5"/><circle cx="290" cy="181" r="4.5"/><circle cx="276" cy="195" r="4.5"/>
+    <circle cx="293" cy="198" r="4.5"/><circle cx="264" cy="200" r="4.5"/>
+    <circle cx="438" cy="178" r="4.5"/><circle cx="462" cy="181" r="4.5"/><circle cx="448" cy="195" r="4.5"/>
+    <circle cx="465" cy="198" r="4.5"/><circle cx="436" cy="200" r="4.5"/>
   </g>
-  <text x="105" y="334" text-anchor="middle" font-size="12" font-weight="700" fill="#5b6570">community 3</text>
-
-  <!-- LDA box (middle) -->
-  <rect x="320" y="150" width="160" height="60" rx="8" fill="#0f1620"/>
-  <text x="400" y="178" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">LDA</text>
-  <text x="400" y="196" text-anchor="middle" font-size="11.5" fill="#c9d4e0">topic model</text>
-
-  <!-- Topic cards (right) -->
-  <rect x="560" y="62" width="200" height="64" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="576" y="86" font-size="12" font-weight="700" fill="#1b3a8a">topic card 1</text>
-  <text x="576" y="108" font-size="11.5" font-family="ui-monospace,SFMono-Regular,monospace" fill="#3a5a9a">protein, folding, structure</text>
-
-  <rect x="560" y="148" width="200" height="64" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="576" y="172" font-size="12" font-weight="700" fill="#1b3a8a">topic card 2</text>
-  <text x="576" y="194" font-size="11.5" font-family="ui-monospace,SFMono-Regular,monospace" fill="#3a5a9a">climate, carbon, ocean</text>
-
-  <rect x="560" y="234" width="200" height="64" rx="8" fill="#dce8ff" stroke="#2a6df4"/>
-  <text x="576" y="258" font-size="12" font-weight="700" fill="#1b3a8a">topic card 3</text>
-  <text x="576" y="280" font-size="11.5" font-family="ui-monospace,SFMono-Regular,monospace" fill="#3a5a9a">neural, model, training</text>
-
-  <!-- arrows community -> LDA -->
-  <g stroke="#5b6570" stroke-width="1.5" fill="none">
-    <path d="M146,98 C240,120 270,160 314,172" marker-end="url(#a)"/>
-    <path d="M146,184 C230,184 270,182 314,182" marker-end="url(#a)"/>
-    <path d="M146,270 C240,248 270,208 314,192" marker-end="url(#a)"/>
+  <g class="body" font-weight="700" text-anchor="middle">
+    <text x="108" y="240">community 0</text>
+    <text x="280" y="240">community 1</text>
+    <text x="452" y="240">community 2</text>
   </g>
 
-  <!-- arrows LDA -> topic cards -->
-  <g stroke="#5b6570" stroke-width="1.5" fill="none">
-    <path d="M480,168 C516,140 524,110 554,98" marker-end="url(#a)"/>
-    <path d="M480,180 C516,180 524,180 554,180" marker-end="url(#a)"/>
-    <path d="M480,192 C516,222 524,254 554,262" marker-end="url(#a)"/>
+  <!-- into the model -->
+  <g stroke="var(--muted)" stroke-width="1.8" fill="none" marker-end="url(#fl)">
+    <path d="M108,250 L232,272"/>
+    <path d="M280,250 L280,272"/>
+    <path d="M452,250 L328,272"/>
   </g>
+  <rect x="210" y="278" width="140" height="34" rx="7" fill="var(--ink)"/>
+  <text class="body u-onink" x="280" y="300" text-anchor="middle" font-weight="700">LDA · topic model</text>
+  <path d="M280,312 L280,336" stroke="var(--muted)" stroke-width="1.8" fill="none" marker-end="url(#fl)"/>
 
-  <text x="400" y="340" text-anchor="middle" font-size="12.5" fill="#5b6570">Each discovered community gets a human-readable theme from the words on its nodes.</text>
+  <!-- ============ topics ============ -->
+  <text class="sect" x="26" y="362">topics — latent themes in the text on those nodes</text>
+
+  <!-- topic 0 -->
+  <rect x="26" y="374" width="508" height="36" rx="7" fill="var(--panel)" stroke="var(--line)"/>
+  <rect x="40" y="379" width="76" height="26" rx="13" fill="var(--meta)"/>
+  <text class="onchip" x="78" y="397" text-anchor="middle">topic 0</text>
+  <text class="mono body" x="128" y="397">network · neural · improves · query</text>
+  <text class="ann" x="520" y="397" text-anchor="end">communities 0 · 1</text>
+
+  <!-- topic 1 — nothing lands here -->
+  <rect class="cold" x="26" y="418" width="508" height="36" rx="7" stroke-dasharray="5 4"/>
+  <rect class="cold" x="40" y="423" width="76" height="26" rx="13"/>
+  <text class="coldtx" x="78" y="441" text-anchor="middle" font-weight="700">topic 1</text>
+  <text class="mono coldtx" x="128" y="441">using · study · model · tree</text>
+  <text class="coldtx" x="520" y="441" text-anchor="end">no community</text>
+
+  <!-- topic 2 -->
+  <rect x="26" y="462" width="508" height="36" rx="7" fill="var(--panel)" stroke="var(--line)"/>
+  <rect x="40" y="467" width="76" height="26" rx="13" fill="var(--meta)"/>
+  <text class="onchip" x="78" y="485" text-anchor="middle">topic 2</text>
+  <text class="mono body" x="128" y="485">protein · gene · genome · dna</text>
+  <text class="ann" x="520" y="485" text-anchor="end">community 2</text>
+
+  <text class="ann" x="26" y="522">Three topics, two claimed: with only three documents LDA cannot split machine</text>
+  <text class="ann" x="26" y="540">learning from databases. A community is not a topic — the gap is the finding.</text>
+
+  <!-- takeaway -->
+  <rect x="26" y="554" width="508" height="34" rx="12" fill="var(--panel)" stroke="var(--meta)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="mono body u-metaink" x="40" y="576" font-weight="700">rete communities --profile</text>
+  <text class="body" x="228" y="576">the same labels, with no ML at all</text>
 </svg>

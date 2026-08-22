@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Dataset Cards · rete docs</title>
   <meta name="description" content="A Dataset Card is a small, embeddable data-catalog record carried inside a .rete file. It turns an opaque graph blob into a self-describing dataset: who made it, under what license, where it came…" />
@@ -24,12 +24,18 @@
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
-     otherwise prefers-color-scheme decides. */
+     otherwise prefers-color-scheme decides.
+
+     `js-chrome` is set in the same breath, and it is what lets the narrow
+     layout replace the sidebar with the top/bottom bars and the drawer: with
+     JavaScript off the class never lands, the mobile chrome stays inert, and
+     the reader gets the plain stacked sidebar that has always been there. */
   (function () {
     try {
       var t = localStorage.getItem("theme");
       if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
     } catch (e) {}
+    document.documentElement.className += " js-chrome";
   })();
   </script>
   <style>
@@ -215,6 +221,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
 .content h2 { clear:right; }
 
+/* Square figures get a narrower column than landscape ones.
+   `.img-sq` / `.fig-sq` are stamped by docgen from the image's MEASURED
+   aspect ratio — the viewBox of an SVG, the IHDR of a PNG — against
+   SQUARE_MAX_RATIO; nothing here is decided by hand. The reason: at the full
+   column a square is as tall as it is wide, so one picture is an 830-950px
+   wall that pushes every word after it under the fold, while a landscape
+   strip (the byte-layout diagrams, the app screenshots) needs that width to
+   stay legible and is left alone.
+   The cap is 60% of the column, clamped at both ends: never above 560px,
+   which is the width every diagram is DRAWN at, so they render at their
+   intended size instead of being enlarged up to 1.75x; and never below
+   340px, so a narrow desktop window — where the column is small but the
+   sidebar still takes its 250px — gets a readable figure rather than a
+   thumbnail.
+   ONLY above the phone breakpoint. The mobile column is 353px at 390px, and
+   60% of that is 212px of unreadable diagram, so a phone keeps every image
+   full-bleed exactly as before — hence min-width:781px, the complement of the
+   780px query the mobile chrome uses. */
+@media (min-width:781px) {
+  .content img.img-sq { display:block; max-width:clamp(340px, 60%, 560px); margin-left:auto; margin-right:auto; }
+  /* Anchors are inline, so a linked image needs a block box to centre in. */
+  .content a:has(> img.img-sq) { display:block; }
+  /* The FIGURE is capped, not its img, so the caption stays the same width as
+     the picture it captions. `fig-right` is excluded: it is already floated at
+     min(42%, 390px), and this would make it wider, not narrower. */
+  .content figure.fig-sq:not(.fig-right) { max-width:clamp(340px, 60%, 560px); }
+}
+
 .content img { cursor:zoom-in; }
 .lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
 .lightbox.open { display:flex; align-items:center; justify-content:center; }
@@ -253,15 +287,252 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .content { padding-top:2rem; }
   .content h1 { font-size:2.15rem; }
   footer { padding-left:1.15rem; padding-right:1.15rem; }
+  /* Wide tables scroll inside their own box from here down, not just below
+     520px: it keeps the PAGE from scrolling sideways on a tablet, and it is
+     what the swipe handler looks for when deciding whether a horizontal drag
+     belongs to the table under the finger or to the page. */
+  .content table { display:block; overflow-x:auto; }
+  /* A single unbreakable token in INLINE code — `CARGO_UNSTABLE_BUILD_STD=std,
+     panic_abort,…`, `dev/perms/{build_bench.sh,…}` — used to push the document
+     wider than the screen, and a phone's answer to that is to zoom the whole
+     page out: BENCHMARK, SPEC, clients-dev and sparql all rendered 20-30%
+     smaller than they should on a 390px phone because of one token. Let those
+     wrap. Code BLOCKS are untouched — they are `width:max-content` inside a
+     scrollable `pre` and never overflow their line box. */
+  .content code { overflow-wrap:break-word; }
+  .content pre code { overflow-wrap:normal; }
 }
 @media (max-width:520px) {
   .sidebar ul { columns:1; }
-  .content table { display:block; overflow-x:auto; }
   .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior:auto; }
+}
+
+.mbar,.mnav,.mdrawer,.mscrim,.mprog { display:none; }
+
+@media (max-width:780px) {
+  :root { --mbar-h:52px; --mnav-h:56px; }
+
+  /* The sidebar is only retired when the head script has confirmed JavaScript
+     — see the `js-chrome` note there. Without it, nothing below applies and
+     the page keeps the stacked sidebar it has always had. */
+  html.js-chrome .sidebar { display:none; }
+  html.js-chrome body {
+    padding-top:var(--mbar-h);
+    padding-bottom:calc(var(--mnav-h) + env(safe-area-inset-bottom));
+  }
+  html.js-chrome .page {
+    padding-left:max(1.15rem, env(safe-area-inset-left));
+    padding-right:max(1.15rem, env(safe-area-inset-right));
+  }
+  html.js-chrome .content { padding-top:1.4rem; }
+  /* Anchor targets must clear the fixed bar, or every in-page jump lands with
+     its heading hidden underneath it. */
+  html.js-chrome .content h1,
+  html.js-chrome .content h2,
+  html.js-chrome .content h3 { scroll-margin-top:calc(var(--mbar-h) + 12px); }
+  html.drawer-open, html.drawer-open body { overflow:hidden; }
+  /* `hidden` stays the one truth for "closed" — for assistive tech as much
+     as for paint — so it has to outrank the display rules below. */
+  html.js-chrome .mdrawer[hidden],html.js-chrome .mscrim[hidden] { display:none; }
+
+  /* ── reading position ─────────────────────────────────────────────────
+     Two pixels at the very top of the viewport, above the bar in z-order so
+     it survives the bar sliding away. "How much of this is left" is the one
+     piece of state a phone reader cannot see for themselves — the scrollbar
+     that answers it on a desktop does not exist here. */
+  html.js-chrome .mprog {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:901; height:2px;
+    background:transparent; pointer-events:none;
+  }
+  .mprog i { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
+
+  /* ── top bar ──────────────────────────────────────────────────────────
+     Identity (where am I in the site?) plus the two controls worth a
+     permanent tap target. It hides on scroll-down and comes back on
+     scroll-up, so the 52px is only spent when the reader is not reading. */
+  html.js-chrome .mbar {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:900; height:var(--mbar-h);
+    align-items:center; gap:.3rem;
+    padding-left:max(.3rem, env(safe-area-inset-left));
+    padding-right:max(.3rem, env(safe-area-inset-right));
+    background:var(--side); border-bottom:1px solid var(--border); color:var(--side-fg);
+    transition:transform .18s ease;
+  }
+  html.js-chrome .mbar.up { transform:translateY(-100%); }
+  .mbar-btn {
+    flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+    width:42px; height:42px; padding:0; font:inherit; font-size:1.05rem;
+    color:var(--side-fg); background:transparent; border:0; border-radius:9px; cursor:pointer;
+  }
+  .mbar-btn:active { background:rgba(20,125,105,.14); }
+  .mbar-btn:focus-visible,.mnav a:focus-visible,.mnav button:focus-visible,
+  .mdrawer a:focus-visible,.mdrawer button:focus-visible {
+    outline:2px solid var(--accent); outline-offset:-2px;
+  }
+  .mbar-id { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:center; line-height:1.18; }
+  .mbar-sec {
+    font-size:.66rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mbar-sec a { color:var(--iri); text-decoration:none; font-family:Georgia,"Times New Roman",serif; font-size:1.05em; letter-spacing:0; text-transform:none; }
+  .mbar-title {
+    font-size:.92rem; font-weight:700; color:var(--fg);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  /* ── bottom bar ───────────────────────────────────────────────────────
+     Thumb country. Previous / next carry the neighbour's real title (a bare
+     arrow tells you nothing about whether to press it) and the middle opens
+     the drawer — the same control as the top-left one, put where a thumb
+     already is. These two links are also the accessible equivalent of the
+     swipe: the gesture only ever follows them. */
+  html.js-chrome .mnav {
+    display:grid; position:fixed; inset:auto 0 0 0; z-index:900;
+    grid-template-columns:1fr auto 1fr; align-items:stretch;
+    min-height:var(--mnav-h);
+    padding-bottom:env(safe-area-inset-bottom);
+    padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);
+    background:var(--side); border-top:1px solid var(--border);
+    box-shadow:0 -6px 18px rgba(20,40,33,.06);
+  }
+  .mnav-side {
+    display:flex; flex-direction:column; justify-content:center; gap:.1rem;
+    min-width:0; padding:.42rem .6rem; text-decoration:none; color:var(--side-fg);
+  }
+  .mnav-next { align-items:flex-end; text-align:right; }
+  .mnav-side:active { background:rgba(20,125,105,.1); }
+  .mnav-side.is-off { color:var(--muted); opacity:.45; }
+  .mnav-dir {
+    font-size:.6rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mnav-t {
+    font-size:.79rem; font-weight:600; line-height:1.2; max-width:100%;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mnav-toc {
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.1rem;
+    padding:.3rem .7rem; margin:.42rem 0; font:inherit; font-size:.62rem; font-weight:800;
+    letter-spacing:.05em; text-transform:uppercase; cursor:pointer;
+    color:var(--accent-deep); background:var(--panel);
+    border:1px solid var(--border); border-radius:10px;
+  }
+  .mnav-toc:active { background:var(--tint); }
+
+  /* ── the drawer ───────────────────────────────────────────────────────
+     A sheet over the page, not a block above it: the reader asks for it and
+     it goes away again. Two tabs, because the two questions are different —
+     "where am I inside this page" and "what else is there". */
+  html.js-chrome .mscrim {
+    display:block; position:fixed; inset:0; z-index:1050; background:rgba(12,20,17,.5);
+    opacity:0; transition:opacity .2s ease; touch-action:none;
+  }
+  html.js-chrome .mscrim.open { opacity:1; }
+  html.js-chrome .mdrawer {
+    display:flex; position:fixed; inset:0 auto 0 0; z-index:1100;
+    width:min(88vw,390px); flex-direction:column;
+    padding-left:env(safe-area-inset-left);
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--panel); color:var(--fg);
+    border-right:1px solid var(--border); box-shadow:var(--shadow);
+    transform:translateX(-100%); transition:transform .22s ease;
+  }
+  html.js-chrome .mdrawer.open { transform:none; }
+  .mdrawer-head {
+    display:flex; align-items:flex-start; gap:.5rem; flex:0 0 auto;
+    padding:.85rem .5rem .7rem .95rem; border-bottom:1px solid var(--border); background:var(--side);
+  }
+  .mdrawer-who { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:.15rem; }
+  .mdrawer-eyebrow {
+    font-size:.63rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer-title {
+    font-family:Georgia,"Times New Roman",serif; font-size:1.12rem; font-weight:700; line-height:1.2; color:var(--fg);
+  }
+  .mdrawer-x {
+    flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:.1rem;
+    padding:.35rem .5rem; font:inherit; font-size:.58rem; font-weight:800; letter-spacing:.06em;
+    text-transform:uppercase; cursor:pointer;
+    color:var(--side-fg); background:var(--panel); border:1px solid var(--border); border-radius:9px;
+  }
+  .mdrawer-x:active { background:var(--tint); }
+  .mdrawer-tabs { display:flex; flex:0 0 auto; gap:.35rem; padding:.55rem .7rem; border-bottom:1px solid var(--border); }
+  .mdrawer-tabs button {
+    flex:1 1 0; padding:.44rem .5rem; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer;
+    color:var(--muted); background:transparent; border:1px solid var(--border); border-radius:999px;
+  }
+  .mdrawer-tabs button[aria-selected="true"] {
+    color:var(--on-accent); background:var(--accent); border-color:var(--accent);
+  }
+  .mdrawer-body { flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  .mdrawer-panel { padding:.6rem .7rem 1.4rem; }
+  .mdrawer-panel:focus { outline:none; }
+  .mdrawer-empty { color:var(--muted); font-size:.85rem; padding:.5rem .35rem; }
+  /* The panels hold clones of the two lists the page already built — the
+     rail's "on this page" TOC (heading ids and all) and the sidebar's nav —
+     so they can never disagree with them. These rules restyle the clones. */
+  .mdrawer ul { list-style:none; margin:0; padding:0; }
+  .mdrawer li { margin:.05rem 0; }
+  .mdrawer a {
+    display:block; padding:.5rem .6rem; border-left:3px solid transparent; border-radius:0 7px 7px 0;
+    color:var(--fg); text-decoration:none; font-size:.9rem; line-height:1.3;
+  }
+  .mdrawer a:active { background:rgba(20,125,105,.1); }
+  .mdrawer a.active { background:var(--tint); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; }
+  .mdrawer .toc-sub a { padding-left:1.5rem; font-size:.84rem; color:var(--muted); }
+  .mdrawer li.nav-h {
+    margin:1rem 0 .2rem; padding:0 .6rem; font-size:.63rem; font-weight:800;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer li.nav-h:first-child { margin-top:.1rem; }
+  .mdrawer .nav-group summary {
+    display:flex; align-items:center; padding:.5rem .6rem; font-size:.9rem; line-height:1.3;
+    list-style:none; cursor:pointer;
+  }
+  .mdrawer .nav-group summary::-webkit-details-marker { display:none; }
+  .mdrawer .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+  .mdrawer .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+  .mdrawer .nav-group summary a { display:inline; padding:0; border:0; border-radius:0; background:none; font-size:inherit; }
+  .mdrawer .nav-sub { margin:.1rem 0 .3rem .6rem; padding-left:.5rem; border-left:1px solid var(--border); }
+  .mdrawer .nav-sub a { font-size:.82rem; padding:.36rem .6rem; color:var(--muted); }
+
+  /* The page turn: a short slide out before the browser fetches the next
+     document. It is the only motion the gesture adds, and it does not run at
+     all under prefers-reduced-motion. */
+  html.page-out-left main,html.page-out-right main {
+    transition:transform .13s ease-in, opacity .13s ease-in; opacity:.3;
+  }
+  html.page-out-left main { transform:translateX(-7%); }
+  html.page-out-right main { transform:translateX(7%); }
+}
+
+/* Every selector here has to outrank its `html.js-chrome …` counterpart above,
+   or the transitions it is switching off simply stay on. */
+@media (max-width:780px) and (prefers-reduced-motion: reduce) {
+  html.js-chrome .mbar,
+  html.js-chrome .mdrawer,
+  html.js-chrome .mscrim,
+  html.js-chrome .mprog i { transition:none; }
+  html.js-chrome.page-out-left main,
+  html.js-chrome.page-out-right main { transition:none; transform:none; opacity:1; }
 }
 </style>
 </head>
 <body>
+  <div class="mprog" aria-hidden="true"><i id="mprogBar"></i></div>
+  <header class="mbar" id="mbar">
+    <button type="button" class="mbar-btn" id="mbarMenu" aria-controls="mdrawer" aria-expanded="false"
+      aria-label="Contents — this page's sections and every other page">
+      <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <span class="mbar-id">
+      <span class="mbar-sec"><a href="index.html">rete</a> · Publish &amp; share</span>
+      <span class="mbar-title">Dataset Cards</span>
+    </span>
+    <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
+  </header>
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
@@ -331,13 +602,13 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
-    <button type="button" class="theme-toggle" id="themeToggle"
-      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel">System</span></button>
+    <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
+      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel" data-theme-label>System</span></button>
   </nav>
   <main>
     <div class="page">
       <article class="content">
-<h1>Dataset Cards</h1>
+<h1 id="dataset-cards">Dataset Cards</h1>
 <p>A <strong>Dataset Card</strong> is a small, embeddable data-catalog record carried <em>inside</em> a
 <code>.rete</code> file. It turns an opaque graph blob into a <strong>self-describing dataset</strong>:
 who made it, under what license, where it came from — plus an auto-computed
@@ -349,7 +620,7 @@ right after the 1 KB header. Adding a card is <strong>not a format change</stron
 without one is byte-for-byte identical to a pre-card build, and an older reader
 simply ignores the section. The card is folded into the file's <code>blake3</code> content
 hash, so <code>rete verify</code> covers it and it is <strong>tamper-evident</strong>.</p>
-<h2>Building a card</h2>
+<h2 id="building-a-card">Building a card</h2>
 <p>Cards are <strong>opt-in</strong>: a plain <code>rete build</code> writes no card and is unchanged. Pass
 any card flag to embed one. The statistics are derived from the data; the curated
 fields (title, license, …) are yours to supply.</p>
@@ -364,27 +635,57 @@ rete build data.nt -o data.rete \
   --description "Open citations sharded by year" \
   --created 2026-06-08
 </code></pre>
-<p>For the curated fields — including a list of <strong>example queries</strong>, which has no
-flag — supply a small JSON file with <code>--card-file</code>. Explicit flags override
-whatever the file provides:</p>
+<p>For the curated fields — including the <strong>identity and provenance</strong> fields and
+a list of <strong>example queries</strong>, none of which have flags — supply a small JSON
+file with <code>--card-file</code>. Explicit flags override whatever the file provides:</p>
 <pre><code class="language-json">{
   "title": "Citation graph 2021",
   "license": "CC0-1.0",
   "source": "https://example.org/citations",
   "description": "Open citations sharded by year",
+  "version": "2021.2",
+  "creators": [
+    { "name": "Ada Lovelace", "orcid": "https://orcid.org/0000-0002-1825-0097" }
+  ],
+  "publisher": { "name": "EPFL", "ror": "https://ror.org/02s376052" },
+  "canonical_url": "https://data.example.org/citations-2021.rete",
+  "sparql_endpoint": "https://example.org/sparql",
+  "source_date": "2021-12-31",
+  "derived_from": ["https://example.org/dumps/citations-2021.nt"],
+  "doi": "https://doi.org/10.5281/zenodo.0000000",
+  "cite_as": "Lovelace, A. (2021). Citation graph 2021.",
+  "keywords": ["citations", "open science", "scholarly communication"],
+  "theme": ["http://publications.europa.eu/resource/authority/data-theme/TECH"],
   "example_queries": [
     "SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt; ?cited }"
-  ]
+  ],
+  "extra": {
+    "atlas:region": "CH",
+    "internal_id": "DS-2021-042",
+    "review": { "status": "approved", "by": "data-team" }
+  }
 }
 </code></pre>
 <pre><code class="language-sh">rete build data.nt -o data.rete --card-file card.json --title "Override title"
 </code></pre>
 <p>Any of <code>--card</code>, <code>--card-file</code>, <code>--title</code>, <code>--license</code>, <code>--source</code>,
 <code>--description</code>, or <code>--created</code> opts the build into writing a card.</p>
-<h2>What's in a card</h2>
+<p><code>description</code> is <strong>Markdown</strong> and may run to several paragraphs with headings
+and lists — see <a href="#the-description-markdown-not-html">The description</a> for what
+is supported, why raw HTML is not, and how to write one without hand-escaping
+newlines.</p>
+<h2 id="whats-in-a-card">What's in a card</h2>
 <table><thead><tr><th>Field</th><th>Source</th><th>Meaning</th></tr></thead><tbody>
-<tr><td><code>title</code>, <code>description</code>, <code>license</code>, <code>source</code>, <code>created</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>Free-text catalog metadata. Omitted fields are absent from the JSON.</td></tr>
+<tr><td><code>title</code>, <code>license</code>, <code>source</code>, <code>created</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>Free-text catalog metadata. Omitted fields are absent from the JSON.</td></tr>
+<tr><td><code>description</code></td><td><strong>curated</strong> (flags / <code>--card-file</code>)</td><td>The dataset's abstract, read as <strong>Markdown</strong> — headings, lists, links, code. Raw HTML is escaped, never rendered. May be written as an array of lines. Capped at 8 KiB. See <a href="#the-description-markdown-not-html">The description</a>.</td></tr>
+<tr><td><code>version</code>, <code>doi</code>, <code>cite_as</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>The publisher's <strong>dataset version</strong> (a date or semver — Croissant requires one; distinct from <code>format_version</code> and from the build-info <code>builder</code>, see <a href="#one-card-three-versions">One card, three versions</a>), DOI IRI, preferred citation.</td></tr>
+<tr><td><code>creators</code>, <code>publisher</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>People (<code>{name, orcid}</code>) and organisation (<code>{name, ror}</code>). ORCID/ROR as <strong>IRIs, not strings</strong> — this project publishes both authority graphs, so "which datasets did this person build?" becomes a federated join, not a text search.</td></tr>
+<tr><td><code>canonical_url</code>, <code>sparql_endpoint</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Where the authoritative copy of this file lives (<code>void:dataDump</code>) and a public endpoint (<code>void:sparqlEndpoint</code>). A <code>.rete</code> found on a disk can then say where to verify against.</td></tr>
+<tr><td><code>source_date</code>, <code>derived_from</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>The source data's own snapshot date (distinct from <code>created</code> and from the build timestamp), and what this file was derived from (<code>prov:wasDerivedFrom</code>) — dumps, endpoints, or the shards a <code>rete merge</code> folded in.</td></tr>
+<tr><td><code>keywords</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Free-text tags (<code>dcat:keyword</code> / <code>schema:keywords</code> in the projections). Canonicalized at build time — trimmed, sorted, de-duplicated (<code>dcat:keyword</code> is an unordered repeated property, so sorting loses nothing and keeps the content hash independent of authoring order); a keyword that is empty after trimming fails the build.</td></tr>
+<tr><td><code>theme</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td><strong>IRIs into a controlled vocabulary</strong> (<code>dcat:theme</code>), e.g. the <a href="http://publications.europa.eu/resource/authority/data-theme">EU data themes</a>. IRIs are required — a free-text theme is a keyword by another name and is rejected with a pointer at <code>keywords</code>; the agreed concept scheme is the whole value <code>dcat:theme</code> adds. <a href="#where-to-get-theme-iris">Where to get one</a>. Canonicalized like <code>keywords</code>. (There is deliberately <strong>no curated language field</strong>: in RDF the language rides on every literal, so the card <em>measures</em> it — see the <code>languages</code> row below and <a href="#first-class-field-or-the-bag-the-rule">the rule</a>.)</td></tr>
 <tr><td><code>example_queries</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Sample queries a consumer can run.</td></tr>
+<tr><td><code>extra</code></td><td><strong>curated</strong> (<code>--card-file</code> only)</td><td>Publisher-defined <strong>custom fields</strong> — one bounded bag, see <a href="#custom-fields-the-extra-bag">Custom fields</a>.</td></tr>
 <tr><td><code>triple_count</code></td><td>derived</td><td>Triples in the <strong>default graph</strong>.</td></tr>
 <tr><td><code>quad_count</code>, <code>named_graph_count</code></td><td>derived</td><td>Total statements and number of named graphs.</td></tr>
 <tr><td><code>term_count</code></td><td>derived</td><td>Distinct dictionary terms.</td></tr>
@@ -396,9 +697,12 @@ whatever the file provides:</p>
 <tr><td><code>class_links</code></td><td>derived</td><td>The <strong>effective schema</strong>: <code>(s_class, predicate, o_class, count)</code> rows — the class-to-class quotient (same as <code>rete schema</code> / <code>schema_summary</code>, with <code>(literal)</code>/<code>(untyped)</code> sentinels).</td></tr>
 <tr><td><code>top_hubs</code>, <code>in_hubs</code></td><td>derived</td><td>Top subjects by out-degree and top non-literal objects by in-degree.</td></tr>
 <tr><td><code>signals</code></td><td>derived</td><td>Detected <strong>affordances</strong>: <code>label_predicate</code>, <code>base_iri</code>, <code>default_lang</code>, ranked <code>time_predicates</code> / <code>numeric_predicates</code>, present <code>link_predicates</code>, <code>geo_wkt</code> / <code>geo_latlong</code>, <code>temporal_extent</code>, <code>spatial_bbox</code> (CRS84 lon/lat).</td></tr>
+<tr><td><code>signals.text_index</code></td><td><strong>measured</strong></td><td>Whether the file carries a <strong>full-text (TEXT_INDEX) section</strong> — <code>{present, bytes, token_table_bytes}</code>. Derived from the file's <em>sections</em> rather than its triples, and never written into the file. See <a href="#the-full-text-signal-measured-not-stored">The full-text signal</a>.</td></tr>
+<tr><td><code>signals.permutations</code></td><td><strong>measured</strong></td><td>Which <strong>index permutations</strong> the file stores — <code>{count, names, merge_join}</code>. Also derived, from the header's permutation mask, and also never written. See <a href="#the-permutation-signal-measured-not-stored">The permutation signal</a>.</td></tr>
 <tr><td><code>queries</code></td><td>derived</td><td>The auto-generated, <strong>tiered starter-query library</strong> (see below).</td></tr>
 <tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial).</td></tr>
-<tr><td><code>format_version</code></td><td>derived</td><td>The <code>.rete</code> format version the card was written against.</td></tr>
+<tr><td><code>top_n</code></td><td>derived</td><td>The cap the profile lists were derived under — the number <code>truncated</code> was hinting at without stating.</td></tr>
+<tr><td><code>format_version</code></td><td>derived</td><td>The <code>.rete</code> <strong>spec version</strong> the card was written against — the format's version, not the dataset's.</td></tr>
 </tbody></table>
 <p>The per-predicate and per-class statistics are computed over the <strong>default
 graph</strong> (named-graph contents are summarized only by <code>quad_count</code> /
@@ -407,7 +711,521 @@ list is <strong>capped</strong> and <strong>deterministically ordered</strong> (
 broken lexically), so building the same input twice yields a <strong>byte-identical</strong>
 card — the card folds into a reproducible content hash. Counts are over the raw
 (pre-dedup) multiset, matching <code>rete progressive</code>.</p>
-<h2>The three-tier exploration model</h2>
+<h3 id="the-full-text-signal-measured-not-stored">The full-text signal: measured, not stored</h3>
+<p>A <code>.rete</code> carries an optional <strong>TEXT_INDEX section</strong> (kind <code>6</code>, <a href="SPEC.html#63-full-text-index-text_index-section-optional">SPEC §6.3</a>),
+opt-in via <code>rete build --text-index</code> / <code>rete repyramid --text-index</code>. A file
+that has one answers <code>FILTER(CONTAINS(…))</code> by word lookup; a file that does not
+answers <strong>the same query with the same rows</strong> by full scan. The capability is
+therefore invisible from the results — which is exactly how the playground
+catalog came to advertise an index for two published datasets whose files never
+carried one, and to ship the catalog's largest index (1.88 GB, 29% of
+<code>causenet-full-typed.rete</code>) without telling anyone.</p>
+<p>So the card states it, in both directions:</p>
+<pre><code class="language-json">"signals": { "text_index": { "present": true, "bytes": 1879287762, "token_table_bytes": 193295361 } }
+"signals": { "text_index": { "present": false } }
+</code></pre>
+<p>(Those are the real figures for the published <code>causenet-full-typed.rete</code>, read
+by <code>rete card-url</code> in <strong>43,671 bytes across 3 range requests</strong> — the 1 KiB
+header, the 42,637-byte card, and a 10-byte probe — against a 6.39 GB file.)</p>
+<table><thead><tr><th>value</th><th>means</th></tr></thead><tbody>
+<tr><td><code>{"present": true, …}</code></td><td>measured — the file has a kind-6 section</td></tr>
+<tr><td><code>{"present": false}</code></td><td>measured — it has none</td></tr>
+<tr><td><strong>field absent</strong></td><td><strong>unknown</strong> — nobody measured (a card read out of a saved JSON document, with no file behind it). Never read this as "no index".</td></tr>
+</tbody></table>
+<p><strong>It is measured by the reader, not written by the builder.</strong> Every other
+derived field is computed once at build time and stored; this one is not stored
+at all. Three reasons:</p>
+<ol>
+<li><strong>The ground truth is already in the bytes every card read fetches.</strong> The
+section directory lives in the 1 KiB header, and <code>rete card</code> parses it for
+the content hash anyway. A stored copy would be a second source of truth for
+a question the first source answers for free — the same reasoning that keeps
+a curated <code>language</code> field out of the card (see
+<a href="#first-class-field-or-the-bag-the-rule">the rule</a>).</li>
+<li><strong>A stored flag can outlive the section it describes.</strong> <code>rete repyramid --text-index</code> rewrites a file's sections; <code>rete repyramid</code> without <code>--card</code>
+drops the card entirely. A measured signal simply becomes true, and is right
+for a file with no card at all — where <code>rete card</code> prints
+<code>(no dataset card — TEXT_INDEX present — …)</code> rather than nothing.</li>
+<li><strong>No re-card.</strong> Every already-published <code>.rete</code> reports it today. A stamped
+field would have reached the catalog only after each file was rebuilt.</li>
+</ol>
+<p><strong>Why byte counts and not a token count.</strong> <code>bytes</code> is the whole section — worth
+stating because it can dominate a download (1.88 GB, 29% of
+<code>causenet-full-typed.rete</code>). <code>token_table_bytes</code> is its leading token table,
+which is what a <em>first search</em> actually fetches; the postings blob behind it is
+read one posting at a time and never whole. On that same file the two differ by
+<strong>9.7×</strong> (1.88 GB against 193 MB), so quoting <code>bytes</code> alone would badly
+overstate the price of pressing Search — which is why the playground's full-text
+panel already shows both. The <strong>number of indexed tokens</strong> is deliberately
+absent: it is the first varint of the <em>decompressed</em> token table, so reporting
+it would mean fetching and inflating all 193 MB — not a card-tier fact.
+<code>token_table_bytes</code> answers the same question for one ≤10-byte range read.</p>
+<p><code>rete card-audit</code> reports the measured signal for any <code>.rete</code>, local or remote,
+and flags a card whose own bytes disagree with the file's sections. Given a card
+<em>document</em> it reports <code>unknown</code> — there is nothing to measure.</p>
+<h3 id="the-permutation-signal-measured-not-stored">The permutation signal: measured, not stored</h3>
+<p>A <code>.rete</code> stores its triples in six orders of <code>(s, p, o)</code> by default —
+<code>SPO, POS, OSP, SOP, PSO, OPS</code>. <code>rete build --permutations 3</code> keeps only the
+first three. The first three decide <strong>routing</strong>: they tie the longest bound
+prefix on all eight triple-pattern shapes, so a three-permutation file answers
+every query with the same rows, fetched from the same tiles. The other three
+exist to hand a <strong>sort-merge join</strong> two streams already sorted on the join key;
+without them the planner declines the merge seed and hash-joins instead.</p>
+<p>So, exactly like a missing full-text index, the difference <strong>cannot be seen in
+any result</strong> — and it is not small: measured on two datasets built both ways,
+<code>SOP + PSO + OPS</code> are <strong>36.8%</strong> of <code>davidrumsey</code> (58.7 MB → 37.1 MB) and
+<strong>50.5%</strong> of <code>tree-city-inventory</code> (19.4 MB → 9.6 MB).</p>
+<pre><code class="language-json">"signals": { "permutations": { "count": 6, "names": ["SPO","POS","OSP","SOP","PSO","OPS"], "merge_join": true } }
+"signals": { "permutations": { "count": 3, "names": ["SPO","POS","OSP"], "merge_join": false } }
+</code></pre>
+<table><thead><tr><th>value</th><th>means</th></tr></thead><tbody>
+<tr><td><code>{"count": 6, "merge_join": true, …}</code></td><td>measured — the file carries the merge-join orders</td></tr>
+<tr><td><code>{"count": 3, "merge_join": false, …}</code></td><td>measured — it carries only the routing three</td></tr>
+<tr><td><strong>field absent</strong></td><td><strong>unknown</strong> — nobody measured (a card read out of a saved JSON document). Never read this as "six".</td></tr>
+</tbody></table>
+<p><strong>Measured, never stored</strong>, for the same three reasons as <code>text_index</code> — and one
+that is sharper here. Which permutations a file carries is a fact about <em>its own
+bytes</em>, sitting in the 1 KiB header (byte 50; <code>0</code> means all six, which is why
+every file written before the mask existed reports six today, with no re-card).
+A stored copy would be an <strong>authored claim about the file's own layout</strong> — the
+single class of statement a file can always check for itself, for free. The
+measurement costs <strong>no range read at all</strong>: the header is already in hand.</p>
+<p><code>names</code> is written out rather than implied by <code>count</code> because the mask is a set,
+and a future build may keep a different three.</p>
+<p>Beyond the card, <code>rete info</code> and <code>rete stats</code> report it directly, so a file with
+no card still answers the question.</p>
+<h3 id="where-to-get-theme-iris">Where to get <code>theme</code> IRIs</h3>
+<p><code>theme</code> rejects free text, which is only helpful if you know where an IRI
+comes from. Pick a <strong>published concept scheme</strong> and copy the concept's IRI —
+every example below resolves as printed:</p>
+<table><thead><tr><th>Vocabulary</th><th>Example IRI</th><th>Good for</th></tr></thead><tbody>
+<tr><td><strong>EU Data Themes</strong></td><td><code>http://publications.europa.eu/resource/authority/data-theme/GOVE</code> (<em>Government and public sector</em>)</td><td>The DCAT-AP controlled list — <strong>the default answer</strong> for government and open-data portals. 13 themes, labelled in 27 languages.</td></tr>
+<tr><td><strong>EuroVoc</strong></td><td><code>http://eurovoc.europa.eu/1460</code> (<em>EU financial instrument</em>)</td><td>EU policy and legal subject headings, when the data-theme list is too coarse.</td></tr>
+<tr><td><strong>Wikidata</strong></td><td><code>https://www.wikidata.org/entity/Q413</code> (<em>physics</em>)</td><td><strong>Anything with no domain vocabulary.</strong> Stable IRIs that are never reassigned, labels in hundreds of languages (282 on that one concept), and cross-links into most of the vocabularies below — so a Wikidata theme stays joinable even when a consumer speaks a different scheme.</td></tr>
+<tr><td><strong>LCSH</strong></td><td><code>https://id.loc.gov/authorities/subjects/sh85101653</code> (<em>Physics</em>)</td><td>Library-style subject headings; what bibliographic consumers already index.</td></tr>
+<tr><td><strong>UNESCO Thesaurus</strong></td><td><code>http://vocabularies.unesco.org/thesaurus/concept197</code> (<em>Environmental management</em>)</td><td>Education, science, culture, communication.</td></tr>
+<tr><td><strong>AGROVOC</strong></td><td><code>http://aims.fao.org/aos/agrovoc/c_12332</code> (<em>maize</em>)</td><td>Agriculture, fisheries, food, environment.</td></tr>
+<tr><td><strong>MeSH</strong></td><td><code>http://id.nlm.nih.gov/mesh/D009369</code> (<em>Neoplasms</em>)</td><td>Biomedical and clinical topics.</td></tr>
+<tr><td><strong>OBO Foundry</strong></td><td><code>http://purl.obolibrary.org/obo/GO_0008150</code> (<em>biological_process</em>)</td><td>Life sciences. The playground catalog already carries graphs built on OBO IRIs (<code>chebi-full</code> is the complete ChEBI ontology; <code>chemotion</code> merges CHMO and RXNO), so an OBO theme is joinable against a graph you can actually query.</td></tr>
+<tr><td><strong>GeoNames</strong></td><td><code>https://sws.geonames.org/3077311/</code> (<em>Czechia</em>)</td><td>When the dataset's subject is really a <strong>place</strong>.</td></tr>
+</tbody></table>
+<p><strong>How to choose:</strong></p>
+<ol>
+<li><strong>Prefer the vocabulary your consumers already harvest.</strong> DCAT-AP requires a
+theme from the EU Data Themes list, so a concept from a different scheme —
+however precise — does not satisfy a portal that checks for one. Matching
+your audience beats picking the most exact concept. (A national open-data
+catalog is the clean case: <code>…/data-theme/GOVE</code>, plus anything else you like
+alongside it.)</li>
+<li><strong>Then the obvious domain vocabulary</strong>, if your dataset has one (AGROVOC for
+a crop census, MeSH for a clinical corpus).</li>
+<li><strong>Otherwise Wikidata</strong>, which has a concept for essentially any topic. It is
+the honest fallback, not a defeat.</li>
+<li><strong>Use several</strong> when the dataset genuinely spans several — <code>theme</code> is a
+<strong>list</strong>, and mixing schemes is fine (one EU data theme <em>and</em> a Wikidata
+concept is a common, useful pairing). Entries are sorted and de-duplicated
+at build time.</li>
+</ol>
+<p><code>theme</code> is for concepts a scheme has agreed on; everything else you would like
+a reader to search by belongs in <code>keywords</code>, which takes free text precisely so
+you are never tempted to invent an IRI. <strong>Never mint a theme IRI yourself</strong> — a
+plausible-looking IRI in a scheme's namespace that resolves to nothing is worse
+than no theme at all.</p>
+<h3 id="one-card-three-versions">One card, three versions</h3>
+<p>A <code>.rete</code> file carries three different versions, each with its own owner. They
+answer different questions and are never merged:</p>
+<table><thead><tr><th>field</th><th>owner</th><th>answers</th><th>example</th></tr></thead><tbody>
+<tr><td><code>version</code> (card, curated)</td><td>the <strong>publisher</strong></td><td>which release of the <em>data</em> is this?</td><td><code>2021.2</code></td></tr>
+<tr><td><code>format_version</code> (card, derived)</td><td>the <strong>spec</strong></td><td>which <code>.rete</code> format does the file conform to?</td><td><code>5</code></td></tr>
+<tr><td><code>builder</code> (build-info)</td><td>the <strong>tool</strong></td><td>which binary wrote the file?</td><td><code>rete-cli 0.3.2</code></td></tr>
+</tbody></table>
+<p><code>version</code> is yours: set it in the card file, bump it when the dataset changes.
+<code>format_version</code> is stamped by the builder and changes only when the format
+does. <code>builder</code> lives in the unhashed build-info section because it is a fact
+about one build, not about the data.</p>
+<h2 id="the-description-markdown-not-html">The description: Markdown, not HTML</h2>
+<p><code>description</code> is the one curated field long enough to want structure, so it is
+read as <strong>Markdown</strong>. The card viewer renders headings, lists, links and code;
+every other surface reduces the same text to one readable line.</p>
+<pre><code class="language-json">{
+  "description": [
+    "The complete Wikidata class ontology — no instances.",
+    "",
+    "## What's inside",
+    "",
+    "- **4,420,121 classes** — every `wdt:P279` subject or object",
+    "- the **5.1M-edge** subclass hierarchy",
+    "- per-class direct-instance counts",
+    "",
+    "See [the build notes](https://example.org/notes) for how it was derived."
+  ]
+}
+</code></pre>
+<h3 id="supported">Supported</h3>
+<table><thead><tr><th>Construct</th><th>Written as</th></tr></thead><tbody>
+<tr><td>Headings</td><td><code># One</code> … <code>###### Six</code> — rendered <strong>shifted down</strong>, so a card never emits an <code>&lt;h1&gt;</code>; the viewer's own title owns that level</td></tr>
+<tr><td>Bulleted lists</td><td><code>- item</code>, <code>* item</code>, <code>+ item</code> — <strong>nested by indentation</strong></td></tr>
+<tr><td>Numbered lists</td><td><code>1. item</code>, <code>1) item</code> — nested the same way</td></tr>
+<tr><td>Block quotes</td><td><code>&gt; quoted</code> (every line carries the <code>&gt;</code>; a quote's body is Markdown too)</td></tr>
+<tr><td>Horizontal rules</td><td><code>---</code>, <code>***</code>, <code>___</code></td></tr>
+<tr><td>Fenced code</td><td><code>```</code> … <code>```</code></td></tr>
+<tr><td>Links</td><td><code>[text](https://example.org)</code> — <code>http(s)</code> and <code>mailto:</code> only</td></tr>
+<tr><td>Emphasis / code</td><td><code>**bold**</code>, <code>*italic*</code>, <code>`code`</code></td></tr>
+</tbody></table>
+<p>Deliberately <strong>not</strong> supported: tables (a card's tabular data belongs in the
+graph — and the viewer already draws its own tables from the derived profile),
+reference-style links, images, and footnotes. Every construct is more parser
+for less description.</p>
+<h3 id="raw-html-is-not-supported--and-that-is-the-point">Raw HTML is not supported — and that is the point</h3>
+<p>HTML in a description is <strong>escaped, not rendered</strong>: <code>&lt;b&gt;x&lt;/b&gt;</code> shows up as the
+five characters <code>&lt;b&gt;x&lt;/b&gt;</code>, and a <code>&lt;script&gt;</code> shows up as text.</p>
+<p>This is a deliberate refusal, not a missing feature. A card is <strong>third-party
+data</strong> — it arrives inside a file that someone else published, on a page that
+also holds the reader's own local files. Honouring raw HTML would mean any
+publisher could put a <code>&lt;script&gt;</code> (or an <code>onerror=</code> on an <code>&lt;img&gt;</code>) into a
+description and have it execute in every reader's browser, on every open,
+simply because the reader clicked 🏷 Card. That is not a formatting feature; it
+is remote code execution with extra steps.</p>
+<p>Markdown gives the headings, bullets and links with none of that: the renderer
+escapes every character of the source, and the only tags in the output are the
+ones <strong>it</strong> chose. <code>javascript:</code> links degrade to visible text. The playground's
+gate pins both halves — that the formatting appears, and that a description
+carrying a <code>&lt;script&gt;</code>, an <code>&lt;img onerror=&gt;</code> and a <code>javascript:</code> link creates no
+element and executes nothing.</p>
+<p>The same reasoning already governs the card's JSON view, which tokenizes the
+raw bytes and escapes every token precisely so a <code>&lt;</code> inside a description
+cannot become an element.</p>
+<h3 id="writing-a-multi-line-description">Writing a multi-line description</h3>
+<p>A JSON string can only carry line breaks as <code>\n</code> escapes, which is miserable to
+write by hand and worse to review. Three ways out, in the order they are worth
+reaching for:</p>
+<ol>
+<li><strong>An array of lines in <code>--card-file</code></strong> (shown above). <code>rete build</code> joins them
+with newlines. It is input sugar only — the card always stores one string, so
+<code>rete card --json</code> output feeds straight back into <code>--card-file</code>.</li>
+<li><strong>The shell, for <code>--description</code></strong>: <code>--description "$(cat description.md)"</code>
+keeps the Markdown in its own file, where an editor can help.</li>
+<li><strong>The playground's Build panel</strong>: the <em>Description</em> box is a textarea, so
+Markdown typed into it works as typed — the JSON mirror beside it inserts the
+<code>\n</code> escapes for you. The JSON editor accepts the array shape too.</li>
+</ol>
+<p>A literal <code>"description": "line one\nline two"</code> is of course still valid, and
+still what the file stores.</p>
+<h3 id="how-long-may-it-be">How long may it be?</h3>
+<p>Up to <strong>8 KiB</strong> of UTF-8 — the same budget as the <a href="#custom-fields-the-extra-bag"><code>extra</code> bag</a>,
+for the same reason: both ride in the metadata section that every CARD-tier
+reader fetches on every open. For scale, the longest description on the
+published catalog is 813 bytes; 8 KiB is roughly 1,300 words of Markdown.</p>
+<p>Over the cap, the <strong>build fails loudly</strong> rather than truncating — the text is
+authored, it folds into the content hash, and a silent cut would ship a card
+that no longer says what the publisher wrote. A description is the dataset's
+<strong>abstract</strong>, not its documentation: link the long form from <code>source</code> /
+<code>canonical_url</code>, or put it in the graph.</p>
+<p>Readers never validate any of this. A card written oversized by some other tool
+still opens — the cap is a write-time rule, like every other card rule.</p>
+<h3 id="where-a-description-is-shown">Where a description is shown</h3>
+<p>Only the <strong>🏷 Card viewer</strong> renders blocks; it is a scrollable panel with room
+for them. Every other surface has room for one line, so it shows the same text
+with its block markers removed (<code>## Heading</code> becomes <code>Heading</code>, <code>- item</code>
+becomes <code>• item</code>) rather than leaking raw markers into a paragraph:</p>
+<table><thead><tr><th>Surface</th><th>Shows</th></tr></thead><tbody>
+<tr><td>🏷 Card modal</td><td>the full Markdown, rendered</td></tr>
+<tr><td>Dataset sidebar / picker blurb</td><td>one flattened stream, inline markup kept</td></tr>
+<tr><td>Dataset header tagline</td><td>the first sentence, plain text</td></tr>
+<tr><td>Plaza gallery tile and hero</td><td>flattened to plain text</td></tr>
+<tr><td><code>rete card</code> (terminal)</td><td>the source as written, indented to the value column</td></tr>
+<tr><td><code>--format jsonld</code> / <code>croissant</code></td><td>the source as written (both formats take Markdown in <code>description</code>)</td></tr>
+</tbody></table>
+<h2 id="custom-fields-the-extra-bag">Custom fields: the <code>extra</code> bag</h2>
+<p>A publisher can put <strong>their own fields</strong> in a card — internal identifiers,
+review status, project tags, anything the official fields don't cover — under
+one reserved key, <code>extra</code>, in the <code>--card-file</code> document:</p>
+<pre><code class="language-json">{
+  "title": "Citation graph 2021",
+  "extra": {
+    "atlas:region": "CH",
+    "internal_id": "DS-2021-042",
+    "review": { "status": "approved", "by": "data-team" }
+  }
+}
+</code></pre>
+<p><code>rete card --json</code> returns the bag verbatim; the text catalog lists it under
+<code>custom fields</code>. There is deliberately <strong>no flag</strong> for them: arbitrary
+key/value pairs on a command line are a shell-quoting trap with no schema to
+validate against — they come from the card file only. (In Python,
+<code>Builder.card()</code> routes any keyword that is not a rete-defined field into the
+bag, and <code>extra={...}</code> merges a whole dict — the client writes the card it is
+given; the caps below are enforced by <code>rete build</code>.)</p>
+<h3 id="first-class-field-or-the-bag-the-rule">First-class field or the bag? The rule</h3>
+<p>Before putting anything in <code>extra</code>, ask two questions:</p>
+<p><strong>1. Does a standard vocabulary already have a term for it?</strong> If not — the
+meaning is yours, not agreed — it belongs in <code>extra</code>. The bag deliberately
+strips meaning: everything in it projects as <code>rete:extra/&lt;key&gt;</code>, an opaque
+value whose semantics are private to its publisher, and for genuinely
+private fields (internal identifiers, review status, pipeline tags) that
+opacity is <em>honest</em>: the values travel, the meaning stays with you.
+Conversely, storing a standard-termed fact in the bag publishes it <em>as
+though it meant nothing</em> — a consumer that speaks the standard term (a DCAT
+harvester, a dataset-search crawler) will never find it. That is strictly
+worse than either doing it properly or not at all. If the official field
+doesn't exist yet, <strong>ask for it</strong> (file an issue) instead of bagging it for
+good.</p>
+<p><strong>2. Can it be derived from the data?</strong> If yes, it is <strong>auto-derived, not
+curated</strong> — a curated duplicate of a derivable fact is a second source of
+truth that can silently drift from the first, and a reader has no way to
+tell which one is right. The worked example is <strong>language</strong>: it looks like
+an obvious curated field (DCAT catalogs use <code>dct:language</code>) right up until
+you notice that in RDF the language already rides on every literal
+(<code>@lang</code> / <code>rdf:langString</code>). So the card <em>measures</em> it — the <code>languages</code>
+histogram and <code>signals.default_lang</code>, projected as <code>schema:inLanguage</code> —
+and there is deliberately <strong>no curated language field</strong> to contradict the
+measurement.</p>
+<p><code>keywords</code> and <code>theme</code> passed both questions — <code>dcat:keyword</code> /
+<code>schema:keywords</code> and <code>dcat:theme</code> already said what they mean, and neither
+free-text tags nor controlled-vocabulary themes can be computed from the
+triples. Each promotion must also state what its field means beyond "a term
+exists": <code>theme</code> is only worth a field distinct from <code>keywords</code> because it
+is <strong>required to be an IRI into a controlled vocabulary</strong> — a free-text
+theme is a keyword by another name, and the build rejects it as such. A
+candidate that cannot say more than "like keywords, but mine" hasn't
+passed.</p>
+<p>The enforcement mirrors the rule: the top level rejects unknown keys, so a
+private field can never sit where official semantics are expected — and an
+official field is only ever added deliberately, at the top level, never by a
+bag key drifting into common use.</p>
+<p>One candidate remains weighed and deliberately in waiting — by this rule a
+future official field, not bag material, the day a publisher actually needs
+it: curated spatial/temporal coverage (<code>dct:spatial</code> / <code>dct:temporal</code>). It
+passes the second question only in the case its derived counterparts cannot
+reach — <code>spatial_bbox</code> / <code>temporal_extent</code> are computed wherever the data
+carries geometry or time, so a curated value earns its keep solely where
+coverage is known but <em>not encoded in the data</em>. If you need it today, the
+honest stopgap is the bag <em>plus the issue</em>: the value travels verbatim in
+<code>--json</code>, and the projection stays truthfully opaque until the field gets
+its term.</p>
+<h3 id="why-one-bag-not-prefixed-keys">Why one bag, not prefixed keys</h3>
+<p>The failure mode worth designing against is a <strong>future collision</strong>: rete adds
+an official card field, and some published card already uses that name for
+something else. With prefixed top-level keys (<code>x-…</code>) custom and official
+fields share a namespace and the guarantee is a naming promise; with a nested
+bag it is <strong>structural</strong> — official fields live at the top level, publisher
+fields live inside <code>extra</code>, and the two can never meet. And it is enforced,
+not hoped: the card file's <strong>top level rejects unknown keys loudly</strong> (a stray
+key is usually a typo — or a custom field that belongs in the bag), so a
+publisher's field cannot even be written where a future official field could
+capture it. A consumer that doesn't care skips one key.</p>
+<p>One key inside the bag is reserved: <code>@context</code>, held back for a future
+author-supplied JSON-LD mapping (see the projection below). Everything else in
+<code>extra</code> is, by construction, not rete's.</p>
+<h3 id="what-custom-fields-actually-cost--and-the-limits">What custom fields actually cost — and the limits</h3>
+<p>Custom fields never touch the header: the header is a <strong>fixed 1 KiB of
+offsets</strong>, and no card content of any size can disturb it. What they grow is
+the <strong>metadata section</strong> — and that section is fetched by every CARD-tier
+reader on <strong>every open</strong>, across the whole catalog, forever. That is the real
+constraint, and it is tighter than "don't disturb the header". So the bag is
+bounded, and the bounds are checked at build time:</p>
+<table><thead><tr><th>limit</th><th>value</th><th>why</th></tr></thead><tbody>
+<tr><td>serialized size (whole bag, compact JSON)</td><td><strong>8,192 B</strong></td><td>Exceeds the smallest whole published card (NKOD, 6,649 B) — generous for <em>metadata</em>. The worst realistic case — the largest published card (Hugging Face, 53,580 B) + a maxed bag + its ~1 KB build info ≈ 62.8 KB — still travels in the same single coalesced range.</td></tr>
+<tr><td>keys</td><td><strong>64</strong></td><td>A key costs ≥ 8 serialized bytes; needing more fields than this means the bag is being used as a data store, and the graph is the data store.</td></tr>
+<tr><td>key length</td><td><strong>128 bytes</strong></td><td>Keys are identifiers, not values.</td></tr>
+<tr><td>nesting depth</td><td><strong>2</strong></td><td>An object of objects-of-scalars, no deeper. Deep structures invite storing <em>records</em> in the card — Parquet companions exist for records.</td></tr>
+</tbody></table>
+<p>The CARD tier's <strong>request count cannot change</strong>: <code>rete card-url</code> still costs
+the 1 KiB header plus one coalesced metadata+build-info range, bag or no bag —
+pinned by test. The one cost worth knowing: on the smallest cards a maxed-out
+bag can push the coalesced range past a conservative TCP initial window
+(~14.6 KB), i.e. one extra round trip — never an extra request.</p>
+<h3 id="overflow-the-build-fails">Overflow: the build fails</h3>
+<p>A bag over any limit <strong>rejects the build</strong> with the limit and the actual size
+in the error — it is never truncated. Truncation would ship a card that says
+something different from what its author wrote, with no way to know which
+fields vanished; and since the bag folds into the content hash, "what I wrote"
+and "what hashed" would diverge invisibly. The derived profile lists <em>are</em>
+capped (with <code>truncated</code> set) because they can be re-derived; curated input
+cannot — only its author knows what to cut, and at build time the fix costs a
+minute.</p>
+<h3 id="deterministic-hashed-tamper-evident">Deterministic, hashed, tamper-evident</h3>
+<p>The bag is curated input, so it lives <strong>inside</strong> the blake3 content hash like
+every other curated field — <code>rete verify</code> covers it, and any edit is detected.
+That placement is safe because its serialization is deterministic: keys are
+sorted at every nesting level when the card is written, so two builds of
+identical input remain <strong>byte-identical</strong> and hash equal (pinned by test),
+even when the card file's keys are authored in a different order. The
+consequence: per-build volatile facts (timestamps, CI run ids) do <strong>not</strong>
+belong in <code>extra</code> — they would make every build hash differently, and the
+unhashed build-info section already records exactly those facts.</p>
+<h3 id="how-the-projections-treat-custom-fields">How the projections treat custom fields</h3>
+<p>A custom field has no vocabulary term, so projecting it as ordinary RDF would
+invent semantics. The projections keep the fields without pretending to
+understand them:</p>
+<ul>
+<li><strong><code>--format jsonld</code></strong> emits each field under <code>rete:extra/&lt;key&gt;</code> (the key
+percent-encoded where needed, so the IRI is always valid): a scalar becomes
+a plain literal, an object or array becomes a JSON literal (typed <code>@json</code>,
+i.e. <code>rdf:JSON</code>) rather than a blank-node structure pretending to be
+modelled data. A consumer of the JSON-LD <strong>gets the values, not their
+meaning</strong>: <code>rete:extra/review</code> says "the publisher-defined field named
+<code>review</code> of this card" and nothing more — two publishers using the same key
+name share an IRI without sharing semantics. Nothing is dropped (diffing
+the card against its projection finds every field) and nothing is invented.
+If a card's <code>extra</code> one day carries an author-supplied <code>@context</code>, the
+projection can start honouring it — that key is reserved today so honouring
+it later breaks nothing.</li>
+<li><strong><code>--format croissant</code></strong> omits them entirely — Croissant is already the
+honestly-mappable <em>subset</em> (no <code>recordSet</code>, no partitions), for ML loaders
+that would do nothing with opaque publisher keys.</li>
+<li><strong><code>--json</code></strong> always carries the bag verbatim.</li>
+</ul>
+<h2 id="build-conditions-the-build-info-section">Build conditions: the build-info section</h2>
+<p>The card answers <em>what the data is</em>; a second, adjacent record answers <strong>how
+this particular file came to be</strong> — the questions you ask when a file behaves
+oddly and there was previously no way to answer them from the file ("which
+<code>rete</code> even wrote this?"). Every card build also writes a <strong>build-info
+section</strong> (format section kind <code>7</code>, laid out immediately after the card)
+carrying:</p>
+<ul>
+<li><code>built_at</code> — when the file was written (RFC 3339 UTC; <code>SOURCE_DATE_EPOCH</code> is
+honored for reproducible pipelines). Distinct from the curated <code>created</code> and
+<code>source_date</code>, which describe the <em>data</em>.</li>
+<li><code>builder</code> — the binary that wrote the file (<code>rete-cli 0.3.2</code>).</li>
+<li><code>params</code> — the flags that shaped the result: <code>--no-pyramid</code>, the pyramid
+algorithm, <code>--text-index</code>, <code>--materialize</code>/<code>--reason</code>,
+<code>--memory-budget-mb</code>, the section codec, and the card's <code>top_n</code> cap.</li>
+<li><code>query_costs</code> — measured cost figures for every starter query (below).</li>
+<li><code>dropped_queries</code> — starter queries this build generated, <strong>ran</strong>, and then
+refused to ship (below). Absent on a healthy build.</li>
+</ul>
+<h3 id="why-it-sits-outside-the-content-hash">Why it sits outside the content hash</h3>
+<p>The card folds into the file's reproducible blake3 content hash, and <strong>two
+builds of identical data must keep hashing identically</strong> — that property is
+load-bearing (release parity checks, dedup, cache validators). A timestamp and
+a timing are exactly the facts that differ between two such builds. So the
+build-info section is <strong>deliberately excluded from the hash</strong>: <code>rete verify</code>
+does not cover it (old readers see an unknown kind-7 entry and ignore it; new
+readers skip it knowingly), stripping it from two builds of the same input
+yields byte-identical images, and its contents are advisory provenance, not
+integrity-protected data. Cardless builds carry no build-info at all and remain
+byte-identical to pre-build-info output.</p>
+<h3 id="the-starter-query-cost-figures">The starter-query cost figures</h3>
+<p>Each starter query is run once, <strong>cold</strong> (a fresh lazy open per query, what a
+stateless remote client pays), against the finished image. Two kinds of number
+are recorded together but labelled apart:</p>
+<ul>
+<li><strong><code>bytes</code> and <code>requests</code> are portable.</strong> They are a property of the file's
+layout and the query — the same query against the same file pulls the same
+bytes from R2, GitHub Pages, or disk. They state the CARD/summary/index-tier
+claims in checkable numbers instead of prose. (Counting is of <em>logical</em> range
+reads, no block cache; a block-caching client coalesces requests and rounds
+bytes up to blocks.)</li>
+<li><strong><code>debug_ms</code> is not.</strong> It is one machine's wall clock at build time — a
+debug reference, never a guarantee — and is stored <strong>with its context</strong>
+(<code>engine</code>, <code>transport</code>, and a note saying exactly this) so it cannot be
+quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
+9 requests" survives being read elsewhere; "12 ms" does not.</li>
+</ul>
+<p>The memory-bounded external build and <code>rete merge</code> record
+timestamp/builder/params but no costs (their cards carry no derived starter
+queries to measure).</p>
+<h3 id="a-build-does-not-ship-a-query-it-just-measured-at-zero-rows">A build does not ship a query it just measured at zero rows</h3>
+<p>The run above is not only a costing. It is the moment a carded build stops
+<em>reasoning</em> about whether its starter queries answer and simply <strong>observes</strong> it
+— and where an observation exists it is ground truth, so it wins over every
+static rule that guessed. A query whose run comes back worthless is therefore
+removed from the card before the file is written, and the fact is recorded in
+<code>dropped_queries</code> (<code>id</code>, <code>why</code>, and a <code>contradicts_claim</code> flag). Two shapes are
+caught:</p>
+<ul>
+<li><strong>zero rows</strong> (or a false <code>ASK</code>, or nothing constructed) — the failure the
+query library exists to prevent: <em>a starter query that answers nothing is
+worse than no starter query, because the reader concludes the file is
+broken</em>;</li>
+<li><strong>a row that binds no variable at all</strong> — the un-grouped aggregate over an
+empty solution sequence. SPARQL returns exactly one row there no matter what,
+so no row count can catch it, and the row carries no information: <code>sp-bbox</code>
+on a file where no single subject holds both <code>wgs:lat</code> and <code>wgs:long</code> returns
+one row of four unbound variables. That template's own note says the card
+"cannot do better" than shipping it. The measurement can.</li>
+</ul>
+<p><strong>Dropped, not fatal.</strong> Refusing to build is the right answer for <em>authored</em>
+content — an oversized <code>extra</code> bag is the publisher's text, and quietly
+rewriting it destroys an intent only they can restore. A generated starter
+query has no author: the generator wrote it moments earlier out of this
+dataset's own profile, and the build is the only party able to act. Failing
+would make a file unbuildable for a reason its publisher cannot fix, at the end
+of a build that may have taken hours, over a metadata nicety — and would push
+them onto <code>--no-card-costs</code>, which switches off the measurement rather than the
+problem. The generator already <em>drops</em> (rather than fails) when its static
+<code>provably_empty</code> hook fires; measurement is a better oracle for the same
+question and earns the same consequence. Loudness is bought without fatality:
+every drop is printed with its reason, and the build record keeps it after the
+terminal is gone.</p>
+<p><strong>What this does to the hash.</strong> The card is inside the content hash — dropping
+a query is a change to what the file says about itself, so it is a new content
+hash, correctly. Two builds of the same input still hash identically (the
+measurement is deterministic), and a build with nothing to drop is byte-identical
+to one that never measured at all.</p>
+<p><strong>Measurement versus the static machinery.</strong> They are not redundant. The
+generator's <code>NonEmpty</code> claims and <code>provably_empty</code> hooks act at <em>generation</em>
+time, before any measurement exists, and they carry every card built without a
+build record (external builds, <code>merge</code>, and every file published before build
+records). Where both speak, the measurement wins. Where they <em>disagree</em> — a
+template that declares its query cannot come back empty, and then it does —
+that is a defect in the rule, not a fact about the dataset: the build says so
+in as many words and sets <code>contradicts_claim</code> on the record so it is findable
+in a published file years later. A template that admitted up front it could not
+decide (<code>NonEmpty::Undecidable</code>, e.g. <code>top-dangling</code>, <code>sp-within</code>) sets no such
+flag: a measured zero there is news, not a broken promise.</p>
+<p><strong>What measurement cannot catch.</strong> A vacuous <code>COUNT</code> binds — to <code>0</code>.
+<code>cmp-coverage</code> returning <code>total = 76990, have = 0</code> is one row of two bound
+variables: useless, and invisible to any rows-based gate. That class is closed
+by <em>derivation</em>, not measurement — the query is instantiated with
+<code>{{LABELED_CLASS}}</code>, the most populous class a <code>class_links</code> row proves carries
+the label predicate, so <code>have &gt; 0</code> holds by construction. Deciding which
+binding of a query is the payload is a per-template judgement a build cannot
+make; picking the terms so the payload cannot be zero is a judgement the
+generator can.</p>
+<p><strong><code>--no-card-costs</code> opts out of this too.</strong> The flag exists to skip running the
+starter queries on a graph where that is expensive — and the run is what proves
+they answer, so skipping it leaves the card with whatever static reasoning
+produced, unchecked. The build says so on stderr. Note the consequence for
+reproducibility: the flag used to be hash-neutral, and on a dataset that <em>has</em> a
+useless starter query it no longer is (the measured build ships a smaller card).
+On every dataset whose queries all answer, it remains hash-neutral.</p>
+<h3 id="measuring-a-file-that-already-exists">Measuring a file that already exists</h3>
+<p>Almost nothing published carries this record. A survey of 110 cards found
+<strong>one</strong> file with a build record — every other <code>query_costs</code> is missing, so the
+field that would say "this starter query returns N rows and costs M bytes in K
+range requests" is absent exactly where a reader would want it.</p>
+<p><code>rete card-audit &lt;path|url&gt; --measure</code> fills that gap without rebuilding
+anything: it runs the starter queries the card already ships and reports the
+same three numbers, through the <strong>same</strong> <code>measure_query</code> the build uses. That
+sharing is the point — a second measurement loop would drift, and then a
+re-measured figure could not be compared against a recorded one, which is the
+only thing anyone wants to do with it. Where a file <em>does</em> carry a record, the
+command checks itself against it and says whether they agree.</p>
+<p>Two consequences of the numbers being portable:</p>
+<ul>
+<li>a <strong>local</strong> measurement and a <strong>remote</strong> one produce the same <code>bytes</code> and
+<code>requests</code> (no block cache is in the stack, so the range sequence depends on
+layout and query, not on transport) — only the remote one actually pays. The
+output names which it was regardless;</li>
+<li>the measurement can be <strong>written back</strong> (<code>--write-costs</code>). Build info is
+outside the content hash, so the file keeps its identity — same checksum,
+same <code>rete verify</code>, byte-identical N-Quads — but the section is near the
+front, so the file is rewritten end to end to make room. The rewrite itself
+is a bounded-buffer copy; the RAM goes into <em>running the queries</em> (eager
+evaluation, so a 497,905-row starter query materializes 497,905 rows).
+<code>switzerland-fedlex</code> measured and rewrote in 381 s at a 14.2 GiB peak,
+against ≈36 GiB for a <code>repyramid</code> re-card of the same file. See
+<code>rete card-audit</code> in the <a href="cli.html">CLI reference</a>.</li>
+</ul>
+<h3 id="the-one-row-smoke-query">The one-row smoke query</h3>
+<p>Every generated library now begins with <code>ov-one-row</code>: <em>return exactly one
+statement</em>. It is the unambiguous "did this file open and answer?" probe — the
+previous nearest thing was a <code>COUNT</code>, which on a named-graph-only file honestly
+answers <code>0</code> and reads as failure. The body is graph-scope aware like every
+other starter, so it returns exactly one row on any non-empty file.</p>
+<h2 id="the-three-tier-exploration-model">The three-tier exploration model</h2>
 <p>The enriched card exists to fix a graph's <strong>cold-start problem</strong>: a newcomer who
 opens a <code>.rete</code> has no reference for what to ask. Every exploration question is
 answerable from one of three tiers, in increasing cost — and the card makes that
@@ -418,31 +1236,382 @@ explicit so a client knows what is free before it runs anything:</p>
 <tr><td>🟠 <strong>Index</strong></td><td>the triple index (range-fetched tiles)</td><td>O(touched tiles)</td></tr>
 </tbody></table>
 <p><code>rete card-url &lt;url&gt;</code> reads the <strong>Card tier</strong> over HTTP in two small range
-requests — header + metadata — and <strong>never touches the index</strong>, so a remote/S3
-client gets the whole self-description (counts, vocabulary, class graph, signals,
-starter queries) without downloading the file.</p>
-<h2>The starter-query library</h2>
+requests — the header, then <strong>one coalesced range covering the card and the
+adjacent build-info</strong> — and <strong>never touches the index</strong>, so a remote/S3 client
+gets the whole self-description (counts, vocabulary, class graph, signals,
+starter queries, build record) without downloading the file. Measured on the
+published catalog: 7,670 of 71,237,191 bytes for NKOD and 54,601 of
+1,161,874,550 bytes for Hugging Face, two range requests each.</p>
+<h2 id="the-starter-query-library">The starter-query library</h2>
 <p><code>queries</code> is a vetted set of starter SPARQL queries, <strong>auto-instantiated at
 build</strong> with the dataset's own vocabulary (<code>{{TOP_CLASS}}</code> → the most populous
 class, <code>{{LABEL_PRED}}</code> → the detected label predicate, and so on) and emitted
 <strong>only when the required signal is present</strong> — no geometry query without
 geometry, no time query without a time predicate — so the shipped set is
-guaranteed to return rows. Each query carries:</p>
+guaranteed to return rows. The bodies are also <strong>scoped to where the
+statements live</strong> (see <a href="#named-graph-datasets">Named-graph datasets</a> below).
+Each query carries:</p>
 <ul>
 <li>a full <strong>PREFIX block</strong> (the engine injects none, so every query is runnable as-is);</li>
 <li>a <code>dimension</code> (overview / identity / labels / types / topology / links / literals / time / space / graphs);</li>
 <li>a <code>tier</code> tag (<code>card</code> / <code>summary</code> / <code>index</code>) — the cheapest tier that answers it;</li>
 <li>the <code>requires</code> capability keys that gated its emission.</li>
 </ul>
+<h3 id="presence-is-not-co-occurrence">Presence is not co-occurrence</h3>
+<p>"The required signal is present" is not enough on its own, and getting that
+wrong is how a starter query comes back empty. <code>{{TOP_CLASS}}</code> is the class with
+the most instances; <code>{{LABEL_PRED}}</code> is the most-used labelling predicate. Both
+are certainly <em>in</em> the graph — and instances of that class need never carry that
+predicate. On <code>mtg</code> the top class is <code>mtg:Ruling</code> (76,990 instances, no
+<code>schema:name</code>); on <code>hugging-face</code> it is <code>hf:Model</code> while <code>rdfs:label</code> appears
+only on the embedded ontology terms. Joining the two maxima produced a query
+that could not match a single statement, on plain default-graph files.</p>
+<p>So a body may conjoin substituted vocabulary <strong>only where the card proves the
+pieces meet</strong>, and <code>class_links</code> — the <code>(s_class, predicate, o_class, count)</code>
+quotient — is the proof. The capabilities that carry a witness are:</p>
+<table><thead><tr><th>key</th><th>what it resolves to</th><th>witness</th></tr></thead><tbody>
+<tr><td><code>LABELED_CLASS</code></td><td>the most populous class that carries <code>LABEL_PRED</code></td><td>a <code>class_links</code> row for that class <em>and</em> predicate</td></tr>
+<tr><td><code>OBJECT_PRED</code></td><td>the most frequent relation whose object is not a literal — one a path query can walk</td><td>a <code>class_links</code> row whose <code>o_class</code> is not <code>(literal)</code></td></tr>
+<tr><td><code>WKT_PATH</code></td><td>how this dataset hangs a geometry off a subject (<code>geo:asWKT</code>, or <code>geo:hasGeometry?/geo:asWKT</code>)</td><td>the predicates the card recorded</td></tr>
+<tr><td><code>EXTERNAL_IRI</code></td><td>that some recorded IRI lies outside the base IRI</td><td><code>classes</code> / <code>in_hubs</code></td></tr>
+</tbody></table>
+<p><code>LABELED_CLASS</code> equals <code>TOP_CLASS</code> on every dataset whose top class <em>is</em>
+labelled, so the common case is unchanged. Where the card cannot prove a
+witness — <code>class_links</code> is capped at <code>top_n</code> rows, and labels may sit on untyped
+subjects — the label query falls back to the class-free
+<code>SELECT ?s ?label WHERE { ?s &lt;label&gt; ?label }</code> rather than disappearing.</p>
+<p>Three templates are honest about not being decidable from the card, and may
+return zero rows as a fact about the data rather than a defect:
+<code>top-dangling</code> (a fully-described graph has no dangling IRI), <code>sp-within</code> (the
+box comes from <code>wgs84</code> literals, not from the WKT geometries the query reads)
+and <code>top-in-hubs</code> under <code>GRAPH</code> scope (the card profiles the default graph). The
+reason is recorded in the source beside each body.</p>
 <p>A publisher's own <code>example_queries</code> (curated, <code>--card-file</code>) are kept alongside
-the generated library, unchanged.</p>
-<h2>Back-compatibility</h2>
+the generated library, unchanged. Clients surface both: the playground merges
+a loaded file's card queries into its examples panel next to any curated
+catalog examples (deduplicated against them), so even an off-catalog <code>.rete</code>
+opened by URL offers its own starter questions.</p>
+<h2 id="named-graph-datasets">Named-graph datasets</h2>
+<p>Some datasets (DCAT catalogs like NKOD, provenance stores, anything built from
+N-Quads) keep <strong>every statement in named graphs</strong> — the default graph is empty,
+and the card records exactly that (<code>triple_count: 0</code>, <code>named_graph_count &gt; 0</code>).
+On such a file a default-graph starter like
+<code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code> can only ever answer <code>0</code>.</p>
+<p>The generator therefore reads the card's own counts and picks each query's
+body for <strong>where the data actually lives</strong>:</p>
+<table><thead><tr><th>Shape</th><th>Detected by</th><th>Bodies</th></tr></thead><tbody>
+<tr><td>default-graph only</td><td><code>named_graph_count == 0</code></td><td>the classic bodies, byte-identical to earlier builds</td></tr>
+<tr><td>named-graph only</td><td><code>triple_count == 0</code> and <code>named_graph_count &gt; 0</code></td><td><code>GRAPH ?g { … }</code>-scoped; a template with no meaningful graph-scoped form is dropped rather than shipped as a guaranteed-zero-rows query</td></tr>
+<tr><td>mixed (both hold data)</td><td>both counts non-zero</td><td>overview and hub queries scan <code>{ … } UNION { GRAPH ?g { … } }</code> so neither half is silently hidden; profile-driven queries keep addressing the default graph their vocabulary came from, and the <code>graphs</code> family surfaces the named side</td></tr>
+</tbody></table>
+<p>A named-graph file also gets the <code>graphs</code> dimension: which graphs exist
+(<code>ng-list</code>), which are biggest (<code>ng-sizes</code>), and a sample of quads with <code>?g</code>
+projected so each row says where it lives (<code>ng-sample</code>). Graph-scoped bodies
+need the triple index, so they are tagged <code>index</code> — the <code>summary</code> fast path
+covers the default graph only.</p>
+<h3 id="fixing-the-card-on-an-existing-named-graph-rete">Fixing the card on an existing named-graph <code>.rete</code></h3>
+<p>The library is generated <strong>at build time and baked into the file</strong>, so a
+<code>.rete</code> published with an older generator keeps its default-graph-scoped
+starter queries until its publisher re-embeds a card. (That is the named-graph
+instance of a general problem — <a href="#maintaining-a-published-card">Maintaining a published card</a>
+below is how you find every affected file and pick a path that fits its size.)
+Fixing it does <strong>not</strong> require going back to the source RDF — <code>rete repyramid</code>
+reads every statement (default graph and named graphs) straight out of the
+existing file and re-assembles it, deriving a fresh card on the way:</p>
+<pre><code class="language-sh"># One command, no source RDF needed — data is carried over losslessly:
+rete repyramid catalog.rete -o catalog-fixed.rete \
+  --card --title "National Open Data Catalog" --license "CC0-1.0"
+
+rete card catalog-fixed.rete --json   # the queries are now GRAPH-scoped
+</code></pre>
+<p>The equivalent round-trip through text works too (<code>nq</code> export is lossless,
+named graphs included), and is the place to add curated fields or your own
+<code>example_queries</code> via <code>--card-file</code>:</p>
+<pre><code class="language-sh">rete export catalog.rete --format nq &gt; catalog.nq
+rete build catalog.nq -o catalog-fixed.rete --card-file card.json
+</code></pre>
+<p>Either way the <strong>file is rewritten</strong> — the card is folded into the <code>blake3</code>
+content hash, so there is deliberately no in-place patch — and the fixed file
+replaces the published one. On a named-graph-only input, every query in the
+new card is <code>GRAPH</code>-scoped and returns rows; for example <code>ov-triples</code> becomes:</p>
+<pre><code class="language-sparql">SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }
+</code></pre>
+<h2 id="maintaining-a-published-card">Maintaining a published card</h2>
+<p>A card is written <strong>once, at build time</strong>, and never again. Everything in this
+section follows from that one fact, and most confusion about cards dissolves
+once it is internalised: <strong>fixing the card generator today does not fix a
+published file.</strong> It fixes the <em>next</em> build. A <code>.rete</code> already sitting in a
+bucket keeps the card its builder could write on the day it was built —
+starter queries, profile caps, missing build record and all — until somebody
+deliberately re-cards it. And because the card is inside the <code>blake3</code> content
+hash there is no in-place patch: either the file is rewritten, or nothing
+changes.</p>
+<p>So the work splits in two: <strong>find out which files need it</strong> (cheap, and there
+is a tool for exactly that), then <strong>pick a command that can actually do it at
+that file's size</strong> (not cheap, and the ceiling is real).</p>
+<h3 id="how-a-card-goes-stale">How a card goes stale</h3>
+<table><thead><tr><th>symptom</th><th>what a reader loses</th><th>how bad</th></tr></thead><tbody>
+<tr><td><strong>no build record</strong></td><td><code>built_at</code>, <code>builder</code>, <code>params</code>, and the per-query <code>rows</code>/<code>bytes</code>/<code>requests</code> a client would use to budget a query before running it</td><td>invisible until someone asks</td></tr>
+<tr><td><strong>a dated profile</strong></td><td>a <code>top_n</code> cap that predates the field, no <code>ov-one-row</code> smoke query, derived lists missing later additions</td><td>cosmetic</td></tr>
+<tr><td><strong>starter queries that return zero rows</strong></td><td>the file's entire first impression</td><td>reads as a broken file</td></tr>
+</tbody></table>
+<p>Only the third is a defect, and it has known causes — each already corrected in
+the generator, each still baked into every file built before the correction:
+default-graph bodies on a <a href="#named-graph-datasets">named-graph dataset</a>, and
+<a href="#presence-is-not-co-occurrence">a join the card never proved co-occurs</a>. A
+carded build also measures every query it generates, so a current <code>rete</code> will
+not ship one it just watched return nothing; older files had no such check.</p>
+<h3 id="survey-first--the-survey-is-free-the-re-card-is-not">Survey first — the survey is free, the re-card is not</h3>
+<p>Re-carding is a bandwidth cost, not a CPU one: the file is rewritten, so a
+remote dataset has to come down in full and go back up in full. The published
+catalog is <strong>248 GB across 98 files</strong> (22 of them ≥ 1 GB), which makes
+"re-card everything" 248 GB each way. Finding out which files actually need it
+costs <strong>0.6 MB</strong> — the same two range requests <code>rete card-url</code> makes, per file,
+and never the index:</p>
+<pre><code class="language-sh">bash scripts/recard/survey.sh                                    # whole catalog
+bash scripts/recard/survey.sh --keys "lombardi orcid switzerland-fedlex"
+</code></pre>
+<p>It writes a TSV, a JSON, and a <code>todo.txt</code> of every key that is not <code>CURRENT</code>,
+worst first. The verdicts run <code>CARDLESS</code> → <code>ZERO-ROWS</code> → <code>EMPTY-QUERY</code> →
+<code>MIXED-HIDDEN</code> → <code>SUSPECT-QUERY</code> → <code>DATED</code> → <code>CURRENT</code>; the full table and the
+scripts are in <a href="https://github.com/caviri/rete/tree/main/scripts/recard"><code>scripts/recard/</code></a>.
+The first full run (2026-08-05, 98 datasets) returned 14 <code>CARDLESS</code>, <strong>one</strong>
+<code>ZERO-ROWS</code>, 83 <code>DATED</code> and zero <code>CURRENT</code> — so the alarming case is rare and
+specific, and almost everything else is a metadata refresh rather than a fire.</p>
+<p>Two things the survey will not do for you. It re-decides for free from cards
+already on disk (<code>--cards &lt;dir&gt;</code>), so iterate there rather than re-fetching.
+And one file is not cheap: <code>geoadmin-tiles</code> carries an embedded PMTiles section
+<em>ahead</em> of its metadata, so its coalesced card range is 117 MB rather than
+6 KB — survey it last, or not at all.</p>
+<h3 id="deciding-one-file-rete-card-audit">Deciding one file: <code>rete card-audit</code></h3>
+<p>Where the survey classifies a catalog, <a href="cli.html"><code>rete card-audit</code></a> explains one
+file — one row per starter query the card already ships, decided from the same
+card bytes, using the query generator's own judgement rather than a second copy
+of it:</p>
+<pre><code class="language-sh">rete card-audit https://data.graphplaza.com/hugging-face/hugging-face.rete
+</code></pre>
+<p>The verdict worth acting on is <code>empty</code>: the card <em>refuting</em> a query it ships.
+<code>suspect</code> and <code>undecidable</code> are the honest middle.</p>
+<p><strong>The static pass has a ceiling, and it is structural.</strong> Nothing in a card ties
+a specific subject to a specific predicate, and nothing records which objects
+are also subjects — so <code>top-reach</code> and <code>top-dangling</code> cannot be decided from a
+card at all, no matter how good the reasoning gets. In the 2026-08-05 audit
+(110 files, 96 of them carrying starter queries) that left <code>top-reach</code>
+undecided on <strong>79</strong> files and <code>top-dangling</code> on <strong>80</strong>. The way to settle one
+is to run it, which is what <code>rete card-audit --measure</code> does — reporting rows,
+bytes and range requests beside the card's verdict, never merged with it. On
+the published <code>lombardi.rete</code>, both undecidables come back <code>answers</code> (100 rows
+and 1 row); the whole 22-query audit reads 3.58 MB in 1,447 range requests,
+cold. <code>--write-costs</code> then records the run in the file's build record, so the
+next reader gets the numbers from the CARD tier instead of re-measuring.</p>
+<h3 id="which-rebuild-path--the-ceiling-is-statements-not-bytes">Which rebuild path — the ceiling is statements, not bytes</h3>
+<p>There are three tools, and choosing between them by file size is the mistake.
+<code>repyramid</code> materializes <strong>every quad as owned strings</strong> before re-assembling,
+so its RAM tracks the <strong>statement count</strong>: ~350–700 bytes per statement on
+ordinary graphs. As a ratio of file size that lands anywhere between <strong>17× and
+35×</strong>, which is why bytes are the wrong planning variable.</p>
+<table><thead><tr><th>the file's problem</th><th>command</th><th>ceiling on a 48 GB machine</th></tr></thead><tbody>
+<tr><td>only the build record is missing; the queries answer</td><td><code>rete card-audit &lt;file&gt; --measure --write-costs</code></td><td>none from the rewrite — but the <em>queries</em> need the RAM (below)</td></tr>
+<tr><td>the card is stale or its queries are broken</td><td><code>rete repyramid &lt;in&gt; -o &lt;out&gt; --card --card-file &lt;curated&gt;</code></td><td><strong>~80 M statements</strong> (~70–100 M; ≈ 2 GB of a typically dense <code>.rete</code>)</td></tr>
+<tr><td>same, but past that</td><td><code>rete export &lt;in&gt; --format nq</code> → <code>rete build … --card-file &lt;curated&gt;</code></td><td><strong>~150 M statements</strong>, at ~2.5× the wall clock and 9–15× the <code>.rete</code> in staged text on disk</td></tr>
+<tr><td>past <em>that</em></td><td>—</td><td>nothing today; it is engine work, not scripting</td></tr>
+</tbody></table>
+<p><strong>The failure mode when you exceed the ceiling is an OOM kill mid-rebuild</strong>,
+after however long the read took — not a diagnostic. Predict before you start:
+statement count × ~500 B is the working estimate for <code>repyramid</code>, × ~300 B for
+the staged path. <code>switzerland-fedlex</code> (1.04 GB, 56.3 M quads) predicted ≈36 GiB
+for <code>repyramid</code> and was never attempted there; the staged path did it under
+19.1 GiB.</p>
+<p>The staged path is bounded on the export half and only the export half:
+<code>rete export --format nq</code> streams, with a <strong>measured peak of 2.9–3.0 MiB</strong>
+whether it is producing 679 MB or 6.88 GB of N-Quads. What it buys with that is
+disk — the staged text runs <strong>9–15× the <code>.rete</code></strong> — and the two paths land in
+the same place: on <code>nkod</code> they produce the <strong>same content hash</strong>, differing only
+in the four unhashed bytes that say <code>repyramid</code> rather than <code>build</code>.</p>
+<p><strong><code>rete build --memory-budget-mb</code> is still not the third option</strong>, even though
+it is the genuinely bounded builder — and even now that it builds named graphs
+(#139), which used to rule out exactly the named-graph population this work
+exists for. Where it runs it writes a <strong>counts-only card</strong>, roughly a hundred
+bytes of <code>triple_count</code> / <code>quad_count</code> / <code>term_count</code> / <code>named_graph_count</code> with
+no profile and <strong>no starter queries</strong>, because deriving the profile lists needs
+unbounded RAM. Ten of the largest published datasets — <code>crossref</code>, <code>datacite</code>,
+<code>dblp</code>, <code>deps-dev</code>, <code>epfl-graph</code>, <code>gharchive</code>, <code>gharchive-2026-06</code>,
+<code>opencitations</code>, <code>orcid</code>, <code>wikiart</code> — carry exactly that, and report <code>0 starter queries</code> in the survey. That is <em>why</em> they do. They are also the files no
+rebuild path above can reach.</p>
+<p><strong>Measurement RAM is in the queries, not in the file.</strong> Attaching costs to an
+existing file rewrites it through a bounded buffer, but running the starter
+queries to get those costs does not: the engine evaluates eagerly, so a query
+with a large result materializes it. <code>switzerland-fedlex</code> took 381 s and peaked
+at <strong>14.2 GiB</strong> for <code>--measure --write-costs</code>, of which <code>ng-list</code> alone —
+497,905 rows — accounts for 3.2 GiB. Budget for the widest starter query, not
+for the file.</p>
+<h3 id="what-a-re-card-changes--and-what-it-must-not">What a re-card changes — and what it must not</h3>
+<p>It <strong>re-derives the whole derived half</strong> from the data the file already holds:
+the profile, the signals, the class-link quotient, and the starter-query
+library with every generator fix since the file was built. It <strong>adds the build
+record</strong>. It <strong>carries the curated half across verbatim</strong> — and only if you
+hand it back:</p>
+<pre><code class="language-sh">rete card old.rete --json &gt; old-card.json
+python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
+rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
+</code></pre>
+<p>A bare <code>rete repyramid --card</code> <strong>silently drops</strong> <code>title</code>, <code>license</code>, <code>source</code>
+and <code>description</code>: the card flags take the curated half from flags or
+<code>--card-file</code> and nowhere else. <code>card_tools.py verify --old … --new …</code> exists to
+fail the run when a curated field goes missing, and the two proofs a re-card
+owes — identical N-Quads out of both files, and every new starter query
+returning rows — are what <code>scripts/recard/recard.sh</code> runs before it moves
+anything into place. (Note the <code>--pyramid-algo</code> in that command: <code>repyramid</code>
+defaults to <code>louvain</code> regardless of what the file was originally built with,
+and on an older file the build record that would have said is precisely what is
+missing.)</p>
+<p>What a re-card <strong>must not</strong> do is rewrite the publisher's sentences. A tool
+that edits prose cannot be trusted with the prose it leaves alone, so
+<code>description</code> travels through unchanged, stale figures included. When a
+description needs correcting, a human corrects it — and proves the edit was
+surgical by running <code>verify</code> twice: once against the original card, expecting
+<strong>exactly one</strong> reported difference, and once against the corrected document,
+expecting a clean pass. Two differences on the first run means something moved
+that you did not intend.</p>
+<h3 id="carrying-forward-is-a-floor--filling-a-blank-is-not-rewriting">Carrying forward is a floor — filling a blank is not rewriting</h3>
+<p>"Carry the curated half across verbatim" answers the dangerous question (may a
+tool alter what a publisher wrote?) but not the useful one: <strong>may it fill in
+what nobody ever wrote?</strong> A file built before <code>keywords</code>, <code>theme</code>,
+<code>canonical_url</code>, <code>publisher</code> and <code>derived_from</code> existed has none of them, and
+carrying-only guarantees it never will. Those are different acts, and only the
+first needs forbidding.</p>
+<p>So <code>recard.sh --enrich FILE</code> takes a document with this same reserved top level
+and lays it over the carried fields. The gate is handed the <em>same</em> document and
+permits exactly the keys it names to differ — and requires every one of them to
+be present afterwards. Enriching <code>keywords</code> while dropping <code>title</code> still fails.</p>
+<p>Two rules make this safe rather than merely convenient:</p>
+<ol>
+<li><strong>Only on files you publish.</strong> For someone else's <code>.rete</code>, an invented ROR or
+DOI is fabricated metadata in another party's record, and nothing in the file
+distinguishes the two cases — so the tool's default stays carry-only and the
+caller opts in per file.</li>
+<li><strong>Derive, or leave it empty.</strong> Every value must trace to something checkable:
+the catalog's own published URL, a resolved concept IRI, an upstream that
+answered. Where nothing supports a field, the honest output is a blank —
+<code>creators</code> needs an ORCID nobody has recorded, and an upstream's DOI belongs
+in <code>derived_from</code> and <code>cite_as</code>, never in <code>doi</code>, which would claim this file
+<em>is</em> that deposit. <code>sparql_endpoint</code> is the sharpest case: it means an
+endpoint a client can send this dataset's query to, so a project home page in
+that field is a lie a client can act on. Probing the 22 files of the
+2026-08-06 batch, one upstream endpoint answered the protocol <em>and</em> answered
+about the file's own IRIs; a second answered the protocol and knew nothing
+about them, which is exactly the failure a home page would have hidden.</li>
+</ol>
+<p>The prose rule is untouched: <code>description</code> and <code>title</code> still travel through
+unchanged. The one repair that is not a rewrite is a <strong>provable encoding
+defect</strong> — <code>memoria</code>'s card stored "MemÃ²ria", the UTF-8 bytes of "Memòria" read
+once as latin-1, and re-decoding them returns the publisher's own string
+exactly. That is recovering what was written, not editing it; it goes through
+<code>--enrich</code> like any other change so the gate reports it, and it is worth doing
+only because the bytes prove the intended text.</p>
+<p><strong>A headline count can go down, and that is the fix, not data loss.</strong> An older
+card counted the raw pre-dedup input multiset; a re-card counts what the file
+actually stores. On <code>lombardi</code> the published card says 70,719 statements, its
+own header says 70,545, and the file exports exactly 70,545 N-Quads — the
+re-carded card says 70,545, and the card and the header agree for the first
+time. <code>switzerland-fedlex</code> moved 66,392,663 → 56,321,446 the same way. Read the
+new number against the data proof (identical N-Quads), never against the old
+one; and where the old number is real provenance — an input line count, as
+fedlex's was — keep both, in words, by hand.</p>
+<h3 id="publishing-the-result">Publishing the result</h3>
+<p>A re-card changes the content hash, by construction and correctly: the card is
+part of what the file says about itself. So the rebuilt file is a <strong>new object</strong>
+to upload, <code>scripts/check_dataset_catalog.py</code> has to re-probe it, and
+<code>web/datasets.lock.json</code> has to be regenerated. That is a release action —
+<code>scripts/recard/*</code> deliberately stop at <code>--out-dir</code> and let a human decide.</p>
+<p>Attaching costs is the one exception worth knowing: the build-info section sits
+<strong>outside</strong> the content hash, so <code>rete card-audit --measure --write-costs</code>
+leaves the checksum, <code>rete verify</code> and the exported N-Quads untouched. The file
+is still rewritten end to end (the section sits near the front, so making room
+shifts everything behind it), but its <strong>identity is preserved</strong> — confirmed on
+published files, which grew by 2,007 bytes (<code>tree-city-inventory</code>), 1,952
+(<code>lombardi</code>) and 32 (<code>switzerland-fedlex</code>) while keeping their content hash,
+their <code>rete verify</code>, and their exported N-Quads byte for byte.</p>
+<h2 id="interoperability-json-at-rest-rdf-on-demand">Interoperability: JSON at rest, RDF on demand</h2>
+<p>A card lifted out of a <code>.rete</code> should already be RDF — a dataset describing
+itself in standard vocabularies. The first design decision was <strong>JSON-LD at
+rest versus a projection</strong>, and it was decided by measurement, not preference.
+The stored card is not valid JSON-LD as-is: its partition lists are arrays of
+2-tuples (<code>["&lt;iri&gt;", 123]</code>), which JSON-LD cannot lift to meaningful RDF, so an
+at-rest card needs one object per row (<code>{"void:property": …, "void:triples": …}</code>) plus a context. Converting the two reference cards to that <em>minimal
+faithful</em> at-rest form costs:</p>
+<table><thead><tr><th>card</th><th>stored JSON</th><th>at-rest JSON-LD</th><th>delta</th></tr></thead><tbody>
+<tr><td>NKOD (named-graph catalog)</td><td>6,649 B</td><td>7,484 B</td><td><strong>+12.6%</strong></td></tr>
+<tr><td>Hugging Face Hub (53 KB, truncated profile)</td><td>53,580 B</td><td>61,899 B</td><td><strong>+15.5%</strong></td></tr>
+</tbody></table>
+<p>Every reader pays the metadata section on every open, across the whole catalog
+— a permanent double-digit tax to serve occasional RDF consumers. So the card
+<strong>stays plain JSON at rest</strong>, and the RDF view is a <strong>pure projection</strong>:
+<code>rete card --format jsonld</code> (and <code>card-url</code>) reshapes bytes already fetched —
+no network, no index read — and there is no second artefact to drift, because
+the projection is derived from the stored card on every call.</p>
+<h3 id="the-json-ld-projection---format-jsonld">The JSON-LD projection (<code>--format jsonld</code>)</h3>
+<p>One document, typed both <code>schema:Dataset</code> <strong>and</strong> <code>void:Dataset</code> — one dataset
+described in two vocabularies, not two objects. The mapping reuses standard
+terms before inventing any:</p>
+<table><thead><tr><th>card</th><th>projected as</th></tr></thead><tbody>
+<tr><td><code>quad_count</code></td><td><code>void:triples</code> (the whole dataset)</td></tr>
+<tr><td><code>predicates</code></td><td><code>void:propertyPartition</code> (<code>void:property</code> + <code>void:triples</code>)</td></tr>
+<tr><td><code>classes</code></td><td><code>void:classPartition</code> (<code>void:class</code> + <code>void:entities</code>)</td></tr>
+<tr><td><code>vocabularies</code></td><td><code>void:vocabulary</code></td></tr>
+<tr><td><code>sparql_endpoint</code>, <code>canonical_url</code></td><td><code>void:sparqlEndpoint</code>, <code>void:dataDump</code> (+ a <code>schema:DataDownload</code> distribution)</td></tr>
+<tr><td><code>title</code>/<code>description</code>/<code>license</code>/<code>version</code>/<code>created</code>/<code>cite_as</code>/<code>doi</code></td><td><code>schema:name</code>/<code>description</code>/<code>license</code>/<code>version</code>/<code>dateCreated</code>/<code>citation</code>/<code>identifier</code></td></tr>
+<tr><td><code>creators</code>, <code>publisher</code></td><td><code>schema:Person</code> (ORCID as <code>@id</code>) / <code>schema:Organization</code> (ROR as <code>@id</code>)</td></tr>
+<tr><td><code>keywords</code></td><td><code>schema:keywords</code> <strong>and</strong> <code>dcat:keyword</code> — one list under both standard names, the same dual-vocabulary stance as the <code>schema:Dataset</code> + <code>void:Dataset</code> typing</td></tr>
+<tr><td><code>theme</code></td><td><code>dcat:theme</code>, <code>@id</code>-typed (the values are controlled-vocabulary IRIs) — exactly one standard term, so no schema.org double</td></tr>
+<tr><td><code>source</code>, <code>derived_from</code></td><td><code>prov:wasDerivedFrom</code> (URLs) / <code>dct:source</code> (free text)</td></tr>
+<tr><td>build info</td><td><code>prov:wasGeneratedBy</code> — a <code>prov:Activity</code> with <code>prov:endedAtTime</code> and the builder as a <code>schema:SoftwareApplication</code> agent</td></tr>
+<tr><td>temporal/spatial signals</td><td><code>schema:temporalCoverage</code> / <code>schema:spatialCoverage</code> (GeoShape box)</td></tr>
+<tr><td><code>triple_count</code>, <code>term_count</code>, <code>named_graph_count</code>, the content hash</td><td>a small <code>rete:</code> namespace (<code>https://w3id.org/rete/card#</code>) — what no standard covers, rather than a bent term</td></tr>
+<tr><td><code>extra</code> (custom fields)</td><td>per-key <code>rete:extra/&lt;key&gt;</code> — <strong>opaque values, not vocabulary</strong>: scalars as plain literals, containers as <code>rdf:JSON</code> JSON literals (see <a href="#custom-fields-the-extra-bag">Custom fields</a>)</td></tr>
+</tbody></table>
+<p>The projection is validated JSON-LD: it expands under <code>pyld</code> and yields the
+intended VoID/schema.org/PROV triples (58 of them on the demo card). It
+deliberately projects the interoperable core; the full profile (starter
+queries, hubs, datatype histograms, signals) stays in <code>--json</code>, where its
+private names are honest.</p>
+<h3 id="croissant--the-honest-subset---format-croissant">Croissant — the honest subset (<code>--format croissant</code>)</h3>
+<p>Croissant models <strong>tables</strong>: <code>recordSet</code> → <code>field</code> → <code>dataType</code>. An RDF graph
+has no records, and forcing the card into a record-set shape would produce a
+document that validates and misleads. So <code>--format croissant</code> maps what
+genuinely corresponds — the descriptive header, licence, version, keywords,
+creators and publisher, provenance, and the <code>.rete</code> file itself as a
+<code>cr:FileObject</code> distribution — and <strong>carries no <code>recordSet</code> at all</strong>.
+(<code>theme</code> is not carried: its only term is DCAT's, and bending it into a
+schema.org shape here would be the same dishonesty as a fabricated
+<code>recordSet</code>.) (Where a dataset ships
+tabular Parquet companions, <em>those</em> are the honest record-set material, with
+their own Croissant documents beside the bucket.)</p>
+<p>One Croissant requirement is structurally unsatisfiable from inside the file:
+every <code>FileObject</code> must carry an <code>md5</code>/<code>sha256</code>, and <strong>a file cannot contain
+its own whole-file sha256</strong> (the hash would change the bytes being hashed).
+The format's own integrity hash (blake3-16 over the payload sections) is
+published as <code>rete:contentHash</code>; the sha256 — knowable only outside the file —
+can be supplied by the publisher with <code>--sha256 &lt;hex&gt;</code>, which makes the
+document fully validator-clean: <code>mlcroissant</code> reports <strong>zero errors</strong> with it,
+and exactly that one missing-property error without it.</p>
+<pre><code class="language-sh">rete card data.rete --format jsonld                      # VoID + schema.org + PROV
+rete card data.rete --format croissant --sha256 $(sha256sum data.rete | cut -d' ' -f1)
+</code></pre>
+<h2 id="back-compatibility">Back-compatibility</h2>
 <p>All enriched fields are additive with serde defaults, so a card written by an
 older <code>rete</code> (plain <code>example_queries</code>, none of the new fields) still
 deserializes. Because the new fields change the card JSON, they change the
 <code>blake3</code> content hash of every <strong>card-bearing</strong> file — cardless builds are
 unaffected and remain byte-identical to a pre-card build.</p>
-<h2>Reading a card</h2>
+<p>Compatibility holds in both directions, verified against real artifacts: the
+new reader parses the published NKOD and Hugging Face cards unchanged (2 range
+requests each), and a pre-build-info binary run against a new card-bearing
+file <strong>verifies it</strong> (the hash never covered the new section), renders its
+card (unknown JSON fields are ignored by serde), and queries it (the unknown
+kind-7 directory entry is preserved and skipped by the section-directory
+contract the header has always had).</p>
+<h2 id="reading-a-card">Reading a card</h2>
 <p><code>rete card</code> prints a human-readable catalog; <code>--json</code> emits the raw card:</p>
 <pre><code class="language-sh">rete card data.rete
 #  Dataset Card
@@ -462,17 +1631,60 @@ unaffected and remain byte-identical to a pre-card build.</p>
 
 rete card data.rete --json     # the embedded JSON, pretty-printed
 </code></pre>
+<h3 id="in-the-browser">In the browser</h3>
+<p>The <a href="playground.html">playground</a>'s <strong>🏷 Card</strong> button renders the same card,
+and the build record with it. Both come from <strong>one</strong> engine call — the header
+plus the single coalesced range that covers the card and the adjacent
+build-info section — so showing the build conditions costs a reader nothing
+over showing the card alone.</p>
+<p>What the rendered view does with each field is chosen to keep the card's own
+distinctions visible:</p>
+<ul>
+<li><code>keywords</code> and <code>theme</code> sit with the description as tags, since they say what
+the dataset is <em>about</em>. A theme's IRI is <strong>not resolved</strong> — that would be a
+network read the CARD tier exists to avoid — so the viewer names the
+<strong>concept scheme</strong>, which it can read from the IRI's prefix, and shows the
+concept's own identifier. It never invents the label the scheme owns.</li>
+<li><code>creators</code>, <code>publisher</code> and <code>doi</code> render as <strong>links to the identifier</strong>. That
+is the whole reason the card asks for an ORCID/ROR/DOI as an IRI rather than
+a string: it resolves, and it joins.</li>
+<li><code>cite_as</code> gets a copy button — a citation exists to be pasted elsewhere.</li>
+<li><code>extra</code> is rendered <strong>last and fenced off</strong>, labelled as the publisher's own
+fields, with the values shown in their JSON form and nothing linkified,
+rounded or thousands-separated. Formatting them would imply rete had
+understood them, and its contract is precisely that it has not.</li>
+<li>The <strong>build record</strong> is its own part of the modal, after the card, because it
+describes one <em>build of one file</em> rather than the data. Its per-query cost
+figures are shown <strong>with the queries they describe</strong> — that is where the
+question "what will this cost me?" gets asked — with <code>bytes</code>/<code>requests</code>
+leading and <code>debug_ms</code> labelled as one machine's reference.</li>
+<li>A file with no build record <strong>says so</strong>. It is the common case (every card
+written before the section existed, and every in-browser build) and it reads
+as absence, never as zeroed measurements.</li>
+</ul>
+<p>The playground's <strong>Build</strong> mode can also <em>write</em> a card: paste the same
+<code>--card-file</code> document into step 3 and the file it builds carries it. The
+engine validates it with the rules on this page — the same code the CLI runs,
+so the browser cannot compose a card <code>rete build --card-file</code> would refuse. It
+writes the curated fields plus the four counts its own build measured, and the
+built card carries no derived profile and no build record. See
+<a href="playground-guide.html#build">the playground guide</a>.</p>
+<p>That is the playground's own choice, not a limit of the engine: the wasm build
+exports <code>build_with_derived_card</code>, which derives the full profile in the
+browser. It is a separate export because derivation walks the graph twice more,
+and <code>build_with_card</code>'s bytes are a shipped contract.</p>
 <p><code>rete info</code> prints the file header and, when a card is present, appends the same
 catalog — so <code>info</code> is a one-shot overview of <em>what the file is</em> as well as <em>how
 it's laid out</em>. A file with no card just shows the header.</p>
 <p>The <code>checksum</code> line is the file's <code>blake3</code> content hash (the same value
 <code>rete verify</code> checks) — it identifies the exact bytes, card included.</p>
-<h2>How it sits in the file</h2>
+<h2 id="how-it-sits-in-the-file">How it sits in the file</h2>
 <p>The card is stored as compact <strong>JSON</strong> in the metadata section, which sits
 between the header and the dictionary:</p>
 <pre><code class="language-text">[0..1024)     header              (metadata_offset = 1024, metadata_len = card bytes)
 [1024 .. 1024+L) Dataset Card JSON  (L = metadata_len; absent when no card)
-[dictionary]    front-coded terms   (shifts to offset 1024 + L)
+[.. +B]         build-info JSON     (B = build_info_len; adjacent, OUTSIDE the hash)
+[dictionary]    front-coded terms   (shifts to offset 1024 + L + B)
 [index]         permutation blocks
 [pyramid-meta]  community summary
 [named graphs]  (if any)
@@ -493,9 +1705,16 @@ adds nothing to their query-time bytes-on-the-wire. An eligible small native
 card bytes; the bounded in-memory range opener still does not decode the card.
 To read the card explicitly without downloading the file, <code>rete card-url</code>
 fetches just the header + metadata range (two ranges, index untouched).</li>
-<li><strong>Opaque to the engine.</strong> <code>rete-core</code> treats the section as raw bytes; the card
-schema lives entirely in the CLI. The metadata section is a general extension
-point — a card is just its first use.</li>
+<li><strong>Opaque to the writer's <em>layout</em>, not to the card.</strong> The metadata section is
+raw bytes as far as the file format is concerned — a general extension point,
+of which a card is just the first use. The card <em>itself</em>, both halves, lives
+in <code>rete_core::card</code>: the write-time rules for the curated half (the reserved
+top level, the <code>theme</code> IRI requirement, the <code>extra</code> bounds), and the
+derivation of the profile and the starter-query library. It used to live in
+<code>rete-cli</code>, which is a binary-only crate no client can link, so a card
+derived there could never be derived anywhere else (<a href="https://github.com/caviri/rete/issues/152">#152</a>) — a correction to
+the derivation reached CLI-built files and nothing else. One implementation
+now answers for the CLI, the browser, and every language binding.</li>
 </ul>
 <p>See <a href="SPEC.html">the format specification</a> for the header layout and
 <a href="cli.html">the CLI reference</a> for every flag.</p>
@@ -508,6 +1727,35 @@ point — a card is just its first use.</li>
     </div>
     <footer>Generated from <code>docs/dataset-cards.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
+  <nav class="mnav" id="mnav" aria-label="Page navigation">
+    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="fallacies.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Experiment: graphs from speech</span></a>
+    <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
+      <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Contents</span>
+    </button>
+    <a class="mnav-side mnav-next" id="navNext" rel="next" href="hosting.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Hosting your .rete</span></a>
+  </nav>
+  <div class="mscrim" id="mscrim" hidden></div>
+  <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
+    <div class="mdrawer-head">
+      <div class="mdrawer-who">
+        <span class="mdrawer-eyebrow">Publish &amp; share · 40 of 55</span>
+        <span class="mdrawer-title" id="mdrawerTitle">Dataset Cards</span>
+      </div>
+      <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">
+        <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Close</span>
+      </button>
+    </div>
+    <div class="mdrawer-tabs" role="tablist" aria-label="Contents">
+      <button type="button" role="tab" id="tabHere" aria-controls="panelHere" aria-selected="true">On this page</button>
+      <button type="button" role="tab" id="tabAll" aria-controls="panelAll" aria-selected="false" tabindex="-1">All pages</button>
+    </div>
+    <div class="mdrawer-body">
+      <div class="mdrawer-panel" id="panelHere" role="tabpanel" aria-labelledby="tabHere" tabindex="0"></div>
+      <div class="mdrawer-panel" id="panelAll" role="tabpanel" aria-labelledby="tabAll" tabindex="0" hidden></div>
+    </div>
+  </aside>
   <script>
 (function () {
   function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
@@ -751,10 +1999,12 @@ point — a card is just its first use.</li>
 // prefers-color-scheme decides; explicit choices persist under the SAME
 // localStorage key ("theme") the playground uses, so the preference follows
 // the reader across the whole site.
+// There are two of these now — the sidebar's on a wide screen, the top bar's on
+// a phone — so the cycle is bound to every [data-theme-cycle] button rather than
+// to one id, and both stay in step because they read the same localStorage key.
 (function () {
-  var btn = document.getElementById("themeToggle");
-  var label = document.getElementById("themeToggleLabel");
-  if (!btn || !label) return;
+  var btns = [].slice.call(document.querySelectorAll("[data-theme-cycle]"));
+  if (!btns.length) return;
   function current() {
     try {
       var t = localStorage.getItem("theme");
@@ -763,19 +2013,264 @@ point — a card is just its first use.</li>
   }
   function render() {
     var t = current();
-    label.textContent = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    var name = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    btns.forEach(function (b) {
+      var label = b.querySelector("[data-theme-label]");
+      if (label) label.textContent = name;
+      else b.setAttribute("aria-label", "Theme: " + name + " — tap to cycle System, Light, Dark");
+    });
   }
-  btn.addEventListener("click", function () {
-    var next = { system: "light", light: "dark", dark: "system" }[current()];
-    try {
-      if (next === "system") localStorage.removeItem("theme");
-      else localStorage.setItem("theme", next);
-    } catch (e) {}
-    if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
-    else delete document.documentElement.dataset.theme;
-    render();
+  btns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      var next = { system: "light", light: "dark", dark: "system" }[current()];
+      try {
+        if (next === "system") localStorage.removeItem("theme");
+        else localStorage.setItem("theme", next);
+      } catch (e) {}
+      if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
+      else delete document.documentElement.dataset.theme;
+      render();
+    });
   });
   render();
+})();
+</script>
+  <script>
+(function () {
+  var NARROW = window.matchMedia("(max-width: 780px)");
+  var CALM = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var bar = document.getElementById("mbar");
+    var drawer = document.getElementById("mdrawer");
+    var scrim = document.getElementById("mscrim");
+    if (!bar || !drawer || !scrim) return;
+    var progress = document.getElementById("mprogBar");
+    var prevLink = document.getElementById("navPrev");
+    var nextLink = document.getElementById("navNext");
+    var closeBtn = document.getElementById("mdrawerClose");
+    var panels = { here: document.getElementById("panelHere"), all: document.getElementById("panelAll") };
+    var tabs = { here: document.getElementById("tabHere"), all: document.getElementById("tabAll") };
+    var openers = [document.getElementById("mbarMenu"), document.getElementById("mnavToc")]
+      .filter(function (b) { return !!b; });
+
+    /* ---- 1. fill the drawer ------------------------------------------------
+       Both panels are CLONES of lists this page already has: the rail's "on
+       this page" TOC (built by the block above from the heading ids docgen
+       mints server-side) and the sidebar's section nav. Cloning means the
+       drawer cannot drift out of step with either, and neither list carries an
+       `id`, so nothing is duplicated in the document. */
+    var pageToc = document.querySelector("#toc ul");
+    if (pageToc) {
+      panels.here.appendChild(pageToc.cloneNode(true));
+    } else {
+      panels.here.innerHTML = '<p class="mdrawer-empty">This page is short enough to have no sections — try "All pages".</p>';
+    }
+    var siteNav = document.querySelector(".sidebar > ul");
+    if (siteNav) panels.all.appendChild(siteNav.cloneNode(true));
+
+    function selectTab(which) {
+      Object.keys(tabs).forEach(function (k) {
+        var on = k === which;
+        if (tabs[k]) {
+          tabs[k].setAttribute("aria-selected", on ? "true" : "false");
+          tabs[k].tabIndex = on ? 0 : -1;
+        }
+        if (panels[k]) panels[k].hidden = !on;
+      });
+    }
+    function defaultTab() { return pageToc ? "here" : "all"; }
+    selectTab(defaultTab());
+    Object.keys(tabs).forEach(function (k) {
+      if (tabs[k]) tabs[k].addEventListener("click", function () { selectTab(k); tabs[k].focus(); });
+    });
+    var tablist = drawer.querySelector(".mdrawer-tabs");
+    if (tablist) {
+      tablist.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        var to = tabs.here.getAttribute("aria-selected") === "true" ? "all" : "here";
+        selectTab(to); tabs[to].focus();
+      });
+    }
+    // Jumping to a heading closes the sheet — otherwise it covers what you just
+    // asked to see.
+    panels.here.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a") : null;
+      if (a) close();
+    });
+
+    /* ---- 2. open / close, with a focus trap -------------------------------- */
+    var lastFocus = null, closeTimer = null;
+    function focusable() {
+      return [].slice.call(drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+        .filter(function (el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
+    }
+    function isOpen() { return document.documentElement.classList.contains("drawer-open"); }
+    function open() {
+      if (isOpen()) return;
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+      lastFocus = document.activeElement;
+      drawer.hidden = false; scrim.hidden = false;
+      document.documentElement.classList.add("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "true"); });
+      syncActive();
+      // Two frames: the element has to have been laid out in its off-screen
+      // state before the class that slides it in can animate.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { drawer.classList.add("open"); scrim.classList.add("open"); });
+      });
+      if (closeBtn) closeBtn.focus();
+    }
+    function close() {
+      if (!isOpen()) return;
+      drawer.classList.remove("open"); scrim.classList.remove("open");
+      document.documentElement.classList.remove("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+      closeTimer = setTimeout(function () {
+        drawer.hidden = true; scrim.hidden = true; closeTimer = null;
+      }, CALM.matches ? 0 : 240);
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+      lastFocus = null;
+    }
+    openers.forEach(function (b) { b.addEventListener("click", open); });
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    scrim.addEventListener("click", close);
+    document.addEventListener("keydown", function (e) {
+      if (!isOpen()) return;
+      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key !== "Tab") return;
+      var items = focusable();
+      if (!items.length) return;
+      var first = items[0], last = items[items.length - 1];
+      if (!drawer.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    // The desktop scroll-spy keeps `.active` on the rail's TOC; mirror it onto
+    // the clone when the sheet opens, so "you are here" is right without a
+    // second listener running all the way down every page.
+    function syncActive() {
+      var live = document.querySelector("#toc a.active");
+      var want = live ? live.getAttribute("href") : null;
+      panels.here.querySelectorAll("a").forEach(function (a) {
+        a.classList.toggle("active", a.getAttribute("href") === want);
+      });
+    }
+
+    /* ---- 3. reading position + hide-on-scroll ------------------------------
+       The bar is 52px of a 640px-tall screen. Giving it back while the reader
+       is actually reading, and returning it the moment they reach for it, is
+       the whole justification for spending those pixels. Under
+       prefers-reduced-motion it simply never moves. */
+    var lastY = window.pageYOffset || 0, queued = false;
+    function onScroll() {
+      var y = Math.max(0, window.pageYOffset || 0);
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      if (progress) progress.style.width = (max > 40 ? Math.min(100, (y / max) * 100) : 0) + "%";
+      if (CALM.matches || !NARROW.matches || isOpen()) bar.classList.remove("up");
+      else if (y < 96) bar.classList.remove("up");
+      else if (y - lastY > 6) bar.classList.add("up");
+      else if (lastY - y > 6) bar.classList.remove("up");
+      lastY = y;
+      queued = false;
+    }
+    window.addEventListener("scroll", function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(onScroll);
+    }, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    onScroll();
+
+    /* ---- 4. swipe left / right between pages -------------------------------
+       Prev and next are the two links in the bottom bar; the gesture is only a
+       shortcut to them, never the only way to get anywhere. */
+    function go(href, back) {
+      if (!href) return;
+      if (CALM.matches) { window.location.href = href; return; }
+      document.documentElement.classList.add(back ? "page-out-right" : "page-out-left");
+      setTimeout(function () { window.location.href = href; }, 130);
+    }
+    // Coming back through the bfcache must not restore the faded-out state.
+    window.addEventListener("pageshow", function () {
+      document.documentElement.classList.remove("page-out-left", "page-out-right");
+    });
+
+    // The nearest ancestor that the finger could be scrolling sideways. Only
+    // boxes that OVERFLOW and are allowed to scroll count: `overflow-x:hidden`
+    // clips its content but the user cannot pan it, so a swipe there is ours.
+    function hscroller(node) {
+      for (var el = node; el && el !== document.body; el = el.parentElement) {
+        if (el.nodeType !== 1) continue;
+        if (el.scrollWidth - el.clientWidth > 2) {
+          var ox = window.getComputedStyle(el).overflowX;
+          if (ox === "auto" || ox === "scroll") return el;
+        }
+      }
+      return null;
+    }
+
+    var swipe = null;
+    document.addEventListener("touchstart", function (e) {
+      swipe = null;
+      if (!NARROW.matches || isOpen() || e.touches.length !== 1) return;
+      var t = e.touches[0], el = e.target;
+      // Never compete with the chrome itself, a form field, or the lightbox.
+      if (el && el.closest && el.closest("input,textarea,select,[contenteditable],.mbar,.mnav,.mdrawer,.mscrim,.lightbox")) return;
+      var sc = hscroller(el);
+      swipe = {
+        x: t.clientX, y: t.clientY, t: Date.now(), axis: 0, sc: sc,
+        left: sc ? sc.scrollLeft : 0,
+        room: sc ? sc.scrollWidth - sc.clientWidth : 0
+      };
+    }, { passive: true });
+
+    document.addEventListener("touchmove", function (e) {
+      if (!swipe) return;
+      if (e.touches.length !== 1) { swipe = null; return; }   // pinch / second finger
+      var t = e.touches[0];
+      var dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+      if (!swipe.axis && Math.abs(dx) + Math.abs(dy) > 12) {
+        // Lock the axis on the FIRST real movement. A drag that began as
+        // vertical reading scroll can never become a page turn later on,
+        // however far sideways it wanders before the finger lifts.
+        swipe.axis = Math.abs(dx) > Math.abs(dy) * 1.4 ? 1 : -1;
+      }
+      if (swipe.axis === -1) swipe = null;
+    }, { passive: true });
+
+    document.addEventListener("touchcancel", function () { swipe = null; }, { passive: true });
+
+    document.addEventListener("touchend", function (e) {
+      var s = swipe; swipe = null;
+      if (!s || s.axis !== 1 || !e.changedTouches || !e.changedTouches.length) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - s.x, dy = t.clientY - s.y, dt = Math.max(1, Date.now() - s.t);
+      if (Math.abs(dx) < Math.max(72, window.innerWidth * 0.12)) return;  // far enough
+      if (Math.abs(dx) < Math.abs(dy) * 2) return;                        // dominantly horizontal
+      if (dt > 900) return;                                               // a drag, not a rest
+      // Fast flick, or a slow but unmistakably long pull.
+      if (Math.abs(dx) / dt < 0.25 && Math.abs(dx) < window.innerWidth * 0.28) return;
+      var back = dx > 0;                       // finger to the right = go back
+      if (s.sc) {
+        // The gesture started inside a table / code block / diagram that can
+        // pan. Two ways it can still belong to that box, and both forfeit the
+        // page turn: it MOVED under the finger, or it has room left to move
+        // the way the finger is going.
+        //
+        // The 2px on the first test is not slack, it is a real observation: a
+        // block pinned at its right edge reports scrollLeft one pixel below the
+        // maximum once the browser settles the fractional part, and an exact
+        // comparison reads that as a pan and cancels the turn forever. A pan
+        // worth respecting moves hundreds of pixels.
+        if (Math.abs(s.sc.scrollLeft - s.left) > 2) return;
+        if (back ? s.left > 1 : s.left < s.room - 1) return;
+      }
+      var link = back ? prevLink : nextLink;
+      go(link && link.getAttribute("href"), back);
+    }, { passive: true });
+  });
 })();
 </script>
 </body>

@@ -19,15 +19,27 @@ pub const MAGIC: [u8; 4] = *b"RETE";
 
 /// Current format generation written by this crate.
 ///
-/// `0x05` is stable format generation 1, introduced by Rete 1.0.0. It retains
-/// the six index permutations and 1 KiB section-directory layout finalized in
-/// the last experimental generation.
+/// `0x05` is stable format generation 1, frozen on 2026-07-14 and first
+/// released in Rete 0.3.0. It retains the six-wide index-permutation addressing
+/// and the 1 KiB section-directory layout finalized in the last experimental
+/// generation; *which* of those six a given file stores is [`Header::perms`]
+/// (byte 50), not the generation.
+///
+/// The generation number is not a release version — there is no Rete 1.0.0, and
+/// it is the Rust/CLI/WASM APIs, not the format, that are waiting on one. Nor
+/// does it pin reader capability: writer semantics changed inside `0x05` nine
+/// days after the freeze (#68 split oversized index groups across tiles), so a
+/// `0x05` file can need a reader newer than the one that froze `0x05`.
 pub const CURRENT_FORMAT_VERSION: u8 = 0x05;
 
 /// Oldest stable format generation accepted by this reader.
 ///
-/// Files written before Rete 1.0.0 used experimental generations `0x01` through
-/// `0x04` and must be rebuilt from their RDF source.
+/// Files written before the generation-1 freeze used experimental generations
+/// `0x01` through `0x04` and must be rebuilt from their RDF source. `0x05` has
+/// not moved since it froze on 2026-07-14, but that is a track record, not a
+/// promise: no backwards compatibility is guaranteed before 1.0.0, so this
+/// constant may yet be raised and a `0x05` file may yet need a rebuild. See
+/// `docs/compatibility.md`.
 pub const MIN_STABLE_READ_VERSION: u8 = 0x05;
 
 /// Stable generation retained by the production header while the paired-family
@@ -80,6 +92,13 @@ pub enum SectionKind {
     NamedGraphs,
     /// Full-text (word) index over literals — `token → subjects`.
     TextIndex,
+    /// Build-conditions record (timestamp, builder version, build parameters,
+    /// measured starter-query costs), stored as an opaque JSON blob owned by the
+    /// application layer (the CLI). **Deliberately excluded from the content
+    /// hash**: two builds of identical data must hash identically, and this
+    /// section is exactly the per-build facts (when, by which binary, how fast)
+    /// that differ between them. `verify` therefore does not cover it.
+    BuildInfo,
     /// A section kind this build doesn't know — preserved verbatim on round-trip
     /// so a newer writer's sections survive an older reader.
     Unknown(u16),
@@ -94,6 +113,7 @@ impl SectionKind {
             SectionKind::PyramidMeta => 4,
             SectionKind::NamedGraphs => 5,
             SectionKind::TextIndex => 6,
+            SectionKind::BuildInfo => 7,
             SectionKind::Unknown(k) => k,
         }
     }
@@ -106,6 +126,7 @@ impl SectionKind {
             4 => SectionKind::PyramidMeta,
             5 => SectionKind::NamedGraphs,
             6 => SectionKind::TextIndex,
+            7 => SectionKind::BuildInfo,
             other => SectionKind::Unknown(other),
         }
     }
@@ -134,6 +155,8 @@ pub enum HeaderError {
     UnsupportedVersion { found: u8, min: u8, max: u8 },
     #[error("section count {0} overruns the header frame")]
     BadSectionCount(usize),
+    #[error("unusable index permutation mask {mask:#04x}: {why}")]
+    BadPermMask { mask: u8, why: &'static str },
 }
 
 /// Decoded file header. All multi-byte fields are little-endian on disk. The
@@ -172,6 +195,22 @@ pub struct Header {
     /// `rete build --text-index`). See [`SectionKind::TextIndex`].
     pub text_index_offset: u64,
     pub text_index_len: u64,
+    /// Build-conditions section (0 if absent). See [`SectionKind::BuildInfo`]:
+    /// an opaque per-build record that is **not** covered by the content hash.
+    pub build_info_offset: u64,
+    pub build_info_len: u64,
+    /// Which index permutations the file's index containers carry
+    /// ([`crate::index::PermSet`]).
+    ///
+    /// On disk this is one byte at `[50]`, inside the reserved core span, and
+    /// **`0` means all six** — so every file written before the mask existed
+    /// decodes as [`PermSet::ALL`] and a full six-permutation build stays
+    /// byte-identical to what it always was. A lean file writes its mask
+    /// (`0b000_0111` for SPO+POS+OSP), and its index container then holds three
+    /// sections rather than six, which is what an older reader trips over.
+    ///
+    /// [`PermSet::ALL`]: crate::index::PermSet::ALL
+    pub perms: crate::index::PermSet,
     /// Directory entries whose [`SectionKind`] this build doesn't recognize,
     /// preserved verbatim. Empty for a file this crate wrote.
     pub extra_sections: Vec<Section>,
@@ -194,7 +233,14 @@ impl Header {
         b[43] = self.block_codec;
         // [44..46) section_count written below.
         b[46..50].copy_from_slice(&self.schema_meta_len.to_le_bytes());
-        // [50..64) reserved.
+        // [50] permutation mask; 0 = all six, so a full build is byte-identical
+        // to every file written before the field existed.
+        b[50] = if self.perms == crate::index::PermSet::ALL {
+            0
+        } else {
+            self.perms.bits()
+        };
+        // [51..64) reserved.
 
         // --- section directory ---
         // The five always-present sections (verbatim, so the named offsets
@@ -234,6 +280,13 @@ impl Header {
                 SectionKind::TextIndex,
                 self.text_index_offset,
                 self.text_index_len,
+            ));
+        }
+        if self.build_info_len > 0 {
+            entries.push(entry(
+                SectionKind::BuildInfo,
+                self.build_info_offset,
+                self.build_info_len,
             ));
         }
         entries.extend(self.extra_sections.iter().copied());
@@ -278,6 +331,13 @@ impl Header {
             return Err(HeaderError::BadSectionCount(section_count));
         }
 
+        let perms = if b[50] == 0 {
+            crate::index::PermSet::ALL
+        } else {
+            crate::index::PermSet::from_bits(b[50])
+                .map_err(|why| HeaderError::BadPermMask { mask: b[50], why })?
+        };
+
         let mut h = Header {
             version: b[4],
             flags: b[5],
@@ -298,8 +358,11 @@ impl Header {
             named_graphs_offset: 0,
             named_graphs_len: 0,
             schema_meta_len: u32_at(46),
+            perms,
             text_index_offset: 0,
             text_index_len: 0,
+            build_info_offset: 0,
+            build_info_len: 0,
             extra_sections: Vec::new(),
         };
         for i in 0..section_count {
@@ -332,6 +395,10 @@ impl Header {
                     h.text_index_offset = offset;
                     h.text_index_len = length;
                 }
+                SectionKind::BuildInfo => {
+                    h.build_info_offset = offset;
+                    h.build_info_len = length;
+                }
                 SectionKind::Unknown(_) => h.extra_sections.push(Section {
                     kind,
                     flags: u16_at(p + 2),
@@ -345,6 +412,43 @@ impl Header {
 
     pub fn has_quads(&self) -> bool {
         self.flags & FLAG_HAS_QUADS != 0
+    }
+
+    /// The total file length implied by this header alone: the writer lays the
+    /// sections out back-to-back after the 1 KiB header and ends the file with
+    /// the 4-byte `RETE` footer, so the furthest `offset + length` in the
+    /// section directory plus 4 **is** the file length.
+    ///
+    /// This is the one length signal a *remote* reader can always trust: an
+    /// HTTP host may advertise the size of a compressed representation in
+    /// `Content-Length` (GitHub Pages gzips — a 71 MB file HEADs as 58 MB)
+    /// while serving ranges over the identity bytes, and may hide
+    /// `Content-Range` from cross-origin JS by omitting
+    /// `Access-Control-Expose-Headers`. The header travels *in band* — in the
+    /// first 1 KiB range read — so it cannot be skewed by transport encoding.
+    ///
+    /// `None` if any directory entry overflows `u64` (a crafted or corrupt
+    /// header must yield "unknown", never a panic or a wrapped length — the
+    /// weekly fuzz caught `verify()` on exactly this class of input).
+    pub fn expected_file_len(&self) -> Option<u64> {
+        let mut end = HEADER_LEN as u64;
+        let named = [
+            (self.metadata_offset, self.metadata_len),
+            (self.dictionary_offset, self.dictionary_len),
+            (self.root_dir_offset, self.root_dir_len),
+            (self.pyramid_meta_offset, self.pyramid_meta_len),
+            (self.named_graphs_offset, self.named_graphs_len),
+            (self.text_index_offset, self.text_index_len),
+            (self.build_info_offset, self.build_info_len),
+        ];
+        let extras = self.extra_sections.iter().map(|s| (s.offset, s.length));
+        for (offset, length) in named.into_iter().chain(extras) {
+            if length == 0 {
+                continue; // absent section — its (0, 0) entry says nothing
+            }
+            end = end.max(offset.checked_add(length)?);
+        }
+        end.checked_add(MAGIC.len() as u64)
     }
 
     /// Does the file contain RDF-star quoted triples ([`FLAG_HAS_QUOTED_TRIPLES`])?
@@ -368,6 +472,7 @@ impl Header {
             SectionKind::PyramidMeta => (self.pyramid_meta_offset, self.pyramid_meta_len),
             SectionKind::NamedGraphs => (self.named_graphs_offset, self.named_graphs_len),
             SectionKind::TextIndex => (self.text_index_offset, self.text_index_len),
+            SectionKind::BuildInfo => (self.build_info_offset, self.build_info_len),
             SectionKind::Unknown(_) => {
                 return self.extra_sections.iter().find(|s| s.kind == kind).copied()
             }
@@ -409,6 +514,10 @@ impl Header {
                 self.text_index_offset = offset;
                 self.text_index_len = length;
             }
+            SectionKind::BuildInfo => {
+                self.build_info_offset = offset;
+                self.build_info_len = length;
+            }
             SectionKind::Unknown(_) => self.extra_sections.push(Section {
                 kind,
                 flags: 0,
@@ -439,6 +548,7 @@ mod tests {
             dict_codec: 1,
             block_codec: 2,
             pyramid_levels: 3,
+            perms: crate::index::PermSet::ALL,
             quad_count: 5,
             term_count: 9,
             content_hash: [7u8; 16],
@@ -447,6 +557,8 @@ mod tests {
             schema_meta_len: 99,
             text_index_offset: 0,
             text_index_len: 0,
+            build_info_offset: 0,
+            build_info_len: 0,
             extra_sections: Vec::new(),
         }
     }
@@ -505,6 +617,39 @@ mod tests {
         assert_eq!(u64_at(96), 0x33);
         assert_eq!(u64_at(104), 0x44);
         assert_eq!(b.len(), HEADER_LEN);
+    }
+
+    #[test]
+    fn expected_file_len_is_last_section_end_plus_footer() {
+        // sample(): named graphs end furthest, at 3434 + 48 = 3482.
+        assert_eq!(sample().expected_file_len(), Some(3482 + 4));
+
+        // A zero-length section's offset must not count (absent sections are
+        // written as (0, 0), and a stale offset with len 0 addresses nothing).
+        let mut h = sample();
+        h.text_index_offset = 1 << 40;
+        h.text_index_len = 0;
+        assert_eq!(h.expected_file_len(), Some(3482 + 4));
+
+        // An empty file (header + footer only) is 1028 bytes.
+        let mut e = sample();
+        e.metadata_len = 0;
+        e.dictionary_len = 0;
+        e.root_dir_len = 0;
+        e.pyramid_meta_len = 0;
+        e.named_graphs_len = 0;
+        assert_eq!(e.expected_file_len(), Some(1024 + 4));
+
+        // A crafted header whose entry overflows u64 yields None, not a panic
+        // or a wrapped (tiny) length.
+        let mut c = sample();
+        c.named_graphs_offset = u64::MAX - 8;
+        c.named_graphs_len = 64;
+        assert_eq!(c.expected_file_len(), None);
+
+        // Unknown (future) sections extend the file too.
+        let f = sample().with_section(SectionKind::Unknown(99), 1 << 20, 512);
+        assert_eq!(f.expected_file_len(), Some((1 << 20) + 512 + 4));
     }
 
     #[test]
@@ -585,6 +730,28 @@ mod tests {
         let dict = back.section(SectionKind::Dictionary).unwrap();
         assert_eq!(dict.offset, h.dictionary_offset);
         assert_eq!(h, back);
+    }
+
+    #[test]
+    fn build_info_section_round_trips_and_is_optional() {
+        // Absent (len 0): only the 5 always-present sections — a file without a
+        // build-info section is byte-identical to one built before it existed.
+        let plain = sample().to_bytes();
+        assert_eq!(u16::from_le_bytes(plain[44..46].try_into().unwrap()), 5);
+        assert_eq!(sample().section(SectionKind::BuildInfo).unwrap().length, 0);
+
+        // Present: a directory entry that round-trips and resolves as kind 7.
+        let h = sample().with_section(SectionKind::BuildInfo, 1066, 300);
+        let bytes = h.to_bytes();
+        assert_eq!(u16::from_le_bytes(bytes[44..46].try_into().unwrap()), 6);
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(h, back);
+        let s = back.section(SectionKind::BuildInfo).unwrap();
+        assert_eq!((s.offset, s.length), (1066, 300));
+        assert!(back.extra_sections.is_empty(), "BuildInfo is a known kind");
+        // And it extends the expected file length like any other section.
+        let far = sample().with_section(SectionKind::BuildInfo, 1 << 21, 128);
+        assert_eq!(far.expected_file_len(), Some((1 << 21) + 128 + 4));
     }
 
     #[test]

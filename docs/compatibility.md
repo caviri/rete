@@ -2,13 +2,93 @@
 
 ## Stable `.rete` file compatibility
 
-Format byte `0x05` is stable format generation 1, introduced by Rete 1.0.0.
-Files produced before Rete 1.0.0 are experimental artifacts and must be rebuilt.
-Every stable Rete reader from 1.0.0 onward reads format `0x05`. Newer readers may
+Format byte `0x05` is stable format generation 1, frozen on **2026-07-14** and
+first released in Rete **0.3.0**. Files carrying the experimental generations
+`0x01`–`0x04` predate that freeze and must be rebuilt from RDF source. Every
+stable Rete reader from 0.3.0 onward reads format `0x05`. Newer readers may
 add optional sections and flags that preserve `0x05` semantics. A required layout
-change uses a new format byte, retains `0x05` read support, and ships with a
-documented rebuild or migration path. Older readers may reject a newer format
-cleanly; silent misinterpretation is never permitted.
+change uses a new format byte. Older readers may reject a newer format cleanly;
+silent misinterpretation is never permitted.
+
+> **No backwards-compatibility promise before 1.0.0.** rete reserves the right to
+> change the `.rete` format while it is pre-1.0, **including in ways that require
+> rebuilding a file you have already published**. `0x05` has not moved since it
+> froze on 2026-07-14 — that is a track record, not a guarantee. Keep the RDF
+> source you built from; the durable compatibility promise starts at 1.0.0.
+
+**The generation number is not a release version.** There is no Rete 1.0.0: the
+workspace is 0.3.x, and the file format froze earlier and independently of any
+release version ([release.md](release.md)). Two consequences worth stating,
+because both have bitten:
+
+- **`0x05` does not pin reader capability.** Nine days after the freeze,
+  [#68](https://github.com/caviri/rete/pull/68) changed what the *writer* emits
+  within `0x05` — a single index group larger than the tile budget is now split
+  across consecutive tiles — with no generation bump, because the reader change
+  was backward compatible in one direction only. A reader older than #68 returns
+  **silently incomplete** results on a file that contains split groups, which is
+  [#124](https://github.com/caviri/rete/issues/124). "It's `0x05`" therefore
+  means "the layout is generation 1", not "any generation-1 reader is safe";
+  read published files with a current reader, and rebuild every bundled engine
+  (playground WASM, the single-file explorer pages, the clients) before
+  publishing a file written by a newer writer.
+- **A `min_reader_version` byte would have said that in the file**, and cannot be
+  retrofitted into `0x05`. It is item B of
+  [#206](https://github.com/caviri/rete/issues/206), the standing survey of what
+  a future generation break should batch together.
+
+### `--permutations 3`: a `0x05` file older readers refuse
+
+`rete build --permutations 3` writes SPO, POS and OSP and omits the three
+merge-join orders (SOP, PSO, OPS). **The default is six and this section is the
+reason to think before changing it.**
+
+The file is still format `0x05` — no layout moved, no section was added, the
+header's byte 50 simply carries the permutation mask instead of zero. A reader
+that knows the mask answers every query on it with the same rows, from the same
+tiles, as it would on the six-permutation twin. A reader that predates the mask
+**refuses it**:
+
+```
+$ rete stats three.rete          # a Rete built before the mask existed
+Error: malformed container: expected 6 permutation sections
+$ echo $?
+1
+$ rete sparql-url http://…/three.rete 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }'
+Error: malformed container: unexpected container section count
+$ echo $?
+1
+```
+
+Both the resident decoder and the ranged one check the index container's section
+count before reading a payload, so the refusal is the same on a local file, a
+lazily range-read one, and every `*-url` command. `rete info`, `rete verify` and
+`rete card-url` still succeed, because they read only the header and the metadata
+section and never claim to have read the index.
+
+> **Guarantee.** A reader that does not understand the permutation mask never
+> returns a row from a file that carries fewer than six permutations. Nothing is
+> written empty: a lean file's index container holds **three sections, not six**,
+> and both decoders compare that count against the six they expect *before*
+> touching a payload. Verified by reading a 3-permutation file with an unmodified
+> `rete` built from the previous `main`: `stats`, `sparql`, `export`, `why`,
+> `query-url`, `sparql-url`, `cost` and a forced-resident open
+> (`RETE_LOCAL_LAZY_ABOVE_MB=0`) each printed one of the two errors above and
+> exited 1. That is what makes `--permutations 3` safe to ship without a
+> format-generation bump. (A *current* reader accepts the file; it compares the
+> section count against the header's mask instead, and says `index container
+> section count does not match the header permutation mask` if they disagree.)
+
+That is the good failure — loud, immediate, non-zero exit — and it is the
+opposite of [#124](https://github.com/caviri/rete/issues/124), where a stale
+reader returned 65,384 rows where 508,116 were correct. It is *not* forward
+compatibility: a lean file cannot be published to a fleet of older readers and
+be expected to work. Keep the default for anything published, and treat
+`--permutations 3` as a choice about a specific consumer that you control.
+
+Which set a file carries is visible without downloading it: `rete info`, `rete
+stats` and the Dataset Card's `signals.permutations` all report it, derived from
+the header byte rather than stored — see [dataset-cards.md](dataset-cards.md).
 
 ## Is it compatible with RDF?
 

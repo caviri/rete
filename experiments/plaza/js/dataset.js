@@ -1,6 +1,6 @@
 // dataset.js — one dataset's page: its full card, companion downloads, and a
 // live explore panel (autocomplete + SPARQL) backed by a WASM worker.
-import { readReteCard, liteCardFromHeader, fmtBytes } from "./rete-card.js";
+import { readReteCard, liteCardFromHeader, fmtBytes, plainDescription } from "./rete-card.js";
 import { imageInfoFromCard } from "./procgen.js";
 import { renderFingerprint } from "./procgen-p5.js";
 import { mountSchemaUML } from "./schema-uml.js";
@@ -155,7 +155,10 @@ function render(entry, card, header, cardErr, heroUrl, size) {
       <div>
         <h1>${esc(splitTitle(entry.title || entry.key).name)}</h1>
         ${splitTitle(entry.title || entry.key).sub ? `<div class="hero-subtitle">${esc(splitTitle(entry.title || entry.key).sub)}</div>` : ""}
-        <div class="desc">${esc(card.description || entry.blurb || "")}</div>
+        <!-- The hero is one paragraph; a Markdown description is flattened into
+             it. The card's own structure is preserved in the raw-card details
+             below, and rendered in full by the playground's Card modal. -->
+        <div class="desc">${esc(plainDescription(card.description || entry.blurb || ""))}</div>
         <div class="facts">
           ${size != null ? `<span><b>${fmtBytes(size)}</b> file</span>` : ""}
           ${triples != null ? `<span><b>${fmt(triples)}</b> triples</span>` : ""}

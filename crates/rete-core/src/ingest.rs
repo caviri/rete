@@ -9,6 +9,11 @@
 //! canonical N-Triples surface (and is deliberately tolerant of IRIs a strict
 //! parser would reject), enough for v0 ingestion. Turtle goes through `oxttl`.
 //!
+//! That tolerance is *measured*, not silent: pass an [`IriAudit`] to any of the
+//! `*_audited` entry points and the parse counts every IRI outside the
+//! N-Triples `IRIREF` grammar / RFC 3987 (see [`crate::iri`]) — or, with
+//! `strict`, refuses the input on the first one. `rete build` always audits.
+//!
 //! Assembly degrades with the build features: without the `compression`
 //! feature (e.g. on wasm) sections are written with the `NONE` codec — larger
 //! files, byte-compatible readers.
@@ -39,15 +44,95 @@ pub enum IngestError {
     /// The Turtle parser rejected the input.
     #[error("turtle: {0}")]
     Turtle(String),
+    /// The TriG parser rejected the input.
+    #[error("trig: {0}")]
+    TriG(String),
     /// The RDF/XML parser rejected the input.
     #[error("rdf/xml: {0}")]
     RdfXml(String),
     /// The requested format is not one this crate can parse.
-    #[error("unknown input format: {0} (expected nt, nq, ttl, or rdf/xml)")]
+    #[error("unknown input format: {0} (expected nt, nq, ttl, trig, or rdf/xml)")]
     UnknownFormat(String),
     /// The input could not be read (streaming builds surface the path here).
     #[error("io: {0}")]
     Io(String),
+    /// An IRI outside the N-Triples/N-Quads `IRIREF` grammar / RFC 3987, refused
+    /// because the caller asked for a strict [`IriAudit`] (`rete build
+    /// --strict`). Without `strict` the same finding is only counted.
+    /// `location` is `line N` for the line-based syntaxes, the format name for
+    /// the others (oxttl reports its own positions).
+    #[error("{location}: invalid IRI {token} — {reason}")]
+    InvalidIri {
+        /// Where it was seen: `line 42`, or the format name.
+        location: String,
+        /// The offending term token, verbatim.
+        token: String,
+        /// Which rule it breaks ([`crate::iri::IriDefect::reason`]).
+        reason: &'static str,
+    },
+}
+
+/// Policy **and** tally for the invalid-IRI check that runs during ingest.
+///
+/// rete's reader is deliberately tolerant of IRIs a strict parser rejects (see
+/// [`crate::iri`]), which is what lets it hold every published dataset — and
+/// also what let three of the `scholar/` exports produce N-Quads Oxigraph
+/// refuses to load. Passing an audit makes the tolerance *visible*: the build
+/// still succeeds and stores exactly what it was given, but it can now say how
+/// much of what it stored is not valid RDF. `strict` turns the same finding into
+/// a refusal, on the first offending statement.
+#[derive(Debug, Default)]
+pub struct IriAudit {
+    /// Fail the parse on the first invalid IRI instead of counting it.
+    pub strict: bool,
+    /// What the parse saw. Constant memory — see [`crate::iri::IriReport`].
+    pub report: crate::iri::IriReport,
+}
+
+impl IriAudit {
+    /// Count invalid IRIs; never fail (`rete build`'s default).
+    pub fn counting() -> Self {
+        Self::default()
+    }
+
+    /// Refuse the input at the first invalid IRI (`rete build --strict`).
+    pub fn refusing() -> Self {
+        Self {
+            strict: true,
+            report: crate::iri::IriReport::default(),
+        }
+    }
+}
+
+/// Run one statement past the audit: record any invalid IRI, and in `strict`
+/// mode turn it into an error naming the offending token. `location` is only
+/// called on the error path, so the common case allocates nothing.
+fn audit_quad<F: FnOnce() -> String>(
+    audit: Option<&mut IriAudit>,
+    s: &str,
+    p: &str,
+    o: &str,
+    g: Option<&str>,
+    location: F,
+) -> Result<(), IngestError> {
+    let Some(a) = audit else { return Ok(()) };
+    let Some(defect) = a.report.observe_quad(s, p, o, g) else {
+        return Ok(());
+    };
+    if !a.strict {
+        return Ok(());
+    }
+    let token = [Some(s), Some(p), Some(o), g]
+        .into_iter()
+        .flatten()
+        .find(|t| crate::iri::term_defect(t).is_some())
+        .unwrap_or("<?>")
+        .to_string();
+    Err(IngestError::InvalidIri {
+        location: location(),
+        token,
+        reason: defect.reason(),
+    })
 }
 
 /// Estimate the statement count of an N-Triples/N-Quads text from its newline
@@ -65,7 +150,11 @@ fn bytecount_newlines(input: &str) -> usize {
 
 /// Parse one N-Quads line into a quad, or `None` for a blank/comment line.
 /// Shared by the whole-text [`parse_quads`] and the streaming [`parse_reader`].
-fn parse_nq_line(raw: &str, lineno: usize) -> Result<Option<RawQuad>, IngestError> {
+fn parse_nq_line(
+    raw: &str,
+    lineno: usize,
+    audit: Option<&mut IriAudit>,
+) -> Result<Option<RawQuad>, IngestError> {
     let line = raw.trim();
     if line.is_empty() || line.starts_with('#') {
         return Ok(None);
@@ -88,11 +177,18 @@ fn parse_nq_line(raw: &str, lineno: usize) -> Result<Option<RawQuad>, IngestErro
         }
         Some(g)
     };
+    audit_quad(audit, &s, &p, &o, graph.as_deref(), || {
+        format!("line {lineno}")
+    })?;
     Ok(Some((s, p, o, graph)))
 }
 
 /// Parse one N-Triples line into a triple, or `None` for a blank/comment line.
-fn parse_nt_line(raw: &str, lineno: usize) -> Result<Option<RawTriple>, IngestError> {
+fn parse_nt_line(
+    raw: &str,
+    lineno: usize,
+    audit: Option<&mut IriAudit>,
+) -> Result<Option<RawTriple>, IngestError> {
     let line = raw.trim();
     if line.is_empty() || line.starts_with('#') {
         return Ok(None);
@@ -108,14 +204,23 @@ fn parse_nt_line(raw: &str, lineno: usize) -> Result<Option<RawTriple>, IngestEr
     if !rest.trim().is_empty() {
         return Err(IngestError::Line(lineno, "trailing content after object"));
     }
+    audit_quad(audit, &s, &p, &o, None, || format!("line {lineno}"))?;
     Ok(Some((s, p, o)))
 }
 
 /// Parse N-Quads text: `subject predicate object [graph] .` per line.
 pub fn parse_quads(input: &str) -> Result<Vec<RawQuad>, IngestError> {
+    parse_quads_audited(input, None)
+}
+
+/// [`parse_quads`] with an optional [`IriAudit`].
+pub fn parse_quads_audited(
+    input: &str,
+    mut audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
     let mut out = Vec::with_capacity(estimate_statements(input));
     for (i, raw) in input.lines().enumerate() {
-        if let Some(q) = parse_nq_line(raw, i + 1)? {
+        if let Some(q) = parse_nq_line(raw, i + 1, audit.as_deref_mut())? {
             out.push(q);
         }
     }
@@ -124,9 +229,17 @@ pub fn parse_quads(input: &str) -> Result<Vec<RawQuad>, IngestError> {
 
 /// Parse N-Triples text into raw term-token triples, skipping blank/comment lines.
 pub fn parse(input: &str) -> Result<Vec<RawTriple>, IngestError> {
+    parse_audited(input, None)
+}
+
+/// [`parse`] with an optional [`IriAudit`].
+pub fn parse_audited(
+    input: &str,
+    mut audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawTriple>, IngestError> {
     let mut out = Vec::with_capacity(estimate_statements(input));
     for (i, raw) in input.lines().enumerate() {
-        if let Some(t) = parse_nt_line(raw, i + 1)? {
+        if let Some(t) = parse_nt_line(raw, i + 1, audit.as_deref_mut())? {
             out.push(t);
         }
     }
@@ -145,8 +258,18 @@ pub fn parse_reader<R: std::io::BufRead>(
     format: &str,
     cap: usize,
 ) -> Result<Vec<RawQuad>, IngestError> {
+    parse_reader_audited(reader, format, cap, None)
+}
+
+/// [`parse_reader`] with an optional [`IriAudit`].
+pub fn parse_reader_audited<R: std::io::BufRead>(
+    reader: R,
+    format: &str,
+    cap: usize,
+    audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
     let mut out = Vec::with_capacity(cap);
-    stream_reader(reader, format, &mut |q| out.push(q))?;
+    stream_reader_audited(reader, format, audit, &mut |q| out.push(q))?;
     Ok(out)
 }
 
@@ -158,25 +281,120 @@ pub fn parse_reader<R: std::io::BufRead>(
 /// dictionary — never materializes the whole quad multiset. The big-graph,
 /// low-RAM ingest primitive. Blank/comment lines are skipped; a parse error stops
 /// the stream and is returned.
+///
+/// Every format streams: the line-based ones a line at a time, Turtle / TriG /
+/// RDF-XML through their `oxttl`/`oxrdfxml` reader parsers, which pull from the
+/// reader incrementally. Nothing here holds the input text — so a 60 GB Turtle
+/// file is as ingestible as a 60 GB `.nt` one, which is what lets the external
+/// (memory-bounded) build accept them.
 pub fn stream_reader<R: std::io::BufRead>(
     reader: R,
     format: &str,
     f: &mut dyn FnMut(RawQuad),
 ) -> Result<(), IngestError> {
-    if format != "nt" && format != "nq" {
-        return Err(IngestError::UnknownFormat(format.to_string()));
-    }
-    for (i, line) in reader.lines().enumerate() {
-        let line = line.map_err(|e| IngestError::Io(e.to_string()))?;
-        if format == "nq" {
-            if let Some(q) = parse_nq_line(&line, i + 1)? {
+    stream_reader_audited(reader, format, None, f)
+}
+
+/// [`stream_reader`] with an optional [`IriAudit`].
+///
+/// Every syntax is audited, not only the line-based ones. `oxttl`/`oxrdfxml`
+/// validate IRIs themselves and reject an invalid one before it reaches us, so
+/// in practice the Turtle/TriG/RDF-XML tallies stay at zero — but auditing them
+/// too means the count is a property of the *file*, not of which reader happened
+/// to produce it, and a future parser change cannot silently reopen the hole.
+pub fn stream_reader_audited<R: std::io::BufRead>(
+    reader: R,
+    format: &str,
+    mut audit: Option<&mut IriAudit>,
+    f: &mut dyn FnMut(RawQuad),
+) -> Result<(), IngestError> {
+    match format {
+        "nt" | "nq" => {
+            for (i, line) in reader.lines().enumerate() {
+                let line = line.map_err(|e| IngestError::Io(e.to_string()))?;
+                if format == "nq" {
+                    if let Some(q) = parse_nq_line(&line, i + 1, audit.as_deref_mut())? {
+                        f(q);
+                    }
+                } else if let Some((s, p, o)) = parse_nt_line(&line, i + 1, audit.as_deref_mut())? {
+                    f((s, p, o, None));
+                }
+            }
+            Ok(())
+        }
+        "ttl" => {
+            for r in oxttl::TurtleParser::new()
+                .with_quoted_triples()
+                .for_reader(reader)
+            {
+                let t = r.map_err(|e| IngestError::Turtle(e.to_string()))?;
+                let q = (
+                    t.subject.to_string(),
+                    t.predicate.to_string(),
+                    t.object.to_string(),
+                    None,
+                );
+                audit_quad(audit.as_deref_mut(), &q.0, &q.1, &q.2, None, || {
+                    "turtle".into()
+                })?;
                 f(q);
             }
-        } else if let Some((s, p, o)) = parse_nt_line(&line, i + 1)? {
-            f((s, p, o, None));
+            Ok(())
         }
+        "trig" => {
+            for r in oxttl::TriGParser::new()
+                .with_quoted_triples()
+                .for_reader(reader)
+            {
+                let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
+                let q = (
+                    q.subject.to_string(),
+                    q.predicate.to_string(),
+                    q.object.to_string(),
+                    graph_token(&q.graph_name),
+                );
+                audit_quad(
+                    audit.as_deref_mut(),
+                    &q.0,
+                    &q.1,
+                    &q.2,
+                    q.3.as_deref(),
+                    || "trig".into(),
+                )?;
+                f(q);
+            }
+            Ok(())
+        }
+        "rdfxml" => {
+            for r in oxrdfxml::RdfXmlParser::new().for_reader(reader) {
+                let t = r.map_err(|e| IngestError::RdfXml(e.to_string()))?;
+                let q = (
+                    t.subject.to_string(),
+                    t.predicate.to_string(),
+                    t.object.to_string(),
+                    None,
+                );
+                audit_quad(audit.as_deref_mut(), &q.0, &q.1, &q.2, None, || {
+                    "rdf/xml".into()
+                })?;
+                f(q);
+            }
+            Ok(())
+        }
+        other => Err(IngestError::UnknownFormat(other.to_string())),
     }
-    Ok(())
+}
+
+/// The canonical graph token for a parsed quad — `None` for the default graph,
+/// otherwise the same `<iri>` / `_:b` spelling the N-Quads reader produces, so
+/// TriG and N-Quads inputs land identical dictionary keys. `GraphName`'s own
+/// `Display` renders the default graph as `DEFAULT`, which must never become a
+/// term, hence the explicit match.
+fn graph_token(g: &oxrdf::GraphName) -> Option<String> {
+    match g {
+        oxrdf::GraphName::DefaultGraph => None,
+        other => Some(other.to_string()),
+    }
 }
 
 /// Parse Turtle into canonical N-Triples-token triples via oxttl.
@@ -199,6 +417,25 @@ pub fn parse_turtle(text: &str) -> Result<Vec<RawTriple>, IngestError> {
     Ok(out)
 }
 
+/// Parse TriG into canonical quads via oxttl — Turtle plus named-graph blocks
+/// (`<g> { … }`), the shape most large RDF dumps ship in.
+pub fn parse_trig(text: &str) -> Result<Vec<RawQuad>, IngestError> {
+    let mut out = Vec::new();
+    for r in oxttl::TriGParser::new()
+        .with_quoted_triples()
+        .for_reader(text.as_bytes())
+    {
+        let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
+        out.push((
+            q.subject.to_string(),
+            q.predicate.to_string(),
+            q.object.to_string(),
+            graph_token(&q.graph_name),
+        ));
+    }
+    Ok(out)
+}
+
 /// Parse RDF/XML into canonical N-Triples-token triples via oxrdfxml. This is how
 /// most OWL ontologies ship (`.rdf`/`.owl`/`.xml` with an `rdf:RDF` root) — so rete
 /// ingests them directly, no external conversion. (OWL/XML — the non-RDF functional
@@ -216,25 +453,45 @@ pub fn parse_rdfxml(text: &str) -> Result<Vec<RawTriple>, IngestError> {
     Ok(out)
 }
 
-/// Parse one text input by format name (`"nt"`, `"nq"`, `"ttl"`, or `"rdfxml"`)
-/// into quads (triples land in the default graph).
+/// Parse one text input by format name (`"nt"`, `"nq"`, `"ttl"`, `"trig"`, or
+/// `"rdfxml"`) into quads (triples land in the default graph).
 pub fn parse_statements(text: &str, format: &str) -> Result<Vec<RawQuad>, IngestError> {
-    match format {
-        "nq" => parse_quads(text),
-        "ttl" => Ok(parse_turtle(text)?
+    parse_statements_audited(text, format, None)
+}
+
+/// [`parse_statements`] with an optional [`IriAudit`]. The line-based syntaxes
+/// audit as they parse (so `strict` fails on the offending line); the others are
+/// audited over the parsed quads, which is where `oxttl` has already had its say.
+pub fn parse_statements_audited(
+    text: &str,
+    format: &str,
+    mut audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
+    let quads = match format {
+        "nq" => return parse_quads_audited(text, audit),
+        "nt" => {
+            return Ok(parse_audited(text, audit)?
+                .into_iter()
+                .map(|(s, p, o)| (s, p, o, None))
+                .collect())
+        }
+        "ttl" => parse_turtle(text)?
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
-            .collect()),
-        "rdfxml" => Ok(parse_rdfxml(text)?
+            .collect(),
+        "trig" => parse_trig(text)?,
+        "rdfxml" => parse_rdfxml(text)?
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
-            .collect()),
-        "nt" => Ok(parse(text)?
-            .into_iter()
-            .map(|(s, p, o)| (s, p, o, None))
-            .collect()),
-        other => Err(IngestError::UnknownFormat(other.to_string())),
+            .collect(),
+        other => return Err(IngestError::UnknownFormat(other.to_string())),
+    };
+    for (s, p, o, g) in &quads {
+        audit_quad(audit.as_deref_mut(), s, p, o, g.as_deref(), || {
+            format.to_string()
+        })?;
     }
+    Ok(quads)
 }
 
 /// Take one term from the front of `s`, returning `(term, remainder)`.
@@ -336,9 +593,16 @@ pub(crate) fn quoted_triple_parts(t: &str) -> Option<(String, String, String)> {
 }
 
 /// Counts describing an assembled file, for status lines and UIs.
+///
+/// In the [`BuildStats`] a metadata callback receives, `statements` and
+/// `default_triples` are the counts **ingested** — the input multiset, before
+/// the index deduplicates it. In the `BuildStats` an assemble function
+/// *returns*, they are the counts actually **written** (see
+/// [`FinalCounts`]), so a status line reports what the file holds. Use
+/// [`FinalCounts`] rather than these when a payload must agree with the header.
 #[derive(Debug, Clone, Copy)]
 pub struct BuildStats {
-    /// Total statements ingested, across the default graph and every named one.
+    /// Total statements, across the default graph and every named one.
     pub statements: usize,
     /// Statements that landed in the default graph.
     pub default_triples: usize,
@@ -348,6 +612,66 @@ pub struct BuildStats {
     pub terms: usize,
     /// Levels in the community pyramid, or `0` when the build skipped it.
     pub pyramid_levels: u16,
+}
+
+/// The **deduplicated** counts of the file being written — what the header
+/// records, and therefore what any embedded metadata has to report.
+///
+/// The input multiset is not the file: every permutation index sorts and
+/// deduplicates, so a harvest that pages with overlapping windows writes fewer
+/// quads than it ingested. These counts are known only once the indexes exist,
+/// which is why a payload that carries them is derived in two stages (see
+/// [`IntoMetadata`]).
+#[derive(Debug, Clone, Copy)]
+pub struct FinalCounts {
+    /// Unique triples in the default graph.
+    pub default_triples: u64,
+    /// Unique quads across the default graph and every named graph — exactly
+    /// the header's `quad_count`.
+    pub quads: u64,
+}
+
+/// What a build's metadata callback may return.
+///
+/// A `Vec<u8>` is the payload verbatim — the common case (no metadata, or a
+/// payload that carries no counts). [`DeferredMetadata`] is a payload that
+/// *does* carry counts: the callback derives everything it needs while the
+/// source quads are still resident, and returns a finalizer that the writer
+/// calls with the [`FinalCounts`], which only exist once the indexes have
+/// deduplicated the input. Without that second stage a card can only report the
+/// ingested count, which over-reports any input containing duplicates.
+pub trait IntoMetadata {
+    /// Produce the metadata section payload for a file with these counts.
+    fn into_metadata(self, counts: FinalCounts) -> Vec<u8>;
+}
+
+impl IntoMetadata for Vec<u8> {
+    fn into_metadata(self, _counts: FinalCounts) -> Vec<u8> {
+        self
+    }
+}
+
+/// A metadata payload whose final form needs the written (deduplicated) counts.
+/// See [`IntoMetadata`].
+pub struct DeferredMetadata(Box<dyn FnOnce(FinalCounts) -> Vec<u8>>);
+
+impl DeferredMetadata {
+    /// Defer `f` until the indexes are built and the true counts are known.
+    pub fn new(f: impl FnOnce(FinalCounts) -> Vec<u8> + 'static) -> Self {
+        DeferredMetadata(Box::new(f))
+    }
+
+    /// No metadata section — byte-identical to a metadata-free build. Lets one
+    /// `match` arm opt out while the other defers, without a type mismatch.
+    pub fn none() -> Self {
+        DeferredMetadata::new(|_| Vec::new())
+    }
+}
+
+impl IntoMetadata for DeferredMetadata {
+    fn into_metadata(self, counts: FinalCounts) -> Vec<u8> {
+        (self.0)(counts)
+    }
 }
 
 /// Assemble a complete `.rete` file image from parsed quads: one shared
@@ -361,12 +685,14 @@ pub fn assemble_dataset(quads: Vec<RawQuad>, metadata: &[u8]) -> (Vec<u8>, Build
 }
 
 /// Like [`assemble_dataset`], but the metadata payload is derived from the
-/// [`BuildStats`] right before serialization — for metadata that embeds counts
-/// only known after the dictionary and indexes are built (the Dataset Card).
-/// Returning an empty `Vec` is byte-identical to a metadata-free build.
-pub fn assemble_dataset_with(
+/// [`BuildStats`] and the source quads while they are still resident — for
+/// metadata that describes the graph (the Dataset Card). Returning an empty
+/// `Vec` is byte-identical to a metadata-free build; return a
+/// [`DeferredMetadata`] for a payload that must also carry the file's
+/// deduplicated counts, which exist only once the indexes are built.
+pub fn assemble_dataset_with<M: IntoMetadata>(
     quads: Vec<RawQuad>,
-    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
     assemble_dataset_with_opts(quads, true, false, None, metadata)
 }
@@ -377,12 +703,12 @@ pub fn assemble_dataset_with(
 /// pyramid-less file is fully queryable and markedly smaller (the pyramid is the
 /// largest section on highly-connected graphs). Only the community / summary /
 /// progressive paths need it.
-pub fn assemble_dataset_with_opts(
+pub fn assemble_dataset_with_opts<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
-    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
     assemble_dataset_with_opts_algo(
         quads,
@@ -397,13 +723,38 @@ pub fn assemble_dataset_with_opts(
 /// Like [`assemble_dataset_with_opts`], but selects the community [`PyramidAlgo`]
 /// (the in-memory build path for `rete build --pyramid-algo …`).
 #[allow(clippy::too_many_arguments)]
-pub fn assemble_dataset_with_opts_algo(
+pub fn assemble_dataset_with_opts_algo<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
-    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
+    assemble_dataset_with_perms(
+        quads,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        algo,
+        crate::index::PermSet::ALL,
+        metadata,
+    )
+}
+
+/// Like [`assemble_dataset_with_opts_algo`], but writes only the permutations in
+/// `perms` (`rete build --permutations 3`). Every other byte of the file is
+/// unchanged; [`crate::index::PermSet::ALL`] reproduces the default build
+/// exactly, down to the header byte.
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_dataset_with_perms<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    with_pyramid: bool,
+    with_text_index: bool,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    perms: crate::index::PermSet,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
 
@@ -440,7 +791,7 @@ pub fn assemble_dataset_with_opts_algo(
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
     };
-    let blob = metadata(&stats, &quads);
+    let pending = metadata(&stats, &quads);
     drop(quads);
 
     finish_assembly(
@@ -451,7 +802,8 @@ pub fn assemble_dataset_with_opts_algo(
         with_text_index,
         type_override,
         algo,
-        blob,
+        perms,
+        pending,
         stats,
         &mut timing,
     )
@@ -471,12 +823,12 @@ pub fn assemble_dataset_with_opts_algo(
 /// The metadata callback derives the Dataset Card from the built dictionary +
 /// default-graph id-triples (resolving terms through the dictionary), since the
 /// raw quads were never retained. `stream` propagates parse/IO errors.
-pub fn assemble_dataset_streaming<S>(
+pub fn assemble_dataset_streaming<S, M: IntoMetadata>(
     stream: S,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
-    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> Vec<u8>,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
 where
     S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
@@ -494,13 +846,39 @@ where
 /// Like [`assemble_dataset_streaming`], but selects the community [`PyramidAlgo`]
 /// (the streaming, low-RAM build path for `rete build --pyramid-algo …`).
 #[allow(clippy::too_many_arguments)]
-pub fn assemble_dataset_streaming_algo<S>(
+pub fn assemble_dataset_streaming_algo<S, M: IntoMetadata>(
+    stream: S,
+    with_pyramid: bool,
+    with_text_index: bool,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
+) -> Result<(Vec<u8>, BuildStats), IngestError>
+where
+    S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
+{
+    assemble_dataset_streaming_with_perms(
+        stream,
+        with_pyramid,
+        with_text_index,
+        type_override,
+        algo,
+        crate::index::PermSet::ALL,
+        metadata,
+    )
+}
+
+/// Like [`assemble_dataset_streaming_algo`], but writes only the permutations in
+/// `perms` — the two-pass low-RAM twin of [`assemble_dataset_with_perms`].
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_dataset_streaming_with_perms<S, M: IntoMetadata>(
     mut stream: S,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
-    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> Vec<u8>,
+    perms: crate::index::PermSet,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
 where
     S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
@@ -536,7 +914,7 @@ where
         terms: dict.term_count() as usize,
         pyramid_levels: 0,
     };
-    let blob = metadata(&stats, &dict, &default_triples);
+    let pending = metadata(&stats, &dict, &default_triples);
     Ok(finish_assembly(
         dict,
         default_triples,
@@ -545,7 +923,8 @@ where
         with_text_index,
         type_override,
         algo,
-        blob,
+        perms,
+        pending,
         stats,
         &mut timing,
     ))
@@ -556,7 +935,7 @@ where
 /// full-text index, the permutation indexes, and serialize the file image. Takes
 /// the id-triples **by value** so they are freed as the permutations consume them.
 #[allow(clippy::too_many_arguments)]
-fn finish_assembly(
+fn finish_assembly<M: IntoMetadata>(
     dict: Dictionary,
     default_triples: Vec<(u32, u32, u32)>,
     named: std::collections::BTreeMap<String, Vec<(u32, u32, u32)>>,
@@ -564,7 +943,8 @@ fn finish_assembly(
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
-    blob: Vec<u8>,
+    perms: crate::index::PermSet,
+    pending: M,
     mut stats: BuildStats,
     timing: &mut BuildTiming,
 ) -> (Vec<u8>, BuildStats) {
@@ -616,7 +996,7 @@ fn finish_assembly(
     // byte-identical to `build`.
     let build_index = |triples: Vec<(u32, u32, u32)>| -> crate::GraphIndex {
         let n = triples.len();
-        let b = GraphIndexBuilder::from_triples(triples);
+        let b = GraphIndexBuilder::from_triples(triples).with_perms(perms);
         if n > LOWMEM_TRIPLE_THRESHOLD {
             b.build_seq()
         } else {
@@ -629,6 +1009,26 @@ fn finish_assembly(
         .map(|(g, ts)| (g, build_index(ts)))
         .collect();
     timing.lap(BuildPhase::SubjectFamily);
+
+    // Only now is the DEDUPLICATED size of the file known: every index sorts and
+    // dedups, so an input containing duplicate statements (a harvest that pages
+    // with overlapping windows, a merge of overlapping dumps) writes fewer quads
+    // than it ingested. `write_dataset_from_parts` stamps exactly this sum into
+    // the header, so a metadata payload finalized with it cannot disagree with
+    // the header — which is what an embedded Dataset Card used to do.
+    let counts = FinalCounts {
+        default_triples: def.triple_count() as u64,
+        quads: def.triple_count() as u64
+            + named_indexes
+                .iter()
+                .map(|(_, ix)| ix.triple_count() as u64)
+                .sum::<u64>(),
+    };
+    let blob = pending.into_metadata(counts);
+    // Report what was WRITTEN, not what was read: the returned stats drive the
+    // CLI's "wrote …: N quads" line, which described the file, not the input.
+    stats.statements = counts.quads as usize;
+    stats.default_triples = counts.default_triples as usize;
 
     let bytes = crate::file::write_dataset_from_parts(
         &dict_container,
@@ -774,8 +1174,20 @@ mod tests {
             parse_quads(nq).unwrap(),
             parse_reader(std::io::Cursor::new(nq), "nq", 0).unwrap()
         );
-        // Turtle is not streamable here.
-        assert!(parse_reader(std::io::Cursor::new(nt), "ttl", 0).is_err());
+        // Turtle and TriG stream too — that is what lets the external build take a
+        // multi-gigabyte `.ttl.gz` without expanding it to N-Triples first. Reading
+        // a structured syntax from a reader must agree with parsing its whole text.
+        let ttl = "@prefix ex: <http://ex/> .\nex:A ex:knows ex:B , ex:C .\n";
+        assert_eq!(
+            parse_statements(ttl, "ttl").unwrap(),
+            parse_reader(std::io::Cursor::new(ttl), "ttl", 0).unwrap()
+        );
+        let trig = "@prefix ex: <http://ex/> .\nex:g { ex:A ex:knows ex:B . }\n";
+        let streamed = parse_reader(std::io::Cursor::new(trig), "trig", 0).unwrap();
+        assert_eq!(parse_statements(trig, "trig").unwrap(), streamed);
+        assert_eq!(streamed[0].3.as_deref(), Some("<http://ex/g>"));
+        // An unknown format is still a hard error, not a silent guess.
+        assert!(parse_reader(std::io::Cursor::new(nt), "jsonld", 0).is_err());
     }
 
     #[test]
@@ -784,7 +1196,26 @@ mod tests {
         assert_eq!(parse_statements(nt, "nt").unwrap().len(), 1);
         let ttl = "@prefix ex: <http://ex/> .\nex:A ex:knows ex:B , ex:C .";
         assert_eq!(parse_statements(ttl, "ttl").unwrap().len(), 2);
-        assert!(parse_statements(nt, "trig").is_err());
+        // N-Triples is a subset of both Turtle and TriG, so the same text parses
+        // under all three — and lands in the default graph under each.
+        assert_eq!(parse_statements(nt, "trig").unwrap().len(), 1);
+        assert!(parse_statements(nt, "trig").unwrap()[0].3.is_none());
+        assert!(parse_statements(nt, "jsonld").is_err());
+    }
+
+    /// A TriG graph block carries its graph name through as the same canonical
+    /// token N-Quads would produce — so the two syntaxes agree on dictionary keys
+    /// and a `.trig` shard federates with a `.nq` one.
+    #[test]
+    fn trig_graph_names_match_nquads() {
+        let trig = "@prefix ex: <http://ex/> .\nex:g { ex:a ex:p ex:b . }\nex:a ex:p ex:c .\n";
+        let nq = "<http://ex/a> <http://ex/p> <http://ex/b> <http://ex/g> .\n\
+                  <http://ex/a> <http://ex/p> <http://ex/c> .\n";
+        let mut from_trig = parse_statements(trig, "trig").unwrap();
+        let mut from_nq = parse_statements(nq, "nq").unwrap();
+        from_trig.sort();
+        from_nq.sort();
+        assert_eq!(from_trig, from_nq);
     }
 
     /// RDF/XML (how most OWL ontologies ship) parses to the same canonical tokens,

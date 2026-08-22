@@ -1,69 +1,142 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 410" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">How a level is built: instances live at the leaf classes; rolling each instance's type up its subClassOf chain to a chosen depth produces that level's type histogram. Counts conserve up the hierarchy.</title>
-  <rect width="760" height="410" fill="#ffffff"/>
-  <text x="380" y="30" text-anchor="middle" font-size="19" font-weight="700" fill="#1b1f24">The rollup: subClassOf is the zoom function</text>
-
-  <!-- Depth ruler -->
-  <g font-size="11" font-weight="700" fill="#5b6570">
-    <text x="95" y="60" text-anchor="middle">depth 0</text>
-    <text x="265" y="60" text-anchor="middle">depth 1</text>
-    <text x="435" y="60" text-anchor="middle">depth 2</text>
-    <text x="615" y="60" text-anchor="middle">depth 3 · leaves</text>
-  </g>
-  <line x1="40" y1="70" x2="720" y2="70" stroke="#e4e8ec" stroke-width="1"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 566" role="img" aria-labelledby="t">
+  <title id="t">How one level of the schema pyramid is built. Six classes hang off a subClassOf chain — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — and the four instances sit at the leaves: ada and edwin are Astronomers, frida an Artist, nasa an Organisation. Rolling each instance's type up to depth d gives level d's histogram: Agent times 4 at depth 0; Person times 3 and Organisation times 1 at depth 1; Scientist times 2, Artist times 1 and Organisation times 1 at depth 2; Astronomer times 2, Artist times 1 and Organisation times 1 at depth 3. Every level totals the same four instances. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.</title>
+  <!-- shared kit for the five semantic-zoom figures: class box = .cls + .clstx, instance = .inst r5.5,
+       title y40 / deck y62 / chip y76 / first section label y140, 26px margins. Keep them identical. -->
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .title{font-size:19px;font-weight:700}
+    .deck{font-size:13px;fill:var(--muted)}
+    .sect{font-size:13px;font-weight:700;fill:var(--ink2)}
+    .body{font-size:13px}
+    .meas{font-size:14px;font-weight:700}
+    .ann{font-size:13px;fill:var(--muted)}
+    .cls{fill:var(--panel);stroke:var(--meta)}
+    .clstx{fill:var(--meta-ink);font-size:13px;font-weight:700}
+    .inst{fill:var(--data)}
+  </style>
 
   <defs>
-    <marker id="up" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-      <path d="M0,0 L9,4.5 L0,9 Z" fill="#2a6df4"/>
+    <marker id="isa" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--meta)"/>
     </marker>
   </defs>
 
-  <!-- subClassOf edges (child -> parent, arrow points toward the parent / left) -->
-  <g stroke="#2a6df4" stroke-width="1.6" fill="none" marker-end="url(#up)">
-    <path d="M250,120 L150,150"/>   <!-- Person -> Agent -->
-    <path d="M250,235 L150,165"/>   <!-- Organisation -> Agent -->
-    <path d="M420,100 L320,128"/>   <!-- Scientist -> Person -->
-    <path d="M420,175 L320,140"/>   <!-- Artist -> Person -->
-    <path d="M600,100 L490,108"/>   <!-- Astronomer -> Scientist -->
-  </g>
-  <text x="200" y="128" font-size="9.5" fill="#5b6570">subClassOf</text>
+  <rect x="1" y="1" width="558" height="564" rx="14" fill="var(--surface)" stroke="var(--line)"/>
 
-  <!-- Class nodes -->
-  <g font-size="12.5" font-weight="700">
-    <rect x="55" y="138" width="92" height="38" rx="7" fill="#2a6df4"/>
-    <text x="101" y="162" text-anchor="middle" fill="#ffffff">Agent</text>
+  <text class="title" x="26" y="40">subClassOf is the zoom function</text>
+  <text class="deck" x="26" y="62">instances live at the leaves — roll their types up to get a level</text>
 
-    <rect x="225" y="108" width="92" height="36" rx="7" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="271" y="131" text-anchor="middle" fill="#0f2347">Person</text>
-    <rect x="225" y="218" width="110" height="36" rx="7" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="280" y="241" text-anchor="middle" fill="#0f2347">Organisation</text>
+  <!-- specimen chip -->
+  <rect x="26" y="76" width="88" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/>
+  <text class="mono body" x="40" y="95" font-weight="700">people.nt</text>
+  <text class="ann" x="126" y="95">6 classes · 4 instances · 4 levels</text>
 
-    <rect x="400" y="82" width="92" height="36" rx="7" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="446" y="105" text-anchor="middle" fill="#0f2347">Scientist</text>
-    <rect x="400" y="158" width="92" height="36" rx="7" fill="#eef3ff" stroke="#bcd0f7"/>
-    <text x="446" y="181" text-anchor="middle" fill="#0f2347">Artist</text>
+  <!-- ============ the hierarchy ============ -->
+  <text class="sect" x="26" y="140">the subClassOf chain — every arrow points at the parent</text>
 
-    <rect x="578" y="82" width="104" height="36" rx="7" fill="#f5f7f9" stroke="#e4e8ec"/>
-    <text x="630" y="105" text-anchor="middle" fill="#1b1f24">Astronomer</text>
+  <!-- edges, child -> parent (upward) -->
+  <g stroke="var(--meta)" stroke-width="1.8" fill="none" marker-end="url(#isa)">
+    <path d="M200,214 L268,193"/>
+    <path d="M362,214 L322,193"/>
+    <path d="M162,268 L185,248"/>
+    <path d="M283,268 L222,248"/>
+    <path d="M169,322 L166,302"/>
   </g>
 
-  <!-- Instance dots at the leaves -->
-  <g>
-    <circle cx="598" cy="135" r="6" fill="#16a34a"/><circle cx="616" cy="135" r="6" fill="#16a34a"/>
-    <text x="690" y="139" font-size="10.5" fill="#5b6570">ada, edwin · a Astronomer</text>
-    <circle cx="416" cy="210" r="6" fill="#16a34a"/>
-    <text x="500" y="214" font-size="10.5" fill="#5b6570">frida · a Artist</text>
-    <circle cx="246" cy="270" r="6" fill="#16a34a"/>
-    <text x="345" y="274" font-size="10.5" fill="#5b6570">nasa · a Organisation</text>
+  <!-- depth ruler -->
+  <g class="ann">
+    <text x="26" y="180">depth 0</text>
+    <text x="26" y="234">depth 1</text>
+    <text x="26" y="288">depth 2</text>
+    <text x="26" y="342">depth 3</text>
   </g>
 
-  <!-- Rollup explanation panel -->
-  <rect x="40" y="312" width="680" height="74" rx="8" fill="#f5f7f9" stroke="#e4e8ec"/>
-  <text x="58" y="335" font-size="12.5" font-weight="700" fill="#1b1f24">Roll each instance's type up to depth d → level d's histogram</text>
-  <g font-size="11.5" fill="#0f2347">
-    <text x="58" y="356">depth 3: Astronomer ×2 · Artist ×1 · Organisation ×1</text>
-    <text x="58" y="374">depth 1: Person ×3 · Organisation ×1</text>
-    <text x="430" y="356">depth 2: Scientist ×2 · Artist ×1 · Organisation ×1</text>
-    <text x="430" y="374" font-weight="700">depth 0: Agent ×4   (everything)</text>
+  <!-- class boxes -->
+  <rect class="cls" x="240" y="160" width="110" height="30" rx="7"/>
+  <text class="clstx" x="295" y="180" text-anchor="middle">Agent</text>
+
+  <rect class="cls" x="150" y="214" width="100" height="30" rx="7"/>
+  <text class="clstx" x="200" y="234" text-anchor="middle">Person</text>
+  <rect class="cls" x="300" y="214" width="124" height="30" rx="7"/>
+  <text class="clstx" x="362" y="234" text-anchor="middle">Organisation</text>
+
+  <rect class="cls" x="110" y="268" width="104" height="30" rx="7"/>
+  <text class="clstx" x="162" y="288" text-anchor="middle">Scientist</text>
+  <rect class="cls" x="240" y="268" width="86" height="30" rx="7"/>
+  <text class="clstx" x="283" y="288" text-anchor="middle">Artist</text>
+
+  <rect class="cls" x="110" y="322" width="118" height="30" rx="7"/>
+  <text class="clstx" x="169" y="342" text-anchor="middle">Astronomer</text>
+
+  <!-- instances, at the class they are typed with -->
+  <g class="inst">
+    <circle cx="441" cy="229" r="5.5"/>
+    <circle cx="343" cy="283" r="5.5"/>
+    <circle cx="245" cy="337" r="5.5"/><circle cx="263" cy="337" r="5.5"/>
   </g>
+  <text class="ann" x="456" y="234">nasa</text>
+  <text class="ann" x="358" y="288">frida</text>
+  <text class="ann" x="278" y="342">ada · edwin</text>
+
+  <!-- ============ the rollup ============ -->
+  <text class="sect" x="26" y="384">roll each instance's type up to depth d</text>
+  <text class="ann" x="534" y="384" text-anchor="end">instances</text>
+
+  <g class="body">
+    <text class="ann" x="26" y="406">depth 0</text>
+    <text x="88" y="406">Agent ×4</text>
+    <text class="meas" x="534" y="406" text-anchor="end">4</text>
+
+    <text class="ann" x="26" y="426">depth 1</text>
+    <text x="88" y="426">Person ×3 · Organisation ×1</text>
+    <text class="meas" x="534" y="426" text-anchor="end">4</text>
+
+    <text class="ann" x="26" y="446">depth 2</text>
+    <text x="88" y="446">Scientist ×2 · Artist ×1 · Organisation ×1</text>
+    <text class="meas" x="534" y="446" text-anchor="end">4</text>
+
+    <text class="ann" x="26" y="466">depth 3</text>
+    <text x="88" y="466">Astronomer ×2 · Artist ×1 · Organisation ×1</text>
+    <text class="meas" x="534" y="466" text-anchor="end">4</text>
+  </g>
+
+  <text class="ann" x="26" y="492">No rdf:type in the graph? No pyramid — section kind 4 is simply absent.</text>
+
+  <!-- takeaway -->
+  <rect x="26" y="506" width="508" height="34" rx="12" fill="var(--panel)" stroke="var(--meta)" stroke-width="1.3" stroke-dasharray="6 4"/>
+  <text class="body u-metaink" x="40" y="528" font-weight="700">Counts conserve</text>
+  <text class="body" x="152" y="528">— every level re-partitions the same four instances</text>
 </svg>

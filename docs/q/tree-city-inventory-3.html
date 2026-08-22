@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>Which municipality has the most species diversity — tree-city-inventory</title>
-<meta name="description" content="48 municipalities, counted two ways — raw tree count and distinct taxa. The ranking changes between the two columns, which is the interesting part:… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
+<meta name="description" content="Answer: 20 rows in 1.6 s. 48 municipalities, counted two ways — raw tree count and distinct taxa. The ranking changes between the two columns, which is the interesting part:… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/tree-city-inventory-3.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="Which municipality has the most species diversity — tree-city-inventory" />
-<meta property="og:description" content="48 municipalities, counted two ways — raw tree count and distinct taxa. The ranking changes between the two columns, which is the interesting part:… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
+<meta property="og:description" content="Answer: 20 rows in 1.6 s. 48 municipalities, counted two ways — raw tree count and distinct taxa. The ranking changes between the two columns, which is the interesting part:… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/tree-city-inventory-3.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/tree-city-inventory-3.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="Which municipality has the most species diversity — tree-city-inventory" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Which municipality has the most species diversity — tree-city-inventory" />
-<meta name="twitter:description" content="48 municipalities, counted two ways — raw tree count and distinct taxa. The ranking changes between the two columns, which is the interesting part:… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
+<meta name="twitter:description" content="Answer: 20 rows in 1.6 s. 48 municipalities, counted two ways — raw tree count and distinct taxa. The ranking changes between the two columns, which is the interesting part:… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/tree-city-inventory-3.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Which municipality has the most species diversity","description":"48 municipalities, counted two ways — raw tree count and distinct taxa. The ranking changes between the two columns, which is the interesting part:… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server.","url":"https://caviri.github.io/rete/q/tree-city-inventory-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"tree-city-inventory","url":"https://caviri.github.io/rete/d/tree-city-inventory.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Which municipality has the most species diversity","description":"Answer: 20 rows in 1.6 s. 48 municipalities, counted two ways — raw tree count and distinct taxa. The ranking changes between the two columns, which is the interesting part:… Runs live in your browser over tree-city-inventory (3.15 M triples · 25 MB) — no server.","url":"https://caviri.github.io/rete/q/tree-city-inventory-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"tree-city-inventory","url":"https://caviri.github.io/rete/d/tree-city-inventory.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,15 +49,13 @@
       <div class="chip">Aggregate</div>
     </div>
     <h1 class="title s2">Which municipality has the most species diversity</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?muni</span> (<span class="kw">COUNT</span>(<span class="v">?t</span>) <span class="kw">AS</span> <span class="v">?trees</span>) (<span class="kw">COUNT</span>(<span class="kw">DISTINCT</span> <span class="v">?tx</span>) A…
-  <span class="v">?t</span> a tci:Tree ; tci:inMunicipality <span class="v">?m</span> ; tci:taxon <span class="v">?tx</span> .
-  <span class="v">?m</span> rdfs:label <span class="v">?muni</span>
-}
-<span class="kw">GROUP BY</span> <span class="v">?muni</span> <span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="v">?species</span>) <span class="kw">LIMIT</span> 20</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Municipality</th><th>Trees</th><th>Distinct species</th></tr></thead><tbody><tr><td class="">Jussy</td><td class="num">4,479</td><td class="num">1594</td></tr><tr><td class="">Genève-Petit-Saconnex</td><td class="num">20,293</td><td class="num">1064</td></tr><tr><td class="">Chêne-Bougeries</td><td class="num">14,859</td><td class="num">585</td></tr><tr><td class="">Meyrin</td><td class="num">9,717</td><td class="num">557</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🌳</div>
       <div class="key">tree-city-inventory</div>
       <div class="facts"><b>3.15 M</b> triples · 25 MB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">20 rows</div>
+        <div class="sub">1 range request · 256.0 KB of 23.9 MB read</div>
+        <div class="sub">in 1.6 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -67,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=tree-city-inventory&amp;load=lazy&amp;mode=sparql&amp;ex=3">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">20 rows · 1.6 s · 256.0 KB of 23.9 MB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX tci: &lt;https://data.graphplaza.com/tree-city-inventory/ns#&gt;
 PREFIX skos: &lt;http://www.w3.org/2004/02/skos/core#&gt;

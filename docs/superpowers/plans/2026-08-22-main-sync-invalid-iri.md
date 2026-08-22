@@ -31,7 +31,7 @@
 - Consumes: clean `feat/rust-optimization` at `4570d597`; `origin/main` at `cee7ac6a`
 - Produces: one in-progress merge whose conflicts retain stage-1/base, stage-2/feature, and stage-3/main blobs
 
-- [ ] **Step 1: Verify the exact tips and clean worktree**
+- [x] **Step 1: Verify the exact tips and clean worktree**
 
 ```powershell
 git status --short --branch
@@ -42,14 +42,14 @@ git rev-list --left-right --count origin/main...HEAD
 
 Expected: clean branch; tips `4570d597...` and `cee7ac6a...`; `80 80` divergence.
 
-- [ ] **Step 2: Commit this integration plan**
+- [x] **Step 2: Commit this integration plan**
 
 ```powershell
 git add docs/superpowers/plans/2026-08-22-main-sync-invalid-iri.md
 git commit -m "docs: plan main integration checkpoint"
 ```
 
-- [ ] **Step 3: Start a no-edit merge**
+- [x] **Step 3: Start a no-edit merge**
 
 ```powershell
 git merge --no-ff --no-commit origin/main
@@ -76,7 +76,7 @@ Expected: conflicts are preserved for semantic resolution; no merge commit yet.
 - Consumes: optimization-side family format/build/range-reader implementations and main-side optional-permutation/named-graph/IRI-audit changes
 - Produces: compiling combined sources with the same public invalid-IRI CLI contract as `cee7ac6a`
 
-- [ ] **Step 1: Resolve one source conflict at a time from all three stages**
+- [x] **Step 1: Resolve one source conflict at a time from all three stages**
 
 ```powershell
 git show :1:crates/rete-core/src/file.rs > $env:TEMP/rete-file-base.rs
@@ -87,7 +87,7 @@ git diff --cc -- crates/rete-core/src/file.rs
 
 Apply the same inspection to every conflicted hand-written source. Preserve main's three-permutation masks, named-graph external build, separator dictionary routing, and IRI audit; preserve the feature branch's safe paired-family codec, checked range boundaries, adaptive reads, and telemetry.
 
-- [ ] **Step 2: Prove the invalid-IRI feature exists before broader tests**
+- [x] **Step 2: Prove the invalid-IRI feature exists before broader tests**
 
 ```powershell
 git grep -n "pub mod iri" -- crates/rete-core/src/lib.rs
@@ -97,7 +97,7 @@ git grep -n -- "--sanitize-iris" crates/rete-cli/src/main.rs docs/cli.md
 
 Expected: all three searches return the main-side definitions/call sites.
 
-- [ ] **Step 3: Run the focused invalid-IRI suite**
+- [x] **Step 3: Run the focused invalid-IRI suite**
 
 ```powershell
 docker compose run --rm dev cargo test -p rete-cli --test invalid_iris -- --nocapture
@@ -105,7 +105,7 @@ docker compose run --rm dev cargo test -p rete-cli --test invalid_iris -- --noca
 
 Expected: build warning, strict refusal, sanitizing export, schemeless non-repair, and round-trip cases all pass.
 
-- [ ] **Step 4: Run the focused staged-format and range-boundary suites**
+- [x] **Step 4: Run the focused staged-format and range-boundary suites**
 
 ```powershell
 docker compose run --rm dev cargo test -p rete-core family_ -- --nocapture
@@ -135,17 +135,17 @@ Expected: all pass; production version constants remain `0x05`.
 - Consumes: both branches' Markdown/source claims and current catalog records
 - Produces: a single truthful source set from which all derived HTML/WASM assets can be rebuilt
 
-- [ ] **Step 1: Resolve source prose by claim, not by side**
+- [x] **Step 1: Resolve source prose by claim, not by side**
 
 Retain main's current compatibility, publishing, invalid-IRI, catalog, and browser-build rules. Retain only optimization claims supported by committed benchmark evidence, including the staged `0x06` description and query-time decompression caveats.
 
-- [ ] **Step 2: Accept main's deliberate obsolete-file deletion**
+- [x] **Step 2: Accept main's deliberate obsolete-file deletion**
 
 ```powershell
 git rm -- docs/explore-100mb.html
 ```
 
-- [ ] **Step 3: Resolve catalog and gate sources before generated pages**
+- [x] **Step 3: Resolve catalog and gate sources before generated pages**
 
 ```powershell
 node --check web/playground-src/catalog.js
@@ -169,22 +169,25 @@ Expected: syntax/JSON checks pass and the current main David Rumsey entries win 
 - Consumes: resolved Rust, Markdown, build scripts, catalog, and playground sources
 - Produces: byte-consistent derived artifacts; no hand-resolved generated HTML or WASM binaries
 
-- [ ] **Step 1: Regenerate docgen pages**
+- [x] **Step 1: Regenerate docgen pages**
 
 ```powershell
 docker compose run --rm dev cargo run -q -p docgen
 ```
 
-- [ ] **Step 2: Regenerate every browser artifact with the canonical producer**
+- [x] **Step 2: Defer the canonical browser rebuild until the source merge has its final revision**
 
 ```powershell
-$reteRevision = git rev-parse HEAD
-docker compose run --rm -e RETE_SOURCE_REVISION=$reteRevision wasm
+git rev-parse MERGE_HEAD
 ```
 
-If the merge is still uncommitted, use the pre-merge feature tip solely as the required non-empty source revision; the final merge commit will be recorded in the subsequent canonical rebuild before branch completion.
+The browser manifest embeds a source revision, so building before the merge commit
+would deliberately create provisional artifacts. Keep current main's artifacts as
+the conflict-resolution baseline, commit the source merge after the Rust matrix is
+green, then run the sole canonical producer against that exact merge revision in
+Task 5.
 
-- [ ] **Step 3: Confirm no conflict markers or unmerged paths remain**
+- [x] **Step 3: Confirm no conflict markers or unmerged paths remain**
 
 ```powershell
 git diff --check
@@ -204,7 +207,7 @@ Expected: no output from the latter two checks.
 - Consumes: fully resolved/regenerated merge tree
 - Produces: one reviewed main-integration merge commit and a green base for Task 7
 
-- [ ] **Step 1: Run the canonical workspace matrix**
+- [x] **Step 1: Run the canonical workspace matrix**
 
 ```powershell
 docker compose run --rm dev cargo fmt --all -- --check
@@ -215,28 +218,33 @@ docker compose run --rm dev cargo build -p rete-core --all-features
 docker compose run --rm dev bash scripts/smoke.sh
 ```
 
-- [ ] **Step 2: Run the browser regression gate because browser artifacts changed**
-
-```powershell
-docker compose run --rm dev bash tests/gate/gate.sh
-```
-
-- [ ] **Step 3: Commit the merge without a co-author trailer**
+- [ ] **Step 2: Commit the source merge checkpoint without a co-author trailer**
 
 ```powershell
 git add -A
 git commit -m "merge: synchronize rust optimization with main"
 ```
 
-- [ ] **Step 4: Rebuild canonical browser artifacts against the merge revision if the manifest embeds the revision**
+- [ ] **Step 3: Rebuild canonical browser artifacts against the merge revision**
 
 ```powershell
 $reteRevision = git rev-parse HEAD
 docker compose run --rm -e RETE_SOURCE_REVISION=$reteRevision wasm
-git diff --exit-code -- docs web
 ```
 
-- [ ] **Step 5: Re-run the Task 6 independent review boundary**
+- [ ] **Step 4: Run the browser regression gate because browser artifacts changed**
+
+```powershell
+docker compose run --rm dev bash tests/gate/gate.sh
+```
+
+- [ ] **Step 5: Commit the reproducible generated artifacts separately**
+
+```powershell
+git add docs web
+git commit -m "build(wasm): regenerate browser artifacts after main sync"
+```
+
+- [ ] **Step 6: Re-run the Task 6 independent review boundary**
 
 Review the merge delta and the staged-family/materialization invariants before setting Task 6 complete or starting Task 7.
-

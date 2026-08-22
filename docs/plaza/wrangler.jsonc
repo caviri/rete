@@ -1,0 +1,22 @@
+{
+  // graphplaza.com — the dataset plaza.
+  //
+  // Same fix as docs/demo-iswc2026/wrangler.jsonc: Cloudflare builds this repo
+  // and runs `wrangler versions upload`, which without a config cannot know what
+  // to deploy and fails with "Missing entry-point to Worker script or to assets
+  // directory" on every push. Two projects build from this repo, so each needs
+  // its own config beside the site it serves — a root config would be picked up
+  // by both. Set this project's build root directory to `docs/plaza`.
+  //
+  // Static files only; no Worker script. Unlike the demo site there is no
+  // _headers here and none is needed: the plaza loads the SYNC wasm build
+  // (pkg-nomodules), which does not require cross-origin isolation, so there is
+  // no COOP/COEP arrangement to preserve.
+  "name": "rete",
+  "compatibility_date": "2026-08-03",
+  "assets": {
+    "directory": ".",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

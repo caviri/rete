@@ -1,0 +1,26 @@
+{
+  // demo.graphplaza.com — the frozen ISWC 2026 demo site.
+  //
+  // Cloudflare builds this repo and runs `wrangler versions upload`. Without a
+  // config that command has no idea what to deploy and fails with "Missing
+  // entry-point to Worker script or to assets directory" — which it did on every
+  // push, so every pull request was born with a red check that had nothing to do
+  // with the change under review.
+  //
+  // There is no Worker script here: the site is static files. `assets.directory`
+  // is therefore the whole deployment. Set this project's build root directory to
+  // `docs/demo-iswc2026` in the Cloudflare dashboard so the command finds this
+  // file; the repo root deliberately has no wrangler config, because the other
+  // Workers project pointed at this repo would then pick it up too.
+  "name": "demo-iswc2026",
+  "compatibility_date": "2026-08-03",
+  "assets": {
+    "directory": ".",
+    // The console opts into cross-origin isolation per-visit (?parallel=1) via a
+    // service worker scoped to /playground/, so paths must be served as written
+    // rather than redirected — a trailing-slash rewrite would move the worker's
+    // scope and silently disable parallel mode.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

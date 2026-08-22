@@ -988,6 +988,22 @@ h3 {
   border-left-color: var(--accent-2);
 }
 
+/* Examples read from the loaded file's own Dataset Card (family "Card"):
+   visually a sibling of the catalog examples, but clearly its own block. */
+.example-card[data-family="Card"] {
+  border-left-color: var(--muted);
+  background: var(--side);
+}
+.ex-card-sep {
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ex-card-sep .microcopy { font-weight: 400; }
+
 .example-card .example-button {
   display: flex;
   align-items: center;
@@ -1399,6 +1415,9 @@ textarea {
 .markdown-body pre { max-width: 100%; overflow: auto; margin: .5em 0; padding: .6em .7em; background: var(--side); border: 1px solid var(--line); border-radius: 6px; }
 .markdown-body pre code { padding: 0; background: none; white-space: pre-wrap; }
 .markdown-body a { color: var(--accent-dark); }
+.markdown-body hr { border: 0; border-top: 1px solid var(--line); margin: .9em 0; }
+/* A nested list sits under its parent item, not adrift below the whole list. */
+.markdown-body li > ul, .markdown-body li > ol { margin: .15em 0 .15em; }
 /* Opt-in embedded page thumbnail. A desktop-sized iframe is scaled down so the
    preview shows the site's real desktop layout, without granting parent access. */
 .page-preview-cell { width: 294px; max-width: 100%; padding: 6px 8px; white-space: normal; }
@@ -2409,6 +2428,25 @@ th .coltype.coltype-on {
   color: var(--accent-dark);
 }
 
+/* The Load pre-modal (the "Load" button beside Build): three stacked routes —
+   drop a file / paste a URL / browse the examples. Stacked at every width, so
+   it needs no phone-specific layout beyond the generic .modal rules. */
+.load-modal { width: min(560px, 100%); }
+.load-routes { display: grid; gap: 4px; }
+.load-route {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.load-route:first-child { margin-top: 0; padding-top: 2px; border-top: 0; }
+.load-route h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--accent-dark);
+}
+.load-route .file-zone { min-height: 72px; }
+.load-url-err { color: var(--bad); }
+
 /* Dataset browser (the "Datasets" modal): a wide two-pane layout — a sidebar
    list on the left, the selected dataset's details + preview on the right. */
 .ds-modal {
@@ -2800,7 +2838,7 @@ th .coltype.coltype-on {
      flexes/truncates so Build and ↗ keep their natural size beside it. */
   .top-actions { order: 4; width: 100%; flex-wrap: nowrap; gap: 8px; }
   .dataset-button { flex: 1 1 auto; min-width: 0; }
-  #buildBtn, #shareBtn { flex: 0 0 auto; }
+  #loadBtn, #buildBtn, #shareBtn { flex: 0 0 auto; }
   .dataset-button #dsName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* The eject icon stays (tap to change dataset); its "Change dataset" label and
      the Browser-API docs link are dropped to make room for Build. */
@@ -3155,6 +3193,9 @@ th .coltype.coltype-on {
 .cache-step.done::before { content: "✓"; color: var(--accent); font-weight: 800; }
 .cache-step.active { color: var(--accent-dark); font-weight: 600; }
 .cache-step.active::before { content: "▸"; color: var(--accent-dark); }
+/* The consent row for caching by URL: [Download <size>] [Cancel], centered
+   under the size line. Hidden (global .hidden) in every other modal state. */
+.cache-confirm { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
 
 /* Inline progress for a remote range read (schema/coherence over HTTP), in a
    tab body rather than the cache modal — reuses .cache-bar / .cache-step. */
@@ -3520,9 +3561,15 @@ td.lit { color: var(--ink); }
 }
 .card-code:focus { outline: none; border-color: var(--accent); }
 .card-code.invalid { border-color: var(--bad); background: var(--warn); }
-.builder-card-sync { margin-left: auto; font-size: 11px; color: var(--muted); }
-.builder-card-sync.invalid { color: var(--bad); font-weight: 600; }
-.builder-card-code-head .card-import { margin-left: auto; padding: 3px 9px; font-size: 11px; }
+/* The card validator's message is shown whole — the fix is usually in its tail
+   — so this wraps rather than truncating, and yields the width to do it. */
+.builder-card-sync { margin-left: auto; font-size: 11px; color: var(--muted); max-width: 55%; text-align: right; }
+.builder-card-sync.invalid { color: var(--bad); font-weight: 600; white-space: pre-wrap; }
+.builder-card-code-head .card-template { margin-left: auto; padding: 3px 9px; font-size: 11px; }
+.builder-card-code-head .card-import { padding: 3px 9px; font-size: 11px; }
+/* The card editor is the primary surface here, so it keeps the room; its
+   footnote sits under it rather than pushing it out of view. */
+.builder-card-code > .microcopy { margin: 6px 0 0; }
 
 /* Accepted-extensions hint next to the Upload button. */
 .builder-accept {
@@ -3586,7 +3633,20 @@ td.lit { color: var(--ink); }
 .card-body { overflow: auto; flex: 1 1 auto; padding: 4px 2px 14px; }
 
 .card-lede { margin: 2px 0 12px; }
-.card-lede .card-desc { margin: 4px 0 0; }
+/* The description is the one card field rendered as BLOCK markdown (headings,
+   lists, quotes, rules, fenced code — never raw HTML; see mdLite/markdownBlocks
+   in app.js). It reuses .markdown-body, which the result-table markdown cells
+   already style; these rules only re-scale it from "inside a table cell" to
+   "lede of a reading panel", and cap the headings a publisher can emit so a
+   card's own structure can never out-shout the modal's. */
+.card-lede .card-desc { margin: 4px 0 0; max-width: 82ch; line-height: 1.55; }
+.card-desc h4 { font-size: 15px; margin: 16px 0 5px; }
+.card-desc h5 { font-size: 13.5px; margin: 13px 0 4px; }
+.card-desc h6 { font-size: 12px; margin: 11px 0 3px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.card-desc p { margin: 0 0 8px; }
+.card-desc ul, .card-desc ol { margin: 6px 0 8px; }
+.card-desc li { margin: 2px 0; }
+.card-desc pre { font-size: 12px; }
 .card-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 16px; }
 .card-stat {
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; min-width: 108px;
@@ -3601,6 +3661,56 @@ td.lit { color: var(--ink); }
 .card-tbl td { border-bottom: 1px solid var(--line); padding: 3px 6px; vertical-align: top; }
 .card-tbl td.n { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
 .card-tbl td.iri { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Identity & provenance: a label column narrow enough that the values line up. */
+.card-meta td.card-k { width: 150px; color: var(--muted); white-space: nowrap; }
+.card-meta td { word-break: break-word; }
+.card-meta a { word-break: break-all; }
+
+/* Keywords (free text) and themes (controlled-vocabulary IRIs) read as tags,
+   not as table rows — they answer "what is this about" at a glance. */
+.card-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 0; }
+.card-chip {
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px;
+  font-size: 12px; color: var(--muted); background: var(--side);
+}
+a.card-chip-iri { text-decoration: none; color: var(--accent-dark); }
+a.card-chip-iri:hover { border-color: var(--accent); }
+/* The scheme name, derived from the IRI prefix — never the concept's label,
+   which lives in the scheme and is not fetched. */
+.card-chip-iri span { color: var(--muted); font-size: 11px; margin-left: 6px; }
+.card-theme-note { flex: 1 1 100%; }
+
+/* An ORCID / ROR is rendered as the link it is: the identifier resolves to the
+   authority record, which is the entire reason the card asks for an IRI. */
+.card-id { font-size: 11.5px; text-decoration: none; white-space: nowrap; }
+.card-id span { color: var(--muted); margin-left: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.card-cite { display: flex; gap: 8px; align-items: flex-start; }
+.card-cite > span { flex: 1 1 auto; }
+.card-cite-copy { flex: 0 0 auto; padding: 2px 10px; font-size: 11.5px; }
+
+/* Publisher-defined `extra`: values only, in their JSON form. Deliberately
+   plain — no linkification, no number formatting — because rete attaches no
+   meaning to them and formatting would imply it had. */
+.card-extra td.card-x-key, .card-x-sub td.card-x-k {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted); width: 30%; word-break: break-all;
+}
+.card-x-str { white-space: pre-wrap; word-break: break-word; }
+.card-x-lit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--cm-num); }
+.card-x-sub { margin: 0; font-size: 12px; }
+.card-x-sub td { border-bottom: none; padding: 1px 6px 1px 0; }
+
+/* Per-query measured cost, sitting with the query it describes. */
+.card-cost { margin: 4px 0 0; font-size: 11.5px; color: var(--muted); }
+.card-cost-ms { opacity: .75; font-style: italic; }
+.card-cost-ms::before { content: " · "; font-style: normal; }
+
+/* The build record is ABOUT THE BUILD, not about the data — so it is fenced off
+   from the card's own content rather than appended as one more section. */
+.card-build { margin: 22px 0 0; border-top: 2px solid var(--line); padding-top: 12px; }
+.card-build h4 { margin: 0 0 4px; font-size: 13px; }
 
 /* Card queries are runnable: the card ships the SPARQL, so the modal can hand
    it to the editor instead of making the reader retype it. */

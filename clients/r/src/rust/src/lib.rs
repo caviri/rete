@@ -230,8 +230,43 @@ fn card_bytes(curated: Option<serde_json::Value>, stats: &rete_core::ingest::Bui
     serde_json::to_vec(&value).unwrap_or_default()
 }
 
+/// The curated half of a card, typed and validated exactly as
+/// `rete build --card-file` validates it — the input card derivation takes.
+/// Mirrors the Python client's `curated_for_derivation`: `queries` is split
+/// off (it is written by the caller, not derived) and appended afterwards.
+fn curated_for_derivation(
+    value: serde_json::Value,
+) -> (
+    rete_core::card::CardInput,
+    Vec<rete_core::card::ExampleQuery>,
+) {
+    let mut obj = match value {
+        serde_json::Value::Object(o) => o,
+        _ => fail("card must be a JSON object"),
+    };
+    let examples: Vec<rete_core::card::ExampleQuery> = match obj.remove("queries") {
+        None => Vec::new(),
+        Some(q) => match serde_json::from_value(q) {
+            Ok(v) => v,
+            Err(e) => fail(format!(
+                "card `queries` is not a list of example queries: {e}"
+            )),
+        },
+    };
+    let doc = serde_json::Value::Object(obj);
+    // The document validator first: its wording is the CLI's.
+    if let Err(e) = rete_core::card::validate_curated_card(&doc) {
+        fail(e);
+    }
+    match rete_core::card::CardInput::from_json_str(&doc.to_string()) {
+        Ok(curated) => (curated, examples),
+        Err(e) => fail(e),
+    }
+}
+
 /// Build a complete `.rete` file image from RDF text. `card_json` may be ""
-/// (no card); `pyramid_algo` is "louvain", "types", or "none". Internal —
+/// (no card); `pyramid_algo` is "louvain", "types", or "none";
+/// `derive_card` opts into the auto-derived card profile. Internal —
 /// users call the documented `rete_build()`.
 /// @noRd
 #[extendr]
@@ -241,6 +276,7 @@ fn build_dataset(
     card_json: &str,
     pyramid_algo: &str,
     text_index: bool,
+    derive_card: bool,
 ) -> Vec<u8> {
     let (with_pyramid, algo) = match pyramid_algo {
         "none" => (false, rete_core::PyramidAlgo::Louvain),
@@ -258,12 +294,46 @@ fn build_dataset(
             Err(e) => fail(format!("card is not valid JSON: {e}")),
         }
     };
+    // Validate + type the curated half BEFORE parsing, so a malformed card
+    // fails before the graph is read rather than after.
+    let derived_input = if derive_card {
+        Some(curated_for_derivation(
+            curated.clone().unwrap_or_else(|| serde_json::json!({})),
+        ))
+    } else {
+        None
+    };
     let quads = match rete_core::ingest::parse_statements(text, format) {
         Ok(quads) => quads,
         Err(e) => fail(e),
     };
     if quads.is_empty() {
         fail("no statements parsed (empty input or only comments)");
+    }
+    if let Some((input, examples)) = derived_input {
+        let (bytes, _stats) = rete_core::ingest::assemble_dataset_with_opts_algo(
+            quads,
+            with_pyramid,
+            text_index,
+            None,
+            algo,
+            move |stats, quads| {
+                let mut card = rete_core::card::derive_card(
+                    quads,
+                    stats.terms as u64,
+                    stats.named_graphs as u64,
+                    input,
+                );
+                card.queries.extend(examples);
+                // Two-stage, exactly as the CLI does it: derive while the quads
+                // are resident, stamp the DEDUPLICATED counts once the indexes
+                // exist.
+                rete_core::ingest::DeferredMetadata::new(move |counts| {
+                    card.with_final_counts(counts).to_json_bytes()
+                })
+            },
+        );
+        return bytes;
     }
     let (bytes, _stats) = rete_core::ingest::assemble_dataset_with_opts_algo(
         quads,

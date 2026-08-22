@@ -50,16 +50,102 @@ docker compose run --rm dev cargo build -p rete-bench
 docker compose run --rm dev bash scripts/smoke.sh
 ```
 
-For browser bindings:
+### Regenerating the browser artifacts
+
+`scripts/build_wasm.sh` is **the** producer of every browser artifact — the two
+plain wasm packages, the Asyncify one, `docs/engine/`, `docs/playground.html`,
+the explorer pages and `docs/wasm-build.json`. CI's `wasm` job reruns this exact
+script and byte-diffs the tracked ones, so run the script, not the individual
+`wasm-pack` lines it contains:
 
 ```sh
-docker compose run --rm wasm
+docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
 ```
 
-This canonical build deliberately disables Binaryen's post-pass for the regular
-`web` and `no-modules` artifacts; the pinned Binaryen v108 corrupts modern
-wasm-bindgen extern-reference table exports. Do not replace it with a bare
-`wasm-pack build` unless that command includes `--no-opt`.
+(`RETE_SOURCE_REVISION` is only needed from a git worktree, whose `.git` file
+points at a host path the container cannot follow.)
+
+Four things make that byte diff go red, all presenting as the same
+`Binary files … differ`. Two are handled by the script; the other two are the
+check doing its job:
+
+- **A shared `CARGO_TARGET_DIR`.** A wasm built in a target dir another build has
+  used was reported to come out the same size with a handful of differing bytes
+  — the binary moved, not changed (35adffeb). It does not reproduce on demand,
+  which is exactly why it is not left to you to remember: the script derives its
+  own `…/wasm32` and `…/wasm32-asyncify` dirs from whatever `CARGO_TARGET_DIR` is
+  in force, and refuses to build in one that has host output in it. See
+  `scripts/wasm_target_dir.sh` for what was and was not reproduced. Do not invoke
+  `wasm-pack` by hand — that is the one way back into this.
+- **The build stamp.** `RETE_BUILD_STAMP` is written into `docs/playground.html`
+  and defaults to the `[workspace.package]` version, which is exactly what CI
+  stamps. Set it only for a release or a preview; the script warns when an
+  explicit value differs from the version.
+- **Genuinely stale artifacts.** Regenerate and commit them, separately from the
+  source change. CI uploads its own byte-exact `wasm-build-<sha>` artifact even
+  when the job fails, so a repair never needs a local rebuild.
+- **Source lines moved above panicking code.** rustc bakes `line!()` into the
+  binary — each panic site carries a `core::panic::Location` of
+  `(file ptr, path len, line, col)` — so adding or removing *lines* shifts those
+  constants and the artifacts are genuinely stale. **A doc-comment-only edit does
+  this**: it never reaches codegen, but it occupies lines. #208 added 8 lines of
+  doc comment above `Header::from_bytes` and moved exactly two bytes in
+  `rete_wasm_bg.wasm` — the low byte of two `line` fields, 305→313 and 307→315.
+  This looks identical to the target-dir signature (same size, a handful of
+  bytes) and was misread as one; the triage now tells them apart by which field
+  of the record moved. Rebuild and commit — nothing is wrong with your target dir.
+
+When the diff does go red, CI runs `scripts/wasm_parity_triage.py`, which reads
+the bytes and says which of the four it is. It runs locally too — though not
+from inside the dev container when your checkout is a git *worktree*: `git diff`
+cannot resolve the `.git` file there and the script reports "no diff" rather
+than failing, the same constraint that makes `RETE_SOURCE_REVISION` necessary
+above. Run it on the host, or against a normal clone.
+
+### The regression gate
+
+No commit to playground or engine files without a green `bash tests/gate/gate.sh`
+(full docs: `tests/gate/README.md`).
+
+From a fresh clone it needs two things a clone does not carry, both build output:
+
+- **`web/pkg*`** — gitignored. `gate.sh` stops up front and names the command
+  (`docker compose run --rm wasm`) rather than letting the G0 checks that read
+  it fail as if the engine were broken.
+- **the `.rete` fixtures under `tests/gate/.cache/`** — built for you by
+  `tests/gate/fixtures.sh`, which `gate.sh`, `scripts/build_wasm.sh` and CI all
+  call. It is **the** producer; do not add a sixth `cargo run … build` line
+  somewhere else. Add a fixture by adding a source + a recipe entry to
+  `tests/gate/fixtures/manifest.json`, which also records the properties its
+  checks depend on (carded/cardless, counts, curated card fields) so a fixture
+  that came out wrong fails naming itself.
+
+Nothing in the gate downloads a fixture. If a check needs a file with particular
+properties, build it from a tracked source — a published dataset that merely
+shares a name is a different graph and will drift under you.
+
+### Interop against a real triple store
+
+`tests/interop/oxigraph.sh` is the one check that runs a *third-party* engine:
+it exports the fixtures in `tests/interop/fixtures/` and loads them into
+`oxigraph/oxigraph` in Docker, asserting that an export with invalid IRIs is
+**rejected**, that `--sanitize-iris` makes it load with a matching quad count,
+and that a dump whose only defect is a relative IRI is rejected even after
+sanitizing.
+
+```sh
+bash tests/interop/oxigraph.sh        # ~1 min; pulls oxigraph/oxigraph
+```
+
+It is deliberately **not** in `gate.sh`: the gate is the per-change browser
+matrix, and this pulls a third-party image, so it sits in the same opt-in tier
+as the W3C conformance run and has its own CI job (`interop`, on rust changes
+and `workflow_dispatch`). Two things it pins that are easy to get wrong when
+extending it: `oxigraph load` **exits 0 even when it rejects the file**, so
+assert on the quad count in the store rather than on `$?`; and Oxigraph resolves
+N-Triples `UCHAR` escapes while rete stores the token verbatim, so a fixture
+must not contain both spellings of one IRI or the round-trip count silently
+drops by one.
 
 ## Documentation
 
@@ -121,6 +207,21 @@ source it as `set -a; . <(tr -d '\r' < .env); set +a` (a stray `\r` corrupts the
 signature header); run the scripts with `python3 -P` (a `dev/inspect.py` shadows stdlib
 `inspect`).
 
+**`--permutations` is a per-dataset decision, and its default is not yours to move.**
+`rete build --permutations 3|6` chooses whether the file carries the three
+merge-join orders (SOP/PSO/OPS) on top of the three routing ones. **The default is
+6.** A 3-permutation file returns the same rows from the same tiles for every
+query — but it is refused outright by any reader older than the mask, so it must
+never be the silent outcome of an unrelated change. Do not flip the default, a
+build script's default, or a skill's recommended invocation without an explicit
+decision recorded in the PR (the measurement and the standing recommendation are
+in `docs/BENCHMARK.md` and issue #206). Rebuilding one dataset lean is a choice
+about that dataset's consumers — the file records its own set, so nothing else
+has to change, and it is **not** the first step of a corpus-wide migration:
+re-publishing the estate lean would strand every bundled engine that is not
+rebuilt in lockstep, and two of the largest published files have no local source
+to rebuild from at all.
+
 **R2 rules of the road:**
 - **CORS is required and MUST ExposeHeaders `Content-Range`** — rete's open probe reads
   the total file length from `Content-Range: bytes 0-0/N`; without exposing it the file
@@ -145,6 +246,55 @@ Range proxy) served directly but wedged under load — R2 replaced that plane, a
 Range traffic should never route through the Space again. The Space itself is alive and
 current (engine 0.3.0) for its other planes: `/api`, `/mcp`, and the per-dataset
 SPARQL 1.1 endpoints under `/sparql/…`.
+
+## Re-Carding A Published Dataset
+
+Before touching a `.rete` that is already published. Full lifecycle in
+`docs/dataset-cards.md` ("Maintaining a published card"); tooling in
+`scripts/recard/`.
+
+- **A card is written at build time.** Fixing the card generator fixes the
+  *next* build, never a published file. The card is inside the content hash, so
+  there is no in-place patch — the file is rewritten or nothing changes.
+- **Survey before you re-card.** `bash scripts/recard/survey.sh` reads the CARD
+  tier only: 0.6 MB for the whole 98-file catalog. Re-carding it blind is
+  248 GB down and 248 GB back up. Re-decide from cards already on disk with
+  `--cards <dir>` (zero network). Skip `geoadmin-tiles` — its card range is
+  117 MB, not 6 KB.
+- **Pick the path by statement count, not file size.** `repyramid` costs
+  ~350–700 B per statement (17–35× the file, so bytes mislead): ceiling
+  **~80 M statements** on a 48 GB machine. Past that, stage through text
+  (`rete export --format nq` → `rete build --card-file …`): ~2.5× the wall
+  clock, 9–15× the `.rete` in scratch disk, ceiling **~150 M**. Past *that*,
+  stop — it is engine work. Exceeding a ceiling is an OOM kill mid-rebuild, not
+  an error message.
+- **`rete build --memory-budget-mb` cannot re-card.** It writes a counts-only
+  card with no profile and no starter queries. It *does* build named graphs
+  (#139) — `--collapse-graphs` is now a modelling choice (fold a TriG export's
+  graphs into the default graph when that is what the dump means), not a
+  requirement. `--text-index` is still refused there.
+- **Feed the external build the dump as it ships.** It reads
+  N-Triples/N-Quads/Turtle/TriG, gzipped or not, straight from the compressed
+  file — so a `dump.ttl.gz` never has to be expanded to `.nt` first. That
+  expansion is not a rounding error: SemOpenAlex measures 146.8 N-Quads bytes
+  per triple, which turns an 8.5 GiB dump into ~400 GB of scratch.
+- **Carry the curated fields explicitly.** A bare `repyramid --card` silently
+  drops `title`/`license`/`source`/`description`. Use
+  `scripts/recard/card_tools.py curated` to lift them, and its `verify` to fail
+  the run if one goes missing.
+- **Never edit a publisher's prose.** `description` travels verbatim, stale
+  figures included. If it genuinely must be corrected, a human does it, and
+  proves it surgical by expecting `verify` to report *exactly one* difference.
+- **Before overwriting any `.rete`, make a dated recovery copy** (`<name>.rete`
+  → `<name>.YYYYMMDD.rete`) outside the destination directory, and **re-check
+  it exists immediately before the overwrite** — parallel sessions share this
+  tree, and a copy made an hour ago is not evidence about now. Build to a new
+  path and move it in; never write over the input.
+- **`web/datasets.lock.json` MERGES.** `check_dataset_catalog.py --write-lock`
+  adds every key it probed to the existing lock and keeps the rest, so a
+  `--all --write-lock` run silently widens the release contract from the few
+  datasets it deliberately pins to the whole catalog. Probe with `--key` when
+  writing the lock, and diff the lock before committing it.
 
 ## Commits
 

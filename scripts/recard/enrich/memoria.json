@@ -1,0 +1,28 @@
+{
+  "title": "Memòria - Spanish Civil War victims & mass graves (open data)",
+  "description": "An aggregation of openly-licensed Spanish Civil War 'memoria histórica' datasets into one knowledge graph: 99,542 named victims/repressed persons and 2,872 mass graves (fosas), linked through provinces. Persons (mc:Victim) from Catalonia's reparació jurídica (69,834), Catalonia's desapareguts (8,339) and Euskadi's víctimas mortales (21,369) - name, sex, age, birth/residence municipality & province, cause of death, sentence, profession, military unit, executed flag. Mass graves (mc:MassGrave) from the Catalan (1,027, with WGS84 coordinates), Andalusian (615, with narratives), Castilla y León (701) and Valencian (529) fosas registries - municipality, province, victim count, status, repressor side. Provinces (mc:Province) tie victims and graves together. Aggregated from regional open-data portals (transparenciacatalunya.cat, opendata.euskadi.eus, juntadeandalucia.es, jcyl.es, gva.es); all CC-BY-style open data. Sensitive personal/historical data - attribute the source administrations.",
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/memoria/memoria.rete",
+  "derived_from": [
+    "https://analisi.transparenciacatalunya.cat",
+    "https://opendata.euskadi.eus",
+    "https://www.juntadeandalucia.es",
+    "https://www.jcyl.es",
+    "https://dadesobertes.gva.es"
+  ],
+  "keywords": [
+    "Civil War",
+    "Spain",
+    "memoria histórica",
+    "victims"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/SOCI",
+    "https://www.wikidata.org/entity/Q10859"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/memoria.html"
+  }
+}

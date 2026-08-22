@@ -5,11 +5,12 @@
 use rete_core::reader::materializable_len;
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
-    eval_query_reasoned, eval_select_communities, eval_sparql, project_graph, schema_classes,
+    eval_query_with, eval_select_communities, eval_sparql, project_graph, schema_classes,
     schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
-    ByteRange, CountingReader, DataGraph, Header, OwnedMemoryRangeReader, QueryOutput, RangeReader,
-    Rete, ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView, TermTriple,
-    TripleProvenance, ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
+    ByteRange, CountingReader, DataGraph, Header, OffsetReader, OwnedMemoryRangeReader, QueryOpts,
+    QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape,
+    SummaryView, TermTriple, TripleProvenance, ValidationReport, DEFAULT_BLOCK,
+    DEFAULT_TILE_BUDGET,
 };
 use std::rc::Rc;
 use std::sync::Arc;
@@ -57,7 +58,7 @@ pub fn info(bytes: &[u8]) -> Result<String, JsValue> {
         h.quad_count,
         h.term_count,
         h.pyramid_levels,
-        rete.graph_names().len()
+        rete.named_graph_count()
     ))
 }
 
@@ -86,6 +87,154 @@ pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
     }
     let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
     Ok(bytes)
+}
+
+/// [`build`], but the file carries a **Dataset Card** written from
+/// `card_json` — the same document `rete build --card-file` takes, validated
+/// by the same rules ([`rete_core::card::validate_curated_card`]), so a card
+/// authored in the browser is one the CLI would also have accepted.
+///
+/// What the browser can and cannot put in a card, stated plainly because the
+/// difference matters to whoever reads the file afterwards:
+///
+/// - **Curated fields travel in full** — title, description, licence, source,
+///   version, creators, publisher, DOI, citation, keywords, theme, the `extra`
+///   bag, everything on [`rete_core::card::CURATED_CARD_FIELDS`].
+/// - **The four counts are measured, not asserted**: `triple_count`,
+///   `quad_count`, `named_graph_count` and `term_count` come from the build's
+///   own [`BuildStats`](rete_core::ingest::BuildStats), and any values supplied
+///   for them would be ignored (they are not curated fields, so supplying them
+///   is already an error). `format_version` is stamped by the writer.
+/// - **The derived profile is NOT written.** Predicates, classes,
+///   vocabularies, datatypes, languages, class links, hubs, signals and the
+///   tiered starter-query library are absent. Their absence is honest absence:
+///   the card simply does not carry those keys, exactly as a `rete merge` card
+///   does not. Call [`build_with_derived_card`] instead to compute them here —
+///   this function stays curated-only so its bytes never change under a caller
+///   who did not ask for the extra passes.
+/// - **No build-info section** (kind 7) is written: its cost figures come from
+///   measuring the starter queries, and there are none to measure.
+///
+/// Pass an empty string for no card — byte-identical to [`build`].
+#[wasm_bindgen]
+pub fn build_with_card(text: &str, format: &str, card_json: &str) -> Result<Vec<u8>, JsValue> {
+    let quads = rete_core::ingest::parse_statements(text, format).map_err(err)?;
+    if quads.is_empty() {
+        return Err(js_error(
+            "no statements parsed (empty input or only comments)",
+        ));
+    }
+    if card_json.trim().is_empty() {
+        let (bytes, _stats) = rete_core::ingest::assemble_dataset(quads, &[]);
+        return Ok(bytes);
+    }
+    let curated = validated_card(card_json)?;
+    // The counts are only known once the dictionary and indexes exist, so the
+    // card is serialized from inside the writer rather than handed in whole.
+    let (bytes, _stats) = rete_core::ingest::assemble_dataset_with(quads, move |stats, _| {
+        let card = rete_core::card::compose_curated_card(
+            curated,
+            stats.default_triples as u64,
+            stats.statements as u64,
+            stats.named_graphs as u64,
+            stats.terms as u64,
+            rete_core::CURRENT_FORMAT_VERSION,
+        );
+        serde_json::to_vec(&card).expect("card serializes")
+    });
+    Ok(bytes)
+}
+
+/// [`build_with_card`], but the card also carries the **auto-derived profile**
+/// — the half a browser build used to have to do without (#152).
+///
+/// Predicates, classes, vocabularies, datatypes, languages, the class-link
+/// quotient, hubs, the affordance signals, and the tiered starter-query
+/// library are all computed here, by exactly the code `rete build --card`
+/// runs ([`rete_core::card::derive_card`]). On the same graph with the same
+/// curated document, the metadata section this writes is **byte-identical** to
+/// the CLI's.
+///
+/// Two honest differences remain, and neither is derivation:
+///
+/// - **Sections are uncompressed** (the wasm build has no zstd *encoder*), so
+///   the file is larger than a CLI build of the same graph. Every reader
+///   accepts it.
+/// - **No build-info section** (kind 7): its cost figures come from *running*
+///   the starter queries, which is a benchmark, not a build.
+///
+/// # Why this is a separate function
+///
+/// Derivation walks the graph twice more. In a browser, on a paste the user is
+/// waiting on, that is a cost they should choose — so [`build_with_card`]
+/// keeps writing exactly the bytes it always has, and this is the opt-in.
+///
+/// Pass an empty string for `card_json` to derive a profile-only card with no
+/// curated fields (the equivalent of a bare `rete build --card`).
+#[wasm_bindgen]
+pub fn build_with_derived_card(
+    text: &str,
+    format: &str,
+    card_json: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let quads = rete_core::ingest::parse_statements(text, format).map_err(err)?;
+    if quads.is_empty() {
+        return Err(js_error(
+            "no statements parsed (empty input or only comments)",
+        ));
+    }
+    // The typed curated half, held to the same rules `--card-file` is held to.
+    let curated = if card_json.trim().is_empty() {
+        rete_core::card::CardInput::default()
+    } else {
+        // Validate through the document validator first, so the wording a
+        // browser author sees is the wording `validate_card` shows them while
+        // they type, not a raw serde message.
+        validated_card(card_json)?;
+        rete_core::card::CardInput::from_json_str(card_json).map_err(js_error)?
+    };
+    let (bytes, _stats) = rete_core::ingest::assemble_dataset_with(quads, move |stats, quads| {
+        let card = rete_core::card::derive_card(
+            quads,
+            stats.terms as u64,
+            stats.named_graphs as u64,
+            curated,
+        );
+        // The counts the file actually holds are known only once the indexes
+        // have deduplicated the input — the same two-stage stamp the CLI uses.
+        rete_core::ingest::DeferredMetadata::new(move |counts| {
+            card.with_final_counts(counts).to_json_bytes()
+        })
+    });
+    Ok(bytes)
+}
+
+/// Check a curated card document without building anything — so an editor can
+/// report the **exact** error `rete build --card-file` would report, while the
+/// author is still typing. Returns the empty string when the document is
+/// valid, otherwise the error message.
+///
+/// Deliberately not a boolean: the wording is the useful part (a free-text
+/// `theme` is told to use `keywords`; a stray top-level key is told about the
+/// `extra` bag), and duplicating that wording in JavaScript is exactly how the
+/// two writers would drift apart again.
+#[wasm_bindgen]
+pub fn validate_card(card_json: &str) -> String {
+    check_card(card_json).err().unwrap_or_default()
+}
+
+/// Parse + validate a curated card document. The message stays a `String` all
+/// the way through — wrapping it in a JS `Error` first and unwrapping it later
+/// loses the wording, which is the part worth returning.
+fn check_card(card_json: &str) -> Result<serde_json::Value, String> {
+    let doc: serde_json::Value =
+        serde_json::from_str(card_json).map_err(|e| format!("card is not JSON: {e}"))?;
+    rete_core::card::validate_curated_card(&doc)
+}
+
+/// [`check_card`] as a JS exception, for the build path.
+fn validated_card(card_json: &str) -> Result<serde_json::Value, JsValue> {
+    check_card(card_json).map_err(js_error)
 }
 
 /// Evaluate a triple pattern; `null`/`undefined` positions are wildcards.
@@ -215,22 +364,152 @@ pub fn card(bytes: &[u8]) -> Result<Option<String>, JsValue> {
 /// file carries no card. Worker-only (synchronous XHR).
 #[wasm_bindgen]
 pub fn card_url(url: &str) -> Result<Option<String>, JsValue> {
-    let reader = XhrRangeReader::open(url)?;
+    let reader = RemoteReader::open(url)?.view();
     let bytes = rete_core::read_metadata_ranged(&reader).map_err(err)?;
     Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
 }
 
-/// A `.rete` image owned **once** and kept resident, so a client (the
-/// playground's cached/in-memory mode) can run many queries without re-copying
-/// the buffer. Dictionary chunks and index tiles decode lazily, then stay
-/// cached on the [`Rete`] for later calls. The few index-free readers
-/// (`schema_packed`, `progressive_query`, `check_schema`) stay free functions —
-/// they read small ranges and are called rarely, so a handle buys little.
+/// The Dataset Card **and the build record** of a remote `.rete`, in the same
+/// budget as the card alone: one header read, then **one coalesced range**
+/// covering both sections — the writer lays the kind-7 build-info immediately
+/// after the metadata precisely so this holds
+/// ([`rete_core::range::read_card_and_build_info_ranged`], pinned by a
+/// `rete-core` test). Reading the two separately would have made the CARD tier
+/// cost three requests instead of two, which is why there is one export rather
+/// than a second `build_info_url`.
+///
+/// JSON envelope:
+/// `{"schemaVersion":1,"card":<text|null>,"build":<text|null>,"text_index":{…}}`.
+/// `card` and `build` are the sections' **own bytes** as text, not a
+/// re-serialization — the card a client displays is the card the file holds.
+/// `text_index` is the one thing the file does *not* store about itself and this
+/// reader measures instead (see the private `text_index_json`). Worker-only
+/// (synchronous XHR).
+#[wasm_bindgen]
+pub fn card_and_build_url(url: &str) -> Result<String, JsValue> {
+    // The polyglot-aware view: base 0 for a plain .rete, shifted past the HTML
+    // shell for a polyglot — so the card of an embedded graph is read with the
+    // same two requests as a standalone file's.
+    let reader = RemoteReader::open(url)?.view();
+    card_build_from(&reader)
+}
+
+/// [`card_and_build_url`] for an image already in memory — no I/O at all.
+#[wasm_bindgen]
+pub fn card_and_build(bytes: &[u8]) -> Result<String, JsValue> {
+    card_build_from(&SliceReader::new(bytes))
+}
+
+/// The shared body of the two: header (which the card read needs anyway), the
+/// coalesced card + build-info range, and the measured text-index signal — so
+/// the CARD tier stays at one header read plus one coalesced range, plus the
+/// ≤10-byte probe only when there is an index to measure.
+fn card_build_from<R: RangeReader>(reader: &R) -> Result<String, JsValue> {
+    let (header, card, build) =
+        rete_core::read_card_and_build_info_with_header(reader).map_err(err)?;
+    let token_table = rete_core::read_text_index_token_table_len_ranged(reader, &header);
+    Ok(card_build_envelope(
+        card,
+        build,
+        text_index_json(&header, token_table),
+    ))
+}
+
+/// Whether a `.rete` carries a **full-text (TEXT_INDEX) section**, measured from
+/// the section directory in the 1 KiB header the caller has just read:
+/// `{"present":bool,"bytes":N,"token_table_bytes":N}` (the last two only when
+/// there is an index).
+///
+/// This is not in the card, and deliberately so. A file built with
+/// `--text-index` answers `FILTER(CONTAINS(…))` by word lookup; one built
+/// without it answers the *same query with the same rows* by full scan, so the
+/// capability is invisible from the results — and a stored flag would be a claim
+/// that can outlive the section it describes. Measuring costs the header (already
+/// fetched) plus one ≤10-byte range read for the token-table length: the figure
+/// a first search actually pays, several times smaller than the whole section.
+///
+/// `token_table_bytes` is omitted when it was not measured — absent means
+/// "not measured here", never "zero".
+fn text_index_json(header: &Header, token_table_bytes: Option<u64>) -> serde_json::Value {
+    if header.text_index_len == 0 {
+        return serde_json::json!({ "present": false });
+    }
+    let mut v = serde_json::json!({
+        "present": true,
+        "bytes": header.text_index_len,
+    });
+    if let Some(tt) = token_table_bytes {
+        v.as_object_mut()
+            .expect("an object")
+            .insert("token_table_bytes".into(), serde_json::json!(tt));
+    }
+    v
+}
+
+/// The `{card, build, text_index}` envelope both readers return. Absent sections
+/// are `null`, never `""` or `{}`: a file built before build-info existed has no
+/// build record, and a reader must be able to tell that from one that recorded
+/// nothing. `text_index` is always an object — it is measured, so there is
+/// always an answer, including for a file with no card at all.
+fn card_build_envelope(
+    card: Option<Vec<u8>>,
+    build: Option<Vec<u8>>,
+    text_index: serde_json::Value,
+) -> String {
+    let text = |b: Option<Vec<u8>>| match b {
+        Some(b) if !b.is_empty() => {
+            serde_json::Value::String(String::from_utf8_lossy(&b).into_owned())
+        }
+        _ => serde_json::Value::Null,
+    };
+    serde_json::json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
+        "card": text(card),
+        "build": text(build),
+        "text_index": text_index,
+    })
+    .to_string()
+}
+
+/// The **true byte length of a remote `.rete`**, in 1–2 tiny range requests —
+/// derived from the file's *own* header (the issue-#95 probe: sections are
+/// back-to-back and the file ends with the 4-byte `RETE` footer), never from
+/// the transport's numbers, which may describe a compressed representation
+/// (GitHub Pages HEADs a 71 MB file as its 58 MB gzip) or be hidden from
+/// cross-origin JS entirely. This is how a UI can say what "download the whole
+/// file" actually costs **before** committing to it.
+/// JSON: `{ "schemaVersion": 1, "fileLength": <bytes> }`. Worker-only
+/// (synchronous XHR in the sync build).
+#[wasm_bindgen]
+pub fn file_len_url(url: &str) -> Result<String, JsValue> {
+    // The GRAPH's length: for a polyglot that is the appended `.rete`, not the
+    // web page wrapped around it — "download the whole file" must quote the
+    // bytes a `.rete` consumer would actually take.
+    let reader = RemoteReader::open(url)?;
+    Ok(format!(
+        r#"{{"schemaVersion":{},"fileLength":{}}}"#,
+        JSON_SCHEMA_VERSION,
+        reader.len()
+    ))
+}
+
+/// A `.rete` opened **once** and kept resident, so a client (the playground's
+/// cached/in-memory mode) can run many queries on a big file without re-copying
+/// the whole buffer into wasm and re-decoding its dictionary on every call. The
+/// methods mirror the free functions above but operate on the already-open
+/// [`Rete`]. The few index-free readers (`schema_packed`, `progressive_query`,
+/// `check_schema`) stay free functions — they read small ranges from the buffer
+/// and are called rarely (once at load / on demand), so a handle buys little.
 #[wasm_bindgen]
 pub struct Graph {
     reader: Arc<OwnedMemoryRangeReader>,
     rete: Rc<Rete>,
     file_len: usize,
+    /// The kind-7 build record's own bytes, lifted at open time. `Rete` keeps
+    /// the metadata section but not this one (it is outside the content hash
+    /// and no query needs it), and the handle does not retain the buffer — so
+    /// it is read once here rather than made unreachable.
+    build_info: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -239,20 +518,33 @@ impl Graph {
     #[wasm_bindgen(constructor)]
     pub fn new(bytes: &[u8]) -> Result<Graph, JsValue> {
         let file_len = bytes.len();
+        let build_info = rete_core::read_build_info(bytes)
+            .ok()
+            .flatten()
+            .filter(|b| !b.is_empty())
+            .map(|b| String::from_utf8_lossy(&b).into_owned());
         let (reader, rete) = open_owned(bytes.to_vec())?;
         Ok(Graph {
             reader,
             rete: Rc::new(rete),
             file_len,
+            build_info,
         })
     }
 
-    /// A **lazy, resumable cursor** over every quad of this graph — the
-    /// streaming export path. See [`QuadCursor`]; `graph` selects one graph
-    /// (`""` = the default graph), `None` streams the default graph followed by
-    /// every named graph.
-    pub fn quads(&self, graph: Option<String>) -> QuadCursor {
-        QuadCursor::start(self.rete.clone(), graph)
+    /// A **lazy, resumable cursor** over the quads of this graph — the streaming
+    /// export path. See [`QuadCursor`]; `graph` selects one graph (`""` = the
+    /// default graph), `None` streams the default graph followed by every named
+    /// graph. `s` / `p` / `o` optionally restrict the dump to a triple pattern,
+    /// which **prunes tiles** rather than filtering rows.
+    pub fn quads(
+        &self,
+        graph: Option<String>,
+        s: Option<String>,
+        p: Option<String>,
+        o: Option<String>,
+    ) -> QuadCursor {
+        QuadCursor::start(self.rete.clone(), graph, s, p, o)
     }
 
     /// See [`info`].
@@ -263,7 +555,7 @@ impl Graph {
             h.quad_count,
             h.term_count,
             h.pyramid_levels,
-            self.rete.graph_names().len()
+            self.rete.named_graph_count()
         )
     }
 
@@ -281,6 +573,21 @@ impl Graph {
     /// `subPropertyOf` / `domain` / `range` reasoning by query rewriting).
     pub fn query_reasoned(&self, query: &str, format: &str) -> Result<String, JsValue> {
         query_json_reasoned(&self.rete, query, format, "")
+    }
+
+    /// As [`query`], with explicit opt-in toggles: `reason` (OWL 2 QL
+    /// entailment) and `union_default` (union default graph — a pattern
+    /// outside `GRAPH` matches the merge of the default graph and every named
+    /// graph, the Virtuoso / GraphDB / Jena TDB mode; non-standard, so plain
+    /// [`Graph::query`] never does this).
+    pub fn query_opts(
+        &self,
+        query: &str,
+        format: &str,
+        reason: bool,
+        union_default: bool,
+    ) -> Result<String, JsValue> {
+        query_json_with(&self.rete, query, format, "", reason, union_default)
     }
 
     /// See [`query_triples`].
@@ -309,6 +616,38 @@ impl Graph {
         limit: usize,
     ) -> Result<String, JsValue> {
         text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
+    }
+
+    /// Byte length of the TEXT_INDEX section, `0` when the file has none — a
+    /// header read, never a fault. The UI asks this to decide whether to offer
+    /// full-text search at all, and to state the cost before the first one.
+    /// `f64` because the section outgrows `u32`: causenet's is 1.88 GB.
+    pub fn text_index_len(&self) -> f64 {
+        self.rete.header().text_index_len as f64
+    }
+
+    /// Byte length of the TEXT_INDEX's leading **token table** — what a first
+    /// [`Graph::text_search_one`] actually faults, and therefore the only honest
+    /// number to quote as its cost. [`Graph::text_index_len`] is the whole
+    /// section, postings blob included, and overstates it 6.5× on
+    /// `epfl-infoscience` (195 MB section, 29 MB token table); the postings are
+    /// only ever fetched one list at a time. `0` when the file has no text index
+    /// or the length could not be read — the caller must then say nothing about
+    /// a token table rather than pass the section length off as one.
+    /// `f64` for the same reason as the section length: causenet's table is
+    /// 1.88 GB.
+    pub fn text_index_token_table_len(&self) -> f64 {
+        self.rete.text_index_token_table_len().unwrap_or(0) as f64
+    }
+
+    /// [`Graph::text_search`] from ONE phrase: whitespace splits it into words
+    /// and **every** word must match (AND), like `rete search --contains a b`.
+    /// One string in, one string out — that is what the remote twin's
+    /// hand-marshaled asyncify path can carry (a JS array marshaled raw is what
+    /// traps), and the UI is a single text box either way. Same JSON envelope.
+    pub fn text_search_one(&self, phrase: &str, limit: usize) -> Result<String, JsValue> {
+        let words: Vec<String> = phrase.split_whitespace().map(str::to_owned).collect();
+        text_search_json(&self.rete, &words, None, limit)
     }
 
     /// See [`why_triples`].
@@ -350,6 +689,26 @@ impl Graph {
             .ok()
             .flatten()
             .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// See [`card_and_build`] — the card and the build record of the resident
+    /// file, in the same envelope the remote path returns, so one caller
+    /// handles both sources.
+    pub fn card_and_build(&self) -> String {
+        let card = self
+            .rete
+            .metadata()
+            .filter(|b| !b.is_empty())
+            .map(|b| b.to_vec());
+        // A resident open already decoded the whole TEXT_INDEX section, so both
+        // figures are free here.
+        let text_index =
+            text_index_json(self.rete.header(), self.rete.text_index_token_table_len());
+        card_build_envelope(
+            card,
+            self.build_info.as_ref().map(|s| s.as_bytes().to_vec()),
+            text_index,
+        )
     }
 
     /// See [`query_communities`].
@@ -401,8 +760,8 @@ impl Graph {
     }
 }
 
-/// A **lazy, resumable cursor** over every quad of an open `.rete` — the engine
-/// side of `for await (const [s, p, o, g] of graph.quads())` in the JS client.
+/// A **lazy, resumable cursor** over the quads of an open `.rete` — the engine
+/// side of `for await (const [s, p, o, g] of graph.dump())` in the JS client.
 ///
 /// # Why a cursor and not a callback
 ///
@@ -410,9 +769,9 @@ impl Graph {
 /// cannot be *paused* to hand control back to JavaScript: to feed a JS iterator
 /// it would have to buffer every quad first, which is exactly the `Vec` that
 /// [`Rete::dump`] builds and that OOMs on a large file. This wraps
-/// [`Rete::dump_iter`] instead, so the scan can be suspended between calls and
-/// resumed in place — one triple decoded per `next()`, never a whole-graph
-/// materialization anywhere in the pipeline.
+/// [`Rete::query_batch`] instead, so the scan can be suspended between calls and
+/// resumed in place — the whole resume state is one opaque `u64`, never a
+/// whole-graph materialization anywhere in the pipeline.
 ///
 /// # Why batched (and not one call per quad)
 ///
@@ -424,22 +783,37 @@ impl Graph {
 ///
 /// # Cost model
 ///
-/// The dictionary is prefetched once (a dump resolves every term anyway), and
-/// index tiles fault in as the scan advances and stay resident, so a full dump
-/// of a *remote* graph ends up fetching essentially the whole file. Peak memory
-/// is O(dictionary + index), never O(quads).
+/// The dictionary is **not** prefetched whole: each batch faults only the
+/// chunks its own terms live in, so taking five quads off the front costs five
+/// quads' worth of dictionary rather than all of it. Index tiles fault in as the
+/// scan advances and stay resident, and so do dictionary chunks, so an
+/// **unfiltered** dump driven to the end still ends up fetching essentially the
+/// whole file — that is inherent in exporting a graph.
+///
+/// A **filtered** cursor (a bound `s` / `p` / `o`) is a different shape: the
+/// scan routes to the one permutation that sorts on the bound prefix and drops
+/// every tile whose synopsis proves it cannot match, from the tile directory,
+/// *without fetching it*. On `cordis.rete` (801 MB, six named graphs) dumping
+/// one predicate of one graph reads 16 MB where the unfiltered dump of that
+/// graph reads 376 MB. Peak memory is O(faulted dictionary + index), never
+/// O(quads), either way.
 #[wasm_bindgen]
 pub struct QuadCursor {
     /// Graph slots not yet streamed; `None` = the default graph.
     pending: std::vec::IntoIter<Option<String>>,
     /// The graph being streamed (`None` = the default graph), and how far into
-    /// it we got. The resume state is one subject id — see `Rete::dump_batch`.
+    /// it we got. The resume state is one opaque `u64` — see `Rete::query_batch`.
     current: Option<Option<String>>,
-    cursor: u32,
+    cursor: u64,
+    /// The triple pattern this dump is restricted to; all-`None` = every quad.
+    /// Held as owned tokens because the cursor outlives every call.
+    s: Option<String>,
+    p: Option<String>,
+    o: Option<String>,
     /// Whether the live graph's last batch was its final one.
     slot_done: bool,
-    /// Triples resolved by the last `dump_batch` that the caller has not taken
-    /// yet. A batch ends on a subject boundary, so this drains before the next.
+    /// Triples resolved by the last `query_batch` that the caller has not taken
+    /// yet. A batch ends on a group boundary, so this drains before the next.
     buffered: std::vec::IntoIter<TermTriple>,
     rete: Rc<Rete>,
 }
@@ -457,7 +831,18 @@ impl QuadCursor {
     /// `graph`: `None` = the default graph followed by every named graph;
     /// `Some("")` = the default graph only; `Some(name)` = that named graph
     /// (bare IRI or `<iri>` token — both are accepted).
-    fn start(rete: Rc<Rete>, graph: Option<String>) -> QuadCursor {
+    ///
+    /// `s` / `p` / `o` are canonical N-Triples term tokens; an empty string is
+    /// treated as unbound, so a JS caller can pass `""` for "no filter" without
+    /// a separate sentinel. A bound term the dictionary does not know yields an
+    /// empty dump without touching the index.
+    fn start(
+        rete: Rc<Rete>,
+        graph: Option<String>,
+        s: Option<String>,
+        p: Option<String>,
+        o: Option<String>,
+    ) -> QuadCursor {
         let slots: Vec<Option<String>> = match graph {
             None => std::iter::once(None)
                 .chain(rete.graph_names().iter().map(|g| Some((*g).to_string())))
@@ -469,10 +854,14 @@ impl QuadCursor {
         // failure from an earlier query does not condemn this one (and so
         // `finish()` reports only what happened while streaming).
         rete.reset_load_failures();
+        let term = |t: Option<String>| t.filter(|t| !t.is_empty());
         QuadCursor {
             pending: slots.into_iter(),
             current: None,
             cursor: 0,
+            s: term(s),
+            p: term(p),
+            o: term(o),
             slot_done: false,
             buffered: Vec::new().into_iter(),
             rete,
@@ -484,8 +873,8 @@ impl QuadCursor {
     /// Returns how many were emitted; fewer than `max` means the stream ended.
     ///
     /// The scan is resumable rather than held open: each refill calls
-    /// `Rete::dump_batch`, whose entire resume state is one subject id. That is
-    /// what lets this struct be `'static` — required by `#[wasm_bindgen]` —
+    /// `Rete::query_batch`, whose entire resume state is one opaque `u64`. That
+    /// is what lets this struct be `'static` — required by `#[wasm_bindgen]` —
     /// without a self-referential iterator borrowing the `Rete` beside it.
     fn pull<F: FnMut(&str, &str, &str, Option<&str>)>(&mut self, max: usize, mut sink: F) -> usize {
         let mut emitted = 0;
@@ -514,10 +903,17 @@ impl QuadCursor {
                 self.current = None;
                 continue;
             }
-            // 4. Otherwise resume it. `dump_batch` always advances the cursor or
-            //    reports done, so this cannot spin.
+            // 4. Otherwise resume it. `query_batch` always advances the cursor
+            //    or reports done, so this cannot spin.
             let want = (max - emitted).max(DUMP_BATCH);
-            let (triples, next, done) = self.rete.dump_batch(slot.as_deref(), self.cursor, want);
+            let (triples, next, done) = self.rete.query_batch(
+                slot.as_deref(),
+                self.s.as_deref(),
+                self.p.as_deref(),
+                self.o.as_deref(),
+                self.cursor,
+                want,
+            );
             self.cursor = next;
             self.slot_done = done;
             self.buffered = triples.into_iter();
@@ -636,7 +1032,7 @@ pub fn heap_bytes() -> f64 {
 /// **Worker-only** (synchronous range-read XHR).
 #[wasm_bindgen]
 pub struct RemoteGraph {
-    reader: std::sync::Arc<CountingReader<XhrRangeReader>>,
+    reader: RemoteReader,
     rete: Rc<Rete>,
 }
 
@@ -655,25 +1051,38 @@ impl RemoteGraph {
     }
 
     /// See [`Graph::quads`] — the SAME lazy cursor, over the lazily range-read
-    /// remote handle. It streams and stays memory-bounded exactly as the local
-    /// one does, but it is not *network*-lazy: a full dump resolves every term
-    /// and visits every tile, so it ends up fetching essentially the whole file
-    /// (and the tiles it faults stay resident). Use it to export a remote graph,
-    /// not to peek at one — for that, run a `LIMIT` query. Worker-only in the
-    /// browser, like every other read here.
-    pub fn quads(&self, graph: Option<String>) -> QuadCursor {
-        QuadCursor::start(self.rete.clone(), graph)
+    /// remote handle.
+    ///
+    /// An **unfiltered** dump is not network-lazy and cannot be: it resolves
+    /// every term and visits every tile, so it ends up fetching essentially the
+    /// whole file (and what it faults stays resident). A **filtered** one is:
+    /// pass `s` / `p` / `o` and the scan routes to one permutation, keeps only
+    /// the tiles whose synopsis admits the bound components, and fetches those.
+    /// On `cordis.rete` (801 MB) one predicate of one named graph costs 16 MB
+    /// instead of 376 MB. To peek at an unfiltered graph, still prefer a `LIMIT`
+    /// query. Worker-only in the browser, like every other read here.
+    pub fn quads(
+        &self,
+        graph: Option<String>,
+        s: Option<String>,
+        p: Option<String>,
+        o: Option<String>,
+    ) -> QuadCursor {
+        QuadCursor::start(self.rete.clone(), graph, s, p, o)
     }
 
-    /// `{ fileLength, bytes, requests }` — CUMULATIVE physical fetches since this
-    /// session opened. The worker diffs successive calls to report a single
-    /// query's traffic (a fully cached re-run adds ~0).
+    /// `{ fileLength, bytes, requests, base }` — CUMULATIVE physical fetches
+    /// since this session opened. The worker diffs successive calls to report a
+    /// single query's traffic (a fully cached re-run adds ~0). `fileLength` is
+    /// the **graph's** length and `base` the byte offset it starts at: `0` for an
+    /// ordinary `.rete`, and the size of the HTML shell for a polyglot file.
     pub fn stats(&self) -> String {
         format!(
-            r#"{{"schemaVersion":1,"fileLength":{},"bytes":{},"requests":{}}}"#,
+            r#"{{"schemaVersion":1,"fileLength":{},"bytes":{},"requests":{},"base":{}}}"#,
             self.reader.len(),
             self.reader.bytes_read(),
-            self.reader.requests()
+            self.reader.requests(),
+            self.reader.base
         )
     }
 
@@ -711,6 +1120,22 @@ impl RemoteGraph {
         Ok(s)
     }
 
+    /// As [`query`], with explicit opt-in toggles — see [`Graph::query_opts`].
+    /// With `union_default` on, a lazy remote read may fault the index tiles of
+    /// every named graph the union touches (the merge is strictly opt-in).
+    pub fn query_opts(
+        &self,
+        query: &str,
+        format: &str,
+        reason: bool,
+        union_default: bool,
+    ) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
+        let s = query_json_with(&self.rete, query, format, "", reason, union_default)?;
+        incomplete_guard(&self.rete, "query")?;
+        Ok(s)
+    }
+
     /// See [`prefix_search`] — over the resident, cached remote handle. Faults the
     /// pyramid (where the label index lives) on the first call, then serves the
     /// search from memory.
@@ -730,11 +1155,57 @@ impl RemoteGraph {
         text_search_json(&self.rete, &words, contains_prefix.as_deref(), limit)
     }
 
+    /// See [`Graph::text_index_len`] — read from the resident header, so it
+    /// costs no fetch at all. Worth asking before [`RemoteGraph::text_search`]:
+    /// it is the size of the section the first search starts pulling over the
+    /// wire, so the UI can warn instead of surprising the user.
+    pub fn text_index_len(&self) -> f64 {
+        self.rete.header().text_index_len as f64
+    }
+
+    /// See [`Graph::text_index_token_table_len`] — the figure to quote before
+    /// [`RemoteGraph::text_search`], because it is what that first search pulls
+    /// over the wire; the section length would promise the user several times
+    /// the real bill.
+    ///
+    /// Unlike [`RemoteGraph::text_index_len`] this is not free: the token
+    /// table's length lives in the section's first bytes, not the header, so it
+    /// costs ONE ≤10-byte range read (memoized). Trivial next to the table it
+    /// measures — but it *is* IO, so the asyncify path must drive this call
+    /// rather than treat it as a header field.
+    pub fn text_index_token_table_len(&self) -> f64 {
+        self.rete.text_index_token_table_len().unwrap_or(0) as f64
+    }
+
+    /// See [`Graph::text_search_one`] — over the resident remote handle, with
+    /// the same token-table-then-posting-lists fault pattern as
+    /// [`RemoteGraph::text_search`]. This is the shape the playground's raw
+    /// asyncify glue drives: one string in, one string out, marshaled once.
+    pub fn text_search_one(&self, phrase: &str, limit: usize) -> Result<String, JsValue> {
+        let words: Vec<String> = phrase.split_whitespace().map(str::to_owned).collect();
+        text_search_json(&self.rete, &words, None, limit)
+    }
+
     /// See [`card_url`] — the Dataset Card, over the resident handle's reader
     /// (so the header range it already fetched is served from the block cache).
     pub fn card(&self) -> Result<Option<String>, JsValue> {
-        let bytes = rete_core::read_metadata_ranged(&*self.reader).map_err(err)?;
+        let bytes = rete_core::read_metadata_ranged(&self.reader.view()).map_err(err)?;
         Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
+    }
+
+    /// See [`card_and_build_url`] — card + build record over the resident
+    /// handle's reader, still one coalesced range (and served from the block
+    /// cache when the header range is already there).
+    pub fn card_and_build(&self) -> Result<String, JsValue> {
+        let (card, build) =
+            rete_core::read_card_and_build_info_ranged(&self.reader.view()).map_err(err)?;
+        // Header-only, deliberately: `token_table_bytes` would cost a range read
+        // (see [`RemoteGraph::text_index_token_table_len`]), and this call must
+        // stay IO-free beyond the card range so the asyncify driver does not
+        // have to suspend inside it. A caller that wants the figure asks for it
+        // through that export, which the glue does drive.
+        let text_index = text_index_json(self.rete.header(), None);
+        Ok(card_build_envelope(card, build, text_index))
     }
 
     /// See [`schema_url`] — the **baked** schema pyramid over the resident
@@ -742,7 +1213,7 @@ impl RemoteGraph {
     /// would drag the whole remote file across the wire.
     pub fn schema(&self) -> Result<String, JsValue> {
         use serde_json::json;
-        let (classes, relations) = rete_core::read_schema_summary_ranged(&*self.reader)
+        let (classes, relations) = rete_core::read_schema_summary_ranged(&self.reader.view())
             .map_err(err)?
             .ok_or_else(|| js_error("file has no schema pyramid"))?;
         let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();
@@ -767,7 +1238,9 @@ impl RemoteGraph {
             h.quad_count,
             h.term_count,
             h.pyramid_levels,
-            self.rete.graph_names().len()
+            // The cheap count (the section's leading varint) — listing every
+            // IRI would walk the whole named-graphs directory over the wire.
+            self.rete.named_graph_count()
         )
     }
 
@@ -1070,11 +1543,28 @@ fn query_json_opt(
     extra: &str,
     reason: bool,
 ) -> Result<String, JsValue> {
-    let out = if reason {
-        eval_query_reasoned(rete, query)
-    } else {
-        eval_query(rete, query)
-    }
+    query_json_with(rete, query, format, extra, reason, false)
+}
+
+/// The full-options variant: `reason` (OWL 2 QL) and `union_default` (the
+/// opt-in union-default-graph mode — a pattern outside GRAPH matches the merge
+/// of the default graph and every named graph; see `QueryOpts`).
+fn query_json_with(
+    rete: &Rete,
+    query: &str,
+    format: &str,
+    extra: &str,
+    reason: bool,
+    union_default: bool,
+) -> Result<String, JsValue> {
+    let out = eval_query_with(
+        rete,
+        query,
+        QueryOpts {
+            reason,
+            union_default_graph: union_default,
+        },
+    )
     .map_err(err)?;
     Ok(write_query_json(&out, format, extra))
 }
@@ -1106,14 +1596,156 @@ fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
     rete_core::results_envelope_json(out, &versioned_extra)
 }
 
+/// URL scheme naming a `.rete` that is **already in the page** — a `File` the
+/// user picked, or any `Blob` — instead of one on a server.
+///
+/// A local open used to be `file.arrayBuffer()`: the whole file into a JS
+/// `ArrayBuffer`, copied again into wasm linear memory, then `Rete::open`
+/// decoding every dictionary chunk up front. That is ~6× the file size resident
+/// before a single row is answered, which on wasm32 is a hard wall — so a user
+/// could query a 16.8 GB graph over HTTP and not open their own 500 MB file
+/// from disk (issue #102).
+///
+/// The fix is not a second reader. [`XhrRangeReader`] already *is* the lazy
+/// reader — length, header-window cache, batching, block cache, polyglot base,
+/// progress reporting — and only its bottom transport was HTTP-shaped. A URL
+/// with this scheme swaps that transport for `Blob.slice()` +
+/// [`web_sys::FileReaderSync`], so every `*_url` entry point ([`sparql_url`],
+/// [`card_url`], [`schema_url`], [`RemoteGraph`], …) reads a local file exactly
+/// as lazily as a remote one, over the same code.
+///
+/// `FileReaderSync` is genuinely synchronous and exists **only in workers** —
+/// the same constraint sync XHR already imposes on this reader, so it fits the
+/// contract with no new suspension points. That is also why the **asyncify**
+/// build needs nothing extra: a local read never suspends, so it never reaches
+/// `env.rete_fetch_ranges`.
+///
+/// The blob is registered by JS through [`register_local_file`], which owns the
+/// URL→`Blob` map for this wasm instance.
+const LOCAL_SCHEME: &str = "rete-local:";
+
+fn is_local_url(url: &str) -> bool {
+    url.starts_with(LOCAL_SCHEME)
+}
+
+thread_local! {
+    /// URL → `Blob` for this wasm instance. Thread-local because a `Blob` is a
+    /// JS handle and wasm32 is single-threaded here; the experimental `threads`
+    /// build would simply not find a blob registered on another thread, and the
+    /// read fails with the message below rather than silently reading nothing.
+    static LOCAL_BLOBS: std::cell::RefCell<std::collections::HashMap<String, web_sys::Blob>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Register a local `File`/`Blob` under a `rete-local:…` URL, so every `*_url`
+/// entry point can range-read it.
+///
+/// **Worker-only** (the read uses `FileReaderSync`), and the caller mints the
+/// URL: a worker can be torn down and rebuilt — the playground does that on a
+/// wasm trap, an engine switch, or a phone memory reclaim — and the page must be
+/// able to re-register the same file under the same URL so a resident session
+/// key stays stable. Re-registering an existing URL replaces the blob.
+#[wasm_bindgen]
+pub fn register_local_file(url: &str, blob: &web_sys::Blob) -> Result<(), JsValue> {
+    if !is_local_url(url) {
+        return Err(js_error(format!(
+            "a local file URL must start with `{LOCAL_SCHEME}` (got {url})"
+        )));
+    }
+    LOCAL_BLOBS.with(|map| map.borrow_mut().insert(url.to_string(), blob.clone()));
+    Ok(())
+}
+
+/// Drop a registration made by [`register_local_file`]. Releases this wasm
+/// instance's reference to the `Blob`; any open handle over it stops working.
+#[wasm_bindgen]
+pub fn forget_local_file(url: &str) -> bool {
+    LOCAL_BLOBS.with(|map| map.borrow_mut().remove(url).is_some())
+}
+
+fn local_blob(url: &str) -> std::io::Result<web_sys::Blob> {
+    LOCAL_BLOBS
+        .with(|map| map.borrow().get(url).cloned())
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "no local file is registered as {url} — the page must call \
+                 register_local_file(url, file) in THIS worker before opening it"
+            ))
+        })
+}
+
+/// The local transport: one `Blob.slice()` per range, read synchronously.
+///
+/// Batched like the HTTP one (the engine coalesces ranges before it gets here),
+/// but with no round trip to pay for — a slice is a view over bytes the browser
+/// already has on disk, so the only real cost is the copy of what was asked for.
+fn read_local_ranges(url: &str, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+    let (offsets, lens, total) = checked_async_layout(ranges)?;
+    if total == 0 {
+        return Ok(ranges.iter().map(|_| Vec::new()).collect());
+    }
+    let blob = local_blob(url)?;
+    let size = blob.size();
+    let reader = web_sys::FileReaderSync::new().map_err(|e| {
+        std::io::Error::other(format!(
+            "FileReaderSync is unavailable ({e:?}) — a local .rete is read from a Web Worker only, \
+             never the main thread"
+        ))
+    })?;
+    let mut out = Vec::with_capacity(ranges.len());
+    for (&offset, &len) in offsets.iter().zip(&lens) {
+        let start = offset as f64;
+        let end = start + f64::from(len);
+        if end > size {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("range {offset}..{end} is past the end of {url} ({size} bytes)"),
+            ));
+        }
+        let slice = blob
+            .slice_with_f64_and_f64(start, end)
+            .map_err(|e| std::io::Error::other(format!("Blob.slice failed on {url}: {e:?}")))?;
+        let buffer = reader
+            .read_as_array_buffer(&slice)
+            .map_err(|e| std::io::Error::other(format!("FileReaderSync failed on {url}: {e:?}")))?;
+        let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+        if bytes.len() != len as usize {
+            return Err(std::io::Error::other(format!(
+                "short local read: got {} of {len} bytes at offset {offset} from {url}",
+                bytes.len()
+            )));
+        }
+        out.push(bytes);
+    }
+    // One batch is one "request" to the UI, matching what the asyncify HTTP
+    // reader reports for its concurrent batch — so the playground's range
+    // inspector and `stats()` describe local and remote reads on one scale.
+    report_progress(total, ranges);
+    Ok(out)
+}
+
 /// HTTP `Range` reader over **synchronous** XMLHttpRequest — the bridge that
 /// lets the lazily-faulting `Rete::open_ranged_lazy` run in the browser with
 /// the synchronous engine untouched. Browsers permit sync XHR with a binary
 /// response **only inside Web Workers**: call [`sparql_url`] from a worker,
 /// never the main thread (where the browser throws).
+///
+/// Also the **local** reader: a `rete-local:` URL (see [`LOCAL_SCHEME`]) swaps
+/// the transport for `Blob.slice()` + `FileReaderSync` and changes nothing else.
 struct XhrRangeReader {
     url: String,
     len: u64,
+    /// The resource's first [`rete_core::HEADER_LEN`] bytes, cached once.
+    ///
+    /// Opening a `.rete` reads this window several times over — the sync length
+    /// probe reads it, [`polyglot_base`](Self::polyglot_base) needs it, and every
+    /// `read_*_ranged` helper starts by reading the header — and the bytes cannot
+    /// change under us: the file is immutable for the session, and a host that
+    /// served different bytes for the same range would already have broken every
+    /// other read. So the first reader to pay for it fills this in and the rest
+    /// are served from memory, which is what keeps the CARD tier at its
+    /// advertised two requests.
+    head: std::sync::OnceLock<Vec<u8>>,
 }
 
 // Asyncify variant only (feature = "asyncify"): one dedicated async import in
@@ -1329,6 +1961,20 @@ mod async_range_tests {
         let error = split_range_response(&[(0, 4)], vec![1, 2, 3, 4], 3, "fixture").unwrap_err();
         assert!(error.to_string().contains("returned 3 of 4 bytes"));
     }
+
+    #[test]
+    fn only_the_local_scheme_routes_to_the_blob_transport() {
+        use super::is_local_url;
+        assert!(is_local_url("rete-local:1/mirbase.rete"));
+        // Everything the reader has ever been given before must stay on HTTP —
+        // a URL that merely CONTAINS the token is not a local file.
+        assert!(!is_local_url("https://example.org/rete-local:1/x.rete"));
+        assert!(!is_local_url(
+            "https://data.graphplaza.com/mirbase/mirbase.rete"
+        ));
+        assert!(!is_local_url("file:///tmp/x.rete"));
+        assert!(!is_local_url(""));
+    }
 }
 
 #[cfg(feature = "asyncify")]
@@ -1361,20 +2007,45 @@ impl XhrRangeReader {
             )
         };
         let out = split_range_response(ranges, dst, got, &self.url)?;
-        report_progress(total);
+        report_progress(total, ranges);
         Ok(out)
     }
 }
 
 impl XhrRangeReader {
-    /// Probe the resource length. The default synchronous XHR path prefers
-    /// `HEAD`/`Content-Length`, then falls back to a `bytes=0-0` ranged `GET`
-    /// and its `Content-Range` total. The Asyncify build delegates this
-    /// operation to its host import: the shipped host follows the same
-    /// HEAD-first policy, while test or custom hosts may implement the probe
-    /// differently.
+    /// Probe the resource length. HTTP's own signals are unreliable
+    /// cross-origin — a host may advertise the size of a **compressed**
+    /// representation in `Content-Length` (GitHub Pages HEADs a 71 MB `.rete`
+    /// as its 58 MB gzip; `Content-Encoding` is not CORS-safelisted, so JS
+    /// cannot even see the lie) while range requests address the identity
+    /// bytes, and may hide `Content-Range` by omitting
+    /// `Access-Control-Expose-Headers` (GitHub Pages, Zenodo). So the probe
+    /// reads the file's OWN first KiB — the `.rete` header, whose section
+    /// directory pins the exact length (issue #95) — and only falls back to
+    /// the transport's numbers for a resource that isn't a `.rete`.
     fn open(url: &str) -> Result<Self, JsValue> {
+        // A LOCAL blob needs no probe at all: its length is a property, not a
+        // network fact, and none of the reasons the HTTP probe exists (a
+        // compressing host, a hidden Content-Range, a 405 on HEAD) can apply.
+        // The header window is faulted on first use like any other range, so
+        // opening a local file costs exactly ONE read before the engine starts.
+        // Placed above both build variants because it is the same either way.
+        if is_local_url(url) {
+            // `Blob.size` is an f64: reject NaN/∞/0 explicitly rather than
+            // letting `as u64` saturate one of them into a plausible length.
+            let len = local_blob(url).map_err(|e| js_error(e.to_string()))?.size();
+            if !len.is_finite() || len < 1.0 {
+                return Err(js_error(format!("{url} is an empty local file")));
+            }
+            return Ok(Self {
+                url: url.to_string(),
+                len: len as u64,
+                head: std::sync::OnceLock::new(),
+            });
+        }
         // Asyncify build: probe the length via the async import — no sync XHR.
+        // The JS side (`__reteDoLen` in scripts/build_playground.py) applies
+        // this same derive-from-the-header-then-validate-the-footer strategy.
         #[cfg(feature = "asyncify")]
         {
             let mut len: u64 = 0;
@@ -1385,37 +2056,33 @@ impl XhrRangeReader {
             if ok == 0 || len == 0 {
                 return Err(js_error(format!("could not determine length of {url}")));
             }
+            // The async length probe reads the window on the JS side and only
+            // hands back the length, so the first `head_window()` pays for it.
             Ok(Self {
                 url: url.to_string(),
                 len,
+                head: std::sync::OnceLock::new(),
             })
         }
         #[cfg(not(feature = "asyncify"))]
         {
-            // Prefer a HEAD: its `Content-Length` is the full file size AND is a
-            // CORS-safelisted response header, so it is readable cross-origin even when
-            // the host does NOT expose `Content-Range` (e.g. Zenodo). The ranged-GET
-            // probe below cannot see a hidden `Content-Range` and would mis-read the
-            // 1-byte partial `Content-Length` as the size ("range out of bounds"). Falls
-            // through when the host rejects HEAD (HF's signed-redirect storage 405s it).
-            if let Some(len) = Self::head_len(url) {
-                return Ok(Self {
-                    url: url.to_string(),
-                    len,
-                });
-            }
             // Hugging Face's Space gateway is intermittently flaky on the length
             // probe (a 200 with no Content-Length, a chunked response with neither
-            // header, …). A fresh ranged GET usually lands on a healthy response,
+            // header, …). A fresh attempt usually lands on a healthy response,
             // so retry a few times before surfacing the error.
             let mut last = format!("could not determine length of {url}");
             for _ in 0..4 {
                 match Self::probe_len(url) {
-                    Ok(len) => {
+                    Ok((len, head)) => {
+                        let cached = std::sync::OnceLock::new();
+                        if !head.is_empty() {
+                            let _ = cached.set(head);
+                        }
                         return Ok(Self {
                             url: url.to_string(),
                             len,
-                        })
+                            head: cached,
+                        });
                     }
                     Err(e) => last = e,
                 }
@@ -1424,10 +2091,40 @@ impl XhrRangeReader {
         }
     }
 
-    /// A HEAD length probe: `Content-Length` is the full size and is CORS-safelisted
-    /// (readable cross-origin with no `access-control-expose-headers` entry needed).
-    /// Returns `None` on a non-2xx (some hosts 405 HEAD) or a missing/zero length, so
-    /// the caller can fall back to the ranged-GET probe.
+    /// The cached first [`rete_core::HEADER_LEN`] bytes, fetching them once if
+    /// nobody has yet. `None` only when the resource cannot be read at all — the
+    /// open that follows reports the real error.
+    fn head_window(&self) -> Option<&[u8]> {
+        if let Some(head) = self.head.get() {
+            return Some(head);
+        }
+        let head = self.fetch_at(0, rete_core::HEADER_LEN as u64).ok()?;
+        let _ = self.head.set(head);
+        self.head.get().map(Vec::as_slice)
+    }
+
+    /// Where the `.rete` starts inside this resource: `0` for an ordinary file,
+    /// and the size of the HTML shell for a **polyglot** — a file that is both a
+    /// web page and a graph, whose first bytes carry a `RETE-BASE:` marker naming
+    /// the offset. Reads only the header window, which the open that follows
+    /// needs anyway and now gets from [`head_window`](Self::head_window).
+    fn polyglot_base(&self) -> u64 {
+        let Some(head) = self.head_window() else {
+            return 0;
+        };
+        if head.starts_with(&rete_core::MAGIC) {
+            return 0;
+        }
+        rete_core::detect_polyglot_base(head).unwrap_or(0)
+    }
+
+    /// A HEAD length probe: `Content-Length` is CORS-safelisted (readable
+    /// cross-origin with no `access-control-expose-headers` entry needed).
+    /// **Last-resort fallback only**: on a transparently-compressing host this
+    /// is the size of the gzip representation, not the file (issue #95), which
+    /// is exactly why [`probe_len`](Self::probe_len) prefers the file's own
+    /// header. Returns `None` on a non-2xx (some hosts 405 HEAD) or a
+    /// missing/zero length.
     #[cfg(not(feature = "asyncify"))]
     fn head_len(url: &str) -> Option<u64> {
         let xhr = web_sys::XmlHttpRequest::new().ok()?;
@@ -1444,41 +2141,126 @@ impl XhrRangeReader {
             .filter(|&n| n > 0)
     }
 
-    /// One fallback length probe: a ranged `GET` requesting byte zero, reading
-    /// the total from `Content-Range` (`bytes 0-0/TOTAL`) or `Content-Length`.
-    /// A host that honors Range returns one byte; a host that ignores it may
-    /// return a full `200` response.
+    /// One ranged `GET bytes=first-last`, returning `(status, total from a
+    /// visible Content-Range, body)`. The total is `None` when the header is
+    /// absent, hidden by CORS, or `bytes a-b/*`.
     #[cfg(not(feature = "asyncify"))]
-    fn probe_len(url: &str) -> Result<u64, String> {
+    fn ranged_get(url: &str, first: u64, last: u64) -> Result<(u16, Option<u64>, Vec<u8>), String> {
         let err = |m: &str| m.to_string();
         let xhr = web_sys::XmlHttpRequest::new().map_err(|_| err("xhr"))?;
         xhr.open_with_async("GET", url, false)
             .map_err(|_| err("open"))?;
         xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
-        xhr.set_request_header("Range", "bytes=0-0")
+        xhr.set_request_header("Range", &format!("bytes={first}-{last}"))
             .map_err(|_| err("range header"))?;
         xhr.send()
             .map_err(|_| format!("probe {url}: network error"))?;
         let status = xhr.status().map_err(|_| err("status"))?;
-        if status != 206 && !(200..300).contains(&status) {
-            return Err(format!("probe {url}: status {status}"));
-        }
-        // `Content-Range: bytes 0-0/12345` — the part after `/` is the total.
-        xhr.get_response_header("Content-Range")
+        // `Content-Range: bytes 0-1023/12345` — the part after `/` is the total.
+        let total = xhr
+            .get_response_header("Content-Range")
             .ok()
             .flatten()
             .and_then(|v| {
                 v.rsplit('/')
                     .next()
                     .and_then(|t| t.trim().parse::<u64>().ok())
-            })
-            .or_else(|| {
-                xhr.get_response_header("Content-Length")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.parse::<u64>().ok())
-            })
-            .ok_or_else(|| format!("could not determine length of {url}"))
+            });
+        let body = xhr
+            .response()
+            .ok()
+            .map(|r| js_sys::Uint8Array::new(&r).to_vec())
+            .unwrap_or_default();
+        Ok((status, total, body))
+    }
+
+    /// One length probe. Reads the resource's first KiB over a ranged `GET`;
+    /// if that is a `.rete` header, the length is **derived from the file
+    /// itself** (`Header::expected_file_len`: sections are back-to-back and
+    /// the file ends with the 4-byte `RETE` footer) and, unless a visible
+    /// `Content-Range` already confirms it, **validated** by reading those 4
+    /// footer bytes — one extra tiny request, only on hosts whose headers are
+    /// unusable. Non-`.rete` resources fall back to `Content-Range`, then
+    /// HEAD. A 206's `Content-Length` is never believed (it is the size of
+    /// the partial body, and taking it as the file size made every later read
+    /// "range out of bounds").
+    ///
+    /// Returns the length **and the head window it read** — the caller keeps it
+    /// so polyglot detection costs no second request.
+    #[cfg(not(feature = "asyncify"))]
+    fn probe_len(url: &str) -> Result<(u64, Vec<u8>), String> {
+        let (status, cr_total, body) = Self::ranged_get(url, 0, rete_core::HEADER_LEN as u64 - 1)?;
+        // Only a genuine header window is worth keeping (a Range-ignoring host
+        // may have sent the whole file here).
+        let head = |body: &Vec<u8>| {
+            if body.len() <= rete_core::HEADER_LEN {
+                body.clone()
+            } else {
+                body[..rete_core::HEADER_LEN].to_vec()
+            }
+        };
+        if status == 200 {
+            // Host ignored Range and sent the whole (decoded) body. Range
+            // reads are rejected loudly in read_at anyway; report the honest
+            // decoded length so the failure names the real problem there.
+            if !body.is_empty() {
+                return Ok((body.len() as u64, head(&body)));
+            }
+            return Err(format!("probe {url}: 200 with an empty body"));
+        }
+        if status != 206 {
+            return Err(format!("probe {url}: status {status}"));
+        }
+
+        // A `.rete` self-describes its length; that is the only signal a
+        // compressing/CORS-hiding host cannot skew (issue #95).
+        if let Ok(header) = rete_core::Header::from_bytes(&body) {
+            if let Some(derived) = header.expected_file_len() {
+                if cr_total == Some(derived) {
+                    return Ok((derived, head(&body))); // transport agrees — no extra request
+                }
+                // Ask the file: its last 4 bytes are the `RETE` footer. A 206
+                // with exactly those bytes proves `derived` addresses real
+                // identity bytes; anything else means the file is truncated
+                // or the host's ranges don't address the file's bytes.
+                let (ts, _, tail) = Self::ranged_get(url, derived - 4, derived - 1)?;
+                if ts == 206 && tail == rete_core::MAGIC {
+                    return Ok((derived, head(&body)));
+                }
+                return Err(format!(
+                    "length probe disagrees with the file: its header derives \
+                     {derived} bytes but the host{} has no RETE footer at \
+                     {}..{} (tail probe: status {ts}) — the file is truncated, \
+                     or the host serves ranges over a compressed representation",
+                    match cr_total {
+                        Some(t) => format!(" reports {t} bytes and"),
+                        None => String::from(" hides Content-Range and"),
+                    },
+                    derived - 4,
+                    derived,
+                ));
+            }
+        }
+        if body.starts_with(&[0x1f, 0x8b]) {
+            // The ranged body is a slice of a GZIP stream: the host applied
+            // `Content-Encoding` to the range response, so byte offsets do not
+            // address the file's bytes at all. No length can fix that.
+            return Err(format!(
+                "the host serves HTTP ranges over a gzip-compressed representation \
+                 of {url}; range offsets cannot address the file's bytes"
+            ));
+        }
+
+        // Not a `.rete` header: fall back to the transport's signals. A POLYGLOT
+        // lands here — its byte 0 is `<`, so the header parse above failed — and the
+        // head we keep is exactly what `polyglot_base` needs to find the graph.
+        if let Some(total) = cr_total {
+            return Ok((total, head(&body)));
+        }
+        if let Some(len) = Self::head_len(url) {
+            return Ok((len, head(&body)));
+        }
+        Err(format!("could not determine length of {url}"))
     }
 }
 
@@ -1492,6 +2274,13 @@ impl RangeReader for XhrRangeReader {
     /// opt-in COI fetch-worker pool (`globalThis.reteReadMany`) is installed.
     /// 16 matches the pool size and the CLI's thread fan-out.
     fn concurrency(&self) -> usize {
+        // A local blob has no round trip to hide, so the planner may probe as
+        // freely as the concurrent HTTP readers do — and a wider batch means
+        // fewer crossings of the wasm↔JS boundary, which is the only real cost
+        // here. Same number as the asyncify reader and the CLI's fan-out.
+        if is_local_url(&self.url) {
+            return 16;
+        }
         #[cfg(feature = "asyncify")]
         {
             16
@@ -1510,9 +2299,68 @@ impl RangeReader for XhrRangeReader {
         }
     }
 
+    /// Reads that land entirely inside the cached header window are answered
+    /// from memory: opening a file re-reads those bytes several times (length
+    /// probe, polyglot marker, then every `read_*_ranged` helper's own header
+    /// read) and they are immutable for the session, so paying for them once is
+    /// the difference between the CARD tier costing two requests and four.
     fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());
+        }
+        if let Some(head) = self.head.get() {
+            if let Some(end) = offset.checked_add(len) {
+                if end <= head.len() as u64 {
+                    return Ok(head[offset as usize..end as usize].to_vec());
+                }
+            }
+        }
+        self.fetch_at(offset, len)
+    }
+
+    /// Synchronous XHR can't run two requests at once on one thread, so the
+    /// engine's sequential faults serialize their round trips. If the page
+    /// installs `globalThis.reteReadMany(url, offsets, lens)` — a fetch-worker
+    /// pool that fetches the ranges in parallel and blocks (via SAB/Atomics)
+    /// until done — use it; it returns one buffer with the spans concatenated
+    /// in order, or `null`/throws if it can't (no cross-origin isolation, a
+    /// non-206, a short read). On `null` we fall back to the sequential reads
+    /// below, which keep the rigorous per-range validation.
+    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        // Local: the whole batch is sliced in one call, in either build.
+        if is_local_url(&self.url) {
+            return read_local_ranges(&self.url, ranges);
+        }
+        // Asyncify build: fetch the whole batch concurrently in one suspend.
+        #[cfg(feature = "asyncify")]
+        {
+            self.read_ranges_async(ranges)
+        }
+        #[cfg(not(feature = "asyncify"))]
+        {
+            let (_, _, total) = checked_async_layout(ranges)?;
+            if ranges.len() > 1 {
+                if let Some(buf) = self.read_many_via_pool(ranges) {
+                    if buf.len() == total {
+                        return split_range_response(ranges, buf, total, "globalThis.reteReadMany");
+                    }
+                }
+            }
+            ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
+        }
+    }
+}
+
+/// The raw transport, below the header cache in [`RangeReader::read_at`].
+impl XhrRangeReader {
+    /// One real range request. Never consults the cached header window — this is
+    /// what fills it.
+    fn fetch_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        // Local: one `Blob.slice()` + `FileReaderSync`, in either build.
+        if is_local_url(&self.url) {
+            return read_local_ranges(&self.url, &[(offset, len)])?
+                .pop()
+                .ok_or_else(|| std::io::Error::other("local read returned no range"));
         }
         // Asyncify build: a single read is a 1-range async fetch (suspends).
         #[cfg(feature = "asyncify")]
@@ -1565,47 +2413,37 @@ impl RangeReader for XhrRangeReader {
             // Report this fetch to an optional progress hook so a worker can stream
             // live "N requests · M bytes" updates to the UI *during* the otherwise
             // opaque synchronous query (postMessage works mid-sync-call).
-            report_progress(buf.len());
+            report_progress(buf.len(), &[(offset, len)]);
             Ok(buf)
-        }
-    }
-
-    /// Synchronous XHR can't run two requests at once on one thread, so the
-    /// engine's sequential faults serialize their round trips. If the page
-    /// installs `globalThis.reteReadMany(url, offsets, lens)` — a fetch-worker
-    /// pool that fetches the ranges in parallel and blocks (via SAB/Atomics)
-    /// until done — use it; it returns one buffer with the spans concatenated
-    /// in order, or `null`/throws if it can't (no cross-origin isolation, a
-    /// non-206, a short read). On `null` we fall back to the sequential reads
-    /// below, which keep the rigorous per-range validation.
-    fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
-        // Asyncify build: fetch the whole batch concurrently in one suspend.
-        #[cfg(feature = "asyncify")]
-        {
-            self.read_ranges_async(ranges)
-        }
-        #[cfg(not(feature = "asyncify"))]
-        {
-            let (_, _, total) = checked_async_layout(ranges)?;
-            if ranges.len() > 1 {
-                if let Some(buf) = self.read_many_via_pool(ranges) {
-                    if buf.len() == total {
-                        return split_range_response(ranges, buf, total, "globalThis.reteReadMany");
-                    }
-                }
-            }
-            ranges.iter().map(|&(o, l)| self.read_at(o, l)).collect()
         }
     }
 }
 
-/// Notify an optional `globalThis.reteProgress(bytes)` hook of one completed
-/// range fetch (the worker forwards it to the UI). A no-op when unset.
-fn report_progress(bytes: usize) {
+/// Notify an optional `globalThis.reteProgress(bytes, spans, n)` hook of one
+/// completed fetch (the worker forwards it to the UI and keeps a per-query
+/// log). `spans` is a JS array of `"start-end"` byte-offset strings — capped at
+/// [`PROGRESS_SPAN_CAP`] entries so a huge coalesced batch doesn't build a huge
+/// array — and `n` is the TRUE span count. The offsets used to be dropped here
+/// (only the byte count was forwarded), which left the playground's
+/// "Range requests" inspector promising a `start-end` column it could never
+/// fill. A no-op when unset.
+const PROGRESS_SPAN_CAP: usize = 256;
+
+fn report_progress(bytes: usize, ranges: &[(u64, u64)]) {
     let g = js_sys::global();
     if let Ok(f) = js_sys::Reflect::get(&g, &JsValue::from_str("reteProgress")) {
         if let Ok(f) = f.dyn_into::<js_sys::Function>() {
-            let _ = f.call1(&JsValue::NULL, &JsValue::from_f64(bytes as f64));
+            let spans = js_sys::Array::new();
+            for &(offset, len) in ranges.iter().take(PROGRESS_SPAN_CAP) {
+                let end = offset + len.saturating_sub(1);
+                spans.push(&JsValue::from_str(&format!("{offset}-{end}")));
+            }
+            let _ = f.call3(
+                &JsValue::NULL,
+                &JsValue::from_f64(bytes as f64),
+                &spans.into(),
+                &JsValue::from_f64(ranges.len() as f64),
+            );
         }
     }
 }
@@ -1716,16 +2554,74 @@ fn auto_block(len: u64) -> u64 {
     mult * DEFAULT_BLOCK
 }
 
-fn open_url(url: &str) -> Result<(std::sync::Arc<CountingReader<XhrRangeReader>>, Rete), JsValue> {
+/// The physical range reader behind a remote open, plus the **base offset** of
+/// the `.rete` inside the resource.
+///
+/// For an ordinary `.rete` the base is `0` and every method is a pass-through.
+/// For a **polyglot** — one object that is simultaneously an HTML page and a
+/// graph, byte 0 being `<` — the base is where the appended `.rete` starts, read
+/// from the `RETE-BASE:` marker the page carries in its first
+/// [`rete_core::HEADER_LEN`] bytes (written by
+/// `experiments/polyglot/build_polyglot.py`). Every graph read then goes through
+/// [`RemoteReader::view`], an [`OffsetReader`] that makes the embedded graph read
+/// as if it began at byte 0 — so a polyglot is range-read exactly as lazily as a
+/// plain file instead of being downloaded whole.
+///
+/// [`len`](Self::len) reports the **graph's** length (the shell excluded), while
+/// `bytes_read`/`requests` stay the true wire cost, shell probe included.
+#[derive(Clone)]
+struct RemoteReader {
+    counting: std::sync::Arc<CountingReader<XhrRangeReader>>,
+    base: u64,
+}
+
+impl RemoteReader {
+    /// Open `url` and resolve its polyglot base — free on the sync build, where
+    /// the length probe has already read the header window.
+    fn open(url: &str) -> Result<Self, JsValue> {
+        let xhr = XhrRangeReader::open(url)?;
+        let base = xhr.polyglot_base();
+        Ok(Self {
+            counting: std::sync::Arc::new(CountingReader::new(xhr)),
+            base,
+        })
+    }
+
+    /// The graph-relative reader: absolute for a plain `.rete`, shifted past the
+    /// HTML shell for a polyglot.
+    fn view(&self) -> OffsetReader<std::sync::Arc<CountingReader<XhrRangeReader>>> {
+        OffsetReader::new(self.counting.clone(), self.base)
+    }
+
+    /// Byte length of the embedded `.rete` (not of the enclosing resource).
+    fn len(&self) -> u64 {
+        self.counting.len().saturating_sub(self.base)
+    }
+
+    fn bytes_read(&self) -> u64 {
+        self.counting.bytes_read()
+    }
+
+    fn requests(&self) -> u64 {
+        self.counting.requests()
+    }
+}
+
+fn open_url(url: &str) -> Result<(RemoteReader, Rete), JsValue> {
     // `reader` counts the PHYSICAL fetches; a read-through block cache above it
     // turns the query's scattered range reads into a few aligned block fetches
     // (and reuses them) — working over any single-range backend (S3, a CDN),
     // not just a multi-range gateway. The block fetches still go through
     // `read_many`, so a multi-range host coalesces them further. The block size
     // is auto-tuned from the file size (known at open, no download).
-    let reader = std::sync::Arc::new(CountingReader::new(XhrRangeReader::open(url)?));
-    let cached = std::sync::Arc::new(make_remote_cache(reader.clone(), auto_block(reader.len())));
-    let mut rete = Rete::open_ranged_lazy(cached).map_err(err)?;
+    let reader = RemoteReader::open(url)?;
+    let cached = std::sync::Arc::new(make_remote_cache(
+        reader.counting.clone(),
+        auto_block(reader.len()),
+    ));
+    // The offset shim sits ABOVE the cache so blocks stay aligned to the
+    // resource's absolute offsets (a plain file's base is 0 — a no-op).
+    let mut rete = Rete::open_ranged_lazy(OffsetReader::new(cached, reader.base)).map_err(err)?;
     // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
     rete.set_service_client(Box::new(XhrServiceClient));
     Ok((reader, rete))
@@ -2362,8 +3258,8 @@ pub fn check_schema(bytes: &[u8]) -> Result<String, JsValue> {
 /// "coherent".
 #[wasm_bindgen]
 pub fn check_schema_url(url: &str) -> Result<String, JsValue> {
-    let reader = CountingReader::new(XhrRangeReader::open(url)?);
-    let points = rete_core::read_schema_coherence_ranged(&reader)
+    let reader = RemoteReader::open(url)?;
+    let points = rete_core::read_schema_coherence_ranged(&reader.view())
         .map_err(err)?
         .ok_or_else(|| js_error("file has no schema pyramid"))?;
     Ok(schema_coherence_json(
@@ -2379,8 +3275,8 @@ pub fn check_schema_url(url: &str) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn schema_url(url: &str) -> Result<String, JsValue> {
     use serde_json::json;
-    let reader = CountingReader::new(XhrRangeReader::open(url)?);
-    let (classes, relations) = rete_core::read_schema_summary_ranged(&reader)
+    let reader = RemoteReader::open(url)?;
+    let (classes, relations) = rete_core::read_schema_summary_ranged(&reader.view())
         .map_err(err)?
         .ok_or_else(|| js_error("file has no schema pyramid"))?;
     let classes: Vec<serde_json::Value> = classes.iter().map(|(c, n)| json!([c, n])).collect();

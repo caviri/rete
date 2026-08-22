@@ -95,7 +95,9 @@ pub fn run(path: &str) -> Result<()> {
         elapsed(t),
     );
 
-    // 6. Build the permutation index (SPO/POS/OSP).
+    // 6. Build the permutation index. `GraphIndexBuilder::new()` is the default
+    // set, so this is whatever `rete build` writes without `--permutations` —
+    // six orders, not the three this row claimed for two format generations.
     mem::reset_peak();
     let t = Instant::now();
     let mut ib = GraphIndexBuilder::new();
@@ -103,8 +105,9 @@ pub fn run(path: &str) -> Result<()> {
         ib.push(tr);
     }
     let index = ib.build();
+    let perms = index.perms();
     row(
-        "build index (3 perms)",
+        &format!("build index ({} perms)", perms.len()),
         mem::live(),
         mem::peak(),
         elapsed(t),

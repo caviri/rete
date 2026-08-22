@@ -78,6 +78,20 @@
     // the offline equirectangular vectors). localStorage-backed so it persists.
     mapBasemap: (() => { try { return localStorage.getItem("mapBasemap") || "none"; } catch (e) { return "none"; } })(),
     remote: null,
+    // An OFF-CATALOG remote cached by its URL: { url, title? }. Set only by
+    // loadCachedUrl after its bytes are resident; null everywhere else. It is
+    // what lets updateHash() share the view as #url=…&load=cache and lets
+    // currentDatasetLabel() name the file itself instead of a catalog entry.
+    urlCache: null,
+    // Named-graph count of the RESIDENT graph (from info() at load), for the
+    // empty-default-graph explainer. null = unknown (nothing/remote loaded).
+    namedGraphCount: null,
+    // Example queries read from the LOADED FILE's own Dataset Card (both card
+    // shapes: `queries` objects + `example_queries` strings), mapped onto the
+    // catalog-example shape and deduplicated against the curated catalog
+    // examples. {key, list} or null; the list supplements — never replaces —
+    // CATALOG.examples[key]. See refreshCardExamples().
+    cardExamples: null,
     // Federation: extra sources the SPARQL query also runs against. Each is
     // {id, kind:"remote"|"memory"|"endpoint", label, url?, key?, endpoint?}.
     // Empty = single-source (today's behavior). A resident Graph per in-memory
@@ -160,20 +174,50 @@
   }
   function _now() { return (typeof performance !== "undefined" ? performance.now() : Date.now()); }
   self._reteLog = function (e) { e.t = (_now() - qStart) | 0; if (fetchLog.length < 6000) fetchLog.push(e); };
-  // The wasm calls reteProgress(bytes) after every physical range fetch (the
-  // multipart hook also passes metadata). We tally a running count + a per-fetch
-  // log and forward progress, so a long query shows live, not a frozen "querying…".
-  self.reteProgress = function (b, meta) {
+  // The wasm calls reteProgress(bytes, spans, n) after every physical fetch:
+  // one call per sync range read, one per Asyncify concurrent batch — spans is
+  // ["start-end", ...] byte offsets (capped at 256) and n the true span count.
+  // The JS read hooks (multipart / parallel pool) pass a full meta object
+  // instead. We tally a running count + a per-fetch log (offsets included, so
+  // the "Range requests" inspector can actually show its start-end column) and
+  // forward progress, so a long query shows live, not a frozen "querying…".
+  self.reteProgress = function (b, meta, n) {
     pReq++; pBytes += (b || 0);
-    self._reteLog(meta || { k: "range", b: (b || 0) });
+    var e;
+    if (meta && meta.k) e = meta;
+    else if (meta && typeof meta.length === "number") {
+      var cnt = n || meta.length;
+      e = { k: cnt > 1 ? "batch" : "range", n: cnt, b: (b || 0), r: Array.prototype.slice.call(meta) };
+    } else e = { k: "range", b: (b || 0) };
+    self._reteLog(e);
     self.postMessage({ type: "progress", id: pId, requests: pReq, bytes: pBytes });
   };
+  // LOCAL files: a File posted in here is a handle, not a copy — structured
+  // clone passes the blob by reference, so nothing is read until the engine asks
+  // for a range. register_local_file maps the rete-local: URL onto it inside
+  // wasm, and from then on every *_url export reads it with Blob.slice() +
+  // FileReaderSync exactly as it reads a remote URL over HTTP range. Every open
+  // handle belongs to a wasm instance, so a rebuilt worker gets the whole set
+  // again with its init message (issue #102).
+  function _registerLocals(list) {
+    if (!list || !list.length) return;
+    // A hand-swapped engine predating #102 has no such export. Say so, rather
+    // than registering nothing and failing later as "no local file registered".
+    if (typeof wasm_bindgen.register_local_file !== "function") {
+      throw new Error("this engine build cannot read a local file lazily (no register_local_file export)");
+    }
+    for (var i = 0; i < list.length; i++) {
+      wasm_bindgen.register_local_file(list[i].url, list[i].file);
+    }
+  }
   self.onmessage = function (e) {
     var m = e.data;
     if (m.type === "init") {
       self.__fetchSrc = m.fetchSrc;   // parallel fetch-worker source (pool)
       self.__poolSize = m.poolSize;   // ?workers=N, or null = auto
-      ready = wasm_bindgen(m.bytes);
+      // The registrations are part of readiness: a query posted straight after
+      // init awaits readiness, so it must not observe a half-registered engine.
+      ready = wasm_bindgen(m.bytes).then(function () { _registerLocals(m.locals); });
       // A wasm instantiate failure (CompileError, or OOM allocating the module's
       // memory on a low-RAM device) MUST be reported — otherwise no "ready" is
       // ever posted and the main thread awaits readiness forever ("querying…", no
@@ -184,15 +228,43 @@
       );
       return;
     }
+    // A file attached after this worker was built. Chained onto readiness for the
+    // same reason as above.
+    if (m.type === "local") {
+      ready = Promise.resolve(ready).then(function () { _registerLocals([{ url: m.url, file: m.file }]); });
+      ready.catch(function () { /* surfaced by the query that needs it */ });
+      return;
+    }
     if (m.type === "query") {
       pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
-      Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
+      Promise.resolve(ready).then(function () {
+        // A warm session can answer with ZERO new fetches (every block already
+        // cached). Tell the page what the cache holds BEFORE the run, so a long
+        // CPU-bound evaluation (the ⛁ All graphs union merge re-merges for
+        // seconds over cached blocks) can say "0 new requests — working over
+        // N MB already fetched" instead of a dead-looking zero counter.
+        var hh = urlHash[m.url];
+        var warm = hh && sessions[hh];
+        if (warm) {
+          var w = JSON.parse(warm.stats());
+          self.postMessage({ type: "progress", id: pId, requests: 0, bytes: 0, sessionBytes: w.bytes, sessionRequests: w.requests });
+        }
+        return _session(m.url);
+      }).then(function (g) {
+        // Fetches so far (pReq/pBytes tick on every physical range) happened
+        // while OPENING the session — a fresh open's header/directory reads.
+        // stats() starts counting at open, so the after-before delta below
+        // EXCLUDES them; carry them separately or the final line contradicts
+        // the live counter (live "5 requests · 775 KB", final "0 range req").
+        var openReq = pReq, openBytes = pBytes;
         var before = JSON.parse(g.stats());
         // ASYNC: drive the RAW export (reteQueryRemote) — driving the generated
         // wrapper re-marshals/unpacks on every suspend pass and corrupts the
         // asyncify session on big files (the null-function family).
-        return (ASYNC ? wasm_bindgen.reteQueryRemote(g, m.query, m.format, !!m.reason)
-                      : Promise.resolve(m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format))).then(function (resStr) {
+        // m.union = the opt-in union-default-graph toggle → query_opts.
+        return (ASYNC ? wasm_bindgen.reteQueryRemote(g, m.query, m.format, !!m.reason, !!m.union)
+                      : Promise.resolve(m.union ? g.query_opts(m.query, m.format, !!m.reason, true)
+                                                : (m.reason ? g.query_reasoned(m.query, m.format) : g.query(m.query, m.format)))).then(function (resStr) {
           var res = JSON.parse(resStr);
           var after = JSON.parse(g.stats());
           // Per-query physical traffic is the delta (a cache hit adds ~0); carry
@@ -201,9 +273,11 @@
             fileLength: after.fileLength,
             bytes: after.bytes - before.bytes,
             requests: after.requests - before.requests,
+            openBytes: openBytes,
+            openRequests: openReq,
             sessionBytes: after.bytes,
             sessionRequests: after.requests,
-            cached: (after.requests - before.requests) === 0
+            cached: (after.requests - before.requests) + openReq === 0
           };
           self.postMessage({ type: "result", id: m.id, ok: true, json: JSON.stringify(res), log: fetchLog });
         });
@@ -235,6 +309,59 @@
       Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
         return ASYNC ? wasm_bindgen.retePrefixSearchRemote(g, m.prefix, m.limit || 12)
                      : Promise.resolve(g.prefix_search(m.prefix, m.limit || 12));
+      }).then(function (json) {
+        self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+      }).catch(function (err) {
+        self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
+      });
+    }
+    // What full-text search would cost on this remote file. TWO numbers, because
+    // they answer different questions: textIndexLen is the whole TEXT_INDEX
+    // section, read straight off the resident header (no fetch), and 0 means the
+    // file was built without --text-index so the panel offers nothing it can't
+    // deliver; tokenTableLen is the section's leading token table, which is what
+    // a first search actually faults — several times SMALLER, and the only
+    // figure honest to quote as the price of pressing Search.
+    if (m.type === "tlen") {
+      pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
+      Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
+        var secLen = g.text_index_len();   // header field: no IO, no drive, either mode.
+        // The token table's length lives in the SECTION's first bytes, not the
+        // header, so this one does read — ≤10 bytes, one block. In async mode
+        // that read suspends and must be driven. Driving the generated wrapper
+        // is normally what corrupts the session, but only because a wrapper
+        // re-marshals arguments and runs a free()-epilogue on every pass: this
+        // one takes no arguments and returns a bare f64, so it is a pointer read
+        // and a raw call — identical to driving the raw export, which is why it
+        // needs no glue of its own.
+        // A hand-swapped engine predating the probe answers 0 rather than
+        // failing the whole call: the panel still works, it just describes the
+        // cost instead of pricing it.
+        if (typeof g.text_index_token_table_len !== "function") {
+          return JSON.stringify({ textIndexLen: secLen, tokenTableLen: 0 });
+        }
+        return Promise.resolve(
+          ASYNC ? wasm_bindgen.reteDrive(function () { return g.text_index_token_table_len(); })
+                : g.text_index_token_table_len()
+        ).then(function (ttLen) {
+          return JSON.stringify({ textIndexLen: secLen, tokenTableLen: ttLen });
+        });
+      }).then(function (json) {
+        self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
+      }).catch(function (err) {
+        self.postMessage({ type: "result", id: m.id, ok: false, error: ((err && err.stack) || String((err && err.message) || err)), log: fetchLog });
+      });
+    }
+    // Full-text (whole-word) search over the resident remote session. Unlike
+    // psearch this FAULTS the TEXT_INDEX token table on its first call (tens of
+    // MB, GBs on the biggest files) — which is exactly why the page only sends
+    // it on an explicit press, never per keystroke. Afterwards the table stays
+    // resident in this session and each further word is a few KB of postings.
+    if (m.type === "tsearch") {
+      pReq = 0; pBytes = 0; pId = m.id; fetchLog = []; qStart = _now();
+      Promise.resolve(ready).then(function () { return _session(m.url); }).then(function (g) {
+        return ASYNC ? wasm_bindgen.reteTextSearchRemote(g, m.phrase, m.limit || 25)
+                     : Promise.resolve(g.text_search_one(m.phrase, m.limit || 25));
       }).then(function (json) {
         self.postMessage({ type: "result", id: m.id, ok: true, json: json, log: fetchLog });
       }).catch(function (err) {
@@ -345,7 +472,9 @@
       var deadline = Date.now() + 120000;
       while (true) { var c = Atomics.load(ctrl, 0); if (c >= n) break; Atomics.wait(ctrl, 0, c, 3000); if (Date.now() > deadline) return null; }
       if (Atomics.load(ctrl, 1) !== 0) return null;
-      if (self.reteProgress) self.reteProgress(total, { k: "par", n: n, b: total });
+      var pspec = [];
+      for (var s2 = 0; s2 < n; s2++) pspec.push(offs[s2] + "-" + (offs[s2] + lens[s2] - 1));
+      if (self.reteProgress) self.reteProgress(total, { k: "par", n: n, b: total, r: pspec });
       return data;
     } catch (e) { return null; }
   }
@@ -400,16 +529,25 @@ self.onmessage = function (e) {
   var RealXHR=XMLHttpRequest, BLOCK=self.__RC_BLOCK||1048576, DBN=self.__RC_DB||"playgroundCache",
       RANGES="ranges", RMETA="rangeMeta", WARMCAP=self.__RC_WARMCAP||100663296;
   var mirror=Object.create(null), totals=Object.create(null), dirty=[], flushTimer=null;
+  // A cached block is only valid for the SAME bytes at that offset. The key is
+  // origin+pathname, so republishing a .rete at the same URL silently poisons it
+  // (mixed old/new blocks -> "a range fetch failed mid-query"). Track the object
+  // identity (ETag + total) and revalidate once per key per session.
+  var etags=Object.create(null), validated=Object.create(null);
   function keyOf(url){ try{ var u=new URL(url, self.location&&self.location.href); return u.origin+u.pathname; }catch(e){ var su=String(url), q=su.indexOf("?"); return q<0?su:su.slice(0,q); } }
   function openDB(){ return new Promise(function(res,rej){ var r=indexedDB.open(DBN,2); r.onupgradeneeded=function(){ var db=r.result; ["files","meta",RANGES,RMETA].forEach(function(s){ if(!db.objectStoreNames.contains(s)) db.createObjectStore(s); }); }; r.onsuccess=function(){res(r.result);}; r.onerror=function(){rej(r.error);}; }); }
   openDB().then(function(db){ var metas=[]; var c=db.transaction(RMETA).objectStore(RMETA).openCursor(); c.onsuccess=function(e){ var cur=e.target.result; if(cur){ var v=cur.value||{}; v.key=cur.key; metas.push(v); cur.continue(); } else warm(db,metas); }; c.onerror=function(){}; }).catch(function(){});
-  function warm(db,metas){ metas.sort(function(a,b){ return (b.lastUsed||0)-(a.lastUsed||0); }); var budget=WARMCAP, want=[]; for(var i=0;i<metas.length;i++){ var m=metas[i]; totals[m.key]=m.total; var bl=m.blocks||[]; for(var j=0;j<bl.length;j++){ if(budget<=0) break; want.push(m.key+"#"+bl[j]); budget-=BLOCK; } } if(!want.length) return; var st=db.transaction(RANGES).objectStore(RANGES); want.forEach(function(k){ var g=st.get(k); g.onsuccess=function(){ if(g.result) mirror[k]=new Uint8Array(g.result); }; }); }
+  function warm(db,metas){ metas.sort(function(a,b){ return (b.lastUsed||0)-(a.lastUsed||0); }); var budget=WARMCAP, want=[]; for(var i=0;i<metas.length;i++){ var m=metas[i]; if((totals[m.key]!=null&&m.total!=null&&totals[m.key]!==m.total)||(etags[m.key]&&m.etag&&etags[m.key]!==m.etag)){ purge(m.key); continue; } if(totals[m.key]==null) totals[m.key]=m.total; if(m.etag&&!etags[m.key]) etags[m.key]=m.etag; var bl=m.blocks||[]; for(var j=0;j<bl.length;j++){ if(budget<=0) break; want.push(m.key+"#"+bl[j]); budget-=BLOCK; } } if(!want.length) return; var st=db.transaction(RANGES).objectStore(RANGES); want.forEach(function(k){ var g=st.get(k); g.onsuccess=function(){ if(g.result) mirror[k]=new Uint8Array(g.result); }; }); }
   function scheduleFlush(){ if(flushTimer) return; flushTimer=setTimeout(flush,800); }
-  function flush(){ flushTimer=null; if(!dirty.length) return; var items=dirty; dirty=[]; openDB().then(function(db){ var tx=db.transaction([RANGES,RMETA],"readwrite"), rs=tx.objectStore(RANGES), ms=tx.objectStore(RMETA), byKey=Object.create(null); items.forEach(function(it){ try{ rs.put(it.b, it.k+"#"+it.i); }catch(e){} (byKey[it.k]=byKey[it.k]||[]).push(it.i); }); Object.keys(byKey).forEach(function(k){ var g=ms.get(k); g.onsuccess=function(){ var m=g.result||{total:totals[k]||0,blocks:[],bytes:0}; var seen=Object.create(null); (m.blocks||[]).forEach(function(b){seen[b]=1;}); byKey[k].forEach(function(b){ if(!seen[b]){seen[b]=1;m.blocks.push(b);m.bytes=(m.bytes||0)+BLOCK;} }); m.total=totals[k]||m.total; m.lastUsed=Date.now(); try{ms.put(m,k);}catch(e){} }; }); }).catch(function(){}); }
+  function flush(){ flushTimer=null; if(!dirty.length) return; var items=dirty; dirty=[]; openDB().then(function(db){ var tx=db.transaction([RANGES,RMETA],"readwrite"), rs=tx.objectStore(RANGES), ms=tx.objectStore(RMETA), byKey=Object.create(null); items.forEach(function(it){ try{ rs.put(it.b, it.k+"#"+it.i); }catch(e){} (byKey[it.k]=byKey[it.k]||[]).push(it.i); }); Object.keys(byKey).forEach(function(k){ var g=ms.get(k); g.onsuccess=function(){ var m=g.result||{total:totals[k]||0,blocks:[],bytes:0}; var seen=Object.create(null); (m.blocks||[]).forEach(function(b){seen[b]=1;}); byKey[k].forEach(function(b){ if(!seen[b]){seen[b]=1;m.blocks.push(b);m.bytes=(m.bytes||0)+BLOCK;} }); m.total=totals[k]||m.total; if(etags[k]) m.etag=etags[k]; m.lastUsed=Date.now(); try{ms.put(m,k);}catch(e){} }; }); }).catch(function(){}); }
   function parseBR(r){ if(!r||r.indexOf("bytes=")!==0||r.indexOf(",")>=0) return null; var rest=r.slice(6), dash=rest.indexOf("-"); if(dash<1) return null; var s=parseInt(rest.slice(0,dash),10), es=rest.slice(dash+1); if(es==="") return null; var e=parseInt(es,10); if(isNaN(s)||isNaN(e)||e<s) return null; return [s,e]; }
   function totalOf(cr){ if(!cr) return null; var sl=cr.lastIndexOf("/"); if(sl<0) return null; var t=parseInt(cr.slice(sl+1),10); return isNaN(t)?null:t; }
-  function fetchSpan(url,key,b0,b1){ var b=b0; while(b<=b1){ if(mirror[key+"#"+b]){ b++; continue; } var s=b; while(b<=b1 && !mirror[key+"#"+b]) b++; var e=b-1, as=s*BLOCK, ae=(e+1)*BLOCK-1; var x=new RealXHR(); x.open("GET",url,false); x.setRequestHeader("Range","bytes="+as+"-"+ae); x.responseType="arraybuffer"; x.send(); if(x.status!==206) throw new Error("rc status "+x.status); var buf=new Uint8Array(x.response), t=totalOf(x.getResponseHeader("Content-Range")); if(t!=null) totals[key]=t; for(var bb=s;bb<=e;bb++){ var off=(bb-s)*BLOCK; if(off>=buf.length) break; var u=buf.slice(off, Math.min(off+BLOCK, buf.length)); mirror[key+"#"+bb]=u; dirty.push({k:key,i:bb,b:u}); } scheduleFlush(); } }
-  function serve(url,s,e){ var key=keyOf(url), b0=Math.floor(s/BLOCK), b1=Math.floor(e/BLOCK); fetchSpan(url,key,b0,b1); var out=new Uint8Array(e-s+1), p=0; for(var b=b0;b<=b1;b++){ var blk=mirror[key+"#"+b]; if(!blk) throw new Error("rc miss"); var bs=b*BLOCK, from=Math.max(s,bs)-bs, to=Math.min(e,bs+blk.length-1)-bs; for(var i=from;i<=to;i++) out[p++]=blk[i]; } return { bytes:out.subarray(0,p), total:totals[key], start:s }; }
+  function purge(key){ Object.keys(mirror).forEach(function(k){ if(k.indexOf(key+"#")===0) delete mirror[k]; }); dirty=dirty.filter(function(it){ return it.k!==key; }); openDB().then(function(db){ var tx=db.transaction([RANGES,RMETA],"readwrite"), rs=tx.objectStore(RANGES), ms=tx.objectStore(RMETA); var g=ms.get(key); g.onsuccess=function(){ var m=g.result; if(m&&m.blocks) m.blocks.forEach(function(b){ try{rs.delete(key+"#"+b);}catch(e){} }); try{ms.delete(key);}catch(e){} }; }).catch(function(){}); delete totals[key]; delete etags[key]; }
+  // One cheap real range per key per session: if the object changed identity,
+  // every cached block for it is garbage, so drop them before serving any.
+  function validate(url,key){ if(validated[key]) return; validated[key]=1; try{ var x=new RealXHR(); x.open("GET",url,false); x.setRequestHeader("Range","bytes=0-0"); x.responseType="arraybuffer"; x.send(); if(x.status!==206) return; var t=totalOf(x.getResponseHeader("Content-Range")), et=x.getResponseHeader("ETag"); var stale=(totals[key]!=null&&t!=null&&totals[key]!==t)||(etags[key]&&et&&etags[key]!==et); if(stale) purge(key); if(t!=null) totals[key]=t; if(et) etags[key]=et; }catch(e){} }
+  function fetchSpan(url,key,b0,b1){ var b=b0; while(b<=b1){ if(mirror[key+"#"+b]){ b++; continue; } var s=b; while(b<=b1 && !mirror[key+"#"+b]) b++; var e=b-1, as=s*BLOCK, ae=(e+1)*BLOCK-1; var x=new RealXHR(); x.open("GET",url,false); x.setRequestHeader("Range","bytes="+as+"-"+ae); x.responseType="arraybuffer"; x.send(); if(x.status!==206) throw new Error("rc status "+x.status); var buf=new Uint8Array(x.response), t=totalOf(x.getResponseHeader("Content-Range")); if(t!=null) totals[key]=t; var et0=x.getResponseHeader("ETag"); if(et0) etags[key]=et0; for(var bb=s;bb<=e;bb++){ var off=(bb-s)*BLOCK; if(off>=buf.length) break; var u=buf.slice(off, Math.min(off+BLOCK, buf.length)); mirror[key+"#"+bb]=u; dirty.push({k:key,i:bb,b:u}); } scheduleFlush(); } }
+  function serve(url,s,e){ var key=keyOf(url), b0=Math.floor(s/BLOCK), b1=Math.floor(e/BLOCK); validate(url,key); fetchSpan(url,key,b0,b1); var out=new Uint8Array(e-s+1), p=0; for(var b=b0;b<=b1;b++){ var blk=mirror[key+"#"+b]; if(!blk) throw new Error("rc miss"); var bs=b*BLOCK, from=Math.max(s,bs)-bs, to=Math.min(e,bs+blk.length-1)-bs; for(var i=from;i<=to;i++) out[p++]=blk[i]; } return { bytes:out.subarray(0,p), total:totals[key], start:s }; }
   class CachedXHR extends RealXHR {
     open(method,url,async){ this.__m=(method||"GET").toUpperCase(); this.__u=url; this.__sync=(async===false); this.__range=null; this.__cached=false; this.__resp=null; this.__cr=null; return super.open(method,url,async); }
     setRequestHeader(name,value){ if(String(name).toLowerCase()==="range") this.__range=value; return super.setRequestHeader(name,value); }
@@ -444,6 +582,60 @@ self.onmessage = function (e) {
   let remoteWorker = null, remoteReady = null, remoteResolveReady = null, remoteRejectReady = null, remoteSeq = 0;
   let remoteOnProgress = null;
   const remotePending = new Map();
+
+  // --- Local files, read lazily (issue #102) --------------------------------
+  // `rete-local:<n>/<name>` addresses a File the user picked. It is a URL only
+  // in the sense that the reader takes one: the engine recognizes the scheme and
+  // reads the blob with Blob.slice() + FileReaderSync instead of HTTP Range,
+  // which makes a local open cost the same handful of ranges a remote open does
+  // rather than `file.arrayBuffer()` — the whole file in a JS buffer, copied
+  // again into wasm, with every dictionary chunk decoded up front (~6× the file
+  // size resident before the first row, and a hard wall on wasm32).
+  //
+  // The map lives on the MAIN thread because workers are disposable here (a wasm
+  // trap, the async/sync engine switch, a phone memory reclaim all rebuild one)
+  // and the URL must keep addressing the same file across a rebuild.
+  const localFiles = new Map();  // rete-local: URL -> File
+  let localFileSeq = 0;
+  // Below this, a local file still loads WHOLE: the in-memory path is faster
+  // when a query touches everything, and it is what lights up the tabs that need
+  // the entire graph resident (Explore, Map, Build). Above it the whole-file
+  // read is the thing that kills the tab, so lazy wins by default. Overridable
+  // per-browser (`localStorage.localLazyAboveMB`) — 0 forces lazy for every
+  // local file, mirroring the CLI's RETE_LOCAL_LAZY_ABOVE_MB knob.
+  const LOCAL_LAZY_ABOVE_MB_DEFAULT = 128;
+  function localLazyAboveBytes() {
+    let mb = LOCAL_LAZY_ABOVE_MB_DEFAULT;
+    try {
+      const raw = localStorage.getItem("localLazyAboveMB");
+      if (raw !== null && raw !== "" && Number.isFinite(+raw) && +raw >= 0) mb = +raw;
+    } catch (_e) { /* private mode: keep the default */ }
+    return mb * 1024 * 1024;
+  }
+  // Mint the URL, remember the File, and tell a LIVE worker about it. A worker
+  // built later picks it up from its `init` payload instead (ensureRemoteWorker).
+  const LOCAL_URL_SCHEME = "rete-local:";   // matches LOCAL_SCHEME in crates/rete-wasm
+  function registerLocalFile(file) {
+    const url = LOCAL_URL_SCHEME + (++localFileSeq) + "/" + encodeURIComponent(file.name || "file.rete");
+    localFiles.set(url, file);
+    if (remoteWorker) remoteWorker.postMessage({ type: "local", url, file });
+    return url;
+  }
+  // Headless test hook (#102): exactly what the last open cost, in bytes rather
+  // than in the rounded prose #qmeta shows. The gate reads it to prove a local
+  // open reads a few ranges instead of the whole file; the page never does.
+  try {
+    window.__reteOpenFacts = () => ({
+      source: state.activeSource,
+      local: !!(state.remote && state.remote.local),
+      url: state.remote ? state.remote.url : null,
+      inMemoryBytes: state.bytes ? state.bytes.byteLength : 0,
+      lazyAboveBytes: localLazyAboveBytes(),
+      // {fileLength, bytes, requests, openBytes, openRequests, …} — the engine's
+      // own counters for the last query, open included.
+      lastRead: (state.lastResult && state.lastResult.res && state.lastResult.res.remote) || null,
+    });
+  } catch (e) { /* test hook only */ }
 
   // Hard-cancel a running remote query: a synchronous wasm query can't be
   // interrupted cooperatively, so we terminate the worker (it rebuilds on the
@@ -570,7 +762,11 @@ self.onmessage = function (e) {
       const watchdog = setTimeout(() => failWorker(new Error("the engine didn't start in time — please try again")), 30000);
       remoteWorker.postMessage({
         type: "init", bytes: asyncOn ? asyncWasmBytes : b64ToBytes(RETE_WASM_B64),
-        fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount()
+        fetchSrc: FETCH_WORKER_SRC, poolSize: parallelWorkerCount(),
+        // Every local file this session knows about — a rebuilt worker holds a
+        // FRESH wasm instance, and its registration map starts empty. Files are
+        // posted by reference (structured clone of a Blob copies no bytes).
+        locals: [...localFiles].map(([url, file]) => ({ url, file })),
       });
       return rp;
     });
@@ -578,13 +774,13 @@ self.onmessage = function (e) {
     return remoteReady;
   }
 
-  function remoteSparql(url, query, fmt, reason) {
+  function remoteSparql(url, query, fmt, reason, union) {
     return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
       const id = ++remoteSeq;
       state.remoteQueryStart = Date.now();
       state.liveRemoteFetch = { requests: 0, bytes: 0, at: Date.now() };
       remotePending.set(id, { resolve, reject });
-      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table", reason: !!reason });
+      remoteWorker.postMessage({ type: "query", id, url, query, format: fmt || "table", reason: !!reason, union: !!union });
     }));
   }
 
@@ -672,7 +868,10 @@ self.onmessage = function (e) {
     const v = Number(n || 0);
     if (v < 1024) return v + " B";
     if (v < 1024 * 1024) return (v / 1024).toFixed(1) + " KB";
-    return (v / 1024 / 1024).toFixed(1) + " MB";
+    // A GB tier matters where this number IS the decision — the cache-mode
+    // consent step ("Download 4.6 GB", not "4718.4 MB").
+    if (v < 1024 * 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + " MB";
+    return (v / 1024 / 1024 / 1024).toFixed(2) + " GB";
   }
 
   function b64ToBytes(b64) {
@@ -690,7 +889,9 @@ self.onmessage = function (e) {
     if (state.activeSource === "file") return "local file";
     if (state.activeSource === "url") return "url";
     if (state.activeSource === "built") return "built in browser";
-    if (state.activeSource === "remote") return "remote (lazy)";
+    // Lazy over a blob in this tab, not over the network — the pill must not
+    // claim "remote" for a file that never left the machine.
+    if (state.activeSource === "remote") return state.remote && state.remote.local ? "local file (lazy)" : "remote (lazy)";
     if (state.activeSource === "cached") return "remote (cached)";
     return "bundled";
   }
@@ -699,8 +900,17 @@ self.onmessage = function (e) {
     $("sourcePill").textContent = sourceLabel();
   }
 
+  // STRICT catalog lookup: an unknown key resolves to undefined, never to some
+  // other dataset. This used to fall back to CATALOG.datasets[0], and that
+  // fallback was a repeat offender: every UI surface that derives a name from
+  // state.dataset (the header, the dataset chip, the SOURCES chip, …) claimed
+  // scholar was open whenever an off-catalog file was — each surface got fixed
+  // one report at a time (#95, the header, now the SOURCES chip). Several call
+  // sites (`!datasetInfo(k)`, `d ? … : key`) were already WRITTEN for strict
+  // behavior and the fallback silently defeated them. Callers must handle
+  // undefined; for a user-visible name use currentDatasetLabel().
   function datasetInfo(key) {
-    return CATALOG.datasets.find((d) => d.key === key) || CATALOG.datasets[0];
+    return CATALOG.datasets.find((d) => d.key === key);
   }
 
   // --- Code editors: delegated to the PlaygroundEditor component (editor.js).
@@ -784,6 +994,32 @@ self.onmessage = function (e) {
       const id = ++remoteSeq;
       remotePending.set(id, { resolve, reject });
       remoteWorker.postMessage({ type: "psearch", id, url, prefix, limit: limit || 12 });
+    }));
+  }
+
+  // How big is the remote file's TEXT_INDEX, and how big is the token table a
+  // first search would fault out of it? Resolves
+  // { json: '{"textIndexLen":N,"tokenTableLen":M}' } like the other worker
+  // calls. N comes from the header the session already holds (N === 0 means the
+  // file was built without --text-index and full-text search is simply not on
+  // offer for it); M costs one ≤10-byte range read, and is the number the panel
+  // quotes — the section length would promise several times the real bill.
+  function remoteTextIndexLen(url) {
+    return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++remoteSeq;
+      remotePending.set(id, { resolve, reject });
+      remoteWorker.postMessage({ type: "tlen", id, url });
+    }));
+  }
+
+  // Full-text (whole-word, AND-ed) search over a remote-lazy graph — same worker
+  // route as remotePrefixSearch, but a MUCH heavier first call: it faults the
+  // whole TEXT_INDEX token table. Only ever called from an explicit press.
+  function remoteTextSearch(url, phrase, limit) {
+    return ensureRemoteWorker().then(() => new Promise((resolve, reject) => {
+      const id = ++remoteSeq;
+      remotePending.set(id, { resolve, reject });
+      remoteWorker.postMessage({ type: "tsearch", id, url, phrase, limit: limit || 25 });
     }));
   }
 
@@ -1017,6 +1253,231 @@ self.onmessage = function (e) {
   }
   function closeFinder() { $("finderModal").classList.add("hidden"); }
 
+  // ── Full text (the sidebar's "Full text" section) ────────────────────────
+  // The SECOND search tier, and deliberately not the first one's twin:
+  //   🔎 Find a term → the bounded LABEL index (prefix_search, capped at 8,192
+  //                    entries, already resident) — safe on every keystroke.
+  //   Full text      → the file's TEXT_INDEX section: whole words anywhere in
+  //                    ANY literal, including subjects no label index holds.
+  // The first word lookup FAULTS the index's token table whole — measured at
+  // 29 MB on epfl-infoscience, 419 MB on wikidata-ontology and 1.88 GB on
+  // causenet-full-typed — so this is never search-as-you-type: it waits for an
+  // explicit Enter / Search press, and states that cost BEFORE the first one.
+  // That stated cost is the TOKEN TABLE's length, never the section's: the
+  // section counts the postings blob too, which a search only ever reads one
+  // posting list at a time, and quoting it overstates the bill 6.5× on
+  // epfl-infoscience (186.1 MB section, 27.7 MB table). The gate is only
+  // justified if the number defending it is the real one. The table then stays
+  // resident for the session, so every later word is postings only, a few KB.
+  // Most published datasets carry no text index at all; those get one quiet line
+  // and no box that can't work.
+  const FT_LIMIT = 25;
+  let ftLen = null;        // TEXT_INDEX section byte length; null = not known yet
+  let ftTokenLen = 0;      // its leading token table; 0 = unknown, so don't quote it
+  let ftSupported = true;  // false = an engine build without text_index_len
+  let ftProbing = false;   // a remote header probe is in flight
+  let ftFaulted = false;   // this session already paid for the token table
+  let ftError = "";        // a probe failure, shown inline
+  let ftSeq = 0;           // drops out-of-order / stale-dataset results
+
+  // Called on every dataset load. An in-memory graph answers instantly (its
+  // header is in the buffer we already hold); a remote one waits for an explicit
+  // check, because probing it opens a remote session — exactly the cost lazy
+  // mode exists to defer until a query actually needs it.
+  function resetFullText() {
+    ftLen = null; ftTokenLen = 0; ftProbing = false; ftFaulted = false; ftError = ""; ftSeq++;
+    if (state.graph) {
+      try { ftLen = Number(state.graph.text_index_len()); ftSupported = true; }
+      catch (_e) { ftSupported = false; }   // an engine predating the export
+      // Separately guarded: an engine that has text_index_len but predates the
+      // token-table probe must still get a working panel, just a vaguer one.
+      try { ftTokenLen = Number(state.graph.text_index_token_table_len()) || 0; }
+      catch (_e) { ftTokenLen = 0; }
+    }
+    renderFullText();
+  }
+
+  function ftSetResults(html) { const r = $("ftResults"); if (r) r.innerHTML = html; }
+  function ftSetCost(html) { const c = $("ftCost"); if (c) c.innerHTML = html; }
+  function ftFail(e) {
+    ftSetResults(`<div class="ef-empty">Search failed: ${esc(shorten(String((e && e.message) || e), 180))}</div>`);
+  }
+
+  // One result row: the short local name up top, the full IRI (shortened, on
+  // hover in full) beneath — the entity-finder's shape, so the two tiers read
+  // the same. Clicking inserts <IRI> at the caret, like every other hit list.
+  function ftItemHtml(iri) {
+    return `<button type="button" class="ef-item" data-iri="${esc(iri)}" title="${esc(iri)} — click to insert at the caret">` +
+      `<span class="ef-label">${esc(localName(iri))}</span>` +
+      `<span class="ef-iri"><span class="ef-kind ef-entity">subject</span> ${esc(shorten(iri, 64))}</span></button>`;
+  }
+
+  // The engine returns [{"subject":…}] (the same envelope text_search uses);
+  // tolerate a {matches:[…]} wrapper too, and de-duplicate.
+  function parseFullTextHits(json) {
+    let v = null;
+    try { v = JSON.parse(json); } catch (_e) { return []; }
+    const rows = Array.isArray(v) ? v : ((v && (v.matches || v.hits)) || []);
+    const out = [], seen = new Set();
+    rows.forEach((r) => {
+      const iri = String((r && (r.subject || r.s)) || (typeof r === "string" ? r : "")).replace(/^<|>$/g, "");
+      if (!iri || seen.has(iri)) return;
+      seen.add(iri);
+      out.push(iri);
+    });
+    return out;
+  }
+
+  // What the last search actually cost on the wire. The worker's per-fetch log
+  // is one entry per physical range request, with `b` = bytes — the same log
+  // psearch returns, so the panel can report the fault instead of describing it.
+  function ftBytesNote(log) {
+    if (!state.remote) return "";
+    if (!log || !log.length) return " Last search: no new range requests — answered from bytes already fetched.";
+    let bytes = 0;
+    log.forEach((e) => { bytes += (e && e.b) || 0; });
+    return ` Last search: ${log.length} range request(s) · ${formatBytes(bytes)} fetched.`;
+  }
+
+  function renderFullTextHits(hits, phrase, log) {
+    ftSetCost(`Token table resident for this session — each further word is postings only, a few KB.` + ftBytesNote(log));
+    if (!hits.length) {
+      ftSetResults(`<div class="ef-empty">No subject carries a literal with ` +
+        (/\s/.test(phrase) ? `all of <b>${esc(shorten(phrase, 60))}</b> in it (every word must match).` : `<b>${esc(shorten(phrase, 60))}</b> in it.`) +
+        `</div>`);
+      return;
+    }
+    const more = hits.length >= FT_LIMIT
+      ? `<div class="ef-empty">First ${FT_LIMIT} matches — add another word to narrow it.</div>` : "";
+    ftSetResults(`<div class="ef-group">Subjects</div>` + hits.map(ftItemHtml).join("") + more);
+    $$("#ftResults .ef-item").forEach((b) => {
+      b.onclick = () => insertAtCaret("q", "<" + b.dataset.iri + ">");
+    });
+  }
+
+  // The explicit search. Remote goes through the query worker (tsearch), like
+  // every other range-reading call; an in-memory graph answers in-process.
+  function runFullTextSearch() {
+    const inp = $("ftInput");
+    if (!inp || !ftLen) return;
+    const phrase = (inp.value || "").trim();
+    if (!phrase) {
+      ftSetResults(`<div class="ef-empty">Type a word — or several, all of which must match — then press Enter.</div>`);
+      return;
+    }
+    const seq = ++ftSeq;
+    ftSetResults(`<div class="ef-loading"><span class="spindle"></span> ` +
+      (ftFaulted ? "reading postings"
+                 : (ftTokenLen ? `faulting the ${formatBytes(ftTokenLen)} token table` : "faulting the token table")) +
+      (state.remote ? " over range reads" : "") + `…</div>`);
+    const finish = (json, log) => {
+      if (seq !== ftSeq) return;
+      ftFaulted = true;   // the table is in memory now — say so on the cost line
+      renderFullTextHits(parseFullTextHits(json), phrase, log);
+    };
+    if (state.remote) {
+      remoteTextSearch(state.remote.url, phrase, FT_LIMIT)
+        .then((out) => finish(out.json, out.log))
+        .catch((e) => { if (seq === ftSeq) ftFail(e); });
+      return;
+    }
+    // In-memory: no network, but the call is synchronous — yield one frame so
+    // the spinner actually paints before the engine blocks the thread.
+    setTimeout(() => {
+      if (seq !== ftSeq) return;
+      try { finish(state.graph.text_search_one(phrase, FT_LIMIT), null); }
+      catch (e) { ftFail(e); }
+    }, 16);
+  }
+
+  // Remote only: ask the worker what a search here would cost. The section
+  // length is a header field; the token table's length is the section's first
+  // ≤10 bytes — one small range read, next to nothing beside the 27.7 MB it
+  // lets us quote honestly instead of guessing high.
+  function probeFullTextRemote() {
+    if (!state.remote || ftProbing) return;
+    ftProbing = true; ftError = "";
+    renderFullText();
+    remoteTextIndexLen(state.remote.url).then((out) => {
+      let v = null, tt = 0;
+      try {
+        const o = JSON.parse(out.json);
+        v = o.textIndexLen;
+        tt = Number(o.tokenTableLen) || 0;   // absent on an older worker payload
+      } catch (_e) { v = null; }
+      ftProbing = false;
+      ftTokenLen = tt;
+      if (typeof v === "number") ftLen = v; else ftSupported = false;
+      renderFullText();
+    }).catch((e) => {
+      ftProbing = false;
+      const msg = String((e && e.message) || e);
+      // An engine build predating text_index_len: withdraw the panel rather
+      // than leave a box that can never answer.
+      if (/is not a function|text_index_len/i.test(msg)) ftSupported = false;
+      else ftError = msg;
+      renderFullText();
+    });
+  }
+
+  function renderFullText() {
+    const sec = $("fullTextPanel"), box = $("fullTextInfo");
+    if (!sec || !box) return;
+    // Nothing loaded, or an engine without the text-index exports: no section at
+    // all. setMode() only toggles .hidden per tab, so this uses inline display
+    // and the two never fight.
+    if (!ftSupported || (!state.graph && !state.remote)) { sec.style.display = "none"; return; }
+    sec.style.display = "";
+    const err = ftError ? `<div class="ef-empty">Couldn't read the text index: ${esc(shorten(ftError, 180))}</div>` : "";
+    if (ftProbing) {
+      box.innerHTML = `<div class="ef-loading"><span class="spindle"></span> reading this file's header…</div>`;
+      return;
+    }
+    if (ftLen === null) {
+      // Remote, not probed. Offer the check, not the box — asking costs a
+      // session open, and we don't spend that on a dataset nobody has queried.
+      box.innerHTML =
+        `<div>Whole words anywhere in <b>any</b> literal — the tier <b>🔎 Find a term</b> can't reach (that one prefix-matches the bounded label index).</div>` +
+        `<div><button id="ftCheck" type="button" class="secondary">Check for a text index</button></div>` +
+        `<div class="ef-empty">Reads this remote file's header, plus the ten bytes that state how big its token table is — so you see what a first search costs before paying it.</div>` + err;
+      const b = $("ftCheck");
+      if (b) b.onclick = probeFullTextRemote;
+      return;
+    }
+    if (!ftLen) {
+      box.innerHTML =
+        `<div>This dataset has <b>no full-text index</b>. <code>rete build --text-index</code> adds one — then whole words from any literal are searchable right here, with no download.</div>` + err;
+      return;
+    }
+    // Quote the TOKEN TABLE, not the section: that is what a first search pulls.
+    // Without the figure (an engine or worker predating the probe) say what
+    // happens and what is known, but never rename the section a token table —
+    // an overstated price is exactly the dishonesty this gate exists to avoid.
+    const cost = ftFaulted
+      ? `Token table resident for this session — each further word is postings only, a few KB.`
+      : (ftTokenLen
+        ? `First search fetches the whole <b>${formatBytes(ftTokenLen)}</b> token table${state.remote ? " over HTTP range" : ""} — the head of a ${formatBytes(ftLen)} index, whose postings are then read a list at a time. It stays resident for this session, so every later word costs a few KB. Runs on Enter — never as you type.`
+        : `First search fetches this file's whole token table${state.remote ? " over HTTP range" : ""} — the head of a ${formatBytes(ftLen)} index, typically a fraction of it. It then stays resident for this session, so every later word costs a few KB. Runs on Enter — never as you type.`);
+    box.innerHTML =
+      `<div>Whole words anywhere in <b>any</b> literal, read from this file's own text index — including subjects no label index holds. Several words means <b>all</b> of them must match.</div>` +
+      `<div style="display:flex;gap:6px;align-items:stretch">` +
+        `<input id="ftInput" class="ef-input" type="search" autocomplete="off" spellcheck="false" style="flex:1 1 auto;min-width:0" placeholder="word(s), then Enter" aria-label="Search the full-text index" />` +
+        `<button id="ftGo" type="button" class="secondary" style="flex:0 0 auto;white-space:nowrap" title="Search the text index — the explicit press that does the fetching">Search</button>` +
+      `</div>` +
+      `<div class="ef-empty" id="ftCost">${cost}</div>` +
+      // min-height:0 so the (shared) .ef-results box collapses while empty
+      // instead of reserving the modal's 80px in a narrow sidebar.
+      `<div class="ef-results" id="ftResults" style="min-height:0"></div>` +
+      `<details class="lazy-explainer">` +
+        `<summary>Why this one waits for Enter</summary>` +
+        `<p class="microcopy" style="margin-top:6px">A word lookup faults the index's <b>token table</b> whole: 29 MB on <code>epfl-infoscience</code>, 419 MB on <code>wikidata-ontology</code>, 1.88 GB on <code>causenet-full-typed</code>. Per keystroke that would pull hundreds of MB for a word you hadn't finished typing — so it is an explicit press, and the table is then kept for the rest of the session.</p>` +
+      `</details>` + err;
+    // Deliberately NO input handler: this tier never searches as you type.
+    const inp = $("ftInput"), go = $("ftGo");
+    if (inp) inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); runFullTextSearch(); } };
+    if (go) go.onclick = runFullTextSearch;
+  }
+
   function setEd(id, text) {
     if (window.PlaygroundEditor) window.PlaygroundEditor.setText(id, text);
     else { const t = $(id); if (t) t.value = text; }
@@ -1157,10 +1618,16 @@ self.onmessage = function (e) {
 
   // The dataset header band: a full title and a one-line sentence, with the
   // graph metadata pill sitting to its right.
+  //
+  // The tagline is written with textContent, so the source is reduced to plain
+  // text first: a card `description` may be block Markdown (see mdFlatten), and
+  // "## What's inside" in a one-line tagline reads as a typo, not as a heading.
   function firstSentence(text, max) {
     if (!text) return "";
-    const m = text.match(/^(.+?[.!?])(\s|$)/);
-    let s = (m ? m[1] : text).trim();
+    const flat = mdPlain(text);
+    if (!flat) return "";
+    const m = flat.match(/^(.+?[.!?])(\s|$)/);
+    let s = (m ? m[1] : flat).trim();
     const cap = max || 170;
     if (s.length > cap) s = s.slice(0, cap - 1).replace(/\s+\S*$/, "") + "…";
     return s;
@@ -1221,6 +1688,10 @@ self.onmessage = function (e) {
     state.bytes = bytes;
     state.activeSource = source;
     state.remote = null; // an in-memory load leaves remote-lazy mode
+    // Loading anything clears the cached-by-URL identity; loadCachedUrl is the
+    // ONE caller that re-sets it (right after this returns), because only then
+    // do the resident bytes actually correspond to that URL.
+    state.urlCache = null;
     state.exploreReady = false;
     state.exploreBackend = "native"; state.exploreNativeMeta = ""; freeExploreEngines();
     state.lastResult = null; // a new graph invalidates any cached result
@@ -1238,6 +1709,9 @@ self.onmessage = function (e) {
     // info() already carries the named-graph count, so we avoid a second full
     // open just to call graph_names() (a meaningful saving on a big cached file).
     const graphText = info.namedGraphs ? " | graphs " + info.namedGraphs : "";
+    // Kept for the empty-default-graph explainer: with the graph resident this
+    // count is free here, and re-deriving it later would re-open the file.
+    state.namedGraphCount = info.namedGraphs || 0;
     setStatus(`${info.quads} quads | ${info.terms} terms | ${info.pyramidLevels} pyramid levels${graphText}`);
 
     // Prefer the schema already baked into the file (read from its ~KB schema
@@ -1261,19 +1735,31 @@ self.onmessage = function (e) {
     renderReachDefaults();
     renderShaclExamples();
     renderProvenanceDefaults();
+    resetFullText();   // the new file's own TEXT_INDEX (or none) — header read
 
     const infoRow = datasetInfo(state.dataset);
-    const catalogSource = source === "bundled" || source === "cached";
+    // datasetInfo() is strict now — a bundled/cached load of a key that is
+    // somehow not in the catalog must fall through to the custom branch, not
+    // crash on infoRow.description.
+    const catalogSource = (source === "bundled" || source === "cached") && !!infoRow;
     $("dsDesc").innerHTML = catalogSource
       ? mdLite(infoRow.description)
       : "Custom graph loaded into the same in-browser engine.";
-    if (catalogSource && infoRow) {
+    if (catalogSource) {
       setDatasetHeader(infoRow.label, firstSentence(infoRow.description), state.dataset);
     } else {
       const cn = source === "file" ? "Local file" : source === "url" ? "Custom .rete" : "Custom graph";
       $("dsName").textContent = cn;
       setDatasetHeader(cn, "Custom graph loaded into the same in-browser engine.", null);
     }
+    // Re-render the SOURCES chip against the NOW-current state: the resetFed()
+    // above painted it mid-transition, and the "cached" path (which keeps its
+    // federation partners) skipped resetFed entirely — either way the self
+    // chip's name and lazy/in-memory badge must describe what just loaded.
+    renderFedBar();
+    // The resident graph's own Dataset Card may carry example queries — offer
+    // them in the examples panel (synchronous: the card is already in memory).
+    refreshCardExamples();
   }
 
   function loadDataset(key) {
@@ -1301,7 +1787,13 @@ self.onmessage = function (e) {
       const res = await fetch(url);
       if (!res.ok) throw new Error(res.status + " " + res.statusText);
       const buf = new Uint8Array(await res.arrayBuffer());
+      // Same off-catalog key derivation as enterRemote/loadFromFile: the
+      // strict per-dataset surfaces must describe THIS download, not whatever
+      // catalog key was open before.
+      state.dataset = remoteFileName(url).replace(/\.rete$/i, "") || "remote";
+      state.selectedExample = -1;
       loadBytes(buf, "url");
+      renderExamples();
       closeSource();
     } catch (e) {
       showError("out", "URL load failed: " + e.message);
@@ -1312,7 +1804,11 @@ self.onmessage = function (e) {
   // worker, no full download. Only the SPARQL tab applies (the other tabs need
   // the whole graph in memory). `datasetKey` ties it to a catalog entry so its
   // example query library shows; a custom URL (no key) gets no library.
-  function enterRemote(url, datasetKey) {
+  // `localFile` is set only by enterLocalFile: the graph is a blob in this tab,
+  // not an address, so the mode is "lazy" in exactly the same sense while
+  // nothing about it is remote — no network, no CORS, no Range support to
+  // require, and no shareable URL (see updateHash).
+  function enterRemote(url, datasetKey, localFile) {
     if (!url) return;
     // Phone: switching to a DIFFERENT remote dataset — tear down the old remote
     // worker so the previous dataset's resident heap (the worker caches a
@@ -1320,28 +1816,60 @@ self.onmessage = function (e) {
     // switch-back. Same-URL re-entry keeps the resident engine.
     if (isPhoneView() && state.remote && state.remote.url !== url) cancelRemote();
     state.bytes = null;
+    state.urlCache = null; // lazy mode replaces a cached-by-URL identity
     if (state.graph) { state.graph.free(); state.graph = null; }
     resetFed(); // switching to a remote dataset drops federation partners
-    state.remote = { url };
+    state.remote = { url, local: !!localFile, name: localFile ? localFile.name : null };
     state.activeSource = "remote";
+    state.namedGraphCount = null; // unknown until the card is read
     state.schema = null;
     clearSchemaPanels("");  // drop the previous dataset's schema/diagram immediately
     state.exploreReady = false;
     state.exploreClass = null;
     state.exploreBackend = "native"; state.exploreNativeMeta = ""; freeExploreEngines();
-    if (datasetKey) {
+    // Resolve the key STRICTLY against the catalog. `datasetInfo()` USED to
+    // fall back to the first catalog entry (it is strict now), and that
+    // fallback was exactly a reported bug: an off-catalog key (derived from a
+    // #url= filename) resolved to datasets[0], so the header claimed "hugging-face.rete — …" over an
+    // nkod.rete URL — and a null key (Connect with a pasted address) left the
+    // PREVIOUS dataset's name standing. Off-catalog remotes are named after
+    // the FILE that is actually open, then upgraded (async — the label never
+    // waits on the network) with the file's own Dataset Card title.
+    const entry = datasetKey ? CATALOG.datasets.find((d) => d.key === datasetKey) : null;
+    if (entry) {
       state.dataset = datasetKey;
       setDatasetName(datasetKey);
+    } else {
+      // Keep a key for the strict per-dataset lookups (examples, SHACL,
+      // reach, provenance — all empty for an unknown key, never another
+      // dataset's). Derived from the URL when the caller passed none, so a
+      // hand-pasted Connect stops inheriting the previous dataset's key too.
+      state.dataset = datasetKey || remoteFileName(url).replace(/\.rete$/i, "") || "remote";
+      $("dsName").textContent = remoteFileName(url);
     }
     state.selectedExample = -1;
     updateSourcePill();
     // The source pill already says "remote (lazy)" — don't repeat it here.
     setStatus("queries range-fetch only what they touch");
-    const info = datasetKey ? datasetInfo(datasetKey) : null;
-    $("dsDesc").innerHTML = info ? mdLite(info.description) : "Remote graph, queried lazily over HTTP range: " + esc(url);
-    setDatasetHeader(info ? info.label : "Remote .rete (lazy)",
-      info ? firstSentence(info.description) : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.",
-      datasetKey);
+    const info = entry;
+    // A local file is read the same way but over its own bytes — say THAT, not
+    // "over HTTP range", which would be simply untrue and would send someone
+    // hunting a CORS problem that cannot exist.
+    const lazyBlurb = localFile
+      ? "Local file, read lazily from disk — only the byte ranges each query touches are read, nothing is uploaded."
+      : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.";
+    $("dsDesc").innerHTML = info ? mdLite(info.description)
+      : (localFile ? esc(lazyBlurb) : "Remote graph, queried lazily over HTTP range: " + esc(url));
+    setDatasetHeader(info ? info.label : remoteFileName(url),
+      info ? firstSentence(info.description) : lazyBlurb,
+      entry ? datasetKey : null);
+    if (!entry) upgradeRemoteLabelFromCard(url);
+    // The SOURCES chip: resetFed() above repainted it BEFORE state.remote and
+    // state.dataset were set for this connection, so it kept claiming the
+    // previous dataset was open "in-memory" — the exact wrong pair a user
+    // report showed ("scholar.rete IN-MEMORY" over a lazy nkod.rete). Render
+    // again now that the state describes what is actually connected.
+    renderFedBar();
     renderExamples();
     // Catalog-driven example panels are independent of the (lazy, unloaded)
     // bytes — refresh them here too, or the SHACL / Reach / Provenance tabs keep
@@ -1350,16 +1878,29 @@ self.onmessage = function (e) {
     renderShaclExamples();
     renderReachDefaults();
     renderProvenanceDefaults();
+    resetFullText();   // remote: offers the header check, probes nothing yet
     closeSource();
     setMode("sparql");
     // Load the dataset's first example query automatically (parity with bundled).
     if (examplesForDataset().length) selectExample(0);
-    const lib = examplesForDataset().length
+    const hasLib = examplesForDataset().length > 0;
+    const lib = hasLib
       ? "Pick an example from the library, or write your own."
       : "Write a SPARQL query (a bound subject keeps the fetch small). No example library for a custom URL.";
-    $("out").innerHTML = `<div class="note">Connected to a remote .rete, queried lazily — ` +
-      `each query fetches only the dictionary chunks and index tiles it touches (the first also ` +
-      `pulls the header and directories). ${lib} Other tabs need a graph loaded into memory.</div>`;
+    // data-no-library marks the "no examples" claim so refreshCardExamples can
+    // retract it if the file's own Dataset Card turns out to ship queries.
+    $("out").innerHTML = `<div class="note"${hasLib ? "" : ` data-no-library="1"`}>` +
+      (localFile
+        ? `Opened <b>${esc(localFile.name)}</b> (${formatBytes(localFile.size)}) lazily from disk — ` +
+          `each query reads only the dictionary chunks and index tiles it touches (the first also ` +
+          `reads the header and directories). The file is never uploaded and never loaded whole. `
+        : `Connected to a remote .rete, queried lazily — ` +
+          `each query fetches only the dictionary chunks and index tiles it touches (the first also ` +
+          `pulls the header and directories). `) +
+      `${lib} Other tabs need a graph loaded into memory.</div>`;
+    // The file's own Dataset Card may carry example queries (the only example
+    // source an off-catalog remote has) — read it async, never blocking connect.
+    refreshCardExamples();
   }
 
   // Accept an address the way an address bar does. A pasted link very often
@@ -1374,6 +1915,65 @@ self.onmessage = function (e) {
     if (!s) return null;
     if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return /^https?:/i.test(s) ? s : null;
     return "https://" + s.replace(/^\/+/, "");  // also covers //host/path
+  }
+
+  // The file name a remote URL actually points at ("nkod.rete") — the honest
+  // label for an off-catalog remote. Never a catalog entry's text.
+  function remoteFileName(url) {
+    try {
+      const base = decodeURIComponent(String(url).split("#")[0].split("?")[0].split("/").pop() || "");
+      return base || "Remote .rete";
+    } catch (_e) {
+      return "Remote .rete"; // a malformed %-escape must not break the label
+    }
+  }
+
+  // Off-catalog remotes: the filename label paints immediately; if the file's
+  // own Dataset Card carries a title, upgrade to it when it arrives (the same
+  // two small range reads the 🏷 Card button does, via the worker). Guarded so
+  // a slow card can never relabel a dataset the user has since switched to.
+  // ONE worker card read per URL, shared by every surface that wants the card
+  // at connect time (the label upgrade + the card-examples refresh). Two
+  // concurrent card_url calls each fetch their own ranges — the block cache
+  // only helps sequential readers — and the extra physical requests showed up
+  // as a regression in the card-modal gate check's range budget.
+  const remoteCardTextCache = new Map(); // url -> Promise<string|null>
+  function remoteCardText(url) {
+    if (!remoteCardTextCache.has(url)) {
+      remoteCardTextCache.set(url, remoteCall("card_url", url)
+        .then((r) => (r && r.json) || null)
+        .catch(() => {
+          remoteCardTextCache.delete(url); // a transient failure may retry later
+          return null;
+        }));
+    }
+    return remoteCardTextCache.get(url);
+  }
+
+  async function upgradeRemoteLabelFromCard(url) {
+    let card = null;
+    try {
+      const text = await remoteCardText(url);
+      card = text ? JSON.parse(text) : null;
+    } catch (_e) {
+      return; // no card, or the worker couldn't start — the filename stands
+    }
+    if (!card || typeof card.title !== "string" || !card.title.trim()) return;
+    if (!(state.activeSource === "remote" && state.remote && state.remote.url === url)) return;
+    const title = card.title.trim();
+    // Every surface naming this connection (the SOURCES chip via
+    // currentDatasetLabel) upgrades together with the chip/header below.
+    state.remote.title = title;
+    renderFedBar();
+    $("dsName").textContent = title;
+    setDatasetHeader(title,
+      card.description
+        ? firstSentence(String(card.description))
+        : "Remote graph, queried lazily over HTTP range — only the bytes each query touches are fetched.",
+      null);
+    // #dsDesc is a <p>: a card description carrying blocks is flattened to
+    // inline markdown here, and read whole in the 🏷 Card modal.
+    if (card.description) $("dsDesc").innerHTML = mdLite(mdFlatten(String(card.description)));
   }
 
   function connectRemote() {
@@ -1464,7 +2064,12 @@ self.onmessage = function (e) {
       $("cacheBytes").textContent = formatBytes(received);
     }
   }
-  function closeCacheModal() { $("cacheModal").classList.add("hidden"); }
+  function closeCacheModal() {
+    $("cacheModal").classList.add("hidden");
+    // The URL-cache consent buttons must never leak into the next (catalog or
+    // URL) use of this shared modal.
+    const c = $("cacheConfirm"); if (c) c.classList.add("hidden");
+  }
 
   // Parse "98 MB" / "1.04 GB" / "375 KB" → megabytes, for a rough prep estimate.
   function sizeToMB(s) {
@@ -1540,6 +2145,195 @@ self.onmessage = function (e) {
     }
   }
 
+  // --- caching an OFF-CATALOG .rete by its URL -----------------------------
+  // The same download-once-persist-query-offline mode the catalog offers, for
+  // a file the catalog has never heard of. Cache identity is the NORMALIZED
+  // URL itself, namespaced so it can never collide with a catalog key (catalog
+  // keys are short slugs; this key embeds "://"): two spellings of one address
+  // dedupe through normalizeReteUrl, but two different URLs stay two entries
+  // even when they serve the same bytes — deduping those would require the
+  // bytes anyway. Existing catalog cache entries (`<key>::rete`) are untouched
+  // and keep working; nothing migrates.
+  const urlCacheKey = (url) => `url::${url}::rete`;
+
+  // Ask the FILE how big it is before any download: 1–2 tiny range reads via
+  // the worker. file_len_url derives the length from the .rete header itself
+  // (the #95 probe) because the transport's numbers may describe a compressed
+  // representation (GitHub Pages) or be hidden from cross-origin JS entirely
+  // (no Access-Control-Expose-Headers). null = the probe failed; the caller
+  // must SAY "unknown", never guess.
+  async function probeRemoteFileLength(url) {
+    try {
+      const r = await remoteCall("file_len_url", url);
+      const n = Number((JSON.parse(r.json) || {}).fileLength);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch (_e) { return null; }
+  }
+
+  // The consent step: caching downloads the WHOLE file, and unlike a catalog
+  // entry an arbitrary URL carries no size label — so the number (or an honest
+  // "unknown") goes in front of the user BEFORE the first payload byte moves,
+  // with a way out. Resolves true only on an explicit Download click.
+  function confirmCacheDownload(name, size) {
+    return new Promise((resolve) => {
+      $("cacheName").textContent = name;
+      $("cacheBar").classList.remove("indeterminate");
+      $("cacheBarFill").style.width = "";
+      $("cachePct").textContent = "";
+      $("cacheBytes").textContent = size != null ? formatBytes(size) : "size unknown";
+      $("cacheSub").textContent = size != null
+        ? `${name} is ${formatBytes(size)} (read from the file's own header). Caching downloads the whole file and keeps it in this browser (IndexedDB) — after that, queries touch the network zero times, even across reloads.`
+        : `The size of ${name} could not be determined up front (the host hides it). Caching downloads the WHOLE file, however large it turns out to be — Connect (lazy) reads only the bytes each query touches instead.`;
+      $("cacheSteps").innerHTML = "";
+      $("cacheGo").textContent = size != null ? `Download ${formatBytes(size)}` : "Download anyway";
+      $("cacheConfirm").classList.remove("hidden");
+      $("cacheModal").classList.remove("hidden");
+      const done = (go) => { $("cacheConfirm").classList.add("hidden"); resolve(go); };
+      $("cacheGo").onclick = () => done(true);
+      $("cacheCancel").onclick = () => done(false);
+    });
+  }
+
+  // The cache modal while the size probe runs (2 tiny range reads — feedback,
+  // because the first probe also spins up the query worker).
+  function openCacheMeasuring(name) {
+    $("cacheName").textContent = name;
+    $("cacheSub").textContent = "Asking the file its size — caching downloads the whole file, so the number comes first (two small range reads).";
+    $("cacheBar").classList.add("indeterminate");
+    $("cacheBarFill").style.width = "";
+    $("cachePct").textContent = "";
+    $("cacheBytes").textContent = "";
+    $("cacheSteps").innerHTML = "";
+    $("cacheConfirm").classList.add("hidden");
+    $("cacheModal").classList.remove("hidden");
+  }
+
+  // The cache modal in download-progress state for a URL (the catalog variant,
+  // openCacheModal, phrases sizes from catalog metadata instead).
+  function openUrlCacheDownload(name, size) {
+    $("cacheName").textContent = name;
+    $("cacheSub").textContent = `Downloading the whole .rete${size != null ? " (" + formatBytes(size) + ")" : ""} — kept in this browser and queried in-page once it's here.`;
+    $("cacheBar").classList.add("indeterminate");
+    $("cacheBarFill").style.width = "";
+    $("cachePct").textContent = "";
+    $("cacheBytes").textContent = "0 B";
+    $("cacheSteps").innerHTML = "";
+    $("cacheConfirm").classList.add("hidden");
+    $("cacheModal").classList.remove("hidden");
+  }
+
+  // enterCachePreparing for a URL-cached file: the size is the byte length we
+  // actually hold, not a catalog metadata string.
+  function enterCachePreparingUrl(name, byteLen) {
+    const sizeText = formatBytes(byteLen);
+    const est = Math.max(1, Math.round((byteLen / 1e6) * 0.05));
+    $("cacheName").textContent = name;
+    $("cacheBar").classList.remove("indeterminate");
+    $("cacheBarFill").style.width = "100%";
+    $("cachePct").textContent = "downloaded";
+    $("cacheBytes").textContent = sizeText;
+    $("cacheSub").textContent = `Now opening the file for in-memory queries — the schema is read straight ` +
+      `from the file's packed index (no scan); the page pauses briefly while the dictionary loads ` +
+      `(~${est}s for ${sizeText}).`;
+    $("cacheSteps").innerHTML = `<div class="cache-step done">Downloaded ${esc(sizeText)}</div>`;
+    $("cacheConfirm").classList.add("hidden");
+  }
+
+  // An off-catalog cached file must name ITSELF: the file name the URL points
+  // at, upgraded to the file's own Dataset Card title — read from the LOCAL
+  // bytes (W().card), so the upgrade costs zero network. Never a catalog
+  // entry's text: the "scholar.rete over an nkod.rete view" bug had three
+  // separate doors, and this path must not become a fourth.
+  function applyUrlCacheLabels(url, bytes) {
+    const name = remoteFileName(url);
+    let title = null, desc = null;
+    try {
+      const cj = W().card(bytes);
+      const card = cj ? JSON.parse(cj) : null;
+      if (card && typeof card.title === "string" && card.title.trim()) title = card.title.trim();
+      if (card && card.description) desc = String(card.description);
+    } catch (_e) { /* no card, or an unreadable one — the file name stands */ }
+    if (state.urlCache) state.urlCache.title = title || undefined;
+    const shown = title || name;
+    $("dsName").textContent = shown;
+    setDatasetHeader(shown,
+      desc ? firstSentence(desc)
+        : "Downloaded whole from its URL and kept in this browser — queries run in-page, zero network.",
+      null);
+    $("dsDesc").innerHTML = desc
+      ? mdLite(mdFlatten(desc))  // a <p>: blocks are flattened, the modal shows them
+      : "Cached from " + esc(url) + " — the whole file is stored in this browser (IndexedDB) and queried in memory.";
+    // Re-render the SOURCES self chip now that state names this file.
+    renderFedBar();
+  }
+
+  // Cache an off-catalog remote .rete by URL: download once (with the size
+  // shown, and consent, FIRST), persist in IndexedDB keyed by the URL, then
+  // query it in memory — reloads and future sessions answer from the cache
+  // with zero network. Mirrors loadCachedRemote's failure containment: the
+  // IDB put is one FILES+META transaction (atomic — never a half-written
+  // entry that later reads as complete), an aborted download writes nothing,
+  // and a quota/private-mode failure keeps the in-memory copy for this page.
+  // Resolves false when the user backs out of the download (nothing changed);
+  // true once the file is resident.
+  async function loadCachedUrl(url) {
+    const ck = urlCacheKey(url);
+    const name = remoteFileName(url);
+    try {
+      let bytes = remoteCache.get(ck);
+      if (!bytes) {
+        const stored = await idbGetFile(ck);
+        if (stored) {
+          bytes = stored instanceof Uint8Array ? stored : new Uint8Array(stored);
+          remoteCache.set(ck, bytes);
+        }
+      }
+      if (!bytes) {
+        openCacheMeasuring(name);
+        const size = await probeRemoteFileLength(url);
+        const go = await confirmCacheDownload(name, size);
+        // Backing out leaves the page exactly as it was — nothing loaded,
+        // nothing renamed, nothing stored.
+        if (!go) { closeCacheModal(); return false; }
+        openUrlCacheDownload(name, size);
+        setStatus("downloading " + name + " …");
+        // Some hosts omit Content-Length; the probe's number keeps the bar real.
+        bytes = await fetchWithProgress(url, (received, total) => updateCacheProgress(received, total || size || 0));
+        remoteCache.set(ck, bytes);
+        try {
+          await idbPutFile(ck, bytes, {
+            size: bytes.byteLength,
+            label: name + " — cached from URL",
+            url,
+            backend: "rete",
+          });
+        } catch (_e) { /* private mode / quota: keep the in-memory cache */ }
+      } else {
+        $("cacheModal").classList.remove("hidden");
+      }
+      // Same strict-key derivation as enterRemote: per-dataset lookups
+      // (examples, SHACL, reach) resolve to nothing for an unknown key — never
+      // to another dataset's content.
+      state.dataset = name.replace(/\.rete$/i, "") || "remote";
+      enterCachePreparingUrl(name, bytes.byteLength);
+      await tick();
+      await loadBytes(bytes, "cached", setCacheStep);
+      state.urlCache = { url };
+      applyUrlCacheLabels(url, bytes);
+      renderExamples();
+      if (examplesForDataset().length) selectExample(0);
+      updateHash();
+      setCacheStep("Ready ✓");
+      await tick();
+      closeCacheModal();
+      return true;
+    } catch (e) {
+      closeCacheModal();
+      showError("out", "Cache download failed: " + (e.message || e));
+      return false;
+    }
+  }
+
   // Load a dataset in one of three modes: bundled (embedded bytes), cache
   // (download the remote once, keep it), lazy (range-query the remote).
   function selectDatasetMode(key, mode) {
@@ -1569,20 +2363,132 @@ self.onmessage = function (e) {
     };
   }
 
-  // Tiny markdown for descriptions: **bold**, `code`, *italic* (input escaped).
-  // Lightweight inline markdown → HTML (safe: escapes first, then adds a small
-  // set of tags). Handles links, bold, code, italic, and — importantly for the
-  // dataset descriptions — newlines, so a multi-paragraph description reads as
-  // paragraphs instead of a wall of text. Returns inline HTML (no block tags),
-  // so it's safe to drop inside a <p>/<div>.
+  // ---------------------------------------------------------------------------
+  // Markdown in a description
+  //
+  // A description is third-party data: it arrives inside a file someone else
+  // published, and nothing in it may ever become live markup. **Raw HTML is
+  // therefore not supported** — honouring a <script> (or an onerror= on an
+  // <img>) would hand any publisher script execution in every reader's browser,
+  // on a page that also holds the reader's own files. Markdown buys the
+  // headings, bullets and links with none of that. The rule and the reason are
+  // written down in docs/dataset-cards.md.
+  //
+  // Three functions, one grammar:
+  //   * mdLite         — inline only, for the <p> surfaces (below);
+  //   * markdownBlocks — headings/lists/quotes/rules/code, for the card modal
+  //                      (it already existed for text/markdown result cells);
+  //   * mdFlatten / mdPlain — the same source with its BLOCK markers removed,
+  //                      for the surfaces that can only take one line.
+  // ---------------------------------------------------------------------------
+
+  // *italic* — the ONE emphasis rule. It is duplicated verbatim in
+  // web/playground-src/app.js, scripts/preview/card.mjs and
+  // experiments/plaza/js/rete-card.js, because those three cannot import from one
+  // another: app.js is concatenated into docs/playground.html as a classic script,
+  // card.mjs is Node ESM, and rete-card.js is a browser ES module that
+  // scripts/build_plaza.py copies into docs/plaza/. No bundler in this repo reaches
+  // all three, so tests/gate/checks/check_md_emphasis.mjs asserts the literal below
+  // AND this comment are byte-identical in every copy — change one and the gate
+  // fails until you have changed them all. They had already drifted once: mdLite
+  // used [^*]+ where the other five used [^*\n]+, so emphasis could cross a
+  // paragraph break in the playground and nowhere else.
+  //
+  // A delimiter only emphasises when it FLANKS its text — CommonMark's left- and
+  // right-flanking delimiter runs (spec §6.2). Without that, a literal asterisk in
+  // prose opens a span that swallows the rest of the sentence and eats BOTH
+  // asterisks: `wdt:* statements … prop/direct/*` rendered as "wdt: statements …
+  // prop/direct/", and `mc:residedIn*)` as "mc:residedIn)". Clause by clause:
+  //
+  //   (?=…|…)      the opener must be LEFT-flanking. Either the character before it
+  //                is the start of the string, a space or punctuation — or, when a
+  //                word character precedes it, the character after it must NOT be
+  //                punctuation. This is what rejects `entity/Q*,` and
+  //                `mc:residedIn*)`.
+  //   \*(?!\s)     …and an opener is never followed by a space, which rejects
+  //                `wdt:* statements` and `orc:* → orcid`.
+  //   [^*\n]*…     the run to the closer: no asterisk, no newline — emphasis is
+  //                inline and cannot cross a paragraph.
+  //   (?:…|…)      the closer must be RIGHT-flanking: the character before it is not
+  //                a space (so `*foo *bar*` emphasises `bar`, not `foo `), and when
+  //                that character is punctuation the closer must be followed by a
+  //                space, punctuation, or the end of the string.
+  //   \*(?!\*)     and the closer is not the first half of a `**bold**` run.
+  //
+  // "Punctuation" is \p{P} + \p{S}, exactly CommonMark's definition — it counts
+  // symbols, so `→` and `%` flank like punctuation. The `u` flag is what makes those
+  // classes legal, and it also makes astral characters single code points. HTML
+  // escaping runs BEFORE this rule at the markup call sites, which is safe: `&`,
+  // `<`, `>`, `"` and `'` are all punctuation, and so are the `&…;` entities they
+  // become, so escaping never changes a character's flanking class.
+  //
+  // DELIBERATE DEVIATIONS from CommonMark, because this is one regex and not a
+  // delimiter stack: emphasis may not CONTAIN an asterisk, so `*a.*b*` gives
+  // `*a.<em>b</em>` where CommonMark gives `<em>a.*b</em>`; there is no nesting; and
+  // `_underscore_` emphasis is not supported at all. Checked against the reference
+  // CommonMark implementation over a 3,562-case sweep of flanking neighbourhoods
+  // (100% agreement, against 51% for the rule this replaced) and over every
+  // asterisk-bearing string this repo ships (47/47 lines, against 37/47).
+  const MD_EMPHASIS = /(?=(?:^|[\s\p{P}\p{S}])\*|[^\s\p{P}\p{S}]\*(?![\p{P}\p{S}]))(^|[^*])\*(?!\s)([^*\n]*(?:[^*\s\n\p{P}\p{S}]|[\p{P}\p{S}](?=\*(?:[\s\p{P}\p{S}]|$))))\*(?!\*)/gu;
+
+  // Tiny markdown for descriptions: links, **bold**, `code`, *italic* (input
+  // escaped) and newlines, so a multi-paragraph description reads as paragraphs
+  // instead of a wall of text. Returns INLINE HTML — no block tags — and that is
+  // a contract, not an accident: its call sites (#dsDesc, .ds-desc) are <p>
+  // elements, and a <ul> or an <h4> inside a <p> gets re-parented by the HTML
+  // parser, which would tear those layouts apart. Blocks go through
+  // markdownBlocks() instead, and only where a block can live.
   function mdLite(s) {
     return esc(String(s || ""))
       .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>")
+      .replace(MD_EMPHASIS, "$1<em>$2</em>")
       .replace(/\n{2,}/g, "<br><br>")
       .replace(/\n/g, "<br>");
+  }
+
+  // A description with its BLOCK markers removed, leaving one stream of inline
+  // markdown — for the surfaces that are <p> elements and can only take mdLite.
+  // Markers are dropped rather than shown: a leading "## " in a sidebar
+  // paragraph reads as a typo, not as a heading. The patterns are exactly
+  // markdownBlocks()'s, so the flattener and the renderer can never disagree
+  // about what a block is. On a description carrying no block markup — every
+  // card published to date — this is the identity function.
+  function mdFlatten(s) {
+    // `[ \t]`, never `\s`: these run with /m over the WHOLE text, and `\s` also
+    // matches a newline — so `^\s{0,3}#` would swallow the blank line before a
+    // heading and weld it onto the paragraph above.
+    const stripped = String(s == null ? "" : s)
+      .replace(/\r\n?/g, "\n")
+      .replace(/^[ \t]*(?:```|~~~)[^\n]*$/gm, "")
+      .replace(/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/gm, "")
+      .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+      .replace(/^[ \t]*>[ \t]?/gm, "")
+      .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/gm, "• ");
+    // A single newline is NOT a line break in Markdown — it is a soft wrap the
+    // author's editor put there — so each block is rejoined and only blank-line
+    // boundaries survive. Without this, mdLite's \n → <br> would turn a
+    // hard-wrapped description into a column of ragged short lines in a sidebar
+    // that has room for a paragraph.
+    return stripped
+      .split(/\n\s*\n/)
+      .map((block) => block.replace(/\s*\n\s*/g, " ").trim())
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  // The same reduction taken all the way to plain text — for surfaces written
+  // with textContent (the dataset header tagline), where a leftover `**` is
+  // noise rather than emphasis.
+  function mdPlain(s) {
+    return mdFlatten(s)
+      .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, "$1")
+      .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+      .replace(/`([^`\n]+)`/g, "$1")
+      .replace(MD_EMPHASIS, "$1$2")
+      .replace(/\n+/g, " ")
+      .trim();
   }
 
   function dsShortLabel(key) {
@@ -1593,6 +2499,28 @@ self.onmessage = function (e) {
     // use " — " which the old " - " split missed, so the whole long label leaked
     // through as the "short" name.)
     return d.label.split(/\s[—–-]\s|\s\(/)[0].trim();
+  }
+
+  // The ONE honest short name for whatever is open right now — for every
+  // surface that names the current dataset from state (the SOURCES self chip,
+  // the self federation source). A catalog key gets its catalog label; an
+  // off-catalog remote gets its own card title (once read) or the file name the
+  // URL actually points at; a local/downloaded file gets the same wording the
+  // dataset chip uses. Never another catalog entry's name.
+  function currentDatasetLabel() {
+    if (state.remote) {
+      const d = datasetInfo(state.dataset);
+      return d ? dsShortLabel(state.dataset)
+        : (state.remote.title || remoteFileName(state.remote.url));
+    }
+    // An off-catalog file cached by URL: its own card title (read from the
+    // local bytes) or the file name the URL points at — never a catalog
+    // entry's text, even when the derived key happens to match one.
+    if (state.urlCache) return state.urlCache.title || remoteFileName(state.urlCache.url);
+    if (state.activeSource === "file") return "Local file";
+    if (state.activeSource === "url") return "Custom .rete";
+    const d = datasetInfo(state.dataset);
+    return d ? dsShortLabel(state.dataset) : (state.dataset || "Custom graph");
   }
 
   // The "Datasets" browser: a sidebar list (left) + a detail/preview pane
@@ -1662,6 +2590,10 @@ self.onmessage = function (e) {
 
   function renderDsDetail(key) {
     const d = datasetInfo(key);
+    // Strict lookup: an off-catalog key (e.g. a #url= remote is open) has no
+    // detail pane to render — openSource() falls back before calling here, so
+    // this is belt-and-braces against a stale dsSelected.
+    if (!d) { $("dsDetail").innerHTML = ""; return; }
     const m = (CATALOG.datasetMeta && CATALOG.datasetMeta[key]) || {};
     const ex = (CATALOG.datasetExtra && CATALOG.datasetExtra[key]) || {};
     const remoteOnly = d.kind === "remote-lazy";
@@ -1767,7 +2699,12 @@ self.onmessage = function (e) {
   }
 
   function openSource() {
-    if (!dsSelected || !datasetInfo(dsSelected)) dsSelected = state.dataset;
+    // state.dataset itself can be an off-catalog key (a #url= / hand-pasted
+    // remote); with the strict lookup that must fall back to the default
+    // catalog entry, not render an empty detail pane.
+    if (!dsSelected || !datasetInfo(dsSelected)) {
+      dsSelected = datasetInfo(state.dataset) ? state.dataset : CATALOG.defaultDataset;
+    }
     $("dsSearch").value = "";
     $("dsSearch").oninput = renderDsSidebar;
     renderDsSidebar();
@@ -1779,19 +2716,266 @@ self.onmessage = function (e) {
     $("sourceModal").classList.add("hidden");
   }
 
+  // --- the Load pre-modal (the "Load" button beside Build) ------------------
+  // One place offering every way in: drop/pick a local .rete (reuses
+  // loadFromFile — the same path as the catalog's advanced drop zone), paste a
+  // URL (normalized + connected lazily, exactly like a #url= deep link), or
+  // hand off to the existing catalog browser (openSource — not a reimplementation).
+  function openLoadModal() {
+    const err = $("loadUrlErr"); if (err) err.textContent = "";
+    $("loadModal").classList.remove("hidden");
+    closeSource(); // never two source modals stacked
+  }
+  function closeLoadModal() {
+    const m = $("loadModal"); if (m) m.classList.add("hidden");
+  }
+  function connectFromLoadModal() {
+    const url = normalizeReteUrl($("loadUrl").value);
+    if (!url) {
+      $("loadUrlErr").textContent = "That address can't be opened as a .rete — give an http(s) URL, " +
+        "for example https://example.org/graph.rete";
+      return;
+    }
+    // Same behavior as a #url= boot / the advanced Connect: show the address
+    // that was actually opened, then enter lazy remote mode (enterRemote
+    // derives the off-catalog key from the URL itself).
+    $("remoteUrl").value = url;
+    $("loadUrl").value = url;
+    closeLoadModal();
+    enterRemote(url, null);
+  }
+  // The URL route's OTHER mode: download the whole file once, keep it in this
+  // browser, query it offline from then on. The size check + consent happen in
+  // loadCachedUrl (the same door the #url=…&load=cache deep link goes
+  // through), so the modal only validates the address and hands off.
+  function cacheFromLoadModal() {
+    const url = normalizeReteUrl($("loadUrl").value);
+    if (!url) {
+      $("loadUrlErr").textContent = "That address can't be opened as a .rete — give an http(s) URL, " +
+        "for example https://example.org/graph.rete";
+      return;
+    }
+    $("remoteUrl").value = url;
+    $("loadUrl").value = url;
+    closeLoadModal();
+    loadCachedUrl(url);
+  }
+
   async function loadFromFile(file) {
     if (!file) return;
+    // Big local file: open it LAZILY instead of reading it whole. Same reader
+    // the remote path uses, with Blob.slice() where the HTTP Range would be —
+    // so a query fetches the header, the directories and the tiles it touches,
+    // and nothing else. See registerLocalFile / localLazyAboveBytes.
+    if (file.size > localLazyAboveBytes()) { enterLocalFile(file); return; }
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
+      // An off-catalog key derived from the FILE, exactly as enterRemote does
+      // for a pasted URL: every strict per-dataset lookup (examples, SHACL,
+      // reach, provenance) must resolve to THIS file — before this, the key of
+      // whatever was open previously leaked its example library over a local
+      // file, and the card-example dedupe would have compared against it too.
+      state.dataset = String(file.name || "local").replace(/\.rete$/i, "") || "local";
+      state.selectedExample = -1;
       loadBytes(buf, "file");
+      renderExamples();
       setStatus(`${file.name} | ${formatBytes(buf.byteLength)} | custom file`);
     } catch (e) {
       showError("out", "File load failed: " + e.message);
     }
   }
 
+  // Open a local file the LAZY way: register the blob, then hand its
+  // `rete-local:` URL to enterRemote — the same connect path a remote .rete
+  // takes, because from the reader's side it IS the same path, only the bottom
+  // transport differs. Nothing is read here; the first range read happens when
+  // the worker opens the file.
+  function enterLocalFile(file) {
+    const url = registerLocalFile(file);
+    state.dataset = String(file.name || "local").replace(/\.rete$/i, "") || "local";
+    state.selectedExample = -1;
+    enterRemote(url, null, file);
+    setStatus(`${file.name} | ${formatBytes(file.size)} | local file, read lazily`);
+  }
+
+  // The examples panel is catalog-driven (CATALOG.examples[key]) — which used
+  // to mean an off-catalog file showed NO examples even when its own Dataset
+  // Card ships some. Now the loaded file's card queries supplement the curated
+  // catalog list: catalog examples first (hand-written, generally better), then
+  // whichever card queries are genuinely different, labelled as the card's.
+  // They stay listed even when they return 0 rows — a query that returns
+  // nothing is still a starting point someone can edit.
   function examplesForDataset() {
-    return CATALOG.examples[state.dataset] || [];
+    const curated = CATALOG.examples[state.dataset] || [];
+    const card = state.cardExamples;
+    if (!card || card.key !== state.dataset || !card.list.length) return curated;
+    return curated.concat(card.list);
+  }
+
+  // ── the file's own card queries as examples ────────────────────────────────
+  // "Different" is a judgement call, not a string compare: the same question is
+  // routinely written with different prefixes, whitespace, variable names and
+  // LIMITs. The fingerprint normalizes exactly those — comments stripped,
+  // PREFIX/BASE declarations folded in (prefixed names expand to full IRIs, so
+  // `hf:x` and a different label for the same namespace compare equal),
+  // variables renamed positionally, LIMIT/OFFSET numbers blanked, case and
+  // whitespace normalized outside strings/IRIs. Anything else — a different
+  // pattern, filter, aggregate or graph — keeps the query, on the principle
+  // that showing a near-duplicate beats hiding something genuinely different.
+  function sparqlFingerprint(q) {
+    const src = String(q || "");
+    // One scanner pass: strip comments, protect IRIs and string literals.
+    // tokens: {t:"code"|"iri"|"str", v}
+    const toks = [];
+    let i = 0, code = "";
+    const pushCode = () => { if (code) { toks.push({ t: "code", v: code }); code = ""; } };
+    while (i < src.length) {
+      const c = src[i];
+      if (c === "#") { // comment to EOL (never inside <…> or quotes — handled below)
+        while (i < src.length && src[i] !== "\n") i++;
+        code += " ";
+        continue;
+      }
+      if (c === "<") { // IRI ref — runs to the closing >
+        const j = src.indexOf(">", i + 1);
+        if (j > i) { pushCode(); toks.push({ t: "iri", v: src.slice(i, j + 1) }); i = j + 1; continue; }
+      }
+      if (c === '"' || c === "'") { // string literal (long or short form)
+        const long3 = src.slice(i, i + 3);
+        const delim = (long3 === '"""' || long3 === "'''") ? long3 : c;
+        let j = i + delim.length;
+        while (j < src.length) {
+          if (src[j] === "\\") { j += 2; continue; }
+          if (src.startsWith(delim, j)) break;
+          j++;
+        }
+        pushCode(); toks.push({ t: "str", v: src.slice(i, j + delim.length) });
+        i = j + delim.length; continue;
+      }
+      code += c; i++;
+    }
+    pushCode();
+    // Collect PREFIX/BASE declarations (they may be anywhere per the grammar,
+    // but in practice lead the query): a `PREFIX pfx: <iri>` is a code token
+    // ending in "PREFIX pfx:" followed by an iri token.
+    const prefixes = {};
+    for (let k = 0; k + 1 < toks.length; k++) {
+      if (toks[k].t !== "code" || toks[k + 1].t !== "iri") continue;
+      const m = /(?:^|\s)PREFIX\s+([A-Za-z][\w-]*)?:\s*$/i.exec(toks[k].v);
+      if (m) {
+        prefixes[m[1] || ""] = toks[k + 1].v.slice(1, -1);
+        toks[k].v = toks[k].v.replace(/(?:^|\s)PREFIX\s+(?:[A-Za-z][\w-]*)?:\s*$/i, " ");
+        toks[k + 1].v = ""; // the declaration itself is not part of the shape
+      } else if (/(?:^|\s)BASE\s*$/i.test(toks[k].v)) {
+        toks[k].v = toks[k].v.replace(/(?:^|\s)BASE\s*$/i, " ");
+        toks[k + 1].v = "";
+      }
+    }
+    // Rebuild: expand prefixed names, canonicalize variables, blank
+    // LIMIT/OFFSET counts, uppercase the CODE (keyword case), collapse
+    // whitespace. IRIs and string literals keep their exact bytes — uppercasing
+    // them would merge queries about genuinely different resources/values, and
+    // the rule here is: hide only what is provably the same.
+    const varMap = new Map();
+    const canonVar = (name) => {
+      if (!varMap.has(name)) varMap.set(name, "?v" + varMap.size);
+      return varMap.get(name);
+    };
+    const protectedVals = [];
+    const protect = (v) => { protectedVals.push(v); return "\u0000" + (protectedVals.length - 1) + "\u0000"; };
+    let out = "";
+    for (const tk of toks) {
+      if (tk.t === "iri" || tk.t === "str") { if (tk.v) out += protect(tk.v); continue; }
+      let s = tk.v;
+      s = s.replace(/\b([A-Za-z][\w-]*):([A-Za-z_][\w-]*)?/g, (all, pfx, local) => {
+        const base = prefixes[pfx];
+        return base === undefined ? all : protect("<" + base + (local || "") + ">");
+      });
+      s = s.replace(/[?$]([A-Za-z_]\w*)/g, (_all, name) => canonVar(name));
+      s = s.replace(/\b(LIMIT|OFFSET)\s+\d+/gi, "$1 N");
+      out += s.toUpperCase();
+    }
+    out = out.replace(/\s+/g, " ").replace(/\s*([{}()\[\];,])\s*/g, "$1").replace(/\s+\./g, ".")
+      // A dot-terminated final triple equals its undotted form: `?o . }` = `?o }`.
+      .replace(/\.\}/g, "}").trim();
+    return out.replace(/\u0000(\d+)\u0000/g, (_all, n) => protectedVals[Number(n)]);
+  }
+
+  // Map ONE card onto the examples-panel shape. Two card shapes participate:
+  // `queries` (auto-derived objects with a title/question) and `example_queries`
+  // (plain curated SPARQL strings, no title — labelled by position rather than
+  // inventing a title that misrepresents them). Deduplicated against the
+  // curated catalog examples AND within the card itself.
+  function cardQueriesToExamples(card, curated) {
+    if (!card || typeof card !== "object") return [];
+    const seen = new Set((curated || []).map((ex) => sparqlFingerprint(ex.q)));
+    const list = [];
+    const add = (label, tip, q) => {
+      const fp = sparqlFingerprint(q);
+      if (!fp || seen.has(fp)) return;
+      seen.add(fp);
+      list.push({ family: "Card", label, tip, q, fromCard: true });
+    };
+    if (Array.isArray(card.queries)) {
+      card.queries.forEach((cq, i) => {
+        if (!cq || typeof cq.sparql !== "string" || !cq.sparql.trim()) return;
+        add(String(cq.title || cq.id || "Card query " + (i + 1)),
+          (cq.question ? String(cq.question) + " " : "") + "— shipped inside this file's Dataset Card." +
+          (cq.tier ? " (" + String(cq.tier) + ")" : ""),
+          cq.sparql);
+      });
+    }
+    if (Array.isArray(card.example_queries)) {
+      card.example_queries.forEach((qs, i) => {
+        if (typeof qs !== "string" || !qs.trim()) return;
+        add("Card query " + (i + 1),
+          "Curated SPARQL shipped inside this file's Dataset Card (it carries no title).", qs);
+      });
+    }
+    return list;
+  }
+
+  // Read the LOADED file's card and surface its queries in the examples panel.
+  // Resident graphs answer synchronously from memory; a remote file costs two
+  // small cached range reads through the worker. A generation counter guards
+  // the async path: switching datasets mid-read must never attach the old
+  // file's queries to the new key.
+  let cardExamplesGen = 0;
+  function refreshCardExamples() {
+    const gen = ++cardExamplesGen;
+    state.cardExamples = null;
+    const key = state.dataset;
+    const commit = (card) => {
+      if (gen !== cardExamplesGen || state.dataset !== key || !card) return;
+      const list = cardQueriesToExamples(card, CATALOG.examples[key] || []);
+      if (!list.length) return;
+      state.cardExamples = { key, list };
+      renderExamples();
+      // The connect note may have claimed "No example library for a custom
+      // URL" before the card was read — replace that claim now it is wrong.
+      const stale = document.querySelector("#out .note[data-no-library]");
+      if (stale) {
+        stale.removeAttribute("data-no-library");
+        stale.innerHTML = `Connected to a remote .rete, queried lazily — each query fetches only the ` +
+          `dictionary chunks and index tiles it touches. This file's own Dataset Card ships ` +
+          `<b>${list.length}</b> example quer${list.length === 1 ? "y" : "ies"} — pick one from the ` +
+          `library, or write your own. Other tabs need a graph loaded into memory.`;
+      }
+    };
+    if (state.activeSource === "remote" && state.remote) {
+      remoteCardText(state.remote.url).then((text) => {
+        let card = null;
+        try { card = text ? JSON.parse(text) : null; } catch (_e) { /* not JSON — nothing to offer */ }
+        commit(card);
+      }).catch(() => { /* cardless file or worker hiccup: the panel just stays catalog-only */ });
+      return;
+    }
+    if (state.graph) {
+      try {
+        const text = state.graph.card();
+        commit(text ? JSON.parse(text) : null);
+      } catch (_e) { /* cardless or unparsable — nothing to offer */ }
+    }
   }
 
   function filteredExamples() {
@@ -1806,7 +2990,10 @@ self.onmessage = function (e) {
   }
 
   function renderFamilyFilters() {
-    const families = ["All"].concat(CATALOG.families);
+    // "Card" only exists as a family when the loaded file's card contributed
+    // examples — a filter chip for an empty family would be noise.
+    const hasCard = examplesForDataset().some((ex) => ex.fromCard);
+    const families = ["All"].concat(CATALOG.families).concat(hasCard ? ["Card"] : []);
     $("familyFilters").innerHTML = families.map((family) =>
       `<button type="button" data-family="${esc(family)}" class="${family === state.family ? "active" : ""}">${esc(family)}</button>`
     ).join("");
@@ -1898,7 +3085,18 @@ self.onmessage = function (e) {
       $("examples").innerHTML = `<p class="microcopy">No matching examples for this dataset.</p>`;
       return;
     }
-    $("examples").innerHTML = items.map(({ ex, index }) =>
+    // The file's own card queries render in the SAME list shape, but never as
+    // an undifferentiated pile: a labelled separator opens the card block, and
+    // each row carries the "Card" family. Provenance stays readable — curated
+    // catalog examples first, the file's generated/curated card queries after.
+    const firstCardAt = items.findIndex(({ ex }) => ex.fromCard);
+    const cardCount = items.filter(({ ex }) => ex.fromCard).length;
+    $("examples").innerHTML = items.map(({ ex, index }, i) =>
+      (i === firstCardAt
+        ? `<div class="ex-card-sep">🏷 From this file's Dataset Card <span class="microcopy">— ${cardCount} ` +
+          `quer${cardCount === 1 ? "y" : "ies"} the .rete carries in its own metadata, written at build time. ` +
+          `Shown when they differ from the curated library; kept even when they return 0 rows (still a starting point to edit).</span></div>`
+        : "") +
       `<article class="example-card" data-family="${esc(ex.family)}">` +
         `<div class="ex-head">` +
           `<button type="button" class="example-button ${index === state.selectedExample ? "active" : ""}" data-example="${index}">` +
@@ -1915,12 +3113,18 @@ self.onmessage = function (e) {
     });
     // Copy a share link for any example: the generated preview page when the
     // dataset has one (so the link unfurls with the question and its answer —
-    // see shareableUrl), else the short index-based deep link.
+    // see shareableUrl), else the short index-based deep link. A CARD example
+    // has neither a preview page nor a stable index (the card loads async and
+    // its position depends on dedupe against the catalog), so its link carries
+    // the query text itself — and the file's address when one is open.
     $$("#examples [data-copy]").forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
         const i = Number(btn.dataset.copy);
-        const url = hasSharePage(state.dataset)
+        const exi = examplesForDataset()[i];
+        const url = exi && exi.fromCard
+          ? cardExampleLink(exi)
+          : hasSharePage(state.dataset)
           ? sharePageUrl(`q/${state.dataset}-${i}.html`)
           : location.origin + location.pathname + "#dataset=" +
             encodeURIComponent(state.dataset) + "&ex=" + i;
@@ -1932,6 +3136,21 @@ self.onmessage = function (e) {
         });
       };
     });
+  }
+
+  // A shareable deep link for a card-carried example: the full query text (no
+  // stable index exists — see the copy handler), plus #url= when an off-catalog
+  // remote is open so the link reopens the same file.
+  function cardExampleLink(ex) {
+    const params = new URLSearchParams();
+    // A `rete-local:` address names a blob in THIS tab; putting it in a link
+    // would promise a file the recipient (or a reload) cannot possibly open.
+    const offCatalog = state.activeSource === "remote" && state.remote && !state.remote.local &&
+      state.remote.url !== remoteUrlFor(state.dataset);
+    if (offCatalog) params.set("url", state.remote.url);
+    else params.set("dataset", state.dataset);
+    params.set("q", ex.q);
+    return location.origin + location.pathname + "#" + params.toString();
   }
 
   // Clear the previous query's results so a freshly-picked example doesn't show
@@ -1971,10 +3190,7 @@ self.onmessage = function (e) {
           state.fedSources.push({ id: "f" + (++fedSeq), kind: "endpoint", label: k.label || shortUrlLabel(k.endpoint), endpoint: k.endpoint });
           return;
         }
-        if (k === state.dataset || !datasetInfo(k)) return;
-        state.fedSources.push(isEmbedded(k)
-          ? { id: "f" + (++fedSeq), kind: "memory", label: dsShortLabel(k), key: k }
-          : { id: "f" + (++fedSeq), kind: "remote", label: dsShortLabel(k), url: remoteUrlFor(k), key: k });
+        addCatalogFedSource(k);
       });
       renderFedBar();
     }
@@ -3328,7 +4544,7 @@ self.onmessage = function (e) {
   // it alongside for comparison.
   function setExploreNativeMeta(rows, ms, ent, res) {
     let bytes = 0, reqs = 0, remote = false;
-    [ent, res].forEach((r) => { if (r && r.remote) { remote = true; bytes += r.remote.bytes || 0; reqs += r.remote.requests || 0; } });
+    [ent, res].forEach((r) => { if (r && r.remote) { remote = true; bytes += (r.remote.bytes || 0) + (r.remote.openBytes || 0); reqs += (r.remote.requests || 0) + (r.remote.openRequests || 0); } });
     state.exploreNativeMeta = `rete: ${rows} rows · ${ms.toFixed(0)} ms` + (remote ? ` · ${formatBytes(bytes)} · ${reqs} req` : "");
     if (state.exploreBackend === "native") setBackendMeta(state.exploreNativeMeta);
   }
@@ -3966,15 +5182,25 @@ self.onmessage = function (e) {
   // Refreshes the phone's sticky Run bar (set in wireEvents; null on desktop).
   let mrbUpdate = null;
 
-  function setView(view) {
-    // On a phone, a default "table" view becomes Cards — the table is the one
-    // output that fights a small screen, and Cards renders the same rows
-    // stacked. An example that declares any other view (map / graph / time / …)
-    // keeps it, and the user can always switch back to Table by hand.
+  // What a REQUESTED output type actually resolves to on this device. On a phone
+  // a default "table" becomes Cards — the table is the one output that fights a
+  // small screen, and Cards renders the same rows stacked. An example that
+  // declares any other view (map / graph / time / …) keeps it, and the user can
+  // always switch back to Table by hand.
+  //
+  // Split out of setView so updateHash() can ask "what would a fresh page land on
+  // here?" and stay silent when the answer already matches. Without that, every
+  // link shared from a phone would carry view=cards and push the phone's
+  // substitution onto a desktop reader who never asked for it.
+  function resolvedView(view) {
     if (view === "table" && window.matchMedia && window.matchMedia("(max-width: 560px)").matches) {
-      view = "cards";
+      return "cards";
     }
-    $("fmt").value = view;
+    return view;
+  }
+
+  function setView(view) {
+    $("fmt").value = resolvedView(view);
   }
 
   // Output types that are all renderings of the SAME SELECT bindings (the engine
@@ -3995,6 +5221,12 @@ self.onmessage = function (e) {
     return /\b(CONSTRUCT|DESCRIBE)\b/i.test(String(q || "").split(/\bWHERE\b/i)[0]);
   }
   function onOutputTypeChange() {
+    // Every toolbar control that the deep link now carries re-stamps the hash as
+    // it changes, exactly as picking a dataset / example / tab already did. The
+    // Share button re-stamps too, but plenty of people copy straight out of the
+    // ADDRESS BAR — and a stale address bar is the same defect as a stale share
+    // link, just with no button to blame.
+    updateHash();
     const fmt = $("fmt").value;
     // TTL / JSON-LD serialize an RDF graph — only CONSTRUCT/DESCRIBE makes one.
     // Say so up front (and don't run a query that can't serialize) when the
@@ -4020,7 +5252,10 @@ self.onmessage = function (e) {
     const sameStrategy = !c ? false : c.remote ? true : c.strategy === $("strategy").value;
     const reusable = !!c && c.rowShaped && ROW_VIEWS.has(fmt) &&
       c.q === $("q").value.trim() && c.remote === !!state.remote &&
-      c.dataset === state.dataset && sameStrategy;
+      c.dataset === state.dataset && sameStrategy &&
+      // ⛁ All graphs changes the DATASET a pattern matches — a result computed
+      // under the other setting must re-run, never re-render.
+      !!c.union === unionGraphsOn();
     if (!reusable) return runQuery();
     // Remote Graph has no local bytes to expand a CONSTRUCT, so the run path
     // renders it as a table — match that when re-rendering from cache.
@@ -4182,15 +5417,28 @@ self.onmessage = function (e) {
         ? `<a href="${esc(safe)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`
         : `${esc(label)} (${esc(href)})`);
     });
+    // MD_EMPHASIS (defined with the description renderers above) is the one
+    // emphasis grammar — see the comment there for the flanking rules.
     s = esc(s)
       .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+      .replace(MD_EMPHASIS, "$1<em>$2</em>");
     return s.replace(/\u0000(\d+)\u0000/g, (_m, i) => tokens[Number(i)] || "");
   }
-  function markdownBlocks(value) {
+  // A list item — indent, marker (bullet captured so ordered-vs-unordered is a
+  // group test), text — and a horizontal rule.
+  const MD_ITEM = /^(\s*)(?:([-+*])|\d+[.)])\s+(.*)$/;
+  const MD_RULE = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+  // A `text/markdown` literal, and — with `headingBase` — a Dataset Card's
+  // `description`. `headingBase` shifts every heading DOWN by that many levels:
+  // a result cell owns no document outline so it keeps 0 (`#` → <h1>), while the
+  // card modal passes 3, because its own title is an <h3> and a publisher's file
+  // must never get to emit an <h1> on someone else's page. Levels saturate at 6.
+  function markdownBlocks(value, headingBase) {
+    const base = headingBase || 0;
     const lines = String(value == null ? "" : value).replace(/\r\n?/g, "\n").split("\n");
     const out = [];
-    const startsBlock = (line) => /^\s*$|^\s*```|^\s{0,3}#{1,6}\s+|^\s*>\s?|^\s*[-+*]\s+|^\s*\d+[.)]\s+/.test(line);
+    const startsBlock = (line) => /^\s*$|^\s*```|^\s{0,3}#{1,6}\s+|^\s*>\s?|^\s*[-+*]\s+|^\s*\d+[.)]\s+/.test(line) ||
+      MD_RULE.test(line);
     let i = 0;
     while (i < lines.length) {
       const line = lines[i];
@@ -4204,23 +5452,16 @@ self.onmessage = function (e) {
         out.push(`<pre><code${cls}>${esc(code.join("\n"))}</code></pre>`);
         continue;
       }
+      // A rule has to be tested before a list: "- - -" also looks like a bullet.
+      if (MD_RULE.test(line)) { out.push("<hr>"); i++; continue; }
       const heading = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
-      if (heading) { const n = heading[1].length; out.push(`<h${n}>${markdownInline(heading[2])}</h${n}>`); i++; continue; }
-      if (/^\s*[-+*]\s+/.test(line)) {
-        const items = [];
-        while (i < lines.length) {
-          const m = /^\s*[-+*]\s+(.+)$/.exec(lines[i]); if (!m) break;
-          items.push(`<li>${markdownInline(m[1])}</li>`); i++;
-        }
-        out.push(`<ul>${items.join("")}</ul>`); continue;
+      if (heading) {
+        const n = Math.min(6, heading[1].length + base);
+        out.push(`<h${n}>${markdownInline(heading[2])}</h${n}>`); i++; continue;
       }
-      if (/^\s*\d+[.)]\s+/.test(line)) {
-        const items = [];
-        while (i < lines.length) {
-          const m = /^\s*\d+[.)]\s+(.+)$/.exec(lines[i]); if (!m) break;
-          items.push(`<li>${markdownInline(m[1])}</li>`); i++;
-        }
-        out.push(`<ol>${items.join("")}</ol>`); continue;
+      if (MD_ITEM.test(line)) {
+        const list = markdownList(lines, i);
+        out.push(list.html); i = list.next; continue;
       }
       if (/^\s*>\s?/.test(line)) {
         const quote = [];
@@ -4228,13 +5469,60 @@ self.onmessage = function (e) {
           const m = /^\s*>\s?(.*)$/.exec(lines[i]); if (!m) break;
           quote.push(m[1]); i++;
         }
-        out.push(`<blockquote>${markdownInline(quote.join(" "))}</blockquote>`); continue;
+        // The quote's own body is markdown too, so a quoted list or heading
+        // reads as one — and it costs a recursive call, not a second grammar.
+        out.push(`<blockquote>${markdownBlocks(quote.join("\n"), base)}</blockquote>`); continue;
       }
       const para = [line.trim()]; i++;
       while (i < lines.length && !startsBlock(lines[i])) { para.push(lines[i].trim()); i++; }
       out.push(`<p>${markdownInline(para.join(" "))}</p>`);
     }
     return out.join("");
+  }
+  // One run of list items, nested by indentation. The run is collected first and
+  // rendered second, because nesting is a property of the run (an item's
+  // children are the deeper-indented items that follow it), not of any one line.
+  function markdownList(lines, start) {
+    const items = [];
+    let i = start;
+    while (i < lines.length) {
+      const m = MD_ITEM.exec(lines[i]);
+      if (m && !MD_RULE.test(lines[i])) {
+        items.push({ indent: m[1].replace(/\t/g, "    ").length, ordered: !m[2], text: [m[3]] });
+        i++; continue;
+      }
+      // A blank line stays inside the list as long as an item follows it.
+      if (!lines[i].trim() && MD_ITEM.test(lines[i + 1] || "")) { i++; continue; }
+      // An indented, non-item line is a wrapped bullet — it continues the item
+      // above rather than ending the list.
+      if (items.length && /^\s+\S/.test(lines[i]) && !/^\s*(?:```|>)/.test(lines[i])) {
+        items[items.length - 1].text.push(lines[i].trim()); i++; continue;
+      }
+      break;
+    }
+    return { html: markdownListHtml(items, 0, items.length, items[0].indent), next: i };
+  }
+  function markdownListHtml(items, from, to, indent) {
+    let out = "", i = from;
+    while (i < to) {
+      // One list runs while the marker KIND holds. Switching between bullets and
+      // numbers starts a SIBLING list, because <ul> and <ol> mean different
+      // things — a numbered list that followed a bulleted one used to be
+      // swallowed into it and rendered as more bullets. (Changing the bullet
+      // CHARACTER is not a switch: it is the same list to a reader.)
+      const ordered = items[i].ordered;
+      const tag = ordered ? "ol" : "ul";
+      out += `<${tag}>`;
+      while (i < to && items[i].ordered === ordered) {
+        let j = i + 1;
+        while (j < to && items[j].indent > indent) j++;
+        const sub = j > i + 1 ? markdownListHtml(items, i + 1, j, items[i + 1].indent) : "";
+        out += `<li>${markdownInline(items[i].text.join(" "))}${sub}</li>`;
+        i = j;
+      }
+      out += `</${tag}>`;
+    }
+    return out;
   }
   function markdownCell(t, raw) {
     const lang = t.lang ? ` <span class="t-lang">@${esc(t.lang)}</span>` : "";
@@ -6417,25 +7705,98 @@ self.onmessage = function (e) {
     btn.textContent = `⊞ ${n} request${n === 1 ? "" : "s"}`;
   }
 
+  // One fetch-log row's human kind. "multi" is ONE HTTP request covering n
+  // ranges (RFC 7233 multipart); "par" is n parallel requests via the fetch-
+  // worker pool; "batch" is one Asyncify suspend firing n concurrent fetches;
+  // anything else is a single range read.
+  function reqLogKind(e) {
+    if (e.k === "multi") return `multipart ×${e.n}`;
+    if (e.k === "par") return `parallel ×${e.n}`;
+    if (e.k === "batch") return `concurrent ×${e.n}`;
+    return "range";
+  }
+  function reqLogTotals(log) {
+    return {
+      bytes: log.reduce((a, e) => a + (e.b || 0), 0),
+      ranges: log.reduce((a, e) => a + (e.n || 1), 0),
+      // "multi" coalesces n ranges into ONE request; every other event is one
+      // request per range. This used to count log rows, understating bursts.
+      httpReqs: log.reduce((a, e) => a + (e.k === "multi" ? 1 : (e.n || 1)), 0),
+      last: log.length ? log[log.length - 1].t : 0,
+    };
+  }
+  // Strip a URL's query string / fragment before it enters a shareable report:
+  // a signed link (R2 presign, SAS token) carries its credential exactly there.
+  function redactUrl(u) {
+    const s = String(u || "");
+    const cut = s.search(/[?#]/);
+    return cut < 0 ? { url: s, redacted: false } : { url: s.slice(0, cut), redacted: true };
+  }
+  // The paste-able debug report behind the modal's Copy button: enough on its
+  // own to diagnose a remote read — file, size, engine variant, build, load
+  // mode, the query, the totals, and the full per-fetch table WITH offsets.
+  function reqLogReport(log) {
+    const t = reqLogTotals(log);
+    const L = ["rete playground — remote fetch log"];
+    const push = (k, v) => { try { if (v !== undefined && v !== null && v !== "") L.push(k + ": " + v); } catch (_e) { /* ignore */ } };
+    push("build", window.RETE_BUILD);
+    try { L.push("time: " + new Date().toISOString()); } catch (_e) { /* ignore */ }
+    if (state.remote && state.remote.url) {
+      const r = redactUrl(state.remote.url);
+      L.push("file: " + r.url + (r.redacted ? " [query string/fragment redacted — it can carry signed tokens]" : ""));
+    }
+    try {
+      const rem = (state.lastResult && state.lastResult.res && state.lastResult.res.remote) || {};
+      if (rem.fileLength) push("file-size", formatBytes(rem.fileLength));
+    } catch (_e) { /* ignore */ }
+    L.push("dataset: " + (state.dataset || "?") + " · load: " + (state.activeSource || "?"));
+    push("engine", state.asyncReadsOn ? "asyncify (concurrent reads)" : "sync XHR (reliable reader)");
+    push("range-cache", !!state.rangeCacheOn);
+    try { push("reason (OWL QL)", !!($("owlReason") && $("owlReason").checked)); } catch (_e) { /* ignore */ }
+    try { push("union default graph (⛁ All graphs)", unionGraphsOn()); } catch (_e) { /* ignore */ }
+    const q = (state.lastResult && state.lastResult.remote && state.lastResult.q) || ($("q") && $("q").value) || "";
+    if (q.trim()) L.push("query:\n  " + q.trim().replace(/\n/g, "\n  "));
+    L.push(`totals: ${log.length} fetch event(s) · ${t.httpReqs} HTTP request(s) · ${t.ranges} byte-range(s) · ` +
+      `${formatBytes(t.bytes)} fetched · last fetch at +${t.last} ms`);
+    L.push("fetches (# · kind · bytes · at · byte ranges start-end):");
+    log.forEach((e, i) => {
+      const rs = e.r || [];
+      const extra = Math.max(0, (e.n || rs.length) - rs.length);
+      L.push(`  ${i + 1} · ${reqLogKind(e)} · ${formatBytes(e.b || 0)} · +${e.t} ms · ` +
+        (rs.length ? rs.join(", ") + (extra > 0 ? ` … (+${extra} more)` : "") : "(offsets not recorded)"));
+    });
+    push("agent", navigator.userAgent);
+    return L.join("\n");
+  }
+
   function openReqLog() {
     const log = state.lastRemoteLog || [];
-    const totalBytes = log.reduce((a, e) => a + (e.b || 0), 0);
-    const totalRanges = log.reduce((a, e) => a + (e.k === "multi" ? (e.n || 0) : 1), 0);
-    const last = log.length ? log[log.length - 1].t : 0;
+    const t = reqLogTotals(log);
     const head = `<div class="reqlog-stat">` +
-      `<span><b>${log.length}</b> HTTP request(s)</span><span><b>${totalRanges}</b> byte-range(s)</span>` +
-      `<span><b>${formatBytes(totalBytes)}</b> fetched</span><span><b>${last} ms</b> total</span></div>`;
+      `<span><b>${t.httpReqs}</b> HTTP request(s)</span><span><b>${t.ranges}</b> byte-range(s)</span>` +
+      `<span><b>${formatBytes(t.bytes)}</b> fetched</span><span><b>${t.last} ms</b> total</span></div>`;
     const rows = log.map((e, i) => {
-      const kind = e.k === "multi" ? `multipart ×${e.n}` : "range";
-      const rs = e.k === "multi" ? (e.r || []) : [];
-      const ranges = rs.length ? esc(rs.slice(0, 6).join(", ") + (rs.length > 6 ? ` … (+${rs.length - 6})` : "")) : "—";
-      return `<tr><td class="num">${i + 1}</td><td>${kind}</td><td class="num">${formatBytes(e.b || 0)}</td>` +
+      const rs = e.r || [];
+      const shown = rs.slice(0, 6);
+      const hidden = Math.max(0, (e.n || rs.length) - shown.length);
+      const ranges = shown.length ? esc(shown.join(", ") + (hidden > 0 ? ` … (+${hidden})` : "")) : "—";
+      return `<tr><td class="num">${i + 1}</td><td>${reqLogKind(e)}</td><td class="num">${formatBytes(e.b || 0)}</td>` +
         `<td class="num">${e.t} ms</td><td class="mono">${ranges}</td></tr>`;
     }).join("");
+    // The copy affordance is the SAME one the error box uses (.err-copy inside
+    // .err-tech — the shared delegated handler copies, flashes "Copied ✓", and
+    // on a blocked clipboard selects the text and says so), so the fallback
+    // behaviour is inherited, not re-invented.
+    const copyBlock = log.length
+      ? `<details class="err-tech" open><summary>🔎 Debug report — tap Copy, paste into an issue ` +
+        `<button class="err-copy" type="button">📋 Copy log</button></summary>` +
+        `<pre class="err-tech-body">${esc(reqLogReport(log))}</pre></details>`
+      : "";
     $("reqLogBody").innerHTML = head +
       `<div class="tbl"><table><thead><tr><th class="num">#</th><th>kind</th><th class="num">bytes</th>` +
       `<th class="num">at</th><th>byte ranges (start-end)</th></tr></thead>` +
-      `<tbody>${rows || `<tr><td colspan="5">No requests logged.</td></tr>`}</tbody></table></div>`;
+      `<tbody>${rows || `<tr><td colspan="5">No requests logged.</td></tr>`}</tbody></table></div>` +
+      copyBlock;
     $("reqModal").classList.remove("hidden");
   }
 
@@ -6448,6 +7809,19 @@ self.onmessage = function (e) {
   // SPARQL endpoint via fetch. No source is downloaded wholesale.
   let fedSeq = 0;
   function fedActive() { return state.fedSources.length > 0 || shardSources().length > 0; }
+
+  // Add a CATALOG dataset as a federation partner: embedded (or already cached)
+  // → queried in memory, otherwise range-read lazily. Shared by an example's
+  // `fed:` declaration and by the #fed= deep-link restore, so a link and the
+  // example it came from produce byte-identical sources instead of two
+  // near-copies that can drift apart. Returns whether the key resolved.
+  function addCatalogFedSource(key) {
+    if (!key || key === state.dataset || !datasetInfo(key)) return false;
+    state.fedSources.push(isEmbedded(key)
+      ? { id: "f" + (++fedSeq), kind: "memory", label: dsShortLabel(key), key }
+      : { id: "f" + (++fedSeq), kind: "remote", label: dsShortLabel(key), url: remoteUrlFor(key), key });
+    return true;
+  }
 
   // A SHARDED dataset (catalog `shards: [url0, url1, …]`) is one logical graph split
   // across independent .rete files (too big to build as one). shards[0] is the primary
@@ -6468,7 +7842,7 @@ self.onmessage = function (e) {
   // The current dataset is always source #0, resolved at query time to whatever
   // it actually is — a lazy remote URL or the in-memory Graph handle.
   function selfSource() {
-    const name = dsShortLabel(state.dataset) + " · this dataset";
+    const name = currentDatasetLabel() + " · this dataset";
     return state.remote
       ? { id: "self", kind: "remote", label: name, url: state.remote.url, self: true }
       : { id: "self", kind: "memory", label: name, self: true };
@@ -6536,8 +7910,12 @@ self.onmessage = function (e) {
     if (src.kind === "remote") {
       return remoteSparql(src.url, q, "table").then((out) => {
         const r = JSON.parse(out.json), rem = r.remote || {};
+        // openBytes/openRequests: the session open this source's first query
+        // triggered — physical traffic like any other, so the cost table counts it.
         return { kind: r.kind || kind, vars: r.vars || [], rows: r.rows || [],
-          boolean: r.boolean, triples: r.triples || [], bytes: rem.bytes || 0, requests: rem.requests || 0 };
+          boolean: r.boolean, triples: r.triples || [],
+          bytes: (rem.bytes || 0) + (rem.openBytes || 0),
+          requests: (rem.requests || 0) + (rem.openRequests || 0) };
       });
     }
     return new Promise((resolve) => {
@@ -6767,7 +8145,7 @@ self.onmessage = function (e) {
       `<table><tbody>${rows}</tbody></table></div>`;
     $("out").innerHTML = banner + $("out").innerHTML;
     state.lastResult = { res: merged, rowShaped: true, q, strategy: "federated", remote: false, dataset: state.dataset, federated: true, fedBannerHtml: banner };
-    $("qmeta").textContent = `${summary} · cross-source join · ${dt.toFixed(0)} ms`;
+    $("qmeta").textContent = `${summary} · cross-source join · ${dt.toFixed(0)} ms${unionGraphsOn() ? " · ⛁ All graphs ignored (federated runs use standard semantics)" : ""}`;
     updateResultVisibility();
   }
 
@@ -6837,7 +8215,7 @@ self.onmessage = function (e) {
       const totalBytes = oks.reduce((a, s) => a + (s.r.bytes || 0), 0);
       state.lastResult = { res: merged, rowShaped: true, q, strategy: "federated",
         remote: false, dataset: state.dataset, federated: true, fedBannerHtml: banner };
-      $("qmeta").textContent = `${summary} · federated ${sources.length} source(s) · ${formatBytes(totalBytes)} ranged · ${dt.toFixed(0)} ms`;
+      $("qmeta").textContent = `${summary} · federated ${sources.length} source(s) · ${formatBytes(totalBytes)} ranged · ${dt.toFixed(0)} ms${unionGraphsOn() ? " · ⛁ All graphs ignored (federated runs use standard semantics)" : ""}`;
       saveHistory({ query: q, format: fmt, strategy: "federated",
         dataset: "(federated ×" + sources.length + ")", ts: Date.now(), resultSummary: summary });
     });
@@ -6859,7 +8237,7 @@ self.onmessage = function (e) {
       if (runb && runb.textContent !== "Cancel") runb.textContent = "Run on endpoint";
       return;
     }
-    const self = `<span class="fed-chip fed-self" title="The dataset selected above"><span class="fed-chip-name">${esc(dsShortLabel(state.dataset))}</span>` +
+    const self = `<span class="fed-chip fed-self" title="The dataset selected above"><span class="fed-chip-name">${esc(currentDatasetLabel())}</span>` +
       `<span class="fed-chip-kind">${state.remote ? "lazy" : "in-memory"}</span></span>`;
     const extra = state.fedSources.map((s) =>
       `<span class="fed-chip"><span class="fed-chip-name" title="${esc(s.label)}">${esc(s.label)}</span>` +
@@ -6970,12 +8348,13 @@ self.onmessage = function (e) {
     const dup = state.fedSources.some((s) =>
       (src.url && s.url === src.url) || (src.endpoint && s.endpoint === src.endpoint) ||
       (src.key && s.key === src.key && s.kind === src.kind));
-    if (!dup) { state.fedSources.push(src); renderFedBar(); }
+    if (!dup) { state.fedSources.push(src); renderFedBar(); updateHash(); }
     closeFedPop();
   }
   function removeFedSource(id) {
     state.fedSources = state.fedSources.filter((s) => s.id !== id);
     renderFedBar();
+    updateHash();
   }
 
   // --- live-endpoint mode --------------------------------------------------
@@ -7069,6 +8448,135 @@ self.onmessage = function (e) {
     }
   }
 
+  // --- ⛁ All graphs: the opt-in union-default-graph toggle -------------------
+  // SPARQL says a pattern outside GRAPH matches the DEFAULT graph, and the
+  // engine keeps exactly that (the W3C conformance suite runs on it). Virtuoso,
+  // GraphDB and Jena TDB all offer a "union default graph" mode as a store-level
+  // switch; this is the same capability with the same honesty contract as the
+  // 🧠 Reason toggle: OFF BY DEFAULT, visible while on, announced on every run
+  // it changes, and never applied implicitly. It reads as "how this file is
+  // mounted" — the dataset changes, the query text never does.
+  function unionGraphsOn() {
+    const u = $("unionGraphs");
+    return !!(u && u.checked);
+  }
+
+  function announceUnionGraphs(on) {
+    const el = $("out");
+    if (!el) return;
+    el.insertAdjacentHTML("afterbegin", on
+      ? `<div class="note union-note">⛁ <b>All graphs is ON</b> — from the next run, a pattern outside ` +
+        `<code>GRAPH</code> matches the <b>union of the default graph and every named graph</b> ` +
+        `(the mode Virtuoso, GraphDB and Jena TDB offer). This is <b>not</b> standard SPARQL — the standard ` +
+        `matches only the default graph, which is why this switch is off unless you turn it on. ` +
+        `A query with its own <code>FROM</code> keeps its <code>FROM</code>; <code>GRAPH ?g</code> still works; ` +
+        `federated runs and live endpoints are unaffected.</div>`
+      : `<div class="note union-note">⛁ <b>All graphs is OFF</b> — standard SPARQL semantics again: a pattern ` +
+        `outside <code>GRAPH</code> matches only the file's default graph.</div>`);
+  }
+
+  // --- "this file has no default graph" explainer ---------------------------
+  // A correct-but-baffling case a real user hit twice and read as a broken
+  // page: SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o } answers 0 on a file whose
+  // quads ALL live in named graphs (nkod.rete: default graph empty, 2.28M quads
+  // across 31,974 graphs). SPARQL semantics make 0 the right answer — a pattern
+  // matches the DEFAULT graph unless wrapped in GRAPH — so this is information
+  // about the FILE, not an error, and it is shown only when that file fact is
+  // verifiable: the resident graph answers one first-match ASK; a remote file
+  // answers from its own Dataset Card (2 small cached range reads), or — when
+  // the file carries no card with the counts — from two first-match ASKs on the
+  // open session, so carded and cardless files explain themselves alike. The
+  // query is never rewritten or unioned on the user's behalf.
+  const emptyDefaultFactCache = new Map(); // remote url -> {empty,graphs,count} | "none"
+
+  async function emptyDefaultGraphFact() {
+    if (state.remote) {
+      const url = state.remote.url;
+      if (emptyDefaultFactCache.has(url)) {
+        const c = emptyDefaultFactCache.get(url);
+        return c === "none" ? null : c;
+      }
+      let fact = "none";
+      try {
+        const r = await remoteCall("card_url", url);
+        const card = r && r.json ? JSON.parse(r.json) : null;
+        if (card && typeof card.triple_count === "number" && typeof card.named_graph_count === "number") {
+          fact = { empty: card.triple_count === 0, graphs: card.named_graph_count > 0, count: card.named_graph_count };
+        }
+      } catch (_e) { /* cardless file or worker hiccup: fall through to the ASK probes */ }
+      // No card, or a card without the counts: ask the FILE itself. Two
+      // first-match ASKs over the already-open session — the default graph's
+      // emptiness comes off its resident tile directory and the named-graph
+      // probe stops at the first quad it finds, so both stay a few small
+      // range reads. Without this, a cardless remote file showed NOTHING here,
+      // and the one case the explainer exists for (all data in named graphs)
+      // went unexplained exactly where no card can explain it.
+      if (fact === "none") {
+        try {
+          const empty = JSON.parse((await remoteSparql(url, "ASK { ?s ?p ?o }", "table")).json);
+          if (empty && empty.boolean === false) {
+            const named = JSON.parse((await remoteSparql(url, "ASK { GRAPH ?g { ?s ?p ?o } }", "table")).json);
+            if (named && named.boolean === true) fact = { empty: true, graphs: true, count: 0 };
+          }
+        } catch (_e) { /* unreachable file: show nothing rather than guess */ }
+      }
+      emptyDefaultFactCache.set(url, fact);
+      return fact === "none" ? null : fact;
+    }
+    if (state.graph && state.namedGraphCount > 0) {
+      try {
+        const a = JSON.parse(state.graph.query("ASK { ?s ?p ?o }", "table"));
+        return { empty: !!a && a.boolean === false, graphs: true, count: state.namedGraphCount };
+      } catch (_e) { return null; }
+    }
+    return null;
+  }
+
+  // "Empty-shaped": zero rows / ASK false / zero triples — plus the motivating
+  // report's shape, a COUNT aggregate whose every cell is 0 (an aggregate over
+  // zero matches renders as ONE row, not zero). Anything else is a real answer.
+  function resultIsEmptyish(res, q) {
+    if (!res || typeof res !== "object") return false;
+    if (res.kind === "ask") return res.boolean === false;
+    if (res.kind === "select") {
+      const rows = res.rows || [];
+      if (!rows.length) return true;
+      if (!/\bCOUNT\s*\(/i.test(q)) return false;
+      return rows.every((r) => Object.keys(r).every((k) =>
+        /^"?0"?(\^\^.*)?$/.test(String(r[k] == null ? "" : r[k]).trim())));
+    }
+    if (Array.isArray(res.triples)) return res.triples.length === 0;
+    if (res.format === "ttl" || res.format === "jsonld") return !(res.text || "").trim();
+    return false;
+  }
+
+  function maybeExplainEmptyDefaultGraph(q, res) {
+    if (state.liveEndpoint || fedActive()) return;
+    // With ⛁ All graphs on, patterns DO match the named graphs — the "your
+    // default graph is empty" explanation would be flatly wrong here.
+    if (unionGraphsOn()) return;
+    // A query that already names a graph (GRAPH/FROM) or leaves the file
+    // (SERVICE) is out of scope; over-matching this guard only SUPPRESSES the
+    // note, never mis-shows it.
+    if (/\b(GRAPH|FROM|SERVICE)\b/i.test(q)) return;
+    if (!resultIsEmptyish(res, q)) return;
+    const token = state.lastResult;
+    emptyDefaultGraphFact().then((fact) => {
+      if (!fact || !fact.empty || !fact.graphs) return;
+      if (state.lastResult !== token) return; // a newer result replaced this one
+      const el = $("out");
+      if (!el || el.querySelector(".empty-default-note")) return;
+      const n = typeof fact.count === "number" && fact.count > 0
+        ? `${fact.count.toLocaleString("en-US")} named graph${fact.count === 1 ? "" : "s"}`
+        : "named graphs";
+      el.insertAdjacentHTML("beforeend",
+        `<div class="note empty-default-note">Not an error — <b>this file's default graph is empty</b>: ` +
+        `all of its data lives in ${n}, and a SPARQL pattern only matches the default graph unless it ` +
+        `names one. Wrap the pattern in <code>GRAPH ?g { … }</code> to query the named graphs — or flip ` +
+        `<b>⛁ All graphs</b> (next to Run) to query them as one union, the way Virtuoso or GraphDB would.</div>`);
+    }).catch(() => { /* the explainer must never break a rendered result */ });
+  }
+
   function runQuery() {
     const q = $("q").value.trim();
     if (!q) return showError("out", "Enter a SPARQL query.");
@@ -7076,8 +8584,17 @@ self.onmessage = function (e) {
     // OWL 2 QL reasoning: rewrite the query to include subClassOf/subPropertyOf/
     // domain/range entailments (opt-in toggle; applies to the default strategy).
     const reason = !!($("owlReason") && $("owlReason").checked);
+    // Union default graph (⛁ All graphs): mount the file as if its default
+    // graph were the union of the default graph and every named graph. Strictly
+    // opt-in — off, the engine keeps standard SPARQL semantics untouched.
+    const union = unionGraphsOn();
     // Live-endpoint mode overrides everything: one target, updates allowed.
-    if (state.liveEndpoint) { runLiveEndpoint(q, fmt); return; }
+    if (state.liveEndpoint) {
+      if (union) {
+        $("qmeta").textContent = "⛁ All graphs applies to .rete files only — this live endpoint decides its own dataset.";
+      }
+      runLiveEndpoint(q, fmt); return;
+    }
     if (isUpdateText(q)) {
       return showError("out",
         "That's a SPARQL Update — the in-browser engine is read-only. Connect a live endpoint " +
@@ -7115,11 +8632,22 @@ self.onmessage = function (e) {
       const t0 = performance.now();
       const meta = (CATALOG.datasetMeta && CATALOG.datasetMeta[state.dataset]) || {};
       const ofSize = meta.size ? " of " + meta.size : "";
-      const dsName = dsShortLabel(state.dataset);
-      let lastReq = 0, lastBytes = 0;
+      let lastReq = 0, lastBytes = 0, sessionBytes = 0;
       const showProg = () => {
         const dt = (performance.now() - t0) / 1000;
         // Technical only — no dataset title (it's already named in the header/chip).
+        // A counter frozen at "0 B fetched" reads as a failure, but on a warm
+        // session it is the CACHE WORKING: every block the query touches is
+        // already resident, and the time goes to evaluation (the ⛁ All graphs
+        // union merge recomputes for seconds with zero network). Say that —
+        // report only what is known: 0 completed fetches + what the session
+        // already holds — instead of leaving a dead zero to be read as an error.
+        if (lastReq === 0 && sessionBytes > 0 && dt > 1.5) {
+          $("qmeta").textContent = `⏳ querying · 0 new request(s) — working over ` +
+            `${formatBytes(sessionBytes)} already fetched this session` +
+            `${union ? " (⛁ all graphs: merging the union)" : ""} · ${dt.toFixed(1)}s`;
+          return;
+        }
         $("qmeta").textContent = `⏳ querying · ${lastReq} request(s) · ` +
           `${formatBytes(lastBytes)}${ofSize} fetched · ${dt.toFixed(1)}s`;
       };
@@ -7136,8 +8664,13 @@ self.onmessage = function (e) {
         runBtn.onclick = runQuery;
       };
       // Just record the latest tally; the 250 ms timer paints it — so a query
-      // firing thousands of fetches doesn't thrash the DOM.
-      remoteOnProgress = (m) => { lastReq = m.requests; lastBytes = m.bytes; };
+      // firing thousands of fetches doesn't thrash the DOM. The worker also
+      // announces a warm session's cumulative bytes up front (sessionBytes), so
+      // a zero-fetch run can say what it is running on.
+      remoteOnProgress = (m) => {
+        lastReq = m.requests; lastBytes = m.bytes;
+        if (m.sessionBytes != null) sessionBytes = m.sessionBytes;
+      };
       // TTL / JSON-LD ask the worker to serialize (a CONSTRUCT carries res.text);
       // every other view wants table rows (graph/map/time derive from them).
       const remoteFmt = (fmt === "ttl" || fmt === "jsonld") ? fmt : "table";
@@ -7154,7 +8687,7 @@ self.onmessage = function (e) {
       // The syncReader dataset opt-out is applied in runQuery (it must also
       // cover the federated path); surface its note in this run's qmeta.
       if (state.readerNote) { readerNote = state.readerNote; state.readerNote = ""; }
-      const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason);
+      const invokeRemote = () => remoteSparql(state.remote.url, q, remoteFmt, reason, union);
       invokeRemote().catch((e) => {
         const msg = String((e && e.message) || e);
         // Asyncify can also trap on particular valid query shapes in desktop
@@ -7178,19 +8711,29 @@ self.onmessage = function (e) {
         const res = JSON.parse(out.json);
         // Row-shaped unless we fetched a serialization — cache it so an Output
         // switch re-renders rather than re-runs.
-        state.lastResult = { res, rowShaped: remoteFmt === "table", q, strategy: "remote", remote: true, dataset: state.dataset };
+        state.lastResult = { res, rowShaped: remoteFmt === "table", q, strategy: "remote", remote: true, dataset: state.dataset, union };
         const summary = renderResult(res, fmt === "graph" ? "table" : fmt);
         const r = res.remote || {};
         const dt = performance.now() - t0;
         updateReqLogBtn();
-        // Show this query's PHYSICAL fetch (cache misses only) plus what the
-        // resident session has cached so far — so a re-run visibly drops to ~0.
-        const cacheNote = r.cached
-          ? " — served from cache, 0 new bytes"
+        // This run's PHYSICAL fetches: the query's cache misses PLUS the
+        // session open it may have triggered. stats() starts counting at open,
+        // so the delta alone hid the open's requests — the final line then
+        // contradicted the live counter ("5 requests · 775 KB" while running,
+        // "0 range req — served from cache" on a first-ever query). A genuinely
+        // all-cached run names the cache size, so its "0 new bytes" reads as
+        // the session cache working, not as a fetch that never happened.
+        const req = (r.requests || 0) + (r.openRequests || 0);
+        const rbytes = (r.bytes || 0) + (r.openBytes || 0);
+        const openNote = (r.openRequests || 0) > 0 ? " (incl. opening the file)" : "";
+        const cacheNote = req === 0
+          ? ` — 0 new bytes, all served from this session's cache (${formatBytes(r.sessionBytes || 0)})`
           : (r.sessionBytes != null ? ` · ${formatBytes(r.sessionBytes)} cached this session` : "");
-        $("qmeta").textContent = `${summary} | ${r.requests || 0} range req · ` +
-          `${formatBytes(r.bytes || 0)} of ${formatBytes(r.fileLength || 0)} fetched${cacheNote} · ${dt.toFixed(0)} ms` +
-          (readerNote ? ` · ${readerNote}` : "");
+        $("qmeta").textContent = `${summary} | ${req} range req · ` +
+          `${formatBytes(rbytes)} of ${formatBytes(r.fileLength || 0)} fetched${openNote}${cacheNote} · ${dt.toFixed(0)} ms` +
+          (readerNote ? ` · ${readerNote}` : "") +
+          (union ? " · ⛁ union default graph (non-standard)" : "");
+        maybeExplainEmptyDefaultGraph(q, res);
         saveHistory({ query: q, format: fmt, strategy: "remote", dataset: state.dataset || "(remote)", ts: Date.now(), resultSummary: summary });
       }).catch((e) => {
         cleanup();
@@ -7259,11 +8802,20 @@ self.onmessage = function (e) {
 
     if (!state.bytes) return showError("out", "Load a graph first.");
     // Defer the (synchronous) engine call one frame so the spinner paints first.
-    setTimeout(() => runEmbeddedQuery(q, fmt, reason), 0);
+    setTimeout(() => runEmbeddedQuery(q, fmt, reason, union), 0);
   }
 
-  function runEmbeddedQuery(q, fmt, reason) {
-    const strategy = $("strategy").value;
+  function runEmbeddedQuery(q, fmt, reason, union) {
+    let strategy = $("strategy").value;
+    // The progressive summary and the community split both answer from
+    // default-graph structures — running them under the union toggle would
+    // silently answer with STANDARD semantics while the toggle claims union.
+    // Run the whole index instead, and say so in the result meta.
+    let unionStrategyNote = "";
+    if (union && strategy !== "whole") {
+      unionStrategyNote = ` | ⛁ All graphs runs on the whole index (the ${strategy} strategy answers from default-graph structures)`;
+      strategy = "whole";
+    }
     // graph / map / time / cards are renderings of SELECT bindings — ask the engine for table rows.
     const rowView = fmt === "graph" || fmt === "map" || fmt === "time" || fmt === "cards";
     const queryFmt = strategy === "progressive" || rowView ? "table" : fmt;
@@ -7293,7 +8845,8 @@ self.onmessage = function (e) {
         const roundText = $("round").value.trim();
         raw = state.graph.query_communities(q, roundText === "" ? undefined : Number(roundText));
       } else {
-        raw = reason ? state.graph.query_reasoned(q, queryFmt) : state.graph.query(q, queryFmt);
+        raw = union ? state.graph.query_opts(q, queryFmt, !!reason, true)
+                    : (reason ? state.graph.query_reasoned(q, queryFmt) : state.graph.query(q, queryFmt));
       }
       const res = JSON.parse(raw);
       const summary = renderResult(res, strategy !== "whole" && fmt === "graph" ? "table" : fmt);
@@ -7301,10 +8854,12 @@ self.onmessage = function (e) {
       // the Output type re-renders this result instead of re-running the query.
       // Progressive is excluded — its summary answers re-run cheaply.
       if (queryFmt === "table" && strategy !== "progressive") {
-        state.lastResult = { res, rowShaped: true, q, strategy, remote: false, dataset: state.dataset };
+        state.lastResult = { res, rowShaped: true, q, strategy, remote: false, dataset: state.dataset, union: !!union };
       }
       const dt = performance.now() - t0;
-      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}`;
+      $("qmeta").textContent = `${summary} | ${dt.toFixed(1)} ms${fellBack ? " | fell back to whole index" : ""}` +
+        (union ? " · ⛁ union default graph (non-standard)" : "") + unionStrategyNote;
+      maybeExplainEmptyDefaultGraph(q, res);
       if (fellBack) {
         $("out").innerHTML =
           `<div class="note">Not summary-answerable: this query returns values (titles, scores, …), ` +
@@ -8230,42 +9785,134 @@ self.onmessage = function (e) {
     };
   }
 
-  // FORM → JSON: reflect the form into the code editor (unless the editor is the
-  // one being typed into right now).
+  // --- The Dataset Card the built file will CARRY ---------------------------
+  // Two documents live in step 3 and they are not the same thing, so they are
+  // kept apart rather than merged into one confusing object:
+  //
+  //  * the CATALOG ENTRY (key / icon / tags / provenance) — how the dataset is
+  //    listed in this playground and in a downloadable manifest. Never written
+  //    into the file; `rete build --card-file` would reject those keys.
+  //  * the DATASET CARD (`cardCode`) — exactly the `--card-file` document, and
+  //    the thing that travels inside the `.rete`.
+  //
+  // The JSON editor is the PRIMARY surface for the card, not a mirror of the
+  // form. It is the documented interchange format, so it cannot drift from what
+  // the CLI accepts; the engine validates it with the CLI's own rules; and the
+  // curated fields include lists of objects (`creators`) and a free-form bag
+  // (`extra`) that a form would either mangle or forbid. The four fields a
+  // first-time author always fills — title, licence, source, description — are
+  // ALSO on the form, and patch into the document rather than replacing it, so
+  // typing a title never eats the creators you wrote by hand.
+  const CARD_FORM_FIELDS = [["cardTitle", "title"], ["cardLicense", "license"],
+                            ["cardSource", "source"], ["cardDesc", "description"]];
+
+  // The authoritative card document. `cardCode` renders it; the form patches it.
+  function cardDoc() {
+    const code = $("cardCode");
+    if (!code) return {};
+    try {
+      const o = JSON.parse(code.value || "{}");
+      return o && typeof o === "object" && !Array.isArray(o) ? o : {};
+    } catch (e) { return null; }   // null = the editor is mid-edit and unparseable
+  }
+
+  // FORM → JSON: patch only the fields the form owns, leaving every hand-written
+  // curated field in place.
   function updateCardCode() {
     if (cardSync) return;
     const code = $("cardCode"); if (!code) return;
+    const doc = cardDoc();
+    if (doc === null) { setCardSyncMsg("invalid JSON — card not updated from the form", true); return; }
+    for (const [id, key] of CARD_FORM_FIELDS) {
+      const v = (($(id) || {}).value || "").trim();
+      if (v) doc[key] = v; else delete doc[key];
+    }
     cardSync = true;
-    code.value = JSON.stringify(cardFromForm(), null, 2);
+    code.value = Object.keys(doc).length ? JSON.stringify(doc, null, 2) : "";
     code.classList.remove("invalid");
-    setCardSyncMsg("in sync", false);
     cardSync = false;
+    validateCardCode();
   }
 
-  // JSON → FORM: parse the editor and populate the form. Invalid JSON leaves the
+  // JSON → FORM: reflect the four shared fields back. Invalid JSON leaves the
   // form untouched and flags the editor.
   function applyCardCode() {
     if (cardSync) return;
     const code = $("cardCode"); if (!code) return;
-    let obj;
-    try { obj = JSON.parse(code.value || "{}"); }
-    catch (e) { code.classList.add("invalid"); setCardSyncMsg("invalid JSON — form not updated", true); return; }
-    if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
-      code.classList.add("invalid"); setCardSyncMsg("expected a JSON object", true); return;
+    const doc = cardDoc();
+    if (doc === null) {
+      code.classList.add("invalid"); setCardSyncMsg("invalid JSON — form not updated", true); return;
     }
-    code.classList.remove("invalid");
-    setCardSyncMsg("in sync", false);
     cardSync = true;
-    const set = (id, v) => { const el = $(id); if (el && v != null) el.value = String(v); };
-    if (obj.title != null) set("cardTitle", obj.title);
-    if (obj.key != null) { set("cardKey", obj.key); const ck = $("cardKey"); if (ck) ck.dataset.auto = "0"; }
-    set("cardIcon", obj.icon);
-    set("cardLicense", obj.license);
-    set("cardSource", obj.source);
-    if (obj.tags != null) set("cardTags", Array.isArray(obj.tags) ? obj.tags.join(", ") : obj.tags);
-    if (obj.description != null) set("cardDesc", obj.description);
-    if (obj.provenance != null) set("cardProvenance", obj.provenance);
+    for (const [id, key] of CARD_FORM_FIELDS) {
+      const el = $(id); if (el) el.value = cardFieldText(doc[key]);
+    }
     cardSync = false;
+    validateCardCode();
+  }
+
+  // `description` may be authored as an ARRAY OF LINES — the shape that makes a
+  // multi-line Markdown description writable by hand, since a JSON string can
+  // only carry line breaks as `\n` escapes (docs/dataset-cards.md). The form
+  // shows the joined text, which is exactly what the engine stores; a later form
+  // edit therefore rewrites the array as that same string, losing nothing but
+  // the authoring shape. (#cardDesc is a textarea, so typing Markdown straight
+  // into it works too — JSON.stringify puts the `\n` escapes in for you.)
+  const cardFieldText = (v) =>
+    (Array.isArray(v) ? v.join("\n") : v == null ? "" : String(v));
+
+  // Validate with the ENGINE, not with a re-implementation here: `validate_card`
+  // runs the same rules `rete build --card-file` runs and returns the same
+  // message, so an author cannot compose a card in the browser that the CLI
+  // would refuse. Re-stating those rules in JavaScript is precisely how the two
+  // writers would drift apart.
+  function validateCardCode() {
+    const code = $("cardCode"); if (!code) return "";
+    const text = (code.value || "").trim();
+    if (!text) {
+      code.classList.remove("invalid");
+      setCardSyncMsg("no card — the file will carry none", false);
+      return "";
+    }
+    let msg = "";
+    try { msg = W().validate_card(text); }
+    catch (e) { msg = String((e && e.message) || e); }
+    code.classList.toggle("invalid", !!msg);
+    // Shown WHOLE, not trimmed to a headline: the tail is where these messages
+    // put the fix — a free-text theme is told to use `keywords`, a stray key is
+    // told about the `extra` bag — and a truncated error is one you have to go
+    // and look up.
+    setCardSyncMsg(msg || "valid card", !!msg);
+    return msg;
+  }
+
+  // A skeleton of every curated field, for authors who have not memorized the
+  // list. Values are placeholders to replace, not defaults to keep — inserting
+  // it never overwrites what is already there.
+  function insertCardTemplate() {
+    const code = $("cardCode"); if (!code) return;
+    const doc = cardDoc() || {};
+    const skeleton = {
+      title: "My graph", description: "What's in this graph, and why it is interesting.",
+      license: "CC0-1.0", source: "https://example.org/where-the-data-came-from",
+      version: "2026-01", created: "2026-01-15", source_date: "2026-01-10",
+      creators: [{ name: "Your Name", orcid: "https://orcid.org/0000-0000-0000-0000" }],
+      publisher: { name: "Your Organisation", ror: "https://ror.org/00000000" },
+      canonical_url: "https://example.org/my-graph.rete",
+      sparql_endpoint: "https://example.org/sparql",
+      derived_from: ["https://example.org/source-dump.nt"],
+      doi: "https://doi.org/10.5281/zenodo.0000000",
+      cite_as: "Your Name (2026). My graph. https://doi.org/10.5281/zenodo.0000000",
+      keywords: ["example", "demo"],
+      theme: ["http://publications.europa.eu/resource/authority/data-theme/TECH"],
+      example_queries: ["SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 25"],
+      extra: { internal_id: "DS-2026-001" },
+    };
+    for (const k of Object.keys(skeleton)) if (doc[k] === undefined) doc[k] = skeleton[k];
+    cardSync = true;
+    code.value = JSON.stringify(doc, null, 2);
+    cardSync = false;
+    applyCardCode();
   }
 
   function setCardSyncMsg(text, bad) {
@@ -8332,24 +9979,45 @@ self.onmessage = function (e) {
   // Build the merged graph (data + optional ontology) in the chosen source
   // format. nt/nq/ttl sources are concatenated as text; jsonld/rdfxml sources
   // are each converted, then the resulting line-based forms are concatenated.
-  function buildFromSources(data, onto, fmt) {
+  function buildFromSources(data, onto, fmt, cardJson) {
     const parts = [];
     let buildFmt = fmt;
     if (data.trim()) { const c = toEngineText(data, fmt); buildFmt = c.fmt; parts.push(c.text.replace(/\s+$/, "")); }
     if (onto.trim()) { const c = toEngineText(onto, fmt); buildFmt = c.fmt; parts.push(c.text.replace(/\s+$/, "")); }
-    return W().build(parts.join("\n"), buildFmt);
+    // `build_with_card` with an empty card is byte-identical to `build`, so the
+    // live syntax-validation path can share this function without paying for a
+    // card it does not care about.
+    return W().build_with_card(parts.join("\n"), buildFmt, cardJson || "");
   }
 
-  // --- import a card / manifest JSON file into editor 3 (and step 4) ----------
-  // Accepts either a flat card object {key,title,…} or a full manifest produced
-  // by "Download manifest" (datasetMeta / datasetExtra / examples / shacl), in
-  // which case the example rows are restored too.
+  // --- import a card / manifest JSON file into step 3 (and step 4) -----------
+  // Three shapes are accepted, because all three are things an author plausibly
+  // has on disk:
+  //   * a `--card-file` DATASET CARD  → straight into the card editor;
+  //   * a downloaded MANIFEST         → the catalog-entry form + example rows;
+  //   * a legacy flat {key,title,…}   → the catalog-entry form.
   async function importCardFile(file) {
     if (!file) return;
     let obj;
     try { obj = JSON.parse(await file.text()); }
     catch (e) { setCardSyncMsg("invalid JSON file", true); return; }
     const isManifest = obj && (obj.datasetMeta || obj.datasetExtra || obj.examples || obj.shacl || obj.dataset);
+    // A card file is recognized by carrying only card fields — never `key` /
+    // `icon` / `tags`, which the card schema rejects outright.
+    const CARD_ONLY = ["creators", "publisher", "keywords", "theme", "extra", "doi", "cite_as",
+                       "canonical_url", "sparql_endpoint", "derived_from", "source_date",
+                       "version", "example_queries"];
+    const looksLikeCard = !isManifest && obj && typeof obj === "object" &&
+      obj.key === undefined && obj.icon === undefined && obj.tags === undefined &&
+      (CARD_ONLY.some((k) => obj[k] !== undefined) || obj.title !== undefined);
+    if (looksLikeCard) {
+      const code = $("cardCode");
+      if (code) { code.value = JSON.stringify(obj, null, 2); applyCardCode(); }
+      // Seed the catalog key from the title, since a card file has none.
+      const ct = $("cardTitle"), ck = $("cardKey");
+      if (ck && ct && !ck.value.trim()) ck.value = sanitizeKey(ct.value);
+      return;
+    }
     let card = obj;
     if (isManifest) {
       const key = obj.key || (obj.datasetMeta && Object.keys(obj.datasetMeta)[0]) ||
@@ -8371,9 +10039,16 @@ self.onmessage = function (e) {
         renderBuildExamples();
       }
     }
-    const code = $("cardCode");
-    if (code) { code.value = JSON.stringify(card, null, 2); applyCardCode(); }
-    setCardSyncMsg(isManifest ? "imported manifest" : "imported card", false);
+    // A manifest describes the CATALOG ENTRY, so it fills the form — and, for
+    // the four fields the card shares, the card document too.
+    const set = (id, v) => { const el = $(id); if (el && v != null) el.value = String(v); };
+    set("cardTitle", card.title); set("cardIcon", card.icon);
+    set("cardLicense", card.license); set("cardSource", card.source);
+    set("cardDesc", card.description); set("cardProvenance", card.provenance);
+    if (card.key != null) { set("cardKey", card.key); const ck = $("cardKey"); if (ck) ck.dataset.auto = "0"; }
+    if (card.tags != null) set("cardTags", Array.isArray(card.tags) ? card.tags.join(", ") : card.tags);
+    updateCardCode();
+    setCardSyncMsg("imported manifest — the catalog entry, not the file's card", false);
   }
 
   // Pull the current example-row DOM values back into state.buildEx (so a
@@ -8500,13 +10175,20 @@ self.onmessage = function (e) {
     if (!card.key) return showError("buildOut", "Give the dataset a title or a key first (step 3).");
     if (keyIsReserved(card.key)) return showError("buildOut", `The key “${esc(card.key)}” belongs to a bundled dataset — pick another in step 3.`);
 
+    // The card the FILE will carry (step 3's JSON editor) — validated by the
+    // engine before we spend time parsing RDF, so a card mistake is reported as
+    // a card mistake rather than surfacing halfway through a build.
+    const cardErr = validateCardCode();
+    if (cardErr) return showError("buildOut", "Dataset card rejected (step 3): " + cardErr);
+    const cardJson = (($("cardCode") || {}).value || "").trim();
+
     const fmt = $("buildFormat").value;
     const t0 = performance.now();
     let bytes, info;
     try {
       // Merge data + optional ontology into one graph (JSON-LD / RDF/XML are
       // converted to N-Quads / N-Triples first; nt/nq/ttl are concatenated).
-      bytes = buildFromSources(data, onto, fmt);
+      bytes = buildFromSources(data, onto, fmt, cardJson);
       info = JSON.parse(W().info(bytes));
     } catch (e) {
       state.built = null; setBuiltButtons(false); $("buildMeta").textContent = "";
@@ -8553,9 +10235,20 @@ self.onmessage = function (e) {
       metric("Size", formatBytes(bytes.length)) +
       `</div>` +
       `<p class="microcopy">Open it in the console to query it, or export it: <strong>Download .rete</strong> for the file, ` +
-      `<strong>Download manifest</strong> for the card + examples to PR into the repo or the plaza. ` +
-      `In-browser builds write uncompressed sections (the wasm engine ships no zstd encoder); ` +
-      `<code>rete build</code> on the CLI produces a smaller file from the same input.</p>`;
+      `<strong>Download manifest</strong> for the catalog entry + examples to PR into the repo or the plaza. ` +
+      (cardJson
+        ? `The file <strong>carries your Dataset Card</strong> — open it and press 🏷 Card to read it back. `
+        : `The file carries <strong>no Dataset Card</strong> (step 3 is empty). `) +
+      // Say what the browser cannot do, rather than letting the absence look
+      // like a defect in the file. The derived profile and the starter-query
+      // library are computed by `rete-cli`, which the wasm engine does not
+      // carry; the build record's cost figures come from running those queries,
+      // so there are none to measure either.
+      `In-browser builds write the <em>curated</em> card and the measured counts, but not the ` +
+      `derived profile (predicates, classes, vocabularies, the starter-query library) or the ` +
+      `build record — those come from <code>rete build --card-file</code> on the CLI, which also ` +
+      `writes compressed sections (the wasm engine ships no zstd encoder) and so produces a ` +
+      `smaller file from the same input.</p>`;
     renderBuildSaved();
     updateResultVisibility();
   }
@@ -8657,11 +10350,10 @@ self.onmessage = function (e) {
     $("buildMeta").textContent = "";
     $("buildDataMeta").textContent = "";
     $("buildOut").innerHTML = "";
-    const cc = $("cardCode"); if (cc) cc.classList.remove("invalid");
+    const cc = $("cardCode"); if (cc) { cc.value = ""; cc.classList.remove("invalid"); }
     setValidMsg("buildDataValid", "", null);
     setValidMsg("buildOntoValid", "", null);
-    setCardSyncMsg("in sync", false);
-    updateCardCode();
+    validateCardCode();
     updateResultVisibility();
   }
 
@@ -8750,6 +10442,7 @@ self.onmessage = function (e) {
     push("async-reads (asyncify fetch variant)", state.remote ? !!state.asyncReadsOn : "n/a");
     push("range-cache", !!state.rangeCacheOn);
     try { push("reason (OWL QL)", !!($("owlReason") && $("owlReason").checked)); } catch (_e) { /* ignore */ }
+    try { push("union default graph (⛁ All graphs)", unionGraphsOn()); } catch (_e) { /* ignore */ }
     // How long the failing query ran, and what it had fetched by then — the live
     // progress counters survive a wasm trap that kills the worker mid-query.
     try {
@@ -8910,23 +10603,126 @@ self.onmessage = function (e) {
     });
   }
 
+  // ---- the VIEW STATE a deep link carries ------------------------------------
+  // The link used to name only WHICH graph and WHICH query. Everything that sat
+  // in the toolbar beside them was dropped, so someone could flip ⛁ All graphs,
+  // get an answer, press Share — and the recipient opened standard SPARQL
+  // semantics and saw different results from the same link. Same class of defect
+  // as #148 (the link named a catalog dataset while an off-catalog file was
+  // open): a link that claims to reproduce a view it does not.
+  //
+  // Two classes of parameter, and they are NOT equally important:
+  //
+  //   ANSWER-AFFECTING — union, reason, strategy, round, fed. These change WHAT
+  //   THE QUERY RETURNS, so dropping one makes the link lie. `union` mounts the
+  //   file as a different dataset; `reason` answers under a different entailment
+  //   regime; `strategy=progressive` answers from the pyramid summary and is
+  //   APPROXIMATE BY CONTRACT, so a dropped strategy hands someone exact-looking
+  //   numbers computed a different way. These are never skipped for brevity, and
+  //   when one CANNOT be represented (an ad-hoc federation address — see below)
+  //   the share path SAYS SO rather than hand out a link that silently differs.
+  //
+  //   PRESENTATIONAL — view, labels. These change how the same answer is DRAWN.
+  //   Worth carrying (a map example shared as a table is a worse link) but they
+  //   cannot make a link lie about data, so they are best-effort: the phone's
+  //   table→cards substitution is allowed to override a restored `view=table`,
+  //   and failing to restore one is a cosmetic miss, not a correctness bug.
+  //
+  // FEDERATION is deliberately partial, and the split is about leakage. A
+  // catalog key (`fed=nomisma,mimotext`) is a public entry in the shipped
+  // catalog: short, and the address is re-derived on the other side, so nothing
+  // private can ride along. A source added by pasting an address — a .rete URL
+  // or a SPARQL endpoint — is the opposite: it is typically an intranet host, a
+  // pre-release file, or a URL with a token in the query string, and it reaches
+  // the chip bar through a popover the user stops looking at. `#url=` and
+  // `#endpoint=` do carry an address, but each is THE one address in a visible
+  // field the user just typed; an accumulated partner list is not that. So the
+  // hash carries catalog keys only, and shareUrl() names any source it left out.
+  //
+  // ENCODING, uniform across all of them: lowercase names in the style of the
+  // existing dataset/endpoint/load/mode/q/ex. Booleans are `=1`/`=0`, not
+  // presence-only — `labels` defaults ON so presence-only could not spell "off"
+  // without an inverted name like `nolabels`, and every reader here uses
+  // params.get(), where a presence-only flag reads back as "" and quietly tests
+  // falsy. Enumerations carry the control's own option value (strategy=progressive,
+  // view=map) so the link reads the way the UI does.
+  const VIEW_STATE_PARAMS = ["union", "reason", "strategy", "round", "fed", "view", "labels"];
+
+  // The federation partners a link CAN carry (catalog keys)…
+  function fedKeysInView() {
+    return state.fedSources.filter((s) => s.key && datasetInfo(s.key)).map((s) => s.key);
+  }
+  // …and the ones it deliberately will not. shareUrl() names these out loud.
+  function adHocFedSources() {
+    return state.fedSources.filter((s) => !(s.key && datasetInfo(s.key)));
+  }
+  // The catalog keys an example's own `fed:` contributes — its {endpoint,label}
+  // entries carry no key and fall in with the other ad-hoc sources.
+  function exampleFedKeys(ex) {
+    return (ex && Array.isArray(ex.fed) ? ex.fed : [])
+      .filter((k) => typeof k === "string" && k !== state.dataset && datasetInfo(k));
+  }
+
+  function currentViewState() {
+    const decode = $("decodeToggle");
+    const strategy = $("strategy").value || "whole";
+    return {
+      union: unionGraphsOn(),
+      reason: !!($("owlReason") && $("owlReason").checked),
+      strategy,
+      // The round only exists for the community strategy (its input is hidden
+      // otherwise), so a leftover number must not travel with any other one.
+      round: strategy === "community" && $("round") ? $("round").value.trim() : "",
+      fed: fedKeysInView(),
+      view: $("fmt").value,
+      labels: decode ? !!decode.checked : true,
+    };
+  }
+
+  // What a fresh page opening THIS VERY LINK lands on before any view-state
+  // param is applied: the plain defaults, or — when the link shares an example
+  // by index — whatever that example declares, since boot's selectExample()
+  // applies its view / strategy / reason / fed. Emitting relative to this rather
+  // than to the bare defaults is what keeps `#…&ex=3` of a map example exactly
+  // as short as it is today.
+  function viewStateBaseline(ex) {
+    return {
+      union: false,
+      reason: ex && typeof ex.reason === "boolean" ? ex.reason : false,
+      strategy: (ex && ex.strategy) || "whole",
+      round: "",
+      fed: exampleFedKeys(ex),
+      view: resolvedView((ex && ex.view) || "table"),
+      labels: true,
+    };
+  }
+
   function updateHash() {
     const params = new URLSearchParams();
     // An off-catalog remote — connected by hand or arrived at via #url= — has no
     // catalog key to name it, and state.dataset still holds whatever was loaded
     // before. Sharing that produced a link to a DIFFERENT dataset than the one
     // on screen; emit the address itself so the link round-trips.
+    // A LOCAL lazy file is deliberately excluded: `rete-local:2/x.rete` addresses
+    // a blob in this tab, so a link carrying it would reopen nothing. It shares
+    // like the whole-file local load always has — the query, not the graph.
+    const localLazy = !!(state.remote && state.remote.local);
     const offCatalog =
       state.activeSource === "remote" &&
       state.remote &&
+      !localLazy &&
       state.remote.url !== remoteUrlFor(state.dataset);
     if (offCatalog) params.set("url", state.remote.url);
+    // Cached-by-URL: the same honesty, one mode over — the link must carry the
+    // address that is actually open (with load=cache from the mapping below),
+    // not whatever catalog key the file name happened to derive.
+    else if (state.urlCache) params.set("url", state.urlCache.url);
     else params.set("dataset", state.dataset);
     if (state.liveEndpoint) params.set("endpoint", state.liveEndpoint);
     // Record HOW the dataset is loaded so a reload restores the same mode — a
     // remote-lazy graph is not embedded, so without this the deep link couldn't
     // tell it apart from a bundled one and fell back to the default dataset.
-    const load = { remote: "lazy", cached: "cache", bundled: "bundled" }[state.activeSource];
+    const load = localLazy ? null : { remote: "lazy", cached: "cache", bundled: "bundled" }[state.activeSource];
     if (load) params.set("load", load);
     params.set("mode", state.mode);
     const q = $("q").value.trim();
@@ -8935,12 +10731,96 @@ self.onmessage = function (e) {
     // full query when it was edited or is ad-hoc.
     const exList = examplesForDataset();
     const exi = state.selectedExample;
-    if (exi != null && exi >= 0 && exList[exi] && (exList[exi].q || "").trim() === q) {
-      params.set("ex", String(exi));
-    } else if (q) {
-      params.set("q", q);
-    }
+    // A CARD example never shares by index: the card loads async and its
+    // position depends on dedupe, so #ex=N would open a different query (or
+    // none). Its full text goes in the link instead.
+    const shortEx =
+      exi != null && exi >= 0 && exList[exi] && !exList[exi].fromCard &&
+      (exList[exi].q || "").trim() === q ? exi : null;
+
+    // The view state goes BEFORE the query: `q=` can be thousands of characters
+    // and chat clients truncate long links, so the few short parameters that
+    // decide what the answer even IS should not sit behind it. Each is emitted
+    // only when it differs from what this link will itself restore (the example
+    // baseline above), which is what keeps a default view's hash unchanged.
+    const cur = currentViewState();
+    const base = viewStateBaseline(shortEx != null ? exList[shortEx] : null);
+    // answer-affecting…
+    if (cur.union !== base.union) params.set("union", cur.union ? "1" : "0");
+    if (cur.reason !== base.reason) params.set("reason", cur.reason ? "1" : "0");
+    if (cur.strategy !== base.strategy) params.set("strategy", cur.strategy);
+    if (cur.round !== base.round) params.set("round", cur.round);
+    // An empty `fed=` is meaningful: it says "this view removed the partners the
+    // example declares", which silence could not express.
+    if (cur.fed.join(",") !== base.fed.join(",")) params.set("fed", cur.fed.join(","));
+    // …then presentational.
+    if (cur.view !== base.view) params.set("view", cur.view);
+    if (cur.labels !== base.labels) params.set("labels", cur.labels ? "1" : "0");
+
+    if (shortEx != null) params.set("ex", String(shortEx));
+    else if (q) params.set("q", q);
     history.replaceState(null, "", "#" + params.toString());
+  }
+
+  // Read the view state back out of a deep link.
+  //
+  // Called at the very END of boot, and the ordering is load-bearing rather than
+  // tidy: selectExample() applies the example's own view / strategy / reason /
+  // fed, so anything restored before the q/ex branch is silently overwritten;
+  // and #url= reaches remote-lazy through an awaited path whose enterRemote()
+  // calls resetFed(), so a federation restored before THAT is silently dropped.
+  // Boot awaits both, which makes this the one point where the state is settled.
+  //
+  // Nothing here dispatches a `change` event: #fmt's handler RUNS THE QUERY and
+  // #strategy's re-enters setStrategy. Values are assigned directly, exactly as
+  // setView()/setStrategy() do.
+  function applyViewState(params) {
+    const optionValues = (id) => Array.from(($(id) || { options: [] }).options).map((o) => o.value);
+    const flag = (name, dflt) => {
+      const v = params.get(name);
+      if (v == null) return dflt;
+      // Emitted as 1/0; the words are accepted too, because these links get
+      // hand-edited and `union=true` should not silently mean "off".
+      if (/^(1|true|yes|on)$/i.test(v)) return true;
+      if (/^(0|false|no|off)$/i.test(v)) return false;
+      return dflt;
+    };
+
+    // --- answer-affecting: restored unconditionally ---------------------------
+    const u = $("unionGraphs");
+    if (u && params.get("union") != null) {
+      u.checked = flag("union", u.checked);
+      // Same honesty contract as throwing the switch by hand — a non-standard
+      // dataset mounting is ANNOUNCED, not merely shown. The person opening this
+      // link did not flip it and has no reason to look at the toolbar for it.
+      if (u.checked) announceUnionGraphs(true);
+    }
+    const r = $("owlReason");
+    if (r && params.get("reason") != null) r.checked = flag("reason", r.checked);
+    const strategy = params.get("strategy");
+    if (strategy && optionValues("strategy").includes(strategy)) setStrategy(strategy);
+    const round = params.get("round");
+    // Only a plain integer: this value is parsed with Number() at run time.
+    if (round != null && $("round") && /^\d*$/.test(round)) $("round").value = round;
+    const fed = params.get("fed");
+    if (fed != null) {
+      resetFed();
+      fed.split(",").map((k) => k.trim()).filter(Boolean).forEach(addCatalogFedSource);
+      renderFedBar();
+    }
+
+    // --- presentational: best effort -----------------------------------------
+    const view = params.get("view");
+    // setView, not a raw assignment: on a phone the table→cards substitution
+    // must still win over a link that says view=table.
+    if (view && optionValues("fmt").includes(view)) setView(view);
+    if (params.get("labels") != null) {
+      const decode = $("decodeToggle");
+      if (decode) {
+        decode.checked = flag("labels", decode.checked);
+        if (window.PlaygroundEditor) window.PlaygroundEditor.setDecode("q", decode.checked);
+      }
+    }
   }
 
   function readHash() {
@@ -8960,7 +10840,9 @@ self.onmessage = function (e) {
   // Anything ad-hoc — an edited query, a live endpoint, a graph the visitor
   // built in this browser — has no such page and shares the deep link as before.
   function hasSharePage(ds) {
-    return !!datasetInfo(ds) && !userBytes.has(ds);
+    // Catalog membership, minus user-built keys — d/<key>.html only exists for
+    // real catalog keys. (Predates datasetInfo() going strict; kept explicit.)
+    return CATALOG.datasets.some((d) => d.key === ds) && !userBytes.has(ds);
   }
 
   function sharePageUrl(rel) {
@@ -8973,6 +10855,12 @@ self.onmessage = function (e) {
       if (state.liveEndpoint || !hasSharePage(state.dataset)) return deep;
       const params = readHash();
       if (params.get("q")) return deep;         // an ad-hoc or edited query
+      // A generated share page forwards to a hash built from the CATALOG alone
+      // (dataset + load + mode + ex — see scripts/preview/card.mjs), so it has
+      // nowhere to put a view-state parameter. Handing one out here would drop
+      // exactly the union / reason / strategy the link exists to reproduce —
+      // the same silent-difference bug one level up. Deep link instead.
+      if (VIEW_STATE_PARAMS.some((k) => params.get(k) != null)) return deep;
       const ex = params.get("ex");
       return sharePageUrl(ex ? `q/${state.dataset}-${ex}.html` : `d/${state.dataset}.html`);
     } catch (e) {
@@ -8984,12 +10872,23 @@ self.onmessage = function (e) {
     updateHash();
     const url = shareableUrl();
     const ok = await copyToClipboard(url);
+    // Every ANSWER-AFFECTING setting rides in the hash except one that cannot:
+    // a federation source added by pasting an address (see the view-state note).
+    // Name it. A link that quietly federates over fewer sources than the view it
+    // was copied from is the exact defect this parameter set exists to prevent,
+    // so if the link cannot carry something, the person copying it has to hear so.
+    const dropped = adHocFedSources();
+    const caveat = dropped.length
+      ? ` — WITHOUT ${dropped.length === 1 ? "the added source" : "the " + dropped.length + " added sources"} ` +
+        `${dropped.map((s) => s.label).join(", ")}: a pasted address is not put into a shareable link, ` +
+        `so the recipient queries ${dropped.length === 1 ? "without it" : "without them"}.`
+      : "";
     const b = $("shareBtn");
     if (ok) {
       if (b) { const o = b.title; b.title = "Copied ✓"; setTimeout(() => { b.title = o || "Copy link to this view"; }, 1500); }
-      $("qmeta").textContent = "Link copied ✓";
+      $("qmeta").textContent = "Link copied ✓" + caveat;
     } else {
-      $("qmeta").textContent = "Share URL: " + url;
+      $("qmeta").textContent = "Share URL: " + url + caveat;
     }
   }
 
@@ -9009,19 +10908,45 @@ self.onmessage = function (e) {
   // playground was the one client that never showed it.
   let cardJsonText = "";   // raw card text, for Copy/Download (never re-serialized)
   let cardObj = null;
+  let cardBuildObj = null; // the kind-7 build record, or null when the file has none
+  // Measured by the reader from the header's section directory, NOT read out of
+  // the card — which is why it is held beside `cardObj` rather than inside it.
+  let cardTextIndex = null;
 
   // Source-aware: a resident graph answers from memory, a remote one goes
-  // through the worker (card_url does synchronous range XHR, which a document
-  // cannot do). A live SPARQL endpoint has no .rete behind it at all.
+  // through the worker (the *_url exports do synchronous range XHR, which a
+  // document cannot do). A live SPARQL endpoint has no .rete behind it at all.
+  //
+  // Both paths ask for the card AND the build record in ONE call, because the
+  // engine returns them from one header read plus one coalesced range — the
+  // writer lays the build-info section immediately after the card so that holds.
+  // Two calls would have made the CARD tier cost an extra round trip to show a
+  // few hundred bytes of provenance, which is exactly the trade this tier exists
+  // to avoid.
+  function cardEnvelope(json) {
+    let env;
+    try { env = JSON.parse(json || "{}"); } catch (e) { return { err: "The card could not be read: " + e.message }; }
+    let build = null;
+    if (env.build) {
+      // A malformed build record must not cost the reader the card: it is
+      // advisory provenance sitting outside the content hash.
+      try { build = JSON.parse(env.build); } catch (e) { build = null; }
+    }
+    // `text_index` is NOT part of the card: the reader measured it from the
+    // file's section directory. It rides alongside so the modal can answer
+    // "can I search this?" for any file — including one with no card at all.
+    return { text: env.card || "", build, textIndex: env.text_index || null };
+  }
+
   async function fetchCard() {
     if (state.liveEndpoint) {
       return { err: "A live SPARQL endpoint is not a .rete file, so it carries no Dataset Card. Load a .rete to read one." };
     }
     if (state.activeSource === "remote" && state.remote) {
-      const r = await remoteCall("card_url", state.remote.url);
-      return { text: r && r.json };
+      const r = await remoteCall("card_and_build_url", state.remote.url);
+      return cardEnvelope(r && r.json);
     }
-    if (state.graph) return { text: state.graph.card() };
+    if (state.graph) return cardEnvelope(state.graph.card_and_build());
     return { err: "No graph is loaded yet." };
   }
 
@@ -9067,12 +10992,13 @@ self.onmessage = function (e) {
     return `<table class="card-tbl">${body}${more}</table>`;
   }
 
-  // `source` is usually a URL but the field is free text, so only link it when
-  // it really is one — and only http(s), since this string comes from the file.
-  function cardSourceHtml(s) {
-    return /^https?:\/\/\S+$/.test(s.trim())
-      ? `<a href="${esc(s.trim())}" target="_blank" rel="noopener noreferrer">${esc(s.trim())}</a>`
-      : esc(s);
+  // `source`, `doi`, `canonical_url`, `derived_from` … are all free text that
+  // usually holds a URL, so only link when it really is one — and only http(s),
+  // since these strings come from the file.
+  function cardLinkHtml(s) {
+    return /^https?:\/\/\S+$/.test(String(s).trim())
+      ? `<a href="${esc(String(s).trim())}" target="_blank" rel="noopener noreferrer">${esc(String(s).trim())}</a>`
+      : esc(String(s));
   }
 
   function cardSection(title, count, inner, open) {
@@ -9081,13 +11007,125 @@ self.onmessage = function (e) {
       `</summary>${inner}</details>`;
   }
 
-  function renderCardView(c) {
+  // A labelled row in the identity/provenance table. Absent values never get a
+  // row at all — an empty cell would read as "measured, and empty".
+  function cardRow(label, valueHtml) {
+    return `<tr><td class="card-k">${esc(label)}</td><td>${valueHtml}</td></tr>`;
+  }
+
+  // Concept schemes recognizable from the IRI alone. `theme` is an IRI into a
+  // controlled vocabulary and a bare IRI is unreadable — but the label lives in
+  // the scheme, and resolving it would be a network read the CARD tier exists to
+  // avoid. So name the SCHEME (derivable from the prefix, no fetch) and show the
+  // concept's own identifier; never invent the label the scheme owns.
+  const CARD_THEME_SCHEMES = [
+    [/^https?:\/\/publications\.europa\.eu\/resource\/authority\/data-theme\//, "EU Data Themes"],
+    [/^https?:\/\/publications\.europa\.eu\/resource\/authority\//, "EU Vocabularies"],
+    [/^https?:\/\/eurovoc\.europa\.eu\//, "EuroVoc"],
+    [/^https?:\/\/(?:www\.)?wikidata\.org\/(?:entity|wiki)\//, "Wikidata"],
+    [/^https?:\/\/id\.loc\.gov\/authorities\//, "LCSH"],
+    [/^https?:\/\/vocabularies\.unesco\.org\/thesaurus\//, "UNESCO Thesaurus"],
+    [/^https?:\/\/aims\.fao\.org\/aos\/agrovoc\//, "AGROVOC"],
+    [/^https?:\/\/id\.nlm\.nih\.gov\/mesh\//, "MeSH"],
+    [/^https?:\/\/purl\.obolibrary\.org\/obo\//, "OBO Foundry"],
+    [/^https?:\/\/sws\.geonames\.org\//, "GeoNames"],
+  ];
+  function cardThemeChip(iri) {
+    const s = String(iri).trim();
+    const scheme = (CARD_THEME_SCHEMES.find(([re]) => re.test(s)) || [])[1];
+    // The concept's own id — the last non-empty path segment (or fragment).
+    let id = s;
+    try {
+      const u = new URL(s);
+      id = (u.hash && u.hash.slice(1)) ||
+        u.pathname.split("/").filter(Boolean).pop() || u.hostname;
+    } catch (e) { /* not a parseable URL — show it whole */ }
+    const label = scheme || (() => { try { return new URL(s).hostname; } catch (e) { return ""; } })();
+    return `<a class="card-chip card-chip-iri" href="${esc(s)}" target="_blank" rel="noopener noreferrer" title="${esc(s)}">` +
+      `${esc(id)}${label ? `<span>${esc(label)}</span>` : ""}</a>`;
+  }
+
+  function cardChips(values, cls) {
+    return `<div class="card-chips">${values.map((v) =>
+      `<span class="card-chip${cls ? " " + cls : ""}">${esc(String(v))}</span>`).join("")}</div>`;
+  }
+
+  // A person or organisation with its authority IRI. Rendering the ORCID/ROR as
+  // a LINK is the point of having asked for an IRI instead of a string: the
+  // identifier resolves to the authority record, and this project publishes both
+  // authority graphs, so it is also the join key.
+  function cardAgentHtml(a, idKey, idLabel) {
+    if (!a || typeof a !== "object") return esc(String(a));
+    const id = a[idKey];
+    return esc(String(a.name || "")) +
+      (id ? ` <a class="card-id" href="${esc(String(id))}" target="_blank" rel="noopener noreferrer">` +
+        `${esc(idLabel)}<span>${esc(String(id).replace(/^https?:\/\/(www\.)?/, ""))}</span></a>` : "");
+  }
+
+  // A value from the publisher-defined `extra` bag. It is shown as the JSON it
+  // is — strings raw, everything else in JSON literal form — and never
+  // linkified, thousands-separated or otherwise interpreted: rete stores these
+  // verbatim and attaches no meaning to them, so any formatting that implied a
+  // type rete had understood would be a lie the renderer told.
+  function cardExtraValueHtml(v, depth) {
+    if (v === null) return `<span class="card-x-lit">null</span>`;
+    if (typeof v === "boolean" || typeof v === "number") {
+      return `<span class="card-x-lit">${esc(JSON.stringify(v))}</span>`;
+    }
+    if (typeof v === "string") return `<span class="card-x-str">${esc(v)}</span>`;
+    if (Array.isArray(v)) {
+      // Arrays have no keys to show, so they stay in JSON form — compact, and
+      // unambiguous about where one entry ends.
+      return `<span class="card-x-lit">${esc(JSON.stringify(v))}</span>`;
+    }
+    // The bag allows depth 2: an object of objects-of-scalars. A nested object
+    // gets its own key/value table so it reads as structure, not as a blob.
+    const rows = Object.keys(v).map((k) =>
+      `<tr><td class="card-x-k">${esc(k)}</td><td>${cardExtraValueHtml(v[k], (depth || 0) + 1)}</td></tr>`).join("");
+    return `<table class="card-tbl card-x-sub">${rows}</table>`;
+  }
+
+  // "Can I full-text search this?" as one sentence. `ti` is the envelope's
+  // measured `text_index` — the ONE fact about a .rete that its card does not
+  // store, because the section directory in the header already answers it and a
+  // stored copy could outlive the section (see docs/dataset-cards.md).
+  function textIndexLine(ti) {
+    if (!ti || typeof ti !== "object") return "";
+    if (!ti.present) {
+      return "no — this file carries no TEXT_INDEX section. CONTAINS/regex filters " +
+        "still answer, by full scan.";
+    }
+    const size = typeof ti.bytes === "number" ? ` — ${fmtBytes(ti.bytes)} of index` : "";
+    const table = typeof ti.token_table_bytes === "number"
+      ? `, ${fmtBytes(ti.token_table_bytes)} of it the token table a first search reads`
+      : "";
+    return `yes${size}${table}.`;
+  }
+
+  function renderCardView(c, build, textIndex) {
     const rows = [];
+    const list = (k) => (Array.isArray(c[k]) && c[k].length ? c[k] : null);
     rows.push(
       `<div class="card-lede">` +
-      (c.description ? `<p class="card-desc">${mdLite(String(c.description))}</p>` : "") +
+      // The card modal is the ONE surface that renders a description as BLOCKS:
+      // it is a scrollable panel, not a one-line blurb, and it is where a
+      // publisher's headings and bullets are worth having. Headings are shifted
+      // under the modal's own <h3> (see markdownBlocks). Everywhere else the
+      // same text has to fit inside a <p>, so it goes through mdFlatten first.
+      (c.description
+        ? `<div class="card-desc markdown-body">${markdownBlocks(String(c.description), 3)}</div>`
+        : "") +
+      // Keywords and themes say what the dataset is ABOUT — they belong with the
+      // description, not buried in a table of addresses.
+      (list("keywords") ? cardChips(c.keywords) : "") +
+      (list("theme")
+        ? `<div class="card-chips">${c.theme.map(cardThemeChip).join("")}` +
+          `<span class="microcopy card-theme-note">controlled-vocabulary IRIs — ` +
+          `the scheme is read from the IRI; the concept's label lives in the scheme ` +
+          `and is not fetched</span></div>`
+        : "") +
       (c.license ? `<p class="microcopy">Licence · ${esc(String(c.license))}</p>` : "") +
-      (c.source ? `<p class="microcopy">Source · ${cardSourceHtml(String(c.source))}</p>` : "") +
+      (c.source ? `<p class="microcopy">Source · ${cardLinkHtml(String(c.source))}</p>` : "") +
       `</div>`,
     );
 
@@ -9101,6 +11139,37 @@ self.onmessage = function (e) {
       `${stat(c.term_count, "terms")}${stat(c.named_graph_count, "named graphs")}` +
       `${c.format_version != null ? stat(c.format_version, "format gen") : ""}</div>`,
     );
+
+    // --- Identity & provenance: who made this, where the authoritative copy
+    // lives, what it came from, how to cite it. Curated, so every one of these
+    // is either present or absent — a row is never rendered empty.
+    const idRows = [
+      c.version ? cardRow("Version", esc(String(c.version))) : "",
+      c.created ? cardRow("Created", esc(String(c.created))) : "",
+      c.source_date ? cardRow("Source date", esc(String(c.source_date))) : "",
+      list("creators")
+        ? cardRow(c.creators.length > 1 ? "Creators" : "Creator",
+            c.creators.map((a) => cardAgentHtml(a, "orcid", "ORCID")).join("<br>"))
+        : "",
+      c.publisher ? cardRow("Publisher", cardAgentHtml(c.publisher, "ror", "ROR")) : "",
+      c.doi ? cardRow("DOI", cardLinkHtml(c.doi)) : "",
+      c.canonical_url ? cardRow("Canonical copy", cardLinkHtml(c.canonical_url)) : "",
+      c.sparql_endpoint ? cardRow("SPARQL endpoint", cardLinkHtml(c.sparql_endpoint)) : "",
+      list("derived_from")
+        ? cardRow("Derived from", c.derived_from.map(cardLinkHtml).join("<br>"))
+        : "",
+      // A citation is meant to be copied whole, so it gets a copy button rather
+      // than being a line you have to select by hand.
+      c.cite_as
+        ? cardRow("Cite as",
+            `<span class="card-cite"><span id="cardCiteText">${esc(String(c.cite_as))}</span>` +
+            `<button type="button" class="secondary card-cite-copy">Copy</button></span>`)
+        : "",
+    ].filter(Boolean).join("");
+    if (idRows) {
+      rows.push(cardSection("Identity & provenance", null,
+        `<table class="card-tbl card-meta">${idRows}</table>`, true));
+    }
 
     if (Array.isArray(c.vocabularies) && c.vocabularies.length) {
       rows.push(cardSection("Vocabularies", c.vocabularies.length,
@@ -9133,14 +11202,34 @@ self.onmessage = function (e) {
       rows.push(cardSection("Signals", null, `<table class="card-tbl">${simple}${lists}</table>`));
     }
 
+    // Its OWN section, deliberately not a row inside Signals. Every other
+    // section above is the card's derived profile, present only when a builder
+    // computed one — a browser-built card has none, and rendering an empty
+    // "Signals" for it would claim otherwise. This is not part of that profile:
+    // it was measured from THIS file's section directory while the card was
+    // being fetched, so it is available for every file, carded or not.
+    const tiLine = textIndexLine(textIndex);
+    if (tiLine) {
+      rows.push(cardSection("Full-text search", null,
+        `<table class="card-tbl"><tr><td>Full-text index</td><td>${esc(tiLine)}</td></tr></table>` +
+        `<p class="microcopy">Measured from the file's section directory, not read from the card — ` +
+        `a <code>.rete</code> does not store this about itself.</p>`));
+    }
+
     // The card ships the SPARQL, so these are runnable — handing them to the
     // editor beats making the reader retype them out of the JSON.
     if (Array.isArray(c.queries) && c.queries.length) {
+      // The build record measured what each of these costs. That answer belongs
+      // WITH the query it describes — "what will this cost me" is a question you
+      // ask while reading the query, not one you go and look up in a table.
+      const costs = new Map(
+        (((build || {}).query_costs || {}).queries || []).map((q) => [q.id, q]));
       const body = c.queries.map((q, i) =>
         `<div class="card-q"><div class="card-q-head"><b>${esc(String(q.title || q.id || "query"))}</b>` +
         (q.tier ? `<span class="microcopy">${esc(String(q.tier))}</span>` : "") +
         `<button class="secondary card-q-use" type="button" data-qi="${i}">Use</button></div>` +
         (q.question ? `<p class="card-q-q">${esc(String(q.question))}</p>` : "") +
+        cardCostHtml(costs.get(q.id)) +
         `<pre>${esc(String(q.sparql || ""))}</pre></div>`).join("");
       rows.push(cardSection("Example queries", c.queries.length, body, true));
     }
@@ -9156,11 +11245,98 @@ self.onmessage = function (e) {
       rows.push(cardSection("Curated example queries", c.example_queries.length, body, true));
     }
 
+    // --- Publisher-defined fields. Rendered LAST of the card's own content and
+    // fenced off, because the bag's documented contract is that its contents
+    // have no agreed meaning: rete carries the values and does not know what
+    // they say. Presenting them beside the fields rete does understand — or
+    // formatting them as though it did — would claim otherwise.
+    if (c.extra && typeof c.extra === "object" && Object.keys(c.extra).length) {
+      const keys = Object.keys(c.extra);
+      const body =
+        `<p class="microcopy">These are the <strong>publisher's own</strong> fields. ` +
+        `rete stores and returns them verbatim and attaches <strong>no meaning</strong> to them — ` +
+        `two publishers using the same key need not mean the same thing by it, ` +
+        `and nothing here has been interpreted, resolved or converted.</p>` +
+        `<table class="card-tbl card-extra">${keys.map((k) =>
+          `<tr><td class="card-x-key">${esc(k)}</td><td>${cardExtraValueHtml(c.extra[k], 0)}</td></tr>`
+        ).join("")}</table>`;
+      rows.push(cardSection("Publisher-defined fields (extra)", keys.length, body));
+    }
+
     if (c.truncated) {
       rows.push(`<p class="microcopy">The builder marked this card <strong>truncated</strong> — ` +
         `its lists were capped to keep the card small enough to stay in the header's reach.</p>`);
     }
+
+    rows.push(renderBuildRecord(build));
     return rows.join("");
+  }
+
+  // One starter query's measured cost, shown where the query is. `bytes` and
+  // `requests` are portable — a property of the file's layout and the query, the
+  // same from disk, R2 or Pages — so they lead. `debug_ms` is one machine's
+  // wall clock at build time and is labelled as such rather than dropped: paired
+  // with the byte figure it is interpretable, alone it is not.
+  function cardCostHtml(cost) {
+    if (!cost) return "";
+    const parts = [
+      cost.bytes != null ? `${formatBytes(cost.bytes)} read` : "",
+      cost.requests != null ? `${cardInt(cost.requests)} range request${cost.requests === 1 ? "" : "s"}` : "",
+      cost.rows != null ? `${cardInt(cost.rows)} row${cost.rows === 1 ? "" : "s"}` : "",
+    ].filter(Boolean).join(" · ");
+    const ms = cost.debug_ms != null
+      ? ` <span class="card-cost-ms" title="Wall clock on the build machine — a debug reference, not a property of the file.">` +
+        `${cardInt(cost.debug_ms)} ms on the build machine</span>`
+      : "";
+    return `<p class="card-cost">${esc(parts)}${ms}</p>`;
+  }
+
+  // --- The build record (format section kind 7). Deliberately its own part of
+  // the modal, after everything the card says: the card describes the DATA, this
+  // describes one build of one file. Conflating them would let a reader take
+  // "built 3 days ago" for a fact about the dataset.
+  function renderBuildRecord(b) {
+    if (!b || typeof b !== "object" || !Object.keys(b).length) {
+      // Absence is the common case — every card written before build-info
+      // existed has none — and it must read as absence, not as a record full of
+      // blanks that look like measurements.
+      return `<div class="card-build"><h4>Build record</h4>` +
+        `<p class="microcopy">This file carries no build record. It was written before ` +
+        `<code>.rete</code> stored one, or by a writer that does not (an in-browser build ` +
+        `records no starter-query costs, because it derives no starter queries). ` +
+        `Nothing about the build is known from the file — which is different from ` +
+        `a build that measured nothing.</p></div>`;
+    }
+    const p = b.params || {};
+    const flags = [
+      p.no_pyramid ? "--no-pyramid" : "", p.text_index ? "--text-index" : "",
+      p.materialize ? "--materialize" : "", p.reason ? "--reason" : "",
+    ].filter(Boolean).join(" ");
+    const rows = [
+      b.built_at ? cardRow("Built at", esc(String(b.built_at))) : "",
+      b.builder ? cardRow("Builder", esc(String(b.builder))) : "",
+      p.command ? cardRow("Command", `<code>${esc(String(p.command))}</code>`) : "",
+      flags ? cardRow("Flags", `<code>${esc(flags)}</code>`) : "",
+      p.pyramid_algo ? cardRow("Pyramid algorithm", esc(String(p.pyramid_algo))) : "",
+      p.memory_budget_mb != null ? cardRow("Memory budget", `${cardInt(p.memory_budget_mb)} MB`) : "",
+      p.codec ? cardRow("Section codec", esc(String(p.codec))) : "",
+      p.card_top_n != null ? cardRow("Card list cap", cardInt(p.card_top_n)) : "",
+    ].filter(Boolean).join("");
+    const ctx = (b.query_costs || {}).context || {};
+    const nCosts = ((b.query_costs || {}).queries || []).length;
+    return `<div class="card-build"><h4>Build record</h4>` +
+      `<p class="microcopy">How this <em>file</em> came to be — not what the data is. ` +
+      `Stored in its own section beside the card and, unlike the card, ` +
+      `<strong>outside the content hash</strong>: two builds of identical data ` +
+      `differ here on purpose, so <code>rete verify</code> does not cover it.</p>` +
+      (rows ? `<table class="card-tbl card-meta">${rows}</table>` : "") +
+      (nCosts
+        ? `<p class="microcopy">It also measured what each of the ${cardInt(nCosts)} starter ` +
+          `queries costs — shown with the queries above. ` +
+          (ctx.transport ? `Measured over: ${esc(String(ctx.transport))}. ` : "") +
+          (ctx.note ? esc(String(ctx.note)) : "") + `</p>`
+        : "") +
+      `</div>`;
   }
 
   function showCardTab(which) {
@@ -9170,9 +11346,18 @@ self.onmessage = function (e) {
     $("cardTabView").setAttribute("aria-selected", String(!jsonMode));
     $("cardTabJson").setAttribute("aria-selected", String(jsonMode));
     if (!cardObj) return;
+    // The JSON tab stays the CARD's document — what Copy and Download hand back,
+    // and what `rete build --card-file` would take. The build record is a
+    // separate section of the file, outside the content hash; folding it in here
+    // would make the copied JSON no longer a card.
     $("cardBody").innerHTML = jsonMode
-      ? `<pre class="card-json">${cardHighlightJson(JSON.stringify(cardObj, null, 2))}</pre>`
-      : renderCardView(cardObj);
+      ? `<pre class="card-json">${cardHighlightJson(JSON.stringify(cardObj, null, 2))}</pre>` +
+        (cardBuildObj
+          ? `<p class="microcopy">The file also carries a build record, in its own section — ` +
+            `see the Rendered tab, or <code>rete card --json</code>, which shows it under ` +
+            `<code>"build"</code>.</p>`
+          : "")
+      : renderCardView(cardObj, cardBuildObj, cardTextIndex);
   }
 
   async function openCardModal() {
@@ -9180,7 +11365,7 @@ self.onmessage = function (e) {
     m.classList.remove("hidden");
     $("cardBody").innerHTML = `<p class="microcopy">Reading the card…</p>`;
     $("cardFootNote").textContent = "";
-    cardObj = null; cardJsonText = "";
+    cardObj = null; cardJsonText = ""; cardBuildObj = null; cardTextIndex = null;
     let res;
     try {
       res = await fetchCard();
@@ -9188,12 +11373,23 @@ self.onmessage = function (e) {
       res = { err: "Could not read the card: " + ((e && e.message) || e) };
     }
     if (res.err) { $("cardBody").innerHTML = `<p class="microcopy">${esc(res.err)}</p>`; return; }
+    cardBuildObj = res.build || null;
+    cardTextIndex = res.textIndex || null;
     if (!res.text) {
       // Common for the small bundled demo files, which are built without one.
+      const tiLine = textIndexLine(cardTextIndex);
       $("cardBody").innerHTML =
         `<p class="microcopy">This <code>.rete</code> carries no Dataset Card. ` +
         `A card is written at build time (<code>rete build --card card.json</code>); ` +
-        `the published datasets in the catalog all have one.</p>`;
+        `the published datasets in the catalog all have one.</p>` +
+        // …but one question is answerable without a card, because it is decided
+        // by the header's section directory rather than by anything written
+        // into the metadata section.
+        (tiLine ? `<p class="microcopy">Full-text index: ${esc(tiLine)}</p>` : "") +
+        // A cardless build writes no build record either, so this is normally
+        // silent — but the two sections are independent, and if one is somehow
+        // there without the other, saying so beats hiding it.
+        (cardBuildObj ? renderBuildRecord(cardBuildObj) : "");
       return;
     }
     cardJsonText = String(res.text);
@@ -9208,9 +11404,16 @@ self.onmessage = function (e) {
     }
     const title = cardObj.title || state.dataset || "Dataset Card";
     $("cardModalTitle").textContent = "Dataset Card — " + title;
+    // Say what was actually read. "2 range requests" was the card alone; the
+    // build record rides in the SAME coalesced range, so the honest phrasing is
+    // the budget (one header + one range), not a raw request count — a
+    // block-caching client splits that range into several physical fetches.
     $("cardFootNote").textContent =
       `${(cardJsonText.length / 1024).toFixed(1)} KB` +
-      (state.activeSource === "remote" ? " · read in 2 range requests" : " · read from the loaded file");
+      (cardBuildObj ? " + build record" : "") +
+      (state.activeSource === "remote"
+        ? " · read in one header + one coalesced range"
+        : " · read from the loaded file");
     showCardTab("view");
   }
 
@@ -9237,7 +11440,16 @@ self.onmessage = function (e) {
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     };
     // Delegated: the query rows are re-rendered on every tab switch.
-    $("cardBody").addEventListener("click", (e) => {
+    $("cardBody").addEventListener("click", async (e) => {
+      // `cite_as` is a citation string — its whole purpose is to be pasted
+      // somewhere else, so it gets a one-click copy rather than a hand selection.
+      const cite = e.target.closest && e.target.closest(".card-cite-copy");
+      if (cite && cardObj && cardObj.cite_as) {
+        const ok = await copyToClipboard(String(cardObj.cite_as));
+        cite.textContent = ok ? "Copied ✓" : "Copy failed";
+        setTimeout(() => { cite.textContent = "Copy"; }, 1800);
+        return;
+      }
       const b = e.target.closest && e.target.closest(".card-q-use");
       if (!b || !cardObj) return;
       // Two shapes: `queries` holds objects, `example_queries` plain strings.
@@ -9256,6 +11468,26 @@ self.onmessage = function (e) {
   function wireEvents() {
     wireCard();
     $("buildBtn").onclick = () => setMode("build");
+    // The Load pre-modal: same conventions as every other modal here — × close,
+    // click on the backdrop to dismiss, Escape in the shared keydown block.
+    $("loadBtn").onclick = openLoadModal;
+    $("loadModalClose").onclick = closeLoadModal;
+    $("loadModal").addEventListener("click", (e) => {
+      if (e.target === $("loadModal")) closeLoadModal();
+    });
+    $("loadExamplesBtn").onclick = () => { closeLoadModal(); openSource(); };
+    $("loadUrlGo").onclick = connectFromLoadModal;
+    $("loadUrlCache").onclick = cacheFromLoadModal;
+    $("loadUrl").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); connectFromLoadModal(); }
+    });
+    // The picker matters on a phone, where drag-and-drop isn't usable. Reset
+    // the input so choosing the same file twice still fires change.
+    $("loadFileInput").onchange = (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (f) { closeLoadModal(); loadFromFile(f); }
+    };
     $("run").onclick = runQuery;
 
     // Phone: reclaim memory when the tab is backgrounded. iOS Safari is most
@@ -9291,7 +11523,15 @@ self.onmessage = function (e) {
         flash("Selected — long-press → Copy");
       });
     });
-    $("strategy").onchange = () => setStrategy($("strategy").value);
+    // The controls the deep link carries all re-stamp the hash on change (see the
+    // note in onOutputTypeChange): the address bar has to describe the view a
+    // person is looking at, not the one they opened.
+    $("strategy").onchange = () => { setStrategy($("strategy").value); updateHash(); };
+    // `oninput`, not `onchange`: a free-text field only fires change on blur, and
+    // someone who types a round and copies the address bar without leaving the
+    // field would otherwise copy a link that names a different round.
+    { const rd = $("round"); if (rd) rd.oninput = updateHash; }
+    { const or = $("owlReason"); if (or) or.onchange = updateHash; }
     // Switching the Output type re-renders the last result in the new view
     // (no re-run) when it can; otherwise it runs the query.
     $("fmt").onchange = onOutputTypeChange;
@@ -9552,14 +11792,17 @@ self.onmessage = function (e) {
     $("buildFormat").onchange = scheduleBuildValidation;
     $("addSparqlEx").onclick = () => addBuildExample("sparql");
     $("addShaclEx").onclick = () => addBuildExample("shacl");
-    // Dataset-card form ↔ JSON two-way sync: every card field mirrors into the
-    // code editor; editing the JSON (or importing a card/manifest) drives the form.
+    // Step 3's two documents: the four shared fields sync both ways with the
+    // card editor (patching it, never replacing it), the listing-only fields
+    // stay out of the card entirely.
     const ck = $("cardKey");
     if (ck) ck.dataset.auto = "1";
     ["cardTitle", "cardKey", "cardIcon", "cardLicense", "cardSource", "cardTags", "cardDesc", "cardProvenance"]
       .forEach((id) => { const el = $(id); if (el) el.oninput = onCardField; });
     const cardCode = $("cardCode");
     if (cardCode) cardCode.oninput = applyCardCode;
+    const cardTpl = $("cardTemplate");
+    if (cardTpl) cardTpl.onclick = insertCardTemplate;
     const cardImport = $("cardImportFile");
     if (cardImport) cardImport.onchange = (e) => { importCardFile(e.target.files[0]); e.target.value = ""; };
 
@@ -9573,6 +11816,18 @@ self.onmessage = function (e) {
     { const rh = $("reasonHelp"); if (rh) rh.onclick = () => $("reasonModal").classList.remove("hidden"); }
     { const rc = $("reasonModalClose"); if (rc) rc.onclick = () => $("reasonModal").classList.add("hidden"); }
     { const rm = $("reasonModal"); if (rm) rm.addEventListener("click", (e) => { if (e.target === rm) rm.classList.add("hidden"); }); }
+    // ⛁ All graphs and 🏷 Labels help — same conventions as the Reason/Strategy
+    // modals: a ? beside the control, × close, backdrop click, Escape in the
+    // shared block.
+    { const uh = $("unionHelp"); if (uh) uh.onclick = () => $("unionModal").classList.remove("hidden"); }
+    { const uc = $("unionModalClose"); if (uc) uc.onclick = () => $("unionModal").classList.add("hidden"); }
+    { const um = $("unionModal"); if (um) um.addEventListener("click", (e) => { if (e.target === um) um.classList.add("hidden"); }); }
+    { const lh = $("labelsHelp"); if (lh) lh.onclick = () => $("labelsModal").classList.remove("hidden"); }
+    { const lc = $("labelsModalClose"); if (lc) lc.onclick = () => $("labelsModal").classList.add("hidden"); }
+    { const lm = $("labelsModal"); if (lm) lm.addEventListener("click", (e) => { if (e.target === lm) lm.classList.add("hidden"); }); }
+    // ⛁ All graphs — a semantics switch must announce itself the moment it
+    // flips, not only on the next run.
+    { const u = $("unionGraphs"); if (u) u.onchange = () => { announceUnionGraphs(u.checked); updateHash(); }; }
     $("layoutCell").onchange = renderLayout;
     $("dsButton").onclick = openSource;
     $("sourceModalClose").onclick = closeSource;
@@ -9666,6 +11921,8 @@ self.onmessage = function (e) {
         $("cardModal").classList.add("hidden");
         $("outputModal").classList.add("hidden");
         { const rm = $("reasonModal"); if (rm) rm.classList.add("hidden"); }
+        { const um = $("unionModal"); if (um) um.classList.add("hidden"); }
+        { const lm = $("labelsModal"); if (lm) lm.classList.add("hidden"); }
         $("cardsFieldsModal").classList.add("hidden");
         $("querySettingsModal").classList.add("hidden");
         $("reqModal").classList.add("hidden");
@@ -9674,6 +11931,7 @@ self.onmessage = function (e) {
         closeHistory();
         closeSettings();
         closeSource();
+        closeLoadModal();
         closeFinder();
       }
       // Ctrl/Cmd+Enter runs the active panel's primary action from anywhere.
@@ -9810,21 +12068,31 @@ self.onmessage = function (e) {
       renderHistory();
     };
 
-    const drop = $("dropZone");
-    ["dragenter", "dragover"].forEach((ev) => {
-      drop.addEventListener(ev, (e) => {
-        e.preventDefault();
-        drop.classList.add("drag");
+    // Two drop zones share one wiring: the catalog's advanced fold and the
+    // Load pre-modal — the SAME ingestion path (loadFromFile), not a second one.
+    const wireDropZone = (zone, onFile) => {
+      if (!zone) return;
+      ["dragenter", "dragover"].forEach((ev) => {
+        zone.addEventListener(ev, (e) => {
+          e.preventDefault();
+          zone.classList.add("drag");
+        });
       });
-    });
-    ["dragleave", "drop"].forEach((ev) => {
-      drop.addEventListener(ev, (e) => {
-        e.preventDefault();
-        drop.classList.remove("drag");
+      ["dragleave", "drop"].forEach((ev) => {
+        zone.addEventListener(ev, (e) => {
+          e.preventDefault();
+          zone.classList.remove("drag");
+        });
       });
-    });
-    drop.addEventListener("drop", (e) => {
-      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      zone.addEventListener("drop", (e) => {
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        onFile(file);
+      });
+    };
+    wireDropZone($("dropZone"), loadFromFile);
+    wireDropZone($("loadDropZone"), (file) => {
+      if (!file) return;
+      closeLoadModal();
       loadFromFile(file);
     });
   }
@@ -9842,6 +12110,7 @@ self.onmessage = function (e) {
     renderDatasetOptions();
     wireEvents();
     renderHistory();
+    renderFullText();   // hidden until a graph is open — never an empty box
     // IIIF cells render their thumbnail asynchronously; hydrate them whenever a
     // result table appears or re-renders (debounced; processed-once per cell).
     try {
@@ -9883,7 +12152,7 @@ self.onmessage = function (e) {
     // decode to match on first mount.
     const decodeBtn = $("decodeToggle");
     if (decodeBtn && window.PlaygroundEditor) {
-      decodeBtn.onchange = () => window.PlaygroundEditor.setDecode("q", decodeBtn.checked);
+      decodeBtn.onchange = () => { window.PlaygroundEditor.setDecode("q", decodeBtn.checked); updateHash(); };
       if (decodeBtn.checked) window.PlaygroundEditor.setDecode("q", true);
     }
     // Find-a-term modal: a button opens it; the input is debounced (a remote
@@ -9972,8 +12241,18 @@ self.onmessage = function (e) {
         // without this the field sits empty and there is nothing on screen
         // saying which file answered the query, or to copy for a bug report.
         $("remoteUrl").value = clean;
+        // #url= honors the same load= the catalog deep links use: load=cache
+        // opens (or restores, zero-network, from IndexedDB) the whole-file
+        // cache of that URL — which is what makes cached mode shareable as a
+        // link. A not-yet-cached URL still shows its size and asks first; the
+        // default stays lazy.
         const base = decodeURIComponent((clean.split("?")[0].split("/").pop() || ""));
-        enterRemote(clean, base.replace(/\.rete$/i, "") || "remote");
+        // Backing out of the download (or a failed one) falls back to lazy
+        // over the same URL, so a shared load=cache link never lands on a
+        // dead console.
+        if (load !== "cache" || !(await loadCachedUrl(clean))) {
+          enterRemote(clean, base.replace(/\.rete$/i, "") || "remote");
+        }
       }
     } else if (ds && (datasetInfo(ds) || userBytes.has(ds))) {
       if (load === "lazy") enterRemote(remoteUrlFor(ds), ds);
@@ -10001,7 +12280,15 @@ self.onmessage = function (e) {
       renderExamples();
     }
     setMode(params.get("mode") || "sparql");
+    // The toolbar state comes LAST — see applyViewState(): the dataset branch
+    // above and selectExample() both write these controls, and the link's values
+    // have to win over them.
+    applyViewState(params);
     if (liveEp) connectLiveEndpoint(liveEp);
+    // Boot's own loadDataset/selectExample/setMode each rewrote the hash while
+    // the view was still half-restored. Re-stamp it from the settled state so a
+    // Share pressed straight after opening a link hands back the same link.
+    updateHash();
     updateResultVisibility();
     // Open the catalog last, over a fully-rendered console (see the no-deep-link branch).
     if (bootShowCatalog && !liveEp) openSource();

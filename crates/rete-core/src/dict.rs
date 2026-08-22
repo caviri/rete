@@ -328,9 +328,29 @@ pub type ChunkBulkLoader = Box<dyn Fn(&[usize], ReadIntent) -> Option<Vec<Vec<u8
 /// [`SectionMeta::restart_offsets`] uses) where `data[0]` sits.
 pub struct SectionChunk {
     first_run: usize,
-    /// First term of the chunk (for chunk-level binary search in `id`);
-    /// unused (empty) for the single local chunk.
-    first_term: Vec<u8>,
+    /// The chunk's **routing key** — the only thing the chunk-level binary
+    /// search in [`ChunkedSection::id`] compares against. It is a *separator*,
+    /// **not a term**:
+    ///
+    /// ```text
+    /// last_term(chunk i-1)  <  key(i)  <=  first_term(chunk i)
+    /// ```
+    ///
+    /// and chunk 0's key is empty (`b"" <= anything`, and nothing routes before
+    /// chunk 0 anyway). Writers store the *shortest* such string — see
+    /// [`shortest_separator`] — which is why a file's chunk directory is a few
+    /// bytes per chunk instead of a full copy of every boundary term.
+    ///
+    /// Files written before that change carry the boundary term verbatim; the
+    /// verbatim first term is the degenerate separator, so both read the same
+    /// way and no version check is needed. Nothing may reconstruct a term from
+    /// this field, compare it for equality with a term, or report it as one: a
+    /// key that is *not* a separator (a truncation, a hash) mis-routes silently
+    /// — `term(id)` and every dump keep working because they route by
+    /// `first_run`, and only `id(term)` lies.
+    ///
+    /// Unused (empty) for the single local chunk.
+    key: Vec<u8>,
     body_start: u64,
     data: OnceLock<Vec<u8>>,
     /// This chunk's per-run byte offsets, **relative to its own decompressed
@@ -342,24 +362,26 @@ pub struct SectionChunk {
 }
 
 impl SectionChunk {
-    /// A remote chunk descriptor (data faults in through the loader).
-    pub fn remote(first_run: usize, first_term: Vec<u8>, body_start: u64) -> Self {
+    /// A remote chunk descriptor (data faults in through the loader). `key` is
+    /// the routing separator, **not a term** — see the `key` field.
+    pub fn remote(first_run: usize, key: Vec<u8>, body_start: u64) -> Self {
         SectionChunk {
             first_run,
-            first_term,
+            key,
             body_start,
             data: OnceLock::new(),
             runs: OnceLock::new(),
         }
     }
 
-    /// A resident chunk (data already decoded).
-    pub fn resident(first_run: usize, first_term: Vec<u8>, body_start: u64, data: Vec<u8>) -> Self {
+    /// A resident chunk (data already decoded). `key` is the routing separator,
+    /// **not a term** — see the `key` field.
+    pub fn resident(first_run: usize, key: Vec<u8>, body_start: u64, data: Vec<u8>) -> Self {
         let cell = OnceLock::new();
         let _ = cell.set(data);
         SectionChunk {
             first_run,
-            first_term,
+            key,
             body_start,
             data: cell,
             runs: OnceLock::new(),
@@ -412,6 +434,52 @@ pub fn run_first_term(bytes: &[u8], off: usize) -> Option<Vec<u8>> {
     Some(buf)
 }
 
+/// The LAST term encoded in `bytes[run_off..end]`, where `run_off` is a run
+/// (restart) boundary and `end` is the end of that run's chunk. Walks the
+/// front-coded entries forward, so it decodes at most `restart_interval` of
+/// them. `None` on malformed bytes.
+///
+/// Writers use it for one thing: the previous chunk's last term, the lower
+/// bound of the next chunk's [`shortest_separator`].
+pub fn run_last_term(bytes: &[u8], run_off: usize, end: usize) -> Option<Vec<u8>> {
+    let lim = bytes.get(..end)?;
+    let mut buf = Vec::new();
+    let mut pos = run_entry_into(lim, run_off, &mut buf)?;
+    while pos < end {
+        pos = entry_into(lim, pos, &mut buf)?;
+    }
+    Some(buf)
+}
+
+/// The **shortest** byte string `s` with `prev_last < s <= first`: `first`
+/// truncated one byte past where it first differs from `prev_last`.
+///
+/// This is the routing key a chunk directory stores (`SectionChunk::key`).
+/// `first` is the chunk's first term and `prev_last`
+/// the previous chunk's last term, so `prev_last < first` holds for any sorted
+/// section; if it does not (malformed input), the full `first` is returned —
+/// always a valid separator, just not a short one.
+///
+/// It really is the shortest. Let `k` be the length of the common prefix of
+/// `prev_last` and `first`; the result has length `k + 1`. No shorter `s`
+/// exists: any `s` with `|s| <= k` shares that prefix's bytes with both, so it
+/// is either a prefix of `prev_last` (hence `<= prev_last`), or it first
+/// differs from the shared prefix — below it, making `s < prev_last`, or above
+/// it, making `s > first`. Every case is outside `(prev_last, first]`.
+pub fn shortest_separator(prev_last: &[u8], first: &[u8]) -> Vec<u8> {
+    let shared = prev_last
+        .iter()
+        .zip(first)
+        .take_while(|(a, b)| a == b)
+        .count();
+    if shared >= first.len() {
+        // `first` is a prefix of `prev_last`, i.e. `first <= prev_last`: not a
+        // sorted pair. Keep the whole term.
+        return first.to_vec();
+    }
+    first[..shared + 1].to_vec()
+}
+
 /// A dictionary section whose body is served chunk-by-chunk: metadata + chunk
 /// directory always present, chunk bytes local or faulted in on first touch.
 pub struct ChunkedSection {
@@ -439,7 +507,7 @@ impl ChunkedSection {
             meta,
             chunks: vec![SectionChunk {
                 first_run: 0,
-                first_term: Vec::new(),
+                key: Vec::new(),
                 body_start: 0,
                 data,
                 runs: OnceLock::new(),
@@ -653,14 +721,26 @@ impl ChunkedSection {
             return None;
         }
         let ri = self.meta.restart_interval as usize;
-        // Pick the chunk: the last one whose first term is <= `term` (the
-        // single local chunk skips the search — its `first_term` is unset).
+        // Pick the chunk: the last one whose ROUTING KEY is <= `term` (the
+        // single local chunk skips the search — its key is unset).
+        //
+        // This is the ONLY read of [`SectionChunk::key`] in the codebase, and
+        // all it needs is the separator invariant `last(i-1) < key(i) <=
+        // first(i)`: `term` lands in chunk `i` exactly when `key(i) <= term <
+        // key(i+1)`, which covers every term of chunk `i` and nothing in any
+        // other chunk. A verbatim first term satisfies it too, which is why
+        // files written either way route identically.
+        //
+        // With separators the search can land on chunk `i` for a `term` in the
+        // gap `key(i) <= term < first(i)`; the run search below then hits its
+        // `lo == first_run` branch and answers `None`, which is correct — such
+        // a term is strictly between two chunks, i.e. absent.
         let ci = if self.chunks.len() == 1 {
             0
         } else {
             let i = self
                 .chunks
-                .partition_point(|c| c.first_term.as_slice() <= term.as_bytes());
+                .partition_point(|c| c.key.as_slice() <= term.as_bytes());
             i.checked_sub(1)?
         };
         let first_run = self.chunks[ci].first_run;
@@ -682,7 +762,11 @@ impl ChunkedSection {
             }
         }
         if lo == first_run {
-            return None; // smaller than every term in (and before) this chunk
+            // Smaller than every term in (and before) this chunk. Unreachable
+            // when the key is a verbatim first term; reachable, and correct,
+            // when it is a separator: `key(ci) <= term < first(ci)` puts the
+            // term strictly between two chunks.
+            return None;
         }
         let run = lo - 1;
         let off = self.run_off_in_chunk(ci, run, bytes, ri)?;

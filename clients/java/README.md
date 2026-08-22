@@ -12,6 +12,10 @@ The same Rust engine the native CLI and the browser use is compiled to a small,
 - **No `wasm-bindgen` / JS glue.** The wasm boundary is a plain C ABI over
   linear memory (see [`ffi/src/lib.rs`](ffi/src/lib.rs)), so a JVM wasm runtime
   can call it directly.
+- **Compiled, not interpreted.** Chicory translates the engine to JVM bytecode
+  once per JVM and HotSpot JITs it from there — see
+  [Execution mode](#execution-mode-compiled-by-default) for the numbers and the
+  escape hatch.
 
 This mirrors the design of the [browser client](../js) and the
 [Python client](../python): `clients/` consumes `crates/`, one thin binding per
@@ -24,10 +28,11 @@ Two Maven modules (Reactor under this directory):
 | `rete-client` | `io.github.caviri:rete-client` | the lightweight engine wrapper (Chicory only)      |
 | `rete-rdf4j`  | `io.github.caviri:rete-rdf4j`  | a read-only [RDF4J](https://rdf4j.org/) `Sail`/`Repository` over a `.rete` |
 
-Both work over an **in-memory** image or a **remote** `.rete` read lazily over
-HTTP (only the byte ranges a query touches are fetched — the file is never fully
-downloaded). Named graphs are exposed as RDF4J contexts. The binding is
-read-only.
+Both read a `.rete` from three sources: an **in-memory** image, a **file on
+disk**, or a **URL**. The last two are read *lazily* — only the byte ranges a
+query touches are ever read, so file size stops being a limit (see [Lazy
+(range-read) querying](#lazy-range-read-querying-any-size)). Named graphs are
+exposed as RDF4J contexts. The binding is read-only.
 
 ## `rete-client` usage
 
@@ -63,26 +68,175 @@ Engine errors (bad file, SPARQL parse/eval failure, invalid RDF) are raised as
 `ReteException`, carrying the engine's own message.
 
 A `Rete` instance owns a single wasm linear memory and is **not** thread-safe —
-use one per thread (loading is cheap) or guard calls with a lock.
+use one per thread (loading is cheap after the first, see
+[Execution mode](#execution-mode-compiled-by-default)) or guard calls with a lock.
 
-### Remote (lazy) querying
+### Lazy (range-read) querying: any size
 
-Query a `.rete` hosted over HTTP without downloading it — the engine issues
-`Range` requests for only the bytes each query needs (the host fetch is done by
-a synchronous Java `HttpClient` call, so no Asyncify is involved):
+The `byte[]` entry points above copy the whole image into **wasm32 linear
+memory on every call**. That is a hard ceiling at roughly 700 MB and the JVM
+heap has nothing to do with it — the wasm address space is what runs out, so
+`-Xmx` does not move it. Open the file *by range* instead and the image never
+enters linear memory at all:
 
 ```java
+import java.nio.file.Path;
 import java.net.URI;
 
+// From disk — a FileChannel serves the ranges.
+try (Rete rete = Rete.openFile(Path.of("/data/cordis.rete"))) {
+    String json = rete.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10");
+    System.out.println(rete.bytesRead() + " bytes read (≪ file size)");
+}
+
+// Over HTTP — Range requests serve the ranges. Same reader, same methods.
 try (Rete rete = Rete.openRemote(URI.create("https://data.example.org/dataset.rete"))) {
-    String json = rete.queryRemote("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10");
-    System.out.println(rete.bytesFetched() + " bytes fetched (≪ file size)");
+    String json = rete.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10");
 }
 ```
 
-The resource must support HTTP range requests (206 / `Content-Range`). The
-open cost (header + dictionary) is paid once into a resident handle whose block
-cache stays warm across queries.
+`info()`, `query(String)`, `graphs()`, `scanInGraph(g,s,p,o)` and
+`scanQuads(s,p,o)` work on either. (`infoRemote()`, `queryRemote(String)`, …
+are kept as aliases; they were never HTTP-specific, only HTTP-named.) A remote
+resource must support HTTP range requests (206 / `Content-Range`); a file needs
+nothing but read permission. Either way the open cost is paid once into a
+resident handle whose block cache stays warm across queries — `close()` releases
+it, and the file descriptor with it.
+
+Measured in this repo's Java image (`--memory=12g`, `-Xmx8g`, one fresh JVM per
+figure, peak RSS from the kernel's `VmHWM`, compiled engine):
+
+| file | op | whole-image `byte[]` | `openFile(Path)` | |
+| --- | --- | --- | --- | --- |
+| `mirbase.rete` 39.2 MiB | `info()` | 14.3 s · 738 MB · 100% read | **1.3 s · 557 MB · 6.4% read** | 10.7× faster |
+| | `query()` `LIMIT 100` | 14.4 s · 708 MB · 100% | **1.7 s · 544 MB · 8.9%** | 8.6× faster |
+| `davidrumsey.rete` 71.3 MiB | `info()` | 30.4 s · 1004 MB · 100% | **1.4 s · 556 MB · 3.9%** | 22× faster |
+| | `query()` `LIMIT 100` | 30.2 s · 935 MB · 100% | **1.7 s · 569 MB · 7.7%** | 17.7× faster |
+| `cordis.rete` 763.9 MiB | `info()` | **fails** after 79.6 s · 4212 MB | **1.7 s · 582 MB · 6.0%** | — |
+| | `query()` `LIMIT 100` | **fails** after 78.9 s · 4990 MB | **1.6 s · 587 MB · 5.6%** | — |
+
+"fails" is `ReteException: decompression failed: out of memory`, raised inside
+wasm with 8 GiB of JVM heap untouched.
+
+### Streaming a scan — `scanCursor`
+
+`scanQuads(s,p,o)` returns a `List`, which means the **engine builds the whole
+result inside wasm before the first row comes back**. For a narrow pattern that
+is fine. For `(null, null, null)` it is the wall: on `cordis.rete` (26.4 M quads)
+it exhausts wasm32's 4 GiB address space after 71 s having produced nothing.
+
+`scanCursor` pulls bounded batches instead, so time-to-first-row and peak memory
+are set by the batch, not by the graph:
+
+```java
+try (Rete rete = Rete.openFile(Path.of("/data/cordis.rete"));
+     QuadCursor rows = rete.scanCursor(null, null, null)) {
+    while (rows.hasNext()) {
+        String[] quad = rows.next();   // {s, p, o, graph}; graph == null = default
+    }
+}
+```
+
+`scanCursorInGraph(g, s, p, o)` is the graph-scoped form. The batch ramps from 32
+rows and doubles to `-Drete.scan.batch` (default 2048) — small first so a
+consumer that stops after one row pays for 32, growing so a drain runs at full
+speed.
+
+**Close it.** A cursor holds engine-side state until released. Draining it to
+exhaustion, an exception, and `Rete.close()` all release it too; a cursor
+abandoned mid-scan and garbage-collected is queued by a `Cleaner` and released on
+the next engine call from the owning thread. `openCursorCount()` is the leak
+check.
+
+| `cordis.rete` 763.9 MiB, 26.4 M quads | `scanQuads` (list) | `scanCursor` |
+| --- | --- | --- |
+| first row of `(null,null,null)` | **never** — wasm trap after 71.2 s at 2794 MB | **6.4 s · 826 MB** (2.2 s at `-Drete.scan.batch=32`) |
+
+`mirbase.rete` (2.70 M quads) goes from 14.1 s · 4098 MB to **2.0 s · 689 MB**,
+and drains all 2,701,457 rows in 14.2 s inside a 1 GiB heap.
+
+**What streaming does not fix.** The *result* no longer accumulates, but the
+engine's lazily-faulted caches still do: every decoded dictionary chunk and index
+tile a scan touches stays resident for the life of the handle, and wasm32 has
+4 GiB of address space. So a scan that touches enough of a big file still runs
+out — draining `cordis.rete` reaches **17.0 M of its 26.4 M quads** (241 s,
+3581 MB) and then traps. That ceiling is a property of the handle, not of the
+cursor: it lands within 0.2% of the same row at every batch size (17,042,502 at
+32 · 17,041,438 at 2048 · 17,012,078 at 16384). Before, the same scan produced
+**zero** rows and trapped in 71 s. Bounded consumption — `LIMIT n`, a filtered
+pattern, the first few million rows — is what streaming makes safe; an
+unqualified drain of a multi-GB quads file from a 32-bit engine is not.
+
+About 545 MB of every figure in the right-hand column is the floor: a JVM plus
+the one-off Chicory compile of the engine (see
+[Execution mode](#execution-mode-compiled-by-default)). The graph itself costs
+tens of megabytes, not gigabytes.
+
+### Execution mode: compiled by default
+
+Chicory can either **interpret** the wasm module or **compile** it to JVM
+bytecode. This client compiles, via
+[`com.dylibso.chicory:compiler`](https://chicory.dev) — the module is translated
+once per JVM (and the parsed module cached with it), so every later `Rete.load()`
+/ `openRemote()` in that JVM is nearly free, and HotSpot JITs the generated
+classes from there.
+
+Measured in this repo's own Java image (`--memory=12g`, `-Xmx8g`, one fresh JVM
+per figure, peak RSS from the kernel's `VmHWM`), two calls per op:
+
+| file | op | interpreted | compiled | |
+| --- | --- | --- | --- | --- |
+| `mirbase.rete` 39.2 MiB, 2.70 M quads | `info()` | 84.1 s / 79.8 s · 1332 MB | **12.8 s / 12.6 s · 839 MB** | 6.6× faster, 1.6× less RSS |
+| | `query()` `LIMIT 100` | 82.0 s / 81.8 s · 1581 MB | **12.9 s / 13.0 s · 840 MB** | 6.3× faster, 1.9× less RSS |
+| `davidrumsey.rete` 71.3 MiB, 5.00 M quads | `info()` | 162.7 s / 157.7 s · 2953 MB | **28.9 s / 28.6 s · 961 MB** | 5.6× faster, 3.1× less RSS |
+| | `query()` `LIMIT 100` | 150.5 s / 150.9 s · 1776 MB | **28.8 s / 28.7 s · 1140 MB** | 5.2× faster, 1.6× less RSS |
+
+(Interpreted figures are the best of two runs — the interpreter's wall time
+varies by up to ±30% under load, while the compiled figures repeat within 2%.)
+
+**The startup cost is real and is not hidden here.** Compiling the 1.56 MiB
+engine takes about **0.8 s**, once per JVM: the first `Rete.load()` goes from
+~0.5 s (parse only) to ~1.3 s (parse + compile), and resident memory after that
+load goes from ~250 MB to ~555 MB. A process that loads the engine and does
+nothing is therefore *worse off*. A process that touches a real file is ahead
+after the first call.
+
+Caching the parsed module alongside the compiled code also fixes a second cost:
+on `main` every additional `Rete.load()` re-parsed the wasm at **224–292 ms**
+each — which an RDF4J `Sail` pays *per connection*. It is now **1–7 ms**.
+
+To force the interpreter, set the system property:
+
+```sh
+java -Drete.chicory.interpreter=true -jar your-app.jar
+```
+
+That is the right call in three cases:
+
+- a **short-lived process** that opens one small file, runs one small query and
+  exits — the one-off compile can cost more than it saves;
+- a runtime that **forbids defining classes at execution time** — GraalVM
+  `native-image` (closed-world) or Android (no JVM bytecode loader). For those,
+  Chicory's build-time compiler (`chicory-compiler-maven-plugin`) is the real
+  answer; this client does not use it yet;
+- **excluding the dependency** to slim the classpath. Dropping
+  `com.dylibso.chicory:compiler` still works — `Rete` logs one warning and falls
+  back to the interpreter rather than failing to load.
+
+Cost of shipping it: `+510 KiB` of dependency JARs (`compiler` plus ASM), no
+change to the `rete-client` artifact itself, and no new licence obligations —
+`compiler` is Apache-2.0, ASM is BSD-3-Clause.
+
+### What this does *not* fix
+
+Compiling makes the same work faster; it does not change how much work there is.
+Local calls still copy the entire file into wasm linear memory **on every call**,
+and every scan is materialized twice (a wasm `Vec`, then a JVM `List`), so the
+local API is still bounded by `byte[]`/`Integer.MAX_VALUE` on one side and the
+4 GiB `wasm32` linear memory on the other. `cordis.rete` (763.9 MiB) still dies
+in `info()` with `decompression failed: out of memory` — inside linear memory,
+with 8 GiB of heap unused — compiled exactly as it did interpreted, only sooner.
+See [issue #115](https://github.com/caviri/rete/issues/115), which stays open.
 
 ## `rete-rdf4j` usage
 
@@ -107,6 +261,29 @@ RDF4J does the join/filter/ASK work, calling rete only for triple-pattern scans
 (`getStatements`). rete terms are N-Triples syntax, so `NTriplesUtil` maps both
 directions. Each connection loads its own wasm instance, so connections are
 independent across threads.
+
+Over a `Path`/`URI` Sail those scans **stream**: `getStatements` returns a
+`CloseableIteration` driven by a `QuadCursor`, and `close()` releases the
+engine-side cursor. That is what makes the most trivial exploratory query there
+is answerable —
+
+```sparql
+SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1
+```
+
+— because RDF4J issues it to the Sail as `getStatements(null, null, null)`: the
+`LIMIT` is a `Slice` *above* the triple source, so the Sail never sees it. RDF4J
+then takes one row and closes the iteration. Materializing that scan turned the
+query into a whole-graph read:
+
+| through a `SailRepository` | `SELECT ?s ?p ?o … LIMIT 1` |
+| --- | --- |
+| `mirbase.rete` 39.2 MiB / 2.70 M quads | 14.9 s · 4151 MB → **2.0 s · 670 MB** |
+| `cordis.rete` 763.9 MiB / 26.4 M quads | wasm trap after 72 s → **6.3 s · 825 MB** |
+| **`datacite.rete` 48.6 GiB / 9,834,714,813 quads, over HTTP** | impossible → **27.4 s · 1504 MB** |
+
+The in-memory (`byte[]`) Sail still buffers: the whole image is already resident
+in linear memory there, so a cursor would bound nothing.
 
 **Named graphs** are exposed as RDF4J contexts: `getContextIDs()` lists them, a
 plain pattern is the union of all graphs, `GRAPH <iri> { … }` restricts to one,
@@ -226,17 +403,40 @@ the wasm module (`ffi/src/lib.rs`):
 
 The host reads `status`/`len`/`payload`, then frees every buffer it was handed.
 
-### Remote (the one import)
+### Ranged reads (the one import)
 
 The module imports a single function the runtime supplies:
 
 - `env.rete_host_read_range(offset: i64, len: i32, dest: i32) -> i32` — the host
   writes `len` bytes at `offset` of the resource into linear memory at `dest`
-  and returns the count. The Java side does an HTTP `Range` GET; because the
-  call is synchronous, the engine's sync range reads work without Asyncify.
+  and returns the count. Because the call is synchronous, the engine's sync
+  range reads work without Asyncify.
 
-Remote querying uses a resident handle: `rete_remote_open(file_len) -> id`, then
+**That import is the whole seam, and it is source-agnostic**: the Java side
+satisfies it with an HTTP `Range` GET (`openRemote`) or a positional
+`FileChannel.read` (`openFile`), and nothing in the wasm module can tell the
+difference. This is the same shape the browser client uses — one
+`XhrRangeReader` whose bottom transport is either `fetch` or `Blob.slice()`.
+
+Ranged querying uses a resident handle: `rete_ranged_open(file_len) -> id`, then
 `rete_handle_query(id, query)` / `rete_handle_scan_quads(id, …)` /
 `rete_handle_scan_in_graph(id, …, g)` / `rete_handle_graphs(id)` /
 `rete_handle_info(id)`, and `rete_handle_close(id)`. Opening once keeps the
-block cache warm across a query's many scans.
+block cache warm across a query's many scans. (`rete_remote_open` remains as an
+alias of `rete_ranged_open`, for a host built against the older ABI.)
+
+### Streaming cursors (the second piece of state)
+
+- `rete_handle_scan_open(id, s,p,o, g, all_graphs) -> cursor_id`
+- `rete_handle_scan_next(cursor_id, max_rows) -> [count][done][rows…]`
+- `rete_handle_scan_close(cursor_id)`, and `rete_open_cursors()` for the leak
+  check. `rete_handle_close(id)` drops every cursor on that handle.
+
+What survives between `next` calls is deliberately **not** a suspended Rust
+iterator — that would have to borrow the `Rete` stored beside it, a
+self-referential struct whose soundness rests on drop order and on the engine's
+lazily-faulted caches staying write-once. It is a `u64` resume token
+(`(tile index, next a-group)`) plus a graph slot, which `Rete::query_batch` in
+`rete-core` was built to take. So a cursor holds no borrow, an abandoned one
+leaks a few dozen bytes rather than pinning the engine, and closing the handle
+can drop every cursor unconditionally.

@@ -18,8 +18,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use rete_core::{
     eval_query, eval_query_reasoned, results_envelope_json, schema_classes, schema_summary,
-    validate_shacl, BlockCacheReader, CountingReader, DataGraph, IndexPermutation, RangeReader,
-    Rete, ReteGraph, ShaclShapes, DEFAULT_BLOCK,
+    validate_shacl, BlockCacheReader, CountingReader, DataGraph, RangeReader, Rete, ReteGraph,
+    ShaclShapes, DEFAULT_BLOCK,
 };
 #[cfg(not(target_os = "emscripten"))]
 use rete_core::{parse_sparql_json_results, Binding, ServiceClient};
@@ -44,8 +44,9 @@ const MAX_SERVICE_RESPONSE: u64 = 256 * 1024 * 1024;
 const DUMP_BATCH: usize = 10_000;
 
 /// One [`Graph::dump_batch`] answer: the batch's `(s, p, o)` term tokens, the
-/// cursor to resume from, and whether the graph is exhausted.
-type DumpBatch = (Vec<(String, String, String)>, u32, bool);
+/// cursor to resume from, and whether the graph is exhausted. The cursor is
+/// opaque — see `Rete::query_batch` — and Python only ever hands it back.
+type DumpBatch = (Vec<(String, String, String)>, u64, bool);
 
 /// `SERVICE <endpoint> { … }` transport: SPARQL Protocol over blocking HTTP,
 /// the native twin of the CLI's `HttpServiceClient`. Native-only — a SERVICE
@@ -148,130 +149,6 @@ impl Graph {
     fn fresh_verdict(&self) {
         self.rete.reset_load_failures();
     }
-
-    /// Resolve one bounded slice of a graph's triples — the engine-side half of
-    /// the lazy dump. Returns `(triples, next_cursor, done)`.
-    ///
-    /// The cursor is a **subject id**, and that is the whole trick. The engine's
-    /// constant-memory walk (`Rete::dump_each`) is *push*-based: it drives the
-    /// scan itself and hands each triple to a callback. Python wants a *pull*
-    /// API (a generator), and inverting push into pull needs the scan's stack
-    /// held between calls — either a thread (impossible on the Pyodide wheel,
-    /// which has no threads) or a self-referential `#[pyclass]` holding an
-    /// iterator that borrows the `Rete` it is stored next to (`unsafe`, plus an
-    /// `Arc` refactor of this struct). Both are a lot of machinery for a dump.
-    ///
-    /// So instead the scan is made *resumable*: SPO tiles are ordered by
-    /// subject id, so "all triples of subject `sid`, for `sid` ascending" visits
-    /// exactly the same tiles in exactly the same order as the full scan, and
-    /// the entire resume state collapses to one `u32` the caller keeps. No
-    /// thread, no `unsafe`, no borrow held across calls, works identically on
-    /// the Pyodide build — and unlike a `(offset, limit)` API it is O(n) overall
-    /// rather than O(n²/limit), because nothing is ever re-scanned.
-    ///
-    /// Memory is bounded by `max_quads` (plus, at most, one subject's fan-out —
-    /// a batch is cut at a subject boundary, never inside one). Work per call is
-    /// bounded too, by a probe budget: a sparse named graph whose few subjects
-    /// are spread over a huge id space returns early with `done = false` instead
-    /// of grinding through absent ids, and the caller simply asks again.
-    fn dump_batch_inner(&self, graph: Option<&str>, cursor: u32, max_quads: usize) -> DumpBatch {
-        let index = match graph {
-            None => self.rete.default_index(),
-            // An unknown graph IRI is an empty dump, not an error — same as
-            // `Rete::dump_each`.
-            Some(g) => match self.rete.graph_index(g) {
-                Some(i) => i,
-                None => return (Vec::new(), cursor, true),
-            },
-        };
-        // Tile leading ranges are known WITHOUT fetching a tile (they live in
-        // the section directory), so both the span and the gap jumps below are
-        // free on a lazy/remote open.
-        let tiles = index.tile_sections()[IndexPermutation::Spo.section_index()];
-        let (Some(first), Some(last)) = (
-            tiles.first().map(|t| t.leading_range().0),
-            tiles.last().map(|t| t.leading_range().1),
-        ) else {
-            return (Vec::new(), cursor, true); // empty graph
-        };
-
-        let mut sid = cursor.max(first);
-        let mut probes = max_quads.saturating_mul(4).max(1 << 16);
-        let mut ids: Vec<(u32, u32, u32)> = Vec::new();
-        let mut exhausted = false;
-        while sid <= last && probes > 0 {
-            probes -= 1;
-            let hits = index.match_pattern((Some(sid), None, None));
-            if hits.is_empty() {
-                // No triples at this id. If it also falls in a hole BETWEEN
-                // tiles, jump straight to the next tile's first id instead of
-                // stepping through the gap one absent id at a time.
-                match next_tile_start(tiles, sid) {
-                    None => {
-                        exhausted = true;
-                        break;
-                    }
-                    Some(next) if next > sid => {
-                        sid = next;
-                        continue;
-                    }
-                    Some(_) => {}
-                }
-            } else {
-                ids.extend(hits);
-            }
-            if sid == u32::MAX {
-                exhausted = true;
-                break;
-            }
-            sid += 1;
-            // Cut on a subject boundary: `max_quads` is the floor of a batch,
-            // never a hard truncation, so no subject is ever split across two
-            // batches (which would force a re-scan to resume).
-            if ids.len() >= max_quads {
-                break;
-            }
-        }
-        let done = exhausted || sid > last;
-
-        // One coalesced dictionary fault for the whole batch, then resolve.
-        // Deliberately NOT `Dictionary::prefetch_all` (what `dump_each` uses):
-        // on a lazy open that would pull the *entire* dictionary — gigabytes on
-        // a big file — before the first quad, so `islice(g.iter_quads(), 5)`
-        // would cost as much as a full dump. Per-batch prefetch keeps a partial
-        // walk proportional to what it actually read.
-        let dict = self.rete.dictionary();
-        if !ids.is_empty() {
-            let mut nodes = Vec::with_capacity(ids.len() * 2);
-            let mut preds = Vec::with_capacity(ids.len());
-            for &(s, p, o) in &ids {
-                nodes.push(dict.subject_node(s));
-                nodes.push(dict.object_node(o));
-                preds.push(p);
-            }
-            dict.prefetch_terms(&nodes, &preds);
-        }
-        let triples = ids
-            .into_iter()
-            .filter_map(|(s, p, o)| {
-                Some((
-                    dict.subject_term(s)?,
-                    dict.predicate_term(p)?,
-                    dict.object_term(o)?,
-                ))
-            })
-            .collect();
-        (triples, sid, done)
-    }
-}
-
-/// The first subject id at or after `sid` that any SPO tile can hold, or `None`
-/// when `sid` is past the last tile. Tiles are ascending by leading range, so
-/// this is a binary search; it returns `sid` itself when a tile already covers
-/// it (an ordinary "this subject has no triples" step).
-fn next_tile_start(tiles: &[rete_core::index::Tile], sid: u32) -> Option<u32> {
-    let i = tiles.partition_point(|t| t.leading_range().1 < sid);
-    tiles.get(i).map(|t| t.leading_range().0.max(sid))
 }
 
 #[pymethods]
@@ -333,21 +210,45 @@ impl Graph {
     /// `Graph.iter_quads()` / `Graph.to_nquads()` drive in a loop.
     ///
     /// `graph` is `None` for the default graph or a named-graph token
-    /// (`<iri>`); `cursor` is 0 on the first call and the value returned by the
-    /// previous one afterwards. Returns `(triples, next_cursor, done)` where
-    /// `triples` holds at most `max_quads` (+ one subject's fan-out) canonical
-    /// N-Triples term tokens. See `Graph::dump_batch_inner` for why the cursor
-    /// is a subject id.
-    #[pyo3(signature = (graph=None, cursor=0, max_quads=DUMP_BATCH))]
+    /// (`<iri>`); `subject`/`predicate`/`object` optionally restrict the dump to
+    /// a triple pattern; `cursor` is 0 on the first call and the value returned
+    /// by the previous one afterwards. Returns `(triples, next_cursor, done)`
+    /// where `triples` holds at least one row unless `done`, as canonical
+    /// N-Triples term tokens.
+    ///
+    /// This is `Rete::query_batch` verbatim, and that is the point of the
+    /// change that introduced the filters. It used to be a *second*
+    /// implementation living here — a subject-id cursor that probed
+    /// `match_pattern((Some(sid), None, None))` one id at a time — written
+    /// because the engine's push-based `dump_each` cannot be paused across the
+    /// FFI boundary. The engine grew its own resumable form (whole state = one
+    /// opaque `u64`, no borrow held across calls, so it works on the
+    /// thread-less Pyodide build for the same reason the old one did), and a
+    /// filtered dump has to prune tiles by synopsis, which the probe loop had
+    /// no way to do. Keeping one traversal is what makes the Python client's
+    /// dump prune exactly like the CLI's and the browser's.
+    ///
+    /// A filter is not a row test applied after the fact: it routes the scan to
+    /// one permutation and drops the tiles whose synopsis rejects it *before*
+    /// fetching them. On a remote file that is the difference between a
+    /// predicate slice costing the slice and costing the graph.
+    #[pyo3(signature = (graph=None, cursor=0, max_quads=DUMP_BATCH, subject=None, predicate=None, object=None))]
+    #[allow(clippy::too_many_arguments)]
     fn dump_batch(
         &self,
         py: Python<'_>,
         graph: Option<&str>,
-        cursor: u32,
+        cursor: u64,
         max_quads: usize,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+        object: Option<&str>,
     ) -> PyResult<DumpBatch> {
         self.fresh_verdict();
-        let out = py.allow_threads(|| self.dump_batch_inner(graph, cursor, max_quads.max(1)));
+        let out = py.allow_threads(|| {
+            self.rete
+                .query_batch(graph, subject, predicate, object, cursor, max_quads.max(1))
+        });
         // A batch computed over a half-fetched index/dictionary would silently
         // drop quads from the dump; refuse it like every other entry point.
         self.incomplete_guard()?;
@@ -567,11 +468,62 @@ fn card_bytes(
     serde_json::to_vec(&value).unwrap_or_default()
 }
 
+/// The curated half of a card, typed and validated exactly as
+/// `rete build --card-file` validates it — the input the derivation takes.
+///
+/// Two things happen here that the pass-through path never did: the top level
+/// is held **reserved** (a stray key is a named error, not a silent write), and
+/// `keywords`/`theme`/`extra`/`description` go through the shared write-time
+/// gates. So a Python-derived card is one the CLI would also have accepted.
+///
+/// `queries` is split off first: it is not a rete-defined *curated* field (the
+/// CLI derives that list), but `Builder.example()` writes one, and dropping a
+/// caller's hand-written examples on the floor because they asked for
+/// derivation would be a nasty surprise. They are returned separately and
+/// appended to the derived library.
+fn curated_for_derivation(
+    value: serde_json::Value,
+) -> PyResult<(
+    rete_core::card::CardInput,
+    Vec<rete_core::card::ExampleQuery>,
+)> {
+    let mut obj = match value {
+        serde_json::Value::Object(o) => o,
+        _ => return Err(PyValueError::new_err("card must be a JSON object")),
+    };
+    let examples: Vec<rete_core::card::ExampleQuery> = match obj.remove("queries") {
+        None => Vec::new(),
+        Some(q) => serde_json::from_value(q).map_err(|e| {
+            PyValueError::new_err(format!(
+                "card `queries` is not a list of example queries: {e}"
+            ))
+        })?,
+    };
+    let doc = serde_json::Value::Object(obj);
+    // Validate through the document validator first: its wording is the one
+    // the CLI and the browser builder both show (a free-text theme is pointed
+    // at `keywords`; a stray key is pointed at the `extra` bag).
+    rete_core::card::validate_curated_card(&doc).map_err(PyValueError::new_err)?;
+    let curated = rete_core::card::CardInput::from_json_str(&doc.to_string())
+        .map_err(PyValueError::new_err)?;
+    Ok((curated, examples))
+}
+
 /// Full-option build behind `rete_graph.Builder`: multiple parsed sources,
 /// an optional Dataset Card, pyramid on/off + algorithm, opt-in text index,
-/// and a forced type predicate. Returns `(file_bytes, stats_json)`.
+/// a forced type predicate, and opt-in card derivation. Returns
+/// `(file_bytes, stats_json)`.
+///
+/// `derive_card` is **off by default and must stay that way**: `rete-graph` is
+/// published, and a caller who wrote `.card(title=…)` last release must get
+/// the same bytes this release. Derivation also walks the graph twice more —
+/// a cost nobody should pay without asking.
+// One keyword argument per build option, which is the shape a `#[pyfunction]`
+// with a `signature` has to take — the wrapper calls it with keywords, so an
+// options struct here would only move the same list one level down.
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (sources, card=None, pyramid=true, pyramid_algo="louvain", text_index=false, type_predicate=None))]
+#[pyo3(signature = (sources, card=None, pyramid=true, pyramid_algo="louvain", text_index=false, type_predicate=None, derive_card=false))]
 fn build_dataset(
     py: Python<'_>,
     sources: Vec<(String, String)>,
@@ -580,6 +532,7 @@ fn build_dataset(
     pyramid_algo: &str,
     text_index: bool,
     type_predicate: Option<String>,
+    derive_card: bool,
 ) -> PyResult<(Py<PyBytes>, String)> {
     let algo = rete_core::PyramidAlgo::from_cli(pyramid_algo).ok_or_else(|| {
         PyValueError::new_err(format!(
@@ -599,6 +552,15 @@ fn build_dataset(
             Some(value)
         }
     };
+    // The derived path types + validates the curated half before any parsing,
+    // so a malformed card fails before the graph is read rather than after.
+    let derived_input = if derive_card {
+        Some(curated_for_derivation(
+            curated.clone().unwrap_or_else(|| serde_json::json!({})),
+        )?)
+    } else {
+        None
+    };
     let (bytes, stats) = py.allow_threads(|| -> PyResult<_> {
         let mut quads = Vec::new();
         for (text, format) in &sources {
@@ -610,6 +572,30 @@ fn build_dataset(
         if quads.is_empty() {
             return Err(PyValueError::new_err(
                 "no statements parsed (empty input or only comments)",
+            ));
+        }
+        if let Some((input, examples)) = derived_input {
+            return Ok(rete_core::ingest::assemble_dataset_with_opts_algo(
+                quads,
+                pyramid,
+                text_index,
+                type_predicate.as_deref(),
+                algo,
+                move |stats, quads| {
+                    let mut card = rete_core::card::derive_card(
+                        quads,
+                        stats.terms as u64,
+                        stats.named_graphs as u64,
+                        input,
+                    );
+                    card.queries.extend(examples);
+                    // Two-stage, exactly as the CLI does it: derive while the
+                    // quads are resident, stamp the DEDUPLICATED counts once
+                    // the indexes exist.
+                    rete_core::ingest::DeferredMetadata::new(move |counts| {
+                        card.with_final_counts(counts).to_json_bytes()
+                    })
+                },
             ));
         }
         Ok(rete_core::ingest::assemble_dataset_with_opts_algo(

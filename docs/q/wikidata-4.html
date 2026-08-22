@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>Subclasses of a class (with names) — wikidata</title>
-<meta name="description" content="A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -&gt; Q515, the entity for &#39;city&#39;. Runs live in your browser over wikidata (1.04 GB) — no server." />
+<meta name="description" content="Answer: 5 rows in 11.9 s. A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -&gt; Q515, the entity for &#39;city&#39;. Runs live in your browser over wikidata (1.04 GB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/wikidata-4.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="Subclasses of a class (with names) — wikidata" />
-<meta property="og:description" content="A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -&gt; Q515, the entity for &#39;city&#39;. Runs live in your browser over wikidata (1.04 GB) — no server." />
+<meta property="og:description" content="Answer: 5 rows in 11.9 s. A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -&gt; Q515, the entity for &#39;city&#39;. Runs live in your browser over wikidata (1.04 GB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/wikidata-4.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/wikidata-4.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="Subclasses of a class (with names) — wikidata" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Subclasses of a class (with names) — wikidata" />
-<meta name="twitter:description" content="A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -&gt; Q515, the entity for &#39;city&#39;. Runs live in your browser over wikidata (1.04 GB) — no server." />
+<meta name="twitter:description" content="Answer: 5 rows in 11.9 s. A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -&gt; Q515, the entity for &#39;city&#39;. Runs live in your browser over wikidata (1.04 GB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/wikidata-4.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Subclasses of a class (with names)","description":"A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -> Q515, the entity for 'city'. Runs live in your browser over wikidata (1.04 GB) — no server.","url":"https://caviri.github.io/rete/q/wikidata-4.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"wikidata","url":"https://caviri.github.io/rete/d/wikidata.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Subclasses of a class (with names)","description":"Answer: 5 rows in 11.9 s. A reverse bound-object lookup: every class that declares wdt:P279 (subclass of) -> Q515, the entity for 'city'. Runs live in your browser over wikidata (1.04 GB) — no server.","url":"https://caviri.github.io/rete/q/wikidata-4.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"wikidata","url":"https://caviri.github.io/rete/d/wikidata.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,14 +49,13 @@
       <div class="chip">Path</div>
     </div>
     <h1 class="title s1">Subclasses of a class (with names)</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?sub</span> <span class="v">?name</span> <span class="kw">WHERE</span> {
-  <span class="v">?sub</span> wdt:P279 &lt;http://www.wikidata.org/entity/Q515&gt; .
-  <span class="kw">OPTIONAL</span> { <span class="v">?sub</span> rdfs:label <span class="v">?name</span> . <span class="kw">FILTER</span>(LANG(<span class="v">?name</span>) =…
-} <span class="kw">LIMIT</span> 50</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Sub</th><th>Name</th></tr></thead><tbody><tr><td class="">Q1187811</td><td class="">college town @en</td></tr><tr><td class="">Q2073573</td><td class=""></td></tr><tr><td class="">Q5770868</td><td class="">medieval city @en</td></tr><tr><td class="">Q620509</td><td class="">military town @en</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🌐</div>
       <div class="key">wikidata</div>
       <div class="facts">1.04 GB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">5 rows</div>
+        <div class="sub">69 range requests · 36.0 MB of 1.39 GB read</div>
+        <div class="sub">in 11.9 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -66,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=wikidata&amp;load=lazy&amp;mode=sparql&amp;ex=4">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">5 rows · 11.9 s · 36.0 MB of 1.39 GB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX wdt: &lt;http://www.wikidata.org/prop/direct/&gt;
 PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;

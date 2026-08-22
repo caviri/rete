@@ -183,9 +183,18 @@ impl<R: RangeReader> BlockCacheReader<R> {
 
     fn bounds(&self, offset: u64, len: u64) -> std::io::Result<()> {
         if offset.checked_add(len).is_none_or(|e| e > self.len) {
+            // Name the numbers: this fires when a read the file's own layout
+            // demands overruns the length the transport reported, and the two
+            // disagreeing values are the whole diagnosis (issue #95: a host
+            // advertised its gzip size, 58 MB, for a 71 MB file).
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
-                "range out of bounds",
+                format!(
+                    "range out of bounds: read {offset}+{len} exceeds the reported resource length {} — \
+                     the file's layout expects more bytes than the length probe found \
+                     (a host serving a compressed Content-Length can cause this)",
+                    self.len
+                ),
             ));
         }
         Ok(())

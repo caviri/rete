@@ -26,6 +26,11 @@ oxrdf.workspace = true
 oxttl.workspace = true
 oxrdfxml.workspace = true
 spargebra.workspace = true
+# Derive-based (de)serialization for the Dataset Card types in `card_derive` /
+# `card_queries`. Pure Rust, no_std-capable, and already a transitive dependency
+# of serde_json — `serde_derive` is a build-time proc macro, so it costs the
+# wasm nothing beyond the (De)Serialize impls actually reached.
+serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 blake3.workspace = true
 # Pure-Rust zstd *decoder* — always available (incl. wasm). Encoding uses the

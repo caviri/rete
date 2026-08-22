@@ -10,8 +10,8 @@
 use std::ffi::OsStr;
 
 use rete_core::{
-    auto_block, eval_query, BlockCacheReader, CountingReader, Header, OwnedMemoryRangeReader,
-    RangeReader, Rete, SummaryView, HEADER_LEN,
+    auto_block, eval_query, BlockCacheReader, CountingReader, OwnedMemoryRangeReader, RangeReader,
+    Rete, SearchView, SummaryView,
 };
 
 use crate::commands::card;
@@ -74,28 +74,159 @@ fn adaptive_read_bench_enabled(raw: Option<&OsStr>) -> bool {
     raw.and_then(OsStr::to_str) == Some("adaptive_lazy")
 }
 
-/// Fetch just the embedded Dataset Card over HTTP — the index-free CARD tier.
-/// Reads only the 128-byte header and the metadata range (two small range
+/// Fetch just the embedded Dataset Card (and, when present, the adjacent
+/// build-info record) over HTTP — the index-free CARD tier. Reads only the 1 KiB
+/// header and one coalesced metadata+build-info range (two small range
 /// requests), never the dictionary, index, or pyramid: the cold-start
 /// self-description a newcomer needs before they know what to query.
-pub(crate) fn card_url(url: &str, json: bool) -> anyhow::Result<()> {
+pub(crate) fn card_url(
+    url: &str,
+    json: bool,
+    format: Option<&str>,
+    sha256: Option<&str>,
+) -> anyhow::Result<()> {
+    let format = card::CardFormat::resolve(json, format)?;
     let reader = CountingReader::new(RangedSourceReader::open(url)?);
     let total = reader.len();
-    match card::load_card_ranged(&reader)? {
-        None => println!("(no dataset card)"),
+    let read = card::load_card_and_build_ranged(&reader)?;
+    match &read.card {
+        None => println!("(no dataset card — {})", read.text_index.describe()),
         Some(dataset_card) => {
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&card::card_json(&dataset_card))?
-                );
-            } else {
-                // The content hash is carried in the header we already fetched.
-                let head = reader.read_at(0, HEADER_LEN as u64)?;
-                let checksum = Header::from_bytes(&head)
-                    .map(|h| card::hex16(&h.content_hash))
-                    .unwrap_or_default();
-                println!("{}", card::format_card(&dataset_card, &checksum));
+            // The content hash is carried in the header we already fetched.
+            let checksum = card::hex16(&read.header.content_hash);
+            card::print_card(
+                dataset_card,
+                read.build.as_ref(),
+                &checksum,
+                url,
+                format,
+                sha256,
+            )?;
+        }
+    }
+    eprintln!(
+        "fetched {} of {} bytes in {} range request(s) — index NOT fetched",
+        reader.bytes_read(),
+        total,
+        reader.requests()
+    );
+    Ok(())
+}
+
+/// Search a `.rete` over HTTP — the remote `rete search`, in both its modes.
+///
+/// The open is deliberately narrower than [`sparql_url`]'s: a [`SearchView`]
+/// fetches the subject halves of the dictionary and stops. No object-only
+/// directory, no permutation tile directories, no pyramid, no index — on
+/// `epfl-infoscience.rete` that is 29.5 MB against 270 MB for an open that
+/// answers nothing at all. `--contains` then faults the TEXT_INDEX
+/// token table once and one range per posting list; the bare prefix mode faults
+/// the pyramid (where the label index lives) instead. The byte report on stderr
+/// is the point of the command as much as the hits are — it shows how little of
+/// a multi-gigabyte file a search actually has to read.
+pub(crate) fn search_url(
+    url: &str,
+    prefix: &str,
+    words: &[String],
+    contains_prefix: Option<&str>,
+    limit: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    let reader = std::sync::Arc::new(CountingReader::new(RangedSourceReader::open(url)?));
+    let total = reader.len();
+    // Same block-cache arrangement as `sparql_url`: a search's reads are few and
+    // scattered (a posting here, a dictionary chunk there), which is exactly the
+    // shape a read-through cache coalesces. `RETE_BLOCK_KB=0` disables it.
+    let block: u64 = match std::env::var("RETE_BLOCK_KB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(kb) => kb * 1024,
+        None => auto_block(total),
+    };
+    let view = if block == 0 {
+        SearchView::open_ranged(reader.clone())?
+    } else {
+        SearchView::open_ranged(std::sync::Arc::new(BlockCacheReader::new(
+            reader.clone(),
+            block,
+        )))?
+    };
+
+    let full_text = !words.is_empty() || contains_prefix.is_some();
+    if full_text && !view.has_text_index() {
+        if json {
+            println!(
+                "{{\"schemaVersion\":{},\"matches\":[]}}",
+                crate::JSON_SCHEMA_VERSION
+            );
+        } else {
+            eprintln!("(this file has no text index — rebuild with `rete build --text-index`)");
+        }
+        return Ok(());
+    }
+    if !full_text && !view.has_pyramid() {
+        if json {
+            println!(
+                "{{\"schemaVersion\":{},\"matches\":[]}}",
+                crate::JSON_SCHEMA_VERSION
+            );
+        } else {
+            eprintln!("(this file has no label index — rebuild with a recent `rete build`)");
+        }
+        return Ok(());
+    }
+
+    // `(label, subject)` in prefix mode; full-text yields subjects only, so the
+    // label side stays empty and the printers below branch on it.
+    let hits: Vec<(Option<String>, String)> = if full_text {
+        let word_refs: Vec<&str> = words.iter().map(String::as_str).collect();
+        view.text_search(&word_refs, contains_prefix, limit)
+            .into_iter()
+            .map(|iri| (None, iri))
+            .collect()
+    } else {
+        view.prefix_search(prefix, limit)
+            .into_iter()
+            .map(|(label, iri)| (Some(label), iri))
+            .collect()
+    };
+
+    if json {
+        let items: Vec<String> = hits
+            .iter()
+            .map(|(label, iri)| match label {
+                Some(l) => format!(
+                    "{{\"label\":{},\"subject\":{}}}",
+                    crate::commands::inspect::json_str(l),
+                    crate::commands::inspect::json_str(iri)
+                ),
+                None => format!(
+                    "{{\"subject\":{}}}",
+                    crate::commands::inspect::json_str(iri)
+                ),
+            })
+            .collect();
+        println!(
+            "{{\"schemaVersion\":{},\"matches\":[{}]}}",
+            crate::JSON_SCHEMA_VERSION,
+            items.join(",")
+        );
+    } else if hits.is_empty() {
+        if full_text {
+            let mut terms: Vec<String> = words.to_vec();
+            if let Some(p) = contains_prefix {
+                terms.push(format!("{p}*"));
+            }
+            println!("(no entities contain {})", terms.join(" + "));
+        } else {
+            println!("(no labels match \"{prefix}\")");
+        }
+    } else {
+        for (label, iri) in &hits {
+            match label {
+                Some(l) => println!("{l}\t{iri}"),
+                None => println!("{iri}"),
             }
         }
     }
@@ -389,7 +520,7 @@ mod tests {
     #[test]
     fn fetched_image_open_defers_unused_pyramid_decoding() {
         use rete_core::{
-            build_pyramid_meta, write_file, DictionaryBuilder, GraphIndexBuilder,
+            build_pyramid_meta, write_file, DictionaryBuilder, GraphIndexBuilder, Header,
             DEFAULT_TILE_BUDGET,
         };
 

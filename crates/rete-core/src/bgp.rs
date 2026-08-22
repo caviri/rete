@@ -665,7 +665,10 @@ fn pattern_scan_bytes(index: &GraphIndex, t: &(SlotTerm, SlotTerm, SlotTerm)) ->
         _ => &t.2,
     };
     let mut best = u64::MAX;
-    for perm in crate::index::ALL_PERMS {
+    // Only the permutations the FILE carries: an absent section is an empty
+    // `Vec<Tile>`, and summing its (zero) tile lengths would report a free scan
+    // for the one permutation that cannot be scanned at all.
+    for perm in index.perms().iter() {
         let tiles = sections[perm.section_index()];
         best = best.min(match comp(perm.roles()[0]) {
             SlotTerm::Node(id) | SlotTerm::Pred(id) => tiles

@@ -98,6 +98,28 @@ The catalogue is projected at build time from the playground's
 ship a listing that has drifted behind it. Datasets published as shards are
 listed with their shard URLs and a note, since they are not one file.
 
+## Publish it
+
+The download link above is an R2 object, and `publish.sh` is what writes it:
+
+```sh
+./publish.sh            # build, then upload
+./publish.sh --no-build # upload the rete.mcpb already here
+./publish.sh --dry-run  # print the object keys, upload nothing
+```
+
+It writes the same bytes to two keys — `mcpb/rete-<version>.mcpb` first, then
+the floating `mcpb/rete.mcpb` — so a reader following the floating pointer
+always finds the pinned build already beside it. The version comes from the
+*built* `build/manifest.json`, which `build.mjs` stamps from the workspace
+`Cargo.toml`, so a published pin cannot disagree with the file's contents.
+
+Credentials are the repository's usual R2 set (`ACCESS_KEY_ID`,
+`SECRET_ACCESS_KEY`, `S3_API_ENDPOINT`, optional `RETE_BUCKET`); the upload
+itself goes through `skills/rete-publish/scripts/upload_bucket.sh`, in a
+container like everything else. The tagged-release artifact on GitHub is
+produced separately by `.github/workflows/release.yml` and is unaffected.
+
 ## Test
 
 ```sh

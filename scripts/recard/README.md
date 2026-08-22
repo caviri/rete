@@ -1,0 +1,576 @@
+# `scripts/recard` — bring published `.rete` files up to the current Dataset Card
+
+A `.rete` published six months ago carries the card its builder could write then.
+Since #153/#154 a card also carries a **build record** (provenance, parameters,
+measured query costs) and **graph-scoped starter queries**. The second one is not
+cosmetic: on a file whose statements all live in named graphs, a starter query
+written for the default graph returns **zero rows**, and a newcomer reads that as
+a broken file. That is the bug `nkod.rete` (the Czech national open-data
+catalogue, 31,974 named graphs, empty default graph) shipped with.
+
+These scripts re-card an existing file **without touching its data** and prove
+both halves of that claim before replacing anything.
+
+```
+survey.sh          which published files are broken, which are merely dated
+recard.sh          re-card ONE file, end to end, with both proofs
+recard_batch.sh    the catalog-scale driver: resumable, idempotent
+card_tools.py      the JSON surgery (carry curated fields, classify, verify)
+```
+
+Everything runs in the `rete-dev` image; the shell scripts re-execute themselves
+inside Docker, so the paths you pass are **container** paths (the repo is `/work`).
+
+---
+
+## Quick start
+
+```sh
+docker compose build dev                       # once
+
+# The scripts run /work/target/release/rete — the repo-wide convention. Build it
+# THERE, not into the shared /target Compose volume (which `docker compose run
+# --rm dev cargo build` would use, and which other sessions also write to):
+docker run --rm -v "$PWD:/work" -w /work -e CARGO_TARGET_DIR=/work/target \
+  rete-dev:latest cargo build --release -p rete-cli
+# …or point the scripts elsewhere:  export RETE_BIN=/work/dev/target/release/rete
+
+# 1. what is actually broken?  (2 range requests per file, ~6 KB each)
+bash scripts/recard/survey.sh
+
+# 2. fix one file
+bash scripts/recard/recard.sh \
+  --source https://datagov-cz.github.io/rete-test/nkod.rete \
+  --out /work/dev/recard/out/nkod/nkod.rete
+
+# 3. or work the list the survey wrote
+bash scripts/recard/recard_batch.sh --list /work/dev/recard/survey/todo.txt
+```
+
+Outputs land under `/work/dev/recard/` (git-ignored): `survey/`, `out/`,
+`state/` (receipts) and `work/` (scratch).
+
+---
+
+## Why a re-card is not a one-liner
+
+* `rete repyramid old.rete -o new.rete --card` **re-derives the whole card from
+  the `.rete` itself** — no source RDF needed. That is the primitive.
+* But `--card` takes the **curated** half only from flags or `--card-file`. A
+  bare `--card` silently drops the publisher's `title`/`source`/`license`. So the
+  old card must be read first and handed back in — `card_tools.py curated` does
+  exactly that, and `verify` fails the run if any curated field went missing.
+* The card sits at byte 1024 and is **inside the blake3 content hash**, so there
+  is no in-place byte swap. Every re-card rewrites the file, which is why the
+  data has to be proven unchanged afterwards rather than assumed.
+
+## Carrying is the floor, not the ceiling — `--enrich`
+
+Carrying-and-adding-nothing is the right default for **someone else's** file. The
+`nkod` case is the one that set the rule: it is the Czech national open-data
+catalog's `.rete`, and minting a ROR for its publisher or a DOI for its data
+would put fabricated identity into another party's metadata. There is no way to
+tell from inside the file which is which, so the tool refuses for everything.
+
+But most of the catalog is **this project's own**, and there the same caution only
+preserves blanks. Every one of the 21 files re-carded on 2026-08-06 shipped with
+no `keywords`, no `theme`, no `canonical_url`, no `publisher`, no `derived_from`
+— not because anyone decided against them, but because the fields did not exist
+when the files were built and the re-card carried across exactly what was there.
+
+```bash
+bash scripts/recard/recard.sh --source /work/dev/recard/published/nidm.rete \
+  --out /work/dev/recard/out/nidm/nidm.rete \
+  --enrich /work/scripts/recard/enrich/nidm.json
+```
+
+`--enrich FILE` takes a small JSON document with the **same reserved top level as
+`--card-file`** and lays it over the carried fields: an enriched key wins
+outright (a list is *replaced*, never appended to), a carried key it does not
+mention is untouched. The same document is handed to the gate, which then permits
+**exactly those keys** to differ from the old card — and requires each of them to
+be present in the new one. So the licence to enrich never widens into a licence
+to lose: drop `title` while enriching `keywords` and the run still fails.
+
+`recard_batch.sh --enrich-dir DIR` makes it per-key and opt-in: `DIR/<key>.json`
+if it exists, carry-only otherwise.
+
+The documents for this repo's own datasets are generated, not hand-written —
+`scripts/recard/enrich/generate.mjs` derives them from `web/playground-src/catalog.js`
+(loaded as **code**, not regex'd) and writes one JSON per dataset, so the policy
+is reviewable in one file and the artifacts are diffable. `node
+scripts/recard/enrich/generate.mjs --check` re-derives and fails on drift.
+
+What that generator will and will not derive is the interesting part, and it is
+documented at the top of the file. In short: `canonical_url` from the catalog's
+own published URL; `keywords` from the playground tags **after filtering** —
+licence codes duplicate `license`, and "option-C" / "tiles-in-rete" /
+"semantic-zoom" / "federation" are labels for the *file*, not its subject;
+`theme` only from IRIs resolved against a published scheme before writing (three
+of the first eight Wikidata QIDs guessed from memory turned out to be a different
+concept entirely); `derived_from` only where it says more than `source` already
+does, and only URLs that answered 200. And **not**: `creators` (nobody's ORCID is
+on record and naming a person on 21 published files is a human's call), `doi`
+(none of these files has one — an upstream's DOI is `derived_from` plus
+`cite_as`, not `doi`), or `sparql_endpoint` unless the endpoint answers the
+protocol, answers about *this dataset's own IRIs*, and belongs to the upstream
+publisher. One of twenty-two passed that last test.
+
+## The two proofs
+
+**The data is unchanged.** Both files are serialized to N-Quads and hashed as
+they stream (`rete export --format nq | sha256sum`) — constant memory, no temp
+files. Equal streams prove equal data. Only if the streams differ in order does
+the script fall back to the sorted `cmp`, which needs scratch disk. Either way a
+mismatch is fatal: the original is left alone and the rebuilt file is kept for
+inspection.
+
+**The new starter queries answer.** The row counts are already in the rebuilt
+file: `rete build`/`repyramid` run every starter query once against the finished
+image and record `rows` in the build-info section. `card_tools.py verify` fails
+if any query returns zero, if `ov-one-row` does not return exactly one row, or
+if a named-graph-only file still ships a default-graph query.
+
+The first of those is now belt to the build's braces: a current `rete` does not
+*ship* a query it measured at zero rows (or one that came back binding no
+variable at all) — it drops it from the card and records the id and reason in
+the build record's `dropped_queries`, which `verify` prints. So a rebuilt card
+can carry fewer queries than the generator produced, and that is the repair, not
+a loss. `--allow-empty` and the `top-dangling`/`sp-within` exemptions survive for
+reading cards that are **already published**, where nothing ever ran the query.
+
+That gate is not decorative. On `mtg` it caught a **live card-generator bug**:
+`lb-labels` conjoined the top class with the top label predicate independently —
+
+```sparql
+SELECT ?s ?label WHERE { ?s a mtg:Ruling ; schema:name ?label } LIMIT 50
+```
+
+— and mtg's most frequent class (`mtg:Ruling`) is precisely the one that carries
+no `schema:name`. 22 of the 23 starter queries answered; that one returned zero,
+on a default-graph file.
+
+**Fixed upstream.** The template now takes the most populous class a
+`class_links` row proves carries the label predicate (`LABELED_CLASS`), and
+falls back to a class-free body where the card cannot prove one. Auditing the
+rest of the library for the same shape turned up two more live zero-rows
+queries: `top-reach` (busiest hub × most frequent predicate — 0 rows on
+`hugging-face`) and `sp-within` (a fixed `geo:hasGeometry/geo:asWKT` path
+against `geoadmin`, which hangs `geo:asWKT` straight off each District — 0 rows
+on 52,959 geometries). Re-carding those three files with the fixed generator
+gives **23 / 23, 23 / 23 and 22 / 22 queries returning rows**. `--allow-empty`
+remains for the templates that are honestly undecidable from the card.
+
+---
+
+## Which rebuild engine, and the RAM ceiling
+
+`repyramid` loads the file, decodes it, and materializes **every quad as owned
+strings** before re-assembling. Measured peak RSS (VmHWM, one process, inside
+the dev image):
+
+| file | bytes | statements | peak RSS | × file size | per statement | wall |
+|---|---:|---:|---:|---:|---:|---:|
+| `geoadmin.rete` | 40.3 MB | 372,508 | 778 MiB | 19.8× | 2,138 B | 8.5 s |
+| `nkod.rete` | 71.2 MB | 2,282,441 | 1.18 GiB | 17.4× | 543 B | 65 s |
+| `aifdb.rete` | 96.9 MB | 9,144,988 | 3.19 GiB | 34.5× | 365 B | 133 s |
+| `cordis.rete` | 801 MB | 26,363,545 | **16.07 GiB** | 21.0× | 654 B | 247 s |
+
+**The variable that predicts RAM is the statement count, not the byte size.**
+`repyramid` costs **~350–700 bytes per statement** on ordinary graphs (the
+2,138 B/statement outlier is `geoadmin`, which is a few hundred thousand huge WKT
+literals). As a byte ratio that comes out anywhere between 17× and 35× the file,
+which is why the ×-column is the wrong thing to plan with.
+
+On a 48 GB machine: roughly **70–100 M statements**, or — for a typically dense
+`.rete` — about **2 GB of file**. 22 of the 98 published catalog files are
+≥ 1 GB, and the six largest (`crossref` 56.1 GB, `datacite` 48.6 GB,
+`opencitations` 33.4 GB, `wikiart` 23.7 GB, `orcid` 16.3 GB, `gharchive`
+15.9 GB) are far past it — `crossref` alone is 3.8 G statements.
+
+### The streaming alternative that exists today
+
+There is one, and it is not `--memory-budget-mb`:
+
+```sh
+rete export in.rete --format nq > staged.nq          # constant memory
+rete build staged.nq -o out.rete --card-file curated.json
+```
+
+* `export --format nq` uses `dump_each` — **measured peak RSS 2.9–3.0 MiB**
+  regardless of size (3.0 MiB exporting 71 MB → 679 MB of N-Quads; 2.9 MiB
+  exporting 801 MB → 6.88 GB). This half really is constant memory.
+* `rete build` on an N-Quads **file** takes the two-pass streaming assembler
+  (`assemble_dataset_streaming_algo`), which never materializes the string quad
+  multiset — only the dictionary, the id-triples and the index. It keeps named
+  graphs, derives the **full** profile, generates the graph-scoped starter
+  queries, and measures them. On `nkod.rete` the two paths produce the **same
+  blake3 content hash** (`673fb14a9190be3ffec205340e2b4513`) — and since the
+  content hash covers everything except the unhashed build-info section, the two
+  images are equal apart from the four bytes that say `repyramid` vs `build`.
+
+| file | statements | `repyramid` peak | `export` peak | `build .nq` peak | staged `.nq` |
+|---|---:|---:|---:|---:|---:|
+| `nkod` (71 MB) | 2.28 M | 1.18 GiB / 65 s | 3.0 MiB / 24 s | 949 MiB / 83 s | 679 MB (9.5×) |
+| `cordis` (801 MB) | 26.4 M | **16.07 GiB** / 247 s | 2.9 MiB / 260 s | **7.00 GiB** / 437 s | 6.88 GB (8.6×) |
+| `switzerland-fedlex` (1.04 GB) | 56.3 M | not attempted (≈ 36 GiB predicted) | — / 22 min | ≤ 19.1 GiB / 23 min | 14.7 GB (14.1×) |
+
+The `build .nq` figure is **~285–340 bytes per statement** against `repyramid`'s
+~350–700 — call it **2× less RAM for ~2.5× the wall clock**, paid for in disk.
+(The fedlex row is a container cgroup peak, which includes the page cache from
+reading a 14.7 GB text file, so it is an upper bound, not a VmHWM like the rows
+above it.) On a 48 GB machine that moves the ceiling to roughly **150 M
+statements** — better, not unbounded.
+
+That is what `--mode stream` runs, and what `--mode auto` picks above
+`--stream-above-mb` (default 192). The staged N-Quads runs **9–15× the `.rete`**,
+so budget the disk before starting a batch: `crossref` would stage well over a
+terabyte, which is a second reason it is out of reach.
+
+**On a dense file, 9–15× is a serious underestimate.** `gbif-birds` is 1.53 GB
+for 333.8 M statements — 4.6 bytes per statement in `.rete`, against 139.5 bytes
+per line as N-Quads. It staged to **43.38 GiB, 30× the file**, in 28 minutes.
+The ratio to plan with is not a multiple of the file: it is
+`statements × ~140 B`, and the `.rete` compression ratio is exactly what makes
+that number unpredictable from the file size. `recard.sh` prints the free space
+on the scratch filesystem before it starts staging, and `--reuse-staged` lets a
+failed build retry without paying for the export twice.
+
+**And 333.8 M statements is past the staged path's ceiling on a 47 GiB machine.**
+The build ran for 80 minutes, wrote the card, and was **OOM-killed at
+VmHWM 43.75 GiB** — ~140 bytes per statement, *below* the 285–340 B/statement
+this table quotes, and still fatal because the file is that large. So the honest
+ceiling is roughly `available RAM / 140 B` ≈ **330 M statements at 47 GiB**, and
+`gbif-birds` sits on it. Anything larger needs the `repyramid --stream` engine
+work described above, not a bigger machine.
+
+### What does NOT work
+
+`rete build --memory-budget-mb N` is the genuinely bounded builder, but it is
+the wrong tool here on two counts, both hard:
+
+1. **It rejects named graphs outright** — `external build supports the default
+   graph only (named graph … found)`. Named-graph files are precisely the
+   population this pipeline exists for.
+2. **Its card has no profile and no starter queries.** The external path calls
+   `curated_counts_card`, which writes curated fields plus top-line counts and
+   nothing else (deriving the profile lists needs unbounded RAM). A re-card that
+   produced that would be a downgrade.
+
+You can see the consequence in the survey: `crossref`, `datacite`, `dblp`,
+`deps-dev`, `epfl-graph`, `gharchive`, `gharchive-2026-06`, `opencitations`,
+`orcid` and `wikiart` all report **0 starter queries** — they were built on that
+path.
+
+### The honest boundary
+
+**The big ones need engine work.** Past ~80 M statements `repyramid` is out, and
+past ~150 M so is the staged-N-Quads path (and its disk bill goes with it). The
+missing piece is small and specific: the
+two-pass assembler already accepts *any* re-readable quad source, and a
+lazily-opened `.rete` **is** re-readable (`dump_each` streams it). A
+`repyramid --stream` that feeds `assemble_dataset_streaming_algo` straight from
+the source `.rete` would remove the text detour and the 10× disk bill, and would
+be the same order of RAM as `build` from `.nq` — but it is engine code, and it is
+deliberately **not** in these scripts.
+
+---
+
+## What this costs
+
+Bandwidth, not CPU. Re-carding rewrites the file, so a remote dataset must be
+**downloaded in full** and — if you publish the result — **uploaded in full**.
+
+* The survey is free: 2 range requests per file, ~6 KB each, **~0.6 MB for the
+  whole 98-dataset catalog** (one outlier: `geoadmin-tiles` carries an embedded
+  PMTiles section ahead of its metadata, so its coalesced card range is 117 MB —
+  survey it last, or not at all).
+* The published catalog is **248.35 GB across 98 files** (HEAD-probed
+  2026-08-05; 22 are ≥ 1 GB, 36 are ≥ 100 MB). Re-carding all of it means
+  **248 GB down and 248 GB back up** — at 100 Mbit/s that is about 5.5 hours
+  each way, before any CPU.
+* Use `--max-mb` to stay inside a budget, and `--mirror` (plus `RECARD_MOUNT`)
+  to point at a local copy you already have and skip the download entirely. Most
+  of these datasets were built locally, so the mirror is usually the right
+  answer: it removes the download half of the bill outright.
+* R2 egress is free and uploads are not billed per byte, so the money cost is
+  ~0; the wall-clock cost is real.
+
+`recard_batch.sh` prints the known source bytes of its plan before it starts, and
+`--dry-run` prints the plan and stops.
+
+## Publishing the result
+
+These scripts do **not** upload — the rebuilt file lands in `--out-dir` and stops
+there, so a human decides. The publish step is the repo's existing one:
+
+```sh
+python scripts/r2_upload_files.py dev/recard/out/nkod/nkod.rete=nkod/nkod.rete
+python scripts/check_dataset_catalog.py --all      # re-probe the Range/CORS contract
+```
+
+Re-uploading changes each file's content hash, so `web/datasets.lock.json` has to
+be regenerated afterwards — that is a release action, not a scripting one.
+
+## Resumability and idempotency
+
+`recard.sh` writes a receipt to `<work>/state/<name>.json` recording the source's
+header content hash, the output's, the mode, the curated fields carried and the
+measured row counts. On a re-run it compares both hashes and exits early if the
+work is already done; `--force` overrides. Because the rebuilt file is only moved
+into place after both proofs pass, an interrupted run leaves the destination
+either absent or intact — never half-written. `recard_batch.sh` adds a per-key
+log and a `summary.tsv`, and continues past failures unless `--stop-on-error`.
+
+## Survey verdicts
+
+| verdict | meaning |
+|---|---|
+| `CARDLESS` | no Dataset Card at all |
+| `ZERO-ROWS` | named-graph-only, but starter queries scan the default graph — **broken today** |
+| `EMPTY-QUERY` | the scope is right and a named starter query still cannot match — **broken today** |
+| `MIXED-HIDDEN` | data in both, but no starter query looks inside a named graph |
+| `SUSPECT-QUERY` | a join the card can neither witness nor refute — run the query to settle it |
+| `DATED` | scope-correct, but no build record / profile cap / `ov-one-row` |
+| `CURRENT` | nothing to do |
+| `UNREADABLE` | the card tier itself failed (HTTP, format, parse) |
+
+`survey.sh` writes `todo.txt` with every key that is not `CURRENT`, worst first —
+that is the order `recard_batch.sh` will work them in.
+
+`EMPTY-QUERY` and `SUSPECT-QUERY` come from `rete card-audit`, which `survey.sh`
+runs on each card it has just fetched (no extra network). The verdicts are the
+query generator's own judgement — `Cap::joint_with`, `NonEmpty`,
+`provably_empty` in `crates/rete-cli/src/commands/queries.rs` — rather than a
+second copy of the emptiness rule living in a script, which is how the defect
+they look for survived four releases. The two are reported in separate columns
+and never merged: a survey that folds "provably empty" together with "cannot be
+decided" overstates its own confidence.
+
+Re-deciding is free once the cards are on disk:
+
+```sh
+bash scripts/recard/survey.sh --cards dev/recard/survey/cards --out dev/recard/decide
+```
+
+### What the first full run found (2026-08-05, 98 catalog datasets, 0.6 MB)
+
+| verdict | count |
+|---|---:|
+| `CARDLESS` | 14 |
+| `ZERO-ROWS` | **1** |
+| `MIXED-HIDDEN` | 0 |
+| `DATED` | 83 |
+| `CURRENT` | 0 |
+
+So the alarming case is **rare and specific**: exactly one published file,
+`switzerland-fedlex` (1.04 GB, 56.3 M quads across 497,905 named graphs, empty
+default graph), ships 8 starter queries of which 6 scan the default graph and
+return zero rows. Everything else with data in named graphs is either fine or
+has no card at all. The other 97 are a metadata refresh, not a fire.
+
+It has since been re-carded here (`--mode stream`): identical N-Quads
+(`sha256 29556b87…`), all four curated fields carried, and **10 starter queries,
+all `GRAPH`-scoped, all returning rows** — `ng-list` 497,905, `ov-pred-list` 426.
+
+Two secondary findings worth knowing before planning the work:
+
+* **Ten of the largest datasets carry a counts-only card** — `crossref`,
+  `datacite`, `dblp`, `deps-dev`, `epfl-graph`, `gharchive`,
+  `gharchive-2026-06`, `opencitations`, `orcid`, `wikiart` all report **0
+  starter queries**, because they were built through
+  `build --memory-budget-mb`. Those are also the files no rebuild path here can
+  handle (`datacite` alone is 52 GB / 18.1 G quads). They need the engine work,
+  not these scripts.
+* **`geoadmin-tiles` costs 117 MB to survey**, not 6 KB: its embedded PMTiles
+  section sits ahead of the metadata, so the "coalesced metadata range" spans it.
+  Worth a look at the section ordering.
+
+### What the query audit found (2026-08-05, 110 files: 96 catalog entries plus every shard, 3.7 MB excluding the `geoadmin-tiles` outlier)
+
+96 files carry starter queries. Counting **files**, not queries:
+
+| verdict | files | which queries |
+|---|---:|---|
+| `EMPTY-QUERY` | **20** | `lb-labels` ×11 (each with a vacuous `cmp-coverage`), `sp-within` ×10 |
+| `SUSPECT-QUERY` | 26 | `lb-labels`/`cmp-coverage` ×25, `lk-external` ×3 |
+| undecidable only | 49 | `top-reach` ×79, `top-dangling` ×80, `sp-bbox` ×5 |
+
+Spot-checking against the files themselves (62 query runs, 125 MB) says the
+static pass is calibrated but not tight:
+
+* 10 of the 11 refuted `lb-labels` returned 0 rows (the 11th, `causenet`, was
+  not run); all 10 `sp-within` refutations that were run returned 0.
+* 7 of 10 sampled `SUSPECT-QUERY` files returned 0 rows too — the suspect bucket
+  is mostly broken, it just cannot be proven from a card.
+* 6 of 26 sampled `top-reach` returned 0 rows. That query is undecidable by
+  construction (nothing in a card ties a *subject* to a *predicate*), so its
+  breakage is invisible to any card-only method.
+* All 3 `lk-external` suspects returned 0 — a template whose *table* audit
+  passed and whose published instances are empty anyway.
+
+Those spot-checks are now a command rather than a hand-rolled loop:
+
+```sh
+# what do the shipped queries really do, and what do they cost?
+rete card-audit https://data.graphplaza.com/<key>.rete --measure --max-mb 8
+rete card-audit /work/data/<key>/<key>.rete --measure --json      # free, same numbers
+```
+
+`--measure` runs each shipped query cold and prints the card's verdict beside
+the run's outcome, with rows/bytes/requests. It uses the **same** measurement
+`rete build` records, so where a file already carries a build record the command
+checks itself against it (`= build record`). Two things follow for this table:
+
+* the `undecidable` column stops being a dead end — `top-reach` and
+  `top-dangling` are undecidable from any card, and one run each settles them;
+* the byte figures are transport-independent (no block cache in the stack), so
+  measuring a **local mirror** gives the same `bytes`/`requests` a remote reader
+  would pay. With `--mirror` already the recommended path here, the whole
+  re-measurement of the catalog is free.
+
+Measured on `tree-city-inventory` (25 MB, 22 queries): `lb-labels` is `suspect`
+by card and **empty** by run — one of the 26 suspects confirmed broken — while
+`top-dangling`, `top-reach` and `sp-within` are `undecidable` by card and all
+three answer. The whole audit read 49.4 MB in 2,862 range requests, cold, every
+query.
+
+`vidy` is the one false positive the first pass produced and the reason
+`Refuted` now carries two multi-typing tells: it types every unit both
+`schema:ArchiveComponent` and `vidy:Unit`, the class-link quotient files each
+subject under its last type only, and the label query returns 50 rows from a
+class the quotient never mentions.
+
+## What a rebuild does not put back
+
+A rebuild re-derives the file **from its quads**. Everything else the source
+carried has to be asked for, and the N-Quads proof cannot see it going missing:
+it compares the RDF and nothing else. Two sections fall in that gap, and both bit
+this pipeline on real published files before the checks below existed.
+
+**The full-text index.** `repyramid`/`build` write a `TEXT_INDEX` section only
+under `--text-index`. Re-carding without it produces a file whose RDF is
+identical, whose card is better, and whose `CONTAINS` queries have quietly lost
+their index. Five of the twenty-two files in the 2026-08-05 batch carry one —
+`arxiu` (17.3 MB), `bioexplora` (11.6 MB), `albala` (2.85 MB), `plantatlas`
+(1.66 MB), `subtitles` (51.6 KB) — and the first pass dropped every one.
+
+`recard.sh --text-index auto` (the default) now **mirrors the source**: a file
+that has an index keeps one, and the rebuilt index is checked to exist before the
+output is installed. The receipt records `text_index_bytes_before/after`. Pass
+`--text-index no` to drop one deliberately.
+
+**A section this build does not own.** `geoadmin-tiles.rete` carries a 117.6 MB
+PMTiles vector-tile archive as section **kind 7** — which `scripts/embed_tiles.py`
+chose as "the next free kind after `TextIndex(6)`" and which has since become
+`SectionKind::BuildInfo`. So on that file today:
+
+* `rete card` reads the PMTiles blob as a build record, fails to parse it, warns
+  `unreadable build-info section` and carries on;
+* a re-card writes a real 2 KB build record at kind 7 and the tiles are gone —
+  the file drops from 158 MB to 42.6 MB, with the RDF proof still passing;
+* re-attaching them afterwards produces **two** kind-7 sections, and the
+  playground's tile reader (`reteTilesSection`, web/playground-src/app.js) takes
+  the *first* match — the build record — so the map would range-read 2 KB of JSON
+  as a tile archive.
+
+`recard.sh` now refuses to rebuild a file carrying a kind-7 section whose payload
+is not build-info JSON, or any section of an unknown kind above 7, unless
+`--allow-section-loss` says the caller will re-attach it. `embed_tiles.py`
+likewise refuses to add a second kind-7 entry, and `--drop-build-info` resolves it
+the only way that keeps today's published layout working — at the price of the
+file's build record. **The real fix is a kind of its own for tiles**, plus the
+reader change to match; that is engine + web work, not a flag in these scripts.
+
+### The one file that still does not fit, and what actually costs the RAM
+
+`gbif-birds` (1.53 GB, 333.8 M triples, 43.38 GiB staged N-Quads) has now been
+OOM-killed three times on a 47 GiB machine — twice with its pyramid at VmHWM
+~43.7 GiB, and once with `--no-pyramid` at **44.08 GiB**. Dropping the largest
+section moved the ceiling by less than 1%, so the obvious suspect is the wrong
+one.
+
+A 240-sample VmHWM trace says where it goes. The run climbs to **10.8 GiB and
+plateaus there for most of its length** — that is the streaming assembly, and it
+fits comfortably. Then in its last minutes it goes 10.8 → 16.5 → 29.5 → 37.2 →
+43.6 → 44.1 GiB and dies, with `embedded dataset card (58224 bytes of metadata)`
+as its last output. It had finished assembling; what remained was the **card**,
+and with `--no-pyramid` the only expensive thing there is the pass that runs each
+starter query once, cold, against the finished image to measure it.
+
+That pass is not optional for a re-card: it is what stops a card shipping a query
+nobody ran, and `card_tools.py verify` fails a card that arrives without the row
+counts — so `--no-card-costs` would produce a file and then fail the gate.
+`--memory-budget-mb` does not help either, since it implies `--no-pyramid` and
+excludes `--text-index`: it optimizes the 10.8 GiB half that already fits.
+
+The lever is a bigger machine. Keep the 43.38 GiB staged `.nq` for
+`--reuse-staged` — staging it costs 28 minutes and it is the same input whatever
+the build does next.
+
+## Known limits
+
+* A cardless source has no curated fields to carry unless `--enrich` supplies
+  them; without it the re-card gives such a file a derived card only.
+  `geoadmin-tiles` was that case — it shipped with no card at all.
+* Sharded datasets are surveyed by their first shard unless `--include-shards`.
+  Re-carding a shard set means re-carding every shard.
+* **`--pyramid-algo` now defaults to `auto`, because `repyramid`'s own default
+  (`louvain`) is the WRONG answer for most published files.** Nothing in an
+  older file records the algorithm — that is exactly what the missing build
+  record would have said — but the pyramid it produced does: **`pyramid_levels: 1`
+  means `types`**, Louvain produces three to six. `auto` reads that one header
+  field and reproduces it. Of the 22 files in the 2026-08-05 batch, **17 report
+  one level**; only five (`bph`, `chebi-full`, `factgrid-illuminati`, `orkg`,
+  `ustc`) were Louvain-built.
+
+  Getting it wrong is not cosmetic and the N-Quads proof cannot see it, because
+  the pyramid is derived, not data. Rebuilding a `types` file with `louvain`
+  inflated:
+
+  | file | pyramid before | with `louvain` | with `types` | file size |
+  |---|---:|---:|---:|---|
+  | `arxiu` | 725,907 B | 45,738,962 B | 725,907 B | 72.2 MB → 117 MB → **72.3 MB** |
+  | `proteinbase` | 137,553 B | 5,870,665 B | 137,551 B | 10.8 MB → 16.6 MB → **10.8 MB** |
+  | `albala` | 494,307 B | 4,697,734 B | 494,307 B | 11.4 MB → 15.7 MB → **12.8 MB** |
+  | `geoadmin` | 119,248 B | 2,466,224 B | 119,248 B | 40.3 MB → 42.6 MB → **40.3 MB** |
+
+  The right algorithm reproduces the published section to within a handful of
+  bytes (the residue is the pre-dedup count difference), and the re-carded file
+  comes out the same size as the one it replaces. `recard.sh` prints the
+  before/after pyramid size on every run and warns when the rebuilt one is more
+  than 4× the source's — the tell, if you ever override `auto`.
+* The data proof compares N-Quads. It is exact for the RDF, and it is the same
+  check `rete export` round-trips are documented against; it does not compare
+  non-graph sections. Those are handled separately — see "What a rebuild does
+  not put back" below.
+* **Curated prose is carried verbatim, stale figures and all** — and that is
+  deliberate, because a tool that rewrites a publisher's sentences cannot be
+  trusted with the ones it leaves alone. `fedlex`'s description said "66,392,663
+  quads", the pre-dedup number its publisher wrote by hand, while the re-carded
+  derived count is the correct 56,321,446. The tool carried the stale sentence
+  through unchanged and `verify` reported it as a changed curated field the
+  moment a human edited it — exactly the intended behaviour.
+
+  When `switzerland-fedlex` was published (2026-08-05) that one clause was
+  corrected **by hand**, since for this catalog we are effectively the
+  publisher. The edit keeps both numbers because both are true:
+
+  > 56,321,446 quads (66,392,663 harvested N-Quads lines, deduplicated) across
+  > 497,905 NAMED GRAPHS
+
+  Deleting 66,392,663 would have destroyed real provenance — it is the input
+  line count, not a wrong quad count. `title`, `source` and `license` went
+  across byte-identical. The way to prove such an edit is surgical is to run
+  `verify` twice: once against the original card, expecting **exactly one**
+  reported difference (the description), and once against the corrected curated
+  document, expecting a clean pass. If the first run reports two differences,
+  something moved that you did not intend.
+* **A headline count can go DOWN, and that is a fix, not a loss.** An old card
+  counted the raw pre-dedup input multiset; a re-card counts what the file
+  actually stores. `lombardi` is the clean example: its published card says
+  70,719 statements, its own header says 70,545, and both files export exactly
+  70,545 N-Quads. The re-carded card says 70,545 — the card and the header now
+  agree. Expect this wherever the source RDF carried duplicate statements, and
+  read it against the data proof (identical N-Quads), not against the old
+  number.

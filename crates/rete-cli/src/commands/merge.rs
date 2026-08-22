@@ -107,22 +107,15 @@ pub(crate) fn merge_cmd(
         anyhow::bail!("refusing to overwrite an input ({output} is also an input)");
     }
 
-    // The external builder is DEFAULT-GRAPH ONLY, and it discovers that when the
-    // first named quad reaches it — which on a multi-gigabyte shard is hours in.
-    // Every input's graph list is in its header, so check all of them up front
-    // and fail in a second instead.
+    // The merged file carries the UNION of its inputs' permutation sets: an
+    // all-lean merge stays lean, and one full input is enough to keep the
+    // merge-join orders that input's queries relied on. `merge` has no
+    // `--permutations` of its own — it consolidates shards, it does not
+    // re-decide how they were built.
+    let mut perms_bits = rete_core::PermSet::CORE.bits();
     for path in inputs {
         let rete = crate::commands::range_source::open_local(path)?;
-        let names = rete.graph_names();
-        if !names.is_empty() {
-            anyhow::bail!(
-                "{path} carries {} named graph(s) (e.g. {}), and the memory-bounded \
-                 builder merge uses handles the default graph only. Merge the \
-                 default-graph shards, or export to .nq and use the standard build.",
-                names.len(),
-                names[0]
-            );
-        }
+        perms_bits |= rete.header().perms.bits();
     }
 
     let curated = if card_args.requested() {
@@ -130,8 +123,29 @@ pub(crate) fn merge_cmd(
     } else {
         None
     };
+    // Build conditions (kind-7 section, outside the content hash). A merged
+    // file names its shards in the card's curated `derived_from`; the build
+    // info records when/by what/under which budget the fold happened.
+    let build_info = if curated.is_some() {
+        crate::commands::buildinfo::new_build_info(crate::commands::buildinfo::BuildParams {
+            command: Some("merge".to_string()),
+            no_pyramid: true,
+            memory_budget_mb: Some(memory_budget_mb),
+            ..Default::default()
+        })
+        .to_json_bytes()
+    } else {
+        Vec::new()
+    };
 
+    let perms = rete_core::PermSet::from_bits(perms_bits).map_err(|e| anyhow::anyhow!("{e}"))?;
     eprintln!("merge: {} input file(s) -> {output}", inputs.len());
+    if perms != rete_core::PermSet::ALL {
+        eprintln!(
+            "merge: every input is {}-permutation; the merged file will be too",
+            perms.len()
+        );
+    }
     let out_path = Path::new(output).to_path_buf();
     let stats = rete_core::extbuild::build_external(
         |visit| {
@@ -174,6 +188,8 @@ pub(crate) fn merge_cmd(
                 }
                 None => Vec::new(),
             }),
+            build_info,
+            perms,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;

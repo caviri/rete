@@ -12,6 +12,43 @@
 # `cargo run -p docgen` must have run first: the docs cards are rendered from the
 # social tags docgen writes into docs/*.html.
 #
+# ---------------------------------------------------------------------------
+# THE SAFETY CONTRACT — what `capture` may and may not do to committed files
+#
+# web/preview/answers.json is committed and is hours of live queries against
+# multi-gigabyte remote graphs. The cache it is consolidated from
+# (web/preview/.cache/answers.jsonl) is GITIGNORED, so on a clean checkout it
+# does not exist. `capture` finalizes when it finishes, including `capture
+# --dataset=x`.
+#
+# Those facts once combined into a landmine: capturing a single dataset on a
+# fresh clone rewrote answers.json from a cache holding only that dataset,
+# wiping every other answer and churning ~1,100 generated files downstream.
+#
+# capture.mjs now guarantees the opposite, and the guarantee is the default:
+#
+#   * finalize MERGES over the committed answers.json — it is the base, not the
+#     output. A partial capture can only add or update entries.
+#   * finalize considers the WHOLE catalog, never the --dataset/--scope subset.
+#   * a cached failure never supersedes an answer that already worked.
+#   * an output with fewer answers than the committed file ABORTS, naming the
+#     count it was about to drop. Nothing is written.
+#   * a missing cache is seeded from the committed answers.json, so a clean
+#     checkout behaves exactly like an incremental one.
+#
+# Deliberate destructive operations are still available, and only ever spelled
+# out on the command line:
+#
+#   run.sh finalize --allow-shrink      # accept dropping answers (deleted examples)
+#   run.sh finalize --rebuild           # ignore the committed file, consolidate
+#                                       # the cache alone (still refuses to shrink)
+#   run.sh capture --force              # re-measure everything from scratch
+#
+# The other subcommands do not regenerate committed data from anything
+# gitignored: inject/cards/pages read committed inputs only (answers.json,
+# web/preview/shots/, docs/og/cards.json, docs/*.html) and never delete outputs.
+# ---------------------------------------------------------------------------
+#
 # Browsers come from the image; the only npm dependency is playwright itself,
 # installed once into tests/gate/node_modules (gitignored).
 set -euo pipefail
@@ -59,7 +96,7 @@ build_all() {
 
 case "${CMD}" in
   capture)  ensure_deps; run_in_docker "node /work/scripts/preview/capture.mjs $*" ;;
-  finalize) ensure_deps; run_in_docker "node /work/scripts/preview/capture.mjs --finalize" ;;
+  finalize) ensure_deps; run_in_docker "node /work/scripts/preview/capture.mjs --finalize $*" ;;
   inject)   ensure_deps; run_in_docker "node /work/scripts/preview/inject_og.mjs $*" ;;
   cards)    ensure_deps; run_in_docker "${PNGQUANT_SETUP}; node /work/scripts/preview/render_cards.mjs $*" ;;
   pages)    ensure_deps; run_in_docker "node /work/scripts/preview/build_pages.mjs $*" ;;

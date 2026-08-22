@@ -37,13 +37,82 @@ export function esc(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-/** Catalog descriptions are rich HTML; social text has to be plain. */
+// *italic* — the ONE emphasis rule. It is duplicated verbatim in
+// web/playground-src/app.js, scripts/preview/card.mjs and
+// experiments/plaza/js/rete-card.js, because those three cannot import from one
+// another: app.js is concatenated into docs/playground.html as a classic script,
+// card.mjs is Node ESM, and rete-card.js is a browser ES module that
+// scripts/build_plaza.py copies into docs/plaza/. No bundler in this repo reaches
+// all three, so tests/gate/checks/check_md_emphasis.mjs asserts the literal below
+// AND this comment are byte-identical in every copy — change one and the gate
+// fails until you have changed them all. They had already drifted once: mdLite
+// used [^*]+ where the other five used [^*\n]+, so emphasis could cross a
+// paragraph break in the playground and nowhere else.
+//
+// A delimiter only emphasises when it FLANKS its text — CommonMark's left- and
+// right-flanking delimiter runs (spec §6.2). Without that, a literal asterisk in
+// prose opens a span that swallows the rest of the sentence and eats BOTH
+// asterisks: `wdt:* statements … prop/direct/*` rendered as "wdt: statements …
+// prop/direct/", and `mc:residedIn*)` as "mc:residedIn)". Clause by clause:
+//
+//   (?=…|…)      the opener must be LEFT-flanking. Either the character before it
+//                is the start of the string, a space or punctuation — or, when a
+//                word character precedes it, the character after it must NOT be
+//                punctuation. This is what rejects `entity/Q*,` and
+//                `mc:residedIn*)`.
+//   \*(?!\s)     …and an opener is never followed by a space, which rejects
+//                `wdt:* statements` and `orc:* → orcid`.
+//   [^*\n]*…     the run to the closer: no asterisk, no newline — emphasis is
+//                inline and cannot cross a paragraph.
+//   (?:…|…)      the closer must be RIGHT-flanking: the character before it is not
+//                a space (so `*foo *bar*` emphasises `bar`, not `foo `), and when
+//                that character is punctuation the closer must be followed by a
+//                space, punctuation, or the end of the string.
+//   \*(?!\*)     and the closer is not the first half of a `**bold**` run.
+//
+// "Punctuation" is \p{P} + \p{S}, exactly CommonMark's definition — it counts
+// symbols, so `→` and `%` flank like punctuation. The `u` flag is what makes those
+// classes legal, and it also makes astral characters single code points. HTML
+// escaping runs BEFORE this rule at the markup call sites, which is safe: `&`,
+// `<`, `>`, `"` and `'` are all punctuation, and so are the `&…;` entities they
+// become, so escaping never changes a character's flanking class.
+//
+// DELIBERATE DEVIATIONS from CommonMark, because this is one regex and not a
+// delimiter stack: emphasis may not CONTAIN an asterisk, so `*a.*b*` gives
+// `*a.<em>b</em>` where CommonMark gives `<em>a.*b</em>`; there is no nesting; and
+// `_underscore_` emphasis is not supported at all. Checked against the reference
+// CommonMark implementation over a 3,562-case sweep of flanking neighbourhoods
+// (100% agreement, against 51% for the rule this replaced) and over every
+// asterisk-bearing string this repo ships (47/47 lines, against 37/47).
+const MD_EMPHASIS = /(?=(?:^|[\s\p{P}\p{S}])\*|[^\s\p{P}\p{S}]\*(?![\p{P}\p{S}]))(^|[^*])\*(?!\s)([^*\n]*(?:[^*\s\n\p{P}\p{S}]|[\p{P}\p{S}](?=\*(?:[\s\p{P}\p{S}]|$))))\*(?!\*)/gu;
+
+/**
+ * A description is Markdown — the catalog's and a Dataset Card's alike
+ * (docs/dataset-cards.md). Social text — og:description, the JSON-LD abstract,
+ * the OG image's lead — has to be plain, so the markup is reduced away. Block
+ * markers are stripped before the newline collapse, since `^` only means "start
+ * of line" while the newlines are still there.
+ *
+ * Nothing here strips HTML, and that is deliberate. It used to, from when the
+ * catalog held raw HTML, and the tag pattern ate every angle-bracket phrase our
+ * authors actually write: `<< ?a rdf:predicate ?b >>` (RDF-star), `rete
+ * <command> --help`, `gbif.org/occurrence/<id>`, `?node <- edge -> ?node`. That
+ * silently corrupted 19 social descriptions. Angle brackets are prose now; a
+ * description that really did carry HTML would show it as text, which is
+ * exactly what the card viewer does with it.
+ */
 export function plain(s, max = 0) {
   let out = String(s || "")
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\r\n?/g, "\n")
+    .replace(/^[ \t]*(?:```|~~~)[^\n]*$/gm, "")
+    .replace(/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/gm, "")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]*>[ \t]?/gm, "")
+    .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/gm, "• ")
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, "$1")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(MD_EMPHASIS, "$1$2")
     .replace(/\s+/g, " ")
     .trim();
   if (max && out.length > max) {

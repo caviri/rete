@@ -515,6 +515,54 @@ impl<'a> TripleBlock<'a> {
         cursor
     }
 
+    /// **Resume** a leading-*unbound* scan at the first a-group whose leading id
+    /// is `>= from_a`, jumping there through the directory instead of re-walking
+    /// the groups already consumed. Yields exactly the tail of
+    /// `scan(None, pb, pc)` that begins at that group; `from_a = 0` is the whole
+    /// block.
+    ///
+    /// This is what lets a *batched* cursor stop in the middle of a block and
+    /// pick up where it left off without rescanning — the difference between an
+    /// O(n) resumable scan and an O(n²/batch) skip-and-take. Its bound-leading
+    /// twin is [`scan_from`](Self::scan_from), which pins `pa` to one group;
+    /// here `pa` stays unbound and `from_a` is only a starting point, so the
+    /// cursor runs on through every later group.
+    pub fn scan_resume(
+        &self,
+        dir: &GroupDirectory,
+        from_a: u32,
+        pb: Option<u32>,
+        pc: Option<u32>,
+    ) -> BlockCursor<'a> {
+        let mut cursor = BlockCursor {
+            bytes: self.bytes,
+            pos: self.body_start,
+            a: 0,
+            b: 0,
+            c: 0,
+            a_rem: 0,
+            b_rem: 0,
+            c_rem: 0,
+            started: true, // a dead cursor unless the probe below arms it
+            pa: None,
+            pb,
+            pc,
+        };
+        // Groups are stored ascending by `a`, so the first entry not less than
+        // `from_a` is the resume point (and `Err`/`Ok` of a binary search are the
+        // same answer here — unlike `scan_from`, a miss is not "no matches").
+        let i = dir.entries.partition_point(|e| e.a < from_a);
+        if let Some(e) = dir.entries.get(i) {
+            // State as if the main cursor had just consumed this group's
+            // delta_a + num_b header: positioned at the first b-group.
+            cursor.pos = e.pos;
+            cursor.a = e.a;
+            cursor.a_rem = e.a_rem_after;
+            cursor.b_rem = e.num_b;
+        }
+        cursor
+    }
+
     /// Stream the triples matching a (permuted) pattern, *without* decoding the
     /// whole block. `pa`/`pb`/`pc` are the bound components in this block's stored
     /// order (`None` = wildcard). The cursor walks the grouped body and:

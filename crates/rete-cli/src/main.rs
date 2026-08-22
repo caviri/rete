@@ -28,9 +28,12 @@ enum Command {
     },
     /// Build a `.rete` file from one or more RDF inputs (merged into one file).
     ///
-    /// Format is by extension: `.nt`/`.nq`/`.ttl`, plus `.rdf`/`.owl`/`.rdfxml`
-    /// (RDF/XML — how most OWL ontologies ship). Use `-` to read stdin (defaults to
-    /// N-Triples). `--format` overrides detection for all inputs.
+    /// Format is by extension: `.nt`/`.nq`/`.ttl`/`.trig`, plus
+    /// `.rdf`/`.owl`/`.rdfxml` (RDF/XML — how most OWL ontologies ship). Any input
+    /// may be **gzipped** (`.ttl.gz`, `.trig.gz`, …) — compression is detected from
+    /// the bytes and decompressed while streaming, so a dump never has to be
+    /// expanded to disk first. Use `-` to read stdin (defaults to N-Triples).
+    /// `--format` overrides detection for all inputs.
     /// Example: `cat *.nt | rete build - -o out.rete`.
     Build {
         /// Input files (or `-` for stdin); multiple are merged.
@@ -39,9 +42,18 @@ enum Command {
         /// Output `.rete` file.
         #[arg(short, long)]
         output: String,
-        /// Force input format for all inputs: nt | nq | ttl | rdfxml.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "rdfxml"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml"])]
         format: Option<String>,
+        /// Fold every named graph into the **default graph**, dropping the graph
+        /// term. Dumps that put all their data inside named graphs — TriG
+        /// exports like SemOpenAlex, most Wikibase and GraphDB dumps — otherwise
+        /// answer `?s ?p ?o` with nothing and build an empty pyramid, because in
+        /// SPARQL the default graph is not the union of the named ones. It is
+        /// also what makes such an input eligible for `--memory-budget-mb`,
+        /// which writes default-graph files only.
+        #[arg(long = "collapse-graphs")]
+        collapse_graphs: bool,
         /// Materialize RDFS/OWL-RL entailments at build time: run the reasoner
         /// over the default graph (subClassOf/subPropertyOf/domain/range,
         /// inverseOf, symmetric/transitive, sameAs) and store the inferred
@@ -110,22 +122,70 @@ enum Command {
         /// Card creation date, e.g. `2026-06-08` (implies `--card`).
         #[arg(long)]
         created: Option<String>,
+        /// Skip measuring the starter queries' cost figures (bytes / range
+        /// requests / reference timing) into the build-info section. Card
+        /// builds measure them by default; each starter query is run once,
+        /// cold, against the finished image.
+        #[arg(long = "no-card-costs")]
+        no_card_costs: bool,
         /// **Memory-bounded external build**: assemble the file within roughly
         /// this many MiB of RAM by cutting the input into disk-spilled chunks
         /// and merging them (the budget decides the number of chunks and the
         /// external-sort run sizes). For graphs too large for the in-RAM build.
         /// Output is byte-identical to a standard `--no-pyramid` build.
-        /// v1 limits: N-Triples/N-Quads files only, default graph only, implies
-        /// `--no-pyramid`, and excludes `--text-index`/`--materialize`/`--reason`.
+        /// Named graphs are carried through the same spill (the graph leads the
+        /// sort key), so a `.nq`/TriG input needs no `--collapse-graphs`.
+        /// Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or not — RDF/XML
+        /// is the one syntax that must be converted first), implies
+        /// `--no-pyramid`, and excludes
+        /// `--text-index`/`--materialize`/`--reason`.
         #[arg(long = "memory-budget-mb")]
         memory_budget_mb: Option<u64>,
         /// Directory for the external build's spill files (default: alongside
         /// the output file). Needs free space on the order of the input size.
         #[arg(long = "tmp-dir")]
         tmp_dir: Option<String>,
+        /// How many index permutations to store: `6` (default) or `3`.
+        ///
+        /// `6` stores SPO, POS, OSP, SOP, PSO and OPS. `3` stores only SPO,
+        /// POS and OSP — the orders that decide *routing*. Those three tie the
+        /// longest bound prefix on all eight triple-pattern shapes, so a
+        /// 3-permutation file answers every query with the same rows, from the
+        /// same tiles. What it gives up is the sort-merge join: SOP/PSO/OPS
+        /// exist only to hand a join two streams already sorted on the join
+        /// key, and without them the planner falls back to its hash/probe path
+        /// for the three (bound-set, join-column) shapes they covered — most
+        /// visibly `?s :p ?o . ?s :q ?o2`, the subject star.
+        ///
+        /// The three orders are typically ~40% of a built file. Measure your
+        /// own workload before choosing: `rete cost` reports bytes and requests
+        /// for a query against either build.
+        ///
+        /// **A 3-permutation file is not readable by a Rete older than this
+        /// one** — it errors on the index container's section count rather
+        /// than answering wrongly, but it does error. Keep the default for
+        /// anything published.
+        #[arg(long = "permutations", value_parser = ["3", "6"], default_value = "6")]
+        permutations: String,
+        /// Refuse input containing an IRI the N-Triples/N-Quads `IRIREF` grammar
+        /// and RFC 3987 disallow — a raw `[`/`]` outside an IP-literal host, a
+        /// second `#`, a space or one of ``<>"{}|^` \``, a `%` not followed by
+        /// two hex digits, or no scheme at all.
+        ///
+        /// **Off by default, and that is deliberate**: rete's reader is
+        /// tolerant, published datasets were built through it, and turning the
+        /// tolerance into a hard error would stop them building. Without this
+        /// flag such IRIs are stored verbatim and the build *reports how many*
+        /// it ingested — enough to know the file will not export as valid
+        /// N-Quads (see `rete export --sanitize-iris`). With it, the first
+        /// offending statement fails the build, naming the IRI and the rule.
+        #[arg(long)]
+        strict: bool,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
     /// RDF-XML, without building. Reports counts, or fails with a parse error.
+    /// Also reports invalid IRIs — parsing and being valid RDF are not the same
+    /// claim, and this is where the difference should be visible.
     Validate {
         /// Input files (or `-` for stdin).
         #[arg(required = true, num_args = 1..)]
@@ -133,6 +193,10 @@ enum Command {
         /// Force input format for all inputs: nt | nq | ttl | rdfxml.
         #[arg(long, value_parser = ["nt", "nq", "ttl", "rdfxml"])]
         format: Option<String>,
+        /// Fail on the first invalid IRI instead of counting them (same rule as
+        /// `rete build --strict`).
+        #[arg(long)]
+        strict: bool,
     },
     /// Estimate a build's output size, wall time and spill **before** running it.
     ///
@@ -141,11 +205,11 @@ enum Command {
     /// `--sample-mb` to read only a leading slice and extrapolate, which turns a
     /// multi-hour question ("will this 110 GB conversion fit?") into a minute.
     Estimate {
-        /// Input files (N-Triples / N-Quads).
+        /// Input files (N-Triples / N-Quads / Turtle / TriG, gzipped or not).
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
-        /// Force input format for all inputs: nt | nq.
-        #[arg(long, value_parser = ["nt", "nq"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig"])]
         format: Option<String>,
         /// Read only this many MiB and extrapolate (default: read everything).
         #[arg(long)]
@@ -251,25 +315,119 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Search a **remote** `.rete` over HTTP range reads — the counterpart of
+    /// `rete search`, with the same two modes and the same output.
+    ///
+    /// Opens for **search only**: the header and the subject halves of the
+    /// dictionary, then the TEXT_INDEX token table on the first `--contains`
+    /// and one range request per posting list and per dictionary chunk holding
+    /// a hit. The index tile directories a SPARQL open must fetch to route, and
+    /// the object-only dictionary directory that dominates a normal open on a
+    /// literal-heavy graph, are both skipped — so this is by far the cheapest
+    /// way to find an entity by its text in a file you have not downloaded.
+    /// Bare (label-prefix) mode faults the pyramid instead.
+    SearchUrl {
+        /// http(s):// URL of a `.rete` file (host must honor Range requests).
+        url: String,
+        /// Case-insensitive label prefix (empty matches the first `--limit`).
+        #[arg(default_value = "")]
+        prefix: String,
+        /// Full-text: require each WORD to appear in the subject's literals (AND).
+        #[arg(long = "contains", num_args = 1.., value_name = "WORD")]
+        contains: Vec<String>,
+        /// Full-text: also require a literal word starting with this prefix.
+        #[arg(long = "contains-prefix", value_name = "PREFIX")]
+        contains_prefix: Option<String>,
+        /// Maximum number of matches to print.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit `{schemaVersion:1,matches:[…]}` JSON, as `search` does.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the embedded Dataset Card (data-catalog metadata), if the file has
     /// one — title/license/source, counts, top predicates and classes,
-    /// vocabularies, and the content-hash checksum. `--json` emits the raw card.
+    /// vocabularies, the content-hash checksum, and (when present) the build
+    /// record: when it was built, by which `rete`, with which flags, and what
+    /// the starter queries cost. `--json` emits the raw card; `--format jsonld`
+    /// projects it to JSON-LD (VoID + schema.org + PROV-O — already RDF);
+    /// `--format croissant` emits the honestly-mappable Croissant subset.
     Card {
         /// Path to the `.rete` file.
         file: String,
         /// Emit the card as JSON instead of the human catalog view.
         #[arg(long)]
         json: bool,
+        /// Output format: json | jsonld | croissant (default: human text).
+        #[arg(long, value_parser = ["json", "jsonld", "croissant"])]
+        format: Option<String>,
+        /// The file's sha256 (hex), for `--format croissant`: Croissant requires
+        /// an md5/sha256 on every FileObject and a file cannot carry its own —
+        /// supply it from outside (`sha256sum file.rete`) for a fully
+        /// validator-clean document.
+        #[arg(long)]
+        sha256: Option<String>,
     },
     /// Fetch just the embedded Dataset Card over HTTP — reads only the header and
-    /// metadata range (the index-free CARD tier), never the dictionary or index.
-    /// The cold-start self-description, fetched in two small range requests.
+    /// the metadata + build-info range (the index-free CARD tier), never the
+    /// dictionary or index. The cold-start self-description, fetched in two
+    /// small range requests.
     CardUrl {
         /// http(s):// URL of a `.rete` file (host must honor Range requests).
         url: String,
         /// Emit the card as JSON instead of the human catalog view.
         #[arg(long)]
         json: bool,
+        /// Output format: json | jsonld | croissant (default: human text).
+        #[arg(long, value_parser = ["json", "jsonld", "croissant"])]
+        format: Option<String>,
+        /// The file's sha256 (hex), for `--format croissant` (see `rete card`).
+        #[arg(long)]
+        sha256: Option<String>,
+    },
+    /// Audit the starter queries a Dataset Card **already ships**: which of them
+    /// still answer on the file that carries them, which provably return
+    /// nothing, and which no card can decide. Reads the CARD tier only (two
+    /// range requests), so a published multi-GB file costs tens of KB to check
+    /// — the point being that you do not have to re-card a catalog to find out
+    /// which of its files greet a newcomer with zero rows.
+    ///
+    /// `--measure` runs the queries instead of reasoning about them, reporting
+    /// rows, bytes and range requests per query — the figures a build records
+    /// in its `query_costs`, measured the same way, so the two are comparable.
+    /// That costs real reads (`--only`/`--max-mb` bound them), and it settles
+    /// the templates a card cannot decide at all.
+    CardAudit {
+        /// A `.rete` file (local path or `http(s)://` URL), or a card JSON
+        /// document from `rete card --json` / `rete card-url --json` (`-` for
+        /// stdin). `--measure` needs the file itself.
+        path: String,
+        /// Emit one JSON object with every finding instead of the text table.
+        #[arg(long)]
+        json: bool,
+        /// Run each starter query cold and report what it cost. Local path =
+        /// free but only as honest as your copy; `http(s)://` = what a reader
+        /// really pays. The output names which it was, either way.
+        #[arg(long)]
+        measure: bool,
+        /// Measure only these query ids (repeatable, or comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+        /// Abandon a query once it has asked for this many MB (0 = no cap;
+        /// fractions allowed). A remote measurement is a download; this is the
+        /// leash — and "costs more than N MB" is itself an answer.
+        #[arg(long, default_value_t = 0.0)]
+        max_mb: f64,
+        /// Record the measurement in the file's build-info section. Implies
+        /// `--measure`; local files only. Build info sits **outside** the
+        /// content hash, so the file keeps its identity — but the section is
+        /// near the front, so the file is rewritten end to end to make room.
+        #[arg(long)]
+        write_costs: bool,
+        /// Let `--write-costs` proceed even though a starter query measured
+        /// zero rows.
+        #[arg(long, requires = "write_costs")]
+        allow_empty: bool,
     },
     /// List the named graphs in a dataset.
     Graphs {
@@ -286,6 +444,38 @@ enum Command {
         /// Output format: nq | ttl | jsonld.
         #[arg(long, value_parser = ["nq", "ttl", "jsonld"], default_value = "nq")]
         format: String,
+        /// Export ONE graph: a named-graph IRI, or the empty string for the
+        /// default graph. Omit for the default graph plus every named graph.
+        #[arg(long)]
+        graph: Option<String>,
+        /// Export only triples with this subject (bare IRI or N-Triples token).
+        #[arg(long)]
+        subject: Option<String>,
+        /// Export only triples with this predicate (bare IRI or N-Triples token).
+        #[arg(long)]
+        predicate: Option<String>,
+        /// Export only triples with this object (bare IRI or N-Triples token,
+        /// e.g. `'"text"@en'`).
+        #[arg(long)]
+        object: Option<String>,
+        /// Percent-encode IRIs the N-Triples/N-Quads grammar and RFC 3987
+        /// disallow, so the dump loads into a strict store (Oxigraph, Jena,
+        /// GraphDB) instead of being rejected — and a bulk loader rejects the
+        /// whole *chunk*, not the line.
+        ///
+        /// **Off by default because it changes the data.**
+        /// `<http://ex/a[b]>` is written as `<http://ex/a%5Bb%5D>`, which is a
+        /// different IRI: the dump no longer joins against the graph it came
+        /// from, and rete → store → rete stops being the identity. That is a
+        /// call for whoever exports, which is why it is a flag. What it did is
+        /// reported on stderr, per class.
+        ///
+        /// An IRI with **no scheme** cannot be repaired by escaping (resolving
+        /// it needs a base IRI the file never recorded). Those are counted,
+        /// reported, and written verbatim — the dump is then still not valid
+        /// N-Quads, and the summary says so.
+        #[arg(long = "sanitize-iris")]
+        sanitize_iris: bool,
     },
     /// Rebuild a `.rete`'s pyramid in place, reading triples straight from the
     /// file (no `export | build` N-Quads round-trip). Use to add a schema
@@ -516,8 +706,25 @@ enum Command {
     Cost {
         /// Local `.rete` file path or http(s) URL.
         source: String,
-        /// The SPARQL query to parse and inspect.
-        query: String,
+        /// The SPARQL query to parse and inspect. Omit with `--dump`.
+        query: Option<String>,
+        /// Preview a **dump** instead of a query: what `rete export` (and the
+        /// clients' streaming dump) will fetch for the filter below.
+        #[arg(long)]
+        dump: bool,
+        /// `--dump` only: one graph — a named-graph IRI, or the empty string for
+        /// the default graph. Omit for the default graph plus every named graph.
+        #[arg(long)]
+        graph: Option<String>,
+        /// `--dump` only: restrict to this subject.
+        #[arg(long)]
+        subject: Option<String>,
+        /// `--dump` only: restrict to this predicate.
+        #[arg(long)]
+        predicate: Option<String>,
+        /// `--dump` only: restrict to this object.
+        #[arg(long)]
+        object: Option<String>,
         /// Emit machine-readable JSON.
         #[arg(long)]
         json: bool,
@@ -825,6 +1032,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             inputs,
             output,
             format,
+            collapse_graphs,
             materialize,
             reason,
             no_pyramid,
@@ -838,9 +1046,16 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             source,
             description,
             created,
+            no_card_costs,
             memory_budget_mb,
             tmp_dir,
+            permutations,
+            strict,
         } => {
+            let perms = match permutations.as_str() {
+                "3" => rete_core::PermSet::CORE,
+                _ => rete_core::PermSet::ALL,
+            };
             let card_args = commands::card::CardArgs {
                 enabled: card,
                 file: card_file,
@@ -860,7 +1075,10 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     materialize,
                     reason,
                     text_index,
+                    collapse_graphs,
                     card_args,
+                    perms,
+                    strict,
                 )
             } else {
                 commands::build::build(
@@ -873,13 +1091,19 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     rete_core::PyramidAlgo::from_cli(&pyramid_algo).unwrap_or_default(),
                     text_index,
                     type_predicate.as_deref(),
+                    collapse_graphs,
                     card_args,
+                    no_card_costs,
+                    perms,
+                    strict,
                 )
             }
         }
-        Command::Validate { inputs, format } => {
-            commands::build::validate(&inputs, format.as_deref())
-        }
+        Command::Validate {
+            inputs,
+            format,
+            strict,
+        } => commands::build::validate(&inputs, format.as_deref(), strict),
         Command::Estimate {
             inputs,
             format,
@@ -943,10 +1167,74 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 )
             }
         }
-        Command::Card { file, json } => commands::card::card_cmd(&file, json),
-        Command::CardUrl { url, json } => commands::url::card_url(&url, json),
+        Command::SearchUrl {
+            url,
+            prefix,
+            contains,
+            contains_prefix,
+            limit,
+            json,
+        } => commands::url::search_url(
+            &url,
+            &prefix,
+            &contains,
+            contains_prefix.as_deref(),
+            limit,
+            json,
+        ),
+        Command::Card {
+            file,
+            json,
+            format,
+            sha256,
+        } => commands::card::card_cmd(&file, json, format.as_deref(), sha256.as_deref()),
+        Command::CardUrl {
+            url,
+            json,
+            format,
+            sha256,
+        } => commands::url::card_url(&url, json, format.as_deref(), sha256.as_deref()),
+        Command::CardAudit {
+            path,
+            json,
+            measure,
+            only,
+            max_mb,
+            write_costs,
+            allow_empty,
+        } => commands::card::card_audit_cmd(
+            &path,
+            &commands::card::AuditOptions {
+                json,
+                measure: measure || write_costs,
+                only,
+                max_mb,
+                write_costs,
+                allow_empty,
+            },
+        ),
         Command::Graphs { file } => commands::inspect::graphs(&file),
-        Command::Export { file, format } => commands::export::export(&file, &format),
+        Command::Export {
+            file,
+            format,
+            graph,
+            subject,
+            predicate,
+            object,
+            sanitize_iris,
+        } => commands::export::export(
+            &file,
+            &format,
+            &commands::export::ExportFilter {
+                // `--graph ''` is the default graph alone; a non-empty value is
+                // that named graph; absent is every graph (the lossless dump).
+                graph: graph.map(|g| (!g.is_empty()).then_some(g)),
+                subject: subject.as_deref().map(commands::export::canonical_term),
+                predicate: predicate.as_deref().map(commands::export::canonical_term),
+                object: object.as_deref().map(commands::export::canonical_term),
+            },
+            sanitize_iris,
+        ),
         Command::Repyramid {
             file,
             output,
@@ -1048,9 +1336,34 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Cost {
             source,
             query,
+            dump,
+            graph,
+            subject,
+            predicate,
+            object,
             json,
             explain,
-        } => commands::cost::cost(&source, &query, json, explain),
+        } => {
+            if dump {
+                commands::cost::dump_cost(
+                    &source,
+                    &commands::export::ExportFilter {
+                        graph: graph.map(|g| (!g.is_empty()).then_some(g)),
+                        subject: subject.as_deref().map(commands::export::canonical_term),
+                        predicate: predicate.as_deref().map(commands::export::canonical_term),
+                        object: object.as_deref().map(commands::export::canonical_term),
+                    },
+                    json,
+                )
+            } else {
+                let query = query.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "`rete cost` needs a SPARQL query, or `--dump` to preview a dump"
+                    )
+                })?;
+                commands::cost::cost(&source, &query, json, explain)
+            }
+        }
         Command::Progressive {
             source,
             query,

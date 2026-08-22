@@ -1,0 +1,22 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/mira-wikidata/mira-wikidata.rete",
+  "derived_from": [
+    "https://data.graphplaza.com/mira/mira.rete",
+    "https://www.wikidata.org"
+  ],
+  "keywords": [
+    "SSSOM",
+    "Wikidata",
+    "linkset",
+    "mappings"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/mira-wikidata.html"
+  }
+}

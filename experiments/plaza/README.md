@@ -9,7 +9,7 @@
 
 ## The idea
 
-A `.rete` file is already **self-describing**: its 128-byte header points at every
+A `.rete` file is already **self-describing**: its 1 KiB header points at every
 section, and an optional **[Dataset Card](../../docs/dataset-cards.md)** — compact
 JSON in the metadata section — records who made it, the license, the counts, the
 predicates/classes actually used, detected signals (geo, temporal, …) and an

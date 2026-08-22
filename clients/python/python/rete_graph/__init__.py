@@ -190,6 +190,22 @@ def _parse_literal(token: str) -> Term:
     return Term("literal", lex)
 
 
+def _term_token(value: Union[str, Term, None]) -> Optional[str]:
+    """A dump filter value as the N-Triples token the engine's dictionary stores.
+
+    Accepts a :class:`Term`, an already-canonical token (``<iri>``,
+    ``'"x"@en'``, ``_:b``), or a bare IRI, which gets its angle brackets here.
+    ``None`` stays ``None``, meaning unbound.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Term):
+        return value.n3
+    if not isinstance(value, str):
+        raise TypeError("a dump filter takes an IRI string, a Term, or None")
+    return value if value.startswith(("<", '"', "_:")) else f"<{value}>"
+
+
 Row = Dict[str, Term]
 Triple = Tuple[Term, Term, Term]
 #: One statement from :meth:`Graph.iter_quads`: subject, predicate, object as
@@ -284,6 +300,9 @@ class Graph:
         self,
         graph: Union[str, "_DefaultGraph", None] = None,
         *,
+        subject: Optional[str] = None,
+        predicate: Optional[str] = None,
+        object: Optional[str] = None,  # noqa: A002 - the RDF term's name
         batch_size: int = _BATCH,
     ) -> Iterator[Quad]:
         """Lazily yield every quad as ``(s, p, o, g)`` **N-Triples tokens**.
@@ -313,16 +332,41 @@ class Graph:
             for subject, predicate, obj, named_graph in g.iter_quads():
                 ...
 
+        ``subject``/``predicate``/``object`` restrict the walk to a triple
+        pattern — a bare IRI, an N-Triples token (``'"x"@en'``, ``_:b``), or a
+        :class:`Term`. These **prune the index**, they are not a filter applied
+        to the rows afterwards: the engine routes the scan to the permutation
+        that sorts on the bound components and skips every tile whose recorded
+        synopsis proves it cannot match, without fetching it. On a remote graph
+        that is the difference between a predicate slice costing the slice and
+        costing the graph — measured on an 801 MB file with six named graphs,
+        one predicate of one graph read 16 MB where the graph's full dump read
+        376 MB. A term the file's dictionary does not contain yields nothing.
+
+        What it does *not* prune is the dictionary: resolving the surviving
+        rows' terms still faults the chunks they live in, so on a graph whose
+        payload is long literals the saving is much smaller (on that same file,
+        a predicate whose objects are abstracts went 261 MB -> 213 MB, not
+        23x).
+
+        **Order.** An unfiltered walk yields subject-ascending order. A filtered
+        one yields the order of the permutation it routed to — a bound predicate
+        routes to POS, so its rows arrive predicate-then-object-then-subject.
+        The *set* is identical either way; sort if you need a canonical order.
+
         ``batch_size`` is the granularity of the walk, so it is also what the
         *first* quad costs: peeking at a huge remote graph is much cheaper with
         a small batch (on a 221 MB / 15.9 M-quad file, five quads cost 1.1 MB
         of range reads at ``batch_size=1`` versus 44 MB at the default), while
         a full walk is fastest at the default. Quads are identical either way.
         """
+        s_tok, p_tok, o_tok = (_term_token(t) for t in (subject, predicate, object))
         for name in self._dump_targets(graph):
             cursor, done = 0, False
             while not done:
-                triples, cursor, done = self._g.dump_batch(name, cursor, batch_size)
+                triples, cursor, done = self._g.dump_batch(
+                    name, cursor, batch_size, s_tok, p_tok, o_tok
+                )
                 for s, p, o in triples:
                     yield (s, p, o, name)
 
@@ -331,6 +375,9 @@ class Graph:
         dest: Any,
         *,
         graph: Union[str, "_DefaultGraph", None] = None,
+        subject: Optional[str] = None,
+        predicate: Optional[str] = None,
+        object: Optional[str] = None,  # noqa: A002 - the RDF term's name
         batch_size: int = _BATCH,
     ) -> int:
         """Serialize the graph as N-Quads to ``dest``; return the quad count.
@@ -353,7 +400,13 @@ class Graph:
             # quads instead of one per quad, without letting the formatted text
             # in flight outgrow the quads that produced it.
             lines: List[str] = []
-            for s, p, o, g in self.iter_quads(graph, batch_size=batch_size):
+            for s, p, o, g in self.iter_quads(
+                graph,
+                subject=subject,
+                predicate=predicate,
+                object=object,
+                batch_size=batch_size,
+            ):
                 lines.append(f"{s} {p} {o} .\n" if g is None else f"{s} {p} {o} {g} .\n")
                 count += 1
                 if len(lines) >= _NQ_WRITE_LINES:
@@ -662,6 +715,7 @@ class Builder:
         self._pyramid_algo: str = "louvain"
         self._text_index: bool = False
         self._type_predicate: Optional[str] = None
+        self._derive_card: bool = False
         self._bytes: Optional[bytes] = None
         #: Build statistics from the last :meth:`run` (``statements``,
         #: ``defaultTriples``, ``namedGraphs``, ``terms``, ``pyramidLevels``).
@@ -697,6 +751,26 @@ class Builder:
 
     # -- the dataset card -----------------------------------------------------
 
+    #: The rete-defined curated card fields settable as bare keywords beyond
+    #: the named parameters of :meth:`card`. Anything else lands in the card's
+    #: bounded ``extra`` bag — the top level stays rete's namespace, so a
+    #: future official field can never collide with a custom one.
+    _CARD_FIELDS = frozenset(
+        {
+            "version",
+            "creators",
+            "publisher",
+            "canonical_url",
+            "sparql_endpoint",
+            "source_date",
+            "derived_from",
+            "doi",
+            "cite_as",
+            "keywords",
+            "theme",
+        }
+    )
+
     def card(
         self,
         *,
@@ -710,10 +784,26 @@ class Builder:
     ) -> "Builder":
         """Set the embedded Dataset Card's curated fields (repeat calls merge).
 
+        Keywords naming a rete-defined field (``version``, ``creators``,
+        ``publisher``, ``canonical_url``, ``sparql_endpoint``, ``source_date``,
+        ``derived_from``, ``doi``, ``cite_as``, ``keywords`` [free-text tags →
+        ``dcat:keyword``/``schema:keywords``], ``theme`` [controlled-vocabulary
+        IRIs → ``dcat:theme``]) set that field. **Any other
+        keyword is a publisher-defined custom field** and lands in the card's
+        ``extra`` bag — pass ``extra={...}`` to merge a whole dict (structured
+        values included). The bag is bounded (8 KB serialized, ≤64 keys,
+        ≤128-byte keys, nesting ≤2 levels — enforced by the ``rete build``
+        CLI; this client writes the card it is given) and folds into the
+        file's content hash like every curated field.
+
         The counts (``triple_count``, ``quad_count``, ``named_graph_count``,
         ``term_count``) and ``format_version`` are filled in automatically at
         build time — read the card back with :meth:`Graph.card` or the
         ``rete card`` CLI.
+
+        This writes the *curated* half only. Add :meth:`derive_card` to also
+        compute the auto-derived profile (predicates, classes, vocabularies,
+        signals, the starter-query library) the way ``rete build --card`` does.
         """
         fields: Dict[str, Any] = {
             "title": title,
@@ -722,10 +812,25 @@ class Builder:
             "source": source,
             "created": created,
             "example_queries": example_queries,
-            **extra,
         }
+        bag: Dict[str, Any] = {}
+        for key, value in extra.items():
+            if value is None:
+                continue
+            if key == "extra":
+                if not isinstance(value, dict):
+                    raise ValueError("extra= must be a dict of custom fields")
+                bag.update(value)
+            elif key in self._CARD_FIELDS:
+                fields[key] = value
+            else:
+                bag[key] = value
         merged = dict(self._card or {})
         merged.update({k: v for k, v in fields.items() if v is not None})
+        if bag:
+            existing = dict(merged.get("extra") or {})
+            existing.update(bag)
+            merged["extra"] = existing
         self._card = merged
         self._invalidate()
         return self
@@ -747,8 +852,9 @@ class Builder:
         ``title`` is the short human name, ``question`` the plain-language
         question it answers. May be called many times.
 
-        (For a full auto-generated query library — overview, labels, topology
-        tiers derived from the data — build with the ``rete build`` CLI.)
+        For a full auto-generated query library — overview, labels, topology
+        tiers instantiated from the data's own vocabulary — add
+        :meth:`derive_card`; anything added here is appended to it.
         """
         merged = dict(self._card or {})
         queries = list(merged.get("queries", []))
@@ -798,6 +904,36 @@ class Builder:
         self._invalidate()
         return self
 
+    def derive_card(self, enabled: bool = True) -> "Builder":
+        """Also compute the card's **auto-derived profile**, exactly as
+        ``rete build --card`` does.
+
+            rete.Builder().add_file("people.ttl").card(title="People").derive_card()
+
+        Adds the half a client build used to have to do without: the predicate
+        and class histograms, the vocabulary list, the datatype and language
+        distributions, the class-link quotient, the top hubs, the affordance
+        signals (label predicate, base IRI, temporal/spatial extent, …) and the
+        tiered starter-query library, instantiated with this graph's own
+        vocabulary. Same code as the CLI, so the same graph and the same
+        curated fields produce a byte-identical card.
+
+        Anything :meth:`example` added is appended to the derived query library.
+
+        **Off by default, deliberately.** Derivation walks the graph twice more
+        and holds a subject→class map for the pass; that is a real cost on a
+        large build, and leaving today's behaviour untouched means a caller who
+        upgrades ``rete-graph`` gets the same bytes they got before.
+
+        Turning it on also **tightens validation**: the curated half is then
+        held to the exact rules ``rete build --card-file`` enforces (reserved
+        top level, ``theme`` must be a controlled-vocabulary IRI, the ``extra``
+        bag is bounded), so a card this accepts is one the CLI accepts.
+        """
+        self._derive_card = enabled
+        self._invalidate()
+        return self
+
     # -- execution --------------------------------------------------------------
 
     def run(self) -> bytes:
@@ -814,6 +950,7 @@ class Builder:
                 self._pyramid_algo,
                 self._text_index,
                 self._type_predicate,
+                self._derive_card,
             )
             self._bytes = bytes(data)
             self.stats = json.loads(stats_json)

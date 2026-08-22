@@ -85,6 +85,10 @@ impl BuildTemp {
         Ok(path)
     }
 
+    pub(crate) fn root(&self) -> &Path {
+        &self.inner.owned
+    }
+
     #[cfg(test)]
     pub(crate) fn owned_path(&self) -> &Path {
         &self.inner.owned

@@ -172,11 +172,12 @@
       'PREFIX dct: <http://purl.org/dc/terms/>\n' +
       'PREFIX drm: <https://w3id.org/rete/davidrumsey#>\n' +
       'PREFIX edm: <http://www.europeana.eu/schemas/edm/>\n' +
-      'SELECT ?m ?title ?year ?lat ?long ?thumb ?img ?prec WHERE {\n' +
+      'SELECT ?m ?title ?year ?lat ?long ?thumb ?img ?avif ?prec WHERE {\n' +
       '  ?m geo:lat ?lat ; geo:long ?long ; dct:title ?title .\n' +
       '  OPTIONAL { ?m drm:year ?year }\n' +
       '  OPTIONAL { ?m edm:preview ?thumb }\n' +
       '  OPTIONAL { ?m edm:isShownBy ?img }\n' +
+      '  OPTIONAL { ?m drm:avif4k ?avif }\n' +
       '  OPTIONAL { ?m drm:geoPrecision ?prec }\n' +
       '  FILTER(?lat >= ' + s + ' && ?lat <= ' + n + ' && ?long >= ' + w + ' && ?long <= ' + e + ')\n' +
       '  FILTER(!BOUND(?year) || (?year >= ' + y0 + ' && ?year <= ' + y1 + '))\n' +
@@ -270,9 +271,15 @@
   function openViewer(r) {
     var detail = val(r, "m") || "#";
     var img = val(r, "img") || val(r, "thumb") || "";
-    // best big JPEG we can derive: the Size4 rendition on the media host
-    var m4 = img.match(/Size\d\/RUMSEY~8~1\/(.+)\.jpg/);
-    var big = m4 ? "https://media.davidrumsey.com/MediaManager/srvr?mediafile=/Size4/RUMSEY~8~1/" + m4[1] + ".jpg" : img;
+    // Prefer OUR OWN 4K AVIF (drm:avif4k, up to 3840px, served from R2) — it is
+    // higher resolution than any pre-rendered JPEG tier, a fraction of the
+    // bytes, and doesn't lean on the collection's servers. Fall back to the
+    // Size4 rendition for the ~700 maps that have no derivative.
+    var big = val(r, "avif");
+    if (!big) {
+      var m4 = img.match(/Size\d\/RUMSEY~8~1\/(.+)\.jpg/);
+      big = m4 ? "https://media.davidrumsey.com/MediaManager/srvr?mediafile=/Size4/RUMSEY~8~1/" + m4[1] + ".jpg" : img;
+    }
     var id = detail.split("/detail/")[1] || "";
     document.getElementById("vTitle").textContent = val(r, "title") || "";
     document.getElementById("vImg").src = big;

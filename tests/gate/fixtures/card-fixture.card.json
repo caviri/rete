@@ -1,16 +1,40 @@
 {
   "title": "Gate Card Fixture",
-  "description": "A fixture card, written at build time so the gate can read a real one. Holds a <script> tag and an & on purpose: card text is third-party data and must never reach the DOM as live markup.",
+  "description": [
+    "A fixture card, written at build time so the gate can read a real one.",
+    "",
+    "It is authored as an ARRAY OF LINES, which `rete build --card-file` joins",
+    "with newlines — the shape that makes a Markdown description writable by",
+    "hand. Every construct the card viewer supports appears below, so the",
+    "renderer is asserted against a real card rather than a synthetic string.",
+    "",
+    "# A level-one heading",
+    "",
+    "Prose with **bold**, `code` and a [link](https://example.org/gate-desc-link).",
+    "",
+    "## A level-two heading",
+    "",
+    "- a bullet",
+    "- another bullet",
+    "  - a nested bullet",
+    "",
+    "1. first",
+    "2. second",
+    "",
+    "> A quoted line.",
+    "",
+    "---",
+    "",
+    "```",
+    "SELECT * WHERE { ?s ?p ?o }",
+    "```",
+    "",
+    "It also holds a <script>window.__cardDescPwned = 1</script> tag, an",
+    "<img src=x onerror=\"window.__cardDescPwned = 1\"> tag, a [bad](javascript:window.__cardDescPwned=1)",
+    "link and an & on purpose: card text is third-party data, raw HTML is NOT a",
+    "supported description format, and none of it may ever reach the DOM as live",
+    "markup."
+  ],
   "license": "CC0-1.0",
-  "source": "https://example.org/gate-fixture",
-  "vocabularies": ["http://www.w3.org/1999/02/22-rdf-syntax-ns#", "https://schema.org/"],
-  "queries": [
-    {
-      "id": "all",
-      "title": "Everything in the fixture",
-      "question": "What is in this graph?",
-      "tier": "whole index",
-      "sparql": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10"
-    }
-  ]
+  "source": "https://example.org/gate-fixture"
 }

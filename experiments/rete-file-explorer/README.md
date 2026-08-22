@@ -6,7 +6,7 @@ Folders, files, a preview pane, and — the verb that matters — **extract**.
 The premise is that SPARQL is the wall most people hit, and folders are the one
 interface everybody already knows. Nothing here is a new engine feature; it is a
 projection of what a `.rete` already carries (a 1 KB section directory, a baked
-schema pyramid, a Dataset Card, six permutation indexes) onto a metaphor a
+schema pyramid, a Dataset Card, its permutation indexes) onto a metaphor a
 non-specialist can walk into.
 
 ## Run it

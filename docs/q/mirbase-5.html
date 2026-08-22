@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>Which miRNAs sit inside a host gene&#39;s intron — mirbase</title>
-<meta name="description" content="miRBase records where a precursor falls relative to host transcripts — exon, intron, 3UTR or 5UTR. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta name="description" content="Answer: 50 rows in 8.0 ms. miRBase records where a precursor falls relative to host transcripts — exon, intron, 3UTR or 5UTR. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/mirbase-5.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
 <meta property="og:title" content="Which miRNAs sit inside a host gene&#39;s intron — mirbase" />
-<meta property="og:description" content="miRBase records where a precursor falls relative to host transcripts — exon, intron, 3UTR or 5UTR. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta property="og:description" content="Answer: 50 rows in 8.0 ms. miRBase records where a precursor falls relative to host transcripts — exon, intron, 3UTR or 5UTR. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/mirbase-5.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/mirbase-5.png" />
 <meta property="og:image:type" content="image/png" />
@@ -19,9 +19,9 @@
 <meta property="og:image:alt" content="Which miRNAs sit inside a host gene&#39;s intron — mirbase" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Which miRNAs sit inside a host gene&#39;s intron — mirbase" />
-<meta name="twitter:description" content="miRBase records where a precursor falls relative to host transcripts — exon, intron, 3UTR or 5UTR. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
+<meta name="twitter:description" content="Answer: 50 rows in 8.0 ms. miRBase records where a precursor falls relative to host transcripts — exon, intron, 3UTR or 5UTR. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/mirbase-5.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Which miRNAs sit inside a host gene's intron","description":"miRBase records where a precursor falls relative to host transcripts — exon, intron, 3UTR or 5UTR. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server.","url":"https://caviri.github.io/rete/q/mirbase-5.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mirbase","url":"https://caviri.github.io/rete/d/mirbase.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Which miRNAs sit inside a host gene's intron","description":"Answer: 50 rows in 8.0 ms. miRBase records where a precursor falls relative to host transcripts — exon, intron, 3UTR or 5UTR. Runs live in your browser over mirbase (2.74 M triples · 39 MB) — no server.","url":"https://caviri.github.io/rete/q/mirbase-5.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"mirbase","url":"https://caviri.github.io/rete/d/mirbase.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -49,16 +49,13 @@
       <div class="chip">Select</div>
     </div>
     <h1 class="title s1">Which miRNAs sit inside a host gene&#39;s intron</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?stemLoop</span> <span class="v">?overlap</span> <span class="v">?transcript</span> <span class="kw">WHERE</span> {
-  <span class="v">?h</span> mb:transcriptContext <span class="v">?c</span> ; rdfs:label <span class="v">?stemLoop</span> .
-  <span class="v">?c</span> mb:overlapType <span class="v">?overlap</span> ; mb:transcriptName <span class="v">?transcr</span>…
-  <span class="kw">FILTER</span>(<span class="v">?overlap</span> = &quot;intron&quot;)
-}
-<span class="kw">LIMIT</span> 50</pre></div></div><aside class="rail">
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Stem-loop</th><th>Overlaps</th><th>Host transcript</th></tr></thead><tbody><tr><td class="">cel-lin-4</td><td class="">intron</td><td class="">F59G1.4</td></tr><tr><td class="">cel-mir-2</td><td class="">intron</td><td class="">F16A11.3a</td></tr><tr><td class="">cel-mir-2</td><td class="">intron</td><td class="">F16A11.3b</td></tr><tr><td class="">cel-mir-2</td><td class="">intron</td><td class="">F16A11.3c</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">🧬</div>
       <div class="key">mirbase</div>
       <div class="facts"><b>2.74 M</b> triples · 39 MB<br />remote · HTTP range</div>
-      
+      <div class="answer"><div class="big">50 rows</div>
+        <div class="sub">answered in 8.0 ms</div>
+        </div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -68,7 +65,7 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=mirbase&amp;load=lazy&amp;mode=sparql&amp;ex=5">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">50 rows · 8.0 ms · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX mb: &lt;https://w3id.org/rete/mirbase#&gt;
 PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;

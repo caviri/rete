@@ -29,10 +29,12 @@ inputs and outputs rather than reimplement engine logic.
 1. Parse RDF input into default-graph triples and optional named-graph quads.
 2. Intern terms in the dictionary so query-time matching works on compact integer
    IDs instead of repeated strings.
-3. Build six permutation indexes over the default graph: SPO, POS, OSP, SOP,
-   PSO, and OPS. Three suffice to match any pattern shape; the full six let any
-   join key be streamed pre-sorted, enabling sort-merge joins (stable format
-   generation 1).
+3. Build the permutation indexes over the default graph — by default six: SPO,
+   POS, OSP, SOP, PSO, and OPS. The first three suffice to match any pattern
+   shape at the same longest bound prefix, and are always written; the other
+   three let any join key be streamed pre-sorted, enabling sort-merge joins.
+   `rete build --permutations 3` drops them, and the header's permutation mask
+   records which set the file carries ([SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)).
 4. Compute the pyramid summary: community hierarchy, super-edges, predicate
    totals, class/type summaries, and named-graph metadata.
 5. Optionally attach dataset-card metadata into the reserved metadata section.
@@ -73,15 +75,16 @@ The header is a fixed 1 KB block: a small core (magic, version, content hash,
 counts, codecs) plus a **typed section directory** of `(kind, offset, length)`
 entries that point at every other section. New top-level sections are added as new
 directory entries, so the format has headroom without a layout break (stable
-generation 1, header byte `0x05`). Stable Rete 1.x readers accept this generation;
-pre-1.0 experimental files must be rebuilt. Readers validate the header, then decide how
+generation 1, header byte `0x05`). Every stable reader from 0.3.0 onward accepts
+this generation; the experimental generations `0x01`–`0x04` predate it and must be
+rebuilt from RDF source. Readers validate the header, then decide how
 much of the file to load:
 
 | Section | Purpose |
 |---|---|
 | Header | Magic/version, content hash, counts, and the section directory |
 | Dictionary | Front-coded term strings and role-aware ID spaces |
-| Indexes | Compressed triple blocks in all six (SPO/POS/OSP/SOP/PSO/OPS) orders |
+| Indexes | Compressed triple blocks in the file's permutation orders — six by default (SPO/POS/OSP/SOP/PSO/OPS), three (SPO/POS/OSP) with `build --permutations 3` |
 | Summary | Pyramid/community graph, predicate totals, classes, named-graph counts, and append-only profiling blocks (query_stats, entity shapes, label index) |
 | Text index | Optional `--text-index` section: word → subjects, for full-text (`--contains`) search |
 | Metadata | Optional dataset-card JSON/catalog data |
@@ -159,8 +162,10 @@ triple-pattern path as `Rete::query`, then attaches:
 - the matched terms and dictionary IDs,
 - the graph scope (`default` today for the local triple-pattern command),
 - the resolved ID-space pattern,
-- the selected permutation (one of the six: `SPO`, `POS`, `OSP`, `SOP`, `PSO`,
-  `OPS`) and section index,
+- the selected permutation and its section index — routing always picks one of
+  `SPO`, `POS`, `OSP`, which tie the longest bound prefix on all eight pattern
+  shapes; `SOP`, `PSO`, `OPS` are never *routed* to, they only feed a sort-merge
+  join a pre-sorted stream,
 - the header byte ranges for dictionary, index container, selected permutation
   payload, and pyramid metadata.
 
@@ -202,9 +207,9 @@ progressive` exposes the summary-safe path directly and returns metadata such as
 byte counts, request counts, and whether the index was read.
 
 The first exact routed refinement is implemented for single default-graph triple
-patterns: the reader resolves constants from the dictionary, chooses the best of
-the six (SPO/POS/OSP/SOP/PSO/OPS) permutations, follows the container length
-prefixes, and fetches only that permutation payload. The next architectural step is physical community-tile
+patterns: the reader resolves constants from the dictionary, chooses the
+best-routing permutation (always one of SPO/POS/OSP), follows the container
+length prefixes, and fetches only that permutation payload. The next architectural step is physical community-tile
 directories: use the pyramid to fetch only relevant community ranges instead of
 even a whole permutation section.
 

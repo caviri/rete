@@ -29,6 +29,11 @@ clap_mangen = "0.2"
 thiserror.workspace = true
 # Turtle parsing for `rete build *.ttl`.
 oxttl.workspace = true
+# Transparent gzip on build inputs (`*.ttl.gz`, `*.nt.gz`, `*.trig.gz`) — the
+# form every large public RDF dump ships in. Pure Rust (miniz_oxide), so it adds
+# no C toolchain requirement; `MultiGzDecoder` also handles the concatenated
+# members that `cat a.gz b.gz` produces.
+flate2 = "1"
 # Standard SPARQL Results JSON output + the Dataset Card schema (serde derive).
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true

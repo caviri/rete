@@ -1,4 +1,8 @@
-import assert from "node:assert/strict";
+// The production + PR-preview version selector. Assertions are COLLECTED, not
+// thrown (see _expect.mjs): the gate runner reads the last JSON object this
+// prints, so a broken option label has to arrive as `{"verdict":"FAIL",
+// failures:[…]}` carrying the label it actually found.
+import { expect } from "./_expect.mjs";
 import { launchBrowser } from "./_browser.mjs";
 
 
@@ -7,8 +11,10 @@ const SHA = "91ac238000000000000000000000000000000000";
 const preview = `https://preview.graphplaza.com/pr-72/${SHA}/playground.html`;
 const state = "#dataset=bcn&load=lazy&mode=sparql&ex=3";
 
+const t = expect("check_version_picker");
 const browser = await launchBrowser();
 let pageErrors = [];
+let labels = [];
 try {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -53,14 +59,16 @@ try {
     undefined,
     { timeout: 60000 },
   );
-  const labels = await page.locator("#versionSelect option").allTextContents();
-  assert.match(labels[0], /^Production/);
-  assert.match(labels[1], /PR #72 · Add streaming parser <unsafe> · 91ac238/);
-  assert.equal(await page.locator("#versionSelect option option, #versionSelect script").count(), 0);
+  labels = await page.locator("#versionSelect option").allTextContents();
+  t.match("productionOption", labels[0], /^Production/);
+  t.match("previewOption", labels[1], /PR #72 · Add streaming parser <unsafe> · 91ac238/);
+  t.equal("markupInjectedIntoTheSelect",
+    await page.locator("#versionSelect option option, #versionSelect script").count(), 0,
+    "a PR title must be escaped, never parsed as markup");
 
   await page.selectOption("#versionSelect", preview);
   await page.waitForURL(`${preview}${state}`);
-  assert.equal(page.url(), `${preview}${state}`);
+  t.equal("navigatedUrl", page.url(), `${preview}${state}`);
   await context.close();
 
   const fallbackContext = await browser.newContext();
@@ -77,16 +85,20 @@ try {
     undefined,
     { timeout: 60000 },
   );
-  assert.equal(await fallback.locator("#out .error-box").count(), 0);
+  t.equal("errorBoxesAfterAFailedDiscovery",
+    await fallback.locator("#out .error-box").count(), 0,
+    "a 500 from the GitHub API must degrade quietly to Production only");
   await fallbackContext.close();
 
-  assert.deepEqual(pageErrors, []);
-  console.log(JSON.stringify({
-    verdict: "PASS",
-    options: labels,
-    navigated: `${preview}${state}`,
-    fallbackOptions: 1,
-  }, null, 2));
+  t.deepEqual("pageErrors", pageErrors, []);
+} catch (error) {
+  t.threw("version picker", error);
 } finally {
   await browser.close();
 }
+
+t.finish({
+  options: labels,
+  navigated: `${preview}${state}`,
+  fallbackOptions: 1,
+}, { indent: 2 });

@@ -44,6 +44,11 @@ export function catalogCases(scope = "embedded") {
         // returns an empty result (e.g. a SHACL "no violations" check) sets
         // allowEmpty: true in the catalog.
         allowEmpty: !!example.allowEmpty,
+        // A justified exclusion from every automated sweep (#212): an example
+        // whose cost the harness cannot pay. The reason is the flag's value, and
+        // check_catalog_answers.mjs fails if one ever turns out to answer after
+        // all, so the exclusion cannot outlive its reason.
+        skipCapture: String(example.skipCapture || "").trim(),
         remote,
       });
     }
@@ -51,14 +56,31 @@ export function catalogCases(scope = "embedded") {
   return cases;
 }
 
+/**
+ * Cases grouped per dataset, plus `rendered` — how many example buttons the PAGE
+ * will draw for that dataset.
+ *
+ * The grouping stays a faithful, total projection of the catalog: it drops
+ * nothing and reorders nothing (test_catalog_matrix asserts exactly that), so a
+ * `skipCapture` example is still in `cases` and a caller that must not RUN it
+ * skips it there. Only the runner knows what running costs.
+ *
+ * `rendered` exists because it is NOT interchangeable with `cases.length` for
+ * every caller. scripts/preview/capture.mjs measures a filtered subset on any
+ * resume, and waiting for the example library to render exactly as many buttons
+ * as that subset is not a slow wait, it is an impossible one — see openDataset()
+ * there for the 39 phantom "dataset open failed" records it cost (#212). Here
+ * the two happen to be equal; the name says which one you meant.
+ */
 export function catalogDatasetGroups(scope = "embedded") {
   const groups = [];
   for (const entry of catalogCases(scope)) {
     let group = groups.at(-1);
     if (!group || group.dataset !== entry.dataset) {
-      group = { dataset: entry.dataset, remote: entry.remote, cases: [] };
+      group = { dataset: entry.dataset, remote: entry.remote, rendered: 0, cases: [] };
       groups.push(group);
     }
+    group.rendered++;
     group.cases.push(entry);
   }
   return groups;

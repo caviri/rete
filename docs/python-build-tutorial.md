@@ -72,6 +72,31 @@ builder.card(
 )
 ```
 
+> **The example above matches the *default graph*.** If your sources are
+> N-Quads (or rdflib `Dataset`s with named graphs), a bare `{ ?s <urn:knows> ?o }`
+> correctly returns nothing — scope it with `GRAPH ?g { … }`. Details in
+> [§2's closing note](#2-the-dataset-card).
+
+Beyond the named keyword arguments, `card()` passes **any extra field**
+straight into the card JSON — which is how you set the curated **identity and
+provenance** fields the card schema defines (the same ones the CLI's
+`--card-file` takes):
+
+```python
+builder.card(
+    version="1.0.0",                             # Croissant requires one
+    creators=[{"name": "Ada Lovelace",
+               "orcid": "https://orcid.org/0000-0002-1825-0097"}],
+    publisher={"name": "EPFL", "ror": "https://ror.org/02s376052"},
+    canonical_url="https://data.example.org/people.rete",
+    source_date="2026-07-01",                    # the SOURCE's own snapshot date
+    derived_from=["https://example.org/source-dump"],
+    doi="https://doi.org/10.5281/zenodo.0000000",
+    cite_as="Lovelace, A. (2026). People & places.",
+    keywords=["people", "places", "demo"],
+)
+```
+
 Field by field:
 
 | Field | Meaning |
@@ -82,6 +107,17 @@ Field by field:
 | `source` | Provenance: the upstream dump/API this was built from |
 | `created` | Snapshot date (ISO 8601 string) |
 | `example_queries` | Runnable SPARQL strings for a newcomer's first click |
+| `version` | Dataset version (semver or a date) |
+| `creators` | People: `{name, orcid}` — the ORCID as an **IRI**, joinable against the published ORCID graph |
+| `publisher` | Organisation: `{name, ror}` — the ROR as an **IRI** |
+| `canonical_url` | Where the authoritative copy of this file lives |
+| `sparql_endpoint` | A public endpoint serving this dataset |
+| `source_date` | The source data's own snapshot date (distinct from `created`) |
+| `derived_from` | What this file was derived from (dumps, endpoints, shards) |
+| `doi` | The dataset's DOI, as an IRI (`https://doi.org/…`) |
+| `cite_as` | Preferred citation text |
+| `keywords` | Free-text tags — projected as `dcat:keyword` / `schema:keywords` |
+| `theme` | Controlled-vocabulary IRIs (e.g. EU data themes) — projected as `dcat:theme`; free text is rejected, it belongs in `keywords`. (No curated language field: the card *measures* `languages` from the literals' own tags.) |
 
 The **statistics** — `triple_count`, `quad_count`, `named_graph_count`,
 `term_count`, plus the `format_version` — are stamped **automatically** at
@@ -106,11 +142,47 @@ After opening the built file (even remotely), `g.examples()` lists every
 embedded query, and each entry's `["sparql"]` runs as-is — the dataset ships
 its own documentation *and* its own first queries.
 
-One honest limit: the CLI's `rete build` additionally derives an **enriched
-profile** (top predicates and classes, vocabularies, hubs, datatype/language
-histograms, a tiered starter-query library, an optional coherence verdict).
-The Python builder embeds the curated fields + counts only — if you want the
-full auto-profile, rebuild the exported data with the CLI.
+### Deriving the profile
+
+`card()` writes the **curated** half. Add `derive_card()` and the builder also
+computes the **auto-derived** half — top predicates and classes, vocabularies,
+datatype and language histograms, the class-link quotient, top hubs, the
+affordance signals, and the tiered starter-query library instantiated with your
+graph's own vocabulary:
+
+```python
+builder.card(title="People & places", license="CC0-1.0").derive_card()
+```
+
+It runs the same code `rete build --card` runs, so the same graph and the same
+curated fields produce a **byte-identical card** — the derivation used to live
+in the CLI, where no client could reach it ([#152]). Anything `example()` added
+is appended to the generated library.
+
+Two things to know before turning it on:
+
+- It is **off by default**, and deliberately: derivation walks the graph twice
+  more, so an existing build keeps costing what it always cost and keeps
+  producing the bytes it always produced.
+- Turning it on **tightens validation**. The curated half is then held to the
+  exact rules `rete build --card-file` enforces (reserved top level, `theme`
+  must be a controlled-vocabulary IRI, the `extra` bag is bounded), so a card
+  this accepts is one the CLI accepts.
+
+What stays CLI-only: the adjacent **build-info record** (timestamp, builder,
+parameters, measured starter-query costs — its cost figures come from *running*
+the starter queries, which is a benchmark, not a build) and the JSON-LD /
+Croissant **projections** (`rete card --format jsonld|croissant`).
+
+[#152]: https://github.com/caviri/rete/issues/152
+
+One shape to watch: every example query in this tutorial matches the
+**default graph**. If your sources are N-Quads (or rdflib `Dataset`s with
+named graphs), a bare pattern like `{ ?s <urn:knows> ?o }` correctly returns
+nothing for statements living in named graphs — scope it with
+`GRAPH ?g { … }`, or use a surface that offers the opt-in
+[union default graph](sparql.md#union-default-graph) mode (the playground's
+⛁ All graphs toggle; not standard SPARQL, and not available in this client).
 
 ## 3. The pyramid
 

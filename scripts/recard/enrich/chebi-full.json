@@ -1,0 +1,22 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/chebi-full/chebi-full.rete",
+  "derived_from": [
+    "https://ftp.ebi.ac.uk/pub/databases/chebi/ontology/chebi.owl"
+  ],
+  "keywords": [
+    "ChEBI",
+    "OBO",
+    "chemistry",
+    "ontology"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH",
+    "http://purl.obolibrary.org/obo/CHEBI_24431"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/chebi-full.html"
+  }
+}

@@ -202,6 +202,25 @@ impl Tile {
     }
 }
 
+/// What a routed scan of one pattern will touch, from the tile directories
+/// alone — see [`GraphIndex::scan_plan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanPlan {
+    /// The permutation the scan routes to (always inside [`PermSet::CORE`]).
+    pub permutation: IndexPermutation,
+    /// Tiles in that permutation's section — the denominator.
+    pub tiles_total: usize,
+    /// Tiles left after routing on the bound leading component.
+    pub tiles_routed: usize,
+    /// Tiles left after the synopsis prune — what the scan will actually fetch.
+    pub tiles_admitted: usize,
+    /// Encoded (on-disk) bytes of the admitted tiles: the index-side upper
+    /// bound on the scan's range reads.
+    pub tile_bytes: u64,
+    /// Encoded bytes of the whole section — what an unpruned scan would read.
+    pub section_bytes: u64,
+}
+
 /// Which stored permutation to scan. The full **six** orders (a SPARQL engine's
 /// classic set, as in QLever): together they sort the triples on *every* prefix
 /// of `(s, p, o)` columns, so for any bound-component prefix and any free
@@ -217,7 +236,8 @@ pub enum IndexPermutation {
     Ops,
 }
 
-/// The number of stored permutations.
+/// The number of permutations the format can address (the width of every
+/// per-permutation array). How many a *given file* stores is its [`PermSet`].
 pub(crate) const NUM_PERMS: usize = 6;
 
 /// The six permutations in section order — the canonical iteration list. The
@@ -233,6 +253,100 @@ pub(crate) const ALL_PERMS: [IndexPermutation; NUM_PERMS] = [
     IndexPermutation::Pso,
     IndexPermutation::Ops,
 ];
+
+/// **Which** permutations a file stores — a 6-bit set over
+/// [`IndexPermutation::section_index`], recorded in the header so a reader
+/// never has to assume six.
+///
+/// Every legal set is a superset of [`PermSet::CORE`] = {SPO, POS, OSP}. That
+/// is not a convention: those three **tie the longest bound prefix on all eight
+/// triple-pattern shapes**, so [`GraphIndex::best_permutation`] never selects
+/// outside them and a lean file routes every pattern exactly where a full one
+/// does — same tiles, same rows. What the other three (SOP, PSO, OPS) add is a
+/// *sort order*: they let [`GraphIndex::permutation_sorted_on`] hand a
+/// sort-merge join a co-sorted stream for three of the twelve
+/// (bound-set, join-column) shapes it otherwise has to hash-join. Absent, the
+/// merge seed declines and the hash path answers — the cost is a fast path,
+/// never correctness (`bgp::try_merge_join` already returns `Option`).
+///
+/// `CORE` is the smallest legal set, [`PermSet::ALL`] is the default and what
+/// every file written before this existed carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PermSet(u8);
+
+impl Default for PermSet {
+    fn default() -> Self {
+        PermSet::ALL
+    }
+}
+
+impl PermSet {
+    /// All six permutations — the default, and what a `0` header byte means.
+    pub const ALL: PermSet = PermSet(0b0011_1111);
+    /// The three routing permutations {SPO, POS, OSP}: every pattern shape
+    /// routes as well as it does with six, no merge-join sort orders.
+    pub const CORE: PermSet = PermSet(0b0000_0111);
+
+    /// Parse a raw mask. `Err` when it is not a superset of [`PermSet::CORE`]
+    /// or addresses a permutation this build has no section index for — a
+    /// pattern would then route to a permutation the file does not carry, which
+    /// is the one failure mode that must never be silent.
+    pub fn from_bits(bits: u8) -> Result<PermSet, &'static str> {
+        if bits & !PermSet::ALL.0 != 0 {
+            return Err("permutation mask addresses more than six permutations");
+        }
+        if bits & PermSet::CORE.0 != PermSet::CORE.0 {
+            return Err("permutation mask must contain SPO, POS and OSP");
+        }
+        Ok(PermSet(bits))
+    }
+
+    /// The raw 6-bit mask.
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Is `perm` stored in this file?
+    pub fn contains(self, perm: IndexPermutation) -> bool {
+        self.0 & (1 << perm.section_index()) != 0
+    }
+
+    /// How many permutation sections the file's index container holds.
+    pub fn len(self) -> usize {
+        self.0.count_ones() as usize
+    }
+
+    /// Never true: every legal set contains [`PermSet::CORE`]. Present because
+    /// a public `len` without it is a clippy error, and the honest answer is
+    /// more useful than an `allow`.
+    pub fn is_empty(self) -> bool {
+        false
+    }
+
+    /// The stored permutations in [`ALL_PERMS`] (= container) order.
+    pub fn iter(self) -> impl Iterator<Item = IndexPermutation> {
+        ALL_PERMS.into_iter().filter(move |p| self.contains(*p))
+    }
+
+    /// `perm`'s position **inside the index container**, which is its rank
+    /// among the stored permutations — not [`IndexPermutation::section_index`],
+    /// which is its slot in the format's fixed six-wide addressing. The two
+    /// coincide only for [`PermSet::ALL`].
+    pub fn position(self, perm: IndexPermutation) -> Option<usize> {
+        self.contains(perm)
+            .then(|| (self.0 & ((1u8 << perm.section_index()) - 1)).count_ones() as usize)
+    }
+
+    /// Names in container order, e.g. `["SPO", "POS", "OSP"]`.
+    pub fn names(self) -> Vec<&'static str> {
+        self.iter().map(|p| p.name()).collect()
+    }
+
+    /// Does this set carry the three merge-join orders?
+    pub fn has_merge_orders(self) -> bool {
+        self == PermSet::ALL
+    }
+}
 
 impl IndexPermutation {
     /// Stable display name used in CLI diagnostics and provenance records.
@@ -325,6 +439,7 @@ impl IndexPermutation {
 pub struct GraphIndexBuilder {
     triples: Vec<Triple>,
     tile_budget: usize,
+    perms: PermSet,
 }
 
 impl Default for GraphIndexBuilder {
@@ -332,6 +447,7 @@ impl Default for GraphIndexBuilder {
         Self {
             triples: Vec::new(),
             tile_budget: INDEX_TILE_BUDGET,
+            perms: PermSet::ALL,
         }
     }
 }
@@ -348,6 +464,7 @@ impl GraphIndexBuilder {
         Self {
             triples,
             tile_budget: INDEX_TILE_BUDGET,
+            perms: PermSet::ALL,
         }
     }
 
@@ -355,6 +472,13 @@ impl GraphIndexBuilder {
     /// multi-tile sections on small data).
     pub fn with_tile_budget(mut self, bytes: usize) -> Self {
         self.tile_budget = bytes.max(1);
+        self
+    }
+
+    /// Build only the permutations in `perms` (default [`PermSet::ALL`]).
+    /// Sections outside the set come out empty and are not written to the file.
+    pub fn with_perms(mut self, perms: PermSet) -> Self {
+        self.perms = perms;
         self
     }
 
@@ -370,6 +494,7 @@ impl GraphIndexBuilder {
     pub fn build_seq(self) -> GraphIndex {
         let triples = &self.triples;
         let budget = self.tile_budget;
+        let wanted: Vec<IndexPermutation> = self.perms.iter().collect();
         // Permute (parallel) + sort (parallel inside `build_tiles`) one permutation
         // at a time, so only a single permuted copy of the triples is resident — but
         // every core is still busy. Process permutations in batches of two to
@@ -386,10 +511,10 @@ impl GraphIndexBuilder {
             build_tiles(permuted, budget)
         };
         #[cfg(feature = "parallel")]
-        let sections: [Vec<Tile>; NUM_PERMS] = {
+        let built: Vec<Vec<Tile>> = {
             use rayon::prelude::*;
-            let mut built: Vec<Vec<Tile>> = Vec::with_capacity(NUM_PERMS);
-            for chunk in ALL_PERMS.chunks(2) {
+            let mut built: Vec<Vec<Tile>> = Vec::with_capacity(wanted.len());
+            for chunk in wanted.chunks(2) {
                 built.extend(
                     chunk
                         .to_vec()
@@ -398,18 +523,18 @@ impl GraphIndexBuilder {
                         .collect::<Vec<_>>(),
                 );
             }
-            built.try_into().ok().expect("six permutations")
+            built
         };
         #[cfg(not(feature = "parallel"))]
-        let sections: [Vec<Tile>; NUM_PERMS] = ALL_PERMS.map(build_one);
-        GraphIndex::from_sections(sections)
+        let built: Vec<Vec<Tile>> = wanted.iter().copied().map(build_one).collect();
+        GraphIndex::from_sections(scatter(&wanted, built), self.perms)
     }
 
     pub fn build(self) -> GraphIndex {
-        let perms = ALL_PERMS;
+        let wanted: Vec<IndexPermutation> = self.perms.iter().collect();
         let triples = &self.triples;
         let budget = self.tile_budget;
-        // The six permutations are independent — permute + sort + tile each.
+        // The permutations are independent — permute + sort + tile each.
         let build_one = move |perm: IndexPermutation| -> Vec<Tile> {
             let permuted: Vec<Triple> = triples.iter().map(|&t| perm.forward(t)).collect();
             build_tiles(permuted, budget)
@@ -418,15 +543,13 @@ impl GraphIndexBuilder {
         // (they share no state); the per-permutation sort inside is also
         // parallel. Output is byte-identical to the serial path.
         #[cfg(feature = "parallel")]
-        let sections: [Vec<Tile>; NUM_PERMS] = {
+        let built: Vec<Vec<Tile>> = {
             use rayon::iter::{IntoParallelIterator, ParallelIterator};
-            let built: Vec<Vec<Tile>> = perms.into_par_iter().map(build_one).collect();
-            // `.ok()` drops the (non-Debug) Vec error so `expect` compiles.
-            built.try_into().ok().expect("six permutations")
+            wanted.clone().into_par_iter().map(build_one).collect()
         };
         #[cfg(not(feature = "parallel"))]
-        let sections: [Vec<Tile>; NUM_PERMS] = perms.map(build_one);
-        GraphIndex::from_sections(sections)
+        let built: Vec<Vec<Tile>> = wanted.iter().copied().map(build_one).collect();
+        GraphIndex::from_sections(scatter(&wanted, built), self.perms)
     }
 
     /// Build through the staged paired-family path without making it a public
@@ -461,6 +584,18 @@ impl GraphIndexBuilder {
         ];
         Ok(GraphIndex::from_families(families))
     }
+}
+
+/// Place each built section at its permutation's fixed [`IndexPermutation::section_index`]
+/// slot, leaving unbuilt permutations empty. The array stays six wide however
+/// few permutations a file carries, so every `sections[perm.section_index()]`
+/// in the engine keeps working unchanged.
+fn scatter(wanted: &[IndexPermutation], built: Vec<Vec<Tile>>) -> [Vec<Tile>; NUM_PERMS] {
+    let mut sections: [Vec<Tile>; NUM_PERMS] = Default::default();
+    for (perm, tiles) in wanted.iter().zip(built) {
+        sections[perm.section_index()] = tiles;
+    }
+    sections
 }
 
 /// Incremental encoded-size accounting for one a-group of a tiled section —
@@ -653,7 +788,7 @@ pub(crate) fn build_reference_profile(
     let sections: [Vec<Tile>; NUM_PERMS] = sections.try_into().map_err(|_| ()).unwrap();
     let profiles: [ReferencePermutationProfile; NUM_PERMS] =
         profiles.try_into().map_err(|_| ()).unwrap();
-    (GraphIndex::from_sections(sections), profiles)
+    (GraphIndex::from_sections(sections, PermSet::ALL), profiles)
 }
 
 /// The six tiled permutation sections, queryable by triple pattern.
@@ -662,6 +797,11 @@ pub struct GraphIndex {
     /// ascending in their leading-id ranges; consecutive tiles may share a
     /// leading id when a mega-group was split (see [`build_tiles`]).
     pub(crate) sections: [Vec<Tile>; NUM_PERMS],
+    /// Which of those six slots this file actually carries. Sections outside
+    /// the set are empty and must never be consulted — an empty section is
+    /// indistinguishable from an empty *graph*, which is why the planner asks
+    /// this rather than the section lengths.
+    perms: PermSet,
     /// Faults in remote tiles on first scan (`None` for local indexes).
     loader: Option<TileLoader>,
     /// Optional batched fetch for multi-tile scans (`None` falls back to
@@ -678,20 +818,21 @@ pub struct GraphIndex {
     /// Research-only selection of the unchecked cursor. Default artifacts do
     /// not contain this field or its decoder.
     #[cfg(feature = "unsafe-decode-bench")]
-    unchecked_decode: bool,
+    unchecked_decode: std::sync::atomic::AtomicBool,
 }
 
 impl GraphIndex {
-    fn from_sections(sections: [Vec<Tile>; NUM_PERMS]) -> Self {
+    fn from_sections(sections: [Vec<Tile>; NUM_PERMS], perms: PermSet) -> Self {
         GraphIndex {
             sections,
+            perms,
             loader: None,
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             adaptive_controller: None,
             #[cfg(feature = "unsafe-decode-bench")]
-            unchecked_decode: false,
+            unchecked_decode: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -707,7 +848,7 @@ impl GraphIndex {
                 sections[slot + 3].push(Tile::local(tile.min_a, tile.max_a, tile.second));
             }
         }
-        Self::from_sections(sections)
+        Self::from_sections(sections, PermSet::ALL)
     }
 
     /// Borrow the two logical sections which make up one physical family.
@@ -723,14 +864,20 @@ impl GraphIndex {
 
     /// Rebuild from tiled sections: per permutation, `(min_a, max_a, block
     /// bytes)` per tile in ascending leading-id order — the v0.2 layout.
-    pub fn from_tiles(sections: [Vec<(u32, u32, Vec<u8>)>; NUM_PERMS]) -> Self {
+    /// Slots outside `perms` must be empty.
+    pub fn from_tiles(sections: [Vec<(u32, u32, Vec<u8>)>; NUM_PERMS], perms: PermSet) -> Self {
         let sections = sections.map(|tiles| {
             tiles
                 .into_iter()
                 .map(|(min_a, max_a, bytes)| Tile::local(min_a, max_a, bytes))
                 .collect()
         });
-        Self::from_sections(sections)
+        Self::from_sections(sections, perms)
+    }
+
+    /// The permutations this index carries.
+    pub fn perms(&self) -> PermSet {
+        self.perms
     }
 
     /// A **remote** index: only the tile directories (leading-id ranges per
@@ -741,6 +888,7 @@ impl GraphIndex {
     #[allow(clippy::type_complexity)]
     pub fn from_remote_directories(
         directories: [Vec<(u32, u32, Option<(u32, u32, u32, u32)>)>; NUM_PERMS],
+        perms: PermSet,
         loader: TileLoader,
     ) -> Self {
         let sections = directories.map(|dir| {
@@ -750,13 +898,14 @@ impl GraphIndex {
         });
         GraphIndex {
             sections,
+            perms,
             loader: Some(loader),
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
             adaptive_controller: None,
             #[cfg(feature = "unsafe-decode-bench")]
-            unchecked_decode: false,
+            unchecked_decode: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -770,8 +919,9 @@ impl GraphIndex {
     /// out-of-bounds read. This research mode must never be enabled for an
     /// untrusted file.
     #[cfg(feature = "unsafe-decode-bench")]
-    pub unsafe fn assume_valid_blocks(&mut self) {
-        self.unchecked_decode = true;
+    pub unsafe fn assume_valid_blocks(&self) {
+        self.unchecked_decode
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Attach a batched tile fetcher (see [`TileBulkLoader`]): multi-tile
@@ -953,10 +1103,24 @@ impl GraphIndex {
     /// prefix. Ties keep the canonical SPO order (then POS, then OSP), which
     /// makes provenance stable for unbound or equally selective shapes and routes
     /// a fully unbound pattern to the SPO block rather than fetching all three.
+    ///
+    /// Six-permutation shorthand for [`best_permutation_in`]. Its answer is
+    /// always inside [`PermSet::CORE`] (see `perm_routing_never_leaves_core`),
+    /// so a file with any legal [`PermSet`] routes identically — but call the
+    /// `_in` form wherever the file's set is at hand, so that stays true by
+    /// construction rather than by argument.
+    ///
+    /// [`best_permutation_in`]: GraphIndex::best_permutation_in
     pub fn best_permutation(pattern: Pattern) -> IndexPermutation {
+        Self::best_permutation_in(PermSet::ALL, pattern)
+    }
+
+    /// [`best_permutation`](GraphIndex::best_permutation) restricted to the
+    /// permutations a file carries.
+    pub fn best_permutation_in(perms: PermSet, pattern: Pattern) -> IndexPermutation {
         let mut best = IndexPermutation::Spo;
         let mut best_score = best.leading_bound(pattern);
-        for perm in ALL_PERMS {
+        for perm in perms.iter() {
             let score = perm.leading_bound(pattern);
             if score > best_score {
                 best = perm;
@@ -973,7 +1137,33 @@ impl GraphIndex {
     /// that value — any permutation is "sorted" on it) or no permutation qualifies.
     /// This is the precondition a merge join needs: both inputs sorted on the join
     /// key. Among qualifiers, the longest bound prefix (best routing) wins.
+    ///
+    /// Six-permutation shorthand for [`permutation_sorted_on_in`].
+    ///
+    /// [`permutation_sorted_on_in`]: GraphIndex::permutation_sorted_on_in
     pub fn permutation_sorted_on(pattern: Pattern, sort_col: usize) -> Option<IndexPermutation> {
+        Self::permutation_sorted_on_in(PermSet::ALL, pattern, sort_col)
+    }
+
+    /// [`permutation_sorted_on`](GraphIndex::permutation_sorted_on) restricted
+    /// to the permutations a file carries — **and it will not trade routing for
+    /// sort order**.
+    ///
+    /// A qualifier must match the bound prefix that
+    /// [`best_permutation_in`](GraphIndex::best_permutation_in) achieves.
+    /// With all six that costs nothing: every ordering of `(s, p, o)` exists, so
+    /// "the bound components first, then `sort_col`" is always available at the
+    /// maximal prefix. With [`PermSet::CORE`] it is what stops a merge join from
+    /// buying its co-sorted stream with a **whole-section scan** — e.g.
+    /// `?s :p ?o` sorted on `?s` has no `P*S` order left, and the only remaining
+    /// sorted-on-subject stream is an unrouted SPO scan of the entire graph. The
+    /// merge seed then declines and the hash/probe path answers, which is
+    /// strictly the cheaper plan.
+    pub fn permutation_sorted_on_in(
+        perms: PermSet,
+        pattern: Pattern,
+        sort_col: usize,
+    ) -> Option<IndexPermutation> {
         let bound = [
             pattern.0.is_some(),
             pattern.1.is_some(),
@@ -982,8 +1172,9 @@ impl GraphIndex {
         if bound[sort_col] {
             return None;
         }
+        let routed = Self::best_permutation_in(perms, pattern).leading_bound(pattern);
         let mut best: Option<(IndexPermutation, usize)> = None;
-        for perm in ALL_PERMS {
+        for perm in perms.iter() {
             let roles = perm.roles();
             let lead = perm.leading_bound(pattern);
             // The component at slot `lead` is the first free one; it must be the
@@ -992,7 +1183,7 @@ impl GraphIndex {
                 best = Some((perm, lead));
             }
         }
-        best.map(|(p, _)| p)
+        best.filter(|&(_, lead)| lead >= routed).map(|(p, _)| p)
     }
 
     /// Match one already-decoded serialized permutation block (a single v0.1
@@ -1049,6 +1240,159 @@ impl GraphIndex {
         self.scan_iter_with(pattern, Self::best_permutation(pattern), intent)
     }
 
+    /// What [`scan_iter`](Self::scan_iter) *would* fetch for `pattern`, computed
+    /// from the tile directories alone — **no tile is fetched, decoded, or even
+    /// looked at**. This is the cost-preview half of the routed scan: it walks
+    /// the same three decisions the scan makes (permutation, routed tile span,
+    /// synopsis prune) and reports what survives, so a caller can say "this dump
+    /// will pull 16 MB of index, not 376 MB" before starting it.
+    ///
+    /// It is a preview, not a promise: `tile_bytes` is an **upper bound** on the
+    /// index bytes the scan reads (an admitted tile can still be rejected by its
+    /// in-tile zone map once in hand, and a re-scan of an already-faulted tile
+    /// reads nothing), and it says nothing about the dictionary, which is where
+    /// a term-resolving dump's real cost usually lives.
+    pub fn scan_plan(&self, pattern: Pattern) -> ScanPlan {
+        let perm = Self::best_permutation_in(self.perms, pattern);
+        let [_, pb, pc] = perm.order_pattern(pattern);
+        let si = perm.section_index();
+        let tiles = &self.sections[si];
+        let (start, end) = self.tile_span(si, perm.order_pattern(pattern)[0]);
+        let mut admitted = 0usize;
+        let mut tile_bytes = 0u64;
+        for t in &tiles[start..end] {
+            if t.syn_admits(pb, pc) {
+                admitted += 1;
+                tile_bytes += t.encoded_len();
+            }
+        }
+        ScanPlan {
+            permutation: perm,
+            tiles_total: tiles.len(),
+            tiles_routed: end - start,
+            tiles_admitted: admitted,
+            tile_bytes,
+            section_bytes: tiles.iter().map(|t| t.encoded_len()).sum(),
+        }
+    }
+
+    /// One bounded, **resumable** slice of `pattern`'s matches: the pull form of
+    /// [`scan_iter`](Self::scan_iter), for a caller that cannot hold a borrow
+    /// across calls.
+    ///
+    /// Returns `(triples, next_cursor, done)`; start at `cursor = 0` and feed the
+    /// returned cursor back until `done`. The whole resume state is one opaque
+    /// `u64` — `(tile index, next a-group id)` — so no iterator, no thread and no
+    /// self-referential struct has to survive between calls. That is the shape a
+    /// foreign-function boundary needs: a wasm module cannot suspend a Rust
+    /// iterator mid-scan and hand control back to its host, but it can be handed
+    /// a `u64` and told to carry on.
+    ///
+    /// `max_rows` is a **floor**, not a hard cut: a batch always ends on an
+    /// a-group boundary of the chosen permutation, so no group is ever split
+    /// across two calls and the overshoot is one group's fanout. Nothing is ever
+    /// rescanned ([`TripleBlock::scan_resume`] jumps straight to the group
+    /// through the tile's directory), so a full drain is O(n) overall — unlike
+    /// `(offset, limit)`, which is O(n²/limit).
+    ///
+    /// Every call either yields at least one row or reports `done`, so a caller
+    /// never has to guard against an empty non-final batch.
+    ///
+    /// **Order.** Rows arrive in the chosen permutation's order and each batch is
+    /// re-sorted canonically, exactly as [`match_pattern`](Self::match_pattern)
+    /// does for a whole result. For a fully unbound pattern (routed to SPO) that
+    /// makes the concatenation of every batch identical to `match_pattern`'s
+    /// output; for a bound pattern the *set* is identical but the canonical
+    /// re-sort is per batch rather than global.
+    ///
+    /// **Memory** is O(`max_rows` + one a-group + the tiles faulted so far) —
+    /// never O(matches). That is the whole point: an unbounded `(?s ?p ?o)` over
+    /// a 26-million-quad graph used to materialize every match before the caller
+    /// saw one row.
+    pub fn scan_batch(
+        &self,
+        pattern: Pattern,
+        cursor: u64,
+        max_rows: usize,
+    ) -> (Vec<Triple>, u64, bool) {
+        let max_rows = max_rows.max(1);
+        let perm = Self::best_permutation(pattern);
+        let [pa, pb, pc] = perm.order_pattern(pattern);
+        let si = perm.section_index();
+        // Same routing as `scan_iter_with`: the tile directory alone decides the
+        // span, so this is free on a lazy/remote open.
+        let (start, end) = self.tile_span(si, pa);
+        let mut ti = ((cursor >> 32) as usize).max(start);
+        let mut from_a = cursor as u32;
+        let mut out: Vec<Triple> = Vec::new();
+        // Same geometric prefetch ramp as the streaming scan: a batch that stops
+        // after one tile never fetches the ones behind it.
+        let mut window = PREFETCH_WINDOW_START;
+        while ti < end {
+            // Synopsis pre-fault prune — no tile is fetched to reject it.
+            if !self.sections[si][ti].syn_admits(pb, pc) {
+                ti += 1;
+                from_a = 0;
+                continue;
+            }
+            if self.sections[si][ti].data.get().is_none() {
+                self.prefetch_span(si, ti, (ti + window).min(end), ReadIntent::BoundedScan);
+                window = window.saturating_mul(2).min(PREFETCH_WINDOW_MAX);
+            }
+            let tile = &self.sections[si][ti];
+            let mut resume_at: Option<u32> = None;
+            if let Some(block) = TripleBlock::parse(self.tile_data(si, ti))
+                .ok()
+                .filter(|b| b.zone().may_contain(pa, pb, pc))
+            {
+                let rows = match pa {
+                    // A bound leading id is one a-group; it cannot be split
+                    // inside a tile, only across tiles (a mega-group split), so
+                    // there is nothing finer to resume at than the tile.
+                    Some(a) => {
+                        let dir = tile.dir.get_or_init(|| block.group_directory());
+                        block.scan_from(dir, a, pb, pc)
+                    }
+                    // Fresh tile: no directory needed, so a straight drain never
+                    // pays for one.
+                    None if from_a == 0 => block.scan(None, pb, pc),
+                    None => {
+                        let dir = tile.dir.get_or_init(|| block.group_directory());
+                        block.scan_resume(dir, from_a, pb, pc)
+                    }
+                };
+                // Only a leading-unbound scan can be resumed mid-tile: with `pa`
+                // bound there is one a-group and `scan_from` always restarts it
+                // from the top, so cutting inside it would duplicate rows.
+                let splittable = pa.is_none();
+                let mut last_a: Option<u32> = None;
+                for abc in rows {
+                    // Full, and this row opens a new a-group ⇒ cut here and
+                    // resume at this group. The row is dropped, not lost: the
+                    // next call re-enters at exactly this id.
+                    if splittable && out.len() >= max_rows && last_a != Some(abc.0) {
+                        resume_at = Some(abc.0);
+                        break;
+                    }
+                    last_a = Some(abc.0);
+                    out.push(perm.back(abc));
+                }
+            }
+            if let Some(a) = resume_at {
+                out.sort_unstable();
+                return (out, ((ti as u64) << 32) | a as u64, false);
+            }
+            ti += 1;
+            from_a = 0;
+            if out.len() >= max_rows {
+                break;
+            }
+        }
+        let done = ti >= end;
+        out.sort_unstable();
+        (out, (ti as u64) << 32, done)
+    }
+
     /// Stream `pattern`'s matches **sorted on the canonical column `sort_col`**
     /// (0=subject, 1=predicate, 2=object): the stream's `sort_col` values are
     /// ascending. Chooses a permutation that routes on the bound prefix *and*
@@ -1063,7 +1407,7 @@ impl GraphIndex {
     ) -> Option<impl Iterator<Item = Triple> + '_> {
         Some(self.scan_iter_with(
             pattern,
-            Self::permutation_sorted_on(pattern, sort_col)?,
+            Self::permutation_sorted_on_in(self.perms, pattern, sort_col)?,
             ReadIntent::FullScan,
         ))
     }
@@ -1152,7 +1496,10 @@ impl GraphIndex {
                     .map(|b| {
                         #[cfg(feature = "unsafe-decode-bench")]
                         {
-                            if self.unchecked_decode {
+                            if self
+                                .unchecked_decode
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                            {
                                 return match pa {
                                     Some(a) => {
                                         // SAFETY: enabling this mode requires every
@@ -1335,7 +1682,8 @@ mod tests {
                 success: true,
             });
         }
-        let mut index = GraphIndex::from_remote_directories(dirs, loader).with_bulk_loader(bulk);
+        let mut index =
+            GraphIndex::from_remote_directories(dirs, PermSet::ALL, loader).with_bulk_loader(bulk);
         index.set_adaptive_controller(Some(controller.clone()));
 
         let first = index
@@ -1387,7 +1735,8 @@ mod tests {
                 success: true,
             });
         }
-        let mut index = GraphIndex::from_remote_directories(dirs, loader).with_bulk_loader(bulk);
+        let mut index =
+            GraphIndex::from_remote_directories(dirs, PermSet::ALL, loader).with_bulk_loader(bulk);
         index.set_adaptive_controller(Some(controller));
 
         assert_eq!(
@@ -1712,7 +2061,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
         ];
-        let idx = GraphIndex::from_remote_directories(dirs, loader);
+        let idx = GraphIndex::from_remote_directories(dirs, PermSet::ALL, loader);
 
         // Predicate 99 is outside the tile's b-range → prune, zero fetches, empty.
         assert!(idx.match_pattern((Some(5), Some(99), None)).is_empty());
@@ -1763,10 +2112,187 @@ mod tests {
             Vec::new(),
             Vec::new(),
         ];
-        let idx = GraphIndex::from_remote_directories(dirs, loader);
+        let idx = GraphIndex::from_remote_directories(dirs, PermSet::ALL, loader);
         // Predicate 99 absent, but with no synopsis the tile is fetched (then the
         // zone map yields no match) — correctness preserved, just no fetch saved.
         assert!(idx.match_pattern((Some(5), Some(99), None)).is_empty());
         assert_eq!(fetches.load(SeqCst), 1, "no synopsis ⇒ no early prune");
+    }
+
+    /// The eight triple-pattern shapes, as `(s, p, o)` boundness.
+    fn all_patterns() -> Vec<Pattern> {
+        (0..8u8)
+            .map(|mask| {
+                (
+                    (mask & 1 != 0).then_some(1u32),
+                    (mask & 2 != 0).then_some(2u32),
+                    (mask & 4 != 0).then_some(3u32),
+                )
+            })
+            .collect()
+    }
+
+    /// The claim the whole option rests on: **{SPO, POS, OSP} ties the longest
+    /// bound prefix on all eight pattern shapes**, so the other three never win
+    /// routing — only sort order. Enumerated and printed rather than asserted in
+    /// prose, because if it were ever false a lean file would answer a pattern
+    /// from a worse index without anything failing.
+    #[test]
+    fn perm_routing_never_leaves_core() {
+        for pat in all_patterns() {
+            let best_all = ALL_PERMS
+                .iter()
+                .map(|p| p.leading_bound(pat))
+                .max()
+                .unwrap();
+            let best_core = PermSet::CORE
+                .iter()
+                .map(|p| p.leading_bound(pat))
+                .max()
+                .unwrap();
+            let scores: Vec<String> = ALL_PERMS
+                .iter()
+                .map(|p| format!("{}={}", p.name(), p.leading_bound(pat)))
+                .collect();
+            eprintln!(
+                "s={} p={} o={} | {} | best6={best_all} best3={best_core} chosen={}",
+                pat.0.is_some() as u8,
+                pat.1.is_some() as u8,
+                pat.2.is_some() as u8,
+                scores.join(" "),
+                GraphIndex::best_permutation(pat).name(),
+            );
+            assert_eq!(
+                best_core, best_all,
+                "the three routing permutations must tie the best of six on {pat:?}"
+            );
+            let chosen = GraphIndex::best_permutation(pat);
+            assert!(
+                PermSet::CORE.contains(chosen),
+                "best_permutation chose {} for {pat:?}, outside the routing three",
+                chosen.name()
+            );
+            assert_eq!(
+                chosen,
+                GraphIndex::best_permutation_in(PermSet::CORE, pat),
+                "routing must be identical with three permutations and with six"
+            );
+        }
+    }
+
+    /// Restricting the set may never make a merge join pick a *worse-routed*
+    /// stream than the plain lookup would use: with six the co-sorted
+    /// permutation always ties the best prefix, and with three the guard
+    /// declines rather than buying sort order with a whole-section scan.
+    #[test]
+    fn sorted_permutation_never_sacrifices_routing() {
+        let mut declined = Vec::new();
+        for pat in all_patterns() {
+            for col in 0..3usize {
+                let routed_all = GraphIndex::best_permutation(pat).leading_bound(pat);
+                if let Some(p) = GraphIndex::permutation_sorted_on(pat, col) {
+                    assert_eq!(
+                        p.leading_bound(pat),
+                        routed_all,
+                        "six permutations must always co-sort at the best prefix"
+                    );
+                    assert_eq!(p.roles()[p.leading_bound(pat)], col);
+                }
+                match GraphIndex::permutation_sorted_on_in(PermSet::CORE, pat, col) {
+                    Some(p) => {
+                        assert!(PermSet::CORE.contains(p));
+                        assert_eq!(
+                            p.leading_bound(pat),
+                            GraphIndex::best_permutation_in(PermSet::CORE, pat).leading_bound(pat)
+                        );
+                    }
+                    None => {
+                        if GraphIndex::permutation_sorted_on(pat, col).is_some() {
+                            declined.push((pat, col));
+                        }
+                    }
+                }
+            }
+        }
+        // Exactly the three shapes SOP / PSO / OPS exist for: one bound
+        // component, sorted on a column no remaining order can lead with after
+        // it — subject-bound sorted on object, predicate-bound sorted on
+        // subject, object-bound sorted on predicate.
+        for (pat, col) in &declined {
+            let bound: Vec<usize> = (0..3)
+                .filter(|&i| [pat.0, pat.1, pat.2][i].is_some())
+                .collect();
+            assert_eq!(
+                bound.len(),
+                1,
+                "only single-bound shapes lose a merge order"
+            );
+            assert_ne!(bound[0], *col);
+        }
+        eprintln!("three-permutation merge-join declines: {declined:?}");
+        assert_eq!(declined.len(), 3, "exactly three (bound, sort) shapes lost");
+    }
+
+    #[test]
+    fn perm_set_masks_and_positions() {
+        assert_eq!(PermSet::ALL.len(), 6);
+        assert_eq!(PermSet::CORE.len(), 3);
+        assert_eq!(PermSet::CORE.bits(), 0b0000_0111);
+        assert_eq!(PermSet::CORE.names(), vec!["SPO", "POS", "OSP"]);
+        assert_eq!(
+            PermSet::ALL.names(),
+            vec!["SPO", "POS", "OSP", "SOP", "PSO", "OPS"]
+        );
+        // Container position is rank among the STORED permutations, which is
+        // why the routing three had to lead ALL_PERMS.
+        for (i, p) in PermSet::CORE.iter().enumerate() {
+            assert_eq!(PermSet::CORE.position(p), Some(i));
+            assert_eq!(p.section_index(), i);
+        }
+        assert_eq!(PermSet::CORE.position(IndexPermutation::Sop), None);
+        assert_eq!(PermSet::ALL.position(IndexPermutation::Ops), Some(5));
+        // Only supersets of the routing three are legal.
+        assert!(PermSet::from_bits(0b0000_0111).is_ok());
+        assert!(PermSet::from_bits(0b0011_1111).is_ok());
+        assert!(PermSet::from_bits(0b0000_1111).is_ok());
+        assert!(PermSet::from_bits(0b0000_0011).is_err());
+        assert!(PermSet::from_bits(0b0011_1000).is_err());
+        assert!(PermSet::from_bits(0b1000_0111).is_err());
+    }
+
+    /// A lean index answers every pattern shape with exactly the rows a full
+    /// one does — the property that makes the option safe at all.
+    #[test]
+    fn three_and_six_agree_on_every_pattern() {
+        let triples: Vec<Triple> = (0..200u32)
+            .map(|i| (i % 17 + 1, i % 5 + 1, i % 23 + 1))
+            .collect();
+        let six = GraphIndexBuilder::from_triples(triples.clone())
+            .with_tile_budget(128)
+            .build();
+        let three = GraphIndexBuilder::from_triples(triples)
+            .with_tile_budget(128)
+            .with_perms(PermSet::CORE)
+            .build();
+        assert_eq!(six.perms(), PermSet::ALL);
+        assert_eq!(three.perms(), PermSet::CORE);
+        for perm in [
+            IndexPermutation::Sop,
+            IndexPermutation::Pso,
+            IndexPermutation::Ops,
+        ] {
+            assert!(three.tile_sections()[perm.section_index()].is_empty());
+        }
+        for a in [None, Some(3u32)] {
+            for b in [None, Some(2u32)] {
+                for c in [None, Some(9u32)] {
+                    let mut x = six.match_pattern((a, b, c));
+                    let mut y = three.match_pattern((a, b, c));
+                    x.sort_unstable();
+                    y.sort_unstable();
+                    assert_eq!(x, y, "pattern {:?} disagreed", (a, b, c));
+                }
+            }
+        }
     }
 }

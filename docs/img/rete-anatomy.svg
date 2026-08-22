@@ -1,186 +1,280 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 900" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-labelledby="t">
-  <title id="t">Anatomy of a .rete file, shown on the real dblp.rete: a 1 KiB header with the section directory, the 731-byte dataset card, the front-coded dictionary (418 MB, 18%), six permutation indexes in ~64 KiB tiles with per-tile synopses (1.85 GB, 82%), the pyramid summary, and the trailing RETE magic that a truncated download cannot fake.</title>
-  <rect width="1560" height="900" fill="#f7f8fb"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 920" role="img" aria-labelledby="t">
+  <title id="t">Anatomy of a .rete file, drawn to scale on the real dblp.rete — 2.27 GB, 179,328,188 triples, 64,276,736 terms. A 1 KiB header carries a 64-byte core and a directory of 24-byte entries; then a 731-byte dataset card, the front-coded dictionary (413 MB, 18.2%), and six permutation indexes cut into roughly 64 KiB tiles with a per-tile min/max synopsis (1.85 GB, 81.8%). The file ends in a 4-byte RETE magic that a truncated download cannot fake. This specimen has no pyramid, named graphs, text index or build info — those section kinds are optional, and the directory simply does not list them.</title>
+  <style>
+    :root{
+      --ink:#14171c; --ink2:#454c55; --muted:#5b6570;
+      --surface:#f7f8fb; --panel:#ffffff; --line:#c9d2de;
+      --cold:#eef1f6; --coldfg:#616b77; --on-chip:#0d1116;
+      --data:#2bb673; --data-ink:#17794a;
+      --meta:#a259f7; --meta-ink:#7a2fe0;
+      --warn:#b32741;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{
+        --ink:#e7ecf3; --ink2:#b4bec9; --muted:#98a4b1;
+        --surface:#12161c; --panel:#1b212a; --line:#39434f;
+        --cold:#232b35; --coldfg:#8d99a6;
+        --data:#2fc47e; --data-ink:#5fe0a8;
+        --meta:#a978f7; --meta-ink:#c6a4ff;
+        --warn:#ff8098;
+      }
+    }
+    svg{fill:var(--ink)}
+    text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    /* Colour utilities for text. The base fill lives on svg{} so that fill=
+       attributes and group-level fills still win by inheritance. */
+    .u-coldfg{fill:var(--coldfg)}
+    .u-data{fill:var(--data)}
+    .u-dataink{fill:var(--data-ink)}
+    .u-ink{fill:var(--ink)}
+    .u-ink2{fill:var(--ink2)}
+    .u-meta{fill:var(--meta)}
+    .u-metaink{fill:var(--meta-ink)}
+    .u-muted{fill:var(--muted)}
+    .u-onchip{fill:var(--on-chip)}
+    .u-onink{fill:var(--surface)}
+    .u-warn{fill:var(--warn)}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .cold{fill:var(--cold);stroke:var(--line)}
+    .coldtx{fill:var(--coldfg)}
+    .card{fill:var(--panel);stroke-width:1.3;stroke-dasharray:6 4}
+    .lead{stroke-width:1;fill:none;stroke-dasharray:4 3}
+    /* One file, two layouts. A media query inside an img-loaded SVG evaluates
+       against the RENDERED width — verified in Chromium, Firefox and WebKit —
+       so a phone gets the byte layout at a legible size instead of a smear. */
+    .narrow{display:none}
+    @media (max-width:420px){ .wide{display:none} .narrow{display:inline} }
+  </style>
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+
+  <rect width="1560" height="920" fill="var(--surface)"/>
+
+  <!-- ==================================================================== -->
+  <!-- WIDE — the full poster                                               -->
+  <!-- ==================================================================== -->
+  <g class="wide">
 
   <!-- ============ file-name chip ============ -->
-  <rect x="40" y="28" width="300" height="44" rx="22" fill="#ffffff"/>
-  <text x="62" y="56" font-size="17" fill="#8a919c">File name</text>
-  <text x="148" y="56" font-size="17" font-weight="700" fill="#14171c" font-family="ui-monospace,Consolas,monospace">dblp.rete</text>
+  <rect x="40" y="28" width="470" height="44" rx="22" fill="var(--panel)" stroke="var(--line)"/>
+  <text class="u-muted" x="62" y="56" font-size="17">File name</text>
+  <text x="148" y="56" font-size="17" font-weight="700" class="mono">dblp.rete</text>
+  <text class="u-muted" x="262" y="56" font-size="17">179,328,188 triples · 2.27 GB</text>
 
   <!-- ============ top byte strip ============ -->
-  <!-- brace labels -->
-  <g font-size="14" fill="#14171c" text-anchor="middle" font-weight="600">
+  <g font-size="14" text-anchor="middle" font-weight="600">
     <text x="225" y="118">1024 bytes</text>
     <text x="302" y="118">731 B</text>
-    <text x="462" y="118">418 MB · 18%</text>
-    <text x="890" y="118">1.85 GB · 82%</text>
-    <text x="1222" y="118">M bytes</text>
+    <text x="419" y="118">413 MB · 18.2%</text>
+    <text x="881" y="118">1.85 GB · 81.8%</text>
     <text x="1305" y="118">4 bytes</text>
   </g>
-  <g stroke="#9aa2ad" stroke-width="1">
-    <path d="M182 128 h86" fill="none"/><path d="M182 124 v8" fill="none"/><path d="M268 124 v8" fill="none"/>
-    <path d="M276 128 h52" fill="none"/><path d="M276 124 v8" fill="none"/><path d="M328 124 v8" fill="none"/>
-    <path d="M336 128 h252" fill="none"/><path d="M336 124 v8" fill="none"/><path d="M588 124 v8" fill="none"/>
-    <path d="M596 128 h588" fill="none"/><path d="M596 124 v8" fill="none"/><path d="M1184 124 v8" fill="none"/>
-    <path d="M1192 128 h60" fill="none"/><path d="M1192 124 v8" fill="none"/><path d="M1252 124 v8" fill="none"/>
-    <path d="M1260 128 h90" fill="none"/><path d="M1260 124 v8" fill="none"/><path d="M1350 124 v8" fill="none"/>
+  <g stroke="var(--muted)" stroke-width="1" fill="none">
+    <path d="M182 128 h86"/><path d="M182 124 v8"/><path d="M268 124 v8"/>
+    <path d="M276 128 h52"/><path d="M276 124 v8"/><path d="M328 124 v8"/>
+    <path d="M336 128 h166"/><path d="M336 124 v8"/><path d="M502 124 v8"/>
+    <path d="M510 128 h742"/><path d="M510 124 v8"/><path d="M1252 124 v8"/>
+    <path d="M1260 128 h90"/><path d="M1260 124 v8"/><path d="M1350 124 v8"/>
   </g>
-  <!-- segments: header | card | dictionary | index | pyramid | footer -->
-  <rect x="182" y="142" width="86"  height="18" rx="4" fill="#14171c"/>
-  <rect x="276" y="142" width="52"  height="18" rx="4" fill="#a259f7"/>
-  <rect x="336" y="142" width="252" height="18" rx="4" fill="#2bb673"/>
-  <rect x="596" y="142" width="588" height="18" rx="4" fill="#2bb673"/>
-  <rect x="1192" y="142" width="60" height="18" rx="4" fill="#a259f7"/>
-  <rect x="1260" y="142" width="90" height="18" rx="4" fill="#14171c"/>
+  <!-- segments: header | card | dictionary | index | footer  (to scale) -->
+  <rect x="182"  y="142" width="86"  height="18" rx="4" fill="var(--ink)"/>
+  <rect x="276"  y="142" width="52"  height="18" rx="4" fill="var(--meta)"/>
+  <rect x="336"  y="142" width="166" height="18" rx="4" fill="var(--data)"/>
+  <rect x="510"  y="142" width="742" height="18" rx="4" fill="var(--data)"/>
+  <rect x="1260" y="142" width="90"  height="18" rx="4" fill="var(--ink)"/>
 
-  <!-- segment names under the strip -->
-  <g font-size="14.5" font-family="ui-monospace,Consolas,monospace" font-weight="700">
-    <text x="225"  y="186" text-anchor="middle" fill="#14171c">header</text>
-    <text x="302"  y="186" text-anchor="middle" fill="#8338ec">card</text>
-    <text x="462"  y="186" text-anchor="middle" fill="#1a8a52">dictionary</text>
-    <text x="890"  y="186" text-anchor="middle" fill="#1a8a52">index — 6 permutations</text>
-    <text x="1222" y="186" text-anchor="middle" fill="#8338ec">pyramid</text>
-    <text x="1305" y="186" text-anchor="middle" fill="#14171c">footer</text>
+  <g font-size="14.5" class="mono" font-weight="700" text-anchor="middle">
+    <text x="225"  y="186">header</text>
+    <text class="u-metaink" x="302"  y="186">card</text>
+    <text class="u-dataink" x="419"  y="186">dictionary</text>
+    <text class="u-dataink" x="881"  y="186">index — 6 permutations</text>
+    <text x="1305" y="186">footer</text>
   </g>
 
   <!-- magic callout (left) -->
-  <path d="M225 160 v58" stroke="#14171c" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
-  <rect x="120" y="218" width="220" height="76" rx="12" fill="#ffffff" stroke="#14171c" stroke-width="1.3" stroke-dasharray="6 4"/>
-  <text x="230" y="243" text-anchor="middle" font-size="14.5" font-weight="700" fill="#14171c">magic number</text>
-  <text x="230" y="264" text-anchor="middle" font-size="13.5" fill="#14171c" font-family="ui-monospace,Consolas,monospace">0x52 0x45 0x54 0x45</text>
-  <text x="230" y="283" text-anchor="middle" font-size="13.5" font-weight="700" fill="#14171c" font-family="ui-monospace,Consolas,monospace">R&#160;&#160;&#160;&#160;E&#160;&#160;&#160;&#160;T&#160;&#160;&#160;&#160;E</text>
+  <path class="lead" d="M225 160 v58" stroke="var(--ink)"/>
+  <rect x="120" y="218" width="220" height="76" rx="12" class="card" stroke="var(--ink)"/>
+  <text x="230" y="243" text-anchor="middle" font-size="14.5" font-weight="700">magic number</text>
+  <text x="230" y="264" text-anchor="middle" font-size="13.5" class="mono">0x52 0x45 0x54 0x45</text>
+  <text x="230" y="283" text-anchor="middle" font-size="13.5" font-weight="700" class="mono">R&#160;&#160;&#160;&#160;E&#160;&#160;&#160;&#160;T&#160;&#160;&#160;&#160;E</text>
 
   <!-- trailing magic callout (right) -->
-  <path d="M1305 160 v58" stroke="#14171c" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
-  <rect x="1210" y="218" width="220" height="76" rx="12" fill="#ffffff" stroke="#14171c" stroke-width="1.3" stroke-dasharray="6 4"/>
-  <text x="1320" y="243" text-anchor="middle" font-size="14.5" font-weight="700" fill="#14171c">trailing magic</text>
-  <text x="1320" y="264" text-anchor="middle" font-size="13.5" fill="#14171c" font-family="ui-monospace,Consolas,monospace">RETE — integrity mark</text>
-  <text x="1320" y="283" text-anchor="middle" font-size="13" fill="#5b6570">a truncated download can't pass</text>
+  <path class="lead" d="M1305 160 v58" stroke="var(--ink)"/>
+  <rect x="1210" y="218" width="220" height="76" rx="12" class="card" stroke="var(--ink)"/>
+  <text x="1320" y="243" text-anchor="middle" font-size="14.5" font-weight="700">trailing magic</text>
+  <text x="1320" y="264" text-anchor="middle" font-size="13.5" class="mono">RETE — integrity mark</text>
+  <text class="u-muted" x="1320" y="283" text-anchor="middle" font-size="13">a truncated download can't pass</text>
 
   <!-- "header points at everything" arc -->
-  <path d="M268 136 C 500 60, 1000 60, 1220 136" stroke="#5b6570" stroke-width="1.2" fill="none" marker-end="url(#arr)"/>
-  <defs><marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#5b6570"/></marker></defs>
-  <text x="744" y="52" text-anchor="middle" font-size="14.5" font-weight="600" fill="#5b6570">the 1 KiB header addresses every section — a client's first request is</text>
-  <text x="744" y="72" text-anchor="middle" font-size="14.5" font-weight="700" fill="#14171c" font-family="ui-monospace,Consolas,monospace">GET bytes=0-1023</text>
+  <path d="M268 136 C 500 60, 1000 60, 1220 136" stroke="var(--muted)" stroke-width="1.2" fill="none" marker-end="url(#arr)"/>
+  <text class="u-muted" x="900" y="52" text-anchor="middle" font-size="14.5" font-weight="600">the 1 KiB header addresses every section — a client's first request is</text>
+  <text x="900" y="72" text-anchor="middle" font-size="14.5" font-weight="700" class="mono">GET bytes=0-1023</text>
 
-  <!-- ============ LEFT: Data side (green) ============ -->
-  <!-- dictionary zoom -->
-  <text x="70" y="342" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#1a8a52">dictionary</text>
-  <rect x="70"  y="352" width="130" height="16" rx="4" fill="#2bb673"/>
-  <rect x="206" y="352" width="130" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
-  <rect x="342" y="352" width="130" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
-  <rect x="478" y="352" width="130" height="16" rx="4" fill="#2bb673"/>
-  <text x="616" y="365" font-size="13.5" fill="#1a8a52" font-family="ui-monospace,Consolas,monospace">front-coded term sections</text>
+  <!-- ============ LEFT: Data side ============ -->
+  <text x="70" y="342" font-size="15" class="mono u-dataink" font-weight="700">dictionary — 4 sections</text>
+  <rect x="70"  y="352" width="130" height="16" rx="4" fill="var(--data)"/>
+  <rect x="206" y="352" width="130" height="16" rx="4" fill="var(--data)"/>
+  <rect x="342" y="352" width="130" height="16" rx="4" fill="var(--data)"/>
+  <rect x="478" y="352" width="130" height="16" rx="4" fill="var(--data)"/>
+  <g font-size="12.5" class="mono" fill="var(--data-ink)" text-anchor="middle">
+    <text x="135" y="386">shared</text>
+    <text x="271" y="386">subjects</text>
+    <text x="407" y="386">objects</text>
+    <text x="543" y="386">predicates</text>
+  </g>
 
   <!-- one term section zoom -->
-  <path d="M100 368 L100 424" stroke="#2bb673" stroke-width="1.2" fill="none"/>
-  <text x="70" y="418" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#1a8a52">term section</text>
-  <rect x="70"  y="428" width="96" height="16" rx="4" fill="#a259f7"/>
-  <rect x="172" y="428" width="140" height="16" rx="4" fill="#2bb673"/>
-  <rect x="318" y="428" width="140" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
-  <rect x="464" y="428" width="140" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
-  <path d="M118 444 v26" stroke="#8338ec" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
-  <rect x="52" y="470" width="180" height="58" rx="12" fill="#ffffff" stroke="#8338ec" stroke-width="1.2" stroke-dasharray="6 4"/>
-  <text x="142" y="493" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">restart table</text>
-  <text x="142" y="512" text-anchor="middle" font-size="12.5" fill="#454c55">any chunk decodes alone</text>
-  <path d="M242 444 v26" stroke="#1a8a52" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
-  <rect x="252" y="470" width="268" height="58" rx="12" fill="#ffffff" stroke="#2bb673" stroke-width="1.2" stroke-dasharray="6 4"/>
-  <text x="386" y="493" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1a8a52">chunk: shared prefix + suffix</text>
-  <text x="386" y="512" text-anchor="middle" font-size="12.5" fill="#454c55">64M terms → sorted, delta-coded, zstd</text>
+  <path d="M100 368 L100 424" stroke="var(--data)" stroke-width="1.2" fill="none"/>
+  <text x="70" y="418" font-size="15" class="mono u-dataink" font-weight="700">term section</text>
+  <rect x="70"  y="428" width="96"  height="16" rx="4" fill="var(--meta)"/>
+  <rect x="172" y="428" width="140" height="16" rx="4" fill="var(--data)"/>
+  <rect x="318" y="428" width="140" height="16" rx="4" class="cold"/>
+  <rect x="464" y="428" width="140" height="16" rx="4" class="cold"/>
+  <path class="lead" d="M118 444 v26" stroke="var(--meta-ink)"/>
+  <rect x="52" y="470" width="180" height="58" rx="12" class="card" stroke="var(--meta)"/>
+  <text class="u-metaink" x="142" y="493" text-anchor="middle" font-size="13.5" font-weight="700">restart table</text>
+  <text x="142" y="512" text-anchor="middle" font-size="12.5" fill="var(--ink2)">any chunk decodes alone</text>
+  <path class="lead" d="M242 444 v26" stroke="var(--data-ink)"/>
+  <rect x="252" y="470" width="268" height="58" rx="12" class="card" stroke="var(--data)"/>
+  <text class="u-dataink" x="386" y="493" text-anchor="middle" font-size="13.5" font-weight="700">chunk: shared prefix + suffix</text>
+  <text x="386" y="512" text-anchor="middle" font-size="12.5" fill="var(--ink2)">64.3M terms → sorted, delta-coded, zstd</text>
 
   <!-- index zoom -->
-  <text x="70" y="582" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#1a8a52">index</text>
-  <g font-size="12.5" font-family="ui-monospace,Consolas,monospace" fill="#ffffff" font-weight="700" text-anchor="middle">
-    <rect x="70"  y="592" width="86" height="16" rx="4" fill="#2bb673"/><text x="113" y="605" fill="#0e5c36">SPO</text>
-    <rect x="162" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="205" y="605" fill="#7c8794">POS</text>
-    <rect x="254" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="297" y="605" fill="#7c8794">OSP</text>
-    <rect x="346" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="389" y="605" fill="#7c8794">SOP</text>
-    <rect x="438" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="481" y="605" fill="#7c8794">PSO</text>
-    <rect x="530" y="592" width="86" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="573" y="605" fill="#7c8794">OPS</text>
+  <text x="70" y="582" font-size="15" class="mono u-dataink" font-weight="700">index</text>
+  <g font-size="12.5" class="mono" font-weight="700" text-anchor="middle">
+    <rect x="70"  y="592" width="86" height="16" rx="4" fill="var(--data)"/><text class="u-onchip" x="113" y="605">SPO</text>
+    <rect x="162" y="592" width="86" height="16" rx="4" fill="var(--data)"/><text class="u-onchip" x="205" y="605">POS</text>
+    <rect x="254" y="592" width="86" height="16" rx="4" fill="var(--data)"/><text class="u-onchip" x="297" y="605">OSP</text>
+    <rect x="346" y="592" width="86" height="16" rx="4" class="cold" stroke-dasharray="5 4"/><text x="389" y="605" class="coldtx">SOP</text>
+    <rect x="438" y="592" width="86" height="16" rx="4" class="cold" stroke-dasharray="5 4"/><text x="481" y="605" class="coldtx">PSO</text>
+    <rect x="530" y="592" width="86" height="16" rx="4" class="cold" stroke-dasharray="5 4"/><text x="573" y="605" class="coldtx">OPS</text>
   </g>
-  <text x="632" y="605" font-size="13.5" fill="#1a8a52" font-family="ui-monospace,Consolas,monospace">one sorted run each</text>
+  <text x="632" y="605" font-size="13.5" class="mono u-dataink">3 route · 3 optional</text>
 
   <!-- one permutation zoom: tiles -->
-  <path d="M113 608 L113 660" stroke="#2bb673" stroke-width="1.2" fill="none"/>
-  <text x="70" y="656" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#1a8a52">permutation</text>
-  <rect x="70"  y="666" width="120" height="16" rx="4" fill="#2bb673"/>
-  <rect x="196" y="666" width="120" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
-  <rect x="322" y="666" width="120" height="16" rx="4" fill="#2bb673"/>
-  <rect x="448" y="666" width="120" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
-  <rect x="574" y="666" width="96" height="16" rx="4" fill="#a259f7"/>
-  <path d="M130 682 v26" stroke="#1a8a52" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
-  <rect x="52" y="708" width="250" height="58" rx="12" fill="#ffffff" stroke="#2bb673" stroke-width="1.2" stroke-dasharray="6 4"/>
-  <text x="177" y="731" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1a8a52">~64 KiB tiles</text>
-  <text x="177" y="750" text-anchor="middle" font-size="12.5" fill="#454c55">a bounded fetch answers a pattern</text>
-  <path d="M622 682 v26" stroke="#8338ec" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
-  <rect x="420" y="708" width="290" height="58" rx="12" fill="#ffffff" stroke="#8338ec" stroke-width="1.2" stroke-dasharray="6 4"/>
-  <text x="565" y="731" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">tile synopsis — per-tile min/max</text>
-  <text x="565" y="750" text-anchor="middle" font-size="12.5" fill="#454c55">prune a tile before fetching it (flags bit 1)</text>
+  <path d="M113 608 L113 660" stroke="var(--data)" stroke-width="1.2" fill="none"/>
+  <text x="70" y="656" font-size="15" class="mono u-dataink" font-weight="700">permutation</text>
+  <rect x="70"  y="666" width="120" height="16" rx="4" fill="var(--data)"/>
+  <rect x="196" y="666" width="120" height="16" rx="4" class="cold"/>
+  <rect x="322" y="666" width="120" height="16" rx="4" fill="var(--data)"/>
+  <rect x="448" y="666" width="120" height="16" rx="4" class="cold"/>
+  <rect x="574" y="666" width="96"  height="16" rx="4" fill="var(--meta)"/>
+  <path class="lead" d="M130 682 v26" stroke="var(--data-ink)"/>
+  <rect x="52" y="708" width="250" height="58" rx="12" class="card" stroke="var(--data)"/>
+  <text class="u-dataink" x="177" y="731" text-anchor="middle" font-size="13.5" font-weight="700">~64 KiB tiles</text>
+  <text x="177" y="750" text-anchor="middle" font-size="12.5" fill="var(--ink2)">a bounded fetch answers a pattern</text>
+  <path class="lead" d="M622 682 v26" stroke="var(--meta-ink)"/>
+  <rect x="420" y="708" width="290" height="58" rx="12" class="card" stroke="var(--meta)"/>
+  <text class="u-metaink" x="565" y="731" text-anchor="middle" font-size="13.5" font-weight="700">tile synopsis — per-tile min/max</text>
+  <text x="565" y="750" text-anchor="middle" font-size="12.5" fill="var(--ink2)">prune a tile before fetching it (flags bit 1)</text>
 
-  <!-- ============ RIGHT: Metadata side (purple) ============ -->
-  <!-- header layout zoom -->
-  <text x="850" y="342" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#8338ec">header — 1 KiB</text>
-  <rect x="850"  y="352" width="150" height="16" rx="4" fill="#a259f7"/>
-  <rect x="1006" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
-  <rect x="1088" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
-  <rect x="1170" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
-  <rect x="1252" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
-  <rect x="1334" y="352" width="76" height="16" rx="4" fill="#a259f7" opacity="0.55"/>
-  <rect x="1416" y="352" width="90" height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/>
-  <g font-size="12" fill="#5b6570" text-anchor="middle">
+  <!-- ============ RIGHT: Metadata side ============ -->
+  <text x="850" y="342" font-size="15" class="mono u-metaink" font-weight="700">header — 1 KiB</text>
+  <rect x="850"  y="352" width="150" height="16" rx="4" fill="var(--meta)"/>
+  <rect x="1006" y="352" width="76"  height="16" rx="4" fill="var(--meta)" opacity="0.55"/>
+  <rect x="1088" y="352" width="76"  height="16" rx="4" fill="var(--meta)" opacity="0.55"/>
+  <rect x="1170" y="352" width="76"  height="16" rx="4" fill="var(--meta)" opacity="0.55"/>
+  <rect x="1252" y="352" width="76"  height="16" rx="4" fill="var(--meta)" opacity="0.55"/>
+  <rect x="1334" y="352" width="76"  height="16" rx="4" fill="var(--meta)" opacity="0.55"/>
+  <rect x="1416" y="352" width="90"  height="16" rx="4" class="cold"/>
+  <g font-size="12" fill="var(--muted)" text-anchor="middle">
     <text x="925"  y="386">core · 64 B</text>
-    <text x="1208" y="386">directory entries · 24 B each</text>
+    <text x="1208" y="386">directory entries · 24 B each · at 64 + i×24</text>
     <text x="1461" y="386">zero pad</text>
   </g>
 
   <!-- core zoom -->
-  <path d="M880 368 L880 424" stroke="#a259f7" stroke-width="1.2" fill="none"/>
-  <text x="850" y="418" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#8338ec">core</text>
-  <g font-size="11.5" font-family="ui-monospace,Consolas,monospace" text-anchor="middle">
-    <rect x="850"  y="428" width="64"  height="16" rx="4" fill="#14171c"/><text x="882"  y="459" fill="#14171c">magic·4</text>
-    <rect x="920"  y="428" width="46"  height="16" rx="4" fill="#a259f7"/><text x="943"  y="459" fill="#8338ec">ver·1</text>
-    <rect x="972"  y="428" width="52"  height="16" rx="4" fill="#a259f7"/><text x="998"  y="459" fill="#8338ec">flags·1</text>
-    <rect x="1030" y="428" width="140" height="16" rx="4" fill="#a259f7"/><text x="1100" y="459" fill="#8338ec">blake3 hash·16</text>
-    <rect x="1176" y="428" width="80"  height="16" rx="4" fill="#a259f7"/><text x="1216" y="459" fill="#8338ec">quads·8</text>
-    <rect x="1262" y="428" width="80"  height="16" rx="4" fill="#a259f7"/><text x="1302" y="459" fill="#8338ec">terms·8</text>
-    <rect x="1348" y="428" width="90"  height="16" rx="4" fill="#a259f7" opacity="0.55"/><text x="1393" y="459" fill="#8338ec">counts…</text>
+  <path d="M880 368 L880 424" stroke="var(--meta)" stroke-width="1.2" fill="none"/>
+  <text x="850" y="418" font-size="15" class="mono u-metaink" font-weight="700">core</text>
+  <g font-size="11.5" class="mono" text-anchor="middle">
+    <rect x="850"  y="428" width="64"  height="16" rx="4" fill="var(--ink)"/><text x="882"  y="459">magic·4</text>
+    <rect x="920"  y="428" width="46"  height="16" rx="4" fill="var(--meta)"/><text class="u-metaink" x="943"  y="459">ver·1</text>
+    <rect x="972"  y="428" width="52"  height="16" rx="4" fill="var(--meta)"/><text class="u-metaink" x="998"  y="459">flags·1</text>
+    <rect x="1030" y="428" width="140" height="16" rx="4" fill="var(--meta)"/><text class="u-metaink" x="1100" y="459">blake3 hash·16</text>
+    <rect x="1176" y="428" width="80"  height="16" rx="4" fill="var(--meta)"/><text class="u-metaink" x="1216" y="459">quads·8</text>
+    <rect x="1262" y="428" width="80"  height="16" rx="4" fill="var(--meta)"/><text class="u-metaink" x="1302" y="459">terms·8</text>
+    <rect x="1348" y="428" width="90"  height="16" rx="4" fill="var(--meta)" opacity="0.55"/><text class="u-metaink" x="1393" y="459">counts…</text>
   </g>
-  <path d="M1100 468 v22" stroke="#8338ec" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
-  <rect x="940" y="490" width="330" height="58" rx="12" fill="#ffffff" stroke="#8338ec" stroke-width="1.2" stroke-dasharray="6 4"/>
-  <text x="1105" y="513" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">content hash = the catalog's integrity id</text>
-  <text x="1105" y="532" text-anchor="middle" font-size="12.5" fill="#454c55" font-family="ui-monospace,Consolas,monospace">4d8eca2df600d18e108221aa47baa9ec</text>
+  <path class="lead" d="M1100 468 v22" stroke="var(--meta-ink)"/>
+  <rect x="940" y="490" width="330" height="58" rx="12" class="card" stroke="var(--meta)"/>
+  <text class="u-metaink" x="1105" y="513" text-anchor="middle" font-size="13.5" font-weight="700">content hash = the catalog's integrity id</text>
+  <text x="1105" y="532" text-anchor="middle" font-size="12.5" fill="var(--ink2)" class="mono">4d8eca2df600d18e108221aa47baa9ec</text>
 
   <!-- directory entry zoom -->
-  <text x="850" y="582" font-size="15" font-family="ui-monospace,Consolas,monospace" font-weight="700" fill="#8338ec">directory entry</text>
-  <g font-size="11.5" font-family="ui-monospace,Consolas,monospace" text-anchor="middle">
-    <rect x="850"  y="592" width="90"  height="16" rx="4" fill="#a259f7"/><text x="895"  y="623" fill="#8338ec">kind·u16</text>
-    <rect x="946"  y="592" width="90"  height="16" rx="4" fill="#a259f7" opacity="0.55"/><text x="991"  y="623" fill="#8338ec">flags·u16</text>
-    <rect x="1042" y="592" width="70"  height="16" rx="4" fill="#eef1f6" stroke="#c9d2de"/><text x="1077" y="623" fill="#7c8794">rsvd·4</text>
-    <rect x="1118" y="592" width="150" height="16" rx="4" fill="#a259f7"/><text x="1193" y="623" fill="#8338ec">offset·u64</text>
-    <rect x="1274" y="592" width="150" height="16" rx="4" fill="#a259f7"/><text x="1349" y="623" fill="#8338ec">length·u64</text>
+  <text x="850" y="582" font-size="15" class="mono u-metaink" font-weight="700">directory entry</text>
+  <g font-size="11.5" class="mono" text-anchor="middle">
+    <rect x="850"  y="592" width="90"  height="16" rx="4" fill="var(--meta)"/><text class="u-metaink" x="895"  y="623">kind·u16</text>
+    <rect x="946"  y="592" width="90"  height="16" rx="4" fill="var(--meta)" opacity="0.55"/><text class="u-metaink" x="991"  y="623">flags·u16</text>
+    <rect x="1042" y="592" width="70"  height="16" rx="4" class="cold"/><text x="1077" y="623" class="coldtx">rsvd·4</text>
+    <rect x="1118" y="592" width="150" height="16" rx="4" fill="var(--meta)"/><text class="u-metaink" x="1193" y="623">offset·u64</text>
+    <rect x="1274" y="592" width="150" height="16" rx="4" fill="var(--meta)"/><text class="u-metaink" x="1349" y="623">length·u64</text>
   </g>
-  <path d="M895 630 v22" stroke="#8338ec" stroke-width="1" stroke-dasharray="4 3" fill="none"/>
-  <rect x="780" y="652" width="384" height="120" rx="12" fill="#ffffff" stroke="#8338ec" stroke-width="1.2" stroke-dasharray="6 4"/>
-  <text x="972" y="676" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">section kinds</text>
-  <g font-size="12.5" font-family="ui-monospace,Consolas,monospace" fill="#454c55">
-    <text x="802" y="698">1 dataset card    4 schema pyramid</text>
-    <text x="802" y="718">2 dictionary      5 named graphs</text>
-    <text x="802" y="738">3 index (6 perms) 6 text index</text>
-    <text x="802" y="760" fill="#8338ec">unknown kinds preserved — fwd-compat</text>
+
+  <!-- section kinds — with what this specimen actually has -->
+  <path class="lead" d="M895 630 v22" stroke="var(--meta-ink)"/>
+  <rect x="780" y="652" width="384" height="196" rx="12" class="card" stroke="var(--meta)"/>
+  <text class="u-metaink" x="972" y="676" text-anchor="middle" font-size="13.5" font-weight="700">the 7 section kinds — and this file</text>
+  <g font-size="12.5" class="mono" fill="var(--ink2)">
+    <text x="802" y="700">1 dataset card</text><text class="u-dataink" x="1142" y="700" text-anchor="end">731 B</text>
+    <text x="802" y="720">2 dictionary</text><text class="u-dataink" x="1142" y="720" text-anchor="end">413 MB</text>
+    <text x="802" y="740">3 index</text><text class="u-dataink" x="1142" y="740" text-anchor="end">1.85 GB</text>
+    <text x="802" y="760" class="coldtx">4 schema pyramid</text><text x="1142" y="760" text-anchor="end" class="coldtx">absent</text>
+    <text x="802" y="780" class="coldtx">5 named graphs</text><text x="1142" y="780" text-anchor="end" class="coldtx">absent</text>
+    <text x="802" y="800" class="coldtx">6 text index</text><text x="1142" y="800" text-anchor="end" class="coldtx">absent</text>
+    <text x="802" y="820" class="coldtx">7 build info</text><text x="1142" y="820" text-anchor="end" class="coldtx">absent</text>
+    <text class="u-metaink" x="802" y="840">unknown kinds preserved — fwd-compat</text>
   </g>
 
   <!-- dataset card callout -->
-  <rect x="1180" y="652" width="350" height="120" rx="12" fill="#ffffff" stroke="#a259f7" stroke-width="1.3" stroke-dasharray="6 4"/>
-  <text x="1355" y="676" text-anchor="middle" font-size="13.5" font-weight="700" fill="#8338ec">dataset card — 731 bytes of JSON</text>
-  <g font-size="12" font-family="ui-monospace,Consolas,monospace" fill="#454c55">
-    <text x="1200" y="698">{"title": "DBLP — computer-science</text>
-    <text x="1200" y="716">  bibliography", "license": "CC0-1.0",</text>
-    <text x="1200" y="734">  "quad_count": …, "term_count": …}</text>
-    <text x="1200" y="758" fill="#8338ec">the schema story, index never touched</text>
+  <rect x="1180" y="652" width="350" height="140" rx="12" class="card" stroke="var(--meta)"/>
+  <text class="u-metaink" x="1355" y="676" text-anchor="middle" font-size="13.5" font-weight="700">dataset card — 731 bytes of JSON</text>
+  <g font-size="12" class="mono" fill="var(--ink2)">
+    <text x="1200" y="700">{"title": "DBLP — computer-science</text>
+    <text x="1200" y="718">  bibliography", "license": "CC0-1.0",</text>
+    <text x="1200" y="736">  "quad_count": …, "term_count": …}</text>
+    <text class="u-metaink" x="1200" y="762">the schema story, index never touched</text>
+    <text class="u-muted" x="1200" y="780">2 range requests · 1,755 bytes</text>
   </g>
 
   <!-- ============ bottom legend ============ -->
-  <path d="M780 800 v70" stroke="#9aa2ad" stroke-width="1.5" stroke-dasharray="6 5" fill="none"/>
-  <text x="756" y="846" text-anchor="end" font-size="17" font-weight="700" fill="#1a8a52" font-family="ui-monospace,Consolas,monospace">Data</text>
-  <text x="804" y="846" font-size="17" font-weight="700" fill="#8338ec" font-family="ui-monospace,Consolas,monospace">Metadata</text>
+  <path d="M780 862 v40" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="6 5" fill="none"/>
+  <text x="756" y="892" text-anchor="end" font-size="17" font-weight="700" class="mono u-dataink">Data</text>
+  <text x="804" y="892" font-size="17" font-weight="700" class="mono u-metaink">Metadata</text>
+
+  </g>
+
+  <!-- ==================================================================== -->
+  <!-- NARROW — a phone gets the byte layout, at a size it can read         -->
+  <!-- ==================================================================== -->
+  <g class="narrow">
+    <text x="60" y="96" font-size="54" font-weight="700">Anatomy of a .rete file</text>
+    <text class="u-muted" x="60" y="158" font-size="38">drawn to scale on the real <tspan class="mono" font-weight="700" fill="var(--ink)">dblp.rete</tspan></text>
+    <text class="u-muted" x="60" y="212" font-size="38">179,328,188 triples · 2.27 GB</text>
+
+    <!-- the strip, same proportions, full width -->
+    <rect x="60"   y="270" width="42"  height="76" rx="10" fill="var(--ink)"/>
+    <rect x="110"  y="270" width="26"  height="76" rx="10" fill="var(--meta)"/>
+    <rect x="144"  y="270" width="242" height="76" rx="10" fill="var(--data)"/>
+    <rect x="394"  y="270" width="1062" height="76" rx="10" fill="var(--data)"/>
+    <rect x="1464" y="270" width="36"  height="76" rx="10" fill="var(--ink)"/>
+
+    <!-- a legend, not positional labels: the header/card/footer slivers are far
+         too narrow to carry text of their own at this scale -->
+    <rect x="60" y="386" width="30" height="30" rx="7" fill="var(--data)"/>
+    <text class="u-dataink" x="106" y="411" font-size="36" font-weight="700">dictionary<tspan font-weight="400" fill="var(--muted)"> — 413 MB · 18.2%</tspan></text>
+    <rect x="60" y="438" width="30" height="30" rx="7" fill="var(--data)"/>
+    <text class="u-dataink" x="106" y="463" font-size="36" font-weight="700">index, 6 perms<tspan font-weight="400" fill="var(--muted)"> — 1.85 GB · 81.8%</tspan></text>
+    <rect x="60" y="490" width="30" height="30" rx="7" fill="var(--ink)"/>
+    <text class="u-muted" x="106" y="515" font-size="36">header 1 KiB · card 731 B · footer 4 B</text>
+
+    <text class="u-muted" x="60" y="596" font-size="36">The 1 KiB header addresses every section,</text>
+    <text class="u-muted" x="60" y="642" font-size="36">so a client's first request is</text>
+    <text x="60" y="716" font-size="46" font-weight="700" class="mono">GET bytes=0-1023</text>
+
+    <text x="60" y="812" font-size="34" class="coldtx">No pyramid, named graphs, text index or</text>
+    <text x="60" y="854" font-size="34" class="coldtx">build info in this file — those are optional.</text>
+  </g>
 </svg>

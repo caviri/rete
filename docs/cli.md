@@ -38,7 +38,16 @@ the index-free card with no compute; unlike `--materialize` it records
 --verify-card`, combine with `--materialize` to also bake the inferred triples).
 `--card` (and `--card-file` / `--title` / `--license` / `--source` /
 `--description` / `--created`) embeds a [Dataset Card](dataset-cards.md) —
-data-catalog metadata plus an auto-derived profile. `--text-index` adds a
+data-catalog metadata plus an auto-derived profile; the card file's `extra`
+object carries bounded publisher-defined custom fields (no flag — see
+[Custom fields](dataset-cards.md)); a card build also writes a
+**build-info section** (build timestamp, builder version, parameters, measured
+starter-query costs — kept *outside* the content hash so identical data still
+hashes identically). That same run is what proves each starter query answers:
+one measured at zero rows (or returning a row that binds nothing) is **dropped
+from the card**, loudly and with the reason recorded — see
+[dataset-cards.md](dataset-cards.md). `--no-card-costs` skips the run, and so
+skips that check as well. `--text-index` adds a
 full-text (word/CONTAINS) index over the literals for `rete search --contains`
 (see below). `--type-predicate <IRI>` overrides the predicate that types subjects
 with classes for the schema pyramid (default `rdf:type`, else auto-detected) —
@@ -53,22 +62,100 @@ on graphs too large for the single-threaded Louvain build (it falls back to
 Louvain when the graph is untyped). All of these are opt-in; without them the
 output is byte-identical to a plain build.
 
+`--strict` refuses input carrying an IRI that the N-Triples/N-Quads `IRIREF`
+grammar and RFC 3987 disallow. It is **off** by default and the build only
+*counts* them — see [Invalid IRIs](#invalid-iris) for what that means and why the
+default is a warning.
+
+`--permutations 3|6` (default **6**) chooses how many index permutations to
+store. `6` writes SPO, POS, OSP, SOP, PSO and OPS; `3` writes only SPO, POS and
+OSP — the orders that decide *routing*. Those three tie the longest bound prefix
+on all eight triple-pattern shapes, so a 3-permutation file answers **every query
+with the same rows, from the same tiles**; what it gives up is the sort-merge
+join, on the three (bound-set, join-column) shapes SOP/PSO/OPS existed for —
+most visibly `?s <p1> ?o1 . ?s <p2> ?o2`, two bound predicates sharing a subject.
+The three orders are 36.8%–50.5% of a built file
+([BENCHMARK.md](BENCHMARK.md#the-merge-join-permutations-cost-vs-benefit)), and
+the file records its own set in the header, so `rete info` / `rete stats` and the
+card's `signals.permutations` all report it.
+
+**A 3-permutation file is not readable by a Rete older than this one** — it
+refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
+rather than answering wrongly, but it does refuse. Keep the default for anything
+published; see [compatibility.md](compatibility.md).
+
+The flag exists on `build` only. The two commands that re-assemble an existing
+file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-)
+**preserves its input's set** (and says so on stderr when that set is not the
+default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-)
+writes the **union** of its inputs' sets — one full shard is enough to keep the
+merge-join orders its queries relied on. To change a file's set, rebuild it from
+its RDF source.
+
 ### `rete repyramid <file> -o <out.rete> [--type-predicate <IRI>] [--pyramid-algo louvain|types] [--text-index] [--card …]`
 Rebuild a file's pyramid **in place**, reading the triples straight from the
 existing `.rete` — no `export | build` N-Quads round-trip. Use it to add a schema
 pyramid (or a `--text-index` / a Dataset Card) to a file built before those
 existed, or to re-derive the schema pyramid under a different `--type-predicate`
 or `--pyramid-algo` (same semantics as `rete build`). The card flags match
-`rete build` (`--card-file` / `--title` / `--license` / …).
+`rete build` (`--card-file` / `--title` / `--license` / …) — and take the
+curated half **only** from those flags, so a bare `--card` drops the
+publisher's `title`/`license`/`source`/`description`. `--pyramid-algo` likewise
+defaults to `louvain` rather than to whatever the file was built with.
+
+It loads and materializes every quad, so its RAM tracks the **statement count**
+(~350–700 B each), not the file size — roughly **80 M statements** on a 48 GB
+machine, past which the staged `export --format nq | build` route is the one
+that fits. See
+[Maintaining a published card](dataset-cards.md#maintaining-a-published-card).
 
 ```sh
 rete repyramid old.rete -o new.rete --type-predicate http://www.wikidata.org/prop/direct/P31
 rete repyramid old.rete -o new.rete --text-index    # add full-text search to an existing file
+
+# re-card a published file, carrying its curated fields across
+rete card old.rete --json > old-card.json
+python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
+rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
+```
+
+`repyramid` **preserves its input's permutation set**: a 3-permutation file stays
+3-permutation, a 6 stays 6, and it prints the preserved set on stderr when it is
+not the default six. It re-assembles an existing file rather than re-deciding how
+it was built, so it has no `--permutations` of its own — rebuild from source to
+change the set.
+
+### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …]`
+Fold several `.rete` files into one without going back through text — the way to
+consolidate a sharded dataset when the original RDF is gone or expensive to
+re-emit. It reads the **shards** (dictionary-encoded and compressed, roughly a
+quarter of the RDF bytes), so it skips the conversion and the parse.
+
+It does **not** skip the sorting. The dictionary is HDT-style (`shared` /
+subject-only / object-only) and IDs are assigned per section, so a term that is
+subject-only in one shard and object-only in another becomes *shared* in the
+merge and changes ID section: the shards' orderings do not survive the remap and
+every permutation is rebuilt. Memory is bounded at both ends: each input is
+opened lazily and streamed rather than loaded, and the quads feed the same
+memory-bounded external builder `rete build --memory-budget-mb` uses, which
+chunks and spills under this command's own `--memory-budget-mb` (default 4096)
+into `--tmp-dir`. Shards carrying **named graphs** fold like any other: the
+builder puts the graph in its sort key, so each graph comes back out of the
+merge as one contiguous run. Card flags match `rete build`.
+
+The merged file carries the **union** of its inputs' permutation sets — an
+all-lean merge stays lean, and one six-permutation input is enough to keep the
+merge-join orders. Like `repyramid`, it has no `--permutations` flag: it
+consolidates shards, it does not re-decide how they were built.
+
+```sh
+rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
+  --card --card-file curated.json
 ```
 
 ## Validating
 
-### `rete validate <inputs…> [--format nt|nq|ttl]`
+### `rete validate <inputs…> [--format nt|nq|ttl] [--strict]`
 Parse RDF input(s) without building, to check they are well-formed
 N-Triples/N-Quads/Turtle. Reports statement and named-graph counts, or exits
 non-zero with a precise parse error (file, line, column).
@@ -77,6 +164,65 @@ non-zero with a precise parse error (file, line, column).
 rete validate data.ttl
 curl -s https://host/data.nt | rete validate - --format nt
 ```
+
+It also reports **invalid IRIs**, because "it parses" and "it is valid RDF" are
+different claims and only the second one predicts whether a dump will load
+anywhere else. `--strict` turns the report into a non-zero exit.
+
+### Invalid IRIs
+
+rete's N-Triples/N-Quads reader is deliberately tolerant: it stores whatever
+sits between `<` and the next `>`, so the file is a faithful container of what
+it was given. That tolerance is why every published dataset built — and it is
+also why `rete export --format nq` could emit something no strict parser
+accepts. `build` and `validate` now **count** what they ingested:
+
+```
+warning: 5 statement(s) carry an invalid IRI (5 IRI occurrence(s)).
+         They are stored verbatim, so `rete export --format nq` emits N-Quads that a
+         strict parser (Oxigraph, Jena, rapper) rejects — and a bulk loader rejects the
+         whole chunk, not the line.
+               2  '[' or ']' outside an IP-literal host
+                  e.g. <http://example.org/a[b]>
+               1  more than one '#'
+                  e.g. <http://example.org/c#d#e>
+               1  '%' not followed by two hex digits
+                  e.g. <http://example.org/%x-template-artifact>
+               1  a character the IRIREF grammar excludes (space, control, or one of <>"{}|^`\)
+                  e.g. <http://example.org/a b>
+```
+
+Five classes, from the `IRIREF` production
+(`'<' ([^#x00-#x20<>"{}|^`\] | UCHAR)* '>'`) plus RFC 3987, which the same
+grammar requires the content to satisfy as an **absolute** IRI:
+
+| class | example | repairable by escaping |
+|---|---|---|
+| no scheme (relative IRI) | `<noscheme/path>` | **no** |
+| an excluded character | `<http://ex/a b>` | yes |
+| `[` / `]` outside an IP-literal host | `<http://ex/a[b]>` | yes |
+| more than one `#` | `<http://ex/c#d#e>` | yes |
+| `%` not followed by two hex digits | `<http://ex/%x>` | yes |
+
+What is **not** judged: non-ASCII (RFC 3987 `ucschar` is legal — `<http://ex/café>`
+is a valid IRI and is never touched), `UCHAR` escapes (`é`), and scheme
+semantics (`<nonsense://x>` is well-formed). Flagging something valid would mean
+percent-encoding an IRI that was fine, which is the one failure mode a sanitizer
+must not have.
+
+Three flags act on this, and they are separate on purpose:
+
+- `rete build --strict` / `rete validate --strict` — refuse the input, naming
+  the IRI and the rule. **Not** the default: datasets that build today, including
+  published ones, must keep building.
+- `rete export --sanitize-iris` — percent-encode the repairable classes on the
+  way out. Also not the default, because it **changes the data**.
+
+An IRI with **no scheme** is reported and never rewritten. Escaping cannot
+repair it: resolving it needs a base IRI the `.rete` never recorded. This is the
+class that cost the most in the field — one such line made a bulk loader drop an
+entire ~102,000-line chunk — and the only honest thing a tool can do with it is
+say where it is.
 
 ## Inspecting
 
@@ -117,7 +263,8 @@ line (or the same versioned `matches` envelope with `{subject}` entries under
 requires a literal word starting with `einst`. Answered from the opt-in
 **TEXT_INDEX** section (`rete build --text-index`); on a remote file only the
 queried words' posting lists are fetched, not the whole index. A file built
-without `--text-index` reports that it has no text index.
+without `--text-index` reports that it has no text index. To search a file you
+have **not** downloaded, use `rete search-url` (below).
 
 ```sh
 rete search data.rete gluc                       # label prefix (autocomplete)
@@ -126,29 +273,108 @@ rete search data.rete --contains glucose phosphate  # both words (AND)
 rete search data.rete --contains-prefix einst    # a word starting with "einst…"
 ```
 
-### `rete card <file> [--json]`
+### `rete card <file> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
-(title/license/source/…) plus the derived profile (counts, top predicates and
-classes, vocabularies) and the content-hash checksum. Costs two small range
-reads (header + card), never the dictionary or index — instant on any size. `--json` emits the card
-object plus `schemaVersion: 1`. Prints `(no dataset card)` for a file built without one. `rete info` shows
-the same catalog beneath the header when a card is present.
+(title/license/source/creators/publisher/…) plus the derived profile (counts, top
+predicates and classes, vocabularies), the content-hash checksum, and (when the
+file carries one) the **build record**: when it was built, by which `rete`, with
+which flags, and the starter queries' measured costs. Costs two small range
+reads (header + one coalesced card/build-info range), never the dictionary or
+index — instant on any size. `--json` emits the card object plus
+`schemaVersion: 1` and a `build` block. `--format jsonld` projects the card to
+JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
+`--format croissant` emits the honestly-mappable Croissant subset (no
+`recordSet`: a graph is not a table). `--sha256` supplies the whole-file
+sha256 the Croissant projection's `FileObject` requires — a file cannot carry
+its own, so compute it outside (`sha256sum file.rete`); with it the document
+is validator-clean. For a file built without one it prints
+`(no dataset card — …)`, still naming what the header alone decides: whether
+the file carries a full-text index (`signals.text_index`, measured from the
+section directory rather than read out of the card — see
+[Dataset Cards](dataset-cards.md#the-full-text-signal-measured-not-stored)).
+`rete info` shows the same catalog beneath the header when a card is present.
 
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).
 
-### `rete export <file> [--format nq|ttl|jsonld]`
-Serialize the dataset. `nq` (the default) dumps every triple/quad as N-Quads
-(default graph + named graphs) — a lossless round-trip. `ttl` emits Turtle and
-`jsonld` emits expanded JSON-LD; both serialize the **default graph only**
-(Turtle/JSON-LD here carry no default-vs-named distinction, so named graphs are
-skipped — use `nq` to export those).
+### `rete export <file> [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris]`
+Serialize the dataset, or a slice of it. `nq` (the default) dumps every
+triple/quad as N-Quads (default graph + named graphs) — a lossless round-trip.
+`ttl` emits Turtle and `jsonld` emits expanded JSON-LD; both serialize a
+**single graph** (the default graph unless `--graph` names one), because
+Turtle/JSON-LD carry no default-vs-named distinction — use `nq` to export the
+whole dataset.
 
 ```sh
 rete export data.rete                 # N-Quads (default)
 rete export data.rete --format ttl    # Turtle
 rete export data.rete --format jsonld # expanded JSON-LD
 ```
+
+`--sanitize-iris` percent-encodes IRIs that are outside the N-Triples/N-Quads
+grammar (see [Invalid IRIs](#invalid-iris)), so the dump loads into a strict
+store instead of being rejected — and a bulk loader rejects the whole *chunk*,
+not the line, so one bad IRI is worth a hundred thousand good statements.
+
+It is **off by default because it changes the data.** `<http://ex/a[b]>` is
+written as `<http://ex/a%5Bb%5D>`, which is a different IRI: the dump no longer
+joins against the graph it came from, `rete → store → rete` stops being the
+identity, and if the graph happened to contain both spellings they collapse into
+one. Deciding to accept that is the exporter's call, which is why it is a flag.
+What it did goes to **stderr** (stdout is the dump), per class:
+
+```
+--sanitize-iris: percent-encoded 5 IRI occurrence(s). The dump's IRIs are NOT the
+                 file's IRIs: it no longer joins against the source graph, and
+                 rete → store → rete is no longer the identity.
+                       2  '[' or ']' outside an IP-literal host
+                       1  more than one '#'
+                       …
+```
+
+An IRI with no scheme cannot be repaired by escaping, so it is counted, named,
+and written **verbatim** — the dump is then still not valid N-Quads and the
+summary says exactly that rather than implying a fix it did not make. The
+[triple-store interop](interop.md) page has the measured Oxigraph round-trip for
+all three cases.
+
+**Filters prune the file; they are not `| grep`.** `--graph` /`--subject` /
+`--predicate` / `--object` become a triple pattern the engine routes: it picks
+the index permutation that sorts on the bound components, binary-searches its
+tile directory down to the tiles that can match, and drops the rest by their
+recorded synopsis *without fetching them*. On a lazily-opened file that is the
+difference between exporting a slice and reading the graph.
+
+```sh
+# one predicate of one named graph: 16 MB read instead of 376 MB, 0.4 s
+# instead of 12.8 s, 183 MB peak RSS instead of 2.1 GB (cordis.rete, 801 MB)
+rete export cordis.rete --format nq \
+    --graph http://data.europa.eu/s66/graph/results \
+    --predicate http://data.europa.eu/s66#doi
+
+rete export data.rete --format nq --graph ''            # the default graph alone
+rete export data.rete --format nq --subject http://ex/a # everything about one subject
+rete export data.rete --format nq --object '"text"@en'  # an exact literal
+```
+
+Terms are bare IRIs or N-Triples tokens (`<iri>`, `"lit"@en`, `"lit"^^<dt>`,
+`_:b`) — quote literals for your shell. A term the file's dictionary does not
+contain matches nothing, which is an empty export, not an error. `--graph ''`
+selects the default graph alone; omitting `--graph` keeps the current behaviour
+(default graph, then every named graph).
+
+Two caveats worth knowing before you measure it:
+
+- **A filtered dump prunes the index, not the dictionary.** Resolving the rows
+  it keeps still faults the dictionary chunks their terms live in, so on a graph
+  whose payload *is* long literals the saving is much smaller: on the same file,
+  a predicate whose objects are abstracts went 261 MB → 213 MB, not 23×.
+- **Rows arrive in the routed permutation's order.** Unfiltered (and
+  subject-bound) that is `(s, p, o)` as before; a bound predicate streams
+  `(p, o, s)`, a bound object `(o, s, p)`. The *set* is identical; N-Quads does
+  not care, but `diff` does — sort both sides.
+
+Preview any of this before running it with [`rete cost --dump`](#rete-cost-file-or-url---dump---graph-g---subject-s---predicate-p---object-o---json).
 
 ## Querying
 
@@ -209,6 +435,13 @@ the command's adaptive transfer policy: an eligible small object is fetched in
 one exact full-file range request, while a larger object (or
 `RETE_EAGER_MAX_MB=0`) remains remote-lazy and fetches the ranges touched by the
 rewritten evaluation. See [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
+
+There is **no union-default-graph flag** here: the opt-in ⛁ All graphs mode —
+a pattern outside `GRAPH` matching the merge of the default graph and every
+named graph, for files whose data lives entirely in named graphs — exists
+today in the playground and the wasm `query_opts` API only, not on the CLI and
+not in `rete serve`. On the CLI, scope the query with `GRAPH ?g { … }`
+instead. See [Union default graph](sparql.md#union-default-graph).
 
 ```sh
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
@@ -273,6 +506,36 @@ summary-based routing, and compares three access paths:
 rete cost data.rete "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 rete cost https://host/data.rete "ASK { ?s <http://ex/knows> ?o }" --json
 ```
+
+#### `rete cost <file-or-url> --dump [--graph G] [--subject S] [--predicate P] [--object O] [--json]`
+
+The same preview for a **dump** — what `rete export` (or a client's streaming
+dump) will fetch for that filter, before it starts. Same report shape as above.
+
+The index figure is *computed*, not sampled: the tile directories say which
+tiles the filter's routed scan can touch and how big each is, so no tile is
+fetched to produce it.
+
+```
+$ rete cost cordis.rete --dump \
+      --graph http://data.europa.eu/s66/graph/results \
+      --predicate http://data.europa.eu/s66#doi
+  file bytes: 801016143
+  lazy dump open: 43156179 bytes in 66 range request(s) · reads index
+  graphs selected: 1
+    <…/graph/results>: POS · 31 of 528 tile(s) admitted · 1217273 bytes (section 21227100)
+  index tiles: 31 of 528 admitted · 1217273 bytes of 21227100 · computed from the
+               tile directories, no tile fetched
+  dictionary ceiling: 417246556 bytes
+  estimated dump cost: 44373452 – 461620008 bytes
+```
+
+Read the range honestly: the **floor** (open + admitted tiles) is exact; the
+**ceiling** adds the whole dictionary, which only a dump touching every term
+pays. Term resolution faults chunks the tile directories cannot name, so the
+true cost sits between — near the floor when the slice is small and its terms
+are short, near the ceiling on a literal-heavy file however well the index
+prunes. The dump previewed above actually read 59,672,911 bytes.
 
 For the exact summary-only shapes `SELECT (COUNT(*) AS ?n) WHERE { ?s <p> ?o }`,
 `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`,
@@ -457,15 +720,160 @@ rete reach g.rete --predicate '<http://ex/knows>' --seeds-file seeds.txt --paral
 Both URL commands work against `http://` and `https://` hosts that honor `Range`
 requests (S3, GitHub, any CDN).
 
-### `rete card-url <url> [--json]`
-Fetch only the embedded [Dataset Card](dataset-cards.md) — the header and the
-metadata range, in **two small range requests**. The dictionary, index, and
-pyramid are never fetched: this is the index-free **CARD tier**, the cold-start
-self-description (counts, vocabulary, class graph, signals, starter queries) a
-client reads before it knows what to query. Reports bytes fetched + range count.
+### `rete card-url <url> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
+Fetch only the embedded [Dataset Card](dataset-cards.md) — the header and one
+coalesced metadata + build-info range, in **two small range requests**. The
+dictionary, index, and pyramid are never fetched: this is the index-free **CARD
+tier**, the cold-start self-description (counts, vocabulary, class graph,
+signals, starter queries, build record) a client reads before it knows what to
+query. Reports bytes fetched + range count. The `--format` projections (and
+`--sha256` for Croissant) match `rete card`.
 
 ```sh
 rete card-url https://host/data.rete --json
+```
+
+### `rete card-audit <path|url> [--json] [--measure] [--only IDS] [--max-mb N] [--write-costs] [--allow-empty]`
+Do the starter queries a card **already ships** still answer on the file that
+carries them? A published `.rete` cannot be re-carded for free, so this decides
+each query's fate from the card's own profile — the CARD tier again, so a
+multi-GB file costs tens of KB to check.
+
+Each query gets one verdict, and the two that matter are kept apart: `empty` is
+the card *refuting* a shipped query (a property path through a predicate the
+file does not have, a `VALUES` list disjoint from the dataset's link predicates,
+a class joined to a label predicate the class-link quotient accounts for and
+never pairs with it), while `undecidable` and `suspect` are the honest middle —
+run the query to settle those. `answers` is the card proving a row comes back,
+and `revision` says what a re-card would do to the body (`current`,
+`superseded`, `dropped`).
+
+The judgement is the query generator's own (`Cap::joint_with`, `NonEmpty`,
+`provably_empty`), not a second copy of it. Input is a `.rete` (local path or
+URL) or a card JSON document from `rete card --json` / `rete card-url --json`.
+
+```sh
+rete card-audit https://host/data.rete
+rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
+```
+
+#### `--measure`: run them instead of reasoning about them
+
+The static pass has a hard ceiling. Some templates are undecidable **by
+construction** — nothing in a card ties a subject to a predicate, so `top-reach`
+cannot be settled from one, and a card does not record which objects are also
+subjects, so `top-dangling` cannot either. No better card-only reasoning closes
+that; a run does, and records what the answer cost.
+
+`--measure` runs each starter query **cold** — a fresh lazy open, logical range
+reads, no block cache — and reports rows, bytes, requests and a reference
+timing. It is the same `measure_query` a `rete build` uses to fill in its
+`query_costs`, so when the file already carries a build record the command
+checks itself against it and says whether the two agree (`= build record` /
+`!= build record`). On `switzerland-fedlex.rete` — the one published file that
+has a record — all ten queries reproduce it exactly.
+
+Each row shows the card's verdict and the run's outcome side by side; they are
+never merged, because one is what a card can prove and the other is what the
+file did.
+
+```
+card says    run says   query             rows               bytes      req           ms
+answers      answers    ov-triples           1 row(s)       2800822 B     74 req      294 ms
+suspect      empty      lb-labels            0 row(s)        228126 B     68 req       12 ms
+undecidable  answers    top-dangling       100 row(s)       4468038 B    118 req      592 ms
+```
+
+**Local or remote.** Point it at a path or at an `http(s)://` URL. `bytes` and
+`requests` are the same quantity either way — no block cache is in the stack, so
+the range sequence is a function of layout and query, not of transport — but
+only the remote run actually pays for them. The output always names which it
+was, in the text header and in the JSON `measurement.transport`, because a cost
+figure without its transport is not a cost figure.
+
+**It is a download.** `--only ov-triples,lb-labels` measures a subset;
+`--max-mb 8` abandons a query once it has asked for more than that, and reports
+the abandonment with the bytes it spent — "costs more than 8 MB" is itself an
+answer. Both matter: eight of `switzerland-fedlex`'s ten starter queries read
+~1.02 GB each, so measuring that card remotely without a leash is an 8 GB
+download.
+
+#### `--write-costs`: make the measurement durable
+
+Records the run in the file's build-info section, so the next reader gets the
+figures from the CARD tier (two range requests) instead of re-measuring. Local
+files only.
+
+The section sits **outside** the blake3 content hash — that is why two builds of
+identical data hash equal — so the file keeps its identity: same checksum, same
+`rete verify`, byte-identical N-Quads. It sits **near the front**, though, right
+after the card, so making room for it shifts everything behind it and the file
+is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
+by rename, but it is still one full pass of I/O and — for a published file — a
+full re-upload.
+
+Where that is worth it: when the alternative is a re-card. A re-card rewrites
+the file too, and additionally costs 17–35× the file in RAM (`repyramid`) or
+9–15× in staged N-Quads on disk (`--mode stream`, see `scripts/recard`), which
+puts anything past ~150 M statements out of reach. Attaching costs is one pass
+with no staging.
+
+**The RAM goes into the measurement, not the rewrite**, and it is not free
+either: the engine evaluates eagerly, so a starter query with a big result
+materializes it. `switzerland-fedlex` (1.04 GB, 56.3 M quads) took 381 s and
+peaked at **14.2 GiB** for `--measure --write-costs` — `ng-list` alone, which
+returns 497,905 rows, accounts for 3.2 GiB of that; the rewrite of the 1.04 GB
+file that followed is a bounded-buffer copy. Against `repyramid`'s ≈36 GiB
+prediction and the staged path's ≤19.1 GiB for the same file, it is the cheaper
+route, but budget for the queries, not for the file.
+
+So: if the audit says the queries are stale or broken, re-card — same rewrite,
+more value. If the queries answer and the only gap is the missing record, write
+the costs. The command enforces that split: it refuses when a query measured
+zero rows (`--allow-empty` overrides, for `top-dangling` on a fully-described
+graph), when a run did not finish, and when `--only` measured a subset that
+would be stored as if it were the whole card.
+
+```sh
+rete card-audit data.rete --measure --json | jq '.findings[] | select(.observed.outcome=="empty")'
+rete card-audit https://host/data.rete --measure --only ov-triples --max-mb 8
+rete card-audit data.rete --measure --write-costs
+```
+
+### `rete search-url <url> [<prefix>] [--contains <word>…] [--contains-prefix P] [--limit N] [--json]`
+`rete search` over HTTP — the same two modes and the same output, without
+downloading the file.
+
+The open is deliberately narrower than any other remote command's. It reads the
+header and the **subject** halves of the dictionary (the shared and subject-only
+sections), and stops: no permutation tile directories, no pyramid, no index.
+`--contains` then faults the TEXT_INDEX token table once and one range request
+per posting list; the bare prefix mode faults the pyramid instead, where the
+label index lives.
+
+That narrowness is the point, because on a literal-heavy graph the dictionary is
+most of the file, and on a file built before 2026-08 its **object-only chunk
+directory** — which carried every chunk's first term verbatim — is most of what a
+normal open costs. (Newer builds key that directory by the shortest *separator*
+instead, a few bytes per chunk: on `epfl-infoscience` that is 234 MB of routing
+keys against ~600 KB. It is a write-side change, so a published file keeps its
+large directory until it is rebuilt — the figures below are the published one.)
+Searching `epfl-infoscience.rete` (1.64 GB; a 1.35 GB dictionary, a 186 MB text
+index over titles and 132k abstracts) for `photosynthesis`:
+
+| | bytes fetched | requests | time |
+|---|---|---|---|
+| `sparql-url` with `FILTER(CONTAINS(…))` | 334 MB | 83 | 28.6 s |
+| `search-url --contains` | **29.5 MB** | **5** | **4.8 s** |
+
+Same five hits. The 29.5 MB is the token table itself; label-prefix mode over the
+same file costs 1.4 MB in 4 requests. A file built without `--text-index` says so
+instead of silently scanning.
+
+```sh
+rete search-url https://host/data.rete --contains glucose phosphate
+rete search-url https://host/data.rete --contains graphs --contains-prefix existen --json
+rete search-url https://host/data.rete "Photosynth" --limit 3   # label prefix
 ```
 
 ### `rete summary-url <url>`

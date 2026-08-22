@@ -5,10 +5,12 @@
 //! a shared template with a sidebar; inter-doc `.md` links are rewritten to
 //! `.html`. Run: `cargo run -p docgen` (from the repo root, or pass the docs dir).
 
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
-use pulldown_cmark::{html, Options, Parser};
+use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
 
 /// Crate version, shown in the sidebar next to the repository link.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -17,6 +19,21 @@ const REPO_URL: &str = "https://github.com/caviri/rete";
 /// `og:image` is silently dropped by every unfurler — so social tags are the one
 /// place the site's own address has to be hard-coded.
 const SITE_BASE: &str = "https://caviri.github.io/rete/";
+
+/// Widest aspect ratio (intrinsic width ÷ height) still counted as "square".
+///
+/// Every figure in `docs/img` is measured at build time — the `viewBox` of an
+/// SVG, the IHDR of a PNG — and anything at or below this gets the narrower
+/// column (see `.img-sq` / `.fig-sq` in `CSS`). Nothing is classified by hand,
+/// so a diagram added tomorrow is sized by its own shape with no HTML to
+/// remember.
+///
+/// 1.35 sits inside the real gap in the corpus: the squarest 21 figures run
+/// 0.87 (`lazy-open.svg`, taller than it is wide) to 1.32 (`pyramid.svg`), and
+/// the next one up is 1.41 (`triple.svg`). Landscape strips — the byte-layout
+/// diagrams, the app screenshots, the 3.8:1 logo — stay on the far side of it
+/// and keep the full column, which they need.
+const SQUARE_MAX_RATIO: f64 = 1.35;
 
 /// Sectioned nav: (section title, [(file, sidebar title)]). Markdown entries are
 /// rendered to the sibling `.html`; entries already ending in `.html` are
@@ -154,7 +171,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue; // already reported above
             }
             let markdown = fs::read_to_string(&src)?;
-            let body = render_markdown(&markdown);
+            // Figures are sized by their own measured shape — see
+            // `classify_images`. `src` is relative to the docs dir (`img/x.svg`),
+            // and a `docs/`-prefixed path is the form the README uses, so accept
+            // both; anything remote or unmeasurable is left as it is.
+            let body = classify_images(&render_markdown(&markdown), &|src| {
+                let rel = src.strip_prefix("docs/").unwrap_or(src);
+                aspect_ratio(&docs_dir.join(rel))
+            });
             let html_name = md.replace(".md", ".html");
             let page = template(title, &body, md, &summarize(&markdown), &missing);
             let out = docs_dir.join(&html_name);
@@ -294,6 +318,22 @@ fn truncate_words(text: &str, max: usize) -> String {
     }
 }
 
+/// The site's linear reading order: `SECTIONS` flattened, minus the entries this
+/// run could not render.
+///
+/// This is the ONE sequence. The sidebar renders it, the drawer's "All pages"
+/// panel is a clone of the sidebar, the bottom bar's prev/next are computed from
+/// it, and the swipe gesture just follows those two links — so there is no
+/// second source of truth to drift out of step with the nav.
+fn reading_order(missing: &[&str]) -> Vec<(&'static str, &'static str)> {
+    SECTIONS
+        .iter()
+        .flat_map(|(_, pages)| pages.iter())
+        .filter(|(md, _)| md.ends_with(".md") && !missing.contains(md))
+        .map(|(md, title)| (*md, *title))
+        .collect()
+}
+
 /// The nav section a page belongs to — the card's category chip.
 fn section_for(md: &str) -> &'static str {
     for (section, pages) in SECTIONS {
@@ -322,10 +362,265 @@ fn render_markdown(md: &str) -> String {
     opts.insert(Options::ENABLE_FOOTNOTES);
     opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
 
-    let parser = Parser::new_ext(md, opts);
+    let mut events: Vec<Event> = Parser::new_ext(md, opts).collect();
+    anchor_headings(&mut events);
     let mut out = String::new();
-    html::push_html(&mut out, parser);
+    html::push_html(&mut out, events.into_iter());
     rewrite_links(&out)
+}
+
+/// Give every heading an `id`, so an in-page link written in the Markdown
+/// (`[jump](#some-heading)`) lands somewhere in the built page.
+///
+/// The ids follow GitHub's slug convention, because that is what an author
+/// writing `docs/*.md` sees working on github.com and will naturally copy: the
+/// heading's *text* (markup dropped — `` `code` ``, links and emphasis
+/// contribute what they read as, not how they are written), lowercased, with
+/// everything that is not alphanumeric, underscore, space or hyphen removed and
+/// spaces turned into hyphens. Repeats of one slug get a `-1`, `-2`, … suffix.
+///
+/// An explicit `{#id}` (ENABLE_HEADING_ATTRIBUTES) is the author's own and is
+/// kept verbatim — only recorded so a later heading cannot silently take it.
+fn anchor_headings(events: &mut [Event<'_>]) {
+    let mut used: HashMap<String, usize> = HashMap::new();
+    let mut i = 0;
+    while i < events.len() {
+        if !matches!(events[i], Event::Start(Tag::Heading { .. })) {
+            i += 1;
+            continue;
+        }
+        // Read the heading's text off the events between it and its close.
+        let mut text = String::new();
+        let mut end = i + 1;
+        while end < events.len() && !matches!(events[end], Event::End(TagEnd::Heading(_))) {
+            match &events[end] {
+                Event::Text(t) | Event::Code(t) => text.push_str(t),
+                Event::SoftBreak | Event::HardBreak => text.push(' '),
+                _ => {}
+            }
+            end += 1;
+        }
+        if let Event::Start(Tag::Heading { id, .. }) = &mut events[i] {
+            let anchor = match id.take() {
+                Some(explicit) => {
+                    used.insert(explicit.to_string(), 1);
+                    explicit.to_string()
+                }
+                None => unique(&mut used, slug(&text)),
+            };
+            *id = Some(anchor.into());
+        }
+        i = end + 1;
+    }
+}
+
+/// A heading's text → the anchor GitHub would mint for it.
+fn slug(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
+        } else if ch == '_' {
+            // `_` survives on github.com — its slugger strips punctuation with a
+            // class that runs `[`-`^` then `` ` ``, jumping over `_` (0x5F). A
+            // spec full of `TEXT_INDEX`-style identifiers depends on it: dropping
+            // it would mint `...-textindex-...` for a heading whose GitHub anchor
+            // is `...-text_index-...`, and every link an author tested on GitHub
+            // would 404 in the built site.
+            out.push('_');
+        } else if ch == '-' || ch.is_whitespace() {
+            // Runs are kept, not collapsed: `--limit <n>` slugs to `---limit-n`,
+            // exactly as it does on github.com.
+            out.push('-');
+        }
+    }
+    out
+}
+
+/// Claim `base`, or the first free `base-1`, `base-2`, … if it is already taken.
+fn unique(used: &mut HashMap<String, usize>, base: String) -> String {
+    let base = if base.is_empty() {
+        "section".to_string()
+    } else {
+        base
+    };
+    let seen = used.entry(base.clone()).or_insert(0);
+    let anchor = if *seen == 0 {
+        base
+    } else {
+        format!("{base}-{seen}")
+    };
+    *seen += 1;
+    anchor
+}
+
+/// An image's intrinsic aspect ratio, width ÷ height, read out of the file.
+///
+/// SVG: the `viewBox`, which every diagram in `docs/img` carries and which is
+/// the only place the shape is recorded — they deliberately have no `width` /
+/// `height` attributes so they scale. PNG: the IHDR, the first chunk of the
+/// file, so only 24 bytes are read however large the screenshot is.
+///
+/// `None` for anything unmeasurable (unknown extension, no `viewBox`, a
+/// zero-height box), and the caller then leaves the image alone — an image
+/// whose shape is unknown keeps the width it has always had.
+fn aspect_ratio(path: &Path) -> Option<f64> {
+    let (w, h) = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("svg") => {
+            // The header is enough: `viewBox` is an attribute of the root
+            // <svg>, so it is in the first few hundred bytes.
+            let text = fs::read_to_string(path).ok()?;
+            let after = text.split_once("viewBox")?.1.trim_start();
+            let quoted = after.strip_prefix('=')?.trim_start();
+            let quote = quoted.chars().next()?;
+            let value = quoted[quote.len_utf8()..].split(quote).next()?;
+            // "min-x min-y width height", separated by whitespace or commas.
+            let nums: Vec<f64> = value
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|s| !s.is_empty())
+                .filter_map(|s| s.parse::<f64>().ok())
+                .collect();
+            (*nums.get(2)?, *nums.get(3)?)
+        }
+        Some("png") => {
+            let mut head = [0u8; 24];
+            fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+            if head[..8] != *b"\x89PNG\r\n\x1a\n" || head[12..16] != *b"IHDR" {
+                return None;
+            }
+            let n = |o: usize| u32::from_be_bytes(head[o..o + 4].try_into().unwrap()) as f64;
+            (n(16), n(20))
+        }
+        _ => return None,
+    };
+    (w > 0.0 && h > 0.0).then(|| w / h)
+}
+
+/// Tag every square-ish image in the rendered HTML, so the stylesheet can give
+/// it a narrower column than a landscape one.
+///
+/// The classification is the *measured* ratio (`ratio_of`, keyed on the `src`)
+/// against [`SQUARE_MAX_RATIO`] — never a hand-written class, so nobody has to
+/// remember to mark a new diagram and nobody can mark one wrongly.
+///
+/// Which element carries the class depends on the shape of the markup:
+///
+/// * inside a `<figure>` the class goes on the **figure**, because the figure
+///   is what carries the caption — capping the `<img>` alone would leave a
+///   full-width caption under a half-width picture;
+/// * anywhere else — a bare `<img>` block, a Markdown `![…](…)`, a Markdown
+///   image wrapped in a link — it goes on the **img** itself.
+fn classify_images(html: &str, ratio_of: &dyn Fn(&str) -> Option<f64>) -> String {
+    // (start, end) of every `<img …>` tag, and whether it is square-ish.
+    let mut imgs: Vec<(usize, usize, bool)> = Vec::new();
+    let mut at = 0;
+    while let Some(rel) = html[at..].find("<img") {
+        let start = at + rel;
+        let end = tag_end(html, start);
+        let tag = &html[start..end];
+        let square = attr_value(tag, "src")
+            .and_then(ratio_of)
+            .is_some_and(|r| r <= SQUARE_MAX_RATIO);
+        imgs.push((start, end, square));
+        at = end;
+    }
+
+    // (start, end) of every `<figure …>` OPENING tag paired with the offset of
+    // its `</figure>`. Figures never nest in these docs, so a linear scan is
+    // the whole story.
+    let mut figures: Vec<(usize, usize, usize)> = Vec::new();
+    let mut at = 0;
+    while let Some(rel) = html[at..].find("<figure") {
+        let start = at + rel;
+        let open_end = tag_end(html, start);
+        let close = html[open_end..]
+            .find("</figure>")
+            .map(|r| open_end + r)
+            .unwrap_or(html.len());
+        figures.push((start, open_end, close));
+        at = open_end;
+    }
+
+    // Each edit inserts a class into one opening tag. A figure claims the
+    // images inside it; the rest speak for themselves.
+    let mut edits: Vec<(usize, usize, &'static str)> = Vec::new();
+    for &(fig_start, fig_open_end, fig_close) in &figures {
+        let square_inside = imgs
+            .iter()
+            .any(|&(s, _, sq)| sq && s > fig_start && s < fig_close);
+        if square_inside {
+            edits.push((fig_start, fig_open_end, "fig-sq"));
+        }
+    }
+    for &(start, end, square) in &imgs {
+        let inside_figure = figures.iter().any(|&(s, _, c)| start > s && start < c);
+        if square && !inside_figure {
+            edits.push((start, end, "img-sq"));
+        }
+    }
+    edits.sort_by_key(|&(start, _, _)| start);
+
+    let mut out = String::with_capacity(html.len() + edits.len() * 16);
+    let mut copied = 0;
+    for (start, end, class) in edits {
+        out.push_str(&html[copied..start]);
+        out.push_str(&with_class(&html[start..end], class));
+        copied = end;
+    }
+    out.push_str(&html[copied..]);
+    out
+}
+
+/// The offset just past the `>` that closes the tag starting at `start`,
+/// ignoring any `>` inside a quoted attribute value — the alt text on these
+/// diagrams is a paragraph of prose and may well contain one.
+fn tag_end(html: &str, start: usize) -> usize {
+    let bytes = html.as_bytes();
+    let mut i = start;
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        match (quote, bytes[i]) {
+            (Some(q), c) if c == q => quote = None,
+            (None, c @ (b'"' | b'\'')) => quote = Some(c),
+            (None, b'>') => return i + 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+/// The value of a double-quoted attribute of an opening tag, or `None`.
+fn attr_value<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let needle = format!("{name}=\"");
+    let at = tag.match_indices(&needle).find(|&(i, _)| {
+        // Not a suffix of a longer attribute name: `data-src="…"` is not `src`.
+        i > 0 && tag.as_bytes()[i - 1].is_ascii_whitespace()
+    })?;
+    tag[at.0 + needle.len()..].split('"').next()
+}
+
+/// The same opening tag with `class` added — appended if the tag already has
+/// one, inserted after the element name if it does not.
+fn with_class(tag: &str, class: &str) -> String {
+    match attr_value(tag, "class") {
+        Some(existing) => tag.replacen(
+            &format!("class=\"{existing}\""),
+            &format!("class=\"{existing} {class}\""),
+            1,
+        ),
+        None => {
+            let name_end = tag
+                .find(|c: char| c.is_ascii_whitespace() || c == '>')
+                .unwrap_or(tag.len());
+            format!("{} class=\"{class}\"{}", &tag[..name_end], &tag[name_end..])
+        }
+    }
 }
 
 /// Make links between docs work in the rendered site: a `docs/`-prefixed or bare
@@ -496,6 +791,118 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
     } else {
         summary.to_string()
     };
+    // ── The mobile reading chrome ────────────────────────────────────────────
+    // Narrow viewports get a fixed top bar, a fixed bottom bar and an on-demand
+    // drawer instead of the sidebar dumped above the prose. All three are
+    // `display:none` until the ≤780px media query turns them on, so a desktop
+    // page renders byte-identically to before apart from this inert markup.
+    let order = reading_order(missing);
+    let pos = order.iter().position(|(md, _)| *md == current_md);
+    let total = order.len();
+    let seq = match pos {
+        Some(i) => format!("{} of {total}", i + 1),
+        None => String::new(),
+    };
+    // Prev/next are real links, present in the HTML with the neighbour's title:
+    // they work with JavaScript off, they are the accessible equivalent of the
+    // swipe gesture, and the swipe handler navigates by reading their `href`.
+    let step = |offset: isize, dir: &str, arrow_first: bool| -> String {
+        let target = pos.and_then(|i| {
+            let j = i as isize + offset;
+            if j < 0 {
+                None
+            } else {
+                order.get(j as usize)
+            }
+        });
+        let class = if offset < 0 {
+            "mnav-side mnav-prev"
+        } else {
+            "mnav-side mnav-next"
+        };
+        match target {
+            Some((md, t)) => {
+                let href = md.replace(".md", ".html");
+                let rel = if offset < 0 { "prev" } else { "next" };
+                let id = if offset < 0 { "navPrev" } else { "navNext" };
+                let label = if arrow_first {
+                    format!("\u{2039} {dir}")
+                } else {
+                    format!("{dir} \u{203a}")
+                };
+                format!(
+                    "<a class=\"{class}\" id=\"{id}\" rel=\"{rel}\" href=\"{href}\"><span class=\"mnav-dir\">{label}</span><span class=\"mnav-t\">{title}</span></a>",
+                    title = attr(t)
+                )
+            }
+            // No neighbour in that direction: an inert slot, so the bar keeps
+            // its three-column shape and the swipe handler finds no href.
+            None => {
+                let edge = if offset < 0 {
+                    "Start of the docs"
+                } else {
+                    "End of the docs"
+                };
+                format!("<span class=\"{class} is-off\"><span class=\"mnav-dir\">{dir}</span><span class=\"mnav-t\">{edge}</span></span>")
+            }
+        }
+    };
+    let topbar = format!(
+        r#"<div class="mprog" aria-hidden="true"><i id="mprogBar"></i></div>
+  <header class="mbar" id="mbar">
+    <button type="button" class="mbar-btn" id="mbarMenu" aria-controls="mdrawer" aria-expanded="false"
+      aria-label="Contents — this page's sections and every other page">
+      <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <span class="mbar-id">
+      <span class="mbar-sec"><a href="index.html">rete</a> · {section}</span>
+      <span class="mbar-title">{title}</span>
+    </span>
+    <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
+  </header>"#,
+        section = attr(section),
+        title = attr(title),
+    );
+    let bottombar = format!(
+        r#"<nav class="mnav" id="mnav" aria-label="Page navigation">
+    {prev}
+    <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
+      <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Contents</span>
+    </button>
+    {next}
+  </nav>"#,
+        prev = step(-1, "Previous", true),
+        next = step(1, "Next", false),
+    );
+    let drawer = format!(
+        r#"<div class="mscrim" id="mscrim" hidden></div>
+  <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
+    <div class="mdrawer-head">
+      <div class="mdrawer-who">
+        <span class="mdrawer-eyebrow">{section}{sep}{seq}</span>
+        <span class="mdrawer-title" id="mdrawerTitle">{title}</span>
+      </div>
+      <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">
+        <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Close</span>
+      </button>
+    </div>
+    <div class="mdrawer-tabs" role="tablist" aria-label="Contents">
+      <button type="button" role="tab" id="tabHere" aria-controls="panelHere" aria-selected="true">On this page</button>
+      <button type="button" role="tab" id="tabAll" aria-controls="panelAll" aria-selected="false" tabindex="-1">All pages</button>
+    </div>
+    <div class="mdrawer-body">
+      <div class="mdrawer-panel" id="panelHere" role="tabpanel" aria-labelledby="tabHere" tabindex="0"></div>
+      <div class="mdrawer-panel" id="panelAll" role="tabpanel" aria-labelledby="tabAll" tabindex="0" hidden></div>
+    </div>
+  </aside>"#,
+        section = attr(section),
+        sep = if seq.is_empty() { "" } else { " · " },
+        seq = seq,
+        title = attr(title),
+    );
+
     let social = format!(
         r#"<meta name="description" content="{desc}" />
   <link rel="canonical" href="{base}{page}" />
@@ -526,24 +933,31 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>{title} · rete docs</title>
   {social}
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
-     otherwise prefers-color-scheme decides. */
+     otherwise prefers-color-scheme decides.
+
+     `js-chrome` is set in the same breath, and it is what lets the narrow
+     layout replace the sidebar with the top/bottom bars and the drawer: with
+     JavaScript off the class never lands, the mobile chrome stays inert, and
+     the reader gets the plain stacked sidebar that has always been there. */
   (function () {{
     try {{
       var t = localStorage.getItem("theme");
       if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
     }} catch (e) {{}}
+    document.documentElement.className += " js-chrome";
   }})();
   </script>
-  <style>{css}</style>
+  <style>{css}{mobilecss}</style>
 </head>
 <body>
+  {topbar}
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
@@ -552,8 +966,8 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
         {nav}
     </ul>
     <p class="foot"><a href="{repo}">github.com/caviri/rete</a></p>
-    <button type="button" class="theme-toggle" id="themeToggle"
-      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel">System</span></button>
+    <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
+      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel" data-theme-label>System</span></button>
   </nav>
   <main>
     <div class="page">
@@ -567,25 +981,33 @@ fn template(title: &str, body: &str, current_md: &str, summary: &str, missing: &
     </div>
     <footer>Generated from <code>docs/{current_md}</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
+  {bottombar}
+  {drawer}
   <script>{script}</script>
   <script>{lightbox}</script>
   <script>{glossary}</script>
   <script>{toc}</script>
+  <script>{mobilejs}</script>
 </body>
 </html>
 "##,
         title = title,
         social = social,
         css = CSS,
+        mobilecss = MOBILE_CSS,
         nav = nav,
         body = body,
         current_md = current_md,
         version = VERSION,
         repo = REPO_URL,
+        topbar = topbar,
+        bottombar = bottombar,
+        drawer = drawer,
         script = HIGHLIGHTER,
         lightbox = LIGHTBOX,
         glossary = GLOSSARY_JS,
         toc = TOC_JS,
+        mobilejs = MOBILE_JS,
     )
 }
 
@@ -772,6 +1194,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
 .content h2 { clear:right; }
 
+/* Square figures get a narrower column than landscape ones.
+   `.img-sq` / `.fig-sq` are stamped by docgen from the image's MEASURED
+   aspect ratio — the viewBox of an SVG, the IHDR of a PNG — against
+   SQUARE_MAX_RATIO; nothing here is decided by hand. The reason: at the full
+   column a square is as tall as it is wide, so one picture is an 830-950px
+   wall that pushes every word after it under the fold, while a landscape
+   strip (the byte-layout diagrams, the app screenshots) needs that width to
+   stay legible and is left alone.
+   The cap is 60% of the column, clamped at both ends: never above 560px,
+   which is the width every diagram is DRAWN at, so they render at their
+   intended size instead of being enlarged up to 1.75x; and never below
+   340px, so a narrow desktop window — where the column is small but the
+   sidebar still takes its 250px — gets a readable figure rather than a
+   thumbnail.
+   ONLY above the phone breakpoint. The mobile column is 353px at 390px, and
+   60% of that is 212px of unreadable diagram, so a phone keeps every image
+   full-bleed exactly as before — hence min-width:781px, the complement of the
+   780px query the mobile chrome uses. */
+@media (min-width:781px) {
+  .content img.img-sq { display:block; max-width:clamp(340px, 60%, 560px); margin-left:auto; margin-right:auto; }
+  /* Anchors are inline, so a linked image needs a block box to centre in. */
+  .content a:has(> img.img-sq) { display:block; }
+  /* The FIGURE is capped, not its img, so the caption stays the same width as
+     the picture it captions. `fig-right` is excluded: it is already floated at
+     min(42%, 390px), and this would make it wider, not narrower. */
+  .content figure.fig-sq:not(.fig-right) { max-width:clamp(340px, 60%, 560px); }
+}
+
 .content img { cursor:zoom-in; }
 .lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
 .lightbox.open { display:flex; align-items:center; justify-content:center; }
@@ -810,11 +1260,245 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .content { padding-top:2rem; }
   .content h1 { font-size:2.15rem; }
   footer { padding-left:1.15rem; padding-right:1.15rem; }
+  /* Wide tables scroll inside their own box from here down, not just below
+     520px: it keeps the PAGE from scrolling sideways on a tablet, and it is
+     what the swipe handler looks for when deciding whether a horizontal drag
+     belongs to the table under the finger or to the page. */
+  .content table { display:block; overflow-x:auto; }
+  /* A single unbreakable token in INLINE code — `CARGO_UNSTABLE_BUILD_STD=std,
+     panic_abort,…`, `dev/perms/{build_bench.sh,…}` — used to push the document
+     wider than the screen, and a phone's answer to that is to zoom the whole
+     page out: BENCHMARK, SPEC, clients-dev and sparql all rendered 20-30%
+     smaller than they should on a 390px phone because of one token. Let those
+     wrap. Code BLOCKS are untouched — they are `width:max-content` inside a
+     scrollable `pre` and never overflow their line box. */
+  .content code { overflow-wrap:break-word; }
+  .content pre code { overflow-wrap:normal; }
 }
 @media (max-width:520px) {
   .sidebar ul { columns:1; }
-  .content table { display:block; overflow-x:auto; }
   .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior:auto; }
+}
+"#;
+
+/// The mobile reading chrome: a fixed top bar, a fixed bottom bar and a TOC
+/// drawer, all of them `display:none` until the ≤780px media query turns them
+/// on. Nothing in here can reach a desktop viewport — the desktop rules live
+/// untouched in `CSS` above and this file only ever adds.
+///
+/// Colours come from the same custom properties as everything else, so the new
+/// chrome follows the light/dark toggle in both directions for free.
+const MOBILE_CSS: &str = r#"
+.mbar,.mnav,.mdrawer,.mscrim,.mprog { display:none; }
+
+@media (max-width:780px) {
+  :root { --mbar-h:52px; --mnav-h:56px; }
+
+  /* The sidebar is only retired when the head script has confirmed JavaScript
+     — see the `js-chrome` note there. Without it, nothing below applies and
+     the page keeps the stacked sidebar it has always had. */
+  html.js-chrome .sidebar { display:none; }
+  html.js-chrome body {
+    padding-top:var(--mbar-h);
+    padding-bottom:calc(var(--mnav-h) + env(safe-area-inset-bottom));
+  }
+  html.js-chrome .page {
+    padding-left:max(1.15rem, env(safe-area-inset-left));
+    padding-right:max(1.15rem, env(safe-area-inset-right));
+  }
+  html.js-chrome .content { padding-top:1.4rem; }
+  /* Anchor targets must clear the fixed bar, or every in-page jump lands with
+     its heading hidden underneath it. */
+  html.js-chrome .content h1,
+  html.js-chrome .content h2,
+  html.js-chrome .content h3 { scroll-margin-top:calc(var(--mbar-h) + 12px); }
+  html.drawer-open, html.drawer-open body { overflow:hidden; }
+  /* `hidden` stays the one truth for "closed" — for assistive tech as much
+     as for paint — so it has to outrank the display rules below. */
+  html.js-chrome .mdrawer[hidden],html.js-chrome .mscrim[hidden] { display:none; }
+
+  /* ── reading position ─────────────────────────────────────────────────
+     Two pixels at the very top of the viewport, above the bar in z-order so
+     it survives the bar sliding away. "How much of this is left" is the one
+     piece of state a phone reader cannot see for themselves — the scrollbar
+     that answers it on a desktop does not exist here. */
+  html.js-chrome .mprog {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:901; height:2px;
+    background:transparent; pointer-events:none;
+  }
+  .mprog i { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
+
+  /* ── top bar ──────────────────────────────────────────────────────────
+     Identity (where am I in the site?) plus the two controls worth a
+     permanent tap target. It hides on scroll-down and comes back on
+     scroll-up, so the 52px is only spent when the reader is not reading. */
+  html.js-chrome .mbar {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:900; height:var(--mbar-h);
+    align-items:center; gap:.3rem;
+    padding-left:max(.3rem, env(safe-area-inset-left));
+    padding-right:max(.3rem, env(safe-area-inset-right));
+    background:var(--side); border-bottom:1px solid var(--border); color:var(--side-fg);
+    transition:transform .18s ease;
+  }
+  html.js-chrome .mbar.up { transform:translateY(-100%); }
+  .mbar-btn {
+    flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+    width:42px; height:42px; padding:0; font:inherit; font-size:1.05rem;
+    color:var(--side-fg); background:transparent; border:0; border-radius:9px; cursor:pointer;
+  }
+  .mbar-btn:active { background:rgba(20,125,105,.14); }
+  .mbar-btn:focus-visible,.mnav a:focus-visible,.mnav button:focus-visible,
+  .mdrawer a:focus-visible,.mdrawer button:focus-visible {
+    outline:2px solid var(--accent); outline-offset:-2px;
+  }
+  .mbar-id { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:center; line-height:1.18; }
+  .mbar-sec {
+    font-size:.66rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mbar-sec a { color:var(--iri); text-decoration:none; font-family:Georgia,"Times New Roman",serif; font-size:1.05em; letter-spacing:0; text-transform:none; }
+  .mbar-title {
+    font-size:.92rem; font-weight:700; color:var(--fg);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  /* ── bottom bar ───────────────────────────────────────────────────────
+     Thumb country. Previous / next carry the neighbour's real title (a bare
+     arrow tells you nothing about whether to press it) and the middle opens
+     the drawer — the same control as the top-left one, put where a thumb
+     already is. These two links are also the accessible equivalent of the
+     swipe: the gesture only ever follows them. */
+  html.js-chrome .mnav {
+    display:grid; position:fixed; inset:auto 0 0 0; z-index:900;
+    grid-template-columns:1fr auto 1fr; align-items:stretch;
+    min-height:var(--mnav-h);
+    padding-bottom:env(safe-area-inset-bottom);
+    padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);
+    background:var(--side); border-top:1px solid var(--border);
+    box-shadow:0 -6px 18px rgba(20,40,33,.06);
+  }
+  .mnav-side {
+    display:flex; flex-direction:column; justify-content:center; gap:.1rem;
+    min-width:0; padding:.42rem .6rem; text-decoration:none; color:var(--side-fg);
+  }
+  .mnav-next { align-items:flex-end; text-align:right; }
+  .mnav-side:active { background:rgba(20,125,105,.1); }
+  .mnav-side.is-off { color:var(--muted); opacity:.45; }
+  .mnav-dir {
+    font-size:.6rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mnav-t {
+    font-size:.79rem; font-weight:600; line-height:1.2; max-width:100%;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mnav-toc {
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.1rem;
+    padding:.3rem .7rem; margin:.42rem 0; font:inherit; font-size:.62rem; font-weight:800;
+    letter-spacing:.05em; text-transform:uppercase; cursor:pointer;
+    color:var(--accent-deep); background:var(--panel);
+    border:1px solid var(--border); border-radius:10px;
+  }
+  .mnav-toc:active { background:var(--tint); }
+
+  /* ── the drawer ───────────────────────────────────────────────────────
+     A sheet over the page, not a block above it: the reader asks for it and
+     it goes away again. Two tabs, because the two questions are different —
+     "where am I inside this page" and "what else is there". */
+  html.js-chrome .mscrim {
+    display:block; position:fixed; inset:0; z-index:1050; background:rgba(12,20,17,.5);
+    opacity:0; transition:opacity .2s ease; touch-action:none;
+  }
+  html.js-chrome .mscrim.open { opacity:1; }
+  html.js-chrome .mdrawer {
+    display:flex; position:fixed; inset:0 auto 0 0; z-index:1100;
+    width:min(88vw,390px); flex-direction:column;
+    padding-left:env(safe-area-inset-left);
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--panel); color:var(--fg);
+    border-right:1px solid var(--border); box-shadow:var(--shadow);
+    transform:translateX(-100%); transition:transform .22s ease;
+  }
+  html.js-chrome .mdrawer.open { transform:none; }
+  .mdrawer-head {
+    display:flex; align-items:flex-start; gap:.5rem; flex:0 0 auto;
+    padding:.85rem .5rem .7rem .95rem; border-bottom:1px solid var(--border); background:var(--side);
+  }
+  .mdrawer-who { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:.15rem; }
+  .mdrawer-eyebrow {
+    font-size:.63rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer-title {
+    font-family:Georgia,"Times New Roman",serif; font-size:1.12rem; font-weight:700; line-height:1.2; color:var(--fg);
+  }
+  .mdrawer-x {
+    flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:.1rem;
+    padding:.35rem .5rem; font:inherit; font-size:.58rem; font-weight:800; letter-spacing:.06em;
+    text-transform:uppercase; cursor:pointer;
+    color:var(--side-fg); background:var(--panel); border:1px solid var(--border); border-radius:9px;
+  }
+  .mdrawer-x:active { background:var(--tint); }
+  .mdrawer-tabs { display:flex; flex:0 0 auto; gap:.35rem; padding:.55rem .7rem; border-bottom:1px solid var(--border); }
+  .mdrawer-tabs button {
+    flex:1 1 0; padding:.44rem .5rem; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer;
+    color:var(--muted); background:transparent; border:1px solid var(--border); border-radius:999px;
+  }
+  .mdrawer-tabs button[aria-selected="true"] {
+    color:var(--on-accent); background:var(--accent); border-color:var(--accent);
+  }
+  .mdrawer-body { flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  .mdrawer-panel { padding:.6rem .7rem 1.4rem; }
+  .mdrawer-panel:focus { outline:none; }
+  .mdrawer-empty { color:var(--muted); font-size:.85rem; padding:.5rem .35rem; }
+  /* The panels hold clones of the two lists the page already built — the
+     rail's "on this page" TOC (heading ids and all) and the sidebar's nav —
+     so they can never disagree with them. These rules restyle the clones. */
+  .mdrawer ul { list-style:none; margin:0; padding:0; }
+  .mdrawer li { margin:.05rem 0; }
+  .mdrawer a {
+    display:block; padding:.5rem .6rem; border-left:3px solid transparent; border-radius:0 7px 7px 0;
+    color:var(--fg); text-decoration:none; font-size:.9rem; line-height:1.3;
+  }
+  .mdrawer a:active { background:rgba(20,125,105,.1); }
+  .mdrawer a.active { background:var(--tint); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; }
+  .mdrawer .toc-sub a { padding-left:1.5rem; font-size:.84rem; color:var(--muted); }
+  .mdrawer li.nav-h {
+    margin:1rem 0 .2rem; padding:0 .6rem; font-size:.63rem; font-weight:800;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer li.nav-h:first-child { margin-top:.1rem; }
+  .mdrawer .nav-group summary {
+    display:flex; align-items:center; padding:.5rem .6rem; font-size:.9rem; line-height:1.3;
+    list-style:none; cursor:pointer;
+  }
+  .mdrawer .nav-group summary::-webkit-details-marker { display:none; }
+  .mdrawer .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+  .mdrawer .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+  .mdrawer .nav-group summary a { display:inline; padding:0; border:0; border-radius:0; background:none; font-size:inherit; }
+  .mdrawer .nav-sub { margin:.1rem 0 .3rem .6rem; padding-left:.5rem; border-left:1px solid var(--border); }
+  .mdrawer .nav-sub a { font-size:.82rem; padding:.36rem .6rem; color:var(--muted); }
+
+  /* The page turn: a short slide out before the browser fetches the next
+     document. It is the only motion the gesture adds, and it does not run at
+     all under prefers-reduced-motion. */
+  html.page-out-left main,html.page-out-right main {
+    transition:transform .13s ease-in, opacity .13s ease-in; opacity:.3;
+  }
+  html.page-out-left main { transform:translateX(-7%); }
+  html.page-out-right main { transform:translateX(7%); }
+}
+
+/* Every selector here has to outrank its `html.js-chrome …` counterpart above,
+   or the transitions it is switching off simply stay on. */
+@media (max-width:780px) and (prefers-reduced-motion: reduce) {
+  html.js-chrome .mbar,
+  html.js-chrome .mdrawer,
+  html.js-chrome .mscrim,
+  html.js-chrome .mprog i { transition:none; }
+  html.js-chrome.page-out-left main,
+  html.js-chrome.page-out-right main { transition:none; transform:none; opacity:1; }
 }
 "#;
 
@@ -1026,7 +1710,9 @@ const GLOSSARY_JS: &str = r#"
 
 /// "On this page" table of contents, built client-side from the `<h2>`/`<h3>`
 /// headings and shown sticky at the top-right (collapses on narrow screens). It
-/// gives each heading a slug id, links to it, and highlights the section in view.
+/// links to each heading and highlights the section in view. The ids it links to
+/// are already in the HTML (see `anchor_headings`); the slugger below is only a
+/// fallback for a heading that somehow arrived without one.
 const TOC_JS: &str = r##"
 (function () {
   document.addEventListener("DOMContentLoaded", function () {
@@ -1081,10 +1767,12 @@ const TOC_JS: &str = r##"
 // prefers-color-scheme decides; explicit choices persist under the SAME
 // localStorage key ("theme") the playground uses, so the preference follows
 // the reader across the whole site.
+// There are two of these now — the sidebar's on a wide screen, the top bar's on
+// a phone — so the cycle is bound to every [data-theme-cycle] button rather than
+// to one id, and both stay in step because they read the same localStorage key.
 (function () {
-  var btn = document.getElementById("themeToggle");
-  var label = document.getElementById("themeToggleLabel");
-  if (!btn || !label) return;
+  var btns = [].slice.call(document.querySelectorAll("[data-theme-cycle]"));
+  if (!btns.length) return;
   function current() {
     try {
       var t = localStorage.getItem("theme");
@@ -1093,18 +1781,510 @@ const TOC_JS: &str = r##"
   }
   function render() {
     var t = current();
-    label.textContent = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    var name = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    btns.forEach(function (b) {
+      var label = b.querySelector("[data-theme-label]");
+      if (label) label.textContent = name;
+      else b.setAttribute("aria-label", "Theme: " + name + " — tap to cycle System, Light, Dark");
+    });
   }
-  btn.addEventListener("click", function () {
-    var next = { system: "light", light: "dark", dark: "system" }[current()];
-    try {
-      if (next === "system") localStorage.removeItem("theme");
-      else localStorage.setItem("theme", next);
-    } catch (e) {}
-    if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
-    else delete document.documentElement.dataset.theme;
-    render();
+  btns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      var next = { system: "light", light: "dark", dark: "system" }[current()];
+      try {
+        if (next === "system") localStorage.removeItem("theme");
+        else localStorage.setItem("theme", next);
+      } catch (e) {}
+      if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
+      else delete document.documentElement.dataset.theme;
+      render();
+    });
   });
   render();
 })();
 "##;
+
+/// The behaviour behind the mobile chrome: the TOC drawer (focus-trapped, two
+/// tabs, filled from lists the page already built), the hide-on-scroll top bar
+/// with its reading-position line, and horizontal swipe between pages.
+///
+/// Every guard in the swipe handler exists for a reason spelled out at the call
+/// site; the short version is that these docs contain ~300 horizontally
+/// scrollable boxes (wide tables, long code blocks, diagrams) and a swipe that
+/// steals a drag from one of them is worse than having no swipe at all.
+const MOBILE_JS: &str = r##"
+(function () {
+  var NARROW = window.matchMedia("(max-width: 780px)");
+  var CALM = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var bar = document.getElementById("mbar");
+    var drawer = document.getElementById("mdrawer");
+    var scrim = document.getElementById("mscrim");
+    if (!bar || !drawer || !scrim) return;
+    var progress = document.getElementById("mprogBar");
+    var prevLink = document.getElementById("navPrev");
+    var nextLink = document.getElementById("navNext");
+    var closeBtn = document.getElementById("mdrawerClose");
+    var panels = { here: document.getElementById("panelHere"), all: document.getElementById("panelAll") };
+    var tabs = { here: document.getElementById("tabHere"), all: document.getElementById("tabAll") };
+    var openers = [document.getElementById("mbarMenu"), document.getElementById("mnavToc")]
+      .filter(function (b) { return !!b; });
+
+    /* ---- 1. fill the drawer ------------------------------------------------
+       Both panels are CLONES of lists this page already has: the rail's "on
+       this page" TOC (built by the block above from the heading ids docgen
+       mints server-side) and the sidebar's section nav. Cloning means the
+       drawer cannot drift out of step with either, and neither list carries an
+       `id`, so nothing is duplicated in the document. */
+    var pageToc = document.querySelector("#toc ul");
+    if (pageToc) {
+      panels.here.appendChild(pageToc.cloneNode(true));
+    } else {
+      panels.here.innerHTML = '<p class="mdrawer-empty">This page is short enough to have no sections — try "All pages".</p>';
+    }
+    var siteNav = document.querySelector(".sidebar > ul");
+    if (siteNav) panels.all.appendChild(siteNav.cloneNode(true));
+
+    function selectTab(which) {
+      Object.keys(tabs).forEach(function (k) {
+        var on = k === which;
+        if (tabs[k]) {
+          tabs[k].setAttribute("aria-selected", on ? "true" : "false");
+          tabs[k].tabIndex = on ? 0 : -1;
+        }
+        if (panels[k]) panels[k].hidden = !on;
+      });
+    }
+    function defaultTab() { return pageToc ? "here" : "all"; }
+    selectTab(defaultTab());
+    Object.keys(tabs).forEach(function (k) {
+      if (tabs[k]) tabs[k].addEventListener("click", function () { selectTab(k); tabs[k].focus(); });
+    });
+    var tablist = drawer.querySelector(".mdrawer-tabs");
+    if (tablist) {
+      tablist.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        var to = tabs.here.getAttribute("aria-selected") === "true" ? "all" : "here";
+        selectTab(to); tabs[to].focus();
+      });
+    }
+    // Jumping to a heading closes the sheet — otherwise it covers what you just
+    // asked to see.
+    panels.here.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a") : null;
+      if (a) close();
+    });
+
+    /* ---- 2. open / close, with a focus trap -------------------------------- */
+    var lastFocus = null, closeTimer = null;
+    function focusable() {
+      return [].slice.call(drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+        .filter(function (el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
+    }
+    function isOpen() { return document.documentElement.classList.contains("drawer-open"); }
+    function open() {
+      if (isOpen()) return;
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+      lastFocus = document.activeElement;
+      drawer.hidden = false; scrim.hidden = false;
+      document.documentElement.classList.add("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "true"); });
+      syncActive();
+      // Two frames: the element has to have been laid out in its off-screen
+      // state before the class that slides it in can animate.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { drawer.classList.add("open"); scrim.classList.add("open"); });
+      });
+      if (closeBtn) closeBtn.focus();
+    }
+    function close() {
+      if (!isOpen()) return;
+      drawer.classList.remove("open"); scrim.classList.remove("open");
+      document.documentElement.classList.remove("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+      closeTimer = setTimeout(function () {
+        drawer.hidden = true; scrim.hidden = true; closeTimer = null;
+      }, CALM.matches ? 0 : 240);
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+      lastFocus = null;
+    }
+    openers.forEach(function (b) { b.addEventListener("click", open); });
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    scrim.addEventListener("click", close);
+    document.addEventListener("keydown", function (e) {
+      if (!isOpen()) return;
+      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key !== "Tab") return;
+      var items = focusable();
+      if (!items.length) return;
+      var first = items[0], last = items[items.length - 1];
+      if (!drawer.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    // The desktop scroll-spy keeps `.active` on the rail's TOC; mirror it onto
+    // the clone when the sheet opens, so "you are here" is right without a
+    // second listener running all the way down every page.
+    function syncActive() {
+      var live = document.querySelector("#toc a.active");
+      var want = live ? live.getAttribute("href") : null;
+      panels.here.querySelectorAll("a").forEach(function (a) {
+        a.classList.toggle("active", a.getAttribute("href") === want);
+      });
+    }
+
+    /* ---- 3. reading position + hide-on-scroll ------------------------------
+       The bar is 52px of a 640px-tall screen. Giving it back while the reader
+       is actually reading, and returning it the moment they reach for it, is
+       the whole justification for spending those pixels. Under
+       prefers-reduced-motion it simply never moves. */
+    var lastY = window.pageYOffset || 0, queued = false;
+    function onScroll() {
+      var y = Math.max(0, window.pageYOffset || 0);
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      if (progress) progress.style.width = (max > 40 ? Math.min(100, (y / max) * 100) : 0) + "%";
+      if (CALM.matches || !NARROW.matches || isOpen()) bar.classList.remove("up");
+      else if (y < 96) bar.classList.remove("up");
+      else if (y - lastY > 6) bar.classList.add("up");
+      else if (lastY - y > 6) bar.classList.remove("up");
+      lastY = y;
+      queued = false;
+    }
+    window.addEventListener("scroll", function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(onScroll);
+    }, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    onScroll();
+
+    /* ---- 4. swipe left / right between pages -------------------------------
+       Prev and next are the two links in the bottom bar; the gesture is only a
+       shortcut to them, never the only way to get anywhere. */
+    function go(href, back) {
+      if (!href) return;
+      if (CALM.matches) { window.location.href = href; return; }
+      document.documentElement.classList.add(back ? "page-out-right" : "page-out-left");
+      setTimeout(function () { window.location.href = href; }, 130);
+    }
+    // Coming back through the bfcache must not restore the faded-out state.
+    window.addEventListener("pageshow", function () {
+      document.documentElement.classList.remove("page-out-left", "page-out-right");
+    });
+
+    // The nearest ancestor that the finger could be scrolling sideways. Only
+    // boxes that OVERFLOW and are allowed to scroll count: `overflow-x:hidden`
+    // clips its content but the user cannot pan it, so a swipe there is ours.
+    function hscroller(node) {
+      for (var el = node; el && el !== document.body; el = el.parentElement) {
+        if (el.nodeType !== 1) continue;
+        if (el.scrollWidth - el.clientWidth > 2) {
+          var ox = window.getComputedStyle(el).overflowX;
+          if (ox === "auto" || ox === "scroll") return el;
+        }
+      }
+      return null;
+    }
+
+    var swipe = null;
+    document.addEventListener("touchstart", function (e) {
+      swipe = null;
+      if (!NARROW.matches || isOpen() || e.touches.length !== 1) return;
+      var t = e.touches[0], el = e.target;
+      // Never compete with the chrome itself, a form field, or the lightbox.
+      if (el && el.closest && el.closest("input,textarea,select,[contenteditable],.mbar,.mnav,.mdrawer,.mscrim,.lightbox")) return;
+      var sc = hscroller(el);
+      swipe = {
+        x: t.clientX, y: t.clientY, t: Date.now(), axis: 0, sc: sc,
+        left: sc ? sc.scrollLeft : 0,
+        room: sc ? sc.scrollWidth - sc.clientWidth : 0
+      };
+    }, { passive: true });
+
+    document.addEventListener("touchmove", function (e) {
+      if (!swipe) return;
+      if (e.touches.length !== 1) { swipe = null; return; }   // pinch / second finger
+      var t = e.touches[0];
+      var dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+      if (!swipe.axis && Math.abs(dx) + Math.abs(dy) > 12) {
+        // Lock the axis on the FIRST real movement. A drag that began as
+        // vertical reading scroll can never become a page turn later on,
+        // however far sideways it wanders before the finger lifts.
+        swipe.axis = Math.abs(dx) > Math.abs(dy) * 1.4 ? 1 : -1;
+      }
+      if (swipe.axis === -1) swipe = null;
+    }, { passive: true });
+
+    document.addEventListener("touchcancel", function () { swipe = null; }, { passive: true });
+
+    document.addEventListener("touchend", function (e) {
+      var s = swipe; swipe = null;
+      if (!s || s.axis !== 1 || !e.changedTouches || !e.changedTouches.length) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - s.x, dy = t.clientY - s.y, dt = Math.max(1, Date.now() - s.t);
+      if (Math.abs(dx) < Math.max(72, window.innerWidth * 0.12)) return;  // far enough
+      if (Math.abs(dx) < Math.abs(dy) * 2) return;                        // dominantly horizontal
+      if (dt > 900) return;                                               // a drag, not a rest
+      // Fast flick, or a slow but unmistakably long pull.
+      if (Math.abs(dx) / dt < 0.25 && Math.abs(dx) < window.innerWidth * 0.28) return;
+      var back = dx > 0;                       // finger to the right = go back
+      if (s.sc) {
+        // The gesture started inside a table / code block / diagram that can
+        // pan. Two ways it can still belong to that box, and both forfeit the
+        // page turn: it MOVED under the finger, or it has room left to move
+        // the way the finger is going.
+        //
+        // The 2px on the first test is not slack, it is a real observation: a
+        // block pinned at its right edge reports scrollLeft one pixel below the
+        // maximum once the browser settles the fractional part, and an exact
+        // comparison reads that as a pan and cancels the turn forever. A pan
+        // worth respecting moves hundreds of pixels.
+        if (Math.abs(s.sc.scrollLeft - s.left) > 2) return;
+        if (back ? s.left > 1 : s.left < s.room - 1) return;
+      }
+      var link = back ? prevLink : nextLink;
+      go(link && link.getAttribute("href"), back);
+    }, { passive: true });
+  });
+})();
+"##;
+
+#[cfg(test)]
+mod tests {
+    use super::{aspect_ratio, classify_images, render_markdown, SQUARE_MAX_RATIO};
+    use std::path::PathBuf;
+
+    /// The shipped diagrams, measured. This is the classification the site
+    /// depends on, so it is asserted against the real files rather than a
+    /// fixture: a redrawn diagram that changes shape changes its width, and
+    /// this says so.
+    fn img(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/img")
+            .join(name)
+    }
+
+    #[test]
+    fn svg_shape_comes_from_the_viewbox() {
+        // The diagrams carry no width/height attributes — only a viewBox.
+        let logo = aspect_ratio(&img("logo.svg")).expect("logo.svg");
+        assert!((logo - 760.0 / 200.0).abs() < 1e-9, "{logo}");
+        assert!(logo > SQUARE_MAX_RATIO, "a 3.8:1 banner is not square");
+
+        // Taller than it is wide, and the worst offender at full width.
+        let lazy = aspect_ratio(&img("lazy-open.svg")).expect("lazy-open.svg");
+        assert!((lazy - 560.0 / 644.0).abs() < 1e-9, "{lazy}");
+        assert!(lazy <= SQUARE_MAX_RATIO, "portrait counts as square-ish");
+    }
+
+    #[test]
+    fn png_shape_comes_from_the_ihdr() {
+        let shot = aspect_ratio(&img("playground-sparql.png")).expect("playground-sparql.png");
+        assert!((shot - 1280.0 / 1140.0).abs() < 1e-9, "{shot}");
+        assert!(shot <= SQUARE_MAX_RATIO);
+        // A screenshot in the usual landscape shape keeps the full column.
+        let wide = aspect_ratio(&img("atlas-1914.png")).expect("atlas-1914.png");
+        assert!(wide > SQUARE_MAX_RATIO, "{wide}");
+    }
+
+    #[test]
+    fn unmeasurable_sources_are_left_alone() {
+        assert_eq!(aspect_ratio(&img("no-such-file.svg")), None);
+        assert_eq!(aspect_ratio(&img("README.md")), None);
+    }
+
+    /// A stub shape table, so the tagging is tested without touching disk.
+    fn shapes(src: &str) -> Option<f64> {
+        match src {
+            "img/square.svg" => Some(1.0),
+            "img/tall.svg" => Some(0.87),
+            "img/wide.svg" => Some(1.7),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn only_square_images_are_tagged() {
+        let html = classify_images(
+            r#"<p><img src="img/square.svg" alt="a"><img src="img/wide.svg" alt="b"><img src="img/tall.svg" alt="c"></p>"#,
+            &shapes,
+        );
+        assert!(
+            html.contains(r#"<img class="img-sq" src="img/square.svg""#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<img class="img-sq" src="img/tall.svg""#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<img src="img/wide.svg""#), "{html}");
+        assert_eq!(html.matches("img-sq").count(), 2, "{html}");
+    }
+
+    /// An unknown `src` — a remote badge, an image added without a shape we
+    /// can read — must not be narrowed on a guess.
+    #[test]
+    fn unknown_shapes_keep_the_full_column() {
+        let html = classify_images(r#"<img src="https://example.com/badge.svg">"#, &shapes);
+        assert!(!html.contains("img-sq"), "{html}");
+    }
+
+    /// In a figure the CAPTION has to keep the picture's width, so the figure
+    /// is what gets capped — and its img must not be capped a second time.
+    #[test]
+    fn a_square_figure_is_tagged_not_its_image() {
+        let html = classify_images(
+            r#"<figure class="fig-center"><img src="img/square.svg" alt="x"><figcaption>c</figcaption></figure>"#,
+            &shapes,
+        );
+        assert!(
+            html.contains(r#"<figure class="fig-center fig-sq">"#),
+            "{html}"
+        );
+        assert!(!html.contains("img-sq"), "{html}");
+    }
+
+    #[test]
+    fn a_wide_figure_is_untouched() {
+        let src = r#"<figure class="fig-right"><img src="img/wide.svg" alt="x"></figure>"#;
+        assert_eq!(classify_images(src, &shapes), src);
+    }
+
+    /// The alt text on these diagrams is a paragraph of prose; a `>` in it must
+    /// not be mistaken for the end of the tag.
+    #[test]
+    fn a_gt_inside_alt_text_does_not_end_the_tag() {
+        let html = classify_images(
+            r#"<img src="img/square.svg" alt="level 0 -> level 1, x > y">"#,
+            &shapes,
+        );
+        assert_eq!(
+            html,
+            r#"<img class="img-sq" src="img/square.svg" alt="level 0 -> level 1, x > y">"#
+        );
+    }
+
+    /// The Markdown forms reach the same place: `![…](…)`, and a linked image.
+    #[test]
+    fn markdown_images_are_classified_too() {
+        let html = classify_images(
+            &render_markdown("![a](img/square.svg)\n\n[![b](img/wide.svg)](playground.html)\n"),
+            &shapes,
+        );
+        assert!(
+            html.contains(r#"<img class="img-sq" src="img/square.svg""#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<img src="img/wide.svg""#), "{html}");
+    }
+
+    /// The ids have to be the ones github.com mints for the same headings —
+    /// that is the whole point of the convention, and what makes an anchor an
+    /// author tested on GitHub keep working here.
+    #[test]
+    fn headings_get_github_slugs() {
+        let html = render_markdown(
+            "# Getting started\n\n\
+             ## `rete search <file> [<prefix>] [--limit <n>] [--json]`\n\n\
+             ## Beyond union — cross-source joins\n\n\
+             ### 7.4 The schema pyramid (v2)\n",
+        );
+        assert!(html.contains(r#"<h1 id="getting-started">"#), "{html}");
+        // Punctuation is dropped, but the spaces around it are not: `--limit`
+        // after a space slugs to `---limit`, and an em dash leaves `--`.
+        assert!(
+            html.contains(r#"<h2 id="rete-search-file-prefix---limit-n---json">"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<h2 id="beyond-union--cross-source-joins">"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<h3 id="74-the-schema-pyramid-v2">"#),
+            "{html}"
+        );
+    }
+
+    /// `_` is not punctuation to GitHub's slugger, and `docs/SPEC.md` is full of
+    /// `TEXT_INDEX`-shaped identifiers. Stripping it mints `-textindex-` for an
+    /// anchor github.com calls `-text_index-`, so a link an author verified on
+    /// GitHub dies in the built page — the exact trap this asserts against.
+    #[test]
+    fn underscores_survive_the_slug() {
+        let html = render_markdown(
+            "### 6.3 Full-text index (TEXT_INDEX section, optional)\n\n\
+             ## RETE_BLOCK_KB\n\n\
+             ## The `__init__` hook\n",
+        );
+        assert!(
+            html.contains(r#"<h3 id="63-full-text-index-text_index-section-optional">"#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<h2 id="rete_block_kb">"#), "{html}");
+        // A run of underscores is kept whole, like a run of hyphens.
+        assert!(html.contains(r#"<h2 id="the-__init__-hook">"#), "{html}");
+    }
+
+    /// A heading is slugged from what it *reads* as, not from its markup.
+    #[test]
+    fn heading_markup_does_not_reach_the_slug() {
+        let html = render_markdown("## The **fast** [path](x.md) to `.rete`\n");
+        assert!(
+            html.contains(r#"<h2 id="the-fast-path-to-rete">"#),
+            "{html}"
+        );
+    }
+
+    /// prev/next — and the swipe that follows them — mean nothing without a
+    /// defined sequence, and there must be exactly one. It is `SECTIONS`
+    /// flattened: the same order the sidebar and the drawer show.
+    #[test]
+    fn reading_order_is_the_nav_flattened() {
+        let order = super::reading_order(&[]);
+        assert_eq!(order.first().map(|(md, _)| *md), Some("index.md"));
+        assert_eq!(order.last().map(|(md, _)| *md), Some("conformance.md"));
+        // Only rendered pages: the pre-built apps hang off nav groups and are
+        // not steps in the sequence.
+        assert!(order.iter().all(|(md, _)| md.ends_with(".md")), "{order:?}");
+        assert_eq!(
+            order.len(),
+            super::SECTIONS.iter().map(|(_, p)| p.len()).sum::<usize>()
+        );
+        // Consecutive: every page's next is the entry after it, so no page can
+        // be reached twice or skipped.
+        let mut seen: Vec<&str> = order.iter().map(|(md, _)| *md).collect();
+        let count = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            count,
+            "a page appears twice in the reading order"
+        );
+    }
+
+    /// A page listed in the nav but not yet committed is dropped from the nav —
+    /// and has to be dropped from the sequence too, or its neighbours' prev/next
+    /// point at a file that does not exist.
+    #[test]
+    fn reading_order_skips_missing_pages() {
+        let order = super::reading_order(&["intro.md", "conformance.md"]);
+        assert!(!order.iter().any(|(md, _)| *md == "intro.md"), "{order:?}");
+        assert_eq!(order.last().map(|(md, _)| *md), Some("BENCHMARK.md"));
+        // index.md's next is now getting-started.md, not the missing intro.md.
+        let i = order.iter().position(|(md, _)| *md == "index.md").unwrap();
+        assert_eq!(order[i + 1].0, "getting-started.md");
+    }
+
+    /// Two headings that read alike still get one anchor each.
+    #[test]
+    fn repeated_headings_are_numbered() {
+        let html = render_markdown("## Notes\n\n## Notes\n\n## Notes\n");
+        assert!(html.contains(r#"<h2 id="notes">"#), "{html}");
+        assert!(html.contains(r#"<h2 id="notes-1">"#), "{html}");
+        assert!(html.contains(r#"<h2 id="notes-2">"#), "{html}");
+    }
+}

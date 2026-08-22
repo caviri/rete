@@ -1,0 +1,20 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/proteinbase/proteinbase.rete",
+  "source_date": "2026-01-28",
+  "keywords": [
+    "3D",
+    "biology",
+    "protein design",
+    "structures"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH",
+    "https://www.wikidata.org/entity/Q410814"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/proteinbase.html"
+  }
+}

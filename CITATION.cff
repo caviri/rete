@@ -17,8 +17,10 @@ authors:
 repository-code: "https://github.com/caviri/rete"
 url: "https://caviri.github.io/rete/"
 license: Apache-2.0
-# Concept DOI: resolves to the latest archived release rather than pinning one.
-doi: "10.5281/zenodo.21546288"
+# Concept DOI (Zenodo `conceptdoi`, parent record 21546287): resolves to the
+# latest archived release rather than pinning one. Never the per-version DOI —
+# 10.5281/zenodo.21546288 is v0.3.0's and would freeze every citation there.
+doi: "10.5281/zenodo.21546287"
 keywords:
   - RDF
   - SPARQL

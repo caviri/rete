@@ -17,6 +17,38 @@ Everything is keyed by a lowercase, kebab-case dataset key such as `foo` or
 For embedded data, omit `kind` and `url`; it is discovered from the inlined
 bytes. Its remote mirror derives as `remoteBase/<key>/<key>.rete`.
 
+**`textIndex`** — set `"textIndex": true` if, and only if, the published file was
+built with `--text-index` (a TEXT_INDEX section, kind 6, in its header). It is a
+declaration, not a switch: nothing reads it at query time, but two checks hold it
+to the truth, so a wrong value is a red gate rather than a quiet lie.
+
+- `tests/gate/checks/check_text_index_claims.mjs` (offline, every gate run) —
+  the flag and the prose must agree. If `textIndex: true`, at least one of
+  `label` / `description` / `datasetMeta.provenance` / `datasetExtra.tags` must
+  say so ("TEXT_INDEX on for full-text search over its literals."); if the flag
+  is absent, none of them may claim one.
+- `scripts/check_dataset_catalog.py` (network, weekly) — the flag vs the section
+  directory the bucket actually serves.
+
+A full-text index is opt-in at build time and `FILTER(CONTAINS(…))` answers with
+or without one — by word lookup or by full scan — so an undeclared index is
+invisible in both directions until something compares the header to the catalog.
+
+To read the truth off any file before you write the flag, ask the file:
+
+```sh
+rete card-url https://data.graphplaza.com/<key>/<key>.rete --json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["signals"]["text_index"])'
+# {'bytes': 1879287762, 'present': True, 'token_table_bytes': 193295361}
+```
+
+`signals.text_index` is **measured** from the section directory by the reader,
+not stored in the card ([Dataset Cards](../../../docs/dataset-cards.md#the-full-text-signal-measured-not-stored)),
+so it is right for every published file today and cannot go stale. The catalog
+flag stays a separate, hand-written **declaration** on purpose: it is the claim
+the two checks above hold the bucket to, and a flag derived from the bytes could
+not detect the bytes changing.
+
 ## 2. `datasetMeta`
 
 ```js

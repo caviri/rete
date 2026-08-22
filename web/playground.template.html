@@ -96,6 +96,7 @@ __PLAYGROUND_CSS__
         <span id="dsName">…</span>
         <span class="ds-eject"><span class="ds-eject-ic" aria-hidden="true">⏏</span>Change dataset</span>
       </button>
+      <button id="loadBtn" type="button" class="secondary" title="Load a graph — drop a .rete file, paste a URL, or browse the examples">Load</button>
       <button id="buildBtn" type="button" class="secondary">Build</button>
       <button id="shareBtn" class="icon-button" type="button" title="Copy a shareable playground URL" aria-label="Copy share URL">
         <span aria-hidden="true">↗</span>
@@ -196,18 +197,27 @@ __PLAYGROUND_CSS__
           <p class="microcopy" style="margin-top:6px">Each .rete embeds a small <b>card</b>: curated metadata (title, license, source) plus auto-derived stats — datatype/language histograms, the effective schema (<code>class→predicate→class</code>), top hubs, geo/temporal extents, and a schema pyramid with per-semantic-zoom-level type rollups. A remote reader fetches just the header + card in two HTTP ranges (~10&nbsp;KB) to learn a multi-GB graph's shape and legend without ever touching the triple index.</p>
         </details>
         <details class="lazy-explainer">
-          <summary>Query helpers: label decode &amp; entity finder</summary>
-          <p class="microcopy" style="margin-top:6px">Two aids sit by the editor and <b>never change what a query does</b> — they only read and write the query text:</p>
+          <summary>Query helpers: label decode, entity finder &amp; full text</summary>
+          <p class="microcopy" style="margin-top:6px">Three aids sit around the editor and <b>never change what a query does</b> — they only read and write the query text:</p>
           <ul class="microcopy" style="margin:6px 0 0;padding-left:18px;line-height:1.6">
             <li><b>🏷 Labels</b> floats a human-readable name over each IRI: <code>wd:Q100001</code> reads as <b>Bemelen</b>, <code>wdt:P625</code> as <b>coordinate location</b>. Names come from a built-in vocabulary, predefined per-dataset hints, and a live <code>rdfs:label</code> / <code>skos:prefLabel</code> lookup.</li>
             <li><b>🔎 Find an entity</b> turns a name you type into its IRI through rete's bounded <b>label index</b> (<code>prefix_search</code> — a binary search, never a full scan); click a hit to drop its <code>&lt;IRI&gt;</code> in at the caret.</li>
+            <li><b>Full text</b> (the panel below) is the other tier: whole words anywhere in <i>any</i> literal, from the file's <code>TEXT_INDEX</code> — the entities no label index holds. Explicit only: the first search faults the whole token table, so it waits for Enter.</li>
           </ul>
-          <p class="microcopy" style="margin-top:6px">Both are <b>lazy-mode native</b>: on a remote <code>.rete</code> they fetch only the few label tiles they need over HTTP range — a small <span class="spindle" style="width:11px;height:11px"></span> spins while those bytes arrive.</p>
+          <p class="microcopy" style="margin-top:6px">All three are <b>lazy-mode native</b>: on a remote <code>.rete</code> they fetch only the tiles they need over HTTP range — a small <span class="spindle" style="width:11px;height:11px"></span> spins while those bytes arrive. The first two cost a few KB, which is why they can run on every keystroke; full text asks first, because its opening read is the whole token table.</p>
         </details>
       </section>
       <section data-modes="sparql shacl reach provenance">
         <h2>Selected Example</h2>
         <div id="exampleInfo" class="inspector-block"></div>
+      </section>
+      <!-- The second search tier: whole words in any literal, read from the
+           file's TEXT_INDEX section. Rendered entirely by renderFullText() —
+           it hides itself on a file built without --text-index, and states the
+           first search's byte cost before you pay it. -->
+      <section id="fullTextPanel" data-modes="sparql">
+        <h2>Full text</h2>
+        <div id="fullTextInfo" class="inspector-block"></div>
       </section>
       <section data-modes="sparql">
         <h2>Progressive Metadata</h2>
@@ -309,12 +319,19 @@ __PLAYGROUND_CSS__
               <span class="switch" aria-hidden="true"></span>
               <span class="switch-txt">🏷 Labels</span>
             </label>
+            <button id="labelsHelp" type="button" class="help-button" title="What does Labels do?" aria-label="Explain the Labels decode toggle">?</button>
             <label class="switch-ctl" id="reasonSwitch" title="OWL 2 QL reasoning: rewrite the query so it ALSO returns entailed answers — rdfs:subClassOf / subPropertyOf / domain / range — computed over the raw data with no materialization. Opt-in; e.g. with it on, ?x a :Aves matches every occurrence via the taxonomy.">
               <input type="checkbox" id="owlReason" />
               <span class="switch" aria-hidden="true"></span>
               <span class="switch-txt">🧠 Reason</span>
             </label>
             <button id="reasonHelp" type="button" class="help-button" title="What does Reason do?" aria-label="Explain OWL 2 QL reasoning">?</button>
+            <label class="switch-ctl" id="unionSwitch" title="Union default graph (opt-in): mount this file as if the default graph were the union of the default graph and EVERY named graph, so a pattern outside GRAPH matches data in named graphs too — the mode Virtuoso, GraphDB and Jena TDB offer. NOT standard SPARQL: the standard matches only the default graph, so on a file whose data lives in named graphs, 0 rows is the standard answer. Off by default; announced in the result line while on. A query with its own FROM keeps its FROM.">
+              <input type="checkbox" id="unionGraphs" />
+              <span class="switch" aria-hidden="true"></span>
+              <span class="switch-txt">⛁ All graphs</span>
+            </label>
+            <button id="unionHelp" type="button" class="help-button" title="What does All graphs do?" aria-label="Explain the All graphs union mode">?</button>
             <label id="roundWrap" class="hidden">
               <span>Round</span>
               <input id="round" type="number" min="0" placeholder="auto" />
@@ -607,37 +624,55 @@ __PLAYGROUND_CSS__
             <header class="builder-step-head">
               <span class="builder-step-no">3</span>
               <h2>Dataset card</h2>
-              <span class="builder-card-sync" id="cardCodeMsg">in sync</span>
+              <span class="builder-card-sync" id="cardCodeMsg">no card — the file will carry none</span>
             </header>
+            <p class="microcopy">Two different things live here. On the left, how the dataset is
+              <strong>listed in this playground</strong> (and in a downloadable manifest). On the right, the
+              <strong>Dataset Card that travels inside the <code>.rete</code></strong> — exactly the document
+              <code>rete build --card-file</code> takes, checked here by the same rules, so a card you write in
+              the browser is one the CLI would also accept. Title, licence, source and description appear in
+              both; <em>key</em>, <em>icon</em>, <em>tags</em> and <em>provenance</em> are listing-only (the card
+              schema rejects them).</p>
             <div class="builder-card-split">
               <div class="builder-grid">
                 <label class="builder-field"><span>Title</span>
                   <input id="cardTitle" type="text" placeholder="My graph" autocomplete="off" /></label>
-                <label class="builder-field"><span>Key <small>url-safe id</small></span>
+                <label class="builder-field"><span>Key <small>url-safe id · listing only</small></span>
                   <input id="cardKey" type="text" placeholder="my-graph" autocomplete="off" spellcheck="false" /></label>
-                <label class="builder-field builder-icon"><span>Icon</span>
+                <label class="builder-field builder-icon"><span>Icon <small>listing</small></span>
                   <input id="cardIcon" type="text" maxlength="4" placeholder="📊" /></label>
                 <label class="builder-field"><span>License</span>
                   <input id="cardLicense" type="text" placeholder="CC0 / CC-BY 4.0 / …" autocomplete="off" /></label>
                 <label class="builder-field"><span>Source URL</span>
                   <input id="cardSource" type="url" placeholder="https://…" autocomplete="off" spellcheck="false" /></label>
-                <label class="builder-field"><span>Tags <small>comma-separated</small></span>
+                <label class="builder-field"><span>Tags <small>comma-separated · listing only</small></span>
                   <input id="cardTags" type="text" placeholder="ontology, social, demo" autocomplete="off" /></label>
                 <label class="builder-field builder-wide"><span>Description</span>
                   <textarea id="cardDesc" rows="3" placeholder="What's in this graph, and what's interesting about it."></textarea></label>
-                <label class="builder-field builder-wide"><span>Provenance <small>how it was built (optional)</small></span>
+                <label class="builder-field builder-wide"><span>Provenance <small>listing only — the card's own is <code>derived_from</code></small></span>
                   <textarea id="cardProvenance" rows="2" placeholder="e.g. CONSTRUCTed from the X endpoint, converted to N-Triples, assembled with rete build."></textarea></label>
               </div>
               <div class="builder-card-code">
                 <div class="builder-card-code-head">
-                  <span>Card JSON</span>
-                  <small>edit either side — they sync both ways</small>
-                  <label class="file-button card-import" title="Import a card or downloaded manifest JSON">
+                  <span>Dataset Card JSON</span>
+                  <small>goes <em>inside</em> the file · <code>--card-file</code> shape</small>
+                  <button id="cardTemplate" type="button" class="secondary card-template"
+                    title="Insert a skeleton of every curated field — placeholders to replace, nothing already typed is overwritten">All fields</button>
+                  <label class="file-button card-import" title="Import a --card-file card, or a downloaded manifest">
                     Import JSON
                     <input id="cardImportFile" type="file" accept=".json,application/json" hidden />
                   </label>
                 </div>
-                <textarea id="cardCode" class="card-code" spellcheck="false" aria-label="Dataset card as JSON"></textarea>
+                <textarea id="cardCode" class="card-code" spellcheck="false" aria-label="Dataset card as JSON"
+                  placeholder='{ "title": "My graph", "license": "CC0-1.0" }'></textarea>
+                <p class="microcopy">Leave it empty for a file with no card. <code>theme</code> must be an
+                  <strong>IRI into a controlled vocabulary</strong> —
+                  <a href="dataset-cards.html#where-to-get-theme-iris" target="_blank" rel="noopener">where to get one</a>;
+                  free-text subjects go in <code>keywords</code>. Publisher-defined fields go in
+                  <code>extra</code> (max 8 KB · 64 keys · depth 2); any other top-level key is rejected.
+                  The browser writes the curated fields and the measured counts — the derived profile
+                  (predicates, classes, the starter-query library) and the build record are
+                  <a href="dataset-cards.html" target="_blank" rel="noopener">CLI-only</a>.</p>
               </div>
             </div>
           </section>
@@ -709,9 +744,8 @@ __PLAYGROUND_CSS__
           <h4>Remote <code>.rete</code> by URL (lazy, over HTTP range)</h4>
           <p class="microcopy">Connect to any <code>.rete</code> URL and query it <strong>without
             downloading it</strong> — the host must allow CORS and honor <code>Range</code> (S3,
-            R2, S3, and direct CDNs can do). Compare the
-            <a href="explore-100mb.html?dataset=wikidata-100MB">100&nbsp;MB</a> /
-            <a href="explore-100mb.html?dataset=wikidata-1GB">1&nbsp;GB</a> tiers in the lazy explorer.</p>
+            R2, S3, and direct CDNs can do). The prefilled URL is a 1&nbsp;GB Wikidata slice on
+            Cloudflare R2 — connecting to it downloads none of it.</p>
           <div class="url-loader">
             <input id="remoteUrl" type="text" spellcheck="false"
               placeholder="https://…/graph.rete"
@@ -723,6 +757,52 @@ __PLAYGROUND_CSS__
           </div>
         </div>
       </details>
+    </div>
+  </div>
+
+  <!-- The Load pre-modal: every way IN, in one place. Before this they were
+       scattered — the dataset chip opened the catalog, drag-and-drop and the
+       URL field hid under the catalog's "Advanced" fold. Three routes: drop or
+       pick a local .rete, paste a URL (opened lazily, exactly like #url=), or
+       hand off to the catalog browser. -->
+  <div id="loadModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="loadModalTitle">
+    <div class="modal-card load-modal">
+      <div class="modal-head">
+        <h3 id="loadModalTitle">Load a graph</h3>
+        <button id="loadModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="load-routes">
+        <div class="load-route">
+          <h4>Drop a file</h4>
+          <p class="microcopy">A local <code>.rete</code> — opened in this page; it never leaves your browser.</p>
+          <label class="file-zone" id="loadDropZone">
+            <input id="loadFileInput" type="file" accept=".rete,application/octet-stream" />
+            <span>Drop a .rete here, or tap to choose a file</span>
+          </label>
+        </div>
+        <div class="load-route">
+          <h4>Paste a URL</h4>
+          <p class="microcopy">Any hosted <code>.rete</code> — <strong>Connect (lazy)</strong> queries it over HTTP
+            range without downloading it; <strong>Download &amp; cache</strong> shows the file's size, then fetches
+            it whole once and keeps it in this browser, so later queries use no network at all (the host must
+            allow CORS and <code>Range</code>; S3, R2 and direct CDNs do).</p>
+          <div class="url-loader">
+            <input id="loadUrl" type="text" spellcheck="false" placeholder="https://…/graph.rete"
+              aria-label="Address of a .rete file" />
+            <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button id="loadUrlGo" type="button">Connect (lazy)</button>
+              <button id="loadUrlCache" type="button" class="secondary"
+                title="Download the whole file once and keep it in this browser — its size is shown before anything downloads">Download &amp; cache</button>
+              <span id="loadUrlErr" class="microcopy load-url-err" aria-live="polite"></span>
+            </div>
+          </div>
+        </div>
+        <div class="load-route">
+          <h4>Browse the examples</h4>
+          <p class="microcopy">The catalog: published knowledge graphs, each with a card and example queries.</p>
+          <button id="loadExamplesBtn" type="button" class="secondary">Open the dataset catalog</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -842,6 +922,101 @@ __PLAYGROUND_CSS__
     </div>
   </div>
 
+  <div id="unionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="unionModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="unionModalTitle">⛁ All graphs (union default graph)</h3>
+        <button id="unionModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy" style="margin:0 0 10px">
+        With <b>All graphs</b> on, this file is mounted as if its default graph were the
+        <b>union of the default graph and every named graph</b> — a pattern outside
+        <code>GRAPH</code> then matches data wherever it lives. The query text never
+        changes; the dataset it runs against does. Off by default; announced in the
+        result line on every run it changes.
+      </p>
+      <dl class="strategy-list">
+        <dt>Why it exists</dt>
+        <dd>
+          Many converted files keep <em>all</em> their data in named graphs, so the
+          standard answer to <code>SELECT … WHERE { ?s ?p ?o }</code> is 0 rows —
+          correct, but a dead end. This toggle is the <strong>union default graph</strong>
+          mode Virtuoso, GraphDB and Jena TDB offer as a store-level switch: query every
+          graph as one merged graph without rewriting anything.
+        </dd>
+        <dt>Not standard SPARQL</dt>
+        <dd>
+          The SPARQL standard says a pattern outside <code>GRAPH</code> matches
+          <em>only</em> the default graph. This mode deliberately departs from that —
+          which is exactly why it is opt-in, visible while on, and every result it
+          changes is stamped <em>"⛁ union default graph (non-standard)"</em>.
+        </dd>
+        <dt>What it does not affect</dt>
+        <dd>
+          A query with its own <code>FROM</code> keeps its <code>FROM</code> dataset.
+          <code>GRAPH ?g { … }</code> still enumerates and filters named graphs exactly
+          as before. Federated (multi-source) runs and live SPARQL endpoints are
+          untouched — they keep standard semantics and the result line says so.
+        </dd>
+        <dt>What it costs</dt>
+        <dd>
+          The engine <strong>materializes the merged index</strong> for the run. On a
+          remote file with many named graphs the first union run can fetch a large share
+          of the file — the merge must visit every graph (nkod.rete, 31,974 graphs:
+          ~64&nbsp;MB of a 68&nbsp;MB file). Later union runs re-merge from this
+          session's cache: seconds of compute with <em>0 new bytes</em>, which the
+          status line reports. A file with no named graphs is unaffected, and the common
+          converted shape — empty default graph, exactly one named graph — stays a
+          zero-copy borrow.
+        </dd>
+      </dl>
+    </div>
+  </div>
+
+  <div id="labelsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="labelsModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="labelsModalTitle">🏷 Labels (IRI label chips)</h3>
+        <button id="labelsModalClose" class="ghost" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="microcopy" style="margin:0 0 10px">
+        With <b>Labels</b> on (the default), each IRI or prefixed name in the <b>query
+        editor</b> gets a small human-label chip beside it. Purely visual: the chips are
+        editor decorations — the query that runs is always the exact text you typed, and
+        editing an IRI reverts its chip to raw text. Result tables are not affected.
+      </p>
+      <dl class="strategy-list">
+        <dt>Where the labels come from</dt>
+        <dd>
+          Three sources, in order: a built-in vocabulary of ubiquitous terms
+          (<code>rdf:type</code> → "type", <code>rdfs:subClassOf</code>,
+          <code>skos:prefLabel</code>, …); the catalog's per-dataset label hints
+          (instant, curated for the bundled datasets); and a <em>live lookup on the
+          loaded graph</em> for everything else — one SPARQL query per batch of unknown
+          IRIs over the common label properties (<code>rdfs:label</code>,
+          <code>skos:prefLabel</code>, <code>foaf:name</code>, <code>schema:name</code>),
+          or the single <b>Label property</b> you pick in the 🔎 Find-a-term modal.
+          Looked-up labels are cached for the session; changing the label property
+          re-resolves them.
+        </dd>
+        <dt>What it costs</dt>
+        <dd>
+          On an in-memory graph the lookup answers from RAM — effectively free. On a
+          <b>remote (lazy)</b> file the same lookup runs over HTTP range reads in the
+          worker: a few extra range requests per batch of unknown IRIs, and the toggle
+          shows a small spinner while one is in flight — that is where an otherwise
+          unexplained pause after typing an IRI comes from. Turning Labels off stops
+          the lookups.
+        </dd>
+        <dt>When there is nothing to show</dt>
+        <dd>
+          A dataset with neither hints nor label triples simply shows no chips — the
+          IRIs stay as typed and the query runs unchanged.
+        </dd>
+      </dl>
+    </div>
+  </div>
+
   <div id="outputModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="outputModalTitle">
     <div class="modal-card">
       <div class="modal-head">
@@ -908,7 +1083,7 @@ __PLAYGROUND_CSS__
         <h3 id="reqModalTitle">Range requests</h3>
         <button id="reqModalClose" class="ghost" type="button" aria-label="Close">×</button>
       </div>
-      <p class="microcopy">Every HTTP request the last remote query made — lazy range reads over the file. A <b>multipart</b> row fetched several byte ranges in one request (coalesced); each range is <code>start-end</code>.</p>
+      <p class="microcopy">Every physical fetch the last remote query made — lazy range reads over the file, each with its byte range(s) as <code>start-end</code> offsets. A <b>multipart</b> row coalesced several ranges into <em>one</em> HTTP request; a <b>concurrent</b> row is one batch of parallel fetches (the concurrent reader); a <b>parallel</b> row used the fetch-worker pool. <b>📋 Copy log</b> below the table copies a paste-able debug report.</p>
       <div id="reqLogBody"></div>
     </div>
   </div>
@@ -921,6 +1096,13 @@ __PLAYGROUND_CSS__
       <div id="cacheBar" class="cache-bar indeterminate"><div id="cacheBarFill" class="cache-bar-fill"></div></div>
       <div class="cache-stat"><span id="cachePct"></span><span id="cacheBytes">0 B</span></div>
       <div id="cacheSteps" class="cache-steps" aria-live="polite"></div>
+      <!-- The consent step for caching by URL: the file's true size (read from
+           its own header, before any download) and a way out. Hidden in every
+           other use of this modal. -->
+      <div id="cacheConfirm" class="cache-confirm hidden">
+        <button id="cacheGo" type="button">Download</button>
+        <button id="cacheCancel" type="button" class="secondary">Cancel</button>
+      </div>
     </div>
   </div>
 

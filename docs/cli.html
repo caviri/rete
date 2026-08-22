@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>CLI reference · rete docs</title>
   <meta name="description" content="The rete binary (crate rete-cli). Run rete &lt;command&gt; --help for the authoritative flags. Terms are written as canonical N-Triples tokens — &lt;http://ex/Alice&gt; for an IRI, &quot;30&quot; or &quot;30&quot;^^&lt;…#integer&gt; for…" />
@@ -24,12 +24,18 @@
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
-     otherwise prefers-color-scheme decides. */
+     otherwise prefers-color-scheme decides.
+
+     `js-chrome` is set in the same breath, and it is what lets the narrow
+     layout replace the sidebar with the top/bottom bars and the drawer: with
+     JavaScript off the class never lands, the mobile chrome stays inert, and
+     the reader gets the plain stacked sidebar that has always been there. */
   (function () {
     try {
       var t = localStorage.getItem("theme");
       if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
     } catch (e) {}
+    document.documentElement.className += " js-chrome";
   })();
   </script>
   <style>
@@ -215,6 +221,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
 .content h2 { clear:right; }
 
+/* Square figures get a narrower column than landscape ones.
+   `.img-sq` / `.fig-sq` are stamped by docgen from the image's MEASURED
+   aspect ratio — the viewBox of an SVG, the IHDR of a PNG — against
+   SQUARE_MAX_RATIO; nothing here is decided by hand. The reason: at the full
+   column a square is as tall as it is wide, so one picture is an 830-950px
+   wall that pushes every word after it under the fold, while a landscape
+   strip (the byte-layout diagrams, the app screenshots) needs that width to
+   stay legible and is left alone.
+   The cap is 60% of the column, clamped at both ends: never above 560px,
+   which is the width every diagram is DRAWN at, so they render at their
+   intended size instead of being enlarged up to 1.75x; and never below
+   340px, so a narrow desktop window — where the column is small but the
+   sidebar still takes its 250px — gets a readable figure rather than a
+   thumbnail.
+   ONLY above the phone breakpoint. The mobile column is 353px at 390px, and
+   60% of that is 212px of unreadable diagram, so a phone keeps every image
+   full-bleed exactly as before — hence min-width:781px, the complement of the
+   780px query the mobile chrome uses. */
+@media (min-width:781px) {
+  .content img.img-sq { display:block; max-width:clamp(340px, 60%, 560px); margin-left:auto; margin-right:auto; }
+  /* Anchors are inline, so a linked image needs a block box to centre in. */
+  .content a:has(> img.img-sq) { display:block; }
+  /* The FIGURE is capped, not its img, so the caption stays the same width as
+     the picture it captions. `fig-right` is excluded: it is already floated at
+     min(42%, 390px), and this would make it wider, not narrower. */
+  .content figure.fig-sq:not(.fig-right) { max-width:clamp(340px, 60%, 560px); }
+}
+
 .content img { cursor:zoom-in; }
 .lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
 .lightbox.open { display:flex; align-items:center; justify-content:center; }
@@ -253,15 +287,252 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .content { padding-top:2rem; }
   .content h1 { font-size:2.15rem; }
   footer { padding-left:1.15rem; padding-right:1.15rem; }
+  /* Wide tables scroll inside their own box from here down, not just below
+     520px: it keeps the PAGE from scrolling sideways on a tablet, and it is
+     what the swipe handler looks for when deciding whether a horizontal drag
+     belongs to the table under the finger or to the page. */
+  .content table { display:block; overflow-x:auto; }
+  /* A single unbreakable token in INLINE code — `CARGO_UNSTABLE_BUILD_STD=std,
+     panic_abort,…`, `dev/perms/{build_bench.sh,…}` — used to push the document
+     wider than the screen, and a phone's answer to that is to zoom the whole
+     page out: BENCHMARK, SPEC, clients-dev and sparql all rendered 20-30%
+     smaller than they should on a 390px phone because of one token. Let those
+     wrap. Code BLOCKS are untouched — they are `width:max-content` inside a
+     scrollable `pre` and never overflow their line box. */
+  .content code { overflow-wrap:break-word; }
+  .content pre code { overflow-wrap:normal; }
 }
 @media (max-width:520px) {
   .sidebar ul { columns:1; }
-  .content table { display:block; overflow-x:auto; }
   .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior:auto; }
+}
+
+.mbar,.mnav,.mdrawer,.mscrim,.mprog { display:none; }
+
+@media (max-width:780px) {
+  :root { --mbar-h:52px; --mnav-h:56px; }
+
+  /* The sidebar is only retired when the head script has confirmed JavaScript
+     — see the `js-chrome` note there. Without it, nothing below applies and
+     the page keeps the stacked sidebar it has always had. */
+  html.js-chrome .sidebar { display:none; }
+  html.js-chrome body {
+    padding-top:var(--mbar-h);
+    padding-bottom:calc(var(--mnav-h) + env(safe-area-inset-bottom));
+  }
+  html.js-chrome .page {
+    padding-left:max(1.15rem, env(safe-area-inset-left));
+    padding-right:max(1.15rem, env(safe-area-inset-right));
+  }
+  html.js-chrome .content { padding-top:1.4rem; }
+  /* Anchor targets must clear the fixed bar, or every in-page jump lands with
+     its heading hidden underneath it. */
+  html.js-chrome .content h1,
+  html.js-chrome .content h2,
+  html.js-chrome .content h3 { scroll-margin-top:calc(var(--mbar-h) + 12px); }
+  html.drawer-open, html.drawer-open body { overflow:hidden; }
+  /* `hidden` stays the one truth for "closed" — for assistive tech as much
+     as for paint — so it has to outrank the display rules below. */
+  html.js-chrome .mdrawer[hidden],html.js-chrome .mscrim[hidden] { display:none; }
+
+  /* ── reading position ─────────────────────────────────────────────────
+     Two pixels at the very top of the viewport, above the bar in z-order so
+     it survives the bar sliding away. "How much of this is left" is the one
+     piece of state a phone reader cannot see for themselves — the scrollbar
+     that answers it on a desktop does not exist here. */
+  html.js-chrome .mprog {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:901; height:2px;
+    background:transparent; pointer-events:none;
+  }
+  .mprog i { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
+
+  /* ── top bar ──────────────────────────────────────────────────────────
+     Identity (where am I in the site?) plus the two controls worth a
+     permanent tap target. It hides on scroll-down and comes back on
+     scroll-up, so the 52px is only spent when the reader is not reading. */
+  html.js-chrome .mbar {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:900; height:var(--mbar-h);
+    align-items:center; gap:.3rem;
+    padding-left:max(.3rem, env(safe-area-inset-left));
+    padding-right:max(.3rem, env(safe-area-inset-right));
+    background:var(--side); border-bottom:1px solid var(--border); color:var(--side-fg);
+    transition:transform .18s ease;
+  }
+  html.js-chrome .mbar.up { transform:translateY(-100%); }
+  .mbar-btn {
+    flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+    width:42px; height:42px; padding:0; font:inherit; font-size:1.05rem;
+    color:var(--side-fg); background:transparent; border:0; border-radius:9px; cursor:pointer;
+  }
+  .mbar-btn:active { background:rgba(20,125,105,.14); }
+  .mbar-btn:focus-visible,.mnav a:focus-visible,.mnav button:focus-visible,
+  .mdrawer a:focus-visible,.mdrawer button:focus-visible {
+    outline:2px solid var(--accent); outline-offset:-2px;
+  }
+  .mbar-id { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:center; line-height:1.18; }
+  .mbar-sec {
+    font-size:.66rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mbar-sec a { color:var(--iri); text-decoration:none; font-family:Georgia,"Times New Roman",serif; font-size:1.05em; letter-spacing:0; text-transform:none; }
+  .mbar-title {
+    font-size:.92rem; font-weight:700; color:var(--fg);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  /* ── bottom bar ───────────────────────────────────────────────────────
+     Thumb country. Previous / next carry the neighbour's real title (a bare
+     arrow tells you nothing about whether to press it) and the middle opens
+     the drawer — the same control as the top-left one, put where a thumb
+     already is. These two links are also the accessible equivalent of the
+     swipe: the gesture only ever follows them. */
+  html.js-chrome .mnav {
+    display:grid; position:fixed; inset:auto 0 0 0; z-index:900;
+    grid-template-columns:1fr auto 1fr; align-items:stretch;
+    min-height:var(--mnav-h);
+    padding-bottom:env(safe-area-inset-bottom);
+    padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);
+    background:var(--side); border-top:1px solid var(--border);
+    box-shadow:0 -6px 18px rgba(20,40,33,.06);
+  }
+  .mnav-side {
+    display:flex; flex-direction:column; justify-content:center; gap:.1rem;
+    min-width:0; padding:.42rem .6rem; text-decoration:none; color:var(--side-fg);
+  }
+  .mnav-next { align-items:flex-end; text-align:right; }
+  .mnav-side:active { background:rgba(20,125,105,.1); }
+  .mnav-side.is-off { color:var(--muted); opacity:.45; }
+  .mnav-dir {
+    font-size:.6rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mnav-t {
+    font-size:.79rem; font-weight:600; line-height:1.2; max-width:100%;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mnav-toc {
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.1rem;
+    padding:.3rem .7rem; margin:.42rem 0; font:inherit; font-size:.62rem; font-weight:800;
+    letter-spacing:.05em; text-transform:uppercase; cursor:pointer;
+    color:var(--accent-deep); background:var(--panel);
+    border:1px solid var(--border); border-radius:10px;
+  }
+  .mnav-toc:active { background:var(--tint); }
+
+  /* ── the drawer ───────────────────────────────────────────────────────
+     A sheet over the page, not a block above it: the reader asks for it and
+     it goes away again. Two tabs, because the two questions are different —
+     "where am I inside this page" and "what else is there". */
+  html.js-chrome .mscrim {
+    display:block; position:fixed; inset:0; z-index:1050; background:rgba(12,20,17,.5);
+    opacity:0; transition:opacity .2s ease; touch-action:none;
+  }
+  html.js-chrome .mscrim.open { opacity:1; }
+  html.js-chrome .mdrawer {
+    display:flex; position:fixed; inset:0 auto 0 0; z-index:1100;
+    width:min(88vw,390px); flex-direction:column;
+    padding-left:env(safe-area-inset-left);
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--panel); color:var(--fg);
+    border-right:1px solid var(--border); box-shadow:var(--shadow);
+    transform:translateX(-100%); transition:transform .22s ease;
+  }
+  html.js-chrome .mdrawer.open { transform:none; }
+  .mdrawer-head {
+    display:flex; align-items:flex-start; gap:.5rem; flex:0 0 auto;
+    padding:.85rem .5rem .7rem .95rem; border-bottom:1px solid var(--border); background:var(--side);
+  }
+  .mdrawer-who { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:.15rem; }
+  .mdrawer-eyebrow {
+    font-size:.63rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer-title {
+    font-family:Georgia,"Times New Roman",serif; font-size:1.12rem; font-weight:700; line-height:1.2; color:var(--fg);
+  }
+  .mdrawer-x {
+    flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:.1rem;
+    padding:.35rem .5rem; font:inherit; font-size:.58rem; font-weight:800; letter-spacing:.06em;
+    text-transform:uppercase; cursor:pointer;
+    color:var(--side-fg); background:var(--panel); border:1px solid var(--border); border-radius:9px;
+  }
+  .mdrawer-x:active { background:var(--tint); }
+  .mdrawer-tabs { display:flex; flex:0 0 auto; gap:.35rem; padding:.55rem .7rem; border-bottom:1px solid var(--border); }
+  .mdrawer-tabs button {
+    flex:1 1 0; padding:.44rem .5rem; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer;
+    color:var(--muted); background:transparent; border:1px solid var(--border); border-radius:999px;
+  }
+  .mdrawer-tabs button[aria-selected="true"] {
+    color:var(--on-accent); background:var(--accent); border-color:var(--accent);
+  }
+  .mdrawer-body { flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  .mdrawer-panel { padding:.6rem .7rem 1.4rem; }
+  .mdrawer-panel:focus { outline:none; }
+  .mdrawer-empty { color:var(--muted); font-size:.85rem; padding:.5rem .35rem; }
+  /* The panels hold clones of the two lists the page already built — the
+     rail's "on this page" TOC (heading ids and all) and the sidebar's nav —
+     so they can never disagree with them. These rules restyle the clones. */
+  .mdrawer ul { list-style:none; margin:0; padding:0; }
+  .mdrawer li { margin:.05rem 0; }
+  .mdrawer a {
+    display:block; padding:.5rem .6rem; border-left:3px solid transparent; border-radius:0 7px 7px 0;
+    color:var(--fg); text-decoration:none; font-size:.9rem; line-height:1.3;
+  }
+  .mdrawer a:active { background:rgba(20,125,105,.1); }
+  .mdrawer a.active { background:var(--tint); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; }
+  .mdrawer .toc-sub a { padding-left:1.5rem; font-size:.84rem; color:var(--muted); }
+  .mdrawer li.nav-h {
+    margin:1rem 0 .2rem; padding:0 .6rem; font-size:.63rem; font-weight:800;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer li.nav-h:first-child { margin-top:.1rem; }
+  .mdrawer .nav-group summary {
+    display:flex; align-items:center; padding:.5rem .6rem; font-size:.9rem; line-height:1.3;
+    list-style:none; cursor:pointer;
+  }
+  .mdrawer .nav-group summary::-webkit-details-marker { display:none; }
+  .mdrawer .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+  .mdrawer .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+  .mdrawer .nav-group summary a { display:inline; padding:0; border:0; border-radius:0; background:none; font-size:inherit; }
+  .mdrawer .nav-sub { margin:.1rem 0 .3rem .6rem; padding-left:.5rem; border-left:1px solid var(--border); }
+  .mdrawer .nav-sub a { font-size:.82rem; padding:.36rem .6rem; color:var(--muted); }
+
+  /* The page turn: a short slide out before the browser fetches the next
+     document. It is the only motion the gesture adds, and it does not run at
+     all under prefers-reduced-motion. */
+  html.page-out-left main,html.page-out-right main {
+    transition:transform .13s ease-in, opacity .13s ease-in; opacity:.3;
+  }
+  html.page-out-left main { transform:translateX(-7%); }
+  html.page-out-right main { transform:translateX(7%); }
+}
+
+/* Every selector here has to outrank its `html.js-chrome …` counterpart above,
+   or the transitions it is switching off simply stay on. */
+@media (max-width:780px) and (prefers-reduced-motion: reduce) {
+  html.js-chrome .mbar,
+  html.js-chrome .mdrawer,
+  html.js-chrome .mscrim,
+  html.js-chrome .mprog i { transition:none; }
+  html.js-chrome.page-out-left main,
+  html.js-chrome.page-out-right main { transition:none; transform:none; opacity:1; }
 }
 </style>
 </head>
 <body>
+  <div class="mprog" aria-hidden="true"><i id="mprogBar"></i></div>
+  <header class="mbar" id="mbar">
+    <button type="button" class="mbar-btn" id="mbarMenu" aria-controls="mdrawer" aria-expanded="false"
+      aria-label="Contents — this page's sections and every other page">
+      <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <span class="mbar-id">
+      <span class="mbar-sec"><a href="index.html">rete</a> · Guides</span>
+      <span class="mbar-title">CLI reference</span>
+    </span>
+    <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
+  </header>
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
@@ -283,6 +554,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li class="nav-group"><details><summary><a href="ask-the-graph.html">Ask the graph — browser graphRAG</a></summary><ul class="nav-sub"><li><a href="ask-the-graph.html">overview</a></li><li><a href="ask-browser.html" target="_blank" rel="noopener">launch ask the graph →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="football.html">Football — match replays</a></summary><ul class="nav-sub"><li><a href="football.html">overview</a></li><li><a href="pitch.html" target="_blank" rel="noopener">pick any match →</a></li><li><a href="wcfinal.html" target="_blank" rel="noopener">the 2022 final →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="subtitles-guide.html">Subtitle timeline</a></summary><ul class="nav-sub"><li><a href="subtitles-guide.html">overview</a></li><li><a href="subtitles.html" target="_blank" rel="noopener">play the timeline →</a></li></ul></details></li>
+        <li class="nav-group"><details><summary><a href="anatomy-guide.html">Z-Anatomy — 3D human body</a></summary><ul class="nav-sub"><li><a href="anatomy-guide.html">overview</a></li><li><a href="anatomy.html" target="_blank" rel="noopener">open the 3D body →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="building-guide.html">FZK-Haus — one building in 3D</a></summary><ul class="nav-sub"><li><a href="building-guide.html">overview</a></li><li><a href="building.html" target="_blank" rel="noopener">open the 3D building →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="bim-pair-guide.html">Architecture vs structure (BIM)</a></summary><ul class="nav-sub"><li><a href="bim-pair-guide.html">overview</a></li><li><a href="bim-pair.html" target="_blank" rel="noopener">open the paired viewer →</a></li></ul></details></li>
         <li class="nav-group"><details><summary><a href="lombardi-guide.html">Lombardi — network drawings in ink</a></summary><ul class="nav-sub"><li><a href="lombardi-guide.html">overview</a></li><li><a href="lombardi.html" target="_blank" rel="noopener">open the drawings →</a></li></ul></details></li>
@@ -308,6 +580,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="blender.html">Blender — graphs as scenes</a></li>
         <li><a href="agents.html">Agents — MCP, plugin & skills</a></li>
         <li><a href="agent-frameworks.html">LangChain & Pydantic AI</a></li>
+        <li><a href="fallacies.html">Experiment: graphs from speech</a></li>
         <li class="nav-h">Publish & share</li>
         <li><a href="dataset-cards.html">Dataset Cards</a></li>
         <li><a href="hosting.html">Hosting your .rete</a></li>
@@ -329,13 +602,13 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
-    <button type="button" class="theme-toggle" id="themeToggle"
-      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel">System</span></button>
+    <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
+      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel" data-theme-label>System</span></button>
   </nav>
   <main>
     <div class="page">
       <article class="content">
-<h1>CLI reference</h1>
+<h1 id="cli-reference">CLI reference</h1>
 <p>The <code>rete</code> binary (crate <code>rete-cli</code>). Run <code>rete &lt;command&gt; --help</code> for the
 authoritative flags. Terms are written as canonical N-Triples tokens —
 <code>&lt;http://ex/Alice&gt;</code> for an IRI, <code>"30"</code> or <code>"30"^^&lt;…#integer&gt;</code> for a literal.</p>
@@ -347,8 +620,8 @@ shapes and do not add that field.</p>
 the <code>rete(1)</code> man page. Maintainers generate these from the exact binary with the
 hidden <code>rete generate --output &lt;directory&gt;</code> packaging command; they are never
 maintained as hand-written copies of the CLI definition.</p>
-<h2>Building</h2>
-<h3><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|rdfxml]</code></h3>
+<h2 id="building">Building</h2>
+<h3 id="rete-build-inputs--o-outrete---format-ntnqttlrdfxml"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|rdfxml]</code></h3>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
 Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code>, plus <code>.rdf</code> / <code>.owl</code> /
 <code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
@@ -365,7 +638,16 @@ the index-free card with no compute; unlike <code>--materialize</code> it record
 <code>coherent: false</code> honestly rather than aborting (verify later with <code>rete reason --verify-card</code>, combine with <code>--materialize</code> to also bake the inferred triples).
 <code>--card</code> (and <code>--card-file</code> / <code>--title</code> / <code>--license</code> / <code>--source</code> /
 <code>--description</code> / <code>--created</code>) embeds a <a href="dataset-cards.html">Dataset Card</a> —
-data-catalog metadata plus an auto-derived profile. <code>--text-index</code> adds a
+data-catalog metadata plus an auto-derived profile; the card file's <code>extra</code>
+object carries bounded publisher-defined custom fields (no flag — see
+<a href="dataset-cards.html">Custom fields</a>); a card build also writes a
+<strong>build-info section</strong> (build timestamp, builder version, parameters, measured
+starter-query costs — kept <em>outside</em> the content hash so identical data still
+hashes identically). That same run is what proves each starter query answers:
+one measured at zero rows (or returning a row that binds nothing) is <strong>dropped
+from the card</strong>, loudly and with the reason recorded — see
+<a href="dataset-cards.html">dataset-cards.md</a>. <code>--no-card-costs</code> skips the run, and so
+skips that check as well. <code>--text-index</code> adds a
 full-text (word/CONTAINS) index over the literals for <code>rete search --contains</code>
 (see below). <code>--type-predicate &lt;IRI&gt;</code> overrides the predicate that types subjects
 with classes for the schema pyramid (default <code>rdf:type</code>, else auto-detected) —
@@ -379,38 +661,155 @@ by <code>rdf:type</code> instead — deterministic, self-naming communities that
 on graphs too large for the single-threaded Louvain build (it falls back to
 Louvain when the graph is untyped). All of these are opt-in; without them the
 output is byte-identical to a plain build.</p>
-<h3><code>rete repyramid &lt;file&gt; -o &lt;out.rete&gt; [--type-predicate &lt;IRI&gt;] [--pyramid-algo louvain|types] [--text-index] [--card …]</code></h3>
+<p><code>--strict</code> refuses input carrying an IRI that the N-Triples/N-Quads <code>IRIREF</code>
+grammar and RFC 3987 disallow. It is <strong>off</strong> by default and the build only
+<em>counts</em> them — see <a href="#invalid-iris">Invalid IRIs</a> for what that means and why the
+default is a warning.</p>
+<p><code>--permutations 3|6</code> (default <strong>6</strong>) chooses how many index permutations to
+store. <code>6</code> writes SPO, POS, OSP, SOP, PSO and OPS; <code>3</code> writes only SPO, POS and
+OSP — the orders that decide <em>routing</em>. Those three tie the longest bound prefix
+on all eight triple-pattern shapes, so a 3-permutation file answers <strong>every query
+with the same rows, from the same tiles</strong>; what it gives up is the sort-merge
+join, on the three (bound-set, join-column) shapes SOP/PSO/OPS existed for —
+most visibly <code>?s &lt;p1&gt; ?o1 . ?s &lt;p2&gt; ?o2</code>, two bound predicates sharing a subject.
+The three orders are 36.8%–50.5% of a built file
+(<a href="BENCHMARK.html#the-merge-join-permutations-cost-vs-benefit">BENCHMARK.md</a>), and
+the file records its own set in the header, so <code>rete info</code> / <code>rete stats</code> and the
+card's <code>signals.permutations</code> all report it.</p>
+<p><strong>A 3-permutation file is not readable by a Rete older than this one</strong> — it
+refuses loudly (<code>malformed container: expected 6 permutation sections</code>, exit 1)
+rather than answering wrongly, but it does refuse. Keep the default for anything
+published; see <a href="compatibility.html">compatibility.md</a>.</p>
+<p>The flag exists on <code>build</code> only. The two commands that re-assemble an existing
+file do not re-decide how it was built: <a href="#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-"><code>repyramid</code></a>
+<strong>preserves its input's set</strong> (and says so on stderr when that set is not the
+default six), and <a href="#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-"><code>merge</code></a>
+writes the <strong>union</strong> of its inputs' sets — one full shard is enough to keep the
+merge-join orders its queries relied on. To change a file's set, rebuild it from
+its RDF source.</p>
+<h3 id="rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---card-"><code>rete repyramid &lt;file&gt; -o &lt;out.rete&gt; [--type-predicate &lt;IRI&gt;] [--pyramid-algo louvain|types] [--text-index] [--card …]</code></h3>
 <p>Rebuild a file's pyramid <strong>in place</strong>, reading the triples straight from the
 existing <code>.rete</code> — no <code>export | build</code> N-Quads round-trip. Use it to add a schema
 pyramid (or a <code>--text-index</code> / a Dataset Card) to a file built before those
 existed, or to re-derive the schema pyramid under a different <code>--type-predicate</code>
 or <code>--pyramid-algo</code> (same semantics as <code>rete build</code>). The card flags match
-<code>rete build</code> (<code>--card-file</code> / <code>--title</code> / <code>--license</code> / …).</p>
+<code>rete build</code> (<code>--card-file</code> / <code>--title</code> / <code>--license</code> / …) — and take the
+curated half <strong>only</strong> from those flags, so a bare <code>--card</code> drops the
+publisher's <code>title</code>/<code>license</code>/<code>source</code>/<code>description</code>. <code>--pyramid-algo</code> likewise
+defaults to <code>louvain</code> rather than to whatever the file was built with.</p>
+<p>It loads and materializes every quad, so its RAM tracks the <strong>statement count</strong>
+(~350–700 B each), not the file size — roughly <strong>80 M statements</strong> on a 48 GB
+machine, past which the staged <code>export --format nq | build</code> route is the one
+that fits. See
+<a href="dataset-cards.html#maintaining-a-published-card">Maintaining a published card</a>.</p>
 <pre><code class="language-sh">rete repyramid old.rete -o new.rete --type-predicate http://www.wikidata.org/prop/direct/P31
 rete repyramid old.rete -o new.rete --text-index    # add full-text search to an existing file
+
+# re-card a published file, carrying its curated fields across
+rete card old.rete --json &gt; old-card.json
+python3 scripts/recard/card_tools.py curated old-card.json -o curated.json
+rete repyramid old.rete -o new.rete --card --card-file curated.json --pyramid-algo types
 </code></pre>
-<h2>Validating</h2>
-<h3><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl]</code></h3>
+<p><code>repyramid</code> <strong>preserves its input's permutation set</strong>: a 3-permutation file stays
+3-permutation, a 6 stays 6, and it prints the preserved set on stderr when it is
+not the default six. It re-assembles an existing file rather than re-deciding how
+it was built, so it has no <code>--permutations</code> of its own — rebuild from source to
+change the set.</p>
+<h3 id="rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-"><code>rete merge &lt;inputs…&gt; -o &lt;out.rete&gt; [--memory-budget-mb N] [--tmp-dir dir] [--card …]</code></h3>
+<p>Fold several <code>.rete</code> files into one without going back through text — the way to
+consolidate a sharded dataset when the original RDF is gone or expensive to
+re-emit. It reads the <strong>shards</strong> (dictionary-encoded and compressed, roughly a
+quarter of the RDF bytes), so it skips the conversion and the parse.</p>
+<p>It does <strong>not</strong> skip the sorting. The dictionary is HDT-style (<code>shared</code> /
+subject-only / object-only) and IDs are assigned per section, so a term that is
+subject-only in one shard and object-only in another becomes <em>shared</em> in the
+merge and changes ID section: the shards' orderings do not survive the remap and
+every permutation is rebuilt. Memory is bounded at both ends: each input is
+opened lazily and streamed rather than loaded, and the quads feed the same
+memory-bounded external builder <code>rete build --memory-budget-mb</code> uses, which
+chunks and spills under this command's own <code>--memory-budget-mb</code> (default 4096)
+into <code>--tmp-dir</code>. Shards carrying <strong>named graphs</strong> fold like any other: the
+builder puts the graph in its sort key, so each graph comes back out of the
+merge as one contiguous run. Card flags match <code>rete build</code>.</p>
+<p>The merged file carries the <strong>union</strong> of its inputs' permutation sets — an
+all-lean merge stays lean, and one six-permutation input is enough to keep the
+merge-join orders. Like <code>repyramid</code>, it has no <code>--permutations</code> flag: it
+consolidates shards, it does not re-decide how they were built.</p>
+<pre><code class="language-sh">rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
+  --card --card-file curated.json
+</code></pre>
+<h2 id="validating">Validating</h2>
+<h3 id="rete-validate-inputs---format-ntnqttl---strict"><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl] [--strict]</code></h3>
 <p>Parse RDF input(s) without building, to check they are well-formed
 N-Triples/N-Quads/Turtle. Reports statement and named-graph counts, or exits
 non-zero with a precise parse error (file, line, column).</p>
 <pre><code class="language-sh">rete validate data.ttl
 curl -s https://host/data.nt | rete validate - --format nt
 </code></pre>
-<h2>Inspecting</h2>
-<h3><code>rete info &lt;file&gt;</code></h3>
+<p>It also reports <strong>invalid IRIs</strong>, because "it parses" and "it is valid RDF" are
+different claims and only the second one predicts whether a dump will load
+anywhere else. <code>--strict</code> turns the report into a non-zero exit.</p>
+<h3 id="invalid-iris">Invalid IRIs</h3>
+<p>rete's N-Triples/N-Quads reader is deliberately tolerant: it stores whatever
+sits between <code>&lt;</code> and the next <code>&gt;</code>, so the file is a faithful container of what
+it was given. That tolerance is why every published dataset built — and it is
+also why <code>rete export --format nq</code> could emit something no strict parser
+accepts. <code>build</code> and <code>validate</code> now <strong>count</strong> what they ingested:</p>
+<pre><code>warning: 5 statement(s) carry an invalid IRI (5 IRI occurrence(s)).
+         They are stored verbatim, so `rete export --format nq` emits N-Quads that a
+         strict parser (Oxigraph, Jena, rapper) rejects — and a bulk loader rejects the
+         whole chunk, not the line.
+               2  '[' or ']' outside an IP-literal host
+                  e.g. &lt;http://example.org/a[b]&gt;
+               1  more than one '#'
+                  e.g. &lt;http://example.org/c#d#e&gt;
+               1  '%' not followed by two hex digits
+                  e.g. &lt;http://example.org/%x-template-artifact&gt;
+               1  a character the IRIREF grammar excludes (space, control, or one of &lt;&gt;"{}|^`\)
+                  e.g. &lt;http://example.org/a b&gt;
+</code></pre>
+<p>Five classes, from the <code>IRIREF</code> production
+(<code>'&lt;' ([^#x00-#x20&lt;&gt;"{}|^</code>] | UCHAR)* '&gt;'`) plus RFC 3987, which the same
+grammar requires the content to satisfy as an <strong>absolute</strong> IRI:</p>
+<table><thead><tr><th>class</th><th>example</th><th>repairable by escaping</th></tr></thead><tbody>
+<tr><td>no scheme (relative IRI)</td><td><code>&lt;noscheme/path&gt;</code></td><td><strong>no</strong></td></tr>
+<tr><td>an excluded character</td><td><code>&lt;http://ex/a b&gt;</code></td><td>yes</td></tr>
+<tr><td><code>[</code> / <code>]</code> outside an IP-literal host</td><td><code>&lt;http://ex/a[b]&gt;</code></td><td>yes</td></tr>
+<tr><td>more than one <code>#</code></td><td><code>&lt;http://ex/c#d#e&gt;</code></td><td>yes</td></tr>
+<tr><td><code>%</code> not followed by two hex digits</td><td><code>&lt;http://ex/%x&gt;</code></td><td>yes</td></tr>
+</tbody></table>
+<p>What is <strong>not</strong> judged: non-ASCII (RFC 3987 <code>ucschar</code> is legal — <code>&lt;http://ex/café&gt;</code>
+is a valid IRI and is never touched), <code>UCHAR</code> escapes (<code>é</code>), and scheme
+semantics (<code>&lt;nonsense://x&gt;</code> is well-formed). Flagging something valid would mean
+percent-encoding an IRI that was fine, which is the one failure mode a sanitizer
+must not have.</p>
+<p>Three flags act on this, and they are separate on purpose:</p>
+<ul>
+<li><code>rete build --strict</code> / <code>rete validate --strict</code> — refuse the input, naming
+the IRI and the rule. <strong>Not</strong> the default: datasets that build today, including
+published ones, must keep building.</li>
+<li><code>rete export --sanitize-iris</code> — percent-encode the repairable classes on the
+way out. Also not the default, because it <strong>changes the data</strong>.</li>
+</ul>
+<p>An IRI with <strong>no scheme</strong> is reported and never rewritten. Escaping cannot
+repair it: resolving it needs a base IRI the <code>.rete</code> never recorded. This is the
+class that cost the most in the field — one such line made a bulk loader drop an
+entire ~102,000-line chunk — and the only honest thing a tool can do with it is
+say where it is.</p>
+<h2 id="inspecting">Inspecting</h2>
+<h3 id="rete-info-file"><code>rete info &lt;file&gt;</code></h3>
 <p>Print the decoded 1 KB header (the section directory, codecs, counts, content hash) — plus
 the <a href="dataset-cards.html">Dataset Card</a> catalog when the file carries one. Reads only
 the header and card byte ranges (the same two small reads <code>card-url</code> does over
 HTTP), so a 50 GB file answers in about a second.</p>
-<h3><code>rete stats &lt;file&gt;</code></h3>
+<h3 id="rete-stats-file"><code>rete stats &lt;file&gt;</code></h3>
 <p>Human-friendly overview: file size, default-graph triple count, distinct terms,
 named-graph count, pyramid levels, and top predicates. Notes the label-index and
 <strong>text-index</strong> sizes when the file carries them.</p>
-<h3><code>rete verify &lt;file&gt;</code></h3>
+<h3 id="rete-verify-file"><code>rete verify &lt;file&gt;</code></h3>
 <p>Recompute the blake3 content hash and compare to the header. Exits non-zero with
 <code>FAILED — content hash mismatch</code> on corruption/truncation.</p>
-<h3><code>rete search &lt;file&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
+<h3 id="rete-search-file-prefix---contains-word---contains-prefix-p---limit-n---json"><code>rete search &lt;file&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
 <p>Two modes.</p>
 <p><strong>Label prefix</strong> (default) — the subjects whose label starts with <code>prefix</code>
 (case-insensitive), printed as <code>label&lt;TAB&gt;&lt;iri&gt;</code> (or
@@ -430,37 +829,107 @@ line (or the same versioned <code>matches</code> envelope with <code>{subject}</
 requires a literal word starting with <code>einst</code>. Answered from the opt-in
 <strong>TEXT_INDEX</strong> section (<code>rete build --text-index</code>); on a remote file only the
 queried words' posting lists are fetched, not the whole index. A file built
-without <code>--text-index</code> reports that it has no text index.</p>
+without <code>--text-index</code> reports that it has no text index. To search a file you
+have <strong>not</strong> downloaded, use <code>rete search-url</code> (below).</p>
 <pre><code class="language-sh">rete search data.rete gluc                       # label prefix (autocomplete)
 rete search data.rete --contains glucose         # literals containing "glucose"
 rete search data.rete --contains glucose phosphate  # both words (AND)
 rete search data.rete --contains-prefix einst    # a word starting with "einst…"
 </code></pre>
-<h3><code>rete card &lt;file&gt; [--json]</code></h3>
+<h3 id="rete-card-file---json---format-jsonldcroissant---sha256-hex"><code>rete card &lt;file&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
 <p>Print the embedded <a href="dataset-cards.html">Dataset Card</a> — curated metadata
-(title/license/source/…) plus the derived profile (counts, top predicates and
-classes, vocabularies) and the content-hash checksum. Costs two small range
-reads (header + card), never the dictionary or index — instant on any size. <code>--json</code> emits the card
-object plus <code>schemaVersion: 1</code>. Prints <code>(no dataset card)</code> for a file built without one. <code>rete info</code> shows
-the same catalog beneath the header when a card is present.</p>
-<h3><code>rete graphs &lt;file&gt;</code></h3>
+(title/license/source/creators/publisher/…) plus the derived profile (counts, top
+predicates and classes, vocabularies), the content-hash checksum, and (when the
+file carries one) the <strong>build record</strong>: when it was built, by which <code>rete</code>, with
+which flags, and the starter queries' measured costs. Costs two small range
+reads (header + one coalesced card/build-info range), never the dictionary or
+index — instant on any size. <code>--json</code> emits the card object plus
+<code>schemaVersion: 1</code> and a <code>build</code> block. <code>--format jsonld</code> projects the card to
+JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
+<code>--format croissant</code> emits the honestly-mappable Croissant subset (no
+<code>recordSet</code>: a graph is not a table). <code>--sha256</code> supplies the whole-file
+sha256 the Croissant projection's <code>FileObject</code> requires — a file cannot carry
+its own, so compute it outside (<code>sha256sum file.rete</code>); with it the document
+is validator-clean. For a file built without one it prints
+<code>(no dataset card — …)</code>, still naming what the header alone decides: whether
+the file carries a full-text index (<code>signals.text_index</code>, measured from the
+section directory rather than read out of the card — see
+<a href="dataset-cards.html#the-full-text-signal-measured-not-stored">Dataset Cards</a>).
+<code>rete info</code> shows the same catalog beneath the header when a card is present.</p>
+<h3 id="rete-graphs-file"><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
-<h3><code>rete export &lt;file&gt; [--format nq|ttl|jsonld]</code></h3>
-<p>Serialize the dataset. <code>nq</code> (the default) dumps every triple/quad as N-Quads
-(default graph + named graphs) — a lossless round-trip. <code>ttl</code> emits Turtle and
-<code>jsonld</code> emits expanded JSON-LD; both serialize the <strong>default graph only</strong>
-(Turtle/JSON-LD here carry no default-vs-named distinction, so named graphs are
-skipped — use <code>nq</code> to export those).</p>
+<h3 id="rete-export-file---format-nqttljsonld---graph-g---subject-s---predicate-p---object-o---sanitize-iris"><code>rete export &lt;file&gt; [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris]</code></h3>
+<p>Serialize the dataset, or a slice of it. <code>nq</code> (the default) dumps every
+triple/quad as N-Quads (default graph + named graphs) — a lossless round-trip.
+<code>ttl</code> emits Turtle and <code>jsonld</code> emits expanded JSON-LD; both serialize a
+<strong>single graph</strong> (the default graph unless <code>--graph</code> names one), because
+Turtle/JSON-LD carry no default-vs-named distinction — use <code>nq</code> to export the
+whole dataset.</p>
 <pre><code class="language-sh">rete export data.rete                 # N-Quads (default)
 rete export data.rete --format ttl    # Turtle
 rete export data.rete --format jsonld # expanded JSON-LD
 </code></pre>
-<h2>Querying</h2>
-<h3><code>rete query &lt;file&gt; [--subject S] [--predicate P] [--object O]</code></h3>
+<p><code>--sanitize-iris</code> percent-encodes IRIs that are outside the N-Triples/N-Quads
+grammar (see <a href="#invalid-iris">Invalid IRIs</a>), so the dump loads into a strict
+store instead of being rejected — and a bulk loader rejects the whole <em>chunk</em>,
+not the line, so one bad IRI is worth a hundred thousand good statements.</p>
+<p>It is <strong>off by default because it changes the data.</strong> <code>&lt;http://ex/a[b]&gt;</code> is
+written as <code>&lt;http://ex/a%5Bb%5D&gt;</code>, which is a different IRI: the dump no longer
+joins against the graph it came from, <code>rete → store → rete</code> stops being the
+identity, and if the graph happened to contain both spellings they collapse into
+one. Deciding to accept that is the exporter's call, which is why it is a flag.
+What it did goes to <strong>stderr</strong> (stdout is the dump), per class:</p>
+<pre><code>--sanitize-iris: percent-encoded 5 IRI occurrence(s). The dump's IRIs are NOT the
+                 file's IRIs: it no longer joins against the source graph, and
+                 rete → store → rete is no longer the identity.
+                       2  '[' or ']' outside an IP-literal host
+                       1  more than one '#'
+                       …
+</code></pre>
+<p>An IRI with no scheme cannot be repaired by escaping, so it is counted, named,
+and written <strong>verbatim</strong> — the dump is then still not valid N-Quads and the
+summary says exactly that rather than implying a fix it did not make. The
+<a href="interop.html">triple-store interop</a> page has the measured Oxigraph round-trip for
+all three cases.</p>
+<p><strong>Filters prune the file; they are not <code>| grep</code>.</strong> <code>--graph</code> /<code>--subject</code> /
+<code>--predicate</code> / <code>--object</code> become a triple pattern the engine routes: it picks
+the index permutation that sorts on the bound components, binary-searches its
+tile directory down to the tiles that can match, and drops the rest by their
+recorded synopsis <em>without fetching them</em>. On a lazily-opened file that is the
+difference between exporting a slice and reading the graph.</p>
+<pre><code class="language-sh"># one predicate of one named graph: 16 MB read instead of 376 MB, 0.4 s
+# instead of 12.8 s, 183 MB peak RSS instead of 2.1 GB (cordis.rete, 801 MB)
+rete export cordis.rete --format nq \
+    --graph http://data.europa.eu/s66/graph/results \
+    --predicate http://data.europa.eu/s66#doi
+
+rete export data.rete --format nq --graph ''            # the default graph alone
+rete export data.rete --format nq --subject http://ex/a # everything about one subject
+rete export data.rete --format nq --object '"text"@en'  # an exact literal
+</code></pre>
+<p>Terms are bare IRIs or N-Triples tokens (<code>&lt;iri&gt;</code>, <code>"lit"@en</code>, <code>"lit"^^&lt;dt&gt;</code>,
+<code>_:b</code>) — quote literals for your shell. A term the file's dictionary does not
+contain matches nothing, which is an empty export, not an error. <code>--graph ''</code>
+selects the default graph alone; omitting <code>--graph</code> keeps the current behaviour
+(default graph, then every named graph).</p>
+<p>Two caveats worth knowing before you measure it:</p>
+<ul>
+<li><strong>A filtered dump prunes the index, not the dictionary.</strong> Resolving the rows
+it keeps still faults the dictionary chunks their terms live in, so on a graph
+whose payload <em>is</em> long literals the saving is much smaller: on the same file,
+a predicate whose objects are abstracts went 261 MB → 213 MB, not 23×.</li>
+<li><strong>Rows arrive in the routed permutation's order.</strong> Unfiltered (and
+subject-bound) that is <code>(s, p, o)</code> as before; a bound predicate streams
+<code>(p, o, s)</code>, a bound object <code>(o, s, p)</code>. The <em>set</em> is identical; N-Quads does
+not care, but <code>diff</code> does — sort both sides.</li>
+</ul>
+<p>Preview any of this before running it with <a href="#rete-cost-file-or-url---dump---graph-g---subject-s---predicate-p---object-o---json"><code>rete cost --dump</code></a>.</p>
+<h2 id="querying">Querying</h2>
+<h3 id="rete-query-file---subject-s---predicate-p---object-o"><code>rete query &lt;file&gt; [--subject S] [--predicate P] [--object O]</code></h3>
 <p>Match a single triple pattern; omitted positions are wildcards.</p>
 <pre><code class="language-sh">rete query data.rete --predicate '&lt;http://ex/knows&gt;'
 </code></pre>
-<h3><code>rete why &lt;file&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
+<h3 id="rete-why-file---subject-s---predicate-p---object-o---json"><code>rete why &lt;file&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
 <p>Explain the provenance of each triple-pattern result. The command reports the
 matched terms, dictionary IDs, graph scope, the chosen permutation (one of the
 six), and the file byte ranges for the dictionary, full index container, selected
@@ -469,7 +938,7 @@ emitted as stable machine-readable JSON with <code>schemaVersion: 1</code>.</p>
 <pre><code class="language-sh">rete why data.rete --predicate '&lt;http://ex/knows&gt;'
 rete why data.rete --subject '&lt;http://ex/Alice&gt;' --json
 </code></pre>
-<h3><code>rete why-url &lt;url&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
+<h3 id="rete-why-url-url---subject-s---predicate-p---object-o---json"><code>rete why-url &lt;url&gt; [--subject S] [--predicate P] [--object O] [--json]</code></h3>
 <p>The remote counterpart of <code>rete why</code>: explain a triple-pattern result over a
 <code>.rete</code> served on HTTP, <strong>range-fetching only the routed tiles</strong> — the same
 provenance (permutation, section, byte ranges, the physical tile) plus the bytes
@@ -482,12 +951,12 @@ fetched and range-request count. The CLI version of the browser's <code>why_url<
 container, the selected permutation payload, and — for tiled files —
 the physical tile holding each match (<code>PERM/index</code>) with its compressed byte
 range.</p>
-<h3><code>rete bgp &lt;file&gt; "&lt;pattern&gt; . &lt;pattern&gt; …"</code></h3>
+<h3 id="rete-bgp-file-pattern--pattern-"><code>rete bgp &lt;file&gt; "&lt;pattern&gt; . &lt;pattern&gt; …"</code></h3>
 <p>Evaluate a Basic Graph Pattern. Patterns are separated by <code>.</code>, terms by spaces;
 <code>?name</code> is a variable (terms may not contain spaces).</p>
 <pre><code class="language-sh">rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
 </code></pre>
-<h3><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json] [--entail]</code></h3>
+<h3 id="rete-sparql-file-query---json---entail"><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json] [--entail]</code></h3>
 <p>Run SPARQL: <code>SELECT</code> / <code>ASK</code> / <code>CONSTRUCT</code> / <code>DESCRIBE</code>. With <code>--json</code>, emit
 standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
 <p><code>--entail</code> turns on <strong>OWL 2 QL reasoning</strong>: the query is rewritten so the answer
@@ -499,6 +968,12 @@ the command's adaptive transfer policy: an eligible small object is fetched in
 one exact full-file range request, while a larger object (or
 <code>RETE_EAGER_MAX_MB=0</code>) remains remote-lazy and fetches the ranges touched by the
 rewritten evaluation. See <a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</p>
+<p>There is <strong>no union-default-graph flag</strong> here: the opt-in ⛁ All graphs mode —
+a pattern outside <code>GRAPH</code> matching the merge of the default graph and every
+named graph, for files whose data lives entirely in named graphs — exists
+today in the playground and the wasm <code>query_opts</code> API only, not on the CLI and
+not in <code>rete serve</code>. On the CLI, scope the query with <code>GRAPH ?g { … }</code>
+instead. See <a href="sparql.html#union-default-graph">Union default graph</a>.</p>
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
@@ -513,7 +988,7 @@ can still use the faster eager path. Aggregation streams through per-group
 accumulators — a <code>COUNT</code> over a 9.83 B-triple file runs in a 2 GiB container
 (<a href="BENCHMARK.html">benchmark</a>). Preview a query's byte cost with <code>rete cost</code>, and
 see the exact ranges a query read with <code>rete why</code>.</p>
-<h3><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
+<h3 id="rete-serve-file---bind-addr---token-t---journal-path"><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
 <p>Serve one <code>.rete</code> — or a <a href="manifest.html">manifest</a> of segments (<code>.json</code>), whose
 visible fold becomes the served state — as a live <strong>SPARQL 1.1 Protocol
 endpoint — queries and SPARQL Update</strong>. The base file is <strong>never mutated</strong>:
@@ -541,7 +1016,7 @@ curl -s --data-urlencode 'query=SELECT * WHERE { ?s ?p ?o } LIMIT 5' http://127.
 curl -s --data-urlencode 'update=INSERT DATA { &lt;http://ex/n1&gt; &lt;http://ex/note&gt; "hello" }' http://127.0.0.1:7878/sparql
 curl -sO http://127.0.0.1:7878/snapshot.rete   # the updated companion .rete
 </code></pre>
-<h3><code>rete cost &lt;file-or-url&gt; "&lt;query&gt;" [--json] [--explain]</code></h3>
+<h3 id="rete-cost-file-or-url-query---json---explain"><code>rete cost &lt;file-or-url&gt; "&lt;query&gt;" [--json] [--explain]</code></h3>
 <p>Preview the byte/range-request cost of a SPARQL query without evaluating it.
 The report parses the query, lists the concrete predicates that can drive
 summary-based routing, and compares three access paths:</p>
@@ -556,6 +1031,30 @@ dictionary chunks and index tiles faulted only when evaluation selects them.</li
 <pre><code class="language-sh">rete cost data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?y WHERE { e:Alice e:knows ?y }"
 rete cost https://host/data.rete "ASK { ?s &lt;http://ex/knows&gt; ?o }" --json
 </code></pre>
+<h4 id="rete-cost-file-or-url---dump---graph-g---subject-s---predicate-p---object-o---json"><code>rete cost &lt;file-or-url&gt; --dump [--graph G] [--subject S] [--predicate P] [--object O] [--json]</code></h4>
+<p>The same preview for a <strong>dump</strong> — what <code>rete export</code> (or a client's streaming
+dump) will fetch for that filter, before it starts. Same report shape as above.</p>
+<p>The index figure is <em>computed</em>, not sampled: the tile directories say which
+tiles the filter's routed scan can touch and how big each is, so no tile is
+fetched to produce it.</p>
+<pre><code>$ rete cost cordis.rete --dump \
+      --graph http://data.europa.eu/s66/graph/results \
+      --predicate http://data.europa.eu/s66#doi
+  file bytes: 801016143
+  lazy dump open: 43156179 bytes in 66 range request(s) · reads index
+  graphs selected: 1
+    &lt;…/graph/results&gt;: POS · 31 of 528 tile(s) admitted · 1217273 bytes (section 21227100)
+  index tiles: 31 of 528 admitted · 1217273 bytes of 21227100 · computed from the
+               tile directories, no tile fetched
+  dictionary ceiling: 417246556 bytes
+  estimated dump cost: 44373452 – 461620008 bytes
+</code></pre>
+<p>Read the range honestly: the <strong>floor</strong> (open + admitted tiles) is exact; the
+<strong>ceiling</strong> adds the whole dictionary, which only a dump touching every term
+pays. Term resolution faults chunks the tile directories cannot name, so the
+true cost sits between — near the floor when the slice is small and its terms
+are short, near the ceiling on a literal-heavy file however well the index
+prunes. The dump previewed above actually read 59,672,911 bytes.</p>
 <p>For the exact summary-only shapes <code>SELECT (COUNT(*) AS ?n) WHERE { ?s &lt;p&gt; ?o }</code>,
 <code>SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }</code>,
 <code>SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p</code>,
@@ -575,7 +1074,7 @@ are marked <code>requires_index</code>.</p>
 <code>sparql-url</code>. Treat this as a deployment/debugging preview: it reports the
 current SPARQL engine's range budget, the summary budget, and the exact routed
 single-pattern budget when the query shape allows it.</p>
-<h3><code>rete progressive &lt;file-or-url&gt; "&lt;query&gt;" [--json]</code></h3>
+<h3 id="rete-progressive-file-or-url-query---json"><code>rete progressive &lt;file-or-url&gt; "&lt;query&gt;" [--json]</code></h3>
 <p>Run the first summary-only progressive query path. This command answers only
 the exact shapes that can be proven from the pyramid summary without opening
 the triple index:</p>
@@ -595,7 +1094,7 @@ describing the summary stage, exactness, predicate when one is fixed, bytes
 fetched, request count, and <code>reads_index: false</code>. Other query shapes fail
 clearly; use <code>rete sparql</code> for full-index evaluation or <code>rete cost --explain</code> to
 inspect why a query is not summary-answerable yet.</p>
-<h3><code>rete cypher &lt;file&gt; "&lt;query&gt;" [--base &lt;iri&gt;] [--json]</code></h3>
+<h3 id="rete-cypher-file-query---base-iri---json"><code>rete cypher &lt;file&gt; "&lt;query&gt;" [--base &lt;iri&gt;] [--json]</code></h3>
 <p>Run a read-only <strong>Cypher subset</strong> (a prototype). The query is translated to an
 equivalent SPARQL <code>SELECT</code> and evaluated by the same engine — no second query
 engine. Supports <code>MATCH … [WHERE …] RETURN … [LIMIT n]</code>: node patterns
@@ -612,8 +1111,8 @@ defaults to <code>http://ex/</code> and is overridable with <code>--base</code>.
 <pre><code class="language-sh">rete cypher deps.rete "MATCH (a:Application) RETURN a"
 rete cypher deps.rete "MATCH (a)-[:dependsOn*]-&gt;(b) WHERE b = &lt;http://ex/log4x&gt; RETURN a"
 </code></pre>
-<h2>Reasoning</h2>
-<h3><code>rete reason [&lt;file&gt;] [--url &lt;url&gt;] [--materialize] [--check] [--verify-card] [--format nq|ttl]</code></h3>
+<h2 id="reasoning">Reasoning</h2>
+<h3 id="rete-reason-file---url-url---materialize---check---verify-card---format-nqttl"><code>rete reason [&lt;file&gt;] [--url &lt;url&gt;] [--materialize] [--check] [--verify-card] [--format nq|ttl]</code></h3>
 <p>Run the prototype <strong>OWL RL / RDFS reasoner</strong>: materialize RDFS/OWL entailments to
 a fixpoint and report any logical <strong>inconsistencies</strong> ("incoherent points", e.g. a
 disjoint-class violation). Prints the count of newly entailed triples and each
@@ -635,8 +1134,8 @@ rete reason data.rete --check                  # one-line CI verdict
 rete reason --url https://host/data.rete       # reason over a remote file
 rete reason data.rete --verify-card            # baked card vs fresh run
 </code></pre>
-<h2>Shape validation</h2>
-<h3><code>rete shacl &lt;file&gt; --shapes &lt;shapes.ttl&gt; [--graph &lt;iri&gt;] [--format text|json|ttl]</code></h3>
+<h2 id="shape-validation">Shape validation</h2>
+<h3 id="rete-shacl-file---shapes-shapesttl---graph-iri---format-textjsonttl"><code>rete shacl &lt;file&gt; --shapes &lt;shapes.ttl&gt; [--graph &lt;iri&gt;] [--format text|json|ttl]</code></h3>
 <p>Validate a <code>.rete</code> graph against SHACL Core shapes read from Turtle. The default
 graph is validated unless <code>--graph</code> names one dataset graph. The command exits
 zero when the report conforms and non-zero when it finds validation results, so
@@ -646,7 +1145,7 @@ the supported components and current limits.</p>
 rete shacl data.rete --shapes shapes.ttl --format json
 rete shacl data.rete --shapes shapes.ttl --graph '&lt;http://ex/snapshot&gt;'
 </code></pre>
-<h3><code>rete shacl-url &lt;url&gt; --shapes &lt;shapes.ttl&gt; [--format text|json|ttl]</code></h3>
+<h3 id="rete-shacl-url-url---shapes-shapesttl---format-textjsonttl"><code>rete shacl-url &lt;url&gt; --shapes &lt;shapes.ttl&gt; [--format text|json|ttl]</code></h3>
 <p>Validate a <strong>remote</strong> <code>.rete</code> over HTTP, <strong>range-reading only what the shapes
 target</strong>. The file is opened lazily and each focus node's values are fetched as
 routed range reads, so a targeted shape (<code>sh:targetClass</code> / <code>targetNode</code> /
@@ -656,19 +1155,19 @@ the bytes fetched and the range-request count. Validates the default graph.</p>
 <pre><code class="language-sh">rete shacl-url https://host/data.rete --shapes shapes.ttl
 # (fetched 38912 bytes in 7 range request(s); file is 1048576 bytes)
 </code></pre>
-<h2>Coarse graphs (no index read)</h2>
-<h3><code>rete summary &lt;file&gt; [--level k]</code></h3>
+<h2 id="coarse-graphs-no-index-read">Coarse graphs (no index read)</h2>
+<h3 id="rete-summary-file---level-k"><code>rete summary &lt;file&gt; [--level k]</code></h3>
 <p>Print the <strong>structural</strong> coarse graph: the Louvain community quotient graph
 (community → community relations with counts), plus — for v2 files — the <strong>schema
 pyramid</strong>: a leveled <code>rdf:type</code> histogram where abstract classes describe coarse
 levels and leaf classes resolve as you zoom in (e.g. <code>Agent → Person → Scientist → Astronomer</code>). <code>--level k</code> prints just level <code>k</code>'s type histogram (<code>0</code> =
 coarsest / most abstract). Everything here reads <strong>index-free</strong> from the
 pyramid-meta — <code>summary-url</code> shows the same over HTTP without fetching the index.</p>
-<h3><code>rete schema &lt;file&gt;</code></h3>
+<h3 id="rete-schema-file"><code>rete schema &lt;file&gt;</code></h3>
 <p>Print the <strong>semantic</strong> coarse graph: classes (by <code>rdf:type</code>) with instance
 counts, and the class→predicate→class relations between them — the dataset's
 effective schema.</p>
-<h3><code>rete communities &lt;file&gt; [--json] [--profile] [--predicate IRI] [--round N] [--min-size N]</code></h3>
+<h3 id="rete-communities-file---json---profile---predicate-iri---round-n---min-size-n"><code>rete communities &lt;file&gt; [--json] [--profile] [--predicate IRI] [--round N] [--min-size N]</code></h3>
 <p>Recompute the Louvain communities and expose, per community, its <strong>member
 subjects</strong> and the <strong>literal text</strong> of its triples — the per-community text
 corpus for downstream topic modeling. <code>--profile</code> adds a no-ML "topic" profile
@@ -684,11 +1183,11 @@ drops communities with fewer than <code>N</code> members. See the
 rete communities researchers.rete --predicate '&lt;http://ex/cites&gt;'  # one criterion
 rete communities papers.rete --json | python3 scripts/lda_topics.py --topics 3
 </code></pre>
-<h3><code>rete predicates &lt;file&gt;</code></h3>
+<h3 id="rete-predicates-file"><code>rete predicates &lt;file&gt;</code></h3>
 <p>Exact per-predicate triple totals, summed from the pyramid summary alone — the
 triple index is never read.</p>
-<h2>Graph traversal</h2>
-<h3><code>rete reach &lt;file&gt; --predicate &lt;iri&gt; --seed &lt;iri&gt;… [--seeds-file F] [--reverse] [--parallel] [--count]</code></h3>
+<h2 id="graph-traversal">Graph traversal</h2>
+<h3 id="rete-reach-file---predicate-iri---seed-iri---seeds-file-f---reverse---parallel---count"><code>rete reach &lt;file&gt; --predicate &lt;iri&gt; --seed &lt;iri&gt;… [--seeds-file F] [--reverse] [--parallel] [--count]</code></h3>
 <p>Multi-source transitive reachability over one relation: for each seed, the set of
 nodes it transitively reaches. <code>--reverse</code> answers <em>"who reaches the seed?"</em>
 (impact analysis); <code>--seeds-file</code> reads one seed IRI per line; <code>--count</code> prints
@@ -700,21 +1199,138 @@ rete reach deps.rete --predicate '&lt;http://ex/dependsOn&gt;' --seed '&lt;http:
 # Many seeds at once, in parallel:
 rete reach g.rete --predicate '&lt;http://ex/knows&gt;' --seeds-file seeds.txt --parallel --count
 </code></pre>
-<h2>Over HTTP</h2>
+<h2 id="over-http">Over HTTP</h2>
 <p>Both URL commands work against <code>http://</code> and <code>https://</code> hosts that honor <code>Range</code>
 requests (S3, GitHub, any CDN).</p>
-<h3><code>rete card-url &lt;url&gt; [--json]</code></h3>
-<p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and the
-metadata range, in <strong>two small range requests</strong>. The dictionary, index, and
-pyramid are never fetched: this is the index-free <strong>CARD tier</strong>, the cold-start
-self-description (counts, vocabulary, class graph, signals, starter queries) a
-client reads before it knows what to query. Reports bytes fetched + range count.</p>
+<h3 id="rete-card-url-url---json---format-jsonldcroissant---sha256-hex"><code>rete card-url &lt;url&gt; [--json] [--format jsonld|croissant] [--sha256 &lt;hex&gt;]</code></h3>
+<p>Fetch only the embedded <a href="dataset-cards.html">Dataset Card</a> — the header and one
+coalesced metadata + build-info range, in <strong>two small range requests</strong>. The
+dictionary, index, and pyramid are never fetched: this is the index-free <strong>CARD
+tier</strong>, the cold-start self-description (counts, vocabulary, class graph,
+signals, starter queries, build record) a client reads before it knows what to
+query. Reports bytes fetched + range count. The <code>--format</code> projections (and
+<code>--sha256</code> for Croissant) match <code>rete card</code>.</p>
 <pre><code class="language-sh">rete card-url https://host/data.rete --json
 </code></pre>
-<h3><code>rete summary-url &lt;url&gt;</code></h3>
+<h3 id="rete-card-audit-pathurl---json---measure---only-ids---max-mb-n---write-costs---allow-empty"><code>rete card-audit &lt;path|url&gt; [--json] [--measure] [--only IDS] [--max-mb N] [--write-costs] [--allow-empty]</code></h3>
+<p>Do the starter queries a card <strong>already ships</strong> still answer on the file that
+carries them? A published <code>.rete</code> cannot be re-carded for free, so this decides
+each query's fate from the card's own profile — the CARD tier again, so a
+multi-GB file costs tens of KB to check.</p>
+<p>Each query gets one verdict, and the two that matter are kept apart: <code>empty</code> is
+the card <em>refuting</em> a shipped query (a property path through a predicate the
+file does not have, a <code>VALUES</code> list disjoint from the dataset's link predicates,
+a class joined to a label predicate the class-link quotient accounts for and
+never pairs with it), while <code>undecidable</code> and <code>suspect</code> are the honest middle —
+run the query to settle those. <code>answers</code> is the card proving a row comes back,
+and <code>revision</code> says what a re-card would do to the body (<code>current</code>,
+<code>superseded</code>, <code>dropped</code>).</p>
+<p>The judgement is the query generator's own (<code>Cap::joint_with</code>, <code>NonEmpty</code>,
+<code>provably_empty</code>), not a second copy of it. Input is a <code>.rete</code> (local path or
+URL) or a card JSON document from <code>rete card --json</code> / <code>rete card-url --json</code>.</p>
+<pre><code class="language-sh">rete card-audit https://host/data.rete
+rete card-audit card.json --json | jq '.findings[] | select(.verdict=="empty")'
+</code></pre>
+<h4 id="--measure-run-them-instead-of-reasoning-about-them"><code>--measure</code>: run them instead of reasoning about them</h4>
+<p>The static pass has a hard ceiling. Some templates are undecidable <strong>by
+construction</strong> — nothing in a card ties a subject to a predicate, so <code>top-reach</code>
+cannot be settled from one, and a card does not record which objects are also
+subjects, so <code>top-dangling</code> cannot either. No better card-only reasoning closes
+that; a run does, and records what the answer cost.</p>
+<p><code>--measure</code> runs each starter query <strong>cold</strong> — a fresh lazy open, logical range
+reads, no block cache — and reports rows, bytes, requests and a reference
+timing. It is the same <code>measure_query</code> a <code>rete build</code> uses to fill in its
+<code>query_costs</code>, so when the file already carries a build record the command
+checks itself against it and says whether the two agree (<code>= build record</code> /
+<code>!= build record</code>). On <code>switzerland-fedlex.rete</code> — the one published file that
+has a record — all ten queries reproduce it exactly.</p>
+<p>Each row shows the card's verdict and the run's outcome side by side; they are
+never merged, because one is what a card can prove and the other is what the
+file did.</p>
+<pre><code>card says    run says   query             rows               bytes      req           ms
+answers      answers    ov-triples           1 row(s)       2800822 B     74 req      294 ms
+suspect      empty      lb-labels            0 row(s)        228126 B     68 req       12 ms
+undecidable  answers    top-dangling       100 row(s)       4468038 B    118 req      592 ms
+</code></pre>
+<p><strong>Local or remote.</strong> Point it at a path or at an <code>http(s)://</code> URL. <code>bytes</code> and
+<code>requests</code> are the same quantity either way — no block cache is in the stack, so
+the range sequence is a function of layout and query, not of transport — but
+only the remote run actually pays for them. The output always names which it
+was, in the text header and in the JSON <code>measurement.transport</code>, because a cost
+figure without its transport is not a cost figure.</p>
+<p><strong>It is a download.</strong> <code>--only ov-triples,lb-labels</code> measures a subset;
+<code>--max-mb 8</code> abandons a query once it has asked for more than that, and reports
+the abandonment with the bytes it spent — "costs more than 8 MB" is itself an
+answer. Both matter: eight of <code>switzerland-fedlex</code>'s ten starter queries read
+~1.02 GB each, so measuring that card remotely without a leash is an 8 GB
+download.</p>
+<h4 id="--write-costs-make-the-measurement-durable"><code>--write-costs</code>: make the measurement durable</h4>
+<p>Records the run in the file's build-info section, so the next reader gets the
+figures from the CARD tier (two range requests) instead of re-measuring. Local
+files only.</p>
+<p>The section sits <strong>outside</strong> the blake3 content hash — that is why two builds of
+identical data hash equal — so the file keeps its identity: same checksum, same
+<code>rete verify</code>, byte-identical N-Quads. It sits <strong>near the front</strong>, though, right
+after the card, so making room for it shifts everything behind it and the file
+is rewritten end to end. The rewrite streams through a 4 MiB buffer and commits
+by rename, but it is still one full pass of I/O and — for a published file — a
+full re-upload.</p>
+<p>Where that is worth it: when the alternative is a re-card. A re-card rewrites
+the file too, and additionally costs 17–35× the file in RAM (<code>repyramid</code>) or
+9–15× in staged N-Quads on disk (<code>--mode stream</code>, see <code>scripts/recard</code>), which
+puts anything past ~150 M statements out of reach. Attaching costs is one pass
+with no staging.</p>
+<p><strong>The RAM goes into the measurement, not the rewrite</strong>, and it is not free
+either: the engine evaluates eagerly, so a starter query with a big result
+materializes it. <code>switzerland-fedlex</code> (1.04 GB, 56.3 M quads) took 381 s and
+peaked at <strong>14.2 GiB</strong> for <code>--measure --write-costs</code> — <code>ng-list</code> alone, which
+returns 497,905 rows, accounts for 3.2 GiB of that; the rewrite of the 1.04 GB
+file that followed is a bounded-buffer copy. Against <code>repyramid</code>'s ≈36 GiB
+prediction and the staged path's ≤19.1 GiB for the same file, it is the cheaper
+route, but budget for the queries, not for the file.</p>
+<p>So: if the audit says the queries are stale or broken, re-card — same rewrite,
+more value. If the queries answer and the only gap is the missing record, write
+the costs. The command enforces that split: it refuses when a query measured
+zero rows (<code>--allow-empty</code> overrides, for <code>top-dangling</code> on a fully-described
+graph), when a run did not finish, and when <code>--only</code> measured a subset that
+would be stored as if it were the whole card.</p>
+<pre><code class="language-sh">rete card-audit data.rete --measure --json | jq '.findings[] | select(.observed.outcome=="empty")'
+rete card-audit https://host/data.rete --measure --only ov-triples --max-mb 8
+rete card-audit data.rete --measure --write-costs
+</code></pre>
+<h3 id="rete-search-url-url-prefix---contains-word---contains-prefix-p---limit-n---json"><code>rete search-url &lt;url&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
+<p><code>rete search</code> over HTTP — the same two modes and the same output, without
+downloading the file.</p>
+<p>The open is deliberately narrower than any other remote command's. It reads the
+header and the <strong>subject</strong> halves of the dictionary (the shared and subject-only
+sections), and stops: no permutation tile directories, no pyramid, no index.
+<code>--contains</code> then faults the TEXT_INDEX token table once and one range request
+per posting list; the bare prefix mode faults the pyramid instead, where the
+label index lives.</p>
+<p>That narrowness is the point, because on a literal-heavy graph the dictionary is
+most of the file, and on a file built before 2026-08 its <strong>object-only chunk
+directory</strong> — which carried every chunk's first term verbatim — is most of what a
+normal open costs. (Newer builds key that directory by the shortest <em>separator</em>
+instead, a few bytes per chunk: on <code>epfl-infoscience</code> that is 234 MB of routing
+keys against ~600 KB. It is a write-side change, so a published file keeps its
+large directory until it is rebuilt — the figures below are the published one.)
+Searching <code>epfl-infoscience.rete</code> (1.64 GB; a 1.35 GB dictionary, a 186 MB text
+index over titles and 132k abstracts) for <code>photosynthesis</code>:</p>
+<table><thead><tr><th></th><th>bytes fetched</th><th>requests</th><th>time</th></tr></thead><tbody>
+<tr><td><code>sparql-url</code> with <code>FILTER(CONTAINS(…))</code></td><td>334 MB</td><td>83</td><td>28.6 s</td></tr>
+<tr><td><code>search-url --contains</code></td><td><strong>29.5 MB</strong></td><td><strong>5</strong></td><td><strong>4.8 s</strong></td></tr>
+</tbody></table>
+<p>Same five hits. The 29.5 MB is the token table itself; label-prefix mode over the
+same file costs 1.4 MB in 4 requests. A file built without <code>--text-index</code> says so
+instead of silently scanning.</p>
+<pre><code class="language-sh">rete search-url https://host/data.rete --contains glucose phosphate
+rete search-url https://host/data.rete --contains graphs --contains-prefix existen --json
+rete search-url https://host/data.rete "Photosynth" --limit 3   # label prefix
+</code></pre>
+<h3 id="rete-summary-url-url"><code>rete summary-url &lt;url&gt;</code></h3>
 <p>Fetch only the header + dictionary + pyramid summary and print the coarse graph.
 The (large) index is never fetched — the "overview first" path.</p>
-<h3><code>rete query-url &lt;url&gt; [--subject S] [--predicate P] [--object O]</code></h3>
+<h3 id="rete-query-url-url---subject-s---predicate-p---object-o"><code>rete query-url &lt;url&gt; [--subject S] [--predicate P] [--object O]</code></h3>
 <p>Match a triple pattern over HTTP, fetching only the byte ranges the query needs
 and reporting how many ranges/bytes were pulled. Bound terms are resolved from
 the dictionary first; if they exist, the reader fetches only the selected
@@ -722,7 +1338,7 @@ permutation payload rather than the whole index container. If a
 bound term is unknown, the index is skipped entirely and the result is empty.</p>
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
-<h3><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
+<h3 id="rete-sparql-url-url-query---json"><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
 <p>Run a full SPARQL query over HTTP. The native CLI first validates a <code>HEAD</code> probe
 and learns the object's length. A non-empty remote file at or below
 <code>RETE_EAGER_MAX_MB</code> (8 MiB by default) is fetched with one exact full-file
@@ -756,8 +1372,8 @@ a switch for querying arbitrary remote files.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>
-<h2>Federation</h2>
-<h3><code>rete federate &lt;sources…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]</code></h3>
+<h2 id="federation">Federation</h2>
+<h3 id="rete-federate-sources---query-sparql---json---no-route"><code>rete federate &lt;sources…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]</code></h3>
 <p>Run one SPARQL query across several <code>.rete</code> <strong>sources</strong> — local file paths and/or
 <code>http(s)://</code> URLs, mixed — and merge the results at the <strong>term (string) level</strong>:
 <code>SELECT</code> rows are unioned + deduped, <code>ASK</code> is OR'd across sources, <code>CONSTRUCT</code>
@@ -779,7 +1395,7 @@ shard and fans the query across them before merging the results.</p>
   --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
                                           &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
 </code></pre>
-<h3><code>rete manifest &lt;init|add|status|query|seal|compact&gt;</code></h3>
+<h3 id="rete-manifest-initaddstatusquerysealcompact"><code>rete manifest &lt;init|add|status|query|seal|compact&gt;</code></h3>
 <p>Manage a <strong>writable logical graph</strong> as an ordered log of immutable <code>.rete</code>
 segments plus tombstone (deletion) segments, described by a small JSON
 manifest — grow a dataset across sessions, delete/update quads, query it all
@@ -794,7 +1410,7 @@ rete manifest status g.rete-manifest.json --count
 rete manifest seal   g.rete-manifest.json     # journal → segments (stop serve first)
 rete manifest compact g.rete-manifest.json    # the whole log → ONE fresh .rete
 </code></pre>
-<h2>Exit codes</h2>
+<h2 id="exit-codes">Exit codes</h2>
 <ul>
 <li><code>0</code> — success.</li>
 <li><code>1</code> — runtime, data, or network failure: malformed RDF, a missing/corrupt or
@@ -812,6 +1428,35 @@ SHACL non-conformance or reasoning incoherence.</li>
     </div>
     <footer>Generated from <code>docs/cli.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
+  <nav class="mnav" id="mnav" aria-label="Page navigation">
+    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="neuro-showcase-guide.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Neuromorphology — 3D neurons &amp; astrocytes (exp.)</span></a>
+    <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
+      <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Contents</span>
+    </button>
+    <a class="mnav-side mnav-next" id="navNext" rel="next" href="sparql.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">SPARQL support</span></a>
+  </nav>
+  <div class="mscrim" id="mscrim" hidden></div>
+  <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
+    <div class="mdrawer-head">
+      <div class="mdrawer-who">
+        <span class="mdrawer-eyebrow">Guides · 22 of 55</span>
+        <span class="mdrawer-title" id="mdrawerTitle">CLI reference</span>
+      </div>
+      <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">
+        <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Close</span>
+      </button>
+    </div>
+    <div class="mdrawer-tabs" role="tablist" aria-label="Contents">
+      <button type="button" role="tab" id="tabHere" aria-controls="panelHere" aria-selected="true">On this page</button>
+      <button type="button" role="tab" id="tabAll" aria-controls="panelAll" aria-selected="false" tabindex="-1">All pages</button>
+    </div>
+    <div class="mdrawer-body">
+      <div class="mdrawer-panel" id="panelHere" role="tabpanel" aria-labelledby="tabHere" tabindex="0"></div>
+      <div class="mdrawer-panel" id="panelAll" role="tabpanel" aria-labelledby="tabAll" tabindex="0" hidden></div>
+    </div>
+  </aside>
   <script>
 (function () {
   function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
@@ -1055,10 +1700,12 @@ SHACL non-conformance or reasoning incoherence.</li>
 // prefers-color-scheme decides; explicit choices persist under the SAME
 // localStorage key ("theme") the playground uses, so the preference follows
 // the reader across the whole site.
+// There are two of these now — the sidebar's on a wide screen, the top bar's on
+// a phone — so the cycle is bound to every [data-theme-cycle] button rather than
+// to one id, and both stay in step because they read the same localStorage key.
 (function () {
-  var btn = document.getElementById("themeToggle");
-  var label = document.getElementById("themeToggleLabel");
-  if (!btn || !label) return;
+  var btns = [].slice.call(document.querySelectorAll("[data-theme-cycle]"));
+  if (!btns.length) return;
   function current() {
     try {
       var t = localStorage.getItem("theme");
@@ -1067,19 +1714,264 @@ SHACL non-conformance or reasoning incoherence.</li>
   }
   function render() {
     var t = current();
-    label.textContent = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    var name = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    btns.forEach(function (b) {
+      var label = b.querySelector("[data-theme-label]");
+      if (label) label.textContent = name;
+      else b.setAttribute("aria-label", "Theme: " + name + " — tap to cycle System, Light, Dark");
+    });
   }
-  btn.addEventListener("click", function () {
-    var next = { system: "light", light: "dark", dark: "system" }[current()];
-    try {
-      if (next === "system") localStorage.removeItem("theme");
-      else localStorage.setItem("theme", next);
-    } catch (e) {}
-    if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
-    else delete document.documentElement.dataset.theme;
-    render();
+  btns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      var next = { system: "light", light: "dark", dark: "system" }[current()];
+      try {
+        if (next === "system") localStorage.removeItem("theme");
+        else localStorage.setItem("theme", next);
+      } catch (e) {}
+      if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
+      else delete document.documentElement.dataset.theme;
+      render();
+    });
   });
   render();
+})();
+</script>
+  <script>
+(function () {
+  var NARROW = window.matchMedia("(max-width: 780px)");
+  var CALM = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var bar = document.getElementById("mbar");
+    var drawer = document.getElementById("mdrawer");
+    var scrim = document.getElementById("mscrim");
+    if (!bar || !drawer || !scrim) return;
+    var progress = document.getElementById("mprogBar");
+    var prevLink = document.getElementById("navPrev");
+    var nextLink = document.getElementById("navNext");
+    var closeBtn = document.getElementById("mdrawerClose");
+    var panels = { here: document.getElementById("panelHere"), all: document.getElementById("panelAll") };
+    var tabs = { here: document.getElementById("tabHere"), all: document.getElementById("tabAll") };
+    var openers = [document.getElementById("mbarMenu"), document.getElementById("mnavToc")]
+      .filter(function (b) { return !!b; });
+
+    /* ---- 1. fill the drawer ------------------------------------------------
+       Both panels are CLONES of lists this page already has: the rail's "on
+       this page" TOC (built by the block above from the heading ids docgen
+       mints server-side) and the sidebar's section nav. Cloning means the
+       drawer cannot drift out of step with either, and neither list carries an
+       `id`, so nothing is duplicated in the document. */
+    var pageToc = document.querySelector("#toc ul");
+    if (pageToc) {
+      panels.here.appendChild(pageToc.cloneNode(true));
+    } else {
+      panels.here.innerHTML = '<p class="mdrawer-empty">This page is short enough to have no sections — try "All pages".</p>';
+    }
+    var siteNav = document.querySelector(".sidebar > ul");
+    if (siteNav) panels.all.appendChild(siteNav.cloneNode(true));
+
+    function selectTab(which) {
+      Object.keys(tabs).forEach(function (k) {
+        var on = k === which;
+        if (tabs[k]) {
+          tabs[k].setAttribute("aria-selected", on ? "true" : "false");
+          tabs[k].tabIndex = on ? 0 : -1;
+        }
+        if (panels[k]) panels[k].hidden = !on;
+      });
+    }
+    function defaultTab() { return pageToc ? "here" : "all"; }
+    selectTab(defaultTab());
+    Object.keys(tabs).forEach(function (k) {
+      if (tabs[k]) tabs[k].addEventListener("click", function () { selectTab(k); tabs[k].focus(); });
+    });
+    var tablist = drawer.querySelector(".mdrawer-tabs");
+    if (tablist) {
+      tablist.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        var to = tabs.here.getAttribute("aria-selected") === "true" ? "all" : "here";
+        selectTab(to); tabs[to].focus();
+      });
+    }
+    // Jumping to a heading closes the sheet — otherwise it covers what you just
+    // asked to see.
+    panels.here.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a") : null;
+      if (a) close();
+    });
+
+    /* ---- 2. open / close, with a focus trap -------------------------------- */
+    var lastFocus = null, closeTimer = null;
+    function focusable() {
+      return [].slice.call(drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+        .filter(function (el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
+    }
+    function isOpen() { return document.documentElement.classList.contains("drawer-open"); }
+    function open() {
+      if (isOpen()) return;
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+      lastFocus = document.activeElement;
+      drawer.hidden = false; scrim.hidden = false;
+      document.documentElement.classList.add("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "true"); });
+      syncActive();
+      // Two frames: the element has to have been laid out in its off-screen
+      // state before the class that slides it in can animate.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { drawer.classList.add("open"); scrim.classList.add("open"); });
+      });
+      if (closeBtn) closeBtn.focus();
+    }
+    function close() {
+      if (!isOpen()) return;
+      drawer.classList.remove("open"); scrim.classList.remove("open");
+      document.documentElement.classList.remove("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+      closeTimer = setTimeout(function () {
+        drawer.hidden = true; scrim.hidden = true; closeTimer = null;
+      }, CALM.matches ? 0 : 240);
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+      lastFocus = null;
+    }
+    openers.forEach(function (b) { b.addEventListener("click", open); });
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    scrim.addEventListener("click", close);
+    document.addEventListener("keydown", function (e) {
+      if (!isOpen()) return;
+      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key !== "Tab") return;
+      var items = focusable();
+      if (!items.length) return;
+      var first = items[0], last = items[items.length - 1];
+      if (!drawer.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    // The desktop scroll-spy keeps `.active` on the rail's TOC; mirror it onto
+    // the clone when the sheet opens, so "you are here" is right without a
+    // second listener running all the way down every page.
+    function syncActive() {
+      var live = document.querySelector("#toc a.active");
+      var want = live ? live.getAttribute("href") : null;
+      panels.here.querySelectorAll("a").forEach(function (a) {
+        a.classList.toggle("active", a.getAttribute("href") === want);
+      });
+    }
+
+    /* ---- 3. reading position + hide-on-scroll ------------------------------
+       The bar is 52px of a 640px-tall screen. Giving it back while the reader
+       is actually reading, and returning it the moment they reach for it, is
+       the whole justification for spending those pixels. Under
+       prefers-reduced-motion it simply never moves. */
+    var lastY = window.pageYOffset || 0, queued = false;
+    function onScroll() {
+      var y = Math.max(0, window.pageYOffset || 0);
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      if (progress) progress.style.width = (max > 40 ? Math.min(100, (y / max) * 100) : 0) + "%";
+      if (CALM.matches || !NARROW.matches || isOpen()) bar.classList.remove("up");
+      else if (y < 96) bar.classList.remove("up");
+      else if (y - lastY > 6) bar.classList.add("up");
+      else if (lastY - y > 6) bar.classList.remove("up");
+      lastY = y;
+      queued = false;
+    }
+    window.addEventListener("scroll", function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(onScroll);
+    }, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    onScroll();
+
+    /* ---- 4. swipe left / right between pages -------------------------------
+       Prev and next are the two links in the bottom bar; the gesture is only a
+       shortcut to them, never the only way to get anywhere. */
+    function go(href, back) {
+      if (!href) return;
+      if (CALM.matches) { window.location.href = href; return; }
+      document.documentElement.classList.add(back ? "page-out-right" : "page-out-left");
+      setTimeout(function () { window.location.href = href; }, 130);
+    }
+    // Coming back through the bfcache must not restore the faded-out state.
+    window.addEventListener("pageshow", function () {
+      document.documentElement.classList.remove("page-out-left", "page-out-right");
+    });
+
+    // The nearest ancestor that the finger could be scrolling sideways. Only
+    // boxes that OVERFLOW and are allowed to scroll count: `overflow-x:hidden`
+    // clips its content but the user cannot pan it, so a swipe there is ours.
+    function hscroller(node) {
+      for (var el = node; el && el !== document.body; el = el.parentElement) {
+        if (el.nodeType !== 1) continue;
+        if (el.scrollWidth - el.clientWidth > 2) {
+          var ox = window.getComputedStyle(el).overflowX;
+          if (ox === "auto" || ox === "scroll") return el;
+        }
+      }
+      return null;
+    }
+
+    var swipe = null;
+    document.addEventListener("touchstart", function (e) {
+      swipe = null;
+      if (!NARROW.matches || isOpen() || e.touches.length !== 1) return;
+      var t = e.touches[0], el = e.target;
+      // Never compete with the chrome itself, a form field, or the lightbox.
+      if (el && el.closest && el.closest("input,textarea,select,[contenteditable],.mbar,.mnav,.mdrawer,.mscrim,.lightbox")) return;
+      var sc = hscroller(el);
+      swipe = {
+        x: t.clientX, y: t.clientY, t: Date.now(), axis: 0, sc: sc,
+        left: sc ? sc.scrollLeft : 0,
+        room: sc ? sc.scrollWidth - sc.clientWidth : 0
+      };
+    }, { passive: true });
+
+    document.addEventListener("touchmove", function (e) {
+      if (!swipe) return;
+      if (e.touches.length !== 1) { swipe = null; return; }   // pinch / second finger
+      var t = e.touches[0];
+      var dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+      if (!swipe.axis && Math.abs(dx) + Math.abs(dy) > 12) {
+        // Lock the axis on the FIRST real movement. A drag that began as
+        // vertical reading scroll can never become a page turn later on,
+        // however far sideways it wanders before the finger lifts.
+        swipe.axis = Math.abs(dx) > Math.abs(dy) * 1.4 ? 1 : -1;
+      }
+      if (swipe.axis === -1) swipe = null;
+    }, { passive: true });
+
+    document.addEventListener("touchcancel", function () { swipe = null; }, { passive: true });
+
+    document.addEventListener("touchend", function (e) {
+      var s = swipe; swipe = null;
+      if (!s || s.axis !== 1 || !e.changedTouches || !e.changedTouches.length) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - s.x, dy = t.clientY - s.y, dt = Math.max(1, Date.now() - s.t);
+      if (Math.abs(dx) < Math.max(72, window.innerWidth * 0.12)) return;  // far enough
+      if (Math.abs(dx) < Math.abs(dy) * 2) return;                        // dominantly horizontal
+      if (dt > 900) return;                                               // a drag, not a rest
+      // Fast flick, or a slow but unmistakably long pull.
+      if (Math.abs(dx) / dt < 0.25 && Math.abs(dx) < window.innerWidth * 0.28) return;
+      var back = dx > 0;                       // finger to the right = go back
+      if (s.sc) {
+        // The gesture started inside a table / code block / diagram that can
+        // pan. Two ways it can still belong to that box, and both forfeit the
+        // page turn: it MOVED under the finger, or it has room left to move
+        // the way the finger is going.
+        //
+        // The 2px on the first test is not slack, it is a real observation: a
+        // block pinned at its right edge reports scrollLeft one pixel below the
+        // maximum once the browser settles the fractional part, and an exact
+        // comparison reads that as a pan and cancels the turn forever. A pan
+        // worth respecting moves hundreds of pixels.
+        if (Math.abs(s.sc.scrollLeft - s.left) > 2) return;
+        if (back ? s.left > 1 : s.left < s.room - 1) return;
+      }
+      var link = back ? prevLink : nextLink;
+      go(link && link.getAttribute("href"), back);
+    }, { passive: true });
+  });
 })();
 </script>
 </body>

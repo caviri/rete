@@ -4,24 +4,24 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
-<title>⏱ What&#39;s on screen at 1:05 — subtitles</title>
-<meta name="description" content="Freeze the film at t = 65 s (1:05) and read the line whose [su:start, su:end] interval covers that instant — in six languages side by side. Runs live in your browser over subtitles (14.4 K triples · 187 KB) — no server." />
+<title>⏱ What&#39;s on screen at 1:02 — subtitles</title>
+<meta name="description" content="Answer: 6 rows in 19.0 s. Freeze the film at t = 62 s (1:02) and read the line whose [su:start, su:end] interval covers that instant — &quot;This is pretty freaky.&quot;, in six… Runs live in your browser over subtitles (14.4 K triples · 195 KB) — no server." />
 <link rel="canonical" href="https://caviri.github.io/rete/q/subtitles-3.html" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="rete" />
-<meta property="og:title" content="⏱ What&#39;s on screen at 1:05 — subtitles" />
-<meta property="og:description" content="Freeze the film at t = 65 s (1:05) and read the line whose [su:start, su:end] interval covers that instant — in six languages side by side. Runs live in your browser over subtitles (14.4 K triples · 187 KB) — no server." />
+<meta property="og:title" content="⏱ What&#39;s on screen at 1:02 — subtitles" />
+<meta property="og:description" content="Answer: 6 rows in 19.0 s. Freeze the film at t = 62 s (1:02) and read the line whose [su:start, su:end] interval covers that instant — &quot;This is pretty freaky.&quot;, in six… Runs live in your browser over subtitles (14.4 K triples · 195 KB) — no server." />
 <meta property="og:url" content="https://caviri.github.io/rete/q/subtitles-3.html" />
 <meta property="og:image" content="https://caviri.github.io/rete/og/q/subtitles-3.png" />
 <meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="⏱ What&#39;s on screen at 1:05 — subtitles" />
+<meta property="og:image:alt" content="⏱ What&#39;s on screen at 1:02 — subtitles" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="⏱ What&#39;s on screen at 1:05 — subtitles" />
-<meta name="twitter:description" content="Freeze the film at t = 65 s (1:05) and read the line whose [su:start, su:end] interval covers that instant — in six languages side by side. Runs live in your browser over subtitles (14.4 K triples · 187 KB) — no server." />
+<meta name="twitter:title" content="⏱ What&#39;s on screen at 1:02 — subtitles" />
+<meta name="twitter:description" content="Answer: 6 rows in 19.0 s. Freeze the film at t = 62 s (1:02) and read the line whose [su:start, su:end] interval covers that instant — &quot;This is pretty freaky.&quot;, in six… Runs live in your browser over subtitles (14.4 K triples · 195 KB) — no server." />
 <meta name="twitter:image" content="https://caviri.github.io/rete/og/q/subtitles-3.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"⏱ What's on screen at 1:05","description":"Freeze the film at t = 65 s (1:05) and read the line whose [su:start, su:end] interval covers that instant — in six languages side by side. Runs live in your browser over subtitles (14.4 K triples · 187 KB) — no server.","url":"https://caviri.github.io/rete/q/subtitles-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"subtitles","url":"https://caviri.github.io/rete/d/subtitles.html"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"⏱ What's on screen at 1:02","description":"Answer: 6 rows in 19.0 s. Freeze the film at t = 62 s (1:02) and read the line whose [su:start, su:end] interval covers that instant — \"This is pretty freaky.\", in six… Runs live in your browser over subtitles (14.4 K triples · 195 KB) — no server.","url":"https://caviri.github.io/rete/q/subtitles-3.html","isPartOf":{"@type":"WebSite","name":"rete","url":"https://caviri.github.io/rete/"},"about":{"@type":"Dataset","name":"subtitles","url":"https://caviri.github.io/rete/d/subtitles.html"}}</script>
 <link rel="stylesheet" href="../preview.css" />
 <script>
 (function(){
@@ -48,17 +48,14 @@
       <div class="brand"><b>rete</b><span>playground</span></div>
       <div class="chip">Over time</div>
     </div>
-    <h1 class="title s1">⏱ What&#39;s on screen at 1:05</h1>
-    <div class="body"><div class="left"><div class="panel"><pre class="peek"><span class="kw">SELECT</span> <span class="v">?language</span> <span class="v">?text</span> <span class="kw">WHERE</span> {
-  <span class="v">?line</span> a su:Line ; su:start <span class="v">?s</span> ; su:end <span class="v">?e</span> ; su:text <span class="v">?te</span>…
-  <span class="kw">FILTER</span>(<span class="v">?s</span> &lt;= 65 &amp;&amp; <span class="v">?e</span> &gt;= 65)
-  <span class="kw">BIND</span>(LANG(<span class="v">?text</span>) <span class="kw">AS</span> <span class="v">?language</span>)
-  <span class="kw">FILTER</span>(<span class="v">?language</span> IN (&quot;en&quot;,&quot;es&quot;,&quot;ja&quot;,&quot;ru&quot;,&quot;fa&quot;,&quot;zh-Hans&quot;…
-} <span class="kw">ORDER BY</span> <span class="v">?language</span></pre></div></div><aside class="rail">
+    <h1 class="title s1">⏱ What&#39;s on screen at 1:02</h1>
+    <div class="body"><div class="left"><div class="panel"><table class="mini"><thead><tr><th>Lang</th><th>Subtitle</th></tr></thead><tbody><tr><td class="">en</td><td class="">This is pretty freaky…</td></tr><tr><td class="">es</td><td class="">Esto es bastante raro…</td></tr><tr><td class="">fa</td><td class="">.این خیلی حال بهم زنه…</td></tr><tr><td class="">ja</td><td class="">本当に怖いな @ja</td></tr></tbody></table></div></div><aside class="rail">
       <div class="icon">💬</div>
       <div class="key">subtitles</div>
-      <div class="facts"><b>14.4 K</b> triples · 187 KB<br />remote · HTTP range</div>
-      
+      <div class="facts"><b>14.4 K</b> triples · 195 KB<br />remote · HTTP range</div>
+      <div class="answer"><div class="big">6 rows</div>
+        <div class="sub">11 range requests · 611.0 KB of 190.2 KB read</div>
+        <div class="sub">in 19.0 s</div></div>
     </aside></div>
     <div class="foot">
       <div class="cta"><span class="btn">Run this query →</span>
@@ -68,12 +65,12 @@
   </div></div>
   <div class="actions">
     <a class="go" href="../playground.html#dataset=subtitles&amp;load=lazy&amp;mode=sparql&amp;ex=3">Run this query in the playground →</a>
-    <span class="alt">no server, no download — the query runs in your browser.</span>
+    <span class="alt">6 rows · 19.0 s · 611.0 KB of 190.2 KB read over HTTP range · no server, no download — the query runs in your browser.</span>
   </div>
   <div class="q"><h2>The query</h2>PREFIX su: &lt;https://w3id.org/rete/subtitles#&gt;
 SELECT ?language ?text WHERE {
   ?line a su:Line ; su:start ?s ; su:end ?e ; su:text ?text .
-  FILTER(?s &lt;= 65 &amp;&amp; ?e &gt;= 65)
+  FILTER(?s &lt;= 62 &amp;&amp; ?e &gt;= 62)
   BIND(LANG(?text) AS ?language)
   FILTER(?language IN (&quot;en&quot;,&quot;es&quot;,&quot;ja&quot;,&quot;ru&quot;,&quot;fa&quot;,&quot;zh-Hans&quot;))
 } ORDER BY ?language</div>

@@ -39,9 +39,9 @@ fresh render (the **"Docs HTML in sync"** step): if you edit a `.md`, re-run
 `docgen` and commit the regenerated `.html` — ideally as its own commit
 (`docs: regenerate HTML`). Don't hand-edit the `.html`.
 
-A few nav entries (e.g. `playground.html`, `explore-100mb.html`) are *not*
-rendered by docgen — they are pre-built pages with inlined WASM (next section)
-and docgen only links to them.
+A few nav entries (e.g. `playground.html`, `yasgui.html`, `atlas-app.html`) are
+*not* rendered by docgen — they are pre-built pages with inlined WASM (next
+section) and docgen only links to them.
 
 A nav entry whose `.md` is missing is skipped *and* dropped from the sidebar, so
 listing a page in `SECTIONS` before committing it cannot leave 50 rendered pages
@@ -68,16 +68,54 @@ generated — don't hand-edit it.
 
 ### Playground / explorer pages — inlined WASM
 
-`docs/playground.html` and the explorer pages are built by
-`scripts/build_playground.py`, which inlines the compiled WASM engine:
+`docs/playground.html` and the explorer pages inline the compiled WASM engine.
+Because the blob is large and the build is not part of the Rust workspace, these
+pages are committed rather than produced in CI. Regenerate the whole set —
+engine, pages, `docs/engine/`, `docs/wasm-build.json` — with the one producer:
 
 ```sh
-uv run python scripts/build_playground.py
+docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
 ```
 
-Because the WASM blob is large and the build is not part of the Rust workspace,
-these pages are committed rather than produced in CI. Treat them like the doc
-HTML: regenerate with the script and commit on their own, never by hand.
+CI's `wasm` job reruns that same script and **byte-diffs** its tracked output, so
+the artifacts you commit have to be what it produces. Two ways that used to fail
+for reasons other than staleness are now handled by the script itself, and it is
+worth knowing they exist:
+
+* it builds the wasm in a **dedicated `CARGO_TARGET_DIR`** (`…/wasm32`,
+  `…/wasm32-asyncify`), never the one your `cargo test` run used — a wasm binary
+  built in a shared target dir was once observed to come out the same size with a
+  handful of differing bytes (`scripts/wasm_target_dir.sh` has the details,
+  including what did and did not reproduce);
+* it defaults **`RETE_BUILD_STAMP`** to the `[workspace.package]` version, the
+  string CI stamps into the page. Set it by hand only for a release.
+
+When the byte diff does go red, CI runs `python3 -P scripts/wasm_parity_triage.py`
+on the result: it reports whether the artifacts are genuinely stale, mis-stamped,
+or merely moved, and what to run. Use it locally the same way.
+
+Treat the output like the doc HTML: regenerate with the script and commit on its
+own, never by hand.
+
+## The regression gate
+
+```sh
+bash tests/gate/gate.sh          # full matrix — green before you commit
+bash tests/gate/gate.sh fast     # static + node engine harness
+```
+
+Details in `tests/gate/README.md`. Two notes for a fresh clone, because both are
+gitignored build output rather than repository content:
+
+- `web/pkg*` (the compiled engine) is not in the clone. `gate.sh` checks for it
+  first and stops with the command that builds it, so a missing engine does not
+  arrive disguised as two failing G0 checks.
+- The `.rete` fixtures are **built, never downloaded**, by the one producer
+  `tests/gate/fixtures.sh` — shared by `gate.sh`, `scripts/build_wasm.sh` and CI.
+  `tests/gate/fixtures/manifest.json` holds each fixture's recipe *and* the
+  properties its checks rely on, and the producer verifies the result against
+  them, so a wrong fixture fails naming itself instead of reddening an unrelated
+  check.
 
 ## Commit hygiene
 

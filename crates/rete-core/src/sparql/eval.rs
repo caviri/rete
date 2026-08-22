@@ -402,7 +402,7 @@ pub(super) fn ask_solution(rete: &Rete, sel: &Select) -> bool {
     // ASK pulls exactly one solution â€” let joins probe instead of scan.
     ctx.limit_hint.set(Some(1));
     let mut merged = None;
-    let active = active_index(rete, &sel.from, &mut merged);
+    let active = active_index(rete, sel, &mut merged);
     plan_exists(&ctx, active, sel.from_named.as_deref(), &sel.plan)
 }
 
@@ -430,9 +430,12 @@ pub(super) fn raw_solutions<'a>(rete: &'a Rete, sel: &Select) -> (Ctx<'a>, Vec<R
 }
 
 fn raw_solutions_in(ctx: &Ctx, sel: &Select) -> Vec<Row> {
+    // Everything below collects/aggregates the plan iterator to exhaustion
+    // (CONSTRUCT/DESCRIBE, grouped ASK) — lazy walks may fetch in bulk.
+    ctx.exhaustive.set(true);
     // The active default graph: `FROM` makes it the union of named graphs.
     let mut merged = None;
-    let active = active_index(ctx.rete, &sel.from, &mut merged);
+    let active = active_index(ctx.rete, sel, &mut merged);
     let nf = sel.from_named.as_deref();
 
     let mut raw = match &sel.group {
@@ -473,19 +476,39 @@ fn apply_extends_row(ctx: &Ctx, row: &mut Row, extends: &[(String, FExpr)]) {
 /// whole-graph materialization: an OOM at billion-triple scale). Only a
 /// multi-graph `FROM` still merges triples into a temporary index, which
 /// `merged` keeps alive for the borrow.
+///
+/// The opt-in union-default-graph mode ([`Select::union_default`]) applies only
+/// when the query brings no `FROM` of its own: the active default graph becomes
+/// the RDF merge of the file's default graph and every named graph. The common
+/// converted-file shape — empty default graph, exactly one named graph — stays
+/// a zero-copy borrow of that graph's index.
 fn active_index<'a>(
     rete: &'a Rete,
-    from: &[String],
+    sel: &Select,
     merged: &'a mut Option<GraphIndex>,
 ) -> &'a GraphIndex {
-    match from {
+    match &sel.from[..] {
+        [] if sel.union_default => {
+            let names = rete.graph_names();
+            if names.is_empty() {
+                return rete.default_index(); // no named graphs — union is the default graph
+            }
+            // Emptiness read off the SPO tile *directory* (already resident on
+            // a lazy open) — no tile fetch, no materialization.
+            if names.len() == 1 && rete.default_index().tile_sections()[0].is_empty() {
+                if let Some(gi) = rete.graph_index(names[0]) {
+                    return gi;
+                }
+            }
+            &*merged.insert(merge_union_default(rete))
+        }
         [] => rete.default_index(),
         [g] => match rete.graph_index(g) {
             Some(gi) => gi,
             // A missing graph contributes nothing: an empty merge.
-            None => &*merged.insert(merge_graphs(rete, from)),
+            None => &*merged.insert(merge_graphs(rete, &sel.from)),
         },
-        _ => &*merged.insert(merge_graphs(rete, from)),
+        _ => &*merged.insert(merge_graphs(rete, &sel.from)),
     }
 }
 
@@ -495,6 +518,26 @@ fn active_index<'a>(
 fn merge_graphs(rete: &Rete, graphs: &[String]) -> GraphIndex {
     let mut b = GraphIndexBuilder::new();
     for g in graphs {
+        if let Some(gi) = rete.graph_index(g) {
+            for t in gi.match_pattern((None, None, None)) {
+                b.push(t);
+            }
+        }
+    }
+    b.build()
+}
+
+/// The union default graph: the RDF merge (set union — the index build dedups)
+/// of the file's default graph and **every** named graph. Unlike `FROM`, the
+/// file's own default graph is included: turning the toggle on must never make
+/// default-graph triples vanish. On a lazily-opened file this materializes each
+/// graph's index, so it is strictly an opt-in.
+fn merge_union_default(rete: &Rete) -> GraphIndex {
+    let mut b = GraphIndexBuilder::new();
+    for t in rete.default_index().match_pattern((None, None, None)) {
+        b.push(t);
+    }
+    for g in rete.graph_names() {
         if let Some(gi) = rete.graph_index(g) {
             for t in gi.match_pattern((None, None, None)) {
                 b.push(t);
@@ -573,8 +616,17 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
         ctx.limit_hint
             .set(sel.limit.map(|l| l.saturating_add(sel.offset)));
     }
+    // The inverse guarantee: the modifier pipeline drains the plan iterator
+    // COMPLETELY when there is no LIMIT, or when the LIMIT sits behind a
+    // blocking stage — aggregation consumes everything, and ORDER BY (top-k
+    // included) must see every row before the slice. NOT implied by
+    // `limit_hint == None`: DISTINCT … LIMIT streams and stops early. Lazy
+    // named-graph walks read in bulk under this flag, so it must never be a
+    // guess.
+    ctx.exhaustive
+        .set(sel.limit.is_none() || sel.group.is_some() || !sel.order.is_empty());
     let mut merged = None;
-    let active = active_index(rete, &sel.from, &mut merged);
+    let active = active_index(rete, sel, &mut merged);
     let nf = sel.from_named.as_deref();
     let source = eval_plan_iter(&ctx, active, nf, &sel.plan);
     finish_select(&ctx, active, sel, source)
@@ -1090,8 +1142,12 @@ pub(crate) fn eval_plan_in(
     plan: &Plan,
 ) -> Vec<Row> {
     let saved = ctx.limit_hint.replace(None);
+    // `collect` IS full consumption — the exhaustive guarantee holds here by
+    // construction, whatever the surrounding query's shape.
+    let saved_exhaustive = ctx.exhaustive.replace(true);
     let rows = eval_plan_iter(ctx, index, named_filter, plan).collect();
     ctx.limit_hint.set(saved);
+    ctx.exhaustive.set(saved_exhaustive);
     rows
 }
 
@@ -1214,24 +1270,39 @@ pub(crate) fn eval_plan_iter<'q>(
             let Some(slot) = ctx.slots.slot(var) else {
                 return Box::new(std::iter::empty());
             };
-            Box::new(
-                ctx.rete
-                    .named_graphs()
-                    .iter()
-                    .filter(move |(name, _)| visible(name))
-                    .flat_map(move |(name, gi)| {
-                        let gval = ctx.resolver.canon_term(name);
-                        eval_plan_iter(ctx, gi, named_filter, inner).filter_map(move |mut sol| {
-                            match &sol[slot] {
-                                Some(existing) if *existing != gval => None,
-                                _ => {
-                                    sol[slot] = Some(gval.clone());
-                                    Some(sol)
-                                }
-                            }
-                        })
-                    }),
-            )
+            // Iterate by index, not over a materialized slice: on a lazy
+            // ranged open the named-graph directory is walked — and each
+            // graph's index decoded — only as this iterator reaches it, so a
+            // LIMITed query stops fetching after its first few graphs. The
+            // IRI is checked against FROM NAMED before the (possibly remote)
+            // index is opened.
+            //
+            // Demand: with `?g` unrestricted (no FROM NAMED) under a consumer
+            // that provably drains the pipeline, this walk WILL visit and
+            // open every graph — declare that, and a lazy open fetches the
+            // section in bulk chunks instead of hundreds of incremental
+            // reads. Read per pull (a Cell): EXISTS sub-evaluations flip the
+            // guarantee mid-iterator.
+            let graphs = (0..ctx.rete.named_graph_count()).filter_map(move |i| {
+                let exhaustive = named_filter.is_none() && ctx.exhaustive.get();
+                let name = ctx.rete.named_graph_name_at_demand(i, exhaustive)?;
+                if !visible(name) {
+                    return None;
+                }
+                ctx.rete.named_graph_at_demand(i, exhaustive)
+            });
+            Box::new(graphs.flat_map(move |(name, gi)| {
+                let gval = ctx.resolver.canon_term(name);
+                eval_plan_iter(ctx, gi, named_filter, inner).filter_map(move |mut sol| {
+                    match &sol[slot] {
+                        Some(existing) if *existing != gval => None,
+                        _ => {
+                            sol[slot] = Some(gval.clone());
+                            Some(sol)
+                        }
+                    }
+                })
+            }))
         }
     }
 }

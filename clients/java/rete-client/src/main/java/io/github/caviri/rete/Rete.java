@@ -1,9 +1,12 @@
 package io.github.caviri.rete;
 
+import com.dylibso.chicory.compiler.InterpreterFallback;
+import com.dylibso.chicory.compiler.MachineFactoryCompiler;
 import com.dylibso.chicory.runtime.ExportFunction;
 import com.dylibso.chicory.runtime.HostFunction;
 import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
+import com.dylibso.chicory.runtime.Machine;
 import com.dylibso.chicory.runtime.Memory;
 import com.dylibso.chicory.runtime.WasmFunctionHandle;
 import com.dylibso.chicory.wasm.Parser;
@@ -14,14 +17,21 @@ import com.dylibso.chicory.wasm.types.ValType;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.lang.System.Logger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 /**
  * A pure-Java client for the <a href="https://caviri.github.io/rete/">rete</a>
@@ -44,31 +54,120 @@ import java.util.concurrent.atomic.AtomicLong;
  * }
  * }</pre>
  *
- * <p><b>Remote (lazy) querying:</b> {@link #openRemote(URI)} opens a {@code
- * .rete} over HTTP and answers queries by fetching only the byte ranges each
- * query touches (via HTTP {@code Range} requests) — the file is never fully
- * downloaded. The engine's range reads are satisfied by a host function this
- * client supplies; because a JVM host call is synchronous, no Asyncify is
- * needed (unlike the browser).
+ * <p><b>Lazy (range-read) querying — the way to open anything large.</b> The
+ * {@code byte[]} entry points above copy the whole image into wasm32 linear
+ * memory on every call, which is a hard wall around 700&nbsp;MB regardless of
+ * {@code -Xmx}: the address space, not the heap, runs out. {@link #openFile(Path)}
+ * and {@link #openRemote(URI)} instead open the file <em>by range</em> — the
+ * engine asks the host for the byte ranges a query actually touches and the
+ * image never enters linear memory at all:
  *
  * <pre>{@code
+ * try (Rete rete = Rete.openFile(Path.of("/data/cordis.rete"))) {   // 764 MB, or 52 GB
+ *     String json = rete.query("SELECT * WHERE { ?s ?p ?o } LIMIT 10");
+ *     System.out.println(rete.bytesRead() + " bytes read");
+ * }
  * try (Rete rete = Rete.openRemote(URI.create("https://data.example.org/x.rete"))) {
- *     String json = rete.queryRemote("SELECT * WHERE { ?s ?p ?o } LIMIT 10");
- *     System.out.println(rete.bytesFetched() + " bytes fetched");
+ *     String json = rete.query("SELECT * WHERE { ?s ?p ?o } LIMIT 10");
+ * }
+ * }</pre>
+ *
+ * <p>Both are the <em>same</em> reader: the engine's range reads are satisfied
+ * by one host function this client supplies, and only its bottom transport
+ * differs — an HTTP {@code Range} request or a {@link FileChannel} positional
+ * read. (Because a JVM host call is synchronous, no Asyncify is needed, unlike
+ * the browser.) The no-argument {@link #info()}, {@link #query(String)},
+ * {@link #graphs()}, {@code scanInGraph} and {@code scanQuads} methods work on
+ * either; the {@code …Remote} spellings are kept as aliases.
+ *
+ * <p><b>Streaming a scan.</b> The list-returning {@link #scanQuads(String,
+ * String, String)} makes the engine build the <em>whole</em> result inside wasm
+ * before returning, which for an unconstrained {@code (null, null, null)} is the
+ * same wall in a different place. {@link #scanCursor(String, String, String)}
+ * returns a {@link QuadCursor} that pulls bounded batches instead, so
+ * time-to-first-row and peak memory are set by the batch rather than by the
+ * graph:
+ *
+ * <pre>{@code
+ * try (Rete rete = Rete.openFile(Path.of("/data/cordis.rete"));
+ *      QuadCursor rows = rete.scanCursor(null, null, null)) {
+ *     while (rows.hasNext()) {
+ *         String[] quad = rows.next();   // {s, p, o, graph}
+ *     }
  * }
  * }</pre>
  *
  * <p><b>Thread-safety:</b> a {@code Rete} instance owns a single wasm linear
  * memory and is <em>not</em> thread-safe. Use one instance per thread (loading
- * is cheap), or guard calls with your own lock.
+ * is cheap after the first one — see below), or guard calls with your own lock.
+ *
+ * <p><b>Execution mode.</b> By default the engine is <em>compiled</em>: Chicory
+ * translates the wasm module to JVM bytecode once per JVM, and the HotSpot JIT
+ * takes it from there. That costs a one-off compile at the first {@link #load()}
+ * / {@link #openRemote(URI)} (roughly a second, paid once and shared by every
+ * later instance) and makes query work several times faster than Chicory's
+ * interpreter. Set the system property {@code rete.chicory.interpreter=true} to
+ * force the interpreter instead — appropriate for a very short-lived process
+ * that does one tiny query, or for a runtime that forbids defining classes at
+ * execution time (GraalVM {@code native-image}, Android). If the compiler is
+ * absent or refuses to run, the client logs a warning and falls back to the
+ * interpreter by itself; it never fails to load because of it.
  */
 public final class Rete implements AutoCloseable {
 
     /** Classpath location of the bundled wasm engine (placed there at build time). */
     private static final String WASM_RESOURCE = "/io/github/caviri/rete/rete_ffi.wasm";
 
+    /** Set to {@code true} to run the engine on Chicory's interpreter. */
+    public static final String INTERPRETER_PROPERTY = "rete.chicory.interpreter";
+
+    /**
+     * Rows a {@link QuadCursor} pulls per wasm call (default
+     * {@value #DEFAULT_SCAN_BATCH}). Read when a cursor is opened.
+     *
+     * <p>This is the <b>ceiling</b>: a cursor opens smaller and doubles up to it
+     * (see {@link QuadCursor}), so the number below is what a long drain settles
+     * at, not what the first row costs.
+     *
+     * <p>A straight trade: smaller batches cross the wasm boundary more often,
+     * larger ones hold more rows at once. The default is the knee of the measured
+     * curve, not a guess — draining all 2,701,457 quads of {@code mirbase.rete},
+     * median of three fresh JVMs at each fixed size:
+     *
+     * <pre>
+     *   batch      64   128   256   512  2048  8192      (rows per wasm call)
+     *   drain    13.5  14.0  13.3  13.0  12.2  12.2  s
+     * </pre>
+     *
+     * Throughput is flat at and above 2048 and degrades by 6–15% below it, where
+     * the per-call cost stops being amortized. 2048 is therefore the smallest
+     * ceiling that still reaches full drain throughput; the ramp takes care of
+     * the latency end.
+     */
+    public static final String SCAN_BATCH_PROPERTY = "rete.scan.batch";
+
+    private static final int DEFAULT_SCAN_BATCH = 2048;
+
     /** Result-buffer status codes, matching {@code ffi/src/lib.rs}. */
     private static final int STATUS_OK = 0;
+
+    private static final Logger LOG = System.getLogger(Rete.class.getName());
+
+    /**
+     * The parsed engine module. Immutable and reusable: {@code Instance.Builder}
+     * copies every mutable section out of it, so one parse serves every instance
+     * (an RDF4J {@code Sail} opens one per connection).
+     */
+    private static WasmModule cachedModule;
+
+    /**
+     * The compiled machine factory for {@link #cachedModule}, or {@code null}
+     * when running interpreted. {@code null} is a valid resolved value, hence
+     * the separate {@link #machineFactoryResolved} flag.
+     */
+    private static Function<Instance, Machine> cachedMachineFactory;
+
+    private static boolean machineFactoryResolved;
 
     private final Instance instance;
     private final Memory memory;
@@ -83,16 +182,37 @@ public final class Rete implements AutoCloseable {
     private final ExportFunction graphsFn;
     private final ExportFunction scanInGraphFn;
     private final ExportFunction scanQuadsFn;
-    private final ExportFunction remoteOpenFn;
+    private final ExportFunction rangedOpenFn;
     private final ExportFunction handleCloseFn;
     private final ExportFunction handleInfoFn;
     private final ExportFunction handleQueryFn;
     private final ExportFunction handleGraphsFn;
     private final ExportFunction handleScanInGraphFn;
     private final ExportFunction handleScanQuadsFn;
+    private final ExportFunction handleScanOpenFn;
+    private final ExportFunction handleScanNextFn;
+    private final ExportFunction handleScanCloseFn;
+    private final ExportFunction openCursorsFn;
 
-    /** Resident remote handle id, or -1 when this instance is local. */
-    private int remoteHandle = -1;
+    /**
+     * Ids of scan cursors whose Java {@link QuadCursor} was garbage-collected
+     * without {@code close()}. The cleaner thread only enqueues here; the ids are
+     * released on the owning thread by {@link #reapAbandonedCursors()}, because
+     * this instance owns one wasm memory and calling into it from another thread
+     * is not safe.
+     */
+    private final ConcurrentLinkedQueue<Integer> abandonedCursors = new ConcurrentLinkedQueue<>();
+
+    /** Streaming accounting; see {@link #rowsStreamed()}. */
+    private long rowsStreamed;
+
+    private long batchCalls;
+
+    /**
+     * Resident ranged-handle id, or -1 when this instance has no open file
+     * (i.e. it was created by {@link #load()} for {@code byte[]} querying).
+     */
+    private int handle = -1;
 
     private Rete(Instance instance, RangeFetcher fetcher) {
         this.instance = instance;
@@ -108,79 +228,176 @@ public final class Rete implements AutoCloseable {
         this.graphsFn = instance.export("rete_graphs");
         this.scanInGraphFn = instance.export("rete_scan_in_graph");
         this.scanQuadsFn = instance.export("rete_scan_quads");
-        this.remoteOpenFn = instance.export("rete_remote_open");
+        this.rangedOpenFn = instance.export("rete_ranged_open");
         this.handleCloseFn = instance.export("rete_handle_close");
         this.handleInfoFn = instance.export("rete_handle_info");
         this.handleQueryFn = instance.export("rete_handle_query");
         this.handleGraphsFn = instance.export("rete_handle_graphs");
         this.handleScanInGraphFn = instance.export("rete_handle_scan_in_graph");
         this.handleScanQuadsFn = instance.export("rete_handle_scan_quads");
+        this.handleScanOpenFn = instance.export("rete_handle_scan_open");
+        this.handleScanNextFn = instance.export("rete_handle_scan_next");
+        this.handleScanCloseFn = instance.export("rete_handle_scan_close");
+        this.openCursorsFn = instance.export("rete_open_cursors");
     }
 
     /**
      * Load the engine for querying <b>in-memory</b> {@code .rete} images. Cheap
-     * enough to call per thread.
+     * enough to call per thread: the module is parsed and compiled once per JVM
+     * and every later instance reuses that work — only the first call in a JVM
+     * pays it.
      *
      * @throws IllegalStateException if the bundled wasm is missing (the JAR was
      *     built without the engine — see the build instructions in the README)
      */
     public static Rete load() {
-        // The module imports a host range-read function (used only on the remote
-        // path); a local engine supplies a stub that must never be called.
-        return instantiate(RangeFetcher.LOCAL_STUB);
+        // The module imports a host range-read function (used only when a file
+        // is open); a byte[]-only engine supplies a stub that is never called.
+        return instantiate(RangeFetcher.NO_SOURCE);
+    }
+
+    /**
+     * Open a {@code .rete} <b>on disk</b> for lazy, range-read querying: the file
+     * is <em>not</em> read into memory, and each call reads only the byte ranges
+     * it needs through a {@link FileChannel}.
+     *
+     * <p>This is the way to open a file larger than a few hundred megabytes. The
+     * {@code byte[]} entry points ({@link #info(byte[])}, {@link #query(byte[],
+     * String)}, …) copy the whole image into wasm32 linear memory <em>per
+     * call</em>, so they fail on a large file with {@code out of memory} however
+     * much JVM heap is available — the 4&nbsp;GiB wasm address space is what runs
+     * out, and the heap is not involved. Nothing here enters linear memory but
+     * the blocks a query touches.
+     *
+     * <p>The returned instance owns an open file descriptor; {@link #close()}
+     * releases it, so use try-with-resources.
+     *
+     * @throws ReteException if the file cannot be opened or is not a {@code .rete}
+     */
+    public static Rete openFile(Path path) {
+        FileRangeFetcher file = new FileRangeFetcher(path);
+        try {
+            return openRanged(file);
+        } catch (RuntimeException e) {
+            file.close();
+            throw e;
+        }
     }
 
     /**
      * Open a <b>remote</b> {@code .rete} over HTTP for lazy, range-read querying:
-     * the file is not downloaded; each {@link #queryRemote}/{@code *Remote} call
-     * fetches only the byte ranges it needs via HTTP {@code Range} requests.
-     * The resource must support range requests (HTTP 206 / {@code Content-Range}).
+     * the file is not downloaded; each call fetches only the byte ranges it needs
+     * via HTTP {@code Range} requests. The resource must support range requests
+     * (HTTP 206 / {@code Content-Range}).
      *
      * @throws ReteException if the resource cannot be opened
      */
     public static Rete openRemote(URI url) {
-        HttpRangeFetcher remote = new HttpRangeFetcher(url);
-        Rete rete = instantiate(remote);
-        int handle = readLe32(rete.readResult(rete.remoteOpenFn.apply(remote.totalLength())[0]), 0);
-        rete.remoteHandle = handle;
+        return openRanged(new HttpRangeFetcher(url));
+    }
+
+    /**
+     * The one lazy-open path, shared by {@link #openFile} and {@link #openRemote}
+     * — the transport is the only difference between them.
+     */
+    private static Rete openRanged(RangeFetcher source) {
+        Rete rete = instantiate(source);
+        rete.handle = readLe32(rete.readResult(rete.rangedOpenFn.apply(source.length())[0]), 0);
         return rete;
     }
 
-    /** Parse + instantiate the bundled wasm, supplying the host range-read import. */
+    /** Instantiate the bundled wasm, supplying the host range-read import. */
     private static Rete instantiate(RangeFetcher fetcher) {
-        try (InputStream in = Rete.class.getResourceAsStream(WASM_RESOURCE)) {
-            if (in == null) {
-                throw new IllegalStateException(
-                        "bundled rete wasm not found on classpath at " + WASM_RESOURCE
-                                + " — build the wasm engine first (see clients/java/README.md)");
+        WasmModule module = module();
+        // The host side of env.rete_host_read_range(offset:i64, len:i32, dest:i32) -> i32:
+        // fetch the range and copy it into the module's linear memory at `dest`.
+        WasmFunctionHandle readRange =
+                (Instance inst, long... args) -> {
+                    long offset = args[0];
+                    int len = (int) args[1];
+                    int dest = (int) args[2];
+                    byte[] bytes = fetcher.read(offset, len);
+                    inst.memory().write(dest, bytes);
+                    return new long[] {bytes.length};
+                };
+        HostFunction hostRead =
+                new HostFunction(
+                        "env",
+                        "rete_host_read_range",
+                        FunctionType.of(
+                                List.of(ValType.I64, ValType.I32, ValType.I32),
+                                List.of(ValType.I32)),
+                        readRange);
+        Instance.Builder builder =
+                Instance.builder(module)
+                        .withImportValues(ImportValues.builder().addFunction(hostRead).build());
+        Function<Instance, Machine> machineFactory = machineFactory(module);
+        if (machineFactory != null) {
+            builder = builder.withMachineFactory(machineFactory);
+        }
+        return new Rete(builder.build(), fetcher);
+    }
+
+    /** Parse the bundled engine once per JVM; every instance reuses the module. */
+    private static synchronized WasmModule module() {
+        if (cachedModule == null) {
+            try (InputStream in = Rete.class.getResourceAsStream(WASM_RESOURCE)) {
+                if (in == null) {
+                    throw new IllegalStateException(
+                            "bundled rete wasm not found on classpath at " + WASM_RESOURCE
+                                    + " — build the wasm engine first (see clients/java/README.md)");
+                }
+                cachedModule = Parser.parse(in);
+            } catch (IOException e) {
+                throw new UncheckedIOException("failed to read bundled rete wasm", e);
             }
-            WasmModule module = Parser.parse(in);
-            // The host side of env.rete_host_read_range(offset:i64, len:i32, dest:i32) -> i32:
-            // fetch the range and copy it into the module's linear memory at `dest`.
-            WasmFunctionHandle readRange =
-                    (Instance inst, long... args) -> {
-                        long offset = args[0];
-                        int len = (int) args[1];
-                        int dest = (int) args[2];
-                        byte[] bytes = fetcher.read(offset, len);
-                        inst.memory().write(dest, bytes);
-                        return new long[] {bytes.length};
-                    };
-            HostFunction hostRead =
-                    new HostFunction(
-                            "env",
-                            "rete_host_read_range",
-                            FunctionType.of(
-                                    List.of(ValType.I64, ValType.I32, ValType.I32),
-                                    List.of(ValType.I32)),
-                            readRange);
-            Instance instance =
-                    Instance.builder(module)
-                            .withImportValues(ImportValues.builder().addFunction(hostRead).build())
-                            .build();
-            return new Rete(instance, fetcher);
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to read bundled rete wasm", e);
+        }
+        return cachedModule;
+    }
+
+    /**
+     * The single place the execution mode is chosen. Compiles the module to JVM
+     * bytecode once per JVM (the expensive part; the resulting factory is cheap
+     * to apply per instance), or returns {@code null} to run interpreted.
+     */
+    private static synchronized Function<Instance, Machine> machineFactory(WasmModule module) {
+        if (!machineFactoryResolved) {
+            machineFactoryResolved = true;
+            cachedMachineFactory = compile(module);
+        }
+        return cachedMachineFactory;
+    }
+
+    /**
+     * Whether the engine is running compiled. Only meaningful once an instance
+     * has been created (that is when the mode is resolved). Package-private:
+     * the mode is an implementation detail, exposed for the tests that assert
+     * both paths are actually exercised.
+     */
+    static synchronized boolean compiled() {
+        return machineFactoryResolved && cachedMachineFactory != null;
+    }
+
+    private static Function<Instance, Machine> compile(WasmModule module) {
+        if (Boolean.getBoolean(INTERPRETER_PROPERTY)) {
+            return null;
+        }
+        try {
+            return MachineFactoryCompiler.builder(module)
+                    // A wasm feature this compiler cannot emit degrades that one
+                    // function to the interpreter instead of failing the load.
+                    .withInterpreterFallback(InterpreterFallback.WARN)
+                    .compile();
+        } catch (LinkageError | RuntimeException e) {
+            // The compiler was excluded from the classpath, or the runtime
+            // forbids defining classes (GraalVM native-image, Android). The
+            // interpreter still answers every query, just slower.
+            LOG.log(
+                    Logger.Level.WARNING,
+                    "rete: falling back to the Chicory interpreter (queries will be several times"
+                            + " slower); set -D" + INTERPRETER_PROPERTY + "=true to silence this",
+                    e);
+            return null;
         }
     }
 
@@ -451,32 +668,36 @@ public final class Rete implements AutoCloseable {
                 | ((b[i + 3] & 0xFF) << 24);
     }
 
-    // --- remote (lazy) operations -----------------------------------------
+    // --- operations on an open file (lazy, range-read) ---------------------
+    //
+    // These work identically for a file opened with openFile(Path) or
+    // openRemote(URI): they run against the resident handle, and the reader
+    // underneath faults in only the ranges each call touches.
 
-    /** Header summary of the remote {@code .rete} (see {@link #info}). */
-    public String infoRemote() {
-        checkRemote();
-        return new String(readResult(handleInfoFn.apply(remoteHandle)[0]), StandardCharsets.UTF_8);
+    /** Header summary of the open {@code .rete} (see {@link #info(byte[])}). */
+    public String info() {
+        checkOpen();
+        return new String(readResult(handleInfoFn.apply(handle)[0]), StandardCharsets.UTF_8);
     }
 
-    /** SPARQL over the remote {@code .rete} (see {@link #query}); lazy range reads. */
-    public String queryRemote(String sparql) {
-        checkRemote();
+    /** SPARQL over the open {@code .rete} (see {@link #query(byte[], String)}). */
+    public String query(String sparql) {
+        checkOpen();
         byte[] q = sparql.getBytes(StandardCharsets.UTF_8);
         int qPtr = writeInput(q);
         try {
             return new String(
-                    readResult(handleQueryFn.apply(remoteHandle, qPtr, q.length)[0]),
+                    readResult(handleQueryFn.apply(handle, qPtr, q.length)[0]),
                     StandardCharsets.UTF_8);
         } finally {
             free.apply(qPtr, q.length);
         }
     }
 
-    /** Named graphs of the remote {@code .rete} (see {@link #graphs}). */
-    public List<String> graphsRemote() {
-        checkRemote();
-        byte[] payload = readResult(handleGraphsFn.apply(remoteHandle)[0]);
+    /** Named graphs of the open {@code .rete} (see {@link #graphs(byte[])}). */
+    public List<String> graphs() {
+        checkOpen();
+        byte[] payload = readResult(handleGraphsFn.apply(handle)[0]);
         int pos = 0;
         int count = readLe32(payload, pos);
         pos += 4;
@@ -490,9 +711,12 @@ public final class Rete implements AutoCloseable {
         return out;
     }
 
-    /** Graph-scoped triple scan over the remote {@code .rete} (see {@link #scanInGraph}). */
-    public List<String[]> scanInGraphRemote(String graph, String subject, String predicate, String object) {
-        checkRemote();
+    /**
+     * Graph-scoped triple scan over the open {@code .rete} (see
+     * {@link #scanInGraph(byte[], String, String, String, String)}).
+     */
+    public List<String[]> scanInGraph(String graph, String subject, String predicate, String object) {
+        checkOpen();
         byte[] sBytes = subject == null ? null : subject.getBytes(StandardCharsets.UTF_8);
         byte[] pBytes = predicate == null ? null : predicate.getBytes(StandardCharsets.UTF_8);
         byte[] oBytes = object == null ? null : object.getBytes(StandardCharsets.UTF_8);
@@ -504,7 +728,7 @@ public final class Rete implements AutoCloseable {
         try {
             long resultPtr =
                     handleScanInGraphFn.apply(
-                            remoteHandle,
+                            handle,
                             sPtr, len(sBytes),
                             pPtr, len(pBytes),
                             oPtr, len(oBytes),
@@ -518,9 +742,12 @@ public final class Rete implements AutoCloseable {
         }
     }
 
-    /** All-graphs quad scan over the remote {@code .rete} (see {@link #scanQuads}). */
-    public List<String[]> scanQuadsRemote(String subject, String predicate, String object) {
-        checkRemote();
+    /**
+     * All-graphs quad scan over the open {@code .rete} (see
+     * {@link #scanQuads(byte[], String, String, String)}).
+     */
+    public List<String[]> scanQuads(String subject, String predicate, String object) {
+        checkOpen();
         byte[] sBytes = subject == null ? null : subject.getBytes(StandardCharsets.UTF_8);
         byte[] pBytes = predicate == null ? null : predicate.getBytes(StandardCharsets.UTF_8);
         byte[] oBytes = object == null ? null : object.getBytes(StandardCharsets.UTF_8);
@@ -530,7 +757,7 @@ public final class Rete implements AutoCloseable {
         try {
             long resultPtr =
                     handleScanQuadsFn.apply(
-                            remoteHandle,
+                            handle,
                             sPtr, len(sBytes),
                             pPtr, len(pBytes),
                             oPtr, len(oBytes))[0];
@@ -542,28 +769,230 @@ public final class Rete implements AutoCloseable {
         }
     }
 
-    /** Total bytes fetched over HTTP so far (0 for a local engine). */
-    public long bytesFetched() {
+    // --- streaming scans over an open file ---------------------------------
+
+    /**
+     * Open a <b>streaming</b> scan of a triple pattern across the default graph
+     * <em>and</em> every named graph — the cursor form of
+     * {@link #scanQuads(String, String, String)}.
+     *
+     * <p>Use this whenever the pattern is not narrow. {@code scanQuads} makes the
+     * engine build the complete result inside wasm32 linear memory before the
+     * first row is returned, so an unconstrained {@code (null, null, null)} over
+     * a large graph exhausts the 4&nbsp;GiB address space however much JVM heap
+     * there is. A cursor pulls {@value #DEFAULT_SCAN_BATCH} rows per wasm call
+     * (override with the {@link #SCAN_BATCH_PROPERTY} system property), so
+     * time-to-first-row and peak memory are bounded by the batch rather than by
+     * the graph.
+     *
+     * <p>Each row is {@code {subject, predicate, object, graph}} in N-Triples
+     * syntax, with a {@code null} graph for the default graph. Close it — see
+     * {@link QuadCursor}.
+     *
+     * @throws IllegalStateException if no {@code .rete} is open on this engine
+     */
+    public QuadCursor scanCursor(String subject, String predicate, String object) {
+        return openCursor(null, subject, predicate, object, true);
+    }
+
+    /**
+     * A {@link #scanCursor} scoped to one graph: {@code graph == null} is the
+     * default graph, a non-null {@code graph} is a named graph as an N-Triples
+     * term (as returned by {@link #graphs()}). The cursor form of
+     * {@link #scanInGraph(String, String, String, String)}; every row carries the
+     * graph asked for.
+     */
+    public QuadCursor scanCursorInGraph(
+            String graph, String subject, String predicate, String object) {
+        return openCursor(graph, subject, predicate, object, false);
+    }
+
+    private QuadCursor openCursor(
+            String graph, String subject, String predicate, String object, boolean allGraphs) {
+        checkOpen();
+        // Piggy-back the reap on any cursor open: a long-lived Sail that never
+        // closes anything still cannot accumulate engine-side cursors.
+        reapAbandonedCursors();
+        byte[] sBytes = subject == null ? null : subject.getBytes(StandardCharsets.UTF_8);
+        byte[] pBytes = predicate == null ? null : predicate.getBytes(StandardCharsets.UTF_8);
+        byte[] oBytes = object == null ? null : object.getBytes(StandardCharsets.UTF_8);
+        byte[] gBytes = graph == null ? null : graph.getBytes(StandardCharsets.UTF_8);
+        int sPtr = sBytes == null ? 0 : writeInput(sBytes);
+        int pPtr = pBytes == null ? 0 : writeInput(pBytes);
+        int oPtr = oBytes == null ? 0 : writeInput(oBytes);
+        int gPtr = gBytes == null ? 0 : writeInput(gBytes);
+        try {
+            long resultPtr =
+                    handleScanOpenFn.apply(
+                            handle,
+                            sPtr, len(sBytes),
+                            pPtr, len(pBytes),
+                            oPtr, len(oBytes),
+                            gPtr, len(gBytes),
+                            allGraphs ? 1 : 0)[0];
+            int cursorId = readLe32(readResult(resultPtr), 0);
+            return new QuadCursor(this, cursorId, scanBatchSize(), abandonedCursors);
+        } finally {
+            freeIf(sPtr, sBytes);
+            freeIf(pPtr, pBytes);
+            freeIf(oPtr, oBytes);
+            freeIf(gPtr, gBytes);
+        }
+    }
+
+    /** One batch of a streaming scan: the rows, and whether the scan is finished. */
+    record Batch(List<String[]> rows, boolean done) {}
+
+    /** Pull one batch from an open cursor. Package-private: {@link QuadCursor} drives it. */
+    Batch nextBatch(int cursorId, int maxRows) {
+        batchCalls++;
+        byte[] payload = readResult(handleScanNextFn.apply(cursorId, maxRows)[0]);
+        int count = readLe32(payload, 0);
+        boolean done = readLe32(payload, 4) != 0;
+        int pos = 8;
+        List<String[]> rows = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            String[] quad = new String[4];
+            for (int j = 0; j < 3; j++) {
+                int len = readLe32(payload, pos);
+                pos += 4;
+                quad[j] = new String(payload, pos, len, StandardCharsets.UTF_8);
+                pos += len;
+            }
+            int glen = readLe32(payload, pos);
+            pos += 4;
+            quad[3] = glen == 0 ? null : new String(payload, pos, glen, StandardCharsets.UTF_8);
+            pos += glen;
+            rows.add(quad);
+        }
+        rowsStreamed += count;
+        return new Batch(rows, done);
+    }
+
+    /**
+     * How many rows this engine has produced through streaming cursors, and how
+     * many wasm calls it took. The companion to {@link #bytesRead()}: it is what
+     * shows a scan was answered <em>incrementally</em>. A {@code LIMIT 1} over a
+     * 26-million-quad graph that leaves this at a few thousand streamed; one that
+     * leaves it at 26 million did not.
+     */
+    public long rowsStreamed() {
+        return rowsStreamed;
+    }
+
+    /** Wasm calls made to pull batches — see {@link #rowsStreamed()}. */
+    public long batchCalls() {
+        return batchCalls;
+    }
+
+    /** Release one cursor. Idempotent in the engine; a no-op once the file is closed. */
+    void closeCursor(int cursorId) {
+        if (handle < 0) {
+            return; // closing the handle already dropped every cursor on it
+        }
+        readResult(handleScanCloseFn.apply(cursorId)[0]);
+    }
+
+    /**
+     * Release the cursors whose {@link QuadCursor} was collected without
+     * {@code close()}. Called automatically whenever a cursor is opened and on
+     * {@link #close()}; public so a caller that opens cursors rarely but holds
+     * the engine for a long time can force it.
+     *
+     * @return how many were released
+     */
+    public int reapAbandonedCursors() {
+        int n = 0;
+        Integer id;
+        while ((id = abandonedCursors.poll()) != null) {
+            closeCursor(id);
+            n++;
+        }
+        return n;
+    }
+
+    /**
+     * How many scan cursors this engine currently holds open. Zero is the
+     * invariant a long-lived {@code Sail} depends on; a number that climbs with
+     * the query count is a leak.
+     */
+    public int openCursorCount() {
+        return readLe32(readResult(openCursorsFn.apply()[0]), 0);
+    }
+
+    /** Rows pulled per wasm call by a {@link QuadCursor}; see {@link #SCAN_BATCH_PROPERTY}. */
+    private static int scanBatchSize() {
+        int n = Integer.getInteger(SCAN_BATCH_PROPERTY, DEFAULT_SCAN_BATCH);
+        return n > 0 ? n : DEFAULT_SCAN_BATCH;
+    }
+
+    // The …Remote spellings, from before a local file could be opened this way.
+    // Kept as aliases: they were never HTTP-specific, only HTTP-named.
+
+    /** Alias of {@link #info()}. */
+    public String infoRemote() {
+        return info();
+    }
+
+    /** Alias of {@link #query(String)}. */
+    public String queryRemote(String sparql) {
+        return query(sparql);
+    }
+
+    /** Alias of {@link #graphs()}. */
+    public List<String> graphsRemote() {
+        return graphs();
+    }
+
+    /** Alias of {@link #scanInGraph(String, String, String, String)}. */
+    public List<String[]> scanInGraphRemote(
+            String graph, String subject, String predicate, String object) {
+        return scanInGraph(graph, subject, predicate, object);
+    }
+
+    /** Alias of {@link #scanQuads(String, String, String)}. */
+    public List<String[]> scanQuadsRemote(String subject, String predicate, String object) {
+        return scanQuads(subject, predicate, object);
+    }
+
+    /**
+     * Bytes read from the backing file so far — over HTTP for
+     * {@link #openRemote}, from disk for {@link #openFile}. Zero for an engine
+     * created by {@link #load()}, which has no backing file.
+     */
+    public long bytesRead() {
         return fetcher.bytesFetched();
     }
 
-    private void checkRemote() {
-        if (remoteHandle < 0) {
-            throw new IllegalStateException("not a remote engine — use Rete.openRemote(uri)");
+    /** Alias of {@link #bytesRead()}. */
+    public long bytesFetched() {
+        return bytesRead();
+    }
+
+    private void checkOpen() {
+        if (handle < 0) {
+            throw new IllegalStateException(
+                    "no .rete is open on this engine — use Rete.openFile(path) or"
+                            + " Rete.openRemote(uri)");
         }
     }
 
     /**
-     * Releases the resident remote handle (if any). Chicory instances are plain
-     * heap objects reclaimed by the GC, so a local engine has nothing to release;
-     * {@code close()} still lets callers use try-with-resources uniformly.
+     * Releases the resident handle and the backing file descriptor (if any).
+     * Chicory instances are plain heap objects reclaimed by the GC, so an engine
+     * from {@link #load()} has nothing to release; {@code close()} still lets
+     * callers use try-with-resources uniformly.
      */
     @Override
     public void close() {
-        if (remoteHandle >= 0) {
-            handleCloseFn.apply(remoteHandle);
-            remoteHandle = -1;
+        if (handle >= 0) {
+            // Dropping the handle drops every scan cursor on it, so a caller who
+            // abandoned one still leaks nothing past the file's own lifetime.
+            handleCloseFn.apply(handle);
+            handle = -1;
         }
+        abandonedCursors.clear();
+        fetcher.close();
     }
 
     // --- linear-memory plumbing -------------------------------------------
@@ -603,22 +1032,105 @@ public final class Rete implements AutoCloseable {
 
     // --- range backend ----------------------------------------------------
 
-    /** Supplies byte ranges of the backing resource to the wasm engine. */
+    /**
+     * Supplies byte ranges of the backing resource to the wasm engine — the one
+     * seam between the engine and where the bytes live. The engine cannot tell
+     * an implementation apart from any other, which is exactly why a local file
+     * needed no new reader on the Rust side: it is the HTTP path with a
+     * different {@link #read} underneath.
+     */
     interface RangeFetcher {
         /** Read exactly {@code len} bytes at {@code offset}. */
         byte[] read(long offset, int len);
 
-        /** Total bytes fetched so far. */
+        /** Total size of the resource, in bytes. */
+        default long length() {
+            return 0L;
+        }
+
+        /** Total bytes read so far. */
         default long bytesFetched() {
             return 0L;
         }
 
-        /** A local engine never fetches ranges; a call here is a bug. */
-        RangeFetcher LOCAL_STUB =
+        /** Release any OS resource held (a socket, a file descriptor). */
+        default void close() {
+            // nothing by default
+        }
+
+        /** An engine with no file open never reads ranges; a call here is a bug. */
+        RangeFetcher NO_SOURCE =
                 (offset, len) -> {
                     throw new IllegalStateException(
-                            "range read attempted on a local Rete (use Rete.openRemote)");
+                            "range read attempted on an engine with no .rete open"
+                                    + " (use Rete.openFile or Rete.openRemote)");
                 };
+    }
+
+    /**
+     * The local transport: one positional {@link FileChannel} read per range.
+     *
+     * <p>Batched like the HTTP one (the engine coalesces and block-aligns ranges
+     * before they get here), but with no round trip to pay for — the only real
+     * cost is the copy of what was asked for. {@code FileChannel.read(ByteBuffer,
+     * long)} is positional, so it neither moves nor shares a file position and is
+     * safe if the engine is ever driven from more than one thread.
+     */
+    private static final class FileRangeFetcher implements RangeFetcher {
+        private final Path path;
+        private final FileChannel channel;
+        private final long total;
+        private final AtomicLong read = new AtomicLong();
+
+        FileRangeFetcher(Path path) {
+            this.path = path;
+            try {
+                this.channel = FileChannel.open(path, StandardOpenOption.READ);
+                this.total = channel.size();
+            } catch (IOException e) {
+                throw new ReteException("cannot open " + path + ": " + e);
+            }
+        }
+
+        @Override
+        public long length() {
+            return total;
+        }
+
+        @Override
+        public long bytesFetched() {
+            return read.get();
+        }
+
+        @Override
+        public byte[] read(long offset, int len) {
+            ByteBuffer buf = ByteBuffer.allocate(len);
+            long pos = offset;
+            try {
+                while (buf.hasRemaining()) {
+                    int n = channel.read(buf, pos);
+                    if (n < 0) {
+                        throw new ReteException(
+                                "short read at offset " + offset + " of " + path + ": wanted "
+                                        + len + ", got " + buf.position());
+                    }
+                    pos += n;
+                }
+            } catch (IOException e) {
+                throw new ReteException("range read failed on " + path + ": " + e);
+            }
+            read.addAndGet(len);
+            return buf.array();
+        }
+
+        @Override
+        public void close() {
+            try {
+                channel.close();
+            } catch (IOException e) {
+                throw new UncheckedIOException("closing " + path, e);
+            }
+        }
     }
 
     /** An HTTP {@code Range}-request fetcher; also counts the bytes it fetches. */
@@ -634,7 +1146,8 @@ public final class Rete implements AutoCloseable {
             this.total = probeLength();
         }
 
-        long totalLength() {
+        @Override
+        public long length() {
             return total;
         }
 

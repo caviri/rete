@@ -13,6 +13,43 @@ a **1 GB Wikidata slice**) stay on their URL and are **range-read lazily**: a
 query fetches only the byte ranges it touches, and a counter shows exactly how
 few bytes crossed the wire.
 
+## What it looks like
+
+Five views of the same page. Every one is a live query against a file that stays
+on its URL — the links reproduce each shot.
+
+[![The playground querying opencitations.rete: a ten-line SPARQL SELECT that pins a journal by title and walks oc:partOf to its papers, a counter reading 25 row(s), 161 range req, 189.4 MB of 33.39 GB fetched, and a results table of DOIs, titles and years.](img/playground-sparql.png)](playground.html#dataset=opencitations&load=lazy&ex=2)
+
+**SPARQL against 5.18 billion triples.** `opencitations.rete` is one 33.4 GB file
+on object storage; 25 rows cost **161 range requests and 189 MB**, opening the
+file included. The rest is never transferred.
+
+[![The playground querying plantatlas.rete: a results table whose third column renders each specimen's WebP photograph inline, captioned 'WEBP · 1448×1024', with the counter reading 40 row(s), 1 range req, 256.0 KB of 9.8 MB fetched, 157 ms.](img/playground-media.png)](playground.html#dataset=plantatlas&load=lazy&ex=0)
+
+**The pictures are in the graph.** Those photographs are `xsd:base64Binary` WebP
+literals stored inside the `.rete` and rendered into the cell — 40 rows and
+their pictures for **one range request and 256 KB**. IIIF, PDF, audio, video and
+`.glb` cells work the same way; see
+[Media & SQL companions](media-companions.md).
+
+[![The Dataset Card modal over davidrumsey.rete: title, licence CC BY-NC-SA 3.0, source link, stat tiles reading 5,001,984 triples and 1,906,259 terms, expandable vocabulary/predicate/class sections, and a footer reading '58.5 KB, read in one header + one coalesced range'.](img/playground-card.png)](playground.html#dataset=davidrumsey&load=lazy)
+
+**The file describes itself.** The [Dataset Card](dataset-cards.md) is read
+straight off the header — **58.5 KB in one coalesced range request**, index
+untouched. See [🏷 Card](#card) below.
+
+[![The Map output over gbif-birds.rete: 3,000 red sighting dots for the family Accipitridae over Iberia and the western Alps on a pale Carto Light basemap, with a Basemap picker above it.](img/playground-map.png)](playground.html#dataset=gbif-birds&load=lazy&ex=10)
+
+**GeoSPARQL, drawn.** 3,000 raptor sightings out of a 334 M-triple, 1.43 GB GBIF
+graph, put on a basemap — `geo:asWKT` detected in the result. See
+[Output views](#output-views) and [GeoSPARQL](geosparql.md).
+
+[![The Explore view over davidrumsey.rete: chips per rdf:type class (AtlasMap 71311, TextPage 26340, View 15666 …) above an entity table whose columns are creator, date, description, isPartOf and publisher.](img/playground-explore.png)](playground.html#dataset=davidrumsey&load=lazy&mode=explore)
+
+**Browse it like an archive.** [Explore](#beyond-sparql-the-other-modes) turns each `rdf:type` class
+into a table — entities as rows, properties as columns — so an unfamiliar graph
+is navigable before you know a predicate in it.
+
 ## Pick a dataset
 
 The dataset picker groups the catalog by theme (heritage, science, reference,
@@ -42,16 +79,42 @@ the page.
 Next to the source pill, **🏷 Card** opens the [Dataset Card](dataset-cards.md)
 that travels *inside* the `.rete`: title, licence, source, counts, vocabularies,
 predicates and classes with their frequencies, the class-link skeleton, and the
-example queries the builder shipped with the file.
+example queries the builder shipped with the file — plus everything the card's
+curated half carries: **keywords** and **themes** as tags beside the
+description; **version**, **creators**, **publisher**, **DOI**, **canonical
+copy**, **SPARQL endpoint**, **source date** and **derived from** in an
+*Identity & provenance* table; a **citation** with a copy button; and the
+publisher's own **`extra`** fields, shown last and clearly marked as theirs —
+rete carries those values and attaches no meaning to them.
 
-It costs one `HEAD` and **two range requests** — the header, then the metadata
-section it points at. Never the dictionary, the index or the pyramid. That is
-the CARD tier: you learn what a 17 GB graph *is* for a few KB, before deciding
-whether to query it at all.
+An ORCID, ROR or DOI renders as a **link to the identifier**, which is why the
+card asks for an IRI instead of a string. A theme's IRI is not resolved (that
+would be a network read); the viewer names the **concept scheme** it can read
+from the IRI and shows the concept's identifier, rather than inventing a label.
+
+Below the card, its own clearly separated part of the modal, is the **build
+record**: when the file was written, by which `rete`, with which flags, and
+what each starter query was measured to cost — those cost figures shown *with
+the queries they describe*, since that is where you ask. A file that carries no
+build record says so plainly instead of showing blanks.
+
+It costs one `HEAD` and **one header read plus one coalesced range** — the card
+and the build record sit adjacent, so both arrive together. Never the
+dictionary, the index or the pyramid. That is the CARD tier: you learn what a
+17 GB graph *is* for a few KB, before deciding whether to query it at all.
 
 Two views: **Rendered**, and **JSON** — the card's own bytes, syntax-coloured,
-with *Copy* and *Download*. Any example query the card carries has a **Use**
-button that loads it straight into the editor.
+with *Copy* and *Download*. The JSON tab stays the *card* (what
+`rete build --card-file` would take); the build record lives in its own file
+section, outside the content hash, and is shown in the Rendered tab. Any
+example query the card carries has a **Use** button that loads it straight into
+the editor.
+
+The card's queries also feed the **examples panel**: when a loaded file ships
+its own starter queries (auto-derived or curated), they appear alongside the
+catalog's curated examples, labelled as coming from the file's card and
+deduplicated against them. So a `.rete` you open by URL — one that was never
+registered in the catalog — still offers its own first questions.
 
 Not every file has one. A card is written at build time
 (`rete build --card …`); the small bundled demo datasets are built without one,
@@ -77,6 +140,17 @@ you don't know the graph's vocabulary yet:
   toggle on, and nothing with it off. Opt-in and lazy — over a remote dataset it
   fetches only what the rewritten query touches. See
   [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
+- **⛁ All graphs** (right beside 🧠 Reason) mounts the file so a pattern outside
+  `GRAPH` matches the **union of the default graph and every named graph** —
+  the mode Virtuoso, GraphDB and Jena TDB call the union default graph. It
+  exists for files that keep all their data in named graphs (anything built
+  from N-Quads), where `?s ?p ?o` *correctly* answers zero rows; when that
+  happens the playground points at the file's own counts and suggests the
+  toggle. Off by default because it is **not standard SPARQL**; flipping it is
+  announced, and every run under it says so in the result line. Federated runs
+  and live endpoints keep standard semantics, and on a many-graph *remote*
+  file the merge has a real byte cost — details in
+  [Union default graph](sparql.md#union-default-graph).
 - **✨ SPARQL AI** drafts a query from a plain-language request using a small
   language model that runs **locally on your GPU** (WebGPU) — nothing is sent
   to any API. It is grounded in the dataset's example queries, so its drafts
@@ -171,9 +245,58 @@ The mode strip turns the same open file around several ways:
   scan to full materialization (see [Reasoning](reasoning.md)).
 - **Build** — paste or upload RDF (N-Triples / N-Quads / Turtle), build a real
   `.rete` **in the browser**, query it immediately, save it to the browser for
-  next time, or download the file. The full publish path (ontology, card,
-  examples) is in [Media & SQL companions](media-companions.md) and
+  next time, or download the file. Step 3 writes the
+  [Dataset Card](dataset-cards.md) the file will *carry* — see below. The full
+  publish path (companions, hosting) is in
+  [Media & SQL companions](media-companions.md) and
   [Hosting your .rete](hosting.md).
+
+### Writing the card in Build mode {#build}
+
+Step 3 holds **two different documents**, kept apart because they are not the
+same thing:
+
+- the **catalog entry** on the left — *key*, *icon*, *tags*, *provenance*: how
+  the dataset is listed in this playground and in a downloadable manifest. It
+  never enters the file, and the card schema rejects those keys outright.
+- the **Dataset Card** on the right — exactly the document
+  `rete build --card-file` takes, and the one that travels inside the `.rete`.
+
+The JSON editor is the *primary* surface for the card, not a mirror of the
+form. It is the documented interchange format, so it cannot drift from what
+the CLI accepts; and the curated fields include a list of objects (`creators`)
+and a free-form bag (`extra`) that a form would either mangle or forbid. Title,
+licence, source and description also appear on the form — the four a
+first-time author always fills — and *patch* the document rather than replacing
+it, so typing a title never eats the creators you wrote by hand. **All fields**
+inserts a skeleton of every curated field to edit.
+
+Validation is the **engine's**, not a re-statement in the page: the same code
+`rete build --card-file` runs checks what you type, with the same wording. A
+free-text `theme` is refused and pointed at `keywords`
+([where theme IRIs come from](dataset-cards.md#where-to-get-theme-iris)); a
+stray top-level key is pointed at `extra`; the bag's 8 KB / 64 keys / depth-2
+bounds are enforced. So a card you compose here is one the CLI would also
+accept.
+
+What a browser build writes, stated plainly because the difference matters to
+whoever reads the file later: **the curated fields, and the four counts the
+build itself measured**. It does **not** write the derived profile (predicates,
+classes, vocabularies, signals, the tiered starter-query library) or the build
+record. They are absent from the card rather than present-and-empty, and the
+🏷 Card viewer shows that absence for what it is. Rebuild with
+`rete build --card-file` to get them (and compressed sections, which the
+browser cannot write).
+
+The derived half is no longer beyond the engine's reach — the wasm build
+exports `build_with_derived_card`, which computes the whole profile in the
+browser from the same code the CLI runs. This page does not call it yet:
+derivation walks the graph twice more, and spending that on every build without
+asking would be the wrong default for a paste-and-see tool. The build record
+stays CLI-only for a different reason — its cost figures come from *running*
+the starter queries, which is a benchmark, not a build.
+
+Leave the card editor empty and the file carries no card at all.
 
 ## Federation: query several sources as one
 
@@ -203,6 +326,42 @@ as long as its host sends `Accept-Ranges: bytes` and permits cross-origin reads
 (`Access-Control-Allow-Origin`, exposing `Content-Range`). Connecting by hand
 and pressing **Share** produces exactly this form of link.
 
+### What the link carries {#sharing-view-state}
+
+Naming the graph and the query is not enough on its own. Several toolbar
+controls change **what the query returns**, and a link that dropped them would
+hand someone the same text under different semantics — the reader would see
+different results and have no way to tell. So the fragment also carries them,
+and only when they differ from the default (a plain view's link is exactly as
+short as it always was):
+
+| Parameter | Control | Values | Effect |
+| --- | --- | --- | --- |
+| `union` | ⛁ **All graphs** | `1` / `0` (default off) | *answer* — mounts the file as if the default graph were the union of the default graph and every named graph |
+| `reason` | 🧠 **Reason** | `1` / `0` (default off) | *answer* — OWL 2 QL entailment, so subclass/subproperty instances also match |
+| `strategy` | **Strategy** | `whole` (default) · `progressive` · `community` | *answer* — `progressive` answers from the pyramid summary and is **approximate by contract** |
+| `round` | **Round** | an integer | *answer* — which dendrogram round the `community` strategy answers from |
+| `fed` | **SOURCES** | comma-separated catalog keys, e.g. `fed=nomisma,mimotext` | *answer* — extra datasets the query also runs against |
+| `view` | **Output** | `table` (default) · `cards` · `graph` · `map` · `tiles` · `time` · `ttl` · `jsonld` | *presentation* — how the same rows are drawn |
+| `labels` | 🏷 **Labels** | `1` (default on) / `0` | *presentation* — the human-label chips beside IRIs in the editor |
+
+The first five change the **answer**; the last two change only how it is
+**drawn**. That distinction is the design: a presentation parameter that fails
+to apply costs you a nicer rendering, an answer parameter that fails to apply
+makes the link lie. The address bar re-stamps itself as you flip these, so
+copying it by hand gives the same link **Share** does.
+
+Federation is carried **only as catalog keys**. A key is a public entry in the
+shipped catalog, so it is short and the address is re-derived on the other side —
+nothing private can ride along. A source you added by *pasting an address* (a
+`.rete` link or a SPARQL endpoint) is deliberately left out: those are routinely
+intranet hosts, pre-release files, or URLs with a token in them, and a share
+button is not the place to forward one. When a view has such a source, **Share**
+says so instead of quietly handing out a narrower view:
+
+> Link copied ✓ — WITHOUT the added source *staging*: a pasted address is not put
+> into a shareable link, so the recipient queries without it.
+
 A fragment has one limitation: it is never sent to a server, and no link preview executes
 the page's JavaScript. Pasted into a chat, a feed or a search index, every deep
 link would therefore unfurl as the same anonymous "rete playground" card, with
@@ -227,12 +386,21 @@ An ad-hoc query has no such page (there is nothing pre-rendered to preview), so
 editing the SPARQL — or connecting a live endpoint, or building your own graph
 in the page — goes back to sharing the deep link itself, exactly as before.
 
+So does any view carrying one of the parameters above. A preview page forwards to
+a link built from the catalog alone (dataset + load mode + tab + example index),
+which leaves it nowhere to put `union=1`; sharing it would silently drop exactly
+the setting the link exists to reproduce, so **Share** hands out the deep link
+instead.
+
 ## Watching the bytes (and the caches)
 
 For a remote dataset the result line reports what the query physically did —
 `N range requests · M KB fetched · file is X MB` — and **⊞ requests** opens the
-actual byte-range log. Re-running a query reports *"served from cache, 0 new
-bytes"*: reads are cached per session and — on Chromium-family browsers —
+actual byte-range log. Re-running a query reports *"0 new bytes, all served
+from this session's cache"* (with the cache's size — so a long, purely
+CPU-bound run such as a ⛁ All graphs union merge on a warm session reads as
+the cache working, not as a stalled fetch): reads are cached per session and —
+on Chromium-family browsers —
 fetched **concurrently by default** (the engine overlaps each query's
 byte-range requests via Asyncify, no cross-origin isolation needed; see
 [Which browser?](#which-browser) for why other browsers read sequentially).

@@ -1,0 +1,12 @@
+# The graph docs/interop.md claims was round-tripped through Oxigraph in Docker.
+# It was — with CLEAN data. This is the same shape (default graph + one named
+# graph) so the re-run measures the same cycle the page describes; the invalid
+# IRIs are added by repairable.nt, in the other direction of the same test.
+#
+# 3 default + 3 named = 6 quads.
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
+<http://example.org/bob> <http://xmlns.com/foaf/0.1/name> "Bob" .
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob> .
+<http://example.org/alice> <http://example.org/worksAt> <http://example.org/acme> <http://example.org/graph/employment> .
+<http://example.org/bob> <http://example.org/worksAt> <http://example.org/acme> <http://example.org/graph/employment> .
+<http://example.org/acme> <http://xmlns.com/foaf/0.1/name> "ACME" <http://example.org/graph/employment> .

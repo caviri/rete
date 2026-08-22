@@ -149,6 +149,20 @@ check "card json"   '"format_version"'              -- $B card "$T/gc.rete" --js
 check "card json queries" '"queries"'               -- $B card "$T/gc.rete" --json
 check "card json tier"    '"tier"|"sparql"'         -- $B card "$T/gc.rete" --json
 check "card queries" "ov-triples|starter"           -- $B card "$T/gc.rete"
+# The audit, static and measured. `--measure` runs the shipped queries through
+# the same measurement the build used, so the figures it prints must agree with
+# the ones already inside the file ("= build record").
+check "card-audit"  "ov-triples"                    -- $B card-audit "$T/gc.rete"
+check "card-audit measure" "= build record"         -- $B card-audit "$T/gc.rete" --measure
+check "card-audit transport" "measured over: local file" -- $B card-audit "$T/gc.rete" --measure
+check "card-audit only"    "1 query run"            -- $B card-audit "$T/gc.rete" --measure --only ov-triples
+# Writing the costs back keeps the file's identity: same content hash, still
+# verifies, and the costs read back from the CARD tier.
+cp "$T/gc.rete" "$T/gcw.rete"
+$B build "$T/g.nt" -o "$T/gcw.rete" --card --no-card-costs >/dev/null 2>&1
+check "card-audit write" "content hash unchanged" -- bash -c "$B card-audit '$T/gcw.rete' --measure --write-costs --allow-empty 2>&1"
+check "card-audit write verify" "OK|matches"      -- $B verify "$T/gcw.rete"
+check "card-audit write costs"  "query costs"     -- $B card "$T/gcw.rete"
 
 echo "== schema pyramid (semantic zoom) =="
 # A tiny subClassOf hierarchy: Astronomer ⊑ Scientist ⊑ Person, with instances.

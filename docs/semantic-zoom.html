@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Semantic zoom (schema pyramid) · rete docs</title>
   <meta name="description" content="The schema pyramid is built automatically whenever your data carries an rdf:type hierarchy. There is no flag to remember and nothing extra to host — it travels in the file's pyramid section and is…" />
@@ -24,12 +24,18 @@
   <script>
   /* Theme, before first paint (no flash): an explicit localStorage choice
      ("theme" = "light"/"dark", shared with the playground) pins data-theme;
-     otherwise prefers-color-scheme decides. */
+     otherwise prefers-color-scheme decides.
+
+     `js-chrome` is set in the same breath, and it is what lets the narrow
+     layout replace the sidebar with the top/bottom bars and the drawer: with
+     JavaScript off the class never lands, the mobile chrome stays inert, and
+     the reader gets the plain stacked sidebar that has always been there. */
   (function () {
     try {
       var t = localStorage.getItem("theme");
       if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
     } catch (e) {}
+    document.documentElement.className += " js-chrome";
   })();
   </script>
   <style>
@@ -215,6 +221,34 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
 .content figure figcaption { font-size:.8rem; color:var(--muted); margin-top:.45rem; line-height:1.45; }
 .content h2 { clear:right; }
 
+/* Square figures get a narrower column than landscape ones.
+   `.img-sq` / `.fig-sq` are stamped by docgen from the image's MEASURED
+   aspect ratio — the viewBox of an SVG, the IHDR of a PNG — against
+   SQUARE_MAX_RATIO; nothing here is decided by hand. The reason: at the full
+   column a square is as tall as it is wide, so one picture is an 830-950px
+   wall that pushes every word after it under the fold, while a landscape
+   strip (the byte-layout diagrams, the app screenshots) needs that width to
+   stay legible and is left alone.
+   The cap is 60% of the column, clamped at both ends: never above 560px,
+   which is the width every diagram is DRAWN at, so they render at their
+   intended size instead of being enlarged up to 1.75x; and never below
+   340px, so a narrow desktop window — where the column is small but the
+   sidebar still takes its 250px — gets a readable figure rather than a
+   thumbnail.
+   ONLY above the phone breakpoint. The mobile column is 353px at 390px, and
+   60% of that is 212px of unreadable diagram, so a phone keeps every image
+   full-bleed exactly as before — hence min-width:781px, the complement of the
+   780px query the mobile chrome uses. */
+@media (min-width:781px) {
+  .content img.img-sq { display:block; max-width:clamp(340px, 60%, 560px); margin-left:auto; margin-right:auto; }
+  /* Anchors are inline, so a linked image needs a block box to centre in. */
+  .content a:has(> img.img-sq) { display:block; }
+  /* The FIGURE is capped, not its img, so the caption stays the same width as
+     the picture it captions. `fig-right` is excluded: it is already floated at
+     min(42%, 390px), and this would make it wider, not narrower. */
+  .content figure.fig-sq:not(.fig-right) { max-width:clamp(340px, 60%, 560px); }
+}
+
 .content img { cursor:zoom-in; }
 .lightbox { position:fixed; inset:0; z-index:1000; display:none; cursor:zoom-out; background:rgba(19,29,25,.86); padding:3vmin; }
 .lightbox.open { display:flex; align-items:center; justify-content:center; }
@@ -253,15 +287,252 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   .content { padding-top:2rem; }
   .content h1 { font-size:2.15rem; }
   footer { padding-left:1.15rem; padding-right:1.15rem; }
+  /* Wide tables scroll inside their own box from here down, not just below
+     520px: it keeps the PAGE from scrolling sideways on a tablet, and it is
+     what the swipe handler looks for when deciding whether a horizontal drag
+     belongs to the table under the finger or to the page. */
+  .content table { display:block; overflow-x:auto; }
+  /* A single unbreakable token in INLINE code — `CARGO_UNSTABLE_BUILD_STD=std,
+     panic_abort,…`, `dev/perms/{build_bench.sh,…}` — used to push the document
+     wider than the screen, and a phone's answer to that is to zoom the whole
+     page out: BENCHMARK, SPEC, clients-dev and sparql all rendered 20-30%
+     smaller than they should on a 390px phone because of one token. Let those
+     wrap. Code BLOCKS are untouched — they are `width:max-content` inside a
+     scrollable `pre` and never overflow their line box. */
+  .content code { overflow-wrap:break-word; }
+  .content pre code { overflow-wrap:normal; }
 }
 @media (max-width:520px) {
   .sidebar ul { columns:1; }
-  .content table { display:block; overflow-x:auto; }
   .content .term .tip { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; width:auto; max-width:none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior:auto; }
+}
+
+.mbar,.mnav,.mdrawer,.mscrim,.mprog { display:none; }
+
+@media (max-width:780px) {
+  :root { --mbar-h:52px; --mnav-h:56px; }
+
+  /* The sidebar is only retired when the head script has confirmed JavaScript
+     — see the `js-chrome` note there. Without it, nothing below applies and
+     the page keeps the stacked sidebar it has always had. */
+  html.js-chrome .sidebar { display:none; }
+  html.js-chrome body {
+    padding-top:var(--mbar-h);
+    padding-bottom:calc(var(--mnav-h) + env(safe-area-inset-bottom));
+  }
+  html.js-chrome .page {
+    padding-left:max(1.15rem, env(safe-area-inset-left));
+    padding-right:max(1.15rem, env(safe-area-inset-right));
+  }
+  html.js-chrome .content { padding-top:1.4rem; }
+  /* Anchor targets must clear the fixed bar, or every in-page jump lands with
+     its heading hidden underneath it. */
+  html.js-chrome .content h1,
+  html.js-chrome .content h2,
+  html.js-chrome .content h3 { scroll-margin-top:calc(var(--mbar-h) + 12px); }
+  html.drawer-open, html.drawer-open body { overflow:hidden; }
+  /* `hidden` stays the one truth for "closed" — for assistive tech as much
+     as for paint — so it has to outrank the display rules below. */
+  html.js-chrome .mdrawer[hidden],html.js-chrome .mscrim[hidden] { display:none; }
+
+  /* ── reading position ─────────────────────────────────────────────────
+     Two pixels at the very top of the viewport, above the bar in z-order so
+     it survives the bar sliding away. "How much of this is left" is the one
+     piece of state a phone reader cannot see for themselves — the scrollbar
+     that answers it on a desktop does not exist here. */
+  html.js-chrome .mprog {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:901; height:2px;
+    background:transparent; pointer-events:none;
+  }
+  .mprog i { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
+
+  /* ── top bar ──────────────────────────────────────────────────────────
+     Identity (where am I in the site?) plus the two controls worth a
+     permanent tap target. It hides on scroll-down and comes back on
+     scroll-up, so the 52px is only spent when the reader is not reading. */
+  html.js-chrome .mbar {
+    display:flex; position:fixed; inset:0 0 auto 0; z-index:900; height:var(--mbar-h);
+    align-items:center; gap:.3rem;
+    padding-left:max(.3rem, env(safe-area-inset-left));
+    padding-right:max(.3rem, env(safe-area-inset-right));
+    background:var(--side); border-bottom:1px solid var(--border); color:var(--side-fg);
+    transition:transform .18s ease;
+  }
+  html.js-chrome .mbar.up { transform:translateY(-100%); }
+  .mbar-btn {
+    flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+    width:42px; height:42px; padding:0; font:inherit; font-size:1.05rem;
+    color:var(--side-fg); background:transparent; border:0; border-radius:9px; cursor:pointer;
+  }
+  .mbar-btn:active { background:rgba(20,125,105,.14); }
+  .mbar-btn:focus-visible,.mnav a:focus-visible,.mnav button:focus-visible,
+  .mdrawer a:focus-visible,.mdrawer button:focus-visible {
+    outline:2px solid var(--accent); outline-offset:-2px;
+  }
+  .mbar-id { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:center; line-height:1.18; }
+  .mbar-sec {
+    font-size:.66rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mbar-sec a { color:var(--iri); text-decoration:none; font-family:Georgia,"Times New Roman",serif; font-size:1.05em; letter-spacing:0; text-transform:none; }
+  .mbar-title {
+    font-size:.92rem; font-weight:700; color:var(--fg);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  /* ── bottom bar ───────────────────────────────────────────────────────
+     Thumb country. Previous / next carry the neighbour's real title (a bare
+     arrow tells you nothing about whether to press it) and the middle opens
+     the drawer — the same control as the top-left one, put where a thumb
+     already is. These two links are also the accessible equivalent of the
+     swipe: the gesture only ever follows them. */
+  html.js-chrome .mnav {
+    display:grid; position:fixed; inset:auto 0 0 0; z-index:900;
+    grid-template-columns:1fr auto 1fr; align-items:stretch;
+    min-height:var(--mnav-h);
+    padding-bottom:env(safe-area-inset-bottom);
+    padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);
+    background:var(--side); border-top:1px solid var(--border);
+    box-shadow:0 -6px 18px rgba(20,40,33,.06);
+  }
+  .mnav-side {
+    display:flex; flex-direction:column; justify-content:center; gap:.1rem;
+    min-width:0; padding:.42rem .6rem; text-decoration:none; color:var(--side-fg);
+  }
+  .mnav-next { align-items:flex-end; text-align:right; }
+  .mnav-side:active { background:rgba(20,125,105,.1); }
+  .mnav-side.is-off { color:var(--muted); opacity:.45; }
+  .mnav-dir {
+    font-size:.6rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mnav-t {
+    font-size:.79rem; font-weight:600; line-height:1.2; max-width:100%;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .mnav-toc {
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.1rem;
+    padding:.3rem .7rem; margin:.42rem 0; font:inherit; font-size:.62rem; font-weight:800;
+    letter-spacing:.05em; text-transform:uppercase; cursor:pointer;
+    color:var(--accent-deep); background:var(--panel);
+    border:1px solid var(--border); border-radius:10px;
+  }
+  .mnav-toc:active { background:var(--tint); }
+
+  /* ── the drawer ───────────────────────────────────────────────────────
+     A sheet over the page, not a block above it: the reader asks for it and
+     it goes away again. Two tabs, because the two questions are different —
+     "where am I inside this page" and "what else is there". */
+  html.js-chrome .mscrim {
+    display:block; position:fixed; inset:0; z-index:1050; background:rgba(12,20,17,.5);
+    opacity:0; transition:opacity .2s ease; touch-action:none;
+  }
+  html.js-chrome .mscrim.open { opacity:1; }
+  html.js-chrome .mdrawer {
+    display:flex; position:fixed; inset:0 auto 0 0; z-index:1100;
+    width:min(88vw,390px); flex-direction:column;
+    padding-left:env(safe-area-inset-left);
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--panel); color:var(--fg);
+    border-right:1px solid var(--border); box-shadow:var(--shadow);
+    transform:translateX(-100%); transition:transform .22s ease;
+  }
+  html.js-chrome .mdrawer.open { transform:none; }
+  .mdrawer-head {
+    display:flex; align-items:flex-start; gap:.5rem; flex:0 0 auto;
+    padding:.85rem .5rem .7rem .95rem; border-bottom:1px solid var(--border); background:var(--side);
+  }
+  .mdrawer-who { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:.15rem; }
+  .mdrawer-eyebrow {
+    font-size:.63rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer-title {
+    font-family:Georgia,"Times New Roman",serif; font-size:1.12rem; font-weight:700; line-height:1.2; color:var(--fg);
+  }
+  .mdrawer-x {
+    flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:.1rem;
+    padding:.35rem .5rem; font:inherit; font-size:.58rem; font-weight:800; letter-spacing:.06em;
+    text-transform:uppercase; cursor:pointer;
+    color:var(--side-fg); background:var(--panel); border:1px solid var(--border); border-radius:9px;
+  }
+  .mdrawer-x:active { background:var(--tint); }
+  .mdrawer-tabs { display:flex; flex:0 0 auto; gap:.35rem; padding:.55rem .7rem; border-bottom:1px solid var(--border); }
+  .mdrawer-tabs button {
+    flex:1 1 0; padding:.44rem .5rem; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer;
+    color:var(--muted); background:transparent; border:1px solid var(--border); border-radius:999px;
+  }
+  .mdrawer-tabs button[aria-selected="true"] {
+    color:var(--on-accent); background:var(--accent); border-color:var(--accent);
+  }
+  .mdrawer-body { flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  .mdrawer-panel { padding:.6rem .7rem 1.4rem; }
+  .mdrawer-panel:focus { outline:none; }
+  .mdrawer-empty { color:var(--muted); font-size:.85rem; padding:.5rem .35rem; }
+  /* The panels hold clones of the two lists the page already built — the
+     rail's "on this page" TOC (heading ids and all) and the sidebar's nav —
+     so they can never disagree with them. These rules restyle the clones. */
+  .mdrawer ul { list-style:none; margin:0; padding:0; }
+  .mdrawer li { margin:.05rem 0; }
+  .mdrawer a {
+    display:block; padding:.5rem .6rem; border-left:3px solid transparent; border-radius:0 7px 7px 0;
+    color:var(--fg); text-decoration:none; font-size:.9rem; line-height:1.3;
+  }
+  .mdrawer a:active { background:rgba(20,125,105,.1); }
+  .mdrawer a.active { background:var(--tint); border-left-color:var(--accent); color:var(--accent-deep); font-weight:700; }
+  .mdrawer .toc-sub a { padding-left:1.5rem; font-size:.84rem; color:var(--muted); }
+  .mdrawer li.nav-h {
+    margin:1rem 0 .2rem; padding:0 .6rem; font-size:.63rem; font-weight:800;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
+  }
+  .mdrawer li.nav-h:first-child { margin-top:.1rem; }
+  .mdrawer .nav-group summary {
+    display:flex; align-items:center; padding:.5rem .6rem; font-size:.9rem; line-height:1.3;
+    list-style:none; cursor:pointer;
+  }
+  .mdrawer .nav-group summary::-webkit-details-marker { display:none; }
+  .mdrawer .nav-group summary::before { content:"\25B8\00a0"; color:var(--muted); font-size:.85em; }
+  .mdrawer .nav-group details[open] > summary::before { content:"\25BE\00a0"; }
+  .mdrawer .nav-group summary a { display:inline; padding:0; border:0; border-radius:0; background:none; font-size:inherit; }
+  .mdrawer .nav-sub { margin:.1rem 0 .3rem .6rem; padding-left:.5rem; border-left:1px solid var(--border); }
+  .mdrawer .nav-sub a { font-size:.82rem; padding:.36rem .6rem; color:var(--muted); }
+
+  /* The page turn: a short slide out before the browser fetches the next
+     document. It is the only motion the gesture adds, and it does not run at
+     all under prefers-reduced-motion. */
+  html.page-out-left main,html.page-out-right main {
+    transition:transform .13s ease-in, opacity .13s ease-in; opacity:.3;
+  }
+  html.page-out-left main { transform:translateX(-7%); }
+  html.page-out-right main { transform:translateX(7%); }
+}
+
+/* Every selector here has to outrank its `html.js-chrome …` counterpart above,
+   or the transitions it is switching off simply stay on. */
+@media (max-width:780px) and (prefers-reduced-motion: reduce) {
+  html.js-chrome .mbar,
+  html.js-chrome .mdrawer,
+  html.js-chrome .mscrim,
+  html.js-chrome .mprog i { transition:none; }
+  html.js-chrome.page-out-left main,
+  html.js-chrome.page-out-right main { transition:none; transform:none; opacity:1; }
 }
 </style>
 </head>
 <body>
+  <div class="mprog" aria-hidden="true"><i id="mprogBar"></i></div>
+  <header class="mbar" id="mbar">
+    <button type="button" class="mbar-btn" id="mbarMenu" aria-controls="mdrawer" aria-expanded="false"
+      aria-label="Contents — this page's sections and every other page">
+      <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <span class="mbar-id">
+      <span class="mbar-sec"><a href="index.html">rete</a> · Guides</span>
+      <span class="mbar-title">Semantic zoom (schema pyramid)</span>
+    </span>
+    <button type="button" class="mbar-btn" id="mbarTheme" data-theme-cycle aria-label="Theme">◐</button>
+  </header>
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
@@ -331,13 +602,13 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
         <li><a href="conformance.html">SPARQL 1.1 conformance</a></li>
     </ul>
     <p class="foot"><a href="https://github.com/caviri/rete">github.com/caviri/rete</a></p>
-    <button type="button" class="theme-toggle" id="themeToggle"
-      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel">System</span></button>
+    <button type="button" class="theme-toggle" id="themeToggle" data-theme-cycle
+      title="Theme: follows your system; click to cycle System → Light → Dark">◐ <span id="themeToggleLabel" data-theme-label>System</span></button>
   </nav>
   <main>
     <div class="page">
       <article class="content">
-<h1>Semantic zoom — the schema pyramid</h1>
+<h1 id="semantic-zoom--the-schema-pyramid">Semantic zoom — the schema pyramid</h1>
 <blockquote>
 <p><strong>The one-paragraph pitch.</strong> Open any <code>.rete</code> and ask <em>"what kinds of things are
 in here?"</em> — and get an answer that <strong>zooms</strong>. At a glance you see the broad
@@ -352,12 +623,12 @@ index.</strong> This is rete's "PMTiles for graphs," applied to <em>types</em>.<
 hierarchy. There is no flag to remember and nothing extra to host — it travels in
 the file's pyramid section and is served over the same range-request transport as
 everything else.</p>
-<img src="img/semantic-zoom.svg" alt="A four-band pyramid, narrow abstract level at the top widening to detailed leaf classes at the base. Level 0: Agent ×4. Level 1: Person ×3, Organisation ×1. Level 2: Scientist ×2, Artist ×1, Organisation ×1. Level 3: Astronomer ×2, Artist ×1, Organisation ×1. A footer notes it is read index-free from the pyramid-meta over HTTP.">
+<img class="img-sq" src="img/semantic-zoom.svg" alt="A four-level schema pyramid over the six-class subClassOf hierarchy in a small people graph. Level 0 is Agent times 4; level 1 is Person times 3 and Organisation times 1; level 2 is Scientist times 2, Artist times 1 and Organisation times 1; level 3, the leaves, is Astronomer times 2, Artist times 1 and Organisation times 1. Every level re-partitions the same four instances, so the counts conserve, and rete summary --level k reads any one level without touching the triple index. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.">
 <p><em>Each level is one type histogram. Read top to bottom and the same instances
 resolve from abstract classes into leaves — and the whole stack is fetched
 index-free, in a few kilobytes, over HTTP.</em></p>
 <hr />
-<h2>Why it exists</h2>
+<h2 id="why-it-exists">Why it exists</h2>
 <p>A knowledge graph you've never seen is <strong>opaque</strong>: you don't know which classes
 exist, how they relate, or where to start. The flat answer — <em>"here are 200
 classes, alphabetical"</em> — is noise. What you actually want is to start coarse and
@@ -373,13 +644,13 @@ at build time, and stores one <strong>type histogram per level</strong>.</li>
 clients fetch <em>without</em> the triple index — so it is <strong>index-free and instant</strong>,
 the cheapest tier of the <a href="dataset-cards.html#the-three-tier-exploration-model">three-tier exploration model</a>.</li>
 </ul>
-<img src="img/schema-rollup.svg" alt="The subClassOf tree laid out by depth — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — with instance dots at the leaves (ada and edwin are Astronomers, frida an Artist, nasa an Organisation). A panel shows each instance's type rolled up the chain to depth d to form level d's histogram.">
+<img class="img-sq" src="img/schema-rollup.svg" alt="How one level of the schema pyramid is built. Six classes hang off a subClassOf chain — Agent at depth 0, Person and Organisation at depth 1, Scientist and Artist at depth 2, Astronomer at depth 3 — and the four instances sit at the leaves: ada and edwin are Astronomers, frida an Artist, nasa an Organisation. Rolling each instance's type up to depth d gives level d's histogram: Agent times 4 at depth 0; Person times 3 and Organisation times 1 at depth 1; Scientist times 2, Artist times 1 and Organisation times 1 at depth 2; Astronomer times 2, Artist times 1 and Organisation times 1 at depth 3. Every level totals the same four instances. The pyramid is section kind 4 and is optional: a graph with no rdf:type has none.">
 <p><em>The <code>subClassOf</code> chain is the zoom function: instances live at the leaves, and
 rolling their types up to depth <code>d</code> produces level <code>d</code>'s histogram — <code>Astronomer</code>
 becomes <code>Scientist</code> becomes <code>Person</code> becomes <code>Agent</code>. Nothing is invented; the
 ontology in the data does the work.</em></p>
 <hr />
-<h2>What you need in the data</h2>
+<h2 id="what-you-need-in-the-data">What you need in the data</h2>
 <table><thead><tr><th>Ingredient</th><th>Predicate</th><th>Required?</th></tr></thead><tbody>
 <tr><td><strong>Typed instances</strong></td><td><code>rdf:type</code> (<code>a</code>)</td><td>Yes — no types, no schema pyramid.</td></tr>
 <tr><td><strong>A class hierarchy</strong></td><td><code>rdfs:subClassOf</code></td><td>Optional — without it the pyramid is a single flat level (= the Dataset Card's class list).</td></tr>
@@ -390,7 +661,7 @@ RDFS/OWL-RL reasoner — see <a href="reasoning.html">Reasoning</a>). Multiple i
 handled by picking a canonical (lexicographically smallest) parent so the rollup is
 a deterministic tree.</p>
 <hr />
-<h2>Build it</h2>
+<h2 id="build-it">Build it</h2>
 <p>Nothing special: it's part of the normal pyramid, so a plain <code>rete build</code> produces
 it. Take this little graph — five classes in a <code>subClassOf</code> tree plus four typed
 people/orgs:</p>
@@ -416,8 +687,8 @@ axioms live in a separate ontology, merge them in the same build:
 <code>rete build people.nt ontology.ttl -o people.rete</code>. If they're only <em>implied</em>,
 <code>rete build people.nt --materialize -o people.rete</code> infers them first.)</p>
 <hr />
-<h2>Use it</h2>
-<h3>Browse every level at once</h3>
+<h2 id="use-it">Use it</h2>
+<h3 id="browse-every-level-at-once">Browse every level at once</h3>
 <p><code>rete summary</code> prints the community super-edge graph and then the schema pyramid —
 one line per semantic level, coarse (abstract) at the top:</p>
 <pre><code class="language-text">$ rete summary people.rete
@@ -433,7 +704,7 @@ schema pyramid — 4 level(s), 6 class(es) in the subClassOf hierarchy:
 that <code>Agent</code> is <code>Person ×3</code> + <code>Organisation ×1</code>; that <code>Person</code> is <code>Scientist ×2</code> +
 <code>Artist ×1</code>; that <code>Scientist</code> is <code>Astronomer ×2</code>. <strong>Counts conserve up the
 hierarchy</strong> — each level re-partitions the <em>same</em> instances at a finer grain.</p>
-<h3>Zoom to one level</h3>
+<h3 id="zoom-to-one-level">Zoom to one level</h3>
 <p><code>--level k</code> prints just one level's type histogram (<code>0</code> = coarsest / most abstract):</p>
 <pre><code class="language-text">$ rete summary people.rete --level 0          # the big picture
 schema pyramid level 0 — depth 0 (round 1), 1 class(es):
@@ -452,17 +723,20 @@ schema pyramid level 3 — depth 3 (round 0), 3 class(es):
 </code></pre>
 <p>A viewer wires <code>--level k</code> to a zoom slider: render level 0 when zoomed out, fetch
 deeper levels as the user drills in.</p>
-<h3>Over HTTP / S3 — the index-free payoff</h3>
+<h3 id="over-http--s3--the-index-free-payoff">Over HTTP / S3 — the index-free payoff</h3>
 <p>This is the selling point. The schema pyramid lives in the pyramid-meta section, so
 <code>summary-url</code> fetches it <strong>without downloading the file and without touching the
 triple index</strong> — only the header, dictionary, and pyramid:</p>
-<img src="img/zoom-fetch.svg" alt="A range client over HTTP draws fetch arrows to three small on-disk sections — HEADER, DICTIONARY, and PYRAMID-META (highlighted) — while the large TRIPLE INDEX section is marked 'never fetched'. Caption: the whole leveled legend in a few KB and 3 range requests; the index stays on the server.">
-<p><em>A range client pulls only the header, dictionary, and pyramid-meta. The large
-triple index never leaves the server — so the leveled legend costs the same few
-kilobytes whether the file is a megabyte or a gigabyte.</em></p>
-<p>(The transcript above is from a larger published file — hence the bigger counts —
-to show the real at-scale byte cost: the whole leveled legend in <strong>27 KB and 3
-range requests</strong>, with the triple index untouched.)</p>
+<img class="img-sq" src="img/zoom-fetch.svg" alt="What rete summary-url pulls over HTTP: three range requests and no more. First the 1024-byte header, whose section directory gives every other section's offset and length; then the dictionary, for the term strings; then the pyramid, section kind 4, which carries every level, the subClassOf DAG and the per-community descriptors. The triple index — the triples themselves, in every permutation — is never requested and stays on the server.">
+<p><em>A range client pulls only the header, dictionary and pyramid-meta — three
+ranges, and never the triple index.</em></p>
+<p>What that costs is set by the <strong>dictionary</strong>, not by the size of the graph. The
+pyramid itself scales with the number of classes and stays small — 1.3 MB on the
+published <code>davidrumsey.rete</code> — but resolving those class IRIs back to strings
+pulls the dictionary along with it, so the three reads total <strong>17.4 MB of a
+74.8 MB file (23.3 %)</strong>, measured with <code>rete cost</code>. On a small file the same
+three reads are tens of kilobytes. Either way the permutation indexes — 56.9 %
+of that file, and the majority of every published one — are never requested.</p>
 <pre><code class="language-text">$ rete summary-url https://host/people.rete
 …
 schema pyramid — 4 level(s), 6 class(es) in the subClassOf hierarchy:
@@ -477,7 +751,7 @@ GitHub Pages) and a browser or CLI gets a zoomable type map for the cost of a fe
 kilobytes. See <a href="dataset-cards.html#the-three-tier-exploration-model">Dataset Cards → the three-tier model</a>
 for how this tier sits alongside the index-free <code>card-url</code> and the lazy
 <code>sparql-url</code> tiers.</p>
-<h3>Read it programmatically</h3>
+<h3 id="read-it-programmatically">Read it programmatically</h3>
 <p>The Rust API exposes the pyramid index-free through <code>SummaryView</code>
 (<code>rete-core</code>), which reads only the header + dictionary + pyramid ranges:</p>
 <pre><code class="language-rust">use rete_core::{SummaryView, SliceReader};
@@ -496,10 +770,10 @@ for k in 0..view.level_count() {
 <p>Any <code>RangeReader</code> works here — back it with an HTTP client and you read the schema
 pyramid straight off a URL.</p>
 <hr />
-<h2>A graph, not a tree — multiple parents and lateral links</h2>
+<h2 id="a-graph-not-a-tree--multiple-parents-and-lateral-links">A graph, not a tree — multiple parents and lateral links</h2>
 <p>A real ontology isn't a strict tree. Two things break the "every class sits in
 exactly one branch" assumption, and the schema pyramid keeps <strong>both</strong>:</p>
-<img src="img/ontology-graph.svg" alt="Class nodes laid out by depth. Solid blue subClassOf edges form the is-a hierarchy, including Astronaut which has TWO parents (Scientist and Explorer). A dashed green edge shows a lateral 'memberOf' relation from Person to Organisation. A legend distinguishes is-a edges from lateral relation edges.">
+<img class="img-sq" src="img/ontology-graph.svg" alt="The shipped class hierarchy is a directed acyclic graph, not a tree. Astronaut has two subClassOf parents — Scientist and Explorer — and both are kept; a single canonical parent only decides its depth. Classes are also joined by lateral, non-is-a relations: Person memberOf Organisation, drawn as a dashed edge to keep it distinguishable without relying on colour. Those lateral relations are rolled up per level too, so at level 1 the pyramid records Person memberOf Organisation and at level 0 the same edge generalises to Agent memberOf Agent — never dropped.">
 <p><strong>1. Non-exclusive <code>subClassOf</code> (multiple inheritance).</strong> A class can be a subclass
 of several others — <code>Astronaut ⊑ Scientist</code> <em>and</em> <code>Astronaut ⊑ Explorer</code>. The
 shipped hierarchy keeps <strong>all</strong> parents, so it is a directed acyclic <em>graph</em>, not a
@@ -529,7 +803,7 @@ the pyramid be non-exclusive and keep connections?"</em> is <strong>yes, by cons
 it's a <em>leveled multigraph</em> over the ontology, not a leveled tree. On the API these
 are <code>view.level_links</code> (<code>Vec&lt;LevelLinks&gt;</code>, each a <code>Vec&lt;ClassRelation&gt;</code>).</p>
 <hr />
-<h2>Per-community descriptors (progressive zoom)</h2>
+<h2 id="per-community-descriptors-progressive-zoom">Per-community descriptors (progressive zoom)</h2>
 <p>Alongside the global levels, the pyramid ships a <strong>descriptor per community</strong>: its
 dominant class, local type histogram, and — when the data has them — a geographic
 bounding box (CRS84 lon/lat) and a temporal range. These let a client refine the
@@ -542,17 +816,17 @@ annotate are a separate, in-progress storage step; until those land, a descripto
 is a standalone summary of its community.</p>
 </blockquote>
 <hr />
-<h2>No hierarchy? It still works</h2>
+<h2 id="no-hierarchy-it-still-works">No hierarchy? It still works</h2>
 <p>If your data has types but <strong>no <code>subClassOf</code></strong>, the pyramid degrades gracefully to
 a <strong>single flat level</strong> — exactly the class histogram you'd get from the Dataset
 Card — so <code>rete summary --level 0</code> always answers. Add a hierarchy (or
 <code>--materialize</code>) later and the levels appear automatically on the next build.</p>
 <hr />
-<h2>How the ontology is embedded in the format</h2>
+<h2 id="how-the-ontology-is-embedded-in-the-format">How the ontology is embedded in the format</h2>
 <p>The ontology isn't a sidecar — it is <strong>derived once at build time and written into
 the file's own sections</strong>, where range clients read it without the triple index.
 Three <em>orthogonal</em> structures are embedded, each answering a different question:</p>
-<img src="img/ontology-embedding.svg" alt="A .rete file's two index-free sections. The METADATA/Dataset Card section holds class_links (the leaf class-relation graph), class/predicate/datatype histograms, and starter queries (read by card-url). The PYRAMID-META section holds the non-exclusive subClassOf DAG, the per-level type histogram, the per-level lateral class-relation graph, and the community super-edges plus descriptors (read by summary-url). A dashed TRIPLE INDEX box is marked 'not needed to read the ontology'.">
+<img class="img-sq" src="img/ontology-embedding.svg" alt="Where a .rete file keeps its ontology, on the published davidrumsey.rete — 74.8 MB across 6 sections. The dataset card, section kind 1, holds class_links (the leaf class-to-predicate-to-class graph), the class, predicate and datatype histograms, and the starter queries; rete card-url reads it. The pyramid, section kind 4, holds the subClassOf DAG with each class's parents and depth, the per-level type and relation rollups, and the community super-edges and descriptors; rete summary-url reads it, and it is absent whenever the graph has no rdf:type. The triple index, section kind 3, is never opened to read any of this.">
 <table><thead><tr><th>Structure</th><th>Question it answers</th><th>Where it lives</th><th>Read by</th></tr></thead><tbody>
 <tr><td><strong><code>subClassOf</code> DAG</strong> (non-exclusive, with depth)</td><td><em>is-a</em> — how classes generalize</td><td>pyramid-meta (v2)</td><td><code>summary</code> / <code>summary-url</code></td></tr>
 <tr><td><strong>Per-level type + relation rollups</strong></td><td><em>what &amp; how, at each zoom</em></td><td>pyramid-meta (v2)</td><td><code>summary --level k</code></td></tr>
@@ -570,7 +844,7 @@ the small metadata/pyramid ranges. The index stays on the server.</li>
 <li><strong>Physically additive (pyramid-meta v2).</strong> The schema block is appended after the
 v1 summary and written <strong>only when the graph has types</strong>, so a typeless file is
 byte-identical to a v1 build and an older reader silently ignores the new bytes.
-See <a href="SPEC.html#7-4-the-schema-pyramid-semantic-zoom-v2">the format spec §7.4</a> for
+See <a href="SPEC.html#74-the-schema-pyramid--semantic-zoom-v2">the format spec §7.4</a> for
 the exact byte layout.</li>
 <li><strong>Provenance.</strong> The <code>subClassOf</code> axioms come straight from the data, from a merged
 ontology file, or from <code>rete build --materialize</code> (the RDFS/OWL-RL reasoner). The
@@ -579,7 +853,7 @@ pyramid never invents structure — it <em>embeds the ontology that's already th
 hash, safe to cache). Levels (≤ 6), classes/relations per level, and descriptors
 are all capped, so the embedded ontology stays small <strong>regardless of graph size</strong>.</li>
 </ul>
-<h2>Cost vs benefit — is the pyramid worth it?</h2>
+<h2 id="cost-vs-benefit--is-the-pyramid-worth-it">Cost vs benefit — is the pyramid worth it?</h2>
 <p>Measured honestly (see the <a href="BENCHMARK.html#the-pyramid-cost-vs-benefit">benchmark</a>),
 the two pyramidal structures have very different economics:</p>
 <ul>
@@ -592,13 +866,13 @@ serve selective SPARQL, <code>--no-pyramid</code> is smaller and just as fast.</
 </ul>
 <p>Rule of thumb: <strong>keep the pyramid when you want index-free overview/exploration;
 drop it (<code>--no-pyramid</code>) when you only serve selective queries at scale.</strong></p>
-<h2>When to reach for it</h2>
+<h2 id="when-to-reach-for-it">When to reach for it</h2>
 <ul>
 <li><strong>Publishing a dataset</strong> people will explore cold — the schema pyramid is the
 zoomable legend that tells them what to ask.</li>
 <li><strong>A browser/edge client</strong> that should show "the shape of the data" before
-running a single SPARQL query — render level 0 from a few KB, drill down on
-demand.</li>
+running a single SPARQL query — render level 0 without touching the triple
+index, drill down on demand.</li>
 <li><strong>Faceted / drill-down UIs</strong> — wire the levels to a type facet that starts
 abstract and refines as the user narrows.</li>
 </ul>
@@ -607,7 +881,7 @@ single flat level); everything else here still applies.</p>
 <hr />
 <p>See also: <a href="dataset-cards.html">Dataset Cards</a> (the self-describing card + starter
 queries that ride the same index-free path), <a href="reasoning.html">Reasoning</a>
-(<code>--materialize</code> to infer <code>subClassOf</code>), and <a href="SPEC.html#7-the-pyramid-community-summarization">the format spec</a>.</p>
+(<code>--materialize</code> to infer <code>subClassOf</code>), and <a href="SPEC.html#7-the-pyramid--community-summarization">the format spec</a>.</p>
 
       </article>
       <aside class="rail" aria-label="On this page">
@@ -617,6 +891,35 @@ queries that ride the same index-free path), <a href="reasoning.html">Reasoning<
     </div>
     <footer>Generated from <code>docs/semantic-zoom.md</code> by <code>cargo run -p docgen</code> · <a href="https://ko-fi.com/caviri">☕ Support rete on Ko-fi</a></footer>
   </main>
+  <nav class="mnav" id="mnav" aria-label="Page navigation">
+    <a class="mnav-side mnav-prev" id="navPrev" rel="prev" href="manifest.html"><span class="mnav-dir">‹ Previous</span><span class="mnav-t">Writable graphs — manifest &amp; WAL</span></a>
+    <button type="button" class="mnav-toc" id="mnavToc" aria-controls="mdrawer" aria-expanded="false">
+      <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h14M3 10h14M3 15h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Contents</span>
+    </button>
+    <a class="mnav-side mnav-next" id="navNext" rel="next" href="compatibility.html"><span class="mnav-dir">Next ›</span><span class="mnav-t">Compatibility &amp; Cypher</span></a>
+  </nav>
+  <div class="mscrim" id="mscrim" hidden></div>
+  <aside class="mdrawer" id="mdrawer" role="dialog" aria-modal="true" aria-labelledby="mdrawerTitle" hidden>
+    <div class="mdrawer-head">
+      <div class="mdrawer-who">
+        <span class="mdrawer-eyebrow">Guides · 29 of 55</span>
+        <span class="mdrawer-title" id="mdrawerTitle">Semantic zoom (schema pyramid)</span>
+      </div>
+      <button type="button" class="mdrawer-x" id="mdrawerClose" aria-label="Close contents">
+        <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Close</span>
+      </button>
+    </div>
+    <div class="mdrawer-tabs" role="tablist" aria-label="Contents">
+      <button type="button" role="tab" id="tabHere" aria-controls="panelHere" aria-selected="true">On this page</button>
+      <button type="button" role="tab" id="tabAll" aria-controls="panelAll" aria-selected="false" tabindex="-1">All pages</button>
+    </div>
+    <div class="mdrawer-body">
+      <div class="mdrawer-panel" id="panelHere" role="tabpanel" aria-labelledby="tabHere" tabindex="0"></div>
+      <div class="mdrawer-panel" id="panelAll" role="tabpanel" aria-labelledby="tabAll" tabindex="0" hidden></div>
+    </div>
+  </aside>
   <script>
 (function () {
   function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
@@ -860,10 +1163,12 @@ queries that ride the same index-free path), <a href="reasoning.html">Reasoning<
 // prefers-color-scheme decides; explicit choices persist under the SAME
 // localStorage key ("theme") the playground uses, so the preference follows
 // the reader across the whole site.
+// There are two of these now — the sidebar's on a wide screen, the top bar's on
+// a phone — so the cycle is bound to every [data-theme-cycle] button rather than
+// to one id, and both stay in step because they read the same localStorage key.
 (function () {
-  var btn = document.getElementById("themeToggle");
-  var label = document.getElementById("themeToggleLabel");
-  if (!btn || !label) return;
+  var btns = [].slice.call(document.querySelectorAll("[data-theme-cycle]"));
+  if (!btns.length) return;
   function current() {
     try {
       var t = localStorage.getItem("theme");
@@ -872,19 +1177,264 @@ queries that ride the same index-free path), <a href="reasoning.html">Reasoning<
   }
   function render() {
     var t = current();
-    label.textContent = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    var name = t === "system" ? "System" : t === "light" ? "Light" : "Dark";
+    btns.forEach(function (b) {
+      var label = b.querySelector("[data-theme-label]");
+      if (label) label.textContent = name;
+      else b.setAttribute("aria-label", "Theme: " + name + " — tap to cycle System, Light, Dark");
+    });
   }
-  btn.addEventListener("click", function () {
-    var next = { system: "light", light: "dark", dark: "system" }[current()];
-    try {
-      if (next === "system") localStorage.removeItem("theme");
-      else localStorage.setItem("theme", next);
-    } catch (e) {}
-    if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
-    else delete document.documentElement.dataset.theme;
-    render();
+  btns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      var next = { system: "light", light: "dark", dark: "system" }[current()];
+      try {
+        if (next === "system") localStorage.removeItem("theme");
+        else localStorage.setItem("theme", next);
+      } catch (e) {}
+      if (next === "light" || next === "dark") document.documentElement.dataset.theme = next;
+      else delete document.documentElement.dataset.theme;
+      render();
+    });
   });
   render();
+})();
+</script>
+  <script>
+(function () {
+  var NARROW = window.matchMedia("(max-width: 780px)");
+  var CALM = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var bar = document.getElementById("mbar");
+    var drawer = document.getElementById("mdrawer");
+    var scrim = document.getElementById("mscrim");
+    if (!bar || !drawer || !scrim) return;
+    var progress = document.getElementById("mprogBar");
+    var prevLink = document.getElementById("navPrev");
+    var nextLink = document.getElementById("navNext");
+    var closeBtn = document.getElementById("mdrawerClose");
+    var panels = { here: document.getElementById("panelHere"), all: document.getElementById("panelAll") };
+    var tabs = { here: document.getElementById("tabHere"), all: document.getElementById("tabAll") };
+    var openers = [document.getElementById("mbarMenu"), document.getElementById("mnavToc")]
+      .filter(function (b) { return !!b; });
+
+    /* ---- 1. fill the drawer ------------------------------------------------
+       Both panels are CLONES of lists this page already has: the rail's "on
+       this page" TOC (built by the block above from the heading ids docgen
+       mints server-side) and the sidebar's section nav. Cloning means the
+       drawer cannot drift out of step with either, and neither list carries an
+       `id`, so nothing is duplicated in the document. */
+    var pageToc = document.querySelector("#toc ul");
+    if (pageToc) {
+      panels.here.appendChild(pageToc.cloneNode(true));
+    } else {
+      panels.here.innerHTML = '<p class="mdrawer-empty">This page is short enough to have no sections — try "All pages".</p>';
+    }
+    var siteNav = document.querySelector(".sidebar > ul");
+    if (siteNav) panels.all.appendChild(siteNav.cloneNode(true));
+
+    function selectTab(which) {
+      Object.keys(tabs).forEach(function (k) {
+        var on = k === which;
+        if (tabs[k]) {
+          tabs[k].setAttribute("aria-selected", on ? "true" : "false");
+          tabs[k].tabIndex = on ? 0 : -1;
+        }
+        if (panels[k]) panels[k].hidden = !on;
+      });
+    }
+    function defaultTab() { return pageToc ? "here" : "all"; }
+    selectTab(defaultTab());
+    Object.keys(tabs).forEach(function (k) {
+      if (tabs[k]) tabs[k].addEventListener("click", function () { selectTab(k); tabs[k].focus(); });
+    });
+    var tablist = drawer.querySelector(".mdrawer-tabs");
+    if (tablist) {
+      tablist.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        var to = tabs.here.getAttribute("aria-selected") === "true" ? "all" : "here";
+        selectTab(to); tabs[to].focus();
+      });
+    }
+    // Jumping to a heading closes the sheet — otherwise it covers what you just
+    // asked to see.
+    panels.here.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a") : null;
+      if (a) close();
+    });
+
+    /* ---- 2. open / close, with a focus trap -------------------------------- */
+    var lastFocus = null, closeTimer = null;
+    function focusable() {
+      return [].slice.call(drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+        .filter(function (el) { return el.offsetWidth > 0 || el.offsetHeight > 0; });
+    }
+    function isOpen() { return document.documentElement.classList.contains("drawer-open"); }
+    function open() {
+      if (isOpen()) return;
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+      lastFocus = document.activeElement;
+      drawer.hidden = false; scrim.hidden = false;
+      document.documentElement.classList.add("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "true"); });
+      syncActive();
+      // Two frames: the element has to have been laid out in its off-screen
+      // state before the class that slides it in can animate.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { drawer.classList.add("open"); scrim.classList.add("open"); });
+      });
+      if (closeBtn) closeBtn.focus();
+    }
+    function close() {
+      if (!isOpen()) return;
+      drawer.classList.remove("open"); scrim.classList.remove("open");
+      document.documentElement.classList.remove("drawer-open");
+      openers.forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+      closeTimer = setTimeout(function () {
+        drawer.hidden = true; scrim.hidden = true; closeTimer = null;
+      }, CALM.matches ? 0 : 240);
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+      lastFocus = null;
+    }
+    openers.forEach(function (b) { b.addEventListener("click", open); });
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    scrim.addEventListener("click", close);
+    document.addEventListener("keydown", function (e) {
+      if (!isOpen()) return;
+      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key !== "Tab") return;
+      var items = focusable();
+      if (!items.length) return;
+      var first = items[0], last = items[items.length - 1];
+      if (!drawer.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    // The desktop scroll-spy keeps `.active` on the rail's TOC; mirror it onto
+    // the clone when the sheet opens, so "you are here" is right without a
+    // second listener running all the way down every page.
+    function syncActive() {
+      var live = document.querySelector("#toc a.active");
+      var want = live ? live.getAttribute("href") : null;
+      panels.here.querySelectorAll("a").forEach(function (a) {
+        a.classList.toggle("active", a.getAttribute("href") === want);
+      });
+    }
+
+    /* ---- 3. reading position + hide-on-scroll ------------------------------
+       The bar is 52px of a 640px-tall screen. Giving it back while the reader
+       is actually reading, and returning it the moment they reach for it, is
+       the whole justification for spending those pixels. Under
+       prefers-reduced-motion it simply never moves. */
+    var lastY = window.pageYOffset || 0, queued = false;
+    function onScroll() {
+      var y = Math.max(0, window.pageYOffset || 0);
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      if (progress) progress.style.width = (max > 40 ? Math.min(100, (y / max) * 100) : 0) + "%";
+      if (CALM.matches || !NARROW.matches || isOpen()) bar.classList.remove("up");
+      else if (y < 96) bar.classList.remove("up");
+      else if (y - lastY > 6) bar.classList.add("up");
+      else if (lastY - y > 6) bar.classList.remove("up");
+      lastY = y;
+      queued = false;
+    }
+    window.addEventListener("scroll", function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(onScroll);
+    }, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    onScroll();
+
+    /* ---- 4. swipe left / right between pages -------------------------------
+       Prev and next are the two links in the bottom bar; the gesture is only a
+       shortcut to them, never the only way to get anywhere. */
+    function go(href, back) {
+      if (!href) return;
+      if (CALM.matches) { window.location.href = href; return; }
+      document.documentElement.classList.add(back ? "page-out-right" : "page-out-left");
+      setTimeout(function () { window.location.href = href; }, 130);
+    }
+    // Coming back through the bfcache must not restore the faded-out state.
+    window.addEventListener("pageshow", function () {
+      document.documentElement.classList.remove("page-out-left", "page-out-right");
+    });
+
+    // The nearest ancestor that the finger could be scrolling sideways. Only
+    // boxes that OVERFLOW and are allowed to scroll count: `overflow-x:hidden`
+    // clips its content but the user cannot pan it, so a swipe there is ours.
+    function hscroller(node) {
+      for (var el = node; el && el !== document.body; el = el.parentElement) {
+        if (el.nodeType !== 1) continue;
+        if (el.scrollWidth - el.clientWidth > 2) {
+          var ox = window.getComputedStyle(el).overflowX;
+          if (ox === "auto" || ox === "scroll") return el;
+        }
+      }
+      return null;
+    }
+
+    var swipe = null;
+    document.addEventListener("touchstart", function (e) {
+      swipe = null;
+      if (!NARROW.matches || isOpen() || e.touches.length !== 1) return;
+      var t = e.touches[0], el = e.target;
+      // Never compete with the chrome itself, a form field, or the lightbox.
+      if (el && el.closest && el.closest("input,textarea,select,[contenteditable],.mbar,.mnav,.mdrawer,.mscrim,.lightbox")) return;
+      var sc = hscroller(el);
+      swipe = {
+        x: t.clientX, y: t.clientY, t: Date.now(), axis: 0, sc: sc,
+        left: sc ? sc.scrollLeft : 0,
+        room: sc ? sc.scrollWidth - sc.clientWidth : 0
+      };
+    }, { passive: true });
+
+    document.addEventListener("touchmove", function (e) {
+      if (!swipe) return;
+      if (e.touches.length !== 1) { swipe = null; return; }   // pinch / second finger
+      var t = e.touches[0];
+      var dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+      if (!swipe.axis && Math.abs(dx) + Math.abs(dy) > 12) {
+        // Lock the axis on the FIRST real movement. A drag that began as
+        // vertical reading scroll can never become a page turn later on,
+        // however far sideways it wanders before the finger lifts.
+        swipe.axis = Math.abs(dx) > Math.abs(dy) * 1.4 ? 1 : -1;
+      }
+      if (swipe.axis === -1) swipe = null;
+    }, { passive: true });
+
+    document.addEventListener("touchcancel", function () { swipe = null; }, { passive: true });
+
+    document.addEventListener("touchend", function (e) {
+      var s = swipe; swipe = null;
+      if (!s || s.axis !== 1 || !e.changedTouches || !e.changedTouches.length) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - s.x, dy = t.clientY - s.y, dt = Math.max(1, Date.now() - s.t);
+      if (Math.abs(dx) < Math.max(72, window.innerWidth * 0.12)) return;  // far enough
+      if (Math.abs(dx) < Math.abs(dy) * 2) return;                        // dominantly horizontal
+      if (dt > 900) return;                                               // a drag, not a rest
+      // Fast flick, or a slow but unmistakably long pull.
+      if (Math.abs(dx) / dt < 0.25 && Math.abs(dx) < window.innerWidth * 0.28) return;
+      var back = dx > 0;                       // finger to the right = go back
+      if (s.sc) {
+        // The gesture started inside a table / code block / diagram that can
+        // pan. Two ways it can still belong to that box, and both forfeit the
+        // page turn: it MOVED under the finger, or it has room left to move
+        // the way the finger is going.
+        //
+        // The 2px on the first test is not slack, it is a real observation: a
+        // block pinned at its right edge reports scrollLeft one pixel below the
+        // maximum once the browser settles the fractional part, and an exact
+        // comparison reads that as a pan and cancels the turn forever. A pan
+        // worth respecting moves hundreds of pixels.
+        if (Math.abs(s.sc.scrollLeft - s.left) > 2) return;
+        if (back ? s.left > 1 : s.left < s.room - 1) return;
+      }
+      var link = back ? prevLink : nextLink;
+      go(link && link.getAttribute("href"), back);
+    }, { passive: true });
+  });
 })();
 </script>
 </body>

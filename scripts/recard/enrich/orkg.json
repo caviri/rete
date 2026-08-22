@@ -1,0 +1,17 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/orkg/orkg.rete",
+  "keywords": [
+    "contributions",
+    "research",
+    "scholarly"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/orkg.html"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/gni-bim/gni-bim.rete",
+  "derived_from": [
+    "https://doi.org/10.5281/zenodo.19722011",
+    "https://github.com/ZijianWang-ZW/GNI-BIM-Dataset"
+  ],
+  "cite_as": "Wang, Z., Fuchs, S., Wu, J., Esser, S., Wrabel, T. & Borrmann, A. (2026). GNI BIM Dataset. Technical University of Munich, Georg Nemetschek Institute. https://doi.org/10.5281/zenodo.19722012",
+  "keywords": [
+    "BIM",
+    "IFC",
+    "TUM",
+    "architecture",
+    "corpus",
+    "structural"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH",
+    "https://www.wikidata.org/entity/Q842017"
+  ],
+  "extra": {
+    "landing_page": "https://caviri.github.io/rete/d/gni-bim.html"
+  }
+}

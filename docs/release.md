@@ -137,11 +137,14 @@ it resolve.
 
 ## Compatibility statement
 
-Pre-1.0 `.rete` bytes were explicitly unstable. Rebuild every dataset from its
-source RDF with the 0.3 toolchain; do not rename an older file and assume it is
-compatible. Files produced by 0.3.0 may still need one final rebuild if review
-changes the format before 1.0.0. The durable compatibility promise starts at
-1.0.0.
+The experimental generations `0x01`–`0x04` that predate this release are not
+readable: rebuild those datasets from their source RDF with the 0.3 toolchain,
+and do not rename an older file and assume it is compatible. Generation 1
+(`0x05`) has not moved since it froze on 2026-07-14, but **no
+backwards-compatibility promise is made before 1.0.0**: the format may still
+change in ways that require rebuilding files produced by the 0.3 line. Keep the
+RDF source you built from. The durable compatibility promise starts at 1.0.0.
+See [compatibility](compatibility.md#stable-rete-file-compatibility).
 
 The Rust crates declare Rust 1.87 as their minimum supported version. The
 public Rust, CLI, and WASM surfaces carry no semantic-versioning promise while

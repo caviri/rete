@@ -10,7 +10,7 @@ lives WITH its dataset, not in `web/`), this workflow makes it available in the
 browser playground:
 
 ```text
-build companions -> upload to R2 -> register catalog -> rebuild -> verify
+build companions -> upload to R2 -> register catalog -> rebuild -> verify -> back up
 ```
 
 ## 0. Pick the load mode
@@ -24,6 +24,15 @@ build companions -> upload to R2 -> register catalog -> rebuild -> verify
   (`cp data/foo/foo.rete web/foo.rete`) just before the playground rebuild.
 
 Both modes are mirrored in R2 so users can cache or lazy-load the graph.
+
+**Publish six-permutation files.** `rete build --permutations 3` produces a valid
+`0x05` file that every *current* reader answers identically — but a reader older
+than the permutation mask refuses it outright (`malformed container: expected 6
+permutation sections`, exit 1) on every path that returns rows. The playground,
+the single-file explorers, the clients and every third-party copy of the engine
+are exactly such a fleet. Six is the build default; keep it for anything that
+gets a public URL, and treat `--permutations 3` as a per-dataset choice for
+consumers you control. `rete info <file>` reports the set before you upload.
 
 ## 1. Build optional SQL companions
 
@@ -62,7 +71,9 @@ templates are in **[reference/catalog.md](reference/catalog.md)**. Add:
 
 1. `datasets`: `{key, kind:"remote-lazy", url, label, description}`. Omit `url`
    for embedded data; remote URLs derive from
-   `remoteBase/<key>/<key>.rete`.
+   `remoteBase/<key>/<key>.rete`. Add `textIndex: true` if the file was built
+   with `--text-index`, and say so in the description — the gate compares the
+   flag to the prose, and the weekly catalog probe compares it to the header.
 2. `datasetMeta`: `{triples, size, license, source, provenance}`.
 3. `datasetExtra`: `{icon, tags}`.
 4. Two to five `examples` with family, label, view, columns, a useful tip, and
@@ -90,6 +101,217 @@ check that its gitignored source file is staged under `web/` before rebuilding.
   file size, content hash, and `web/datasets.lock.json`.
 - Verify R2 CORS in a browser. `Content-Range` must be in
   `Access-Control-Expose-Headers`; curl alone cannot prove that contract.
+
+## 6. Back it up — R2 is not a backup
+
+**A published file lives on exactly two disks, or it does not exist.** This step
+is not optional and it is not "later": the day it was first measured, 44 of 273
+local `.rete` files (177.55 GB) existed on **one** disk — the whole OpenAlex
+corpus among them, five ~30 GB `works` shards plus the 15.67 GB
+`openalex-authors.rete`, the largest `.rete` ever built — on a volume with
+195 GB free. R2 is a serving surface, not a safe: a bucket-level mistake, an
+expired card or a bad `aws s3 rm --recursive` takes the only copy with it.
+
+```bash
+# After publishing one dataset — the normal case.
+scripts/backup_to_hf.sh data/foo/foo.rete
+
+# Plan first, upload nothing (also a pre-flight: non-zero if a source is unsound).
+scripts/backup_to_hf.sh --source both --dry-run
+
+# Whole-corpus sweep: every data/**/*.rete plus every .rete object on R2.
+scripts/backup_to_hf.sh --source both
+```
+
+### Why the backup is a *different* store, and why it cannot serve
+
+The two are not interchangeable, and the difference is the reason there must be
+two of them:
+
+- **R2 serves.** `https://data.graphplaza.com/<key>` answers an HTTP Range
+  request **directly** — `206` with `Content-Range`, no redirect — which is the
+  only thing the playground's default synchronous-XHR worker reader can consume,
+  and it benchmarks ~3.5× faster than the HF Space. The CORS policy **must** put
+  `Content-Range` in `ExposeHeaders`: the open probe fetches `Range: bytes=0-0`
+  and reads the file length out of that header, so without it every remote open
+  fails before the first query.
+- **An HF bucket cannot serve rete's reader at all.** It is Xet
+  content-addressed chunk storage. The public resolve URL
+  `huggingface.co/buckets/<ns>/<bucket>/resolve/<file>` (no revision segment)
+  does work, but it **302-redirects** to a per-range-signed Xet-bridge CDN — and
+  a synchronous XHR cannot follow a 302. The CLI is fine; the browser is not.
+
+So HF is the durable **backup**, never a second origin. Never put a
+`huggingface.co/buckets/...` URL in `catalog.js`.
+
+### Destination keys
+
+One prefix, mirroring the R2 key layout exactly, so an object's identity is the
+same in both stores:
+
+```text
+local   data/<dataset>/<file>.rete
+R2           <dataset>/<file>.rete  ->  https://data.graphplaza.com/<dataset>/<file>.rete
+HF      rete/<dataset>/<file>.rete  ->  hf://buckets/katospiegel/rete-public/rete/<dataset>/<file>.rete
+```
+
+The R2 key is the local path minus `data/`; the HF key is the R2 key under one
+`rete/` prefix (the bucket also holds non-`.rete` material, which is why the
+prefix exists). Override the bucket with `RETE_HF_BUCKET`.
+
+### What the script guarantees
+
+- **Resumable.** It snapshots the bucket first and skips any object already
+  present at the identical byte size, so a killed sweep is restarted by
+  re-running it. A local file whose size *differs* from the backed-up one is not
+  skipped — that is a divergent build, and it gets its own object.
+- **Verified after upload, not on exit code.** `hf buckets cp` returning 0 is not
+  evidence that the object landed whole; the size is read back out of the bucket
+  per object, and the run ends by re-listing and confirming every object in the
+  work list — the number worth quoting is of the form *297 objects present at
+  matching byte counts*.
+- **Single instance, by atomic `mkdir` lock.** Two concurrent sweeps each passed
+  their own free-space check and then jointly exhausted the disk: two 56 GB pulls
+  took 68 GB. A free-space decision is only sound while one process is making it.
+- **Nothing truncated is ever uploaded.** A killed download once left a
+  **zero-byte** file that a naive uploader would have shipped as a valid-looking,
+  completely empty graph. Every source is size-checked against what was expected,
+  and a `.rete` must carry the 4-byte `RETE` magic at **both** ends — 8 bytes that
+  prove the file is whole end to end.
+
+### Verify
+
+```bash
+# Whole corpus, read-only. Ends with
+#   verified N/N object(s) present at matching byte counts
+#   DRY RUN: planned=0 skipped=N unsound=0 ...
+# planned=0 with N/N verified IS the all-clear; it exits non-zero if any local
+# source is unsound, so it also works as a pre-flight before a real run.
+scripts/backup_to_hf.sh --source both --dry-run
+
+# One object.
+hf buckets ls katospiegel/rete-public/rete/foo/foo.rete --recursive --json
+```
+
+Anything short of N/N is listed by key in `dev/backup-hf/missing.txt`; the logs
+and the resume state live beside it in `dev/backup-hf/`.
+
+## 7. Back up the SOURCE too — a `.rete` is a derived artifact
+
+Step 6 protects the graph. It does **not** protect the thing the graph was made
+from, and those are not the same asset. The repo has withdrawn its pre-1.0
+backwards-compatibility promise, so **every published graph will be rebuilt at
+least once** — and a rebuild needs the source, not the output. `getty-tgn` was
+lost exactly this way during the `0x02` → v5 migration: the `.rete` could no
+longer be read and there was nothing left to rebuild it from.
+
+Do this in the same sitting as step 6, for the same dataset:
+
+```bash
+# After publishing one dataset — the normal case.
+scripts/backup_sources_to_hf.sh <dataset-dir>          # e.g. davidrumsey-maps
+
+# Plan only; prints file counts and GiB, uploads nothing.
+scripts/backup_sources_to_hf.sh --all --dry-run
+
+# Whole-corpus sweep.
+scripts/backup_sources_to_hf.sh --all
+```
+
+### Destination keys
+
+A second prefix beside `rete/`, in the shape the hand-mirrored datasets already
+use — do not invent a third:
+
+```text
+local  data/<dataset>/raw/<path>  ->  hf  sources/<dataset>/<path>   ("raw/" strips)
+local  data/<dataset>/<path>      ->  hf  sources/<dataset>/<path>
+```
+
+`raw/` disappears from the key because the datasets mirrored before the script
+existed (`cordis`, `dblp`, `ror`, `zenodo`, `graphontology`, …) keep their source
+archive at the top of the dataset directory and have no `raw/` at all. A handful
+of dataset directories map to a different bucket prefix — `davidrumsey-maps` →
+`davidrumsey`, `epfl-graph` → `graphontology`, `openalex` →
+`semopenalex/2025-02-10` — because the bytes were uploaded by hand under those
+names; the mapping exists so a sweep *recognises* them instead of writing a
+second copy. `scripts/backup_sources_to_hf.sh --all --list` prints it.
+
+### What counts as source
+
+- **Everything under `raw/` is source, unfiltered.** A `.nt` or `.ttl` in there
+  is a *downloaded* ontology, not something we generated.
+- **Outside `raw/`, exclusion is by LANE, never by data-file extension** — a
+  directory we generate *into* (`nt/`, `nq/`, `ttl/`, `parquet*/`, `duckdb/`,
+  `sqlite/`, `tables/`, `companions/`, `turntables/`, `preview/`, `spill/`,
+  `logs/`), plus `*.rete`, `*.pmtiles` and build scratch.
+
+**Do not "improve" this back into an extension filter.** That was the first cut
+and it silently ate real sources: bne's three official `.nt.bz2` dumps, jonas's
+`heurist.duckdb` export, the WDQS harvest `.nt` behind `wd-events` /
+`wikidata-themes` / `dbpedia-themes`, `wd-tables`' `Q*.parquet`, and
+`biblissima`'s `shards/*.nt.gz`. An extension says nothing about whether we
+produced a file; only where it sits does.
+
+Three directories break the default and the script encodes why:
+`data/_extras/` and `data/playground/` are mirrored **raw-like** (the whole tree
+is harvest output, with no `raw/` lane to separate it from ours), and so is
+`data/datacite/`, whose `parquet-*/` is the canonical copy of 994M rows because
+its 24-hour source links expired and the archives were never kept. Loose files
+at the top of `data/` — which `find -maxdepth 1 -type d` never sees, and which
+include the entire source of `causenet` — go to `sources/_root/` via the
+`_root` pseudo-dataset.
+
+The rules live in two rsync-style filter files the script writes into
+`dev/backup-sources/`. **They have to be files.** `hf buckets sync
+--exclude '*.rete'` silently matches *nothing* — only directory-prefix patterns
+like `raw/**` work as a command-line flag — while the identical pattern inside
+`--filter-from` works. Every file-level rule therefore goes in the filter file.
+
+### What the script guarantees
+
+- **Resumable and additive.** `hf buckets sync --ignore-times` compares by byte
+  size only, so an object already in the bucket at the identical length is
+  skipped. `--delete` is never passed: the script only ever adds.
+- **Verified by re-planning, not by exit code.** After syncing, the *same* plan
+  is recomputed against a freshly listed bucket. The dataset counts as mirrored
+  only when that second plan holds **zero** remaining uploads — which is a
+  size comparison over every single file, not a spot check.
+- **Single instance, by atomic `mkdir` lock** in `dev/backup-sources/.lock`, for
+  the same reason as step 6.
+- **Bulk-safe.** Directories go through `hf buckets sync`, not per-file
+  `hf buckets cp`: `davidrumsey` alone is 449,247 files, which as individual
+  `cp` invocations would take days.
+
+### Not everything is on disk, and that is the point
+
+`openaire`, `orcid` and `crossref` are on the skip list: their source tars are
+**already** in the bucket under a hand-made snapshot-dated layout
+(`sources/openaire/2021-v3.0/`, `sources/orcid/2025/`,
+`sources/crossref/public-data-file-2026-03/`) and the local copies were deleted
+afterwards to free disk. The bucket is the only copy — which is exactly the
+outcome this step exists to produce.
+
+### Never write off a source without testing a fetch
+
+If a dataset's source is *neither* on disk *nor* in the bucket, **try the URL
+before calling it lost, and record the HTTP status you actually observed.**
+Every "unrecoverable" claim checked during the first full sweep turned out to
+be false:
+
+| claimed lost | reality |
+|---|---|
+| `databnf` — "expiring `transfert.bnf.fr` links" | all 22 answer `200`; 6.16 GiB re-fetched and mirrored, byte counts matched `Content-Length` |
+| `getty-tgn` — "lost in the `0x02` → v5 migration" | `data/_extras/getty-tgn.ttl` was on disk the whole time |
+| `crossref` | already in the bucket at `sources/crossref/public-data-file-2026-03/` |
+| `chemotion` | GitHub LFS, `206`, sha256 matched the pointer exactly |
+| `ontoneurolog` | the legacy unice.fr zip still answers `200` |
+
+Two real gotchas when re-fetching: `transfert.bnf.fr` **ignores `Range`** (a
+`curl -r 0-1023` returns the whole file, so there is no resumable partial
+fetch), and the filename lives only in `Content-Disposition` — capture it
+rather than numbering the downloads. Keep the URL list next to the bytes in the
+bucket: `sources/databnf/urls.txt` is what made that dataset recoverable at all.
 
 ## Commit
 

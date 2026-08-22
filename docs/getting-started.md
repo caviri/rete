@@ -1,11 +1,59 @@
 # Getting started
 
-## Everything runs in Docker
+## Getting the CLI
 
-`rete` is developed and built **entirely inside a container** — nothing runs on
-the host. The dev container ([`.devcontainer/`](https://github.com/caviri/rete/tree/main/.devcontainer)) carries the
-Rust 1.92 toolchain, rustfmt, clippy, Python, the `wasm32-unknown-unknown`
-target, and `wasm-pack`.
+You do not need a Rust toolchain, a clone of the repo, or its dev container to
+*use* rete. A prebuilt CLI image is published —
+[`ghcr.io/caviri/rete-cli`](https://github.com/caviri/rete/blob/main/docker/README.md),
+~30 MB on distroless, multi-arch (amd64 + arm64) — so turning an RDF dump into a
+`.rete` is one command:
+
+```sh
+# run this in the directory that holds your dump
+docker run --rm -v "$PWD:/data" ghcr.io/caviri/rete-cli:latest \
+  build /data/dump.nt -o /data/out.rete --card --title "My graph"
+```
+```text
+embedded dataset card (16240 bytes of metadata)
+wrote /data/out.rete: 5 triples, 8 terms, 1 pyramid level(s), 18061 bytes
+```
+
+`-v "$PWD:/data"` maps the current directory onto `/data` inside the container,
+so `/data/out.rete` **is** `./out.rete` on your machine — the file is next to
+your dump when the command exits, with nothing to extract from a container.
+
+The rest of this page writes commands as a bare `rete …`. Define this alias once
+and they all run as written against the files in your current directory
+(`-w /data` makes the container's working directory *your* directory, so plain
+filenames resolve; `-i` lets you pipe into it):
+
+```sh
+alias rete='docker run --rm -i -v "$PWD:/data" -w /data ghcr.io/caviri/rete-cli:latest'
+```
+
+> **Three container gotchas, all of them silent.** Piping needs `docker run -i`
+> — the alias sets it, but without `-i` stdin is empty and `rete build -` writes
+> a valid, **0-triple** file and exits 0. On Linux the image runs as root, so add
+> `--user "$(id -u):$(id -g)"` unless you want the output owned by root. On
+> Windows Git Bash, MSYS rewrites both the mount and `/data/…` arguments
+> (`/data/dump.nt` becomes `C:/Program Files/Git/data/dump.nt`, and a `$PWD`
+> mount resolves to a directory that is not yours — the build reports success and
+> no file appears); use
+> `MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/data" …`.
+
+Other routes to the same engine, if a container is not what you want:
+`pip install rete-graph` ([Python](python.md)),
+`npm install rete-graph` ([JavaScript](javascript.md)), or a build from source
+(below). Remote graphs need no install beyond the image and no mount at all —
+see *Deploying & querying over a URL* further down.
+
+## Building from source
+
+Building `rete` *itself* — as opposed to using it — happens **entirely inside a
+container**; nothing runs on the host. The dev container
+([`.devcontainer/`](https://github.com/caviri/rete/tree/main/.devcontainer))
+carries the Rust 1.92 toolchain, rustfmt, clippy, Python, the
+`wasm32-unknown-unknown` target, and `wasm-pack`.
 
 Open the folder in a dev container (VS Code: *Reopen in Container*), or run the
 same image directly:
@@ -17,13 +65,13 @@ docker run --rm -it -v "${PWD}:/work" -w /work rete-dev bash
 cargo build --release -p rete-cli
 ```
 
-The compiled CLI is at `target/release/rete`. The examples below assume it is on
-your `PATH` (or substitute `cargo run -p rete-cli --`).
+The compiled CLI is at `target/release/rete`; put it on your `PATH` and the
+examples below run without the alias (or substitute `cargo run -p rete-cli --`).
 
 ## Building a `.rete` file
 
 <figure class="fig-right">
-  <img src="img/build-pipeline.svg" alt="A pipeline: .nt, .ttl and .nq inputs feed into 'rete build', which produces one social.rete file containing a dictionary, indexes and a pyramid, ready to put on an HTTP host or URL.">
+  <img src="img/build-pipeline.svg" alt="Building a .rete file: source triples in N-Triples, Turtle, N-Quads, RDF/XML or OWL are compiled by rete build — which sorts, dedupes, front-codes the dictionary and writes the permutation indexes — into one immutable file holding a dictionary, permutation indexes and a dataset card, plus an optional community pyramid that many published files do not have. The result goes on any HTTP host that answers Range requests: a bucket, a static site, a CDN. There is no server and no database to run.">
   <figcaption><code>rete build</code> packs your triples into one immutable file — dictionary, permutation indexes, and a community pyramid — that you can drop on any URL.</figcaption>
 </figure>
 
@@ -60,8 +108,9 @@ an external convert-to-RDF step first; see
 
 The build is **parallel and allocation-frugal** by design (the CLI enables the
 `parallel` feature): the dictionary dedups terms with a `HashSet` and sorts once,
-and the six permutation indexes (SPO/POS/OSP/SOP/PSO/OPS) are built concurrently
-with parallel sorts. This is what lets it scale to millions of *unique* terms
+and the permutation indexes (six by default: SPO/POS/OSP/SOP/PSO/OPS, or three
+with [`build --permutations 3`](cli.md#rete-build-inputs--o-outrete---format-ntnqttlrdfxml))
+are built concurrently with parallel sorts. This is what lets it scale to millions of *unique* terms
 (definitions, synonyms, SMILES/InChI strings) without the build collapsing into
 allocation churn — and the output is **byte-identical** to a serial build, so the
 speedup is free. Turtle-native sources (e.g. a 239 MB `.ttl`) skip `rapper` and

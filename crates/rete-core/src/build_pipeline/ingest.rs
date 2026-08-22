@@ -76,7 +76,7 @@ pub(crate) enum ChunkedStage {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct ChunkedIngest<'a> {
     temp: &'a BuildTemp,
-    chunker: crate::extbuild::Chunker<'a>,
+    chunker: crate::extbuild::Chunker,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -105,6 +105,9 @@ impl<'a> ChunkedIngest<'a> {
     }
 
     pub(crate) fn push(&mut self, quad: RawQuad) -> Result<(), BuildPipelineError> {
+        if let Some(graph) = quad.3.as_ref() {
+            return Err(BuildPipelineError::NamedGraph(graph.clone()));
+        }
         self.chunker
             .push(quad)
             .map_err(crate::extbuild::ExtBuildError::into_pipeline)
@@ -151,7 +154,7 @@ impl<'a> SealedChunks<'a> {
                 .checked_add(chunk.triple_count)
                 .ok_or(BuildPipelineError::Overflow("statement count"))
         })?;
-        let merged = crate::extbuild::merge_dictionaries(self.temp, &self.chunks)
+        let merged = crate::extbuild::merge_pipeline_dictionaries(self.temp, &self.chunks)
             .map_err(crate::extbuild::ExtBuildError::into_pipeline)?;
         let stats = BuildStats {
             statements: usize::try_from(statements)

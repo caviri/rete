@@ -33,6 +33,29 @@ function record(tier, name, ok, note = "") {
 
 // ---------- G0 static ----------
 function g0() {
+  // FIRST: are the .rete fixtures the ones the recipe produced? Every tier
+  // below reads them, and a substituted one used to surface as a failure in
+  // whichever check happened to notice — check_card_modal blaming the
+  // playground for a downloaded file. Ask the question where the answer names
+  // the fixture.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_fixture_provenance.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record(
+      "G0",
+      "gate fixtures match their recipe (tests/gate/fixtures/manifest.json)",
+      ok,
+      ok ? `${verdict.fixtures} fixtures, built by ${(verdict.builders || []).join(", ") || "(unknown)"}` : out.slice(-300),
+    );
+  } catch (e) {
+    // stderr first: _expect.mjs puts the compact one-line summary there, and it
+    // is the line that names the fixture and the command that repairs it.
+    record("G0", "gate fixtures match their recipe (tests/gate/fixtures/manifest.json)", false,
+      String(e.stderr || e.stdout || e).slice(-300));
+  }
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/test_catalog_matrix.mjs`, {
       encoding: "utf8",
@@ -124,6 +147,27 @@ function g0() {
     record("G0", "social previews (share pages + og:image)", false,
       String(e.stderr || e.stdout || e).slice(-200));
   }
+  // The Markdown emphasis rule has six call sites across five files — app.js
+  // holds three, and two of the files are generated. Nothing can import it into
+  // all of them, so assert the copies are byte-identical and that the shipped
+  // descriptions still render right: an un-flanked rule silently ate literal
+  // asterisks out of six live cards.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_md_emphasis.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record(
+      "G0",
+      "markdown emphasis rule (identical copies + flanking)",
+      ok,
+      ok ? `${verdict.copies} copies, ${verdict.spans} spans over ${verdict.strings} strings` : out.slice(-240),
+    );
+  } catch (e) {
+    record("G0", "markdown emphasis rule (identical copies + flanking)", false,
+      String(e.stderr || e.stdout || e).slice(-240));
+  }
   for (const f of ["web/playground-src/app.js", "web/playground-src/catalog.js", "web/playground-src/versions.js"]) {
     try { execSync(`node --check ${ROOT}/${f}`, { stdio: "pipe" }); record("G0", `parse ${f}`, true); }
     catch (e) { record("G0", `parse ${f}`, false, String(e.stderr || e).slice(0, 120)); }
@@ -182,6 +226,57 @@ function g0() {
     });
     record("G0", `catalog examples declared prefixes (${checked})`, bad.length === 0, bad.slice(0, 3).join(" "));
   } catch (e) { record("G0", "catalog examples declared prefixes", false, String(e).slice(0, 120)); }
+  // A full-text index is OPT-IN at build time, so the catalog's prose and the
+  // file's sections drift silently (CONTAINS still answers — by full scan).
+  // `boe` and `memoria` advertised an index their published files never had.
+  // Offline half: the `textIndex:` declaration and the prose must agree.
+  // Network half (flag vs the section actually served): check_dataset_catalog.py.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_text_index_claims.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record(
+      "G0",
+      "full-text index claims match the catalog's declaration",
+      ok,
+      ok ? `${verdict.declaringTextIndex} declare one, ${verdict.surfacesScanned} surfaces` : out.slice(-240),
+    );
+  } catch (e) {
+    record("G0", "full-text index claims match the catalog's declaration", false,
+      String(e.stdout || e.stderr || e).slice(-240));
+  }
+  // The live example sweep (check_catalog_examples) defaults to scope=embedded,
+  // so the ~60 remote-lazy datasets are never asserted here — their answers are
+  // measured by scripts/preview/capture.mjs and committed to answers.json, and
+  // until now nothing read that file. Nine examples sat recorded at 0 rows.
+  // Offline by construction: committed JSON + committed catalog, no network.
+  //
+  // Since #212 the same check also reads the OTHER two ways an example can fail
+  // to answer, both of which used to be exempt: a record that came back `ok:
+  // false` (a hang, an engine error, a capture that threw) and an example with
+  // no record at all. Fifty-two entries lived in the first exemption and the
+  // catalog's most expensive query lived in the second.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_catalog_answers.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record(
+      "G0",
+      "every catalog example has a recorded answer with something in it",
+      ok,
+      ok
+        ? `${verdict.measured} counted + ${verdict.drawings} drawn, ${verdict.allowEmpty} allowEmpty, `
+          + `${verdict.skipCapture} skipCapture`
+        : out.slice(-240),
+    );
+  } catch (e) {
+    record("G0", "every catalog example has a recorded answer with something in it", false,
+      String(e.stdout || e.stderr || e).slice(-240));
+  }
 }
 
 // ---------- servers ----------
@@ -249,7 +344,7 @@ function lastJson(out) {
 // ---------- G1 node async harness ----------
 async function g1(port) {
   const fixture = `${ROOT}/tests/gate/.cache/worldcup2026.rete`;
-  if (!fs.existsSync(fixture)) { record("G1", "async wasm harness", false, "fixture missing (gate.sh downloads it)"); return; }
+  if (!fs.existsSync(fixture)) { record("G1", "async wasm harness", false, "fixture missing — run `bash tests/gate/fixtures.sh`"); return; }
   const q = [
     "PREFIX wc: <https://w3id.org/rete/worldcup#>",
     "PREFIX sc: <http://schema.org/>",
@@ -290,13 +385,20 @@ const G2 = [
   ["check_settings_mobile", "phone-viewport Settings (no overflow, storage, session)", 120000, false],
   ["check_copy", "clipboard: parse-error Copy-log + share button", 90000, false],
   ["check_url_param", "#url= opens an off-catalog .rete; javascript: refused", 120000, false],
+  ["check_load_modal", "Load pre-modal: drop/URL/examples routes; URL route end to end; phone width", 150000, false],
+  ["check_default_graph_hint", "empty-default-graph explainer (resident + carded remote); absent on ordinary files", 180000, false],
+  ["check_card_examples", "the file's OWN card queries populate the examples panel (off-catalog + local + catalog supplement; deduped; zero-row kept)", 240000, false],
+  ["check_union_graphs", "⛁ All graphs union toggle: off by default, 0→union when on (remote + resident), announced, explainer suppressed", 240000, false],
+  ["check_deeplink_view_state", "deep links carry the view: union/reason round-trip WITH differing results, strategy/round/fed/view/labels restored, default hash unchanged", 300000, false],
   ["check_card_modal", "Dataset Card modal: rendered + coloured JSON, remote & resident", 120000, false],
+  ["check_len_probe_hostile", "host under-reports length via HEAD + hides Content-Range (#95)", 120000, false],
   ["check_clear", "Clear everything empties 4 stores + Cache API", 90000, false],
   ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000, true],
   ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000, false],
   ["check_async_fallback", "async assets 404 → degrades to sync reader, still runs", 120000, true],
   ["check_query_shapes", "property paths + CONSTRUCT→graph + reasoning (embedded)", 90000, false],
   ["check_boe_reason", "BOE OWL 2 QL reasoning over live R2 (0 → N with 🧠 Reason)", 150000, true],
+  ["check_davidrumsey_spatial", "davidrumsey six place fields roll up under dct:spatial over live R2 (N with 🧠 Reason → 0 without)", 420000, true],
   ["check_enac", "EPFL ENAC repositories by lab over live R2", 150000, true],
   ["check_recent_build", "RECENTLY-BUILT file, bound predicate+object over live R2", 150000, true],
   ["check_schema_empty", "no-pyramid dataset shows honest empty schema (no stale scholar leak)", 120000, true],
@@ -305,8 +407,11 @@ const G2 = [
   ["check_map_geo", "embedded GeoSPARQL → Tiles · local PMTiles fixture", 90000, false],
   ["check_service_success", "successful SERVICE join · local SPARQL JSON endpoint", 90000, false],
   ["check_builder", "in-browser N-Quads build → open bytes → query Alice", 90000, false],
+  ["check_builder_card", "in-browser build writes the file's Dataset Card (CLI-identical validation; derived profile + build record absent, not empty)", 150000, false],
   ["check_cache_mode", "whole-file cache persists across reload · zero second read", 120000, false],
+  ["check_cache_url", "off-catalog URL cache: size-first consent · zero-network reload + deep link", 240000, false],
   ["check_optional_tabs", "Ask AI + Semantic/RAG initialize without model downloads", 90000, false],
+  ["check_local_lazy", "a LOCAL .rete opens through the range reader (both engines) and is never read whole; small files still load whole", 900000, false],
 ];
 async function g2(port) {
   for (const [name, label, timeout, requiresLiveR2] of G2) {

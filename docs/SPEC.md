@@ -1,6 +1,6 @@
 # Rete — a cloud-native, range-queryable RDF graph file
 
-**Status:** Stable format generation **1**, implemented (header byte `0x05`; Rete 1.x compatibility baseline) · **File extension:** `.rete` · **Header magic:** `RETE`
+**Status:** Stable format generation **1**, implemented (header byte `0x05`, frozen 2026-07-14; no compatibility promise before 1.0.0) · **File extension:** `.rete` · **Header magic:** `RETE`
 
 > One file. Put it on S3, GitHub, or any HTTP server that honors `Range`.
 > Give a client the URL. Run SPARQL. No database server.
@@ -56,9 +56,11 @@ Three transformations make it range-queryable:
 
 1. **Dictionary encoding** — every IRI / literal / blank node ⇒ a dense integer
    ID. Triples become integer triples; the dictionary is stored once, compressed.
-2. **Permutation indexes** — store the integer triples sorted in all six orders
-   (SPO, POS, OSP, SOP, PSO, OPS) so *any* triple pattern resolves to a contiguous
-   scan with its bound components leading.
+2. **Permutation indexes** — store the integer triples sorted in six orders by
+   default (SPO, POS, OSP, SOP, PSO, OPS) so *any* triple pattern resolves to a
+   contiguous scan with its bound components leading. Three of them (SPO, POS,
+   OSP) carry that routing on their own and are always present; the other three
+   are optional (§6) and buy sort-merge joins.
 3. **Pyramid (community summarization)** — partition nodes into a hierarchy of
    communities. Level 0 is a *quotient graph* (communities as supernodes, with
    aggregated edges). Each deeper level expands supernodes into their members.
@@ -73,11 +75,15 @@ header is the directory: it carries the absolute offset+length of every section,
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.
 
-<img src="img/file-layout.svg" alt="On-disk layout: a 1 KB HEADER pointing to DICTIONARY, INDEX, PYRAMID META, optional NAMED GRAPHS, and a FOOTER with the RETE magic.">
+<img src="img/file-layout.svg" alt="The section directory inside a .rete header, drawn to scale on the published davidrumsey.rete. The header is 1024 bytes: a 64-byte core, then up to 40 directory entries of 24 bytes each starting at byte 64, then zero padding — this file uses 6 entries, so most of the header is spare room. One entry is a 2-byte kind, a 2-byte flags field, 4 reserved bytes, an 8-byte offset and an 8-byte length. The seven typed kinds are dataset card, dictionary, index, pyramid, named graphs, text index and build info; this file has all but named graphs and build info. One GET of bytes 0 to 1023 therefore locates every section in the file.">
 
-<img src="img/rete-anatomy.svg" alt="The same layout on a real specimen, dblp.rete: 1 KiB header with the section directory, 731-byte card, front-coded dictionary (418 MB, 18%), six tiled permutation indexes with per-tile synopses (1.85 GB, 82%), pyramid summary, and the trailing RETE magic.">
+*The header is the directory, on a real specimen. Entry `i` lives at `64 + i×24`;
+a kind the reader does not recognise is kept verbatim, so a new writer cannot
+break an old reader.*
 
-*The layout on a real specimen (`dblp.rete`, 179 M triples): the dictionary and the six permutation indexes carry nearly all the bytes; everything a reader needs to route a query — header, directory, card — fits in the first two range requests.*
+<img src="img/rete-anatomy.svg" alt="Anatomy of a .rete file, drawn to scale on the real dblp.rete — 2.27 GB, 179,328,188 triples, 64,276,736 terms. A 1 KiB header carries a 64-byte core and a directory of 24-byte entries; then a 731-byte dataset card, the front-coded dictionary (413 MB, 18.2%), and six permutation indexes cut into roughly 64 KiB tiles with a per-tile min/max synopsis (1.85 GB, 81.8%). The file ends in a 4-byte RETE magic that a truncated download cannot fake. This specimen has no pyramid, named graphs, text index or build info — those section kinds are optional, and the directory simply does not list them.">
+
+*The layout on a real specimen (`dblp.rete`, 179 M triples): the dictionary and the six permutation indexes carry nearly all the bytes; everything a reader needs to route a query — header, directory, card — fits in the first two range requests. This file carries none of the four optional sections, and the figure says so.*
 
 *The header is the directory: a single 1 KB read carries the offset and length of every section. The ASCII below is the precise reference.*
 
@@ -121,9 +127,16 @@ The header is a fixed **64-byte core** followed by a **typed section directory**
 up to 40 entries of 24 bytes each `(kind, flags, offset, length)` — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
 room to grow without a layout reshape. Format byte `0x05` is **stable format
-generation 1**, introduced by Rete 1.0.0. It uses six index permutations and this
-1024-byte section-directory header. Experimental formats `0x01` through `0x04`
-are not readable and must be rebuilt from RDF source.
+generation 1**, frozen on 2026-07-14 and first released in Rete **0.3.0**. It
+fixes this 1024-byte section-directory header and the six-wide permutation
+addressing — *how many* of those six a given file actually stores is its
+**permutation mask** (byte 50, §6), not its generation. Experimental formats
+`0x01` through `0x04` are not readable and must be rebuilt from RDF source.
+
+> There is no Rete 1.0.0. The generation number counts *format* generations and
+> is independent of the release version (the workspace is 0.3.x); the Rust, CLI
+> and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
+> [Compatibility](compatibility.md#stable-rete-file-compatibility).
 
 **Core (bytes 0..64):**
 
@@ -141,13 +154,14 @@ are not readable and must be rebuilt from RDF source.
 | 43 | 1 | block codec id (e.g. zstd) |
 | 44 | 2 | section count (entries in the directory) |
 | 46 | 4 | schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, fetched at `pyramid_meta_offset + pyramid_meta_len − this` for an index/dictionary/summary-free schema-coherence read |
-| 50 | 14 | reserved (zero) |
+| 50 | 1 | **index permutation mask** (§6): bit *i* = permutation *i* of `SPO, POS, OSP, SOP, PSO, OPS` is stored. `0` means **all six** — the canonical spelling, so a full build is byte-identical to every file written before this byte was defined. A mask must contain SPO+POS+OSP (`0b000111`); anything else is rejected at header parse |
+| 51 | 13 | reserved (zero) |
 
 **Section directory (bytes 64…, `section_count` entries of 24 bytes):**
 
 | Offset | Size | Field |
 |---|---|---|
-| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index; higher ids reserved for future sections) |
+| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index, `7` build-info; higher ids reserved for future sections) |
 | +2 | 2 | section flags (reserved) |
 | +4 | 4 | reserved (zero) |
 | +8 | 8 | section offset |
@@ -172,11 +186,25 @@ header offsets). A reader that doesn't understand the payload simply skips it: t
 dictionary is always located via `dictionary offset`, which already accounts for
 the section's length.
 
+The **build-info section** (kind `7`) is an optional opaque payload laid out
+**immediately after the metadata section** — adjacent, so a card reader fetches
+metadata + build-info in one coalesced range and the CARD tier stays at one
+header read plus one range read. The CLI stores build-conditions JSON there:
+build timestamp, builder version, the flags in force, and measured starter-query
+costs (see [Dataset Cards](dataset-cards.md)). Unlike every other section its
+bytes are **deliberately excluded from the content hash**: it records exactly
+the facts that differ between two builds of identical data (when, by which
+binary, how fast), and the reproducible-hash property — two builds of the same
+input hash identically — must survive them. `verify` therefore does not cover
+it, on old readers (which see an unknown kind-7 entry and ignore it) and new
+ones alike; treat its contents as advisory provenance, not integrity-protected
+data.
+
 ---
 
 ## 5. Dictionary
 
-<img src="img/dictionary-roles.svg" alt="The dictionary's four front-coded sections: SHARED terms (both subject and object), SUBJECTS-only, OBJECTS-only, and PREDICATES, with role-ordered IDs.">
+<img src="img/dictionary-roles.svg" alt="The dictionary is four front-coded sections. Terms used as both subject and object are shared and take IDs 1 to S, and the same ID means the same term in either position; subject-only and object-only terms continue at S+1 inside their own space; predicates get an independent ID space that starts again at 1. So a term's ID range alone tells you its role, with no second lookup. Every section is sorted, deduped and front-coded against the previous term, with a restart point every 16 terms giving O(log n) term-to-ID lookup, and is chunked at about 64 KiB so resolving one term faults in one chunk instead of the whole section.">
 
 *Four front-coded sections with role-ordered IDs: a term's ID range reveals whether it is a subject, object, or predicate.*
 
@@ -254,14 +282,43 @@ implementation path.
 
 ## 6. Triples / quads
 
-- Stored as integer triples in all **six permutations**: **SPO, POS, OSP, SOP,
-  PSO, OPS** (stable format `0x05`; experimental `0x03` stored only the first three).
-  Three suffice to
-  *match* any of the eight triple-pattern shapes; the full six additionally sort
-  the triples on **every** prefix of columns, so for any bound prefix and any free
-  column there is a permutation that routes on the prefix **and** streams sorted on
-  that column — the precondition a **sort-merge join** needs (both inputs co-sorted
-  on the join key). The cost is ~2× the index payload.
+<img src="img/index-permutations.svg" alt="Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.">
+
+*Which pattern reaches which index, and what the other three actually buy. The
+routing three are measured on `tree-city-inventory`; the optional three are the
+bigger half, because a sort order that does not lead with a subject or predicate
+prefix compresses worse.*
+
+- Stored as integer triples in **SPO, POS, OSP** and, by default, also **SOP,
+  PSO, OPS** (stable format `0x05`; experimental `0x03` stored only the first
+  three). Which orders a file carries is recorded in the header's **permutation
+  mask** (byte 50; `0` = all six) and is fixed at build time by
+  `rete build --permutations 3|6`. **The default is six.**
+  - The first three *match* any of the eight triple-pattern shapes, and they do
+    so at the **same longest bound prefix** the full six achieve on every one of
+    those eight — enumerated in `index.rs`'s `perm_routing_never_leaves_core`.
+    So routing, the tiles fetched, and the rows returned are identical either
+    way; the choice is invisible from a query's results.
+  - The full six additionally sort the triples on **every** prefix of columns, so
+    for any bound prefix and any free column there is a permutation that routes
+    on the prefix **and** streams sorted on that column — the precondition a
+    **sort-merge join** needs (both inputs co-sorted on the join key). Exactly
+    three of the twelve (bound-set, join-column) shapes lose that stream with
+    three permutations: subject-bound sorted on object, predicate-bound sorted on
+    subject, object-bound sorted on predicate. The planner then declines the
+    merge seed and hash-joins, which is a slower plan, never a wrong one.
+  - The cost is ~2× the index payload: measured at **36.8%** of a built
+    literal-heavy file (`davidrumsey`, 5.00 M triples) and **50.5%** of a
+    short-term-heavy one (`tree-city-inventory`, 3.15 M triples) — the two
+    builds tabulated in
+    [BENCHMARK.md](BENCHMARK.md#the-merge-join-permutations-cost-vs-benefit).
+  - **A file with fewer than six permutations is not readable by a Rete that
+    predates the mask.** Such a reader passes six to the index container's
+    section-count check and gets `malformed container: expected 6 permutation
+    sections` (resident) or `unexpected container section count` (ranged), exit
+    1, on every command that touches the index — a loud refusal, not a wrong
+    answer. Its `info`, `verify` and `card-url` still work, because they read
+    only the header and the metadata section.
 - Each permutation is encoded as an **adjacency / bitmap-triples** structure
   (HDT-style): for SPO, a sorted list of subjects, each with its predicate
   list, each with its object list, delta-encoded.
@@ -339,17 +396,40 @@ section payload:  varint header_len, raw §5.1 header (term count, restart
                   offsets stay valid in the section's coordinate space)
                   varint num_chunks
                   per chunk: varint Δfirst_run        # Δ from previous chunk
-                             varint first_term_len, first_term bytes
+                             varint key_len, key bytes # routing separator
                              varint clen               # compressed chunk length
                   chunks:    run-aligned body slices, compressed individually
 ```
 
 Chunks hold whole front-coded runs (~64 KiB of body per chunk), and the
-directory embeds each chunk's first term — so `term → id` binary-searches the
-directory locally and faults exactly **one** chunk, and `id → term` computes
-its chunk arithmetically and faults one. A lazily-opened remote file therefore
-pays the section headers + directories (KBs) up front and O(touched chunks)
-afterwards, instead of the whole dictionary container.
+directory carries one **routing key** per chunk — so `term → id`
+binary-searches the directory locally and faults exactly **one** chunk, and
+`id → term` computes its chunk arithmetically and faults one. A lazily-opened
+remote file therefore pays the section headers + directories (KBs) up front and
+O(touched chunks) afterwards, instead of the whole dictionary container.
+
+The key is a **separator, not a term**. Its only contract is
+
+```
+last_term(chunk i-1)  <  key(i)  <=  first_term(chunk i)
+```
+
+with chunk 0's key empty (`b"" <= anything`). A reader routes by
+`partition_point(|c| c.key <= term)`, which needs nothing else; a term that
+falls in the gap `key(i) <= term < first_term(i)` lands on chunk `i`, finds no
+match, and is correctly reported absent. Writers store the **shortest** such
+string — `first_term(i)` truncated one byte past where it diverges from
+`last_term(i-1)` — which on a graph of long literals is a few bytes where the
+term is kilobytes. Files written before 2026-08 store the chunk's first term
+verbatim; that is the degenerate separator, so **both vintages route
+identically and no version check is involved.** An existing file keeps its
+larger directory until it is rebuilt.
+
+Two consequences a future reader must respect: the key may not be reconstructed
+into a term, compared for equality with one, or reported as one; and a key that
+is *not* a separator (a truncation, a fixed-size hash) mis-routes **silently** —
+`id → term`, `dump` and `export` route by `Δfirst_run` and stay byte-perfect
+while `term → id` returns wrong answers.
 
 ### 6.3 Staged paired-family container (generation `0x06`)
 
@@ -458,14 +538,34 @@ posting, `prefix(word)` the contiguous run of postings whose tokens share the
 prefix. Multiple query words **AND** by intersecting their sorted posting lists.
 SPARQL never touches this section, so a query open neither fetches nor pays for it.
 
-**Compatibility:** `0x05` is stable format generation 1 and the compatibility
-baseline for Rete 1.x. Every stable reader from Rete 1.0.0 onward reads `0x05`.
+**Discoverability.** Because a file *without* the section answers the same
+`FILTER(CONTAINS(…))` with the same rows — by full scan — the capability cannot
+be inferred from a query result, and a reader must be able to ask the file. It
+can: a kind-`6` entry in the section directory is present or it is not, in the
+same `bytes=0-1023` a client already reads. The application layer surfaces that
+as the Dataset Card's `signals.text_index`
+(`{present, bytes, token_table_bytes}` — see
+[Dataset Cards](dataset-cards.md#the-full-text-signal-measured-not-stored)),
+**measured by the reader from this directory, never written into the metadata
+section**. That is a deliberate exception to how every other card field works,
+and it is what keeps the answer true across `repyramid --text-index` (which adds
+the section to an existing file) and true for a file carrying no card at all.
+`token_table_bytes` — the section's leading `token_table_len` varint plus the
+table it measures, i.e. the prefix a first search fetches — costs one ≤10-byte
+range read at `text_index offset` and is the honest cost figure; the section
+length alone overstates it several-fold, since the postings blob is never read
+whole.
+
+**Compatibility:** `0x05` is stable format generation 1. Every stable reader from
+Rete **0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen
+in the 0.3 line and the release version is a separate number.
 Optional sections and flags may extend it without changing its required semantics.
-A required layout change normally uses a new format byte and ships with a
-documented rebuild or migration path. The staged paired-family plan is the
-explicit exception: Task 11 deliberately moves to `0x06` only and removes the
-`0x05` reader. Experimental formats `0x01` through `0x04` are a clean break
-and must be rebuilt from RDF source.
+A required layout change uses a new format byte. **No backwards-compatibility
+promise is made before 1.0.0:** a later generation may drop `0x05` read support
+and force a rebuild from RDF source. The staged paired-family plan makes that
+choice explicitly: Task 11 moves to `0x06` only and removes the `0x05` reader.
+Experimental formats `0x01` through `0x04` are already such a break and must be
+rebuilt from RDF source.
 
 ---
 
@@ -473,7 +573,7 @@ and must be rebuilt from RDF source.
 
 The headline feature. "Zoom" = level of graph detail.
 
-<img src="img/pyramid.svg" alt="The pyramid: a coarse community summary (a few super-nodes) at the top, communities in the middle, and the full triple graph at the base; clients read the top first and descend only where needed.">
+<img src="img/pyramid.svg" alt="The pyramid stores a graph at several levels of detail so a client can read an overview before touching the data. Level 0 at the top is the coarsest: a handful of supernodes with aggregated edges. Middle levels split those into finer communities, each tile targeted at about 64 KiB so one zoom is one range read. Level N-1 at the base is the full triple graph, fetched only where a query drills in. On the published davidrumsey.rete the whole pyramid is 1,332,512 bytes — 1.8 percent of the 74.8 MB file — so the overview is cheap and the base is not.">
 
 *Top to bottom: coarse community summary → communities → full triples. Fewer bytes at the top, more detail below; clients fetch the overview first and drill down on demand.*
 
@@ -650,10 +750,19 @@ separate directory/footer round-trip is needed:
      - optionally emit result provenance: matched IDs/terms, graph scope, chosen
        permutation, and the dictionary/index/payload/pyramid byte ranges
 2c. Routed single-pattern path → GET dictionary, resolve constants, choose the
-    best of the six permutations, then follow the index container's length
+    best of the file's permutations, then follow the index container's length
     prefixes and fetch only that one permutation payload. Unknown bound terms
     skip the index entirely and return an empty result.
 ```
+
+<img src="img/remote-open-cost.svg" alt="What a cold remote open costs, measured with rete cost on the published davidrumsey.rete — 74.8 MB, 5,001,983 triples. Each track is the whole file; the solid part is what crosses the wire. Reading the dataset card costs 2 requests and 61 KB, 0.08 percent. Opening lazily for a query costs 65 requests and 407 KB, 0.54 percent, because only tile directories are read. But routing one triple pattern costs 2 requests and 16.1 MB, 21.5 percent, and the overview costs 3 requests and 17.4 MB, 23.3 percent — both because resolving a term to an id pulls the whole dictionary. Reading the file whole costs 74.7 MB, 99.9 percent.">
+
+*The same file, five ways in. The lazy path is 0.54% of the file; the two paths
+that must resolve a constant term to an id pay for the whole dictionary. This
+file predates separator keys, so its chunk directory also stores every chunk's
+first term verbatim — 261,271 B, which a rebuild takes to 48,009 B (#198). On
+this graph that is a rounding error inside a 16 MB dictionary; on a graph of
+long literals it is most of the open.*
 
 A full open touches ≤4 ranges (header, dict, index, pyramid-meta); the overview
 path touches 3 and skips the index entirely. The routed single-pattern path reads

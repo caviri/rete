@@ -75,13 +75,53 @@ Binding failures throw JavaScript `Error` objects rather than strings.
 | `schema_url(url)` | **worker-only**: the Schema view (`classes`/`relations`) from a remote file's schema pyramid, plus `remote:{…}` |
 | `shacl_url(url, shapes, format?)` | **worker-only**: lazy SHACL — validates the remote default graph, range-reading only each shape's targets, plus `remote:{…}` |
 | `shacl_construct_url(url, shapes, construct)` | **worker-only**: SHACL over just the subgraph a CONSTRUCT selects (only its tiles fetched), plus `remote:{…}` |
-| `new Graph(bytes)` → `.query`, `.query_triples`, `.prefix_search`, `.text_search`, `.why_triples`, `.schema`, `.reach`, `.shacl`, `.reason`, `.query_communities`, `.pyramid_tree`, `.file_layout`, `.info`, `.graph_names` | a file image owned **once** and kept resident, while dictionary chunks and index tiles decode lazily; repeated calls reuse everything already faulted — the stateful local mirror of the free functions |
-| `new RemoteGraph(url)` → `.query(query, format)`, `.prefix_search`, `.text_search`, `.stats()`, `.content_hash()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
+| `new Graph(bytes)` → `.query`, `.query_reasoned`, `.query_opts`, `.query_triples`, `.prefix_search`, `.text_search`, `.why_triples`, `.schema`, `.reach`, `.shacl`, `.reason`, `.query_communities`, `.pyramid_tree`, `.file_layout`, `.info`, `.graph_names` | a file image owned **once** and kept resident, while dictionary chunks and index tiles decode lazily; repeated calls reuse everything already faulted — the stateful local mirror of the free functions |
+| `new RemoteGraph(url)` → `.query(query, format)`, `.query_reasoned`, `.query_opts`, `.prefix_search`, `.text_search`, `.stats()`, `.content_hash()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the adaptive block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
 | `reason(bytes, graph?)` | OWL RL / RDFS coherence over an in-memory graph: `{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }` |
 | `check_schema(bytes)` | index-free Tier-0 schema coherence: `{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], readsIndex:false }` |
 | `check_schema_url(url)` | **worker-only**: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus `remote:{…}` |
 | `reason_construct_url(url, construct)` | **worker-only**: Tier-1 *selective* coherence — reason over just the subgraph a CONSTRUCT selects (only its tiles are fetched), plus `remote:{…}` |
 | `reason_url(url, graph?)` | **worker-only**: Tier-2 *full* coherence over a remote URL (materializes the whole graph), plus `remote:{…}` |
+| `register_local_file(url, blob)` / `forget_local_file(url)` | **worker-only**: map a `rete-local:…` address onto a `File`/`Blob`, so every `*_url` entry point above reads it lazily — see [Local files, read lazily](#local-files-read-lazily) |
+
+### Local files, read lazily
+
+A `File` the user picked can be range-read exactly like a URL. Register the blob
+under an address whose scheme is `rete-local:`, then pass that address to any
+`*_url` function or to `new RemoteGraph(…)`:
+
+```js
+// inside a Web Worker (register_local_file's reads use FileReaderSync)
+wasm_bindgen.register_local_file("rete-local:1/graph.rete", file);
+const g = new wasm_bindgen.RemoteGraph("rete-local:1/graph.rete");
+JSON.parse(g.query("SELECT ?p ?o WHERE { <…/s42> ?p ?o }", "table"));
+g.stats();   // {fileLength, bytes, requests} — how little was actually read
+```
+
+It is the same reader as the HTTP one with a different bottom transport:
+`Blob.slice()` + a synchronous `FileReaderSync` instead of a ranged `GET`. The
+header-window cache, range batching, block cache and polyglot detection all
+apply unchanged, and `stats()` counts blob reads the way it counts requests.
+
+Three things follow from that, and all three matter:
+
+- **Worker-only**, like every other lazy read here — `FileReaderSync` does not
+  exist on the main thread.
+- **Both engine builds work.** A local read never suspends, so the asyncify
+  variant never routes it through `env.rete_fetch_ranges`.
+- **A registration belongs to one wasm instance.** Rebuild the worker (an engine
+  switch, a trap, a memory reclaim) and the map starts empty — re-register the
+  same address before opening again.
+
+`register_local_file` rejects an address that does not begin with `rete-local:`,
+so an ordinary URL can never be silently answered from a blob.
+
+Below ~128 MB the playground still reads a local file whole: that path is faster
+when the query touches everything, and the tabs needing a resident graph
+(Explore, Map, Build) depend on it. Above it, the whole-file read is what kills
+the tab, so lazy is the default. Override with
+`localStorage.localLazyAboveMB` (`0` forces lazy for every local file) — the
+browser's counterpart to the CLI's `RETE_LOCAL_LAZY_ABOVE_MB`.
 
 `query` runs SELECT / ASK / CONSTRUCT / DESCRIBE via `eval_query` and returns a
 single JSON envelope with a `kind` field:
@@ -91,6 +131,18 @@ single JSON envelope with a `kind` field:
 - CONSTRUCT/DESCRIBE → `{ "schemaVersion":1, "kind":"construct", "format":"ttl"|"jsonld", "text":"…" }`
   when `format` is `"ttl"`/`"jsonld"`, else
   `{ "schemaVersion":1, "kind":"construct", "triples":[[s,p,o],…] }`.
+
+`Graph.query_reasoned(query, format)` is `query` with OWL 2 QL entailment on
+(see [Reasoning](reasoning.md)); `Graph.query_opts(query, format, reason,
+union)` — and the same two methods on `RemoteGraph` — makes both opt-in
+evaluation toggles explicit: `reason` is the entailment switch, `union` the
+non-standard [union default graph](sparql.md#union-default-graph) mode, where
+a pattern outside `GRAPH` matches the merge of the default graph and every
+named graph. Both default to off, and plain `query` never applies either. One
+cost to know: on a `RemoteGraph`, a union query over a many-graph file may
+fault the index tiles of **every** named graph the merge touches (the
+empty-default + single-named-graph shape stays a zero-copy borrow), so the
+merge is strictly per-query opt-in.
 
 `communities` recomputes the Louvain community decomposition (optionally at a
 given dendrogram `round`) and returns per-community member and triple counts —
@@ -159,7 +211,8 @@ re-fetches almost nothing. Two layers:
   playground's worker holds one `RemoteGraph` per URL, so exploring a remote
   dataset — refining a filter, paging entity tables, re-running — reuses
   everything already fetched: a fully cached re-run fetches **0 bytes**, and the
-  result line shows *"served from cache, 0 new bytes."* (The free `sparql_url`
+  result line shows *"0 new bytes, all served from this session's cache"* with
+  the cache's size. (The free `sparql_url`
   opens a fresh file each call, so it gets only the within-query block cache —
   use `RemoteGraph` for cross-query reuse.)
 
@@ -238,9 +291,9 @@ const rows = JSON.parse(query_sparql(bytes,
 
 ## Progressive loading (overview without the index)
 
-<img src="img/progressive-fetch.svg" alt="A client issues three small range requests for the header, dictionary, and pyramid summary; the large index block is greyed out and never fetched.">
+<img src="img/progressive-fetch.svg" alt="The overview-first path: a client makes three byte-range reads — the 1024-byte header at bytes 0 to 1023, then the dictionary, then the pyramid summary — and computes the coarse community graph without ever fetching the permutation indexes. Drawn to scale on the published davidrumsey.rete, 74.8 MB: the three reads total 17.4 MB, 23.3 percent of the file, while the permutation indexes alone are 42.6 MB, 56.9 percent, and are never requested. The share depends on how large the dictionary is relative to the rest of the file.">
 
-*Three small range requests (header + dictionary + summary, ~25% of the file) build the coarse graph; the large triple index is never downloaded.*
+*Three small range requests — header + dictionary + summary — build the coarse graph. On the published `davidrumsey.rete` that is 17.4 MB of 74.8 MB (23.3%); the 42.6 MB of permutation indexes are never downloaded.*
 
 `header_ranges` + `summary_overview` implement the "overview first" path in the
 browser: read the 1 KB header (bytes `0..1024`), learn where the dictionary and
@@ -269,7 +322,7 @@ const overview = JSON.parse(summary_overview(buf)); // index never fetched
 
 This is the same path as `rete summary-url` natively. It's verified end-to-end in
 `rete-wasm`'s Node test: with the index region zero-filled, the overview still
-computes — typically ~25 % of the file fetched in 3 ranges.
+computes — 3 ranges, and 23.3 % of the file on `davidrumsey.rete`.
 
 `progressive_query` uses the same summary-only path for query answering. It is
 intentionally conservative and returns an error unless the query is exactly one

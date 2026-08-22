@@ -31,6 +31,12 @@ pub mod bgp;
 #[doc(hidden)]
 pub mod block_cache;
 #[doc(hidden)]
+pub mod card_derive;
+#[doc(hidden)]
+pub mod card_input;
+#[doc(hidden)]
+pub mod card_queries;
+#[doc(hidden)]
 pub mod dict;
 #[doc(hidden)]
 pub mod dictionary;
@@ -47,6 +53,7 @@ pub mod header;
 pub mod index;
 
 pub mod ingest;
+pub mod iri;
 pub mod manifest;
 #[doc(hidden)]
 pub mod meta;
@@ -88,17 +95,57 @@ pub mod varint;
 /// Stable file-format, reader, and in-memory build API.
 pub mod format {
     pub use crate::file::{
-        verify, ByteRange, FileError, LayoutSegment, Rete, TermTriple, TripleProvenance,
-        CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
+        attach_build_info, plan_build_info, read_build_info, replace_metadata, verify,
+        BuildInfoPlan, ByteRange, DumpPlan, FileError, LayoutSegment, Rete, TermTriple,
+        TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
     };
     pub use crate::header::{
         Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
         MIN_STABLE_READ_VERSION,
     };
+    pub use crate::index::ScanPlan;
     pub use crate::ingest::{
         assemble_dataset, assemble_dataset_with, assemble_dataset_with_opts,
-        assemble_dataset_with_opts_algo, parse, parse_quads, parse_rdfxml, parse_statements,
-        parse_turtle, BuildStats, IngestError, RawQuad, RawTriple,
+        assemble_dataset_with_opts_algo, assemble_dataset_with_perms, parse, parse_quads,
+        parse_rdfxml, parse_statements, parse_turtle, BuildStats, DeferredMetadata, FinalCounts,
+        IngestError, IntoMetadata, RawQuad, RawTriple,
+    };
+}
+
+/// Stable **Dataset Card** API — both halves of a card, so that every writer
+/// (`rete build --card-file`, the browser builder, any language binding, any
+/// third-party tool) produces the same card from the same graph.
+///
+/// - The **curated** half ([`crate::card_input`]) is the write-time rules a
+///   hand-authored card document must satisfy: the reserved top level, the
+///   `theme` IRI requirement, the bounded `extra` bag.
+/// - The **derived** half ([`crate::card_derive`] + [`crate::card_queries`])
+///   is the profile computed from the
+///   graph's own statements — predicate/class histograms, vocabularies,
+///   datatypes, languages, the class-link quotient, hubs, affordance signals
+///   and the tiered starter-query library. [`card_derive::derive_card`] is the entry point
+///   for an in-memory quad slice; [`card_derive::derive_card_encoded`] for a streaming build
+///   that only has a dictionary + id-triples; [`card_derive::CardTripleSource`] for anything
+///   else.
+///
+/// Derivation is **opt-in**: it walks the graph a second time, so no build
+/// spends that pass unless the caller asks for a card.
+pub mod card {
+    pub use crate::card_derive::{
+        curated_counts_card, derive_card, derive_card_encoded, derive_card_from, load_card,
+        CardInput, CardTripleSource, ClassLink, Coherence, Creator, DatasetCard, ExampleQuery,
+        PermutationsSignal, Publisher, Signals, TextIndexSignal, Tier, CARD_TOP_N, GEO_ASWKT,
+        GEO_HASGEOMETRY, O_LITERAL,
+    };
+    pub use crate::card_input::{
+        canonicalize_json, check_description_len, compose_curated_card, json_depth,
+        normalize_description, normalize_extra, normalize_string_list, normalize_themes,
+        validate_curated_card, CARD_DESCRIPTION_MAX_BYTES, CARD_EXTRA_MAX_BYTES,
+        CARD_EXTRA_MAX_DEPTH, CARD_EXTRA_MAX_KEYS, CARD_EXTRA_MAX_KEY_BYTES, CURATED_CARD_FIELDS,
+        UNKNOWN_FIELD_HINT,
+    };
+    pub use crate::card_queries::{
+        audit, claim_of, generate, Claim, Finding, Observation, Recorded, Substitution, Verdict,
     };
 }
 
@@ -111,10 +158,10 @@ pub mod query {
         parse_sparql_json_results, sparql_json_ask, sparql_json_results, ServiceClient,
     };
     pub use crate::sparql::{
-        eval_query, eval_query_reasoned, eval_select_communities, eval_sparql,
+        eval_query, eval_query_reasoned, eval_query_with, eval_select_communities, eval_sparql,
         eval_sparql_reasoned, query_predicates, routed_triple_pattern, summary_query_shape,
-        CommunityPartial, CommunitySelect, QueryOutput, RoutedTriplePattern, SparqlError,
-        SummaryQueryShape,
+        CommunityPartial, CommunitySelect, QueryOpts, QueryOutput, RoutedTriplePattern,
+        SparqlError, SummaryQueryShape,
     };
 }
 
@@ -123,10 +170,14 @@ pub mod range {
     pub use crate::adaptive::{AdaptiveReadController, ReadIntent, ReadObservation, ReadPlan};
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
-        read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged, ByteRange,
-        LayoutSegment, SummaryView,
+        read_card_and_build_info_ranged, read_card_and_build_info_with_header,
+        read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged,
+        read_text_index_token_table_len_ranged, ByteRange, LayoutSegment, SearchView, SummaryView,
     };
-    pub use crate::reader::{CountingReader, OwnedMemoryRangeReader, RangeReader, SliceReader};
+    pub use crate::reader::{
+        detect_polyglot_base, CountingReader, OffsetReader, OwnedMemoryRangeReader, RangeReader,
+        SliceReader, POLYGLOT_DIGITS, POLYGLOT_MARKER,
+    };
 }
 
 /// Stable integrity and SHACL validation API.
@@ -159,10 +210,13 @@ pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]
 pub use file::{
-    build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with, read_metadata_ranged,
-    read_schema_coherence_ranged, read_schema_summary_ranged, schema_classes, schema_coherence,
-    schema_summary, verify, write_dataset, write_dataset_with_metadata, write_file, ByteRange,
-    LayoutSegment, Rete, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
+    attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with,
+    plan_build_info, read_build_info, read_card_and_build_info_ranged,
+    read_card_and_build_info_with_header, read_metadata_ranged, read_schema_coherence_ranged,
+    read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata,
+    schema_classes, schema_coherence, schema_summary, verify, write_dataset,
+    write_dataset_with_metadata, write_file, BuildInfoPlan, ByteRange, DumpPlan, LayoutSegment,
+    Rete, SearchView, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
     DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 #[doc(hidden)]
@@ -171,7 +225,10 @@ pub use header::{
     MIN_STABLE_READ_VERSION,
 };
 #[doc(hidden)]
-pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern};
+pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSet, ScanPlan};
+pub use iri::{
+    iri_content_defect, sanitize_iri_content, sanitize_term, term_defect, IriDefect, IriReport,
+};
 #[doc(hidden)]
 pub use meta::{
     CharSet, ClassNode, ClassRelation, CommunityDescriptor, LabelEntry, LevelLinks, LevelRollup,
@@ -186,7 +243,10 @@ pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 #[doc(hidden)]
 pub use read_path_metrics::{read_path_stats, reset_read_path_stats, ReadPathStats};
 #[doc(hidden)]
-pub use reader::{CountingReader, OwnedMemoryRangeReader, RangeReader, SliceReader};
+pub use reader::{
+    detect_polyglot_base, CountingReader, OffsetReader, OwnedMemoryRangeReader, RangeReader,
+    SliceReader, POLYGLOT_DIGITS, POLYGLOT_MARKER,
+};
 #[doc(hidden)]
 pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
 #[doc(hidden)]
@@ -202,10 +262,11 @@ pub use shacl::{
 };
 #[doc(hidden)]
 pub use sparql::{
-    eval_query, eval_query_reasoned, eval_select_communities, eval_sparql, eval_sparql_reasoned,
-    parse_select, query_predicates, routed_triple_pattern, summary_query_shape, Agg,
-    CommunityPartial, CommunitySelect, FExpr, GraphTarget, GroupSpec, Op, PathAst, Plan,
-    QueryOutput, Rep, RoutedTriplePattern, Select, SparqlError, SummaryQueryShape,
+    eval_query, eval_query_reasoned, eval_query_with, eval_select_communities, eval_sparql,
+    eval_sparql_reasoned, parse_select, query_predicates, routed_triple_pattern,
+    summary_query_shape, Agg, CommunityPartial, CommunitySelect, FExpr, GraphTarget, GroupSpec, Op,
+    PathAst, Plan, QueryOpts, QueryOutput, Rep, RoutedTriplePattern, Select, SparqlError,
+    SummaryQueryShape,
 };
 #[doc(hidden)]
 pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};

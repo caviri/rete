@@ -1,0 +1,36 @@
+{
+  "title": "Gate Full Card Fixture",
+  "description": "A card carrying every curated field, so the viewer's rendering of each can be asserted rather than assumed. Its sibling card-fixture.card.json deliberately carries none of them — that pair is what proves absent reads as absent.",
+  "license": "CC-BY-4.0",
+  "source": "https://example.org/gate-full-fixture",
+  "created": "2026-08-01",
+  "version": "2026.08",
+  "source_date": "2026-07-15",
+  "creators": [
+    { "name": "Ada Lovelace", "orcid": "https://orcid.org/0000-0002-1825-0097" },
+    { "name": "A Creator Without An Identifier" }
+  ],
+  "publisher": { "name": "Gate Fixtures Institute", "ror": "https://ror.org/01ggx4157" },
+  "canonical_url": "https://example.org/gate/card-full.rete",
+  "sparql_endpoint": "https://example.org/gate/sparql",
+  "derived_from": [
+    "https://example.org/gate/worldcup2026.nt",
+    "https://example.org/gate/upstream.rete"
+  ],
+  "doi": "https://doi.org/10.5281/zenodo.9999999",
+  "cite_as": "Lovelace, A. (2026). Gate Full Card Fixture. https://doi.org/10.5281/zenodo.9999999",
+  "keywords": ["zeta-keyword", "alpha-keyword", "football"],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/EDUC",
+    "https://www.wikidata.org/entity/Q2736"
+  ],
+  "example_queries": [
+    "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5"
+  ],
+  "extra": {
+    "internal_id": "GATE-2026-042",
+    "pipeline_stage": 7,
+    "review": { "status": "approved", "by": "data-team" },
+    "mirrors": ["a", "b"]
+  }
+}
