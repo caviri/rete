@@ -57,6 +57,8 @@ jobs:
               - 'scripts/build_wasm.sh'
               - 'scripts/build_playground.py'
               - 'scripts/build_yasgui.py'
+              - 'scripts/wasm_parity_triage.py'
+              - 'scripts/test_wasm_parity_triage.py'
               - 'scripts/build_playground_async.sh'
               - 'scripts/stage_playground_datasets.py'
               - 'docs/playground.html'
