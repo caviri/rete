@@ -232,6 +232,7 @@ jobs:
             sh -lc 'git config --global --add safe.directory /work && bash scripts/build_wasm.sh'
       - name: Verify provenance and generated browser files
         run: |
+          python3 -m unittest scripts.test_wasm_parity_triage
           test "$(python3 -c 'import json; print(json.load(open("docs/wasm-build.json"))["gitCommit"])')" = "$GITHUB_SHA"
           # Only TRACKED artifacts belong here: web/pkg* are gitignored (git
           # diff on them was a silent no-op) and docs/rete_wasm.js/_bg.wasm
