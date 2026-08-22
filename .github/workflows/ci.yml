@@ -56,9 +56,13 @@ jobs:
               - 'tests/gate/**'
               - 'scripts/build_wasm.sh'
               - 'scripts/build_playground.py'
+              - 'scripts/build_yasgui.py'
+              - 'scripts/wasm_parity_triage.py'
+              - 'scripts/test_wasm_parity_triage.py'
               - 'scripts/build_playground_async.sh'
               - 'scripts/stage_playground_datasets.py'
               - 'docs/playground.html'
+              - 'docs/yasgui.html'
               - 'docs/rete_wasm.js'
               - 'docs/rete_wasm_bg.wasm'
               - 'docs/rete_wasm_async.js'
@@ -230,12 +234,13 @@ jobs:
             sh -lc 'git config --global --add safe.directory /work && bash scripts/build_wasm.sh'
       - name: Verify provenance and generated browser files
         run: |
+          python3 -m unittest scripts.test_wasm_parity_triage
           test "$(python3 -c 'import json; print(json.load(open("docs/wasm-build.json"))["gitCommit"])')" = "$GITHUB_SHA"
           # Only TRACKED artifacts belong here: web/pkg* are gitignored (git
           # diff on them was a silent no-op) and docs/rete_wasm.js/_bg.wasm
           # never existed. docs/engine is refreshed by build_wasm.sh now, so
           # the ESM copy the standalone docs pages import is guarded too.
-          GUARDED="docs/playground.html docs/engine docs/rete_wasm_async.js docs/rete_wasm_async.wasm"
+          GUARDED="docs/playground.html docs/yasgui.html docs/engine docs/rete_wasm_async.js docs/rete_wasm_async.wasm"
           if git diff --quiet -- $GUARDED; then
             echo "browser artifacts: byte-identical to this commit."
             exit 0
@@ -261,6 +266,7 @@ jobs:
             web/pkg-nomodules
             web/pkg-nomodules-async
             docs/playground.html
+            docs/yasgui.html
             docs/rete_wasm.js
             docs/rete_wasm_bg.wasm
             docs/rete_wasm_async.js

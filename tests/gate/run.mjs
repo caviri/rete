@@ -93,6 +93,44 @@ function g0() {
       String(e.stderr || e.stdout || e).slice(-160),
     );
   }
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_wasm_boot.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "web and no-modules WASM boot",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? "" : out.slice(-160),
+    );
+  } catch (e) {
+    record(
+      "G0",
+      "web and no-modules WASM boot",
+      false,
+      String(e.stderr || e.stdout || e).slice(-160),
+    );
+  }
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_yasgui_wasm_parity.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "yasgui embeds the canonical WASM glue",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? "" : out.slice(-200),
+    );
+  } catch (e) {
+    record(
+      "G0",
+      "yasgui embeds the canonical WASM glue",
+      false,
+      String(e.stderr || e.stdout || e).slice(-200),
+    );
+  }
 
   // The asyncify glue must normalize every wasm pointer it dereferences: above
   // 2 GiB an `i32` import arrives sign-extended and `mem.set` throws. The browser
@@ -107,6 +145,25 @@ function g0() {
     record(
       "G0",
       "async glue pointer safety (>2 GiB heaps)",
+      false,
+      String(e.stderr || e.stdout || e).slice(-160),
+    );
+  }
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/test_url_normalize.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "remote URL normalization and scheme refusal",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? `${verdict.checks} cases` : out.slice(-160),
+    );
+  } catch (e) {
+    record(
+      "G0",
+      "remote URL normalization and scheme refusal",
       false,
       String(e.stderr || e.stdout || e).slice(-160),
     );

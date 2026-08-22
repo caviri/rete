@@ -39,8 +39,8 @@
     lastProvenance: null,
     built: null,
     exploreClass: null,
-    // A resident wasm Graph handle for in-memory queries: opened once per load so
-    // repeated queries skip re-copying the buffer + re-decoding the dictionary.
+    // A resident wasm Graph handle for in-memory queries: owns the image once and
+    // reuses dictionary chunks + index tiles lazily faulted by earlier queries.
     graph: null,
     exploreReady: false,
     explorePage: 0,
@@ -1700,9 +1700,9 @@ self.onmessage = function (e) {
     if (source !== "cached") resetFed();
     updateSourcePill();
 
-    // Open the file ONCE into a resident handle; every later in-memory query
-    // reuses it instead of re-copying the buffer and re-decoding the dictionary.
-    if (onPhase) { onPhase("Opening file & loading dictionaries…"); await tick(); }
+    // Own the file ONCE in a resident handle; every later in-memory query reuses
+    // dictionary chunks and index tiles lazily faulted by earlier queries.
+    if (onPhase) { onPhase("Opening file & reading directories…"); await tick(); }
     if (state.graph) { state.graph.free(); state.graph = null; }
     state.graph = new (W().Graph)(bytes);
     const info = JSON.parse(state.graph.info());
@@ -1913,8 +1913,26 @@ self.onmessage = function (e) {
   function normalizeReteUrl(raw) {
     const s = String(raw == null ? "" : raw).trim();
     if (!s) return null;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return /^https?:/i.test(s) ? s : null;
-    return "https://" + s.replace(/^\/+/, "");  // also covers //host/path
+    // A numeric port after a real host is not a URI scheme. Keep this case
+    // ahead of the scheme check, but deliberately require localhost, an IP
+    // literal, or a dotted DNS name so `javascript:80/...` stays a scheme.
+    const hostPort = /^(?:(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z0-9-]+):\d+|\[[0-9a-f:.]+\]:\d+)(?:[/?#]|$)/i;
+    let candidate;
+    if (s.startsWith("//")) candidate = "https:" + s;
+    else if (hostPort.test(s)) candidate = "https://" + s;
+    else if (/^[a-z][a-z0-9+.-]*:/i.test(s)) {
+      if (!/^https?:\/\//i.test(s) || /^https?:\/\/\//i.test(s)) return null;
+      candidate = s;
+    } else {
+      candidate = "https://" + s.replace(/^\/+/, "");
+    }
+    try {
+      const parsed = new URL(candidate);
+      if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname) return null;
+      return parsed.href;
+    } catch (_e) {
+      return null;
+    }
   }
 
   // The file name a remote URL actually points at ("nkod.rete") — the honest

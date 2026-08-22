@@ -16,6 +16,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use crate::adaptive::ReadIntent;
 use crate::file::Rete;
 use crate::index::{GraphIndex, Pattern, Tile};
 use crate::row::{Ctx, Row, Slots, Val};
@@ -524,7 +525,14 @@ fn scan_rows<'q>(
     );
     Some(
         index
-            .scan_iter((sid, pid, oid))
+            .scan_iter_with_intent(
+                (sid, pid, oid),
+                if ctx.limit_hint.get().is_some() {
+                    ReadIntent::BoundedScan
+                } else {
+                    ReadIntent::FullScan
+                },
+            )
             .filter_map(move |triple| triple_row(ctx, &t, triple)),
     )
 }
@@ -546,7 +554,7 @@ fn pattern_rows(
     );
     // Stream the matches with the lazy cursor — the hash join is
     // order-independent, so no canonical re-sort is needed here.
-    for triple in index.scan_iter((sid, pid, oid)) {
+    for triple in index.scan_iter_with_intent((sid, pid, oid), ReadIntent::FullScan) {
         if let Some(row) = triple_row(ctx, t, triple) {
             rel.push(row);
         }
@@ -806,7 +814,10 @@ pub(crate) fn bgp_exists(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePatter
                 const_predicate(&t.1),
                 const_object(&t.2, dict),
             ) {
-                (Some(s), Some(p), Some(o)) => index.scan_iter((s, p, o)).next().is_some(),
+                (Some(s), Some(p), Some(o)) => index
+                    .scan_iter_with_intent((s, p, o), ReadIntent::SelectiveProbe)
+                    .next()
+                    .is_some(),
                 _ => false,
             };
         }
@@ -1042,7 +1053,7 @@ fn probe_rows<'q>(
     let dict = ctx.rete.dictionary();
     Box::new(
         index
-            .scan_iter((sid, pid, oid))
+            .scan_iter_with_intent((sid, pid, oid), ReadIntent::SelectiveProbe)
             .filter_map(move |(s_id, p_id, o_id)| {
                 let s_val = dict.subject_node(s_id) as i64;
                 let p_val = ctx.resolver.canon_id(pred_tag(p_id));

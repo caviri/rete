@@ -2,7 +2,7 @@
 //
 // drm:city / county / stateProvince / region / country / worldArea are all
 // rdfs:subPropertyOf dcterms:spatial, and dcterms:spatial is asserted on ZERO
-// subjects of the published file — so example ex=6 answers ONLY under OWL 2 QL
+// subjects of the published file — so example ex=7 answers ONLY under OWL 2 QL
 // query rewriting. It shipped without `reason: true` and therefore greeted
 // every visitor with 0 rows (PR #184 flagged it; no check covered it).
 //
@@ -21,7 +21,7 @@ const main = async () => {
     await page.addInitScript(() => localStorage.setItem("asyncReadsOn", "0"));
   }
   const PORT = process.env.PGPORT || "8090";
-  await page.goto(`http://localhost:${PORT}/playground.html#dataset=davidrumsey&load=lazy&mode=sparql&ex=6`, { waitUntil: "domcontentloaded" });
+  await page.goto(`http://localhost:${PORT}/playground.html#dataset=davidrumsey&load=lazy&mode=sparql&ex=7`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.PlaygroundEditor && document.getElementById("run"), { timeout: 60000 });
   await page.waitForTimeout(4000);
 

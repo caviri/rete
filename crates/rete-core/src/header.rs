@@ -42,6 +42,14 @@ pub const CURRENT_FORMAT_VERSION: u8 = 0x05;
 /// `docs/compatibility.md`.
 pub const MIN_STABLE_READ_VERSION: u8 = 0x05;
 
+/// Stable generation retained by the production header while the paired-family
+/// codec is staged behind direct internal tests.
+pub(crate) const LEGACY_FORMAT_VERSION: u8 = 0x05;
+
+/// The byte generation reserved for the staged paired-family container.
+/// Production writers and header dispatch deliberately do not use it yet.
+pub(crate) const NEXT_FORMAT_VERSION: u8 = 0x06;
+
 /// Fixed header size in bytes.
 pub const HEADER_LEN: usize = 1024;
 
@@ -689,6 +697,14 @@ mod tests {
                 }) if found == unsupported
             ));
         }
+    }
+
+    #[test]
+    fn staged_paired_generation_does_not_switch_the_stable_header() {
+        assert_eq!(LEGACY_FORMAT_VERSION, 0x05);
+        assert_eq!(CURRENT_FORMAT_VERSION, 0x05);
+        assert_eq!(MIN_STABLE_READ_VERSION, 0x05);
+        assert_eq!(NEXT_FORMAT_VERSION, 0x06);
     }
 
     #[test]

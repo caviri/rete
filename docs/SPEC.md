@@ -175,7 +175,7 @@ from the directory means that section is not present.
 > (`bytes=0-1023`) tells the client where every section lives, with headroom for
 > new sections (group directories, geo indexes, …) as new directory entries
 > rather than a format break — the optional **text-index** section (kind `6`,
-> §6.3) was added exactly this way.
+> §6.4) was added exactly this way.
 
 The **metadata section** (offset 8 / length 16) sits between the header and the
 dictionary and is `0`-length by default. When present it carries an opaque,
@@ -259,6 +259,24 @@ lookups stay within one run after a binary search over restarts:
 
 Restart points are also the natural **chunk/compression boundaries**: a client
 fetches just the run(s) covering the IDs/terms a query touches.
+
+### 5.2 Integer domains and hostile varints
+
+Dictionary terms and all physical triple components are **u32 IDs**. `0` is
+the absent sentinel and a single dictionary role space therefore holds at most
+`u32::MAX` assigned IDs. The term count, restart interval, run counts when used
+as IDs, tile range endpoints, group counts, and prefix-directory offsets are
+decoded with checked `u64 → u32` conversions; a larger varint is malformed, not
+a truncating cast. This is a physical-ID limit, not a file-size limit.
+
+Aggregate counts and byte coordinates remain **u64**: header quad counts,
+section offsets/lengths, compressed payload lengths, cumulative record offsets,
+and aggregate graph totals may exceed `u32::MAX`. The staged `0x06` family
+decoder bounds its framed count/length conversions and capacities against bytes
+already present; dictionary restart reconstruction and chunk-run coordinates use
+checked `u64` arithmetic before conversion to their physical `u32`/`usize`
+domains. These are format-boundary guarantees, not a claim about every reader
+implementation path.
 
 ---
 
@@ -413,7 +431,77 @@ is *not* a separator (a truncation, a fixed-size hash) mis-routes **silently** �
 `id → term`, `dump` and `export` route by `Δfirst_run` and stay byte-perfect
 while `term → id` returns wrong answers.
 
-### 6.3 Full-text index (TEXT_INDEX section, optional)
+### 6.3 Staged paired-family container (generation `0x06`)
+
+The following is the exact internal contract for the next file generation. It
+is deliberately staged: this repository still writes and dispatches stable
+header generation `0x05` at this point. `0x06` is not emitted by production
+writers or selected by public readers. `CURRENT_FORMAT_VERSION` and the minimum
+stable read version both remain `0x05`. Task 11 will deliberately make the
+eventual `0x06`-only break and remove the `0x05` reader; that incompatibility is
+not part of this staged codec implementation.
+
+Its index root is exactly three uncompressed length-framed family payloads in
+**Subject, Predicate, Object** order. An empty graph is therefore
+`varint(3), varint(1), 0, varint(1), 0, varint(1), 0`: three zero-pair family
+payloads. A subject family pairs SPO/SOP, predicate pairs POS/PSO, and object
+pairs OSP/OPS.
+
+Each family payload is exactly:
+
+```text
+uvarint tile_pair_count
+tile_pair_count × (uvarint min_a_delta, uvarint max_a_span)
+tile_pair_count × (uvarint first_flags, uvarint first_compressed_len,
+                   uvarint first_prefix2_len)
+tile_pair_count × (uvarint second_flags, uvarint second_compressed_len,
+                   uvarint second_prefix2_len)
+first records in order:  prefix-2 blob, then compressed §6.1 tile payload
+second records in order: prefix-2 blob, then compressed §6.1 tile payload
+first synopsis trailer:  tile_pair_count × 4 uvarints
+second synopsis trailer: tile_pair_count × 4 uvarints
+```
+
+`min_a_delta` is from the prior pair's `min_a` (first is absolute) and
+`max_a_span = max_a - min_a`. Both orders must have exactly the same pair count
+and leading range at every pair. Compressed lengths name only their compressed
+tile payload: they exclude the prefix-2 blob and both trailers. Record offsets
+are cumulative checked `u64` values.
+
+Flags bit 0 means this tile continues the previous tile's leading group; bit 1
+means that leading group continues into the next tile. All other bits are
+reserved and rejected. A continuation repeats the same **singleton** leading
+range in adjacent pairs, and both sibling orders carry identical continuation
+flags. Non-continuing ranges are strictly ascending and disjoint.
+
+A non-empty prefix-2 blob is:
+
+```text
+uvarint a_group_count
+for each a group: uvarint a_delta, uvarint a_body_offset, uvarint b_count
+  for each b group: uvarint b_delta, uvarint c_body_offset, uvarint c_count
+```
+
+`a_delta` is from the preceding `a`; `b_delta` resets for each a-group. The
+body offsets are byte offsets in the **decompressed** §6.1 block and must be
+inside that block; entries must agree exactly with its complete grouped body.
+The blob is emitted only when the complete compact `(a,b)` directory fits the
+fixed 64 KiB per-tile prefix-2 budget. Otherwise its length is zero and the
+reader uses the existing bounded a-only directory; partial prefix-2 metadata is
+never serialized.
+
+Each synopsis trailer record is `min_b, max_b-min_b, min_c, max_c-min_c` and
+must equal its decompressed tile's zone map. Counts, flags, varint domains,
+ranges, continuation links, compressed slices, prefix-2 metadata, trailers,
+and trailing bytes are all exact framing checks. Family varints are canonical
+(at most ten bytes); prefix-2 blobs and decompressed tiles are each capped at
+64 KiB. A zstd record is exactly one fully consumed frame, and the staged
+decoder bounds count-dependent capacity by bytes already framed in the payload.
+Its frame header is checked before decoder construction: both declared window
+and any nonzero declared content size are at most 64 KiB; the staged encoder
+uses the same 64 KiB window limit.
+
+### 6.4 Full-text index (TEXT_INDEX section, optional)
 
 An **opt-in** section (kind `6`, built with `rete build --text-index`) that maps
 each **word** appearing in a string literal to the **subjects** that carry it, so
@@ -474,8 +562,10 @@ in the 0.3 line and the release version is a separate number.
 Optional sections and flags may extend it without changing its required semantics.
 A required layout change uses a new format byte. **No backwards-compatibility
 promise is made before 1.0.0:** a later generation may drop `0x05` read support
-and force a rebuild from RDF source. Experimental formats `0x01` through `0x04`
-are already such a break and must be rebuilt from RDF source.
+and force a rebuild from RDF source. The staged paired-family plan makes that
+choice explicitly: Task 11 moves to `0x06` only and removes the `0x05` reader.
+Experimental formats `0x01` through `0x04` are already such a break and must be
+rebuilt from RDF source.
 
 ---
 

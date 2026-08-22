@@ -13,9 +13,21 @@
 //! independently, so a ranged reader can fetch just the tiles a query needs.
 //! v0.1 single-block sections are still read (one tile per permutation).
 
-use std::sync::OnceLock;
+use std::cell::Cell;
+use std::sync::{Arc, OnceLock};
 
-use crate::triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder};
+use crate::adaptive::{AdaptiveReadController, ReadIntent};
+use crate::build_pipeline::family::{
+    build_family_from_slice, FamilyIndex, FamilyView, IndexFamily,
+};
+use crate::build_pipeline::BuildPipelineError;
+use crate::triples::{encode_sorted_unique, GroupDirectory, Triple, TripleBlock};
+use crate::varint::uvarint_len;
+
+#[cfg(test)]
+use crate::triples::TripleBlockBuilder;
+#[cfg(feature = "unsafe-decode-bench")]
+use crate::triples::{BlockCursor, UncheckedBlockCursor};
 
 /// A triple pattern: `None` is an unbound variable, `Some(id)` a bound term.
 pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
@@ -33,6 +45,59 @@ pub const INDEX_TILE_BUDGET: usize = 64 * 1024;
 const PREFETCH_WINDOW_START: usize = 4;
 const PREFETCH_WINDOW_MAX: usize = 512;
 
+struct ScanFeedback {
+    controller: Option<Arc<AdaptiveReadController>>,
+    intent: ReadIntent,
+    consumed: Cell<usize>,
+    offered: Cell<usize>,
+}
+
+impl ScanFeedback {
+    fn new(controller: Option<Arc<AdaptiveReadController>>, intent: ReadIntent) -> Self {
+        Self {
+            controller,
+            intent,
+            consumed: Cell::new(0),
+            offered: Cell::new(0),
+        }
+    }
+
+    fn consume_tile(&self) {
+        self.consumed.set(self.consumed.get().saturating_add(1));
+    }
+
+    fn offer_tiles(&self, count: usize) {
+        self.offered.set(self.offered.get().saturating_add(count));
+    }
+}
+
+impl Drop for ScanFeedback {
+    fn drop(&mut self) {
+        if let Some(controller) = &self.controller {
+            controller.report_consumption(self.intent, self.consumed.get(), self.offered.get());
+        }
+    }
+}
+
+#[cfg(feature = "unsafe-decode-bench")]
+enum DecodeCursor<'a> {
+    Safe(BlockCursor<'a>),
+    Unchecked(UncheckedBlockCursor<'a>),
+}
+
+#[cfg(feature = "unsafe-decode-bench")]
+impl Iterator for DecodeCursor<'_> {
+    type Item = Triple;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Safe(cursor) => cursor.next(),
+            Self::Unchecked(cursor) => cursor.next(),
+        }
+    }
+}
+
 /// Fetches one tile's (uncompressed) block image on demand: the bridge that
 /// lets a remote `GraphIndex` fault tiles in over a `RangeReader` without this
 /// module knowing about I/O. `None` = the fetch failed; the index records the
@@ -47,7 +112,8 @@ pub type TileLoader = Box<dyn Fn(usize, usize) -> Option<Vec<u8>> + Send + Sync>
 /// full-section scan costs a handful of requests instead of one per tile.
 /// `None` = the batch failed as a whole; callers fall back to the per-tile
 /// [`TileLoader`] (which records per-tile failures).
-pub type TileBulkLoader = Box<dyn Fn(usize, &[usize]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
+pub type TileBulkLoader =
+    Box<dyn Fn(usize, &[usize], ReadIntent) -> Option<Vec<Vec<u8>>> + Send + Sync>;
 
 /// One tile of a permutation section: a fully self-contained [`TripleBlock`]
 /// over a consecutive run of whole a-groups, plus the leading-id range it
@@ -73,7 +139,7 @@ pub struct Tile {
 }
 
 impl Tile {
-    fn local(min_a: u32, max_a: u32, bytes: Vec<u8>) -> Self {
+    pub(crate) fn local(min_a: u32, max_a: u32, bytes: Vec<u8>) -> Self {
         let len = bytes.len().min(u32::MAX as usize) as u32;
         let data = OnceLock::new();
         let _ = data.set(bytes);
@@ -307,6 +373,20 @@ impl IndexPermutation {
         }
     }
 
+    /// The physical paired-family slot and sibling-order selector for this
+    /// logical permutation. The stable six-section order remains unchanged.
+    #[allow(dead_code)] // Staged paired-family metadata; exercised by crate tests.
+    pub(crate) const fn family_slot(self) -> (usize, bool) {
+        match self {
+            Self::Spo => (0, false),
+            Self::Pos => (1, false),
+            Self::Osp => (2, false),
+            Self::Sop => (0, true),
+            Self::Pso => (1, true),
+            Self::Ops => (2, true),
+        }
+    }
+
     /// The canonical `(s, p, o)` roles in this permutation's `(a, b, c)` slots,
     /// as indices (0=s, 1=p, 2=o). The single source of truth for `forward` /
     /// `back` / `order_pattern`.
@@ -471,6 +551,39 @@ impl GraphIndexBuilder {
         let built: Vec<Vec<Tile>> = wanted.iter().copied().map(build_one).collect();
         GraphIndex::from_sections(scatter(&wanted, built), self.perms)
     }
+
+    /// Build through the staged paired-family path without making it a public
+    /// production API before the format writer is ready.
+    #[allow(dead_code)] // Staged until the format writer consumes paired families.
+    pub(crate) fn build_families(self) -> Result<GraphIndex, BuildPipelineError> {
+        let triples = &self.triples;
+        #[cfg(feature = "parallel")]
+        let families = {
+            let (subject, predicate_object) = rayon::join(
+                || build_family_from_slice(triples, IndexFamily::Subject, self.tile_budget),
+                || {
+                    rayon::join(
+                        || {
+                            build_family_from_slice(
+                                triples,
+                                IndexFamily::Predicate,
+                                self.tile_budget,
+                            )
+                        },
+                        || build_family_from_slice(triples, IndexFamily::Object, self.tile_budget),
+                    )
+                },
+            );
+            [subject?, predicate_object.0?, predicate_object.1?]
+        };
+        #[cfg(not(feature = "parallel"))]
+        let families = [
+            build_family_from_slice(triples, IndexFamily::Subject, self.tile_budget)?,
+            build_family_from_slice(triples, IndexFamily::Predicate, self.tile_budget)?,
+            build_family_from_slice(triples, IndexFamily::Object, self.tile_budget)?,
+        ];
+        Ok(GraphIndex::from_families(families))
+    }
 }
 
 /// Place each built section at its permutation's fixed [`IndexPermutation::section_index`]
@@ -483,16 +596,6 @@ fn scatter(wanted: &[IndexPermutation], built: Vec<Vec<Tile>>) -> [Vec<Tile>; NU
         sections[perm.section_index()] = tiles;
     }
     sections
-}
-
-/// The encoded varint length of `v` (LEB128).
-fn varint_len(mut v: u64) -> usize {
-    let mut n = 1;
-    while v >= 0x80 {
-        v >>= 7;
-        n += 1;
-    }
-    n
 }
 
 /// Incremental encoded-size accounting for one a-group of a tiled section —
@@ -516,7 +619,7 @@ impl GroupSizer {
     /// previous group's leading id; `a` again for a mid-group continuation).
     pub(crate) fn start(a: u32, prev_a: u32) -> Self {
         GroupSizer {
-            size: varint_len((a - prev_a) as u64),
+            size: uvarint_len((a - prev_a) as u64),
             num_b: 0,
             cur_b: 0,
             num_c: 0,
@@ -530,10 +633,10 @@ impl GroupSizer {
     pub(crate) fn push(&mut self, b: u32, c: u32) -> usize {
         if self.empty || b != self.cur_b {
             if self.empty {
-                self.size += varint_len(b as u64); // first b-run: delta from 0
+                self.size += uvarint_len(b as u64); // first b-run: delta from 0
             } else {
-                self.size += varint_len(self.num_c); // close the previous b-run
-                self.size += varint_len((b - self.cur_b) as u64);
+                self.size += uvarint_len(self.num_c); // close the previous b-run
+                self.size += uvarint_len((b - self.cur_b) as u64);
             }
             self.cur_b = b;
             self.num_c = 0;
@@ -541,7 +644,7 @@ impl GroupSizer {
             self.num_b += 1;
             self.empty = false;
         }
-        self.size += varint_len((c - self.prev_c) as u64);
+        self.size += uvarint_len((c - self.prev_c) as u64);
         self.prev_c = c;
         self.num_c += 1;
         self.total()
@@ -553,9 +656,9 @@ impl GroupSizer {
             + if self.empty {
                 0
             } else {
-                varint_len(self.num_c)
+                uvarint_len(self.num_c)
             }
-            + varint_len(self.num_b)
+            + uvarint_len(self.num_b)
     }
 }
 
@@ -578,16 +681,16 @@ fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
     #[cfg(not(feature = "parallel"))]
     triples.sort_unstable();
     triples.dedup();
+    build_tiles_sorted(&triples, budget)
+}
+
+fn build_tiles_sorted(triples: &[Triple], budget: usize) -> Vec<Tile> {
     if triples.is_empty() {
         return Vec::new();
     }
 
     let make_tile = |run: &[Triple]| -> Tile {
-        let mut b = TripleBlockBuilder::new();
-        for &t in run {
-            b.push(t);
-        }
-        Tile::local(run[0].0, run[run.len() - 1].0, b.build())
+        Tile::local(run[0].0, run[run.len() - 1].0, encode_sorted_unique(run))
     };
 
     let mut tiles = Vec::new();
@@ -633,6 +736,61 @@ fn build_tiles(mut triples: Vec<Triple>, budget: usize) -> Vec<Tile> {
     tiles
 }
 
+#[cfg(test)]
+#[allow(dead_code)] // The ignored preflight harness prints the aggregate Debug view.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ReferencePermutationProfile {
+    pub normalization: std::time::Duration,
+    pub sort: std::time::Duration,
+    pub encode: std::time::Duration,
+    pub input_records: usize,
+    pub output_tiles: usize,
+}
+
+/// Test-only phase split of the unchanged six-order reference construction.
+/// Kept outside the production builder so it cannot affect its timing or API.
+#[cfg(test)]
+pub(crate) fn build_reference_profile(
+    triples: &[Triple],
+    budget: usize,
+) -> (GraphIndex, [ReferencePermutationProfile; NUM_PERMS]) {
+    let mut sections = Vec::with_capacity(NUM_PERMS);
+    let mut profiles = Vec::with_capacity(NUM_PERMS);
+    for permutation in ALL_PERMS {
+        let normalized_started = std::time::Instant::now();
+        let mut permuted: Vec<Triple> = triples
+            .iter()
+            .map(|&triple| permutation.forward(triple))
+            .collect();
+        let normalization = normalized_started.elapsed();
+        let sort_started = std::time::Instant::now();
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::slice::ParallelSliceMut;
+            permuted.par_sort_unstable();
+        }
+        #[cfg(not(feature = "parallel"))]
+        permuted.sort_unstable();
+        permuted.dedup();
+        let sort = sort_started.elapsed();
+        let encode_started = std::time::Instant::now();
+        let tiles = build_tiles_sorted(&permuted, budget);
+        let encode = encode_started.elapsed();
+        profiles.push(ReferencePermutationProfile {
+            normalization,
+            sort,
+            encode,
+            input_records: permuted.len(),
+            output_tiles: tiles.len(),
+        });
+        sections.push(tiles);
+    }
+    let sections: [Vec<Tile>; NUM_PERMS] = sections.try_into().map_err(|_| ()).unwrap();
+    let profiles: [ReferencePermutationProfile; NUM_PERMS] =
+        profiles.try_into().map_err(|_| ()).unwrap();
+    (GraphIndex::from_sections(sections, PermSet::ALL), profiles)
+}
+
 /// The six tiled permutation sections, queryable by triple pattern.
 pub struct GraphIndex {
     /// Tiles per permutation (SPO, SOP, PSO, POS, OSP, OPS — see [`ALL_PERMS`]),
@@ -655,6 +813,12 @@ pub struct GraphIndex {
     /// The reader's concurrent-range fan-out (1 = strictly sequential) — see
     /// [`set_read_concurrency`](Self::set_read_concurrency).
     read_concurrency: usize,
+    /// Session policy shared with sibling indexes and the dictionary reader.
+    adaptive_controller: Option<Arc<AdaptiveReadController>>,
+    /// Research-only selection of the unchecked cursor. Default artifacts do
+    /// not contain this field or its decoder.
+    #[cfg(feature = "unsafe-decode-bench")]
+    unchecked_decode: std::sync::atomic::AtomicBool,
 }
 
 impl GraphIndex {
@@ -666,6 +830,35 @@ impl GraphIndex {
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
+            adaptive_controller: None,
+            #[cfg(feature = "unsafe-decode-bench")]
+            unchecked_decode: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Expand the three family pairs into `ALL_PERMS` section order: SPO, POS,
+    /// OSP, SOP, PSO, OPS. Existing planners and loaders keep their APIs.
+    #[allow(dead_code)] // Staged until the format writer consumes paired families.
+    pub(crate) fn from_families(families: [FamilyIndex; 3]) -> Self {
+        let mut sections: [Vec<Tile>; NUM_PERMS] = std::array::from_fn(|_| Vec::new());
+        for family in families {
+            let slot = family.family.slot();
+            for tile in family.tiles {
+                sections[slot].push(Tile::local(tile.min_a, tile.max_a, tile.first));
+                sections[slot + 3].push(Tile::local(tile.min_a, tile.max_a, tile.second));
+            }
+        }
+        Self::from_sections(sections, PermSet::ALL)
+    }
+
+    /// Borrow the two logical sections which make up one physical family.
+    #[allow(dead_code)]
+    pub(crate) fn family_view(&self, family: IndexFamily) -> FamilyView<'_> {
+        let slot = family.slot();
+        FamilyView {
+            family,
+            first: &self.sections[slot],
+            second: &self.sections[slot + 3],
         }
     }
 
@@ -710,7 +903,25 @@ impl GraphIndex {
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
+            adaptive_controller: None,
+            #[cfg(feature = "unsafe-decode-bench")]
+            unchecked_decode: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Permanently select unchecked decoding for this index instance.
+    ///
+    /// # Safety
+    ///
+    /// Every local block and every block subsequently returned by the remote
+    /// loaders must be a complete immutable image produced by rete's encoder.
+    /// A malformed, truncated, or concurrently mutated block can cause an
+    /// out-of-bounds read. This research mode must never be enabled for an
+    /// untrusted file.
+    #[cfg(feature = "unsafe-decode-bench")]
+    pub unsafe fn assume_valid_blocks(&self) {
+        self.unchecked_decode
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Attach a batched tile fetcher (see [`TileBulkLoader`]): multi-tile
@@ -737,6 +948,13 @@ impl GraphIndex {
     /// overlap instead of serializing.
     pub(crate) fn set_read_concurrency(&mut self, c: usize) {
         self.read_concurrency = c.max(1);
+    }
+
+    pub(crate) fn set_adaptive_controller(
+        &mut self,
+        controller: Option<Arc<AdaptiveReadController>>,
+    ) {
+        self.adaptive_controller = controller;
     }
 
     /// The reader's concurrent-range fan-out (1 = strictly sequential).
@@ -773,11 +991,13 @@ impl GraphIndex {
     /// (a single missing tile costs the same either way). A failed batch is
     /// not an error here: the tiles stay unloaded and the per-tile loader
     /// retries each one (recording failures) when the scan reaches it.
-    fn prefetch_span(&self, section: usize, start: usize, end: usize) {
+    fn prefetch_span(&self, section: usize, start: usize, end: usize, intent: ReadIntent) -> usize {
         let missing: Vec<usize> = (start..end)
             .filter(|&ti| self.sections[section][ti].data.get().is_none())
             .collect();
-        self.bulk_fault(section, &missing);
+        let offered = missing.len();
+        self.bulk_fault(section, &missing, intent);
+        offered
     }
 
     /// Bulk-fault a set of (possibly scattered, ascending) missing tile indices in
@@ -786,12 +1006,12 @@ impl GraphIndex {
     /// costs the same via the per-tile loader). A failed batch leaves the tiles
     /// unloaded for the per-tile loader to retry. Shared by the consecutive-span
     /// scan prefetch and the scattered batch-probe prefetch.
-    fn bulk_fault(&self, section: usize, tiles: &[usize]) {
+    fn bulk_fault(&self, section: usize, tiles: &[usize], intent: ReadIntent) {
         if tiles.len() < 2 {
             return;
         }
         let Some(bulk) = &self.bulk else { return };
-        if let Some(images) = bulk(section, tiles) {
+        if let Some(images) = bulk(section, tiles, intent) {
             if images.len() == tiles.len() {
                 for (&ti, img) in tiles.iter().zip(images) {
                     let _ = self.sections[section][ti].data.set(img);
@@ -828,7 +1048,7 @@ impl GraphIndex {
         }
         for (si, set) in want.iter().enumerate() {
             let tiles: Vec<usize> = set.iter().copied().collect();
-            self.bulk_fault(si, &tiles);
+            self.bulk_fault(si, &tiles, ReadIntent::SelectiveProbe);
         }
     }
 
@@ -859,7 +1079,7 @@ impl GraphIndex {
     /// Total triple count (sum of the SPO tiles' zone counts). For a remote
     /// index this faults in the SPO tiles — prefer the header's quad count.
     pub fn triple_count(&self) -> u32 {
-        self.prefetch_span(0, 0, self.sections[0].len());
+        self.prefetch_span(0, 0, self.sections[0].len(), ReadIntent::FullScan);
         (0..self.sections[0].len())
             .filter_map(|ti| TripleBlock::parse(self.tile_data(0, ti)).ok())
             .map(|b| b.zone().count)
@@ -995,7 +1215,9 @@ impl GraphIndex {
     /// permutation's order, which differs from canonical once `perm.back`
     /// permutes the free components).
     pub fn match_pattern(&self, pattern: Pattern) -> Vec<Triple> {
-        let mut out: Vec<Triple> = self.scan_iter(pattern).collect();
+        let mut out: Vec<Triple> = self
+            .scan_iter_with_intent(pattern, ReadIntent::FullScan)
+            .collect();
         out.sort_unstable();
         out
     }
@@ -1007,7 +1229,15 @@ impl GraphIndex {
     /// [`TripleBlock::scan`]); a malformed/absent block yields nothing rather
     /// than panicking. The permutation is chosen for the longest bound prefix.
     pub fn scan_iter(&self, pattern: Pattern) -> impl Iterator<Item = Triple> + '_ {
-        self.scan_iter_with(pattern, Self::best_permutation(pattern))
+        self.scan_iter_with_intent(pattern, ReadIntent::BoundedScan)
+    }
+
+    pub(crate) fn scan_iter_with_intent(
+        &self,
+        pattern: Pattern,
+        intent: ReadIntent,
+    ) -> impl Iterator<Item = Triple> + '_ {
+        self.scan_iter_with(pattern, Self::best_permutation(pattern), intent)
     }
 
     /// What [`scan_iter`](Self::scan_iter) *would* fetch for `pattern`, computed
@@ -1106,7 +1336,7 @@ impl GraphIndex {
                 continue;
             }
             if self.sections[si][ti].data.get().is_none() {
-                self.prefetch_span(si, ti, (ti + window).min(end));
+                self.prefetch_span(si, ti, (ti + window).min(end), ReadIntent::BoundedScan);
                 window = window.saturating_mul(2).min(PREFETCH_WINDOW_MAX);
             }
             let tile = &self.sections[si][ti];
@@ -1178,6 +1408,7 @@ impl GraphIndex {
         Some(self.scan_iter_with(
             pattern,
             Self::permutation_sorted_on_in(self.perms, pattern, sort_col)?,
+            ReadIntent::FullScan,
         ))
     }
 
@@ -1188,13 +1419,29 @@ impl GraphIndex {
         &self,
         pattern: Pattern,
         perm: IndexPermutation,
+        intent: ReadIntent,
+    ) -> impl Iterator<Item = Triple> + '_ {
+        let [pa, pb, pc] = perm.order_pattern(pattern);
+        self.scan_permuted_with(perm, pa, pb, pc, intent)
+            .map(move |abc| perm.back(abc))
+    }
+
+    /// Stream triples in their stored permutation order. Keeping this below
+    /// the canonical mapping lets prefix-2 consumers project the neighbor ID
+    /// directly without constructing or reordering canonical triples.
+    fn scan_permuted_with(
+        &self,
+        perm: IndexPermutation,
+        pa: Option<u32>,
+        pb: Option<u32>,
+        pc: Option<u32>,
+        intent: ReadIntent,
     ) -> impl Iterator<Item = Triple> + '_ {
         // Route: a bound leading id binary-searches the tile directory to exactly
         // one tile (groups are never split across tiles); an unbound one chains
         // every tile's cursor. Within a tile, a bound leading scan jumps to its
         // a-group via the tile's lazily-built group directory — built on first
         // use, costing one walk of that (budget-sized) tile.
-        let [pa, pb, pc] = perm.order_pattern(pattern);
         let si = perm.section_index();
         let (start, end) = self.tile_span(si, pa);
         // Coalesce tile faults, but ramp the prefetch window geometrically as
@@ -1204,7 +1451,18 @@ impl GraphIndex {
         // handful of coalesced reads (4, 8, 16, … tiles). A bound leading scan
         // spans a single tile, so the prefetch no-ops and it faults just that
         // one tile, unchanged.
-        let window = std::cell::Cell::new(PREFETCH_WINDOW_START);
+        let known_bytes = self.sections[si][start..end]
+            .iter()
+            .fold(0u64, |total, tile| total.saturating_add(tile.len as u64));
+        let plan = self
+            .adaptive_controller
+            .as_ref()
+            .map(|controller| controller.plan(intent, known_bytes, 0, self.read_concurrency));
+        let window = Cell::new(plan.map_or(PREFETCH_WINDOW_START, |plan| plan.prefetch_start));
+        let window_cap = plan.map_or(PREFETCH_WINDOW_MAX, |plan| plan.prefetch_cap);
+        let window_offered = Cell::new(0usize);
+        let window_consumed = Cell::new(0usize);
+        let feedback = ScanFeedback::new(self.adaptive_controller.clone(), intent);
         (start..end)
             // Synopsis pre-fault prune: drop a routed tile the directory proves
             // can't match a bound secondary component, **without fetching it**
@@ -1214,29 +1472,96 @@ impl GraphIndex {
             // `syn_admits` keeps every tile, unchanged.
             .filter(move |&ti| self.sections[si][ti].syn_admits(pb, pc))
             .flat_map(move |ti| {
+                crate::read_path_metrics::record_tile(si, ti);
                 // Fault in (if remote), parse (untrusted bytes ⇒ `None` on
                 // malformed), and zone-prune per tile, then stream the
                 // matching groups.
                 if self.sections[si][ti].data.get().is_none() {
-                    let w = window.get();
-                    self.prefetch_span(si, ti, (ti + w).min(end));
-                    window.set(w.saturating_mul(2).min(PREFETCH_WINDOW_MAX));
+                    let mut w = window.get();
+                    if window_offered.get() > 0 && window_consumed.get() >= window_offered.get() {
+                        w = w.saturating_mul(2).min(window_cap);
+                    }
+                    let offered = self.prefetch_span(si, ti, (ti + w).min(end), intent);
+                    feedback.offer_tiles(offered);
+                    window.set(w);
+                    window_offered.set(offered);
+                    window_consumed.set(0);
                 }
+                feedback.consume_tile();
+                window_consumed.set(window_consumed.get().saturating_add(1));
                 let tile = &self.sections[si][ti];
                 TripleBlock::parse(self.tile_data(si, ti))
                     .ok()
                     .filter(|b| b.zone().may_contain(pa, pb, pc))
-                    .map(|b| match pa {
-                        Some(a) => {
-                            let dir = tile.dir.get_or_init(|| b.group_directory());
-                            b.scan_from(dir, a, pb, pc)
+                    .map(|b| {
+                        #[cfg(feature = "unsafe-decode-bench")]
+                        {
+                            if self
+                                .unchecked_decode
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                return match pa {
+                                    Some(a) => {
+                                        // SAFETY: enabling this mode requires every
+                                        // loader result to be a complete immutable
+                                        // builder-produced block. The directory and
+                                        // cursor borrow this exact tile allocation.
+                                        let dir = tile.dir.get_or_init(|| unsafe {
+                                            b.group_directory_unchecked()
+                                        });
+                                        // SAFETY: the mode's contract and directory
+                                        // construction above satisfy the cursor's
+                                        // validity, lifetime, and provenance rules.
+                                        DecodeCursor::Unchecked(unsafe {
+                                            b.scan_from_unchecked(dir, a, pb, pc)
+                                        })
+                                    }
+                                    // SAFETY: the mode's contract guarantees this is
+                                    // a complete immutable builder-produced block.
+                                    None => DecodeCursor::Unchecked(unsafe {
+                                        b.scan_unchecked(pa, pb, pc)
+                                    }),
+                                };
+                            }
+                            DecodeCursor::Safe(match pa {
+                                Some(a) => {
+                                    let dir = tile.dir.get_or_init(|| b.group_directory());
+                                    b.scan_from(dir, a, pb, pc)
+                                }
+                                None => b.scan(pa, pb, pc),
+                            })
                         }
-                        None => b.scan(pa, pb, pc),
+                        #[cfg(not(feature = "unsafe-decode-bench"))]
+                        match pa {
+                            Some(a) => {
+                                let dir = tile.dir.get_or_init(|| b.group_directory());
+                                b.scan_from(dir, a, pb, pc)
+                            }
+                            None => b.scan(pa, pb, pc),
+                        }
                     })
                     .into_iter()
                     .flatten()
             })
-            .map(move |abc| perm.back(abc))
+    }
+
+    /// Stream the stored third-component IDs for one exact `(a, b)` prefix.
+    /// This retains ordinary tile routing, lazy faulting, corruption handling,
+    /// and split-group chaining while avoiding canonical triple materialization.
+    pub(crate) fn scan_prefix2(
+        &self,
+        permutation: IndexPermutation,
+        a: u32,
+        b: u32,
+    ) -> impl Iterator<Item = u32> + '_ {
+        self.scan_permuted_with(
+            permutation,
+            Some(a),
+            Some(b),
+            None,
+            ReadIntent::SelectiveProbe,
+        )
+        .map(|(_, _, c)| c)
     }
 
     /// The tile index span a scan must visit: every tile when the leading
@@ -1264,6 +1589,8 @@ impl GraphIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adaptive::{AdaptiveReadController, ReadObservation};
+    use std::sync::{Arc, Mutex};
 
     fn graph() -> (GraphIndex, Vec<Triple>) {
         let data = vec![
@@ -1281,6 +1608,160 @@ mod tests {
         (b.build(), data)
     }
 
+    #[test]
+    fn paired_families_expand_to_every_existing_permutation_view() {
+        let (_, data) = graph();
+        let paired = GraphIndexBuilder::from_triples(data.clone())
+            .with_tile_budget(64)
+            .build_families()
+            .unwrap();
+        for permutation in ALL_PERMS {
+            let mut expected: Vec<_> = data
+                .iter()
+                .copied()
+                .map(|triple| permutation.forward(triple))
+                .collect();
+            expected.sort_unstable();
+            expected.dedup();
+            let section = paired.tile_sections()[permutation.section_index()];
+            let actual: Vec<_> = section
+                .iter()
+                .flat_map(|tile| TripleBlock::parse(tile.bytes()).unwrap().triples())
+                .collect();
+            assert_eq!(actual, expected, "{}", permutation.name());
+            let (slot, second) = permutation.family_slot();
+            let family = [
+                IndexFamily::Subject,
+                IndexFamily::Predicate,
+                IndexFamily::Object,
+            ][slot];
+            let view = paired.family_view(family);
+            let selected = if second { view.second } else { view.first };
+            assert_eq!(
+                selected.iter().map(Tile::bytes).collect::<Vec<_>>(),
+                section.iter().map(Tile::bytes).collect::<Vec<_>>(),
+                "{} family slot",
+                permutation.name()
+            );
+            assert_eq!(view.family, family);
+        }
+    }
+
+    #[test]
+    fn adaptive_bounded_scan_reports_unused_prefetch_on_drop() {
+        let mut blocks = Vec::new();
+        let mut spo = Vec::new();
+        for id in 1..=12u32 {
+            let mut builder = TripleBlockBuilder::new();
+            builder.push((id, 1, id + 100));
+            blocks.push(builder.build());
+            spo.push((id, id, None));
+        }
+        let images = Arc::new(blocks);
+        let single = images.clone();
+        let loader: TileLoader = Box::new(move |_section, tile| single.get(tile).cloned());
+        let batches = Arc::new(Mutex::new(Vec::new()));
+        let recorded = batches.clone();
+        let bulk_images = images.clone();
+        let bulk: TileBulkLoader = Box::new(move |_section, tiles, intent| {
+            recorded.lock().unwrap().push((tiles.to_vec(), intent));
+            tiles
+                .iter()
+                .map(|&tile| bulk_images.get(tile).cloned())
+                .collect()
+        });
+        let mut dirs = std::array::from_fn(|_| Vec::new());
+        dirs[0] = spo;
+        let controller = Arc::new(AdaptiveReadController::new());
+        for _ in 0..2 {
+            controller.observe(ReadObservation {
+                requested_bytes: 1024 * 1024,
+                returned_bytes: 1024 * 1024,
+                physical_ranges: 1,
+                elapsed_micros: Some(120_000),
+                success: true,
+            });
+        }
+        let mut index =
+            GraphIndex::from_remote_directories(dirs, PermSet::ALL, loader).with_bulk_loader(bulk);
+        index.set_adaptive_controller(Some(controller.clone()));
+
+        let first = index
+            .scan_iter_with_intent((None, None, None), ReadIntent::BoundedScan)
+            .next();
+        assert_eq!(first, Some((1, 1, 101)));
+
+        let batches = batches.lock().unwrap();
+        assert_eq!(batches.len(), 1, "LIMIT-like demand began a second window");
+        assert_eq!(batches[0].0.len(), 8);
+        assert_eq!(batches[0].1, ReadIntent::BoundedScan);
+        drop(batches);
+        let next = controller.plan(ReadIntent::BoundedScan, 1024 * 1024, 4096, 8);
+        assert_eq!(next.prefetch_start, 2, "unused window was not reported");
+    }
+
+    #[test]
+    fn adaptive_full_scan_uses_full_intent_and_consumes_every_tile() {
+        let mut blocks = Vec::new();
+        let mut spo = Vec::new();
+        for id in 1..=40u32 {
+            let mut builder = TripleBlockBuilder::new();
+            builder.push((id, 1, id + 100));
+            blocks.push(builder.build());
+            spo.push((id, id, None));
+        }
+        let images = Arc::new(blocks);
+        let single = images.clone();
+        let loader: TileLoader = Box::new(move |_section, tile| single.get(tile).cloned());
+        let batches = Arc::new(Mutex::new(Vec::new()));
+        let recorded = batches.clone();
+        let bulk_images = images.clone();
+        let bulk: TileBulkLoader = Box::new(move |_section, tiles, intent| {
+            recorded.lock().unwrap().push((tiles.to_vec(), intent));
+            tiles
+                .iter()
+                .map(|&tile| bulk_images.get(tile).cloned())
+                .collect()
+        });
+        let mut dirs = std::array::from_fn(|_| Vec::new());
+        dirs[0] = spo;
+        let controller = Arc::new(AdaptiveReadController::new());
+        for _ in 0..2 {
+            controller.observe(ReadObservation {
+                requested_bytes: 1024 * 1024,
+                returned_bytes: 1024 * 1024,
+                physical_ranges: 1,
+                elapsed_micros: Some(120_000),
+                success: true,
+            });
+        }
+        let mut index =
+            GraphIndex::from_remote_directories(dirs, PermSet::ALL, loader).with_bulk_loader(bulk);
+        index.set_adaptive_controller(Some(controller));
+
+        assert_eq!(
+            index
+                .scan_iter_with_intent((None, None, None), ReadIntent::FullScan)
+                .count(),
+            40
+        );
+        let batches = batches.lock().unwrap();
+        assert_eq!(
+            batches
+                .iter()
+                .map(|(tiles, _)| tiles.len())
+                .collect::<Vec<_>>(),
+            vec![8, 16, 16]
+        );
+        assert_eq!(
+            batches.iter().map(|(tiles, _)| tiles.len()).sum::<usize>(),
+            40
+        );
+        assert!(batches
+            .iter()
+            .all(|(_, intent)| *intent == ReadIntent::FullScan));
+    }
+
     /// Brute-force reference for a pattern.
     fn reference(data: &[Triple], (s, p, o): Pattern) -> Vec<Triple> {
         let mut v: Vec<Triple> = data
@@ -1292,6 +1773,40 @@ mod tests {
             .collect();
         v.sort_unstable();
         v
+    }
+
+    #[cfg(feature = "unsafe-decode-bench")]
+    #[test]
+    fn unchecked_index_matches_safe_every_pattern() {
+        let data = graph().1;
+        let build = |budget| {
+            let mut builder = GraphIndexBuilder::new().with_tile_budget(budget);
+            for &triple in &data {
+                builder.push(triple);
+            }
+            builder.build()
+        };
+        let values = [None, Some(1), Some(2), Some(3), Some(99)];
+
+        for budget in [1usize, INDEX_TILE_BUDGET] {
+            let safe = build(budget);
+            let mut unchecked = build(budget);
+            // SAFETY: both indexes were built in-process from the same valid
+            // triples and their immutable block images have not been modified.
+            unsafe { unchecked.assume_valid_blocks() };
+            for s in values {
+                for p in values {
+                    for o in values {
+                        let pattern = (s, p, o);
+                        assert_eq!(
+                            unchecked.match_pattern(pattern),
+                            safe.match_pattern(pattern),
+                            "budget {budget}, pattern {pattern:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -1320,6 +1835,59 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn prefix2_neighbor_scan_matches_each_permutation() {
+        let (index, data) = graph();
+        for permutation in ALL_PERMS {
+            let stored: Vec<_> = data
+                .iter()
+                .copied()
+                .map(|triple| permutation.forward(triple))
+                .collect();
+            let mut prefixes: Vec<_> = stored.iter().map(|&(a, b, _)| (a, b)).collect();
+            prefixes.push((u32::MAX, u32::MAX));
+            prefixes.sort_unstable();
+            prefixes.dedup();
+            for (a, b) in prefixes {
+                let mut want: Vec<_> = stored
+                    .iter()
+                    .filter(|&&(x, y, _)| x == a && y == b)
+                    .map(|&(_, _, c)| c)
+                    .collect();
+                want.sort_unstable();
+                assert_eq!(
+                    index.scan_prefix2(permutation, a, b).collect::<Vec<_>>(),
+                    want,
+                    "{} ({a}, {b})",
+                    permutation.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prefix2_neighbor_scan_chains_a_split_group() {
+        let mut builder = GraphIndexBuilder::new().with_tile_budget(128);
+        let want: Vec<u32> = (10_000..50_000).collect();
+        for &object in &want {
+            builder.push((7, 11, object));
+        }
+        let index = builder.build();
+
+        assert!(
+            index
+                .tile_span(IndexPermutation::Spo.section_index(), Some(7))
+                .1
+                > 1
+        );
+        assert_eq!(
+            index
+                .scan_prefix2(IndexPermutation::Spo, 7, 11)
+                .collect::<Vec<_>>(),
+            want
+        );
     }
 
     #[test]

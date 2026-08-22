@@ -16,6 +16,9 @@
 //! right call on a latency-bound link. Missing blocks for one access are fetched
 //! through [`RangeReader::read_many`], so a backend that *does* support
 //! multi-range collapses them further still; the two optimizations compose.
+//! [`RangeReader::read_at_precise`] is the deliberate exception: metadata
+//! callers that must preserve a physical byte boundary bypass widening and do
+//! not populate this cache.
 //!
 //! Residency is **bounded**: past a byte cap (default [`DEFAULT_CACHE_CAP`],
 //! overridable with [`BlockCacheReader::with_cache_cap`]) the least-recently
@@ -24,8 +27,10 @@
 //! wasm (a 4 GiB address space shared with the decompressed tiles and dictionary
 //! chunks) that is an out-of-memory crash, not a slowdown.
 
-use crate::reader::RangeReader;
+use crate::adaptive::{AdaptiveReadController, ReadIntent, ReadObservation};
+use crate::reader::{materializable_len, RangeReader};
 use std::collections::{BTreeSet, HashMap};
+use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
 /// Default block size: 64 KiB — large enough to swallow a dictionary chunk or an
@@ -63,18 +68,54 @@ pub fn auto_block(len: u64) -> u64 {
     mult * DEFAULT_BLOCK
 }
 
-/// One resident block: its bytes plus the last-touch stamp eviction orders by.
-struct CacheEntry {
+/// One fetched span shared by every cache block carved out of it. Accounting is
+/// per allocation: the bytes remain resident until the span's final block is
+/// evicted.
+struct Backing {
     data: Arc<[u8]>,
+    resident_blocks: usize,
+}
+
+/// One resident block: a view into a shared fetched span plus the last-touch
+/// stamp eviction orders by.
+struct CacheEntry {
+    backing: u64,
+    range: Range<usize>,
     stamp: u64,
+}
+
+struct ResidentSlice {
+    data: Arc<[u8]>,
+    range: Range<usize>,
 }
 
 /// The cache state behind one mutex: resident blocks, their total byte size,
 /// and the monotonic access counter that makes eviction least-recently-used.
 struct CacheState {
     map: HashMap<u64, CacheEntry>,
+    backings: HashMap<u64, Backing>,
+    next_backing: u64,
     used: u64,
     tick: u64,
+}
+
+impl CacheState {
+    fn remove_block(&mut self, block: u64) {
+        let Some(entry) = self.map.remove(&block) else {
+            return;
+        };
+        let remove_backing = if let Some(backing) = self.backings.get_mut(&entry.backing) {
+            backing.resident_blocks -= 1;
+            backing.resident_blocks == 0
+        } else {
+            false
+        };
+        if remove_backing {
+            if let Some(backing) = self.backings.remove(&entry.backing) {
+                self.used -= backing.data.len() as u64;
+            }
+        }
+    }
 }
 
 pub struct BlockCacheReader<R> {
@@ -83,6 +124,8 @@ pub struct BlockCacheReader<R> {
     len: u64,
     cap: u64,
     cache: Mutex<CacheState>,
+    controller: Option<Arc<AdaptiveReadController>>,
+    clock: Option<Arc<dyn Fn() -> Option<u64> + Send + Sync>>,
 }
 
 impl<R: RangeReader> BlockCacheReader<R> {
@@ -97,10 +140,31 @@ impl<R: RangeReader> BlockCacheReader<R> {
             cap: DEFAULT_CACHE_CAP,
             cache: Mutex::new(CacheState {
                 map: HashMap::new(),
+                backings: HashMap::new(),
+                next_backing: 0,
                 used: 0,
                 tick: 0,
             }),
+            controller: None,
+            clock: None,
         }
+    }
+
+    /// Enable session-local adaptive scheduling using a host-supplied
+    /// monotonic microsecond clock. Returning `None` leaves the current static
+    /// plan in effect for that observation.
+    pub fn with_adaptive_clock<F>(mut self, clock: F) -> Self
+    where
+        F: Fn() -> Option<u64> + Send + Sync + 'static,
+    {
+        self.controller = Some(Arc::new(AdaptiveReadController::new()));
+        self.clock = Some(Arc::new(clock));
+        self
+    }
+
+    /// The controller shared by every lazy index/dictionary over this cache.
+    pub fn adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>> {
+        self.controller.clone()
     }
 
     /// Override the resident-byte cap. The cap is enforced *between* reads: a
@@ -136,10 +200,25 @@ impl<R: RangeReader> BlockCacheReader<R> {
         Ok(())
     }
 
+    fn block_start(&self, block: u64) -> u64 {
+        block
+            .checked_mul(self.block)
+            .unwrap_or(self.len)
+            .min(self.len)
+    }
+
+    fn block_end(&self, block: u64) -> u64 {
+        block
+            .checked_add(1)
+            .and_then(|next| next.checked_mul(self.block))
+            .unwrap_or(self.len)
+            .min(self.len)
+    }
+
     /// Fetch and cache every block index in `want` that isn't resident, issuing
     /// the missing ones as coalesced spans through `read_many`. Already-resident
     /// wanted blocks get their recency stamp refreshed.
-    fn ensure(&self, want: &BTreeSet<u64>) -> std::io::Result<()> {
+    fn ensure(&self, want: &BTreeSet<u64>, intent: ReadIntent) -> std::io::Result<()> {
         let missing: Vec<u64> = {
             let mut st = self.cache.lock().unwrap();
             st.tick += 1;
@@ -158,7 +237,15 @@ impl<R: RangeReader> BlockCacheReader<R> {
         if missing.is_empty() {
             return Ok(());
         }
-        // Coalesce consecutive block indices into one span each.
+        let known_bytes = (missing.len() as u64).saturating_mul(self.block);
+        let plan = self
+            .controller
+            .as_ref()
+            .map(|controller| controller.plan(intent, known_bytes, 0, self.inner.concurrency()));
+        let max_span = plan.map_or(u64::MAX, |p| p.max_span).max(self.block);
+        let max_in_flight = plan.map_or(usize::MAX, |p| p.max_in_flight).max(1);
+
+        // Coalesce consecutive block indices into bounded spans.
         let mut spans: Vec<(u64, u64)> = Vec::new();
         let mut runs: Vec<(u64, u64)> = Vec::new();
         let mut i = 0;
@@ -166,38 +253,169 @@ impl<R: RangeReader> BlockCacheReader<R> {
             let first = missing[i];
             let mut last = first;
             let mut j = i + 1;
-            while j < missing.len() && missing[j] == last + 1 {
+            while j < missing.len()
+                && missing[j] == last + 1
+                && self
+                    .block_end(missing[j])
+                    .saturating_sub(self.block_start(first))
+                    <= max_span
+            {
                 last = missing[j];
                 j += 1;
             }
-            let off = first * self.block;
-            let end = ((last + 1) * self.block).min(self.len);
+            let off = self.block_start(first);
+            let end = self.block_end(last);
             spans.push((off, end - off));
             runs.push((first, last));
             i = j;
         }
-        let blobs = self.inner.read_many(&spans)?;
-        if blobs.len() != spans.len() {
-            return Err(std::io::Error::other("block fetch returned wrong count"));
+
+        let mut blobs = Vec::with_capacity(spans.len());
+        let mut observations = Vec::new();
+        for chunk in spans.chunks(max_in_flight) {
+            let (fetched, observation) = self.fetch_spans_deferred(chunk, intent)?;
+            blobs.extend(fetched);
+            observations.push(observation);
         }
+        for observation in observations {
+            if let Some(controller) = &self.controller {
+                controller.observe(observation);
+            }
+        }
+
+        let mut fetched = Vec::with_capacity(blobs.len());
+        for (&(first, last), blob) in runs.iter().zip(blobs) {
+            fetched.push((first, last, Arc::<[u8]>::from(blob)));
+        }
+
         let mut st = self.cache.lock().unwrap();
         st.tick += 1;
         let tick = st.tick;
-        for (&(first, last), blob) in runs.iter().zip(blobs.into_iter()) {
-            let span_start = first * self.block;
+        for (first, last, data) in fetched {
+            let backing = st.next_backing;
+            st.next_backing += 1;
+            st.used += data.len() as u64;
+            st.backings.insert(
+                backing,
+                Backing {
+                    data,
+                    resident_blocks: 0,
+                },
+            );
+            let span_start = self.block_start(first);
             for b in first..=last {
-                let lo = (b * self.block - span_start) as usize;
-                let hi = ((((b + 1) * self.block).min(self.len)) - span_start) as usize;
-                let hi = hi.min(blob.len());
-                let lo = lo.min(hi);
-                let data: Arc<[u8]> = Arc::from(&blob[lo..hi]);
-                st.used += data.len() as u64;
-                if let Some(old) = st.map.insert(b, CacheEntry { data, stamp: tick }) {
-                    st.used -= old.data.len() as u64; // concurrent double-fetch
-                }
+                let lo = self.block_start(b).saturating_sub(span_start) as usize;
+                let hi = self.block_end(b).saturating_sub(span_start) as usize;
+                st.remove_block(b); // a concurrent reader may have filled it
+                st.map.insert(
+                    b,
+                    CacheEntry {
+                        backing,
+                        range: lo..hi,
+                        stamp: tick,
+                    },
+                );
+                st.backings.get_mut(&backing).unwrap().resident_blocks += 1;
             }
         }
         Ok(())
+    }
+
+    fn fetch_spans(
+        &self,
+        spans: &[(u64, u64)],
+        intent: ReadIntent,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
+        let (blobs, observation) = self.fetch_spans_deferred(spans, intent)?;
+        if let Some(controller) = &self.controller {
+            controller.observe(observation);
+        }
+        Ok(blobs)
+    }
+
+    fn fetch_spans_deferred(
+        &self,
+        spans: &[(u64, u64)],
+        intent: ReadIntent,
+    ) -> std::io::Result<(Vec<Vec<u8>>, ReadObservation)> {
+        let started = self.clock.as_ref().and_then(|clock| clock());
+        let result = self.inner.read_many_with_intent(spans, intent);
+        let elapsed_micros = started.and_then(|start| {
+            self.clock
+                .as_ref()
+                .and_then(|clock| clock())
+                .and_then(|end| end.checked_sub(start))
+        });
+        let requested_bytes = spans
+            .iter()
+            .fold(0u64, |total, &(_, len)| total.saturating_add(len));
+        let blobs = match result {
+            Ok(blobs) if blobs.len() == spans.len() => blobs,
+            Ok(_) => {
+                self.observe_physical(requested_bytes, 0, spans.len(), elapsed_micros, false);
+                return Err(std::io::Error::other("block fetch returned wrong count"));
+            }
+            Err(error) => {
+                self.observe_physical(requested_bytes, 0, spans.len(), elapsed_micros, false);
+                return Err(error);
+            }
+        };
+
+        let returned_bytes = blobs
+            .iter()
+            .fold(0u64, |total, blob| total.saturating_add(blob.len() as u64));
+        for (&(offset, expected), blob) in spans.iter().zip(&blobs) {
+            if blob.len() as u64 != expected {
+                self.observe_physical(
+                    requested_bytes,
+                    returned_bytes,
+                    spans.len(),
+                    elapsed_micros,
+                    false,
+                );
+                let (kind, mismatch) = if (blob.len() as u64) < expected {
+                    (std::io::ErrorKind::UnexpectedEof, "short")
+                } else {
+                    (std::io::ErrorKind::InvalidData, "overlong")
+                };
+                return Err(std::io::Error::new(
+                    kind,
+                    format!(
+                        "{mismatch} block fetch at offset {offset}: got {} of {expected} bytes",
+                        blob.len()
+                    ),
+                ));
+            }
+        }
+        Ok((
+            blobs,
+            ReadObservation {
+                requested_bytes,
+                returned_bytes,
+                physical_ranges: spans.len(),
+                elapsed_micros,
+                success: true,
+            },
+        ))
+    }
+
+    fn observe_physical(
+        &self,
+        requested_bytes: u64,
+        returned_bytes: u64,
+        physical_ranges: usize,
+        elapsed_micros: Option<u64>,
+        success: bool,
+    ) {
+        if let Some(controller) = &self.controller {
+            controller.observe(ReadObservation {
+                requested_bytes,
+                returned_bytes,
+                physical_ranges,
+                elapsed_micros,
+                success,
+            });
+        }
     }
 
     /// Evict least-recently-touched blocks until the resident total fits the
@@ -214,9 +432,7 @@ impl<R: RangeReader> BlockCacheReader<R> {
             if st.used <= self.cap {
                 break;
             }
-            if let Some(e) = st.map.remove(&b) {
-                st.used -= e.data.len() as u64;
-            }
+            st.remove_block(b);
         }
     }
 
@@ -224,13 +440,22 @@ impl<R: RangeReader> BlockCacheReader<R> {
     /// cloned out under one short lock; a block missing here (evicted by a
     /// concurrent reader's trim between `ensure` and this call) is re-read
     /// directly from the inner reader — correctness never depends on residency.
-    fn assemble(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+    fn assemble(&self, offset: u64, len: u64, intent: ReadIntent) -> std::io::Result<Vec<u8>> {
         let first = offset / self.block;
         let last = (offset + len - 1) / self.block;
-        let resident: Vec<Option<Arc<[u8]>>> = {
+        let resident: Vec<Option<ResidentSlice>> = {
             let st = self.cache.lock().unwrap();
             (first..=last)
-                .map(|b| st.map.get(&b).map(|e| e.data.clone()))
+                .map(|b| {
+                    st.map.get(&b).and_then(|entry| {
+                        st.backings
+                            .get(&entry.backing)
+                            .map(|backing| ResidentSlice {
+                                data: backing.data.clone(),
+                                range: entry.range.clone(),
+                            })
+                    })
+                })
                 .collect()
         };
         let mut out = Vec::with_capacity(len as usize);
@@ -238,14 +463,26 @@ impl<R: RangeReader> BlockCacheReader<R> {
         let end = offset + len;
         while pos < end {
             let b = pos / self.block;
-            let block_start = b * self.block;
+            let block_start = self.block_start(b);
             let within = (pos - block_start) as usize;
             let fetched: Vec<u8>;
             let blk: &[u8] = match &resident[(b - first) as usize] {
-                Some(data) => data,
+                Some(slice) => &slice.data[slice.range.clone()],
                 None => {
-                    let blen = ((b + 1) * self.block).min(self.len) - block_start;
-                    fetched = self.inner.read_at(block_start, blen)?;
+                    let blen = self.block_end(b).saturating_sub(block_start);
+                    fetched = self
+                        .fetch_spans(&[(block_start, blen)], intent)?
+                        .pop()
+                        .ok_or_else(|| std::io::Error::other("block fetch returned no data"))?;
+                    if fetched.len() as u64 != blen {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            format!(
+                                "short block fetch at offset {block_start}: got {} of {blen} bytes",
+                                fetched.len()
+                            ),
+                        ));
+                    }
                     &fetched
                 }
             };
@@ -255,6 +492,15 @@ impl<R: RangeReader> BlockCacheReader<R> {
             }
             out.extend_from_slice(&blk[within..within + take]);
             pos += take as u64;
+        }
+        if out.len() as u64 != len {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!(
+                    "short block fetch while assembling range at offset {offset}: got {} of {len} bytes",
+                    out.len()
+                ),
+            ));
         }
         Ok(out)
     }
@@ -274,37 +520,75 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
             return Ok(Vec::new());
         }
         self.bounds(offset, len)?;
+        materializable_len(len)?;
         let want: BTreeSet<u64> = (offset / self.block..=(offset + len - 1) / self.block).collect();
-        self.ensure(&want)?;
-        let out = self.assemble(offset, len)?;
+        self.ensure(&want, ReadIntent::SelectiveProbe)?;
+        let out = self.assemble(offset, len, ReadIntent::SelectiveProbe)?;
         self.trim();
         Ok(out)
     }
 
+    fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        self.bounds(offset, len)?;
+        materializable_len(len)?;
+        let out = self.inner.read_at_precise(offset, len)?;
+        if out.len() as u64 != len {
+            let (kind, mismatch) = if (out.len() as u64) < len {
+                (std::io::ErrorKind::UnexpectedEof, "short")
+            } else {
+                (std::io::ErrorKind::InvalidData, "overlong")
+            };
+            return Err(std::io::Error::new(
+                kind,
+                format!(
+                    "{mismatch} precise read at offset {offset}: got {} of {len} bytes",
+                    out.len()
+                ),
+            ));
+        }
+        Ok(out)
+    }
+
     fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+        self.read_many_with_intent(ranges, ReadIntent::SelectiveProbe)
+    }
+
+    fn read_many_with_intent(
+        &self,
+        ranges: &[(u64, u64)],
+        intent: ReadIntent,
+    ) -> std::io::Result<Vec<Vec<u8>>> {
         let mut want = BTreeSet::new();
         for &(o, l) in ranges {
             if l == 0 {
                 continue;
             }
             self.bounds(o, l)?;
+            materializable_len(l)?;
             for b in o / self.block..=(o + l - 1) / self.block {
                 want.insert(b);
             }
         }
-        self.ensure(&want)?;
+        self.ensure(&want, intent)?;
         let out = ranges
             .iter()
             .map(|&(o, l)| {
                 if l == 0 {
                     Ok(Vec::new())
                 } else {
-                    self.assemble(o, l)
+                    self.assemble(o, l, intent)
                 }
             })
             .collect::<std::io::Result<Vec<_>>>()?;
         self.trim();
         Ok(out)
+    }
+
+    fn adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>> {
+        self.controller.clone()
     }
 }
 
@@ -312,6 +596,85 @@ impl<R: RangeReader> RangeReader for BlockCacheReader<R> {
 mod tests {
     use super::*;
     use crate::reader::{CountingReader, SliceReader};
+    use crate::ReadIntent;
+    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+    struct ShortReader {
+        len: u64,
+    }
+
+    struct OverlongReader {
+        len: u64,
+    }
+
+    struct FailSecondBatchOnce {
+        data: Vec<u8>,
+        calls: AtomicU64,
+        failed: std::sync::atomic::AtomicBool,
+    }
+
+    struct MaxLengthReader;
+
+    struct NeverMaterializeReader {
+        calls: AtomicU64,
+    }
+
+    impl RangeReader for ShortReader {
+        fn len(&self) -> u64 {
+            self.len
+        }
+
+        fn read_at(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            Ok(vec![0; len.saturating_sub(1) as usize])
+        }
+    }
+
+    impl RangeReader for OverlongReader {
+        fn len(&self) -> u64 {
+            self.len
+        }
+
+        fn read_at(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            Ok(vec![0; len.saturating_add(1) as usize])
+        }
+    }
+
+    impl RangeReader for FailSecondBatchOnce {
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
+
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            let call = self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            if call == 1 && !self.failed.swap(true, AtomicOrdering::SeqCst) {
+                return Err(std::io::Error::other("injected second-batch failure"));
+            }
+            Ok(self.data[offset as usize..(offset + len) as usize].to_vec())
+        }
+    }
+
+    impl RangeReader for MaxLengthReader {
+        fn len(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn read_at(&self, _offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            Ok(vec![0x8d; len as usize])
+        }
+    }
+
+    impl RangeReader for NeverMaterializeReader {
+        fn len(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn read_at(&self, _offset: u64, _len: u64) -> std::io::Result<Vec<u8>> {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            Err(std::io::Error::other(
+                "hostile range reached backing reader",
+            ))
+        }
+    }
 
     #[test]
     fn caches_blocks_and_serves_exact_bytes() {
@@ -356,6 +719,102 @@ mod tests {
             "physical: {}",
             counting.requests()
         );
+    }
+
+    #[test]
+    fn physical_misses_train_adaptation_but_cache_hits_do_not() {
+        let data = vec![0x5au8; 32 * 1024];
+        let physical = Arc::new(CountingReader::new(SliceReader::new(&data)));
+        let now = Arc::new(AtomicU64::new(0));
+        let clock = now.clone();
+        let cache = BlockCacheReader::new(physical.clone(), 4096)
+            .with_adaptive_clock(move || Some(clock.fetch_add(100_000, AtomicOrdering::SeqCst)));
+
+        assert_eq!(cache.read_at(0, 8).unwrap(), vec![0x5a; 8]);
+        let controller = cache.adaptive_controller().unwrap();
+        assert_eq!(controller.successful_samples(), 1);
+        assert_eq!(physical.requests(), 1);
+
+        assert_eq!(cache.read_at(0, 8).unwrap(), vec![0x5a; 8]);
+        assert_eq!(controller.successful_samples(), 1);
+        assert_eq!(physical.requests(), 1);
+
+        let out = cache
+            .read_many_with_intent(&[(8192, 8), (12_288, 8)], ReadIntent::SelectiveProbe)
+            .unwrap();
+        assert_eq!(out, vec![vec![0x5a; 8], vec![0x5a; 8]]);
+        assert_eq!(controller.successful_samples(), 2);
+    }
+
+    #[test]
+    fn precise_reads_neither_train_nor_populate_the_adaptive_cache() {
+        let data = vec![0x6bu8; 16 * 1024];
+        let physical = Arc::new(CountingReader::new(SliceReader::new(&data)));
+        let now = Arc::new(AtomicU64::new(0));
+        let clock = now.clone();
+        let cache = BlockCacheReader::new(physical.clone(), 4096)
+            .with_adaptive_clock(move || Some(clock.fetch_add(100_000, AtomicOrdering::SeqCst)));
+
+        assert_eq!(cache.read_at_precise(123, 7).unwrap(), vec![0x6b; 7]);
+        assert_eq!(physical.requests(), 1);
+        assert_eq!(cache.cached_bytes(), 0);
+        assert_eq!(cache.adaptive_controller().unwrap().successful_samples(), 0);
+    }
+
+    #[test]
+    fn a_late_sub_batch_failure_does_not_train_or_cache_earlier_sub_batches() {
+        let physical = Arc::new(FailSecondBatchOnce {
+            data: vec![0x7c; 20 * 1024],
+            calls: AtomicU64::new(0),
+            failed: std::sync::atomic::AtomicBool::new(false),
+        });
+        let now = Arc::new(AtomicU64::new(0));
+        let clock = now.clone();
+        let cache = BlockCacheReader::new(physical.clone(), 4096)
+            .with_adaptive_clock(move || Some(clock.fetch_add(100_000, AtomicOrdering::SeqCst)));
+        let ranges = [(0, 8), (12_288, 8)];
+
+        assert!(cache
+            .read_many_with_intent(&ranges, ReadIntent::SelectiveProbe)
+            .is_err());
+        let controller = cache.adaptive_controller().unwrap();
+        assert_eq!(controller.successful_samples(), 0);
+        assert_eq!(cache.cached_bytes(), 0);
+
+        let out = cache
+            .read_many_with_intent(&ranges, ReadIntent::SelectiveProbe)
+            .unwrap();
+        assert_eq!(out, vec![vec![0x7c; 8], vec![0x7c; 8]]);
+        assert_eq!(physical.calls.load(AtomicOrdering::SeqCst), 4);
+        assert_eq!(controller.successful_samples(), 2);
+    }
+
+    #[test]
+    fn last_partial_block_of_a_u64_max_source_does_not_overflow() {
+        let cache = BlockCacheReader::new(MaxLengthReader, 4096);
+        assert_eq!(cache.read_at(u64::MAX - 8, 8).unwrap(), vec![0x8d; 8]);
+    }
+
+    #[test]
+    fn hostile_unmaterializable_ranges_do_not_enumerate_or_fetch_blocks() {
+        let physical = Arc::new(NeverMaterializeReader {
+            calls: AtomicU64::new(0),
+        });
+        let cache = BlockCacheReader::new(physical.clone(), 4096);
+
+        assert!(cache.read_at(0, u64::MAX).is_err());
+        assert!(cache.read_at_precise(0, u64::MAX).is_err());
+        assert!(cache
+            .read_many_with_intent(&[(0, u64::MAX)], ReadIntent::SelectiveProbe)
+            .is_err());
+        assert_eq!(physical.calls.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[test]
+    fn small_reads_at_offsets_past_u32_remain_valid() {
+        let cache = BlockCacheReader::new(MaxLengthReader, 4096);
+        let offset = u64::from(u32::MAX) + 4096;
+        assert_eq!(cache.read_at(offset, 8).unwrap(), vec![0x8d; 8]);
     }
 
     #[test]
@@ -433,5 +892,57 @@ mod tests {
             "resident {} > cap {cap} after the read",
             r.cached_bytes()
         );
+    }
+
+    #[test]
+    fn shared_span_is_counted_until_its_last_block_is_evicted() {
+        let data: Vec<u8> = (0..32 * 1024u32).map(|i| i as u8).collect();
+        let r = BlockCacheReader::new(SliceReader::new(&data), 4096).with_cache_cap(8 * 1024);
+
+        assert_eq!(r.read_at(0, 12 * 1024).unwrap(), &data[..12 * 1024]);
+        assert_eq!(
+            r.cached_bytes(),
+            0,
+            "one 12 KiB backing cannot be partly retained under an 8 KiB cap"
+        );
+    }
+
+    #[test]
+    fn short_backend_read_is_an_error() {
+        let r = BlockCacheReader::new(ShortReader { len: 16 * 1024 }, 4096);
+
+        let err = r.read_at(0, 8192).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(err.to_string().contains("short block fetch"));
+    }
+
+    #[test]
+    fn precise_read_bypasses_block_widening_and_cache_population() {
+        let data: Vec<u8> = (0..16 * 1024u32).map(|i| i as u8).collect();
+        let counting = Arc::new(CountingReader::new(SliceReader::new(&data)));
+        let r = BlockCacheReader::new(counting.clone(), 4096);
+
+        assert_eq!(r.read_at_precise(5000, 3).unwrap(), data[5000..5003]);
+        assert_eq!(counting.requests(), 1);
+        assert_eq!(counting.bytes_read(), 3);
+        assert_eq!(r.cached_bytes(), 0);
+    }
+
+    #[test]
+    fn precise_read_rejects_a_short_backend_response() {
+        let r = BlockCacheReader::new(ShortReader { len: 16 * 1024 }, 4096);
+
+        let err = r.read_at_precise(5000, 8).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(err.to_string().contains("short precise read"));
+    }
+
+    #[test]
+    fn precise_read_rejects_an_overlong_backend_response() {
+        let r = BlockCacheReader::new(OverlongReader { len: 16 * 1024 }, 4096);
+
+        let err = r.read_at_precise(5000, 8).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("overlong precise read"));
     }
 }

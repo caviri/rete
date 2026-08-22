@@ -15,6 +15,10 @@ command -v wasm-opt >/dev/null || {
   echo "wasm-opt is required (use the devcontainer image)" >&2
   exit 1
 }
+command -v node >/dev/null || {
+  echo "node is required (use the devcontainer image)" >&2
+  exit 1
+}
 
 if [[ -z "${RETE_SOURCE_REVISION:-}" ]]; then
   if [[ -n "${GITHUB_SHA:-}" ]]; then
@@ -82,6 +86,7 @@ CARGO_TARGET_DIR="$RETE_WASM_TARGET_DIR" \
   wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg --no-opt
 CARGO_TARGET_DIR="$RETE_WASM_TARGET_DIR" \
   wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
+node tests/gate/checks/check_wasm_boot.mjs
 # docs/engine/ is the tracked ESM copy the standalone docs pages import
 # (anatomy/bim-pair/building). It used to be a hand-copy with no producer —
 # refresh it here so the CI parity diff below can actually guard it.
@@ -90,6 +95,9 @@ cp web/pkg/rete_wasm.js web/pkg/rete_wasm_bg.wasm docs/engine/
 bash scripts/build_playground_async.sh
 uv run python scripts/stage_playground_datasets.py
 uv run python scripts/build_playground.py
+# yasgui.html embeds the same no-modules glue and binary. Rebuild it here so a
+# wasm-bindgen API change cannot leave the standalone IDE on an older wrapper.
+uv run python scripts/build_yasgui.py
 # The gate's .rete fixtures. This used to be five inline `cargo run` lines here,
 # five more in .github/workflows/ci.yml, and a curl in tests/gate/gate.sh — three
 # producers of the same five files, which is how they drifted. One producer now,

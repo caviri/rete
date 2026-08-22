@@ -2,15 +2,18 @@
 //! it entirely in the browser — the same engine the native CLI uses, compiled
 //! to wasm. Results come back as JSON strings.
 
+use rete_core::reader::materializable_len;
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
     eval_query_with, eval_select_communities, eval_sparql, project_graph, schema_classes,
     schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
-    ByteRange, CountingReader, DataGraph, Header, OffsetReader, QueryOpts, QueryOutput,
-    RangeReader, Rete, ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView,
-    TermTriple, TripleProvenance, ValidationReport, DEFAULT_BLOCK, DEFAULT_TILE_BUDGET,
+    ByteRange, CountingReader, DataGraph, Header, OffsetReader, OwnedMemoryRangeReader, QueryOpts,
+    QueryOutput, RangeReader, Rete, ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape,
+    SummaryView, TermTriple, TripleProvenance, ValidationReport, DEFAULT_BLOCK,
+    DEFAULT_TILE_BUDGET,
 };
 use std::rc::Rc;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 /// Version of Rete-owned JSON object envelopes exposed by the browser API.
@@ -499,6 +502,7 @@ pub fn file_len_url(url: &str) -> Result<String, JsValue> {
 /// and are called rarely (once at load / on demand), so a handle buys little.
 #[wasm_bindgen]
 pub struct Graph {
+    reader: Arc<OwnedMemoryRangeReader>,
     rete: Rc<Rete>,
     file_len: usize,
     /// The kind-7 build record's own bytes, lifted at open time. `Rete` keeps
@@ -513,14 +517,18 @@ impl Graph {
     /// Open a `.rete` image and keep it resident for repeated querying.
     #[wasm_bindgen(constructor)]
     pub fn new(bytes: &[u8]) -> Result<Graph, JsValue> {
+        let file_len = bytes.len();
+        let build_info = rete_core::read_build_info(bytes)
+            .ok()
+            .flatten()
+            .filter(|b| !b.is_empty())
+            .map(|b| String::from_utf8_lossy(&b).into_owned());
+        let (reader, rete) = open_owned(bytes.to_vec())?;
         Ok(Graph {
-            rete: Rc::new(open(bytes)?),
-            file_len: bytes.len(),
-            build_info: rete_core::read_build_info(bytes)
-                .ok()
-                .flatten()
-                .filter(|b| !b.is_empty())
-                .map(|b| String::from_utf8_lossy(&b).into_owned()),
+            reader,
+            rete: Rc::new(rete),
+            file_len,
+            build_info,
         })
     }
 
@@ -677,29 +685,35 @@ impl Graph {
 
     /// See [`card`] — the Dataset Card of the resident file.
     pub fn card(&self) -> Option<String> {
-        self.rete
-            .metadata()
-            .map(|b| String::from_utf8_lossy(b).into_owned())
+        rete_core::read_metadata_ranged(self.reader.as_ref())
+            .ok()
+            .flatten()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// See [`card_and_build`] — the card and the build record of the resident
     /// file, in the same envelope the remote path returns, so one caller
     /// handles both sources.
-    pub fn card_and_build(&self) -> String {
-        let card = self
-            .rete
-            .metadata()
-            .filter(|b| !b.is_empty())
-            .map(|b| b.to_vec());
+    pub fn card_and_build(&self) -> Result<String, JsValue> {
+        self.card_and_build_result().map_err(err)
+    }
+
+    fn card_and_build_result(&self) -> Result<String, rete_core::format::FileError> {
+        // `Graph` deliberately opens through the lazy owned-memory reader, so
+        // `Rete::metadata()` is empty by contract. Read the card's exact bytes
+        // from that owned image, as `Graph::card` does, instead of silently
+        // treating every browser-built card as absent.
+        let card = rete_core::read_metadata_ranged(self.reader.as_ref())?
+            .filter(|bytes| !bytes.is_empty());
         // A resident open already decoded the whole TEXT_INDEX section, so both
         // figures are free here.
         let text_index =
             text_index_json(self.rete.header(), self.rete.text_index_token_table_len());
-        card_build_envelope(
+        Ok(card_build_envelope(
             card,
             self.build_info.as_ref().map(|s| s.as_bytes().to_vec()),
             text_index,
-        )
+        ))
     }
 
     /// See [`query_communities`].
@@ -1757,9 +1771,10 @@ extern "C" {
         n: usize,
         dst_ptr: *mut u8,
     ) -> usize;
-    /// Async length probe (a `bytes=0-0` fetch; reads the total from
-    /// `Content-Range`). Writes the u64 length to `out_ptr`, returns 1 on
-    /// success. Lets the asyncify build open a file with NO sync XHR at all.
+    /// Host-provided Asyncify length probe. Writes the u64 length to `out_ptr`
+    /// and returns 1 on success. The shipped browser host prefers HEAD and
+    /// falls back to `bytes=0-0`; test or custom hosts may obtain the length
+    /// differently. Lets the Asyncify build open a file with no sync XHR.
     fn rete_file_len(url_ptr: *const u8, url_len: usize, out_ptr: *mut u64) -> usize;
     /// LEAF panic reporter (deliberately NOT in asyncify-imports): the panic
     /// hook passes the raw `Location` pointers so the host can log file:line
@@ -1772,12 +1787,19 @@ fn checked_async_layout(ranges: &[(u64, u64)]) -> std::io::Result<(Vec<u64>, Vec
     let lens: Vec<u32> = ranges
         .iter()
         .map(|&(_, len)| {
-            u32::try_from(len).map_err(|_| {
+            let len = u32::try_from(len).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!("range length {len} exceeds the wasm32 u32 length type"),
                 )
-            })
+            })?;
+            materializable_len(u64::from(len)).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "range length exceeds the wasm target's Vec limit",
+                )
+            })?;
+            Ok(len)
         })
         .collect::<std::io::Result<_>>()?;
     let total = lens.iter().try_fold(0usize, |sum, &len| {
@@ -1792,6 +1814,18 @@ fn checked_async_layout(ranges: &[(u64, u64)]) -> std::io::Result<(Vec<u64>, Vec
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "range response exceeds the wasm32 address space",
+        )
+    })?;
+    materializable_len(u64::try_from(total).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "range response total does not fit u64",
+        )
+    })?)
+    .map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "range response exceeds the wasm target's Vec limit",
         )
     })?;
     Ok((offs, lens, total))
@@ -1819,16 +1853,89 @@ fn split_range_response(
     let mut out = Vec::with_capacity(ranges.len());
     let mut pos = 0usize;
     for len in lens {
-        let end = pos + len as usize;
-        out.push(dst[pos..end].to_vec());
+        let end = pos.checked_add(len as usize).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "range response offset overflow",
+            )
+        })?;
+        out.push(
+            dst.get(pos..end)
+                .ok_or_else(|| std::io::Error::other("range response slice out of bounds"))?
+                .to_vec(),
+        );
         pos = end;
     }
     Ok(out)
 }
 
+#[cfg(any(feature = "adaptive-read-bench", test))]
+fn millis_to_micros(millis: Option<f64>) -> Option<u64> {
+    let millis = millis.filter(|value| value.is_finite() && *value >= 0.0)?;
+    let micros = millis * 1000.0;
+    if micros >= u64::MAX as f64 {
+        Some(u64::MAX)
+    } else {
+        Some(micros as u64)
+    }
+}
+
+#[cfg(any(feature = "adaptive-read-bench", all(test, target_arch = "wasm32")))]
+fn performance_now_micros() -> Option<u64> {
+    let global = js_sys::global();
+    let performance = js_sys::Reflect::get(&global, &JsValue::from_str("performance")).ok()?;
+    if performance.is_null() || performance.is_undefined() {
+        return None;
+    }
+    let now = js_sys::Reflect::get(&performance, &JsValue::from_str("now")).ok()?;
+    let now = now.dyn_into::<js_sys::Function>().ok()?;
+    millis_to_micros(now.call0(&performance).ok()?.as_f64())
+}
+
+fn make_remote_cache<R: RangeReader>(reader: R, block: u64) -> BlockCacheReader<R> {
+    let cache = BlockCacheReader::new(reader, block);
+    #[cfg(feature = "adaptive-read-bench")]
+    {
+        cache.with_adaptive_clock(performance_now_micros)
+    }
+    #[cfg(not(feature = "adaptive-read-bench"))]
+    {
+        cache
+    }
+}
+
 #[cfg(test)]
 mod async_range_tests {
-    use super::{checked_async_layout, split_range_response};
+    #[cfg(target_arch = "wasm32")]
+    use super::performance_now_micros;
+    use super::{checked_async_layout, make_remote_cache, millis_to_micros, split_range_response};
+    use rete_core::SliceReader;
+
+    #[test]
+    fn performance_milliseconds_are_validated_and_saturated() {
+        assert_eq!(millis_to_micros(None), None);
+        assert_eq!(millis_to_micros(Some(-1.0)), None);
+        assert_eq!(millis_to_micros(Some(f64::NAN)), None);
+        assert_eq!(millis_to_micros(Some(f64::INFINITY)), None);
+        assert_eq!(millis_to_micros(Some(1.25)), Some(1250));
+        assert_eq!(millis_to_micros(Some(f64::MAX)), Some(u64::MAX));
+    }
+
+    #[test]
+    fn remote_cache_is_static_in_default_wasm_builds() {
+        let bytes = [0u8; 8192];
+        let cache = make_remote_cache(SliceReader::new(&bytes), 4096);
+        #[cfg(not(feature = "adaptive-read-bench"))]
+        assert!(cache.adaptive_controller().is_none());
+        #[cfg(feature = "adaptive-read-bench")]
+        assert!(cache.adaptive_controller().is_some());
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn browser_global_exposes_a_valid_monotonic_clock() {
+        assert!(performance_now_micros().is_some());
+    }
 
     #[test]
     fn rejects_a_range_larger_than_the_wasm32_length_type() {
@@ -2272,12 +2379,18 @@ impl XhrRangeReader {
         #[cfg(not(feature = "asyncify"))]
         {
             let js = |e: JsValue| std::io::Error::other(format!("XHR error: {e:?}"));
-            let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
-            xhr.open_with_async("GET", &self.url, false).map_err(js)?;
-            xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
+            let requested = materializable_len(len).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "range exceeds wasm target memory",
+                )
+            })?;
             let end = offset
                 .checked_add(len - 1)
                 .ok_or_else(|| std::io::Error::other("HTTP range end overflow"))?;
+            let xhr = web_sys::XmlHttpRequest::new().map_err(js)?;
+            xhr.open_with_async("GET", &self.url, false).map_err(js)?;
+            xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
             xhr.set_request_header("Range", &format!("bytes={offset}-{end}"))
                 .map_err(js)?;
             xhr.send().map_err(js)?;
@@ -2301,8 +2414,6 @@ impl XhrRangeReader {
                     self.url
                 )));
             }
-            let requested = usize::try_from(len)
-                .map_err(|_| std::io::Error::other("range exceeds wasm32 memory"))?;
             buf.truncate(requested);
             // Report this fetch to an optional progress hook so a worker can stream
             // live "N requests · M bytes" updates to the UI *during* the otherwise
@@ -2427,9 +2538,10 @@ impl rete_core::ServiceClient for XhrServiceClient {
 /// Open a remote `.rete` lazily over HTTP range reads, returning the counting
 /// reader (for byte/request stats) and the `Rete`. The seam every `*_url`
 /// task shares with [`sparql_url`].
-/// Auto-tune the block-cache size from the FILE SIZE — known for free at open
-/// from the `Content-Range` of the single `bytes=0-0` request (one byte, no
-/// download; it's what `stats().fileLength` reports). Remote reads are
+/// Auto-tune the block-cache size from the FILE SIZE. The default synchronous
+/// path and shipped Asyncify host prefer a HEAD response, with `bytes=0-0` as a
+/// fallback. A custom Asyncify host may determine the length another way. The
+/// resulting value is what `stats().fileLength` reports. Remote reads are
 /// round-trip-bound, so a bigger block means far fewer requests; benchmarked on
 /// wikidata-1GB: 64 KiB = 262 reqs / 63 s, 256 KiB = 83 / 27 s, 512 KiB = 51 / 19 s.
 /// Bigger files (bigger working sets + dictionaries) get bigger blocks as
@@ -2508,7 +2620,7 @@ fn open_url(url: &str) -> Result<(RemoteReader, Rete), JsValue> {
     // `read_many`, so a multi-range host coalesces them further. The block size
     // is auto-tuned from the file size (known at open, no download).
     let reader = RemoteReader::open(url)?;
-    let cached = std::sync::Arc::new(BlockCacheReader::new(
+    let cached = std::sync::Arc::new(make_remote_cache(
         reader.counting.clone(),
         auto_block(reader.len()),
     ));
@@ -3603,6 +3715,150 @@ fn open(bytes: &[u8]) -> Result<Rete, JsValue> {
     // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
     rete.set_service_client(Box::new(XhrServiceClient));
     Ok(rete)
+}
+
+fn open_owned(bytes: Vec<u8>) -> Result<(Arc<OwnedMemoryRangeReader>, Rete), JsValue> {
+    let reader = Arc::new(OwnedMemoryRangeReader::new(bytes).map_err(err)?);
+    let mut rete = Rete::open_ranged_lazy(reader.clone()).map_err(err)?;
+    // SERVICE blocks federate to remote SPARQL endpoints over sync XHR.
+    rete.set_service_client(Box::new(XhrServiceClient));
+    Ok((reader, rete))
+}
+
+#[cfg(test)]
+mod owned_graph_tests {
+    use super::*;
+
+    fn take_uvarint(bytes: &[u8], pos: &mut usize) -> usize {
+        let mut value = 0usize;
+        let mut shift = 0;
+        loop {
+            let byte = bytes[*pos];
+            *pos += 1;
+            value |= usize::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+            shift += 7;
+        }
+    }
+
+    fn corrupt_unused_ops_tile(image: &mut [u8]) {
+        let header = Header::from_bytes(&image[..rete_core::HEADER_LEN]).unwrap();
+        assert_eq!(header.block_codec, rete_core::CODEC_ZSTD);
+        let mut pos = usize::try_from(header.root_dir_offset).unwrap();
+        assert_eq!(take_uvarint(image, &mut pos), 6);
+        let ops = (0..6)
+            .find_map(|section| {
+                let len = take_uvarint(image, &mut pos);
+                let start = pos;
+                pos += len;
+                (section == 5).then_some((start, len))
+            })
+            .unwrap();
+        let mut dir = ops.0;
+        let tiles = take_uvarint(image, &mut dir);
+        assert!(tiles > 0);
+        let mut compressed_lens = Vec::with_capacity(tiles);
+        for _ in 0..tiles {
+            let _min_delta = take_uvarint(image, &mut dir);
+            let _leading_span = take_uvarint(image, &mut dir);
+            compressed_lens.push(take_uvarint(image, &mut dir));
+        }
+        let first_tile_end = dir + compressed_lens[0];
+        assert!(first_tile_end <= ops.0 + ops.1);
+        image[dir..first_tile_end].fill(0xff);
+    }
+
+    #[test]
+    fn owned_graph_open_does_not_decode_an_unused_permutation() {
+        let mut image = include_bytes!("../../rete-core/tests/fixtures/v1/minimal.rete").to_vec();
+        corrupt_unused_ops_tile(&mut image);
+        assert!(
+            Rete::open(&image).is_err(),
+            "the eager control must decode OPS"
+        );
+
+        let (_, graph) = open_owned(image).expect("the lazy owned opener must defer OPS");
+        assert_eq!(graph.header().quad_count, 3);
+    }
+
+    #[test]
+    fn resident_graph_reads_its_card_from_the_owned_image() {
+        const CARD: &[u8] = br#"{"title":"Resident fixture"}"#;
+        let triple = ("<http://ex/s>", "<http://ex/p>", "<http://ex/o>");
+        let mut dictionary = rete_core::DictionaryBuilder::new();
+        dictionary.observe(triple.0, triple.1, triple.2);
+        let dictionary = dictionary.build();
+        let mut index = rete_core::GraphIndexBuilder::new();
+        index.push(dictionary.encode(triple.0, triple.1, triple.2).unwrap());
+        let image = rete_core::write_dataset_with_metadata(
+            &dictionary,
+            &index.build(),
+            &[],
+            false,
+            &[],
+            0,
+            CARD,
+            &[],
+        );
+
+        let graph = Graph::new(&image).unwrap();
+        assert_eq!(
+            graph.card().as_deref(),
+            Some(r#"{"title":"Resident fixture"}"#)
+        );
+    }
+
+    #[test]
+    fn browser_builder_writes_the_requested_card() {
+        let image = build_with_card(
+            "<http://ex/s> <http://ex/p> <http://ex/o> .",
+            "nt",
+            r#"{"title":"Written in a browser","keywords":["b","a"]}"#,
+        )
+        .unwrap();
+        let graph = Graph::new(&image).unwrap();
+        let envelope: serde_json::Value =
+            serde_json::from_str(&graph.card_and_build().unwrap()).unwrap();
+        let embedded = envelope["card"]
+            .as_str()
+            .expect("resident graph omitted the builder's card");
+        let embedded: serde_json::Value = serde_json::from_str(embedded).unwrap();
+        assert_eq!(embedded["title"], "Written in a browser");
+        assert_eq!(embedded["keywords"], serde_json::json!(["a", "b"]));
+        assert_eq!(embedded["triple_count"], 1);
+        assert_eq!(embedded["quad_count"], 1);
+        assert!(embedded["term_count"].as_u64().is_some());
+    }
+
+    #[test]
+    fn resident_card_and_build_reports_corrupt_metadata_ranges() {
+        const CARD: &[u8] = br#"{"title":"Resident fixture"}"#;
+        let triple = ("<http://ex/s>", "<http://ex/p>", "<http://ex/o>");
+        let mut dictionary = rete_core::DictionaryBuilder::new();
+        dictionary.observe(triple.0, triple.1, triple.2);
+        let dictionary = dictionary.build();
+        let mut index = rete_core::GraphIndexBuilder::new();
+        index.push(dictionary.encode(triple.0, triple.1, triple.2).unwrap());
+        let mut image = rete_core::write_dataset_with_metadata(
+            &dictionary,
+            &index.build(),
+            &[],
+            false,
+            &[],
+            0,
+            CARD,
+            &[],
+        );
+        let mut header = rete_core::Header::from_bytes(&image).unwrap();
+        header.metadata_offset = u64::MAX;
+        header.metadata_len = 1;
+        image[..rete_core::HEADER_LEN].copy_from_slice(&header.to_bytes());
+
+        let graph = Graph::new(&image).expect("lazy open must defer the card range");
+        assert!(graph.card_and_build_result().is_err());
+    }
 }
 
 fn err<E: std::fmt::Display>(e: E) -> JsValue {

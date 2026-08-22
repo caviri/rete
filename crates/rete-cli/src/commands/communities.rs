@@ -4,7 +4,7 @@
 
 use rete_core::{Rete, DEFAULT_TILE_BUDGET};
 
-use crate::commands::range_source::open_local;
+use crate::commands::range_source::open_local_for_query;
 use crate::commands::render::literal_lexical;
 
 /// One community's membership + literal corpus, ready to serialize.
@@ -138,7 +138,7 @@ pub(crate) fn communities(
     profile: bool,
     predicate: Option<&str>,
 ) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    let rete = open_local_for_query(file)?;
     let records = collect_communities(&rete, round, min_size, profile, predicate)?;
 
     if json {

@@ -1,7 +1,12 @@
 #![allow(dead_code)]
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::{io::Write as _, net::TcpListener};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    sync::{Arc, Mutex},
+};
 
 use assert_cmd::Command;
 use tempfile::TempDir;
@@ -78,12 +83,34 @@ pub fn json(command: &mut Command) -> serde_json::Value {
 pub enum RangeMode {
     Honor,
     Ignore,
+    Truncate,
     NotFound,
 }
 
 pub fn serve(data: Vec<u8>, mode: RangeMode) -> String {
+    serve_with_stats(data, mode).0
+}
+
+#[derive(Default)]
+pub struct RangeStats {
+    pub heads: AtomicUsize,
+    pub gets: AtomicUsize,
+    pub ranges: Mutex<Vec<RangeObservation>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RangeObservation {
+    /// Literal half-open range requested by the client.
+    pub requested: Range<usize>,
+    /// Half-open range actually returned after server-side normalization.
+    pub served: Range<usize>,
+}
+
+pub fn serve_with_stats(data: Vec<u8>, mode: RangeMode) -> (String, Arc<RangeStats>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/graph.rete", listener.local_addr().unwrap());
+    let stats = Arc::new(RangeStats::default());
+    let server_stats = stats.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let mut stream = match stream {
@@ -108,30 +135,40 @@ pub fn serve(data: Vec<u8>, mode: RangeMode) -> String {
             let text = String::from_utf8_lossy(&request);
             let total = data.len();
             if text.starts_with("HEAD") {
+                server_stats.heads.fetch_add(1, Ordering::SeqCst);
                 let headers = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
                 );
                 let _ = stream.write_all(headers.as_bytes());
                 continue;
             }
+            server_stats.gets.fetch_add(1, Ordering::SeqCst);
             let range = text.lines().find_map(|line| {
                 let line = line.to_ascii_lowercase();
                 line.strip_prefix("range: bytes=")
                     .map(|value| value.trim().to_string())
             });
-            if matches!(mode, RangeMode::Honor) {
+            if matches!(mode, RangeMode::Honor | RangeMode::Truncate) {
                 if let Some(range) = range {
                     let (start, end) = range.split_once('-').unwrap();
                     let start: usize = start.parse().unwrap();
-                    let end: usize = end.parse().unwrap();
-                    let end = end.min(total - 1);
-                    let body = &data[start..=end];
+                    let requested_end: usize = end.parse().unwrap();
+                    let response_end = requested_end.min(total - 1);
+                    let body = &data[start..=response_end];
+                    server_stats.ranges.lock().unwrap().push(RangeObservation {
+                        requested: start..requested_end.checked_add(1).unwrap(),
+                        served: start..response_end.checked_add(1).unwrap(),
+                    });
                     let headers = format!(
-                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{response_end}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()
                     );
                     let _ = stream.write_all(headers.as_bytes());
-                    let _ = stream.write_all(body);
+                    if matches!(mode, RangeMode::Truncate) {
+                        let _ = stream.write_all(&body[..body.len() / 2]);
+                    } else {
+                        let _ = stream.write_all(body);
+                    }
                     continue;
                 }
             }
@@ -141,5 +178,5 @@ pub fn serve(data: Vec<u8>, mode: RangeMode) -> String {
             let _ = stream.write_all(&data);
         }
     });
-    url
+    (url, stats)
 }

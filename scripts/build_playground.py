@@ -12,7 +12,7 @@ requests:
 The page still includes a user-initiated URL loader for custom `.rete` files.
 
 Prerequisites (all via Docker, see CLAUDE.md / docs):
-  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
   rete build examples/<x>.nt -o web/<x>.rete      # for each dataset below
 
 Run (deterministic):
@@ -31,10 +31,11 @@ import sys
 # Patch spliced into the asyncified wasm-bindgen glue in place of the
 # `const import1 = require("env");` line (which throws in a browser). It defines
 # the two async imports (env.rete_fetch_ranges = Promise.all of fetch;
-# env.rete_file_len = a bytes=0-0 length probe), the Asyncify suspend/rewind
-# driver `reteDrive`, and `reteOpenRemote` (opens a resident RemoteGraph by
-# driving the raw constructor and wrapping the pointer ONCE after rewind — so the
-# unwind pass never registers a garbage instance with the FinalizationRegistry).
+# env.rete_file_len = a HEAD-first probe with a bytes=0-0 fallback), the
+# Asyncify suspend/rewind driver `reteDrive`, and `reteOpenRemote` (opens a
+# resident RemoteGraph by driving the raw constructor and wrapping the pointer
+# ONCE after rewind — so the unwind pass never registers a garbage instance with
+# the FinalizationRegistry).
 # Sits inside the glue closure, so it can use wasm/passStringToWasm0/RemoteGraph/
 # takeObject/WASM_VECTOR_LEN directly. Proven end-to-end in dev/asyncify-e2e.cjs.
 ASYNC_ENV_JS = """
@@ -393,7 +394,10 @@ DATASETS = [
     ("scholar", "scholar.rete"),
     ("scholar-noisy", "scholar-noisy.rete"),
     # A tiny causal ontology with planted coherence defects — powers the Coherence
-    # tab demo (rete build examples/causal.nt -o web/causal.rete).
+    # tab demo. Its card is part of the browser contract (examples + Card
+    # modal), so the reproducible rebuild must include the tracked card recipe:
+    # rete build examples/causal.nt -o web/causal.rete
+    #   --card-file web/playground-cards/causal.card.json
     ("causal", "causal.rete"),
     # Real-world knowledge graphs ingested for the playground (subgraphs built by the
     # fetch recipes in scripts/; see web/playground-src/catalog.js for the example queries):

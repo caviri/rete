@@ -852,7 +852,9 @@ enum Command {
         #[arg(long)]
         no_route: bool,
     },
-    /// Run a SPARQL query over HTTP, range-fetching the file (no full download).
+    /// Run SPARQL against a remote .rete: eligible small HTTP objects use one
+    /// full-file transfer into owned memory and the lazy ranged opener; larger
+    /// objects stay remote-lazy. RETE_EAGER_MAX_MB=0 forces remote-lazy.
     SparqlUrl {
         /// http(s):// URL of a `.rete` file (host must honor Range requests).
         url: String,
@@ -861,10 +863,15 @@ enum Command {
         /// Emit standard SPARQL Results JSON (SELECT/ASK).
         #[arg(long)]
         json: bool,
-        /// OWL 2 QL entailment (see `sparql --entail`): reason over the ontology
-        /// while reading only the bytes the rewritten query touches.
+        /// OWL 2 QL entailment (see `sparql --entail`), using the same adaptive
+        /// transfer policy as the plain query.
         #[arg(long)]
         entail: bool,
+        /// Skip triple-block bounds checks. Research only: the URL must serve a
+        /// complete immutable file produced by rete's encoder.
+        #[cfg(feature = "unsafe-decode-bench")]
+        #[arg(long, hide = true)]
+        unsafe_decode: bool,
     },
     /// Explain a triple-pattern result over a **remote** `.rete` (HTTP range):
     /// which permutation, section, and byte ranges answer it — fetching only the
@@ -1387,12 +1394,21 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             predicate,
             object,
         } => commands::url::query_url(&url, subject, predicate, object),
+        #[cfg(not(feature = "unsafe-decode-bench"))]
         Command::SparqlUrl {
             url,
             query,
             json,
             entail,
         } => commands::url::sparql_url(&url, &query, json, entail),
+        #[cfg(feature = "unsafe-decode-bench")]
+        Command::SparqlUrl {
+            url,
+            query,
+            json,
+            entail,
+            unsafe_decode,
+        } => commands::url::sparql_url(&url, &query, json, entail, unsafe_decode),
         Command::WhyUrl {
             url,
             subject,

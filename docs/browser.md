@@ -12,8 +12,9 @@ docker compose run --rm wasm
 ```
 
 This runs `scripts/build_wasm.sh`: it builds `web/pkg`, `web/pkg-nomodules`, and
-`web/pkg-nomodules-async` from one checkout, regenerates the playground, and
-writes [wasm-build.json](wasm-build.json) with the source revision, pinned tool
+`web/pkg-nomodules-async` from one checkout, regenerates the playground and
+the self-contained yasgui·wasm IDE, and writes
+[wasm-build.json](wasm-build.json) with the source revision, pinned tool
 versions, sizes, and SHA-256 digests. The gitignored embedded `.rete` datasets
 listed in `scripts/build_playground.py` must already be staged under `web/`.
 
@@ -75,8 +76,8 @@ Binding failures throw JavaScript `Error` objects rather than strings.
 | `schema_url(url)` | **worker-only**: the Schema view (`classes`/`relations`) from a remote file's schema pyramid, plus `remote:{…}` |
 | `shacl_url(url, shapes, format?)` | **worker-only**: lazy SHACL — validates the remote default graph, range-reading only each shape's targets, plus `remote:{…}` |
 | `shacl_construct_url(url, shapes, construct)` | **worker-only**: SHACL over just the subgraph a CONSTRUCT selects (only its tiles fetched), plus `remote:{…}` |
-| `new Graph(bytes)` → `.query`, `.query_reasoned`, `.query_opts`, `.query_triples`, `.prefix_search`, `.text_search`, `.why_triples`, `.schema`, `.reach`, `.shacl`, `.reason`, `.query_communities`, `.pyramid_tree`, `.file_layout`, `.info`, `.graph_names` | a file opened **once** and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions |
-| `new RemoteGraph(url)` → `.query(query, format)`, `.query_reasoned`, `.query_opts`, `.prefix_search`, `.text_search`, `.stats()`, `.content_hash()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
+| `new Graph(bytes)` → `.query`, `.query_reasoned`, `.query_opts`, `.query_triples`, `.prefix_search`, `.text_search`, `.why_triples`, `.schema`, `.reach`, `.shacl`, `.reason`, `.query_communities`, `.pyramid_tree`, `.file_layout`, `.info`, `.graph_names` | a file image owned **once** and kept resident, while dictionary chunks and index tiles decode lazily; repeated calls reuse everything already faulted — the stateful local mirror of the free functions |
+| `new RemoteGraph(url)` → `.query(query, format)`, `.query_reasoned`, `.query_opts`, `.prefix_search`, `.text_search`, `.stats()`, `.content_hash()` | **worker-only**: a remote URL opened **once** and kept resident, so repeated queries reuse the adaptive block cache + faulted tiles + decoded dictionary (see [Caching remote reads](#caching-remote-reads)) |
 | `reason(bytes, graph?)` | OWL RL / RDFS coherence over an in-memory graph: `{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }` |
 | `check_schema(bytes)` | index-free Tier-0 schema coherence: `{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], readsIndex:false }` |
 | `check_schema_url(url)` | **worker-only**: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus `remote:{…}` |
@@ -167,13 +168,14 @@ so in-browser builds write uncompressed sections (codec `NONE`) — every reader
 accepts them, but `rete build` produces a smaller file from the same input.
 This powers the playground's **Build** tab.
 
-`sparql_url` runs full SPARQL against a **remote `.rete` URL without
-downloading it**: it reads the header, the dictionary chunk directories and
-index tile directories, then faults in only the dictionary chunks and index
-tiles the query touches — and full scans coalesce adjacent tiles into batched
-range reads, so even `?s ?p ?o` costs a handful of requests, not one per
-tile. The result envelope is the same as `query`, plus a `remote` object
-reporting exactly how little of the file was fetched.
+`sparql_url` runs full SPARQL against a **remote `.rete` URL through lazy range
+reads**. Browser/WASM does not adopt native `rete sparql-url`'s small-object
+one-GET policy: every object size uses the remote-lazy opener. Open reads the
+header, dictionary metadata, graph names, and index tile directories/synopses;
+default and named-graph tile payloads are faulted only when a query touches
+them. Full scans coalesce adjacent tiles into batched range reads, but can still
+fetch most or all of a file. The result envelope is the same as `query`, plus a
+`remote` object reporting the bytes and requests fetched for that call.
 
 The design constraint, honestly: the engine is synchronous, and wasm cannot
 block on `fetch`. Instead of an async engine refactor, the byte-range reads
@@ -185,9 +187,13 @@ throws. The host must answer `Range` requests with `206 Partial Content`
 and send CORS headers when cross-origin. A range fetch that fails mid-query
 is an error — never a silently incomplete result.
 
-The length probe uses a one-byte ranged `GET` (reading the total from
-`Content-Range`) rather than `HEAD`, since some hosts reject `HEAD` —
-notably Hugging Face's signed-redirect storage, which answers `405`.
+The default synchronous XHR reader prefers a `HEAD` probe and reads the full
+size from `Content-Length`, which browsers expose without an
+`Access-Control-Expose-Headers` entry. If `HEAD` is rejected or lacks a usable
+length, the reader falls back to `Range: bytes=0-0` and reads the total from
+`Content-Range`. Cross-origin hosts must expose `Content-Range` through CORS for
+that fallback; the production R2 policy does so. This probe choice does not
+change the browser's always-lazy data path.
 
 ## Caching remote reads
 
@@ -368,6 +374,13 @@ HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
 tiles cross the wire), caches those reads across queries (above), and federates a
 query across **several** sources via the SPARQL console's **+ Add source** button
 — see [Federated queries](federation.md#in-the-playground).
+
+For a catalog entry with `shards`, the playground keeps one always-lazy
+`RemoteGraph` per shard and fans queries across those independent files before
+merging results; the native small-object threshold never turns a shard into a
+whole-file fetch. This browser path is separate from CLI `rete federate`, which
+retains its own existing ranged opener and likewise is not part of native
+`sparql-url`'s one-GET optimization.
 
 ### Rich result cells and focused cards
 

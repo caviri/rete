@@ -6,7 +6,7 @@ web/atlas.template.html — a single offline HTML file: a canvas map (GIS) + a
 SPARQL editor + a temporal timeline, all querying the .rete via WASM in-browser.
 
 Prereqs (same as the playground):
-  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
   python3 scripts/geo_to_rete.py basemaps --years bc323,1000,1492,1815,1914,1945,1994 \
       --prec 2 --min-bbox 0.3 --max-per-year 90 -o dev/geo/history.nt
   rete build dev/geo/history.nt -o web/history.rete

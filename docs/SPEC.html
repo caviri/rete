@@ -761,7 +761,7 @@ from the directory means that section is not present.</p>
 (<code>bytes=0-1023</code>) tells the client where every section lives, with headroom for
 new sections (group directories, geo indexes, …) as new directory entries
 rather than a format break — the optional <strong>text-index</strong> section (kind <code>6</code>,
-§6.3) was added exactly this way.</p>
+§6.4) was added exactly this way.</p>
 </blockquote>
 <p>The <strong>metadata section</strong> (offset 8 / length 16) sits between the header and the
 dictionary and is <code>0</code>-length by default. When present it carries an opaque,
@@ -844,6 +844,21 @@ that run comparing each materialized term; return its ID or <code>None</code>.</
 </ul>
 <p>Restart points are also the natural <strong>chunk/compression boundaries</strong>: a client
 fetches just the run(s) covering the IDs/terms a query touches.</p>
+<h3 id="52-integer-domains-and-hostile-varints">5.2 Integer domains and hostile varints</h3>
+<p>Dictionary terms and all physical triple components are <strong>u32 IDs</strong>. <code>0</code> is
+the absent sentinel and a single dictionary role space therefore holds at most
+<code>u32::MAX</code> assigned IDs. The term count, restart interval, run counts when used
+as IDs, tile range endpoints, group counts, and prefix-directory offsets are
+decoded with checked <code>u64 → u32</code> conversions; a larger varint is malformed, not
+a truncating cast. This is a physical-ID limit, not a file-size limit.</p>
+<p>Aggregate counts and byte coordinates remain <strong>u64</strong>: header quad counts,
+section offsets/lengths, compressed payload lengths, cumulative record offsets,
+and aggregate graph totals may exceed <code>u32::MAX</code>. The staged <code>0x06</code> family
+decoder bounds its framed count/length conversions and capacities against bytes
+already present; dictionary restart reconstruction and chunk-run coordinates use
+checked <code>u64</code> arithmetic before conversion to their physical <code>u32</code>/<code>usize</code>
+domains. These are format-boundary guarantees, not a claim about every reader
+implementation path.</p>
 <hr />
 <h2 id="6-triples--quads">6. Triples / quads</h2>
 <img class="img-sq" src="img/index-permutations.svg" alt="Three of the six permutation indexes answer every SPARQL triple pattern: SPO serves the four patterns with a bound subject or nothing bound, POS the two with a bound predicate and unbound subject, OSP the two with a bound object and unbound subject and predicate. The other three — SOP, PSO, OPS — route nothing; their only job is to hand a merge join a stream already sorted on the join column. Measured on tree-city-inventory.rete built without a pyramid, the three routing indexes are 7.52 MB and the three optional ones 9.82 MB, so building with rete build --permutations 3 drops 50.5 percent of that file — and 36.8 percent of a literal-heavy one such as davidrumsey.">
@@ -976,7 +991,64 @@ into a term, compared for equality with one, or reported as one; and a key that
 is <em>not</em> a separator (a truncation, a fixed-size hash) mis-routes <strong>silently</strong> —
 <code>id → term</code>, <code>dump</code> and <code>export</code> route by <code>Δfirst_run</code> and stay byte-perfect
 while <code>term → id</code> returns wrong answers.</p>
-<h3 id="63-full-text-index-text_index-section-optional">6.3 Full-text index (TEXT_INDEX section, optional)</h3>
+<h3 id="63-staged-paired-family-container-generation-0x06">6.3 Staged paired-family container (generation <code>0x06</code>)</h3>
+<p>The following is the exact internal contract for the next file generation. It
+is deliberately staged: this repository still writes and dispatches stable
+header generation <code>0x05</code> at this point. <code>0x06</code> is not emitted by production
+writers or selected by public readers. <code>CURRENT_FORMAT_VERSION</code> and the minimum
+stable read version both remain <code>0x05</code>. Task 11 will deliberately make the
+eventual <code>0x06</code>-only break and remove the <code>0x05</code> reader; that incompatibility is
+not part of this staged codec implementation.</p>
+<p>Its index root is exactly three uncompressed length-framed family payloads in
+<strong>Subject, Predicate, Object</strong> order. An empty graph is therefore
+<code>varint(3), varint(1), 0, varint(1), 0, varint(1), 0</code>: three zero-pair family
+payloads. A subject family pairs SPO/SOP, predicate pairs POS/PSO, and object
+pairs OSP/OPS.</p>
+<p>Each family payload is exactly:</p>
+<pre><code class="language-text">uvarint tile_pair_count
+tile_pair_count × (uvarint min_a_delta, uvarint max_a_span)
+tile_pair_count × (uvarint first_flags, uvarint first_compressed_len,
+                   uvarint first_prefix2_len)
+tile_pair_count × (uvarint second_flags, uvarint second_compressed_len,
+                   uvarint second_prefix2_len)
+first records in order:  prefix-2 blob, then compressed §6.1 tile payload
+second records in order: prefix-2 blob, then compressed §6.1 tile payload
+first synopsis trailer:  tile_pair_count × 4 uvarints
+second synopsis trailer: tile_pair_count × 4 uvarints
+</code></pre>
+<p><code>min_a_delta</code> is from the prior pair's <code>min_a</code> (first is absolute) and
+<code>max_a_span = max_a - min_a</code>. Both orders must have exactly the same pair count
+and leading range at every pair. Compressed lengths name only their compressed
+tile payload: they exclude the prefix-2 blob and both trailers. Record offsets
+are cumulative checked <code>u64</code> values.</p>
+<p>Flags bit 0 means this tile continues the previous tile's leading group; bit 1
+means that leading group continues into the next tile. All other bits are
+reserved and rejected. A continuation repeats the same <strong>singleton</strong> leading
+range in adjacent pairs, and both sibling orders carry identical continuation
+flags. Non-continuing ranges are strictly ascending and disjoint.</p>
+<p>A non-empty prefix-2 blob is:</p>
+<pre><code class="language-text">uvarint a_group_count
+for each a group: uvarint a_delta, uvarint a_body_offset, uvarint b_count
+  for each b group: uvarint b_delta, uvarint c_body_offset, uvarint c_count
+</code></pre>
+<p><code>a_delta</code> is from the preceding <code>a</code>; <code>b_delta</code> resets for each a-group. The
+body offsets are byte offsets in the <strong>decompressed</strong> §6.1 block and must be
+inside that block; entries must agree exactly with its complete grouped body.
+The blob is emitted only when the complete compact <code>(a,b)</code> directory fits the
+fixed 64 KiB per-tile prefix-2 budget. Otherwise its length is zero and the
+reader uses the existing bounded a-only directory; partial prefix-2 metadata is
+never serialized.</p>
+<p>Each synopsis trailer record is <code>min_b, max_b-min_b, min_c, max_c-min_c</code> and
+must equal its decompressed tile's zone map. Counts, flags, varint domains,
+ranges, continuation links, compressed slices, prefix-2 metadata, trailers,
+and trailing bytes are all exact framing checks. Family varints are canonical
+(at most ten bytes); prefix-2 blobs and decompressed tiles are each capped at
+64 KiB. A zstd record is exactly one fully consumed frame, and the staged
+decoder bounds count-dependent capacity by bytes already framed in the payload.
+Its frame header is checked before decoder construction: both declared window
+and any nonzero declared content size are at most 64 KiB; the staged encoder
+uses the same 64 KiB window limit.</p>
+<h3 id="64-full-text-index-text_index-section-optional">6.4 Full-text index (TEXT_INDEX section, optional)</h3>
 <p>An <strong>opt-in</strong> section (kind <code>6</code>, built with <code>rete build --text-index</code>) that maps
 each <strong>word</strong> appearing in a string literal to the <strong>subjects</strong> that carry it, so
 a reader can answer "which entities mention <code>glucose</code>?" without scanning the
@@ -1029,8 +1101,10 @@ in the 0.3 line and the release version is a separate number.
 Optional sections and flags may extend it without changing its required semantics.
 A required layout change uses a new format byte. <strong>No backwards-compatibility
 promise is made before 1.0.0:</strong> a later generation may drop <code>0x05</code> read support
-and force a rebuild from RDF source. Experimental formats <code>0x01</code> through <code>0x04</code>
-are already such a break and must be rebuilt from RDF source.</p>
+and force a rebuild from RDF source. The staged paired-family plan makes that
+choice explicitly: Task 11 moves to <code>0x06</code> only and removes the <code>0x05</code> reader.
+Experimental formats <code>0x01</code> through <code>0x04</code> are already such a break and must be
+rebuilt from RDF source.</p>
 <hr />
 <h2 id="7-the-pyramid--community-summarization">7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>

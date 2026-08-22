@@ -45,6 +45,7 @@ from pathlib import Path
 # diff` in .github/workflows/ci.yml (which passes them explicitly).
 GUARDED = [
     "docs/playground.html",
+    "docs/yasgui.html",
     "docs/engine",
     "docs/rete_wasm_async.js",
     "docs/rete_wasm_async.wasm",
@@ -54,6 +55,7 @@ GUARDED = [
 STAMP_PATTERNS = (
     re.compile(rb'window\.RETE_BUILD = "([^"]*)";'),
     re.compile(rb'class="build-ver"[^>]*>build ([^<]*)<'),
+    re.compile(rb'const BUILD_STAMP = "Built ([^"]*)\.";'),
 )
 
 # Below this share of differing bytes, at an unchanged size, the binary did not
@@ -85,7 +87,8 @@ def without_stamp(blob: bytes) -> bytes:
     """The page with its build stamp blanked, so two stamps of DIFFERENT length
     (`0.3.2` against a 40-character SHA — the #199 shape) still compare equal
     everywhere else. Only the two known stamp sites are touched, never every
-    occurrence of the version string."""
+    occurrence of the version string. The patterns cover both playground
+    stamp sites and the self-contained Yasgui page."""
     out = blob
     for pattern in STAMP_PATTERNS:
         out = pattern.sub(

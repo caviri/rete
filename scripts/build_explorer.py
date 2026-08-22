@@ -12,7 +12,7 @@ A single, offline `.html` (double-click, no server, no network) that bundles:
     (web/explorer-src/explorer.js).
 
 Prereqs (all via Docker, same as the playground):
-  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
   rete build <inputs> -o web/<dataset>.rete
 
 Usage:

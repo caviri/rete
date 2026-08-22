@@ -7,6 +7,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
+use crate::adaptive::ReadIntent;
 use crate::varint::{read_uvarint, write_uvarint};
 
 /// Default restart interval: a full term every `R` entries.
@@ -70,6 +71,20 @@ impl DictSectionBuilder {
     pub fn build(mut self) -> Vec<u8> {
         self.terms.sort_unstable();
         self.terms.dedup();
+        self.build_sorted_unique()
+    }
+
+    /// Serialize terms that are already sorted and unique. This keeps the
+    /// canonicalizer from repeating either operation after role partitioning.
+    #[allow(dead_code)]
+    pub(crate) fn from_sorted_unique(terms: Vec<String>) -> Self {
+        Self {
+            terms,
+            restart_interval: env_restart_interval(),
+        }
+    }
+
+    pub(crate) fn build_sorted_unique(self) -> Vec<u8> {
         let r = self.restart_interval as usize;
         let n = self.terms.len();
         let num_restarts = n.div_ceil(r);
@@ -125,6 +140,18 @@ pub struct SectionMeta {
 
 /// Parse only the header/restart table of a section.
 pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
+    parse_meta_inner(bytes, Some(bytes.len() as u64))
+}
+
+/// Parse a chunked container's standalone raw-section header.  Its restart
+/// offsets name the *decompressed* raw section, so a compressed container
+/// length cannot safely bound them; checked reconstruction, ordering, and the
+/// exact expected restart count still apply.
+pub(crate) fn parse_meta_header_fragment(bytes: &[u8]) -> Result<SectionMeta, DictError> {
+    parse_meta_inner(bytes, None)
+}
+
+fn parse_meta_inner(bytes: &[u8], section_end: Option<u64>) -> Result<SectionMeta, DictError> {
     let mut pos = 0;
     let take = |pos: &mut usize| -> Result<u64, DictError> {
         let (v, n) =
@@ -132,11 +159,20 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
         *pos += n;
         Ok(v)
     };
-    let term_count = take(&mut pos)? as u32;
-    let restart_interval = take(&mut pos)? as u32;
-    let num_restarts = take(&mut pos)? as usize;
+    let term_count = u32::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("term count exceeds u32"))?;
+    let restart_interval = u32::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("restart interval exceeds u32"))?;
+    let num_restarts = usize::try_from(take(&mut pos)?)
+        .map_err(|_| DictError::Malformed("restart count too large"))?;
     if restart_interval == 0 {
         return Err(DictError::Malformed("zero restart interval"));
+    }
+    let expected_restarts = u64::from(term_count).div_ceil(u64::from(restart_interval));
+    if u64::try_from(num_restarts).ok() != Some(expected_restarts) {
+        return Err(DictError::Malformed(
+            "restart count does not match term count",
+        ));
     }
     // `num_restarts` is untrusted; each restart is ≥1 byte, so cap the
     // pre-allocation at the buffer length to avoid an OOM on a bogus count.
@@ -144,11 +180,26 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
     for _ in 0..num_restarts {
         rel.push(take(&mut pos)?);
     }
-    let body_start = pos as u64;
+    let body_start = u64::try_from(pos).map_err(|_| DictError::Malformed("header too large"))?;
+    let mut restart_offsets = Vec::with_capacity(rel.len());
+    let mut previous = None;
+    for relative in rel {
+        let absolute = body_start
+            .checked_add(relative)
+            .ok_or(DictError::Malformed("restart offset overflows"))?;
+        if section_end.is_some_and(|end| absolute >= end) {
+            return Err(DictError::Malformed("restart offset outside section"));
+        }
+        if previous.is_some_and(|last| absolute <= last) {
+            return Err(DictError::Malformed("restart offsets are not monotone"));
+        }
+        restart_offsets.push(absolute);
+        previous = Some(absolute);
+    }
     Ok(SectionMeta {
         term_count,
         restart_interval,
-        restart_offsets: rel.into_iter().map(|o| body_start + o).collect(),
+        restart_offsets,
     })
 }
 
@@ -161,16 +212,16 @@ pub fn parse_meta(bytes: &[u8]) -> Result<SectionMeta, DictError> {
 #[inline]
 fn entry_into(bytes: &[u8], pos: usize, buf: &mut Vec<u8>) -> Option<usize> {
     let (shared, n1) = read_uvarint(bytes.get(pos..)?)?;
-    let p = pos + n1;
+    let shared = usize::try_from(shared).ok()?;
+    let p = pos.checked_add(n1)?;
     let (suf, n2) = read_uvarint(bytes.get(p..)?)?;
-    let start = p + n2;
-    let end = start
-        .checked_add(suf as usize)
-        .filter(|&e| e <= bytes.len())?;
-    if shared as usize > buf.len() {
+    let suffix = usize::try_from(suf).ok()?;
+    let start = p.checked_add(n2)?;
+    let end = start.checked_add(suffix).filter(|&e| e <= bytes.len())?;
+    if shared > buf.len() {
         return None;
     }
-    buf.truncate(shared as usize);
+    buf.truncate(shared);
     buf.extend_from_slice(&bytes[start..end]);
     Some(end)
 }
@@ -187,11 +238,15 @@ pub fn section_term(bytes: &[u8], meta: &SectionMeta, id: u32) -> Option<String>
     if id == ABSENT || id > meta.term_count {
         return None;
     }
-    let idx = (id - 1) as usize;
-    let run = idx / meta.restart_interval as usize;
-    let steps = idx % meta.restart_interval as usize;
+    let idx = usize::try_from(id - 1).ok()?;
+    let interval = usize::try_from(meta.restart_interval).ok()?;
+    let run = idx / interval;
+    let steps = idx % interval;
     let mut buf = Vec::new();
-    let mut pos = run_entry_into(bytes, *meta.restart_offsets.get(run)? as usize, &mut buf)?;
+    let restart = usize::try_from(*meta.restart_offsets.get(run)?)
+        .ok()
+        .filter(|&offset| offset < bytes.len())?;
+    let mut pos = run_entry_into(bytes, restart, &mut buf)?;
     for _ in 0..steps {
         pos = entry_into(bytes, pos, &mut buf)?;
     }
@@ -206,7 +261,10 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
     let mut hi = meta.restart_offsets.len();
     while lo < hi {
         let mid = (lo + hi) / 2;
-        run_entry_into(bytes, meta.restart_offsets[mid] as usize, &mut buf)?;
+        let restart = usize::try_from(meta.restart_offsets[mid])
+            .ok()
+            .filter(|&offset| offset < bytes.len())?;
+        run_entry_into(bytes, restart, &mut buf)?;
         if buf.as_slice() <= term.as_bytes() {
             lo = mid + 1;
         } else {
@@ -217,17 +275,22 @@ pub fn section_id(bytes: &[u8], meta: &SectionMeta, term: &str) -> Option<u32> {
         return None; // smaller than every term
     }
     let run = lo - 1;
-    let mut pos = run_entry_into(bytes, meta.restart_offsets[run] as usize, &mut buf)?;
-    let base_id = (run * meta.restart_interval as usize) as u32 + 1;
+    let restart = usize::try_from(meta.restart_offsets[run])
+        .ok()
+        .filter(|&offset| offset < bytes.len())?;
+    let mut pos = run_entry_into(bytes, restart, &mut buf)?;
+    let interval = u64::from(meta.restart_interval);
+    let run = u64::try_from(run).ok()?;
+    let base_id = u32::try_from(run.checked_mul(interval)?.checked_add(1)?).ok()?;
     // saturating_sub: corrupt metadata where run*interval > term_count must not
     // underflow-panic.
     let run_len = meta.restart_interval.min(
         meta.term_count
-            .saturating_sub(run as u32 * meta.restart_interval),
+            .checked_sub(u32::try_from(run.checked_mul(interval)?).ok()?)?,
     );
     for step in 0..run_len {
         if buf.as_slice() == term.as_bytes() {
-            return Some(base_id + step);
+            return base_id.checked_add(step);
         }
         if buf.as_slice() > term.as_bytes() {
             return None;
@@ -258,7 +321,7 @@ pub type ChunkLoader = Box<dyn Fn(usize) -> Option<Vec<u8>> + Send + Sync>;
 /// single range reads — a full-dictionary sweep (export, dump) costs a few
 /// requests per section instead of one per chunk. `None` = the batch failed;
 /// callers fall back to the per-chunk [`ChunkLoader`].
-pub type ChunkBulkLoader = Box<dyn Fn(&[usize]) -> Option<Vec<Vec<u8>>> + Send + Sync>;
+pub type ChunkBulkLoader = Box<dyn Fn(&[usize], ReadIntent) -> Option<Vec<Vec<u8>>> + Send + Sync>;
 
 /// One chunk: a run-aligned slice of the section body. `body_start` is the
 /// offset (in the section's coordinate space — the same space
@@ -486,7 +549,10 @@ impl ChunkedSection {
     /// failed batch leaves the chunks unloaded for the per-chunk loader to
     /// retry (and record failures) lookup by lookup.
     pub fn prefetch_all(&self) {
-        self.prefetch_chunks(&(0..self.chunks.len()).collect::<Vec<_>>());
+        self.prefetch_chunks_with_intent(
+            &(0..self.chunks.len()).collect::<Vec<_>>(),
+            ReadIntent::FullScan,
+        );
     }
 
     /// Batch-fault a *specific* set of chunks (the subset a bounded query's
@@ -496,6 +562,10 @@ impl ChunkedSection {
     /// missing chunk is left for the per-chunk loader, and a failed batch leaves
     /// the chunks unloaded for that loader to retry (and record failures).
     pub fn prefetch_chunks(&self, cis: &[usize]) {
+        self.prefetch_chunks_with_intent(cis, ReadIntent::DictionaryResolve);
+    }
+
+    fn prefetch_chunks_with_intent(&self, cis: &[usize], intent: ReadIntent) {
         let Some(bulk) = &self.bulk else { return };
         let missing: Vec<usize> = cis
             .iter()
@@ -505,7 +575,7 @@ impl ChunkedSection {
         if missing.len() < 2 {
             return;
         }
-        if let Some(bodies) = bulk(&missing) {
+        if let Some(bodies) = bulk(&missing, intent) {
             if bodies.len() == missing.len() {
                 for (&ci, body) in missing.iter().zip(bodies) {
                     let _ = self.chunks[ci].data.set(body);
@@ -569,7 +639,8 @@ impl ChunkedSection {
         if id == ABSENT || id > self.meta.term_count {
             return None;
         }
-        let run = (id - 1) as usize / self.meta.restart_interval as usize;
+        let run =
+            usize::try_from(u64::from(id - 1) / u64::from(self.meta.restart_interval)).ok()?;
         self.chunk_of_run(run)
     }
 
@@ -585,25 +656,30 @@ impl ChunkedSection {
                 .get(run.checked_sub(chunk.first_run)?)
                 .copied()
         } else {
-            self.meta
+            let offset = self
+                .meta
                 .restart_offsets
                 .get(run)?
-                .checked_sub(chunk.body_start)
-                .map(|o| o as usize)
+                .checked_sub(chunk.body_start)?;
+            usize::try_from(offset)
+                .ok()
+                .filter(|&offset| offset < bytes.len())
         }
     }
 
     /// One past the last run index held by chunk `ci` (its run range is
     /// `[first_run, run_end)`).
-    fn run_end_of_chunk(&self, ci: usize, bytes: &[u8], ri: usize) -> usize {
+    fn run_end_of_chunk(&self, ci: usize, bytes: &[u8], ri: usize) -> Option<usize> {
         if let Some(next) = self.chunks.get(ci + 1) {
-            return next.first_run;
+            return Some(next.first_run);
         }
         let chunk = &self.chunks[ci];
         if self.meta.restart_offsets.is_empty() {
-            chunk.first_run + chunk.run_offsets(bytes, ri).len()
+            chunk
+                .first_run
+                .checked_add(chunk.run_offsets(bytes, ri).len())
         } else {
-            self.meta.restart_offsets.len()
+            Some(self.meta.restart_offsets.len())
         }
     }
 
@@ -614,7 +690,9 @@ impl ChunkedSection {
         if id == ABSENT || id > self.meta.term_count {
             return None;
         }
-        self.chunk_of_run((id - 1) as usize / self.meta.restart_interval as usize)
+        let run =
+            usize::try_from(u64::from(id - 1) / u64::from(self.meta.restart_interval)).ok()?;
+        self.chunk_of_run(run)
     }
 
     pub fn term(&self, id: u32) -> Option<String> {
@@ -669,7 +747,7 @@ impl ChunkedSection {
         let bytes = self.chunk_data(ci);
 
         // Binary search this chunk's runs by their first (full) term.
-        let run_end = self.run_end_of_chunk(ci, bytes, ri);
+        let run_end = self.run_end_of_chunk(ci, bytes, ri)?;
         let mut buf = Vec::new();
         let mut lo = first_run;
         let mut hi = run_end;
@@ -693,16 +771,18 @@ impl ChunkedSection {
         let run = lo - 1;
         let off = self.run_off_in_chunk(ci, run, bytes, ri)?;
         let mut pos = run_entry_into(bytes, off, &mut buf)?;
-        let base_id = (run * ri) as u32 + 1;
+        let interval = u64::from(self.meta.restart_interval);
+        let run_u64 = u64::try_from(run).ok()?;
+        let base_id = u32::try_from(run_u64.checked_mul(interval)?.checked_add(1)?).ok()?;
         // saturating_sub: corrupt metadata must not underflow-panic.
         let run_len = self.meta.restart_interval.min(
             self.meta
                 .term_count
-                .saturating_sub(run as u32 * self.meta.restart_interval),
+                .checked_sub(u32::try_from(run_u64.checked_mul(interval)?).ok()?)?,
         );
         for step in 0..run_len {
             if buf.as_slice() == term.as_bytes() {
-                return Some(base_id + step);
+                return base_id.checked_add(step);
             }
             if buf.as_slice() > term.as_bytes() {
                 return None;
@@ -844,6 +924,76 @@ mod tests {
         assert_eq!(sec.id("http://ex.org/Alic"), None); // prefix, not present
         assert_eq!(sec.term(0), None);
         assert_eq!(sec.term(9999), None);
+    }
+
+    #[test]
+    fn parse_meta_rejects_dictionary_ids_and_counts_above_u32() {
+        let mut bytes = Vec::new();
+        write_uvarint(&mut bytes, u32::MAX as u64 + 1);
+        write_uvarint(&mut bytes, 1);
+        write_uvarint(&mut bytes, 0);
+        assert!(matches!(
+            parse_meta(&bytes),
+            Err(DictError::Malformed("term count exceeds u32"))
+        ));
+
+        let mut bytes = Vec::new();
+        write_uvarint(&mut bytes, 0);
+        write_uvarint(&mut bytes, u32::MAX as u64 + 1);
+        write_uvarint(&mut bytes, 0);
+        assert!(matches!(
+            parse_meta(&bytes),
+            Err(DictError::Malformed("restart interval exceeds u32"))
+        ));
+    }
+
+    #[test]
+    fn parse_meta_rejects_tenth_byte_u64_overflow() {
+        // `[term_count=1][interval=1][restart_count=1][restart_offset]`
+        // followed by one complete front-coded entry.  The old shared parser
+        // accepted this overflowing restart offset as zero.
+        let mut bytes = vec![1, 1, 1];
+        bytes.extend_from_slice(&[0x80; 9]);
+        bytes.push(0x02);
+        bytes.extend_from_slice(&[0, 1, b'a']);
+        assert!(parse_meta(&bytes).is_err());
+    }
+
+    #[test]
+    fn hostile_entry_and_restart_offsets_do_not_alias_usize() {
+        let mut hostile = Vec::new();
+        write_uvarint(&mut hostile, u64::MAX);
+        write_uvarint(&mut hostile, u64::MAX);
+        assert!(entry_into(&hostile, 0, &mut Vec::new()).is_none());
+
+        let meta = SectionMeta {
+            term_count: 1,
+            restart_interval: 1,
+            restart_offsets: vec![u64::MAX],
+        };
+        assert_eq!(section_term(&[0, 1, b'x'], &meta, 1), None);
+        assert_eq!(section_id(&[0, 1, b'x'], &meta, "x"), None);
+    }
+
+    #[test]
+    fn parse_meta_rejects_overflowing_and_non_monotone_restart_offsets() {
+        let mut overflow = Vec::new();
+        write_uvarint(&mut overflow, 1);
+        write_uvarint(&mut overflow, 1);
+        write_uvarint(&mut overflow, 1);
+        write_uvarint(&mut overflow, u64::MAX);
+        let result = std::panic::catch_unwind(|| parse_meta(&overflow));
+        assert!(result.is_ok(), "untrusted restart offset must not panic");
+        assert!(result.unwrap().is_err());
+
+        let mut non_monotone = Vec::new();
+        write_uvarint(&mut non_monotone, 2);
+        write_uvarint(&mut non_monotone, 1);
+        write_uvarint(&mut non_monotone, 2);
+        write_uvarint(&mut non_monotone, 1);
+        write_uvarint(&mut non_monotone, 0);
+        non_monotone.extend_from_slice(&[0, 1, b'a', 0, 1, b'b']);
+        assert!(parse_meta(&non_monotone).is_err());
     }
 
     /// Property-style stress of the front-coded decode paths: a large

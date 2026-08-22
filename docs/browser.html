@@ -617,8 +617,9 @@ client-side with no server. <code>web/index.html</code> is a working serverless 
 docker compose run --rm wasm
 </code></pre>
 <p>This runs <code>scripts/build_wasm.sh</code>: it builds <code>web/pkg</code>, <code>web/pkg-nomodules</code>, and
-<code>web/pkg-nomodules-async</code> from one checkout, regenerates the playground, and
-writes <a href="wasm-build.json">wasm-build.json</a> with the source revision, pinned tool
+<code>web/pkg-nomodules-async</code> from one checkout, regenerates the playground and
+the self-contained yasgui·wasm IDE, and writes
+<a href="wasm-build.json">wasm-build.json</a> with the source revision, pinned tool
 versions, sizes, and SHA-256 digests. The gitignored embedded <code>.rete</code> datasets
 listed in <code>scripts/build_playground.py</code> must already be staged under <code>web/</code>.</p>
 <p>When the checkout is a Windows Git worktree mounted into Linux, pass the
@@ -670,8 +671,8 @@ Binding failures throw JavaScript <code>Error</code> objects rather than strings
 <tr><td><code>schema_url(url)</code></td><td><strong>worker-only</strong>: the Schema view (<code>classes</code>/<code>relations</code>) from a remote file's schema pyramid, plus <code>remote:{…}</code></td></tr>
 <tr><td><code>shacl_url(url, shapes, format?)</code></td><td><strong>worker-only</strong>: lazy SHACL — validates the remote default graph, range-reading only each shape's targets, plus <code>remote:{…}</code></td></tr>
 <tr><td><code>shacl_construct_url(url, shapes, construct)</code></td><td><strong>worker-only</strong>: SHACL over just the subgraph a CONSTRUCT selects (only its tiles fetched), plus <code>remote:{…}</code></td></tr>
-<tr><td><code>new Graph(bytes)</code> → <code>.query</code>, <code>.query_reasoned</code>, <code>.query_opts</code>, <code>.query_triples</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.why_triples</code>, <code>.schema</code>, <code>.reach</code>, <code>.shacl</code>, <code>.reason</code>, <code>.query_communities</code>, <code>.pyramid_tree</code>, <code>.file_layout</code>, <code>.info</code>, <code>.graph_names</code></td><td>a file opened <strong>once</strong> and kept resident in memory, so repeated calls reuse the decoded dictionary/index — the stateful local mirror of the free functions</td></tr>
-<tr><td><code>new RemoteGraph(url)</code> → <code>.query(query, format)</code>, <code>.query_reasoned</code>, <code>.query_opts</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.stats()</code>, <code>.content_hash()</code></td><td><strong>worker-only</strong>: a remote URL opened <strong>once</strong> and kept resident, so repeated queries reuse the block cache + faulted tiles + decoded dictionary (see <a href="#caching-remote-reads">Caching remote reads</a>)</td></tr>
+<tr><td><code>new Graph(bytes)</code> → <code>.query</code>, <code>.query_reasoned</code>, <code>.query_opts</code>, <code>.query_triples</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.why_triples</code>, <code>.schema</code>, <code>.reach</code>, <code>.shacl</code>, <code>.reason</code>, <code>.query_communities</code>, <code>.pyramid_tree</code>, <code>.file_layout</code>, <code>.info</code>, <code>.graph_names</code></td><td>a file image owned <strong>once</strong> and kept resident, while dictionary chunks and index tiles decode lazily; repeated calls reuse everything already faulted — the stateful local mirror of the free functions</td></tr>
+<tr><td><code>new RemoteGraph(url)</code> → <code>.query(query, format)</code>, <code>.query_reasoned</code>, <code>.query_opts</code>, <code>.prefix_search</code>, <code>.text_search</code>, <code>.stats()</code>, <code>.content_hash()</code></td><td><strong>worker-only</strong>: a remote URL opened <strong>once</strong> and kept resident, so repeated queries reuse the adaptive block cache + faulted tiles + decoded dictionary (see <a href="#caching-remote-reads">Caching remote reads</a>)</td></tr>
 <tr><td><code>reason(bytes, graph?)</code></td><td>OWL RL / RDFS coherence over an in-memory graph: <code>{ kind:"reasoning", coherent, inferredCount, inconsistencies:[{kind,detail}] }</code></td></tr>
 <tr><td><code>check_schema(bytes)</code></td><td>index-free Tier-0 schema coherence: <code>{ kind:"schemaCoherence", coherent, schemaPoints:[{kind,detail}], readsIndex:false }</code></td></tr>
 <tr><td><code>check_schema_url(url)</code></td><td><strong>worker-only</strong>: Tier-0 schema coherence over a remote URL from ~2–3 ranges (header + dictionary + pyramid-meta, never the triple index), plus <code>remote:{…}</code></td></tr>
@@ -750,13 +751,14 @@ as a file. One caveat: the wasm engine ships only the pure-Rust zstd <em>decoder
 so in-browser builds write uncompressed sections (codec <code>NONE</code>) — every reader
 accepts them, but <code>rete build</code> produces a smaller file from the same input.
 This powers the playground's <strong>Build</strong> tab.</p>
-<p><code>sparql_url</code> runs full SPARQL against a <strong>remote <code>.rete</code> URL without
-downloading it</strong>: it reads the header, the dictionary chunk directories and
-index tile directories, then faults in only the dictionary chunks and index
-tiles the query touches — and full scans coalesce adjacent tiles into batched
-range reads, so even <code>?s ?p ?o</code> costs a handful of requests, not one per
-tile. The result envelope is the same as <code>query</code>, plus a <code>remote</code> object
-reporting exactly how little of the file was fetched.</p>
+<p><code>sparql_url</code> runs full SPARQL against a <strong>remote <code>.rete</code> URL through lazy range
+reads</strong>. Browser/WASM does not adopt native <code>rete sparql-url</code>'s small-object
+one-GET policy: every object size uses the remote-lazy opener. Open reads the
+header, dictionary metadata, graph names, and index tile directories/synopses;
+default and named-graph tile payloads are faulted only when a query touches
+them. Full scans coalesce adjacent tiles into batched range reads, but can still
+fetch most or all of a file. The result envelope is the same as <code>query</code>, plus a
+<code>remote</code> object reporting the bytes and requests fetched for that call.</p>
 <p>The design constraint, honestly: the engine is synchronous, and wasm cannot
 block on <code>fetch</code>. Instead of an async engine refactor, the byte-range reads
 use <strong>synchronous XHR — which browsers permit only inside Web Workers</strong>. So
@@ -766,9 +768,13 @@ throws. The host must answer <code>Range</code> requests with <code>206 Partial 
 (a host that ignores <code>Range</code> is rejected loudly, never silently mis-read)
 and send CORS headers when cross-origin. A range fetch that fails mid-query
 is an error — never a silently incomplete result.</p>
-<p>The length probe uses a one-byte ranged <code>GET</code> (reading the total from
-<code>Content-Range</code>) rather than <code>HEAD</code>, since some hosts reject <code>HEAD</code> —
-notably Hugging Face's signed-redirect storage, which answers <code>405</code>.</p>
+<p>The default synchronous XHR reader prefers a <code>HEAD</code> probe and reads the full
+size from <code>Content-Length</code>, which browsers expose without an
+<code>Access-Control-Expose-Headers</code> entry. If <code>HEAD</code> is rejected or lacks a usable
+length, the reader falls back to <code>Range: bytes=0-0</code> and reads the total from
+<code>Content-Range</code>. Cross-origin hosts must expose <code>Content-Range</code> through CORS for
+that fallback; the production R2 policy does so. This probe choice does not
+change the browser's always-lazy data path.</p>
 <h2 id="caching-remote-reads">Caching remote reads</h2>
 <p>Range reads are <strong>cached</strong>, so re-running or refining a query on a remote dataset
 re-fetches almost nothing. Two layers:</p>
@@ -927,6 +933,12 @@ HTTP range (a 120 MB / 1 GB graph stays interactive because only the touched
 tiles cross the wire), caches those reads across queries (above), and federates a
 query across <strong>several</strong> sources via the SPARQL console's <strong>+ Add source</strong> button
 — see <a href="federation.html#in-the-playground">Federated queries</a>.</p>
+<p>For a catalog entry with <code>shards</code>, the playground keeps one always-lazy
+<code>RemoteGraph</code> per shard and fans queries across those independent files before
+merging results; the native small-object threshold never turns a shard into a
+whole-file fetch. This browser path is separate from CLI <code>rete federate</code>, which
+retains its own existing ranged opener and likewise is not part of native
+<code>sparql-url</code>'s one-GET optimization.</p>
 <h3 id="rich-result-cells-and-focused-cards">Rich result cells and focused cards</h3>
 <p>Every Table column and Card field has the same explicit render-type menu. In
 addition to Auto, Text, Link, Button, Image, IIIF, PDF viewer, Map, 3D, Audio,

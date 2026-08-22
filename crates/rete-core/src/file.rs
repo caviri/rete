@@ -14,14 +14,17 @@
 //! the permutation container (`root_dir_offset/len`); routed readers can fetch a
 //! single permutation payload from that container.
 
+use crate::adaptive::ReadIntent;
+use crate::build_pipeline::family::{FamilyView, IndexFamily, Synopsis};
 use crate::dictionary::Dictionary;
 use crate::header::{
-    Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC,
+    Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN,
+    LEGACY_FORMAT_VERSION, MAGIC, NEXT_FORMAT_VERSION,
 };
 use crate::index::{GraphIndex, IndexPermutation, Pattern, PermSet, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
 use crate::pyramid::{build_dendrogram, project_graph, PyramidAlgo};
-use crate::reader::RangeReader;
+use crate::reader::{checked_resident_range, materializable_len, RangeReader};
 use crate::tiling::{choose_round_for_budget, summarize, SuperEdge};
 use crate::triples::Triple;
 use crate::varint::{read_uvarint, write_uvarint};
@@ -70,53 +73,28 @@ pub fn build_pyramid_meta_algo(
     type_override: Option<&str>,
     algo: PyramidAlgo,
 ) -> (Vec<u8>, u16) {
-    // Optional sub-phase timing (set RETE_BUILD_TIMING=1) — the pyramid build is
-    // the dominant cost of a big `rete build`; this shows where inside it.
-    // `Instant::now()` must stay behind the flag: `std::time` is unsupported on
-    // `wasm32-unknown-unknown` and panics ("time not implemented"), so an
-    // unconditional clock read would break every in-browser `build()`.
-    let timing = std::env::var_os("RETE_BUILD_TIMING").is_some();
-    let mut t = timing.then(std::time::Instant::now);
-    let mut lap = |label: &str| {
-        if let Some(t0) = &mut t {
-            eprintln!(
-                "  [pyramid] {label}: {:.0} ms",
-                t0.elapsed().as_secs_f64() * 1000.0
-            );
-            *t0 = std::time::Instant::now();
-        }
-    };
-
     // The community partition — the only step that differs by algorithm.
-    let louvain = |lap: &mut dyn FnMut(&str)| {
+    let louvain = || {
         let g = project_graph(dict, triples);
-        lap("project_graph");
-        let d = build_dendrogram(&g);
-        lap("build_dendrogram (Louvain)");
-        d
+        build_dendrogram(&g)
     };
     let dend = match algo {
-        PyramidAlgo::Louvain => louvain(&mut lap),
+        PyramidAlgo::Louvain => louvain(),
         PyramidAlgo::Types => {
             match crate::schema_pyramid::build_type_dendrogram(dict, triples, type_override) {
-                Some(d) => {
-                    lap("build_type_dendrogram");
-                    d
-                }
+                Some(d) => d,
                 None => {
                     eprintln!(
                         "  [pyramid] --pyramid-algo types: no usable rdf:type \
                          predicate — falling back to louvain"
                     );
-                    louvain(&mut lap)
+                    louvain()
                 }
             }
         }
     };
     let round = choose_round_for_budget(dict, triples, &dend, budget);
-    lap("choose_round_for_budget");
     let summary = summarize(dict, triples, &dend, round);
-    lap("summarize");
     // Attach the v2 schema pyramid (the non-exclusive subClassOf DAG + per-level
     // type rollups + per-level lateral class relations + per-community
     // descriptors). Empty when the graph has no usable typing, in which case the
@@ -128,13 +106,9 @@ pub fn build_pyramid_meta_algo(
         round,
         type_override,
     );
-    lap("build_schema_pyramid");
     let predicate_stats = compute_predicate_stats(triples);
-    lap("compute_predicate_stats");
     let char_sets = compute_char_sets(triples);
-    lap("compute_char_sets");
     let label_index = compute_label_index(dict, triples);
-    lap("compute_label_index");
     let meta = PyramidMeta::new(round as u32, summary, &[])
         .with_schema(
             sp.class_hierarchy,
@@ -148,9 +122,7 @@ pub fn build_pyramid_meta_algo(
         .with_predicate_stats(predicate_stats)
         .with_char_sets(char_sets)
         .with_label_index(label_index);
-    let out = (meta.encode(), dend.rounds() as u16);
-    lap("encode");
-    out
+    (meta.encode(), dend.rounds() as u16)
 }
 
 /// The label predicates a [`compute_label_index`] entry can come from — the
@@ -417,20 +389,41 @@ const TILE_COALESCE_GAP: u64 = 4096;
 /// cheaper than another request's RTT.
 const DICT_COALESCE_GAP: u64 = 64 * 1024;
 
-/// Fetch a set of ascending, disjoint byte ranges, coalescing ranges whose gap
-/// is at most `gap` into one span, then fetching the spans through
-/// [`RangeReader::read_many`] (which a parallelizable reader issues
-/// concurrently). Returns each requested range's bytes in order; `None` if any
-/// read fails.
+/// Fetch a set of ascending, disjoint byte ranges, coalescing ranges according
+/// to the physical source's session-local adaptive plan. Readers without a
+/// controller retain the legacy static-gap behavior. Returns each requested
+/// range's bytes in order; `None` if any read fails or the input ranges are not
+/// ascending and disjoint.
 fn read_coalesced<R: RangeReader + ?Sized>(
     reader: &R,
     ranges: &[ByteRange],
-    gap: u64,
+    static_gap: u64,
+    intent: ReadIntent,
 ) -> Option<Vec<Vec<u8>>> {
+    // Every requested range is later returned as its own Vec. Reject a length
+    // this target cannot represent before asking a cache or network reader to
+    // enumerate/materialize it.
+    for range in ranges {
+        materializable_len(range.len).ok()?;
+    }
+    let known_bytes = ranges
+        .iter()
+        .try_fold(0u64, |sum, range| sum.checked_add(range.len))?;
+    let adaptive = reader.adaptive_controller();
+    let plan = adaptive
+        .as_ref()
+        .map(|controller| controller.plan(intent, known_bytes, static_gap, reader.concurrency()));
+    let coalesce_gap = plan.as_ref().map_or(static_gap, |plan| plan.coalesce_gap);
+    let max_span = plan.as_ref().map_or(u64::MAX, |plan| plan.max_span);
+    let gap_budget = plan
+        .as_ref()
+        .map_or(u64::MAX, |_| (known_bytes / 4).min(256 * 1024));
+
     // Build the coalesced spans and remember which span each input range maps
     // into, so the fetched span blobs can be sliced back apart in order.
     let mut spans: Vec<(u64, u64)> = Vec::new();
     let mut span_of: Vec<usize> = Vec::with_capacity(ranges.len());
+    let mut gap_bytes = 0u64;
     let mut i = 0;
     while i < ranges.len() {
         let start = ranges[i].offset;
@@ -438,20 +431,30 @@ fn read_coalesced<R: RangeReader + ?Sized>(
         let mut j = i + 1;
         while j < ranges.len() {
             let r = &ranges[j];
-            if r.offset < end || r.offset - end > gap {
+            if r.offset < end {
+                return None;
+            }
+            let next_end = r.offset.checked_add(r.len)?;
+            let next_gap = r.offset - end;
+            let next_gap_bytes = gap_bytes.checked_add(next_gap)?;
+            let next_span = next_end.checked_sub(start)?;
+            if next_gap > coalesce_gap || next_gap_bytes > gap_budget || next_span > max_span {
                 break;
             }
-            end = r.offset.checked_add(r.len)?;
+            gap_bytes = next_gap_bytes;
+            end = next_end;
             j += 1;
         }
         let si = spans.len();
-        spans.push((start, end - start));
+        let span_len = end.checked_sub(start)?;
+        materializable_len(span_len).ok()?;
+        spans.push((start, span_len));
         for _ in i..j {
             span_of.push(si);
         }
         i = j;
     }
-    let blobs = reader.read_many(&spans).ok()?;
+    let blobs = reader.read_many_with_intent(&spans, intent).ok()?;
     if blobs.len() != spans.len() {
         return None;
     }
@@ -459,8 +462,8 @@ fn read_coalesced<R: RangeReader + ?Sized>(
     for (k, r) in ranges.iter().enumerate() {
         let (span_start, _) = spans[span_of[k]];
         let blob = &blobs[span_of[k]];
-        let lo = (r.offset - span_start) as usize;
-        let hi = lo.checked_add(r.len as usize)?;
+        let lo = usize::try_from(r.offset.checked_sub(span_start)?).ok()?;
+        let hi = lo.checked_add(materializable_len(r.len).ok()?)?;
         out.push(blob.get(lo..hi)?.to_vec());
     }
     Some(out)
@@ -570,21 +573,35 @@ fn encode_container(sections: &[&[u8]], codec: u8) -> Vec<u8> {
 }
 
 /// Decode a container into owned, decompressed sections.
-fn decode_container(bytes: &[u8], codec: u8) -> Result<Vec<Vec<u8>>, FileError> {
+fn decode_container(
+    bytes: &[u8],
+    codec: u8,
+    expected_sections: usize,
+) -> Result<Vec<Vec<u8>>, FileError> {
     let (n, mut pos) = read_uvarint(bytes).ok_or(FileError::Container("truncated count"))?;
-    // `n` is untrusted; each section needs â‰¥1 byte, so cap the pre-allocation at
-    // the buffer length rather than trusting the count (avoids an OOM on a bogus
-    // header pointing at a small region).
-    let mut out = Vec::with_capacity((n as usize).min(bytes.len()));
-    for _ in 0..n {
-        let (len, used) =
-            read_uvarint(&bytes[pos..]).ok_or(FileError::Container("truncated length"))?;
-        pos += used;
-        let end = pos + len as usize;
-        if end > bytes.len() {
-            return Err(FileError::Container("section overruns buffer"));
-        }
-        out.push(decompress(codec, &bytes[pos..end])?);
+    if n != u64::try_from(expected_sections)
+        .map_err(|_| FileError::Container("expected section count too large"))?
+    {
+        return Err(FileError::Container("unexpected container section count"));
+    }
+    // Dictionary and index containers have fixed production section counts.
+    // Validate that count before reserving even one output element.
+    let mut out = Vec::with_capacity(expected_sections);
+    for _ in 0..expected_sections {
+        let (len, used) = read_uvarint(bytes.get(pos..).unwrap_or(&[]))
+            .ok_or(FileError::Container("truncated length"))?;
+        pos = pos
+            .checked_add(used)
+            .ok_or(FileError::Container("section offset overflows"))?;
+        let len = materializable_len(len)
+            .map_err(|_| FileError::Container("section length too large"))?;
+        let end = pos
+            .checked_add(len)
+            .ok_or(FileError::Container("section range overflows"))?;
+        let payload = bytes
+            .get(pos..end)
+            .ok_or(FileError::Container("section overruns buffer"))?;
+        out.push(decompress(codec, payload)?);
         pos = end;
     }
     Ok(out)
@@ -712,31 +729,66 @@ fn parse_chunked_dict_dir(
     let take = |pos: &mut usize| -> Result<u64, FileError> {
         let (v, n) = read_uvarint(bytes.get(*pos..).unwrap_or(&[]))
             .ok_or(FileError::Container("truncated dict chunk directory"))?;
-        *pos += n;
+        *pos = pos
+            .checked_add(n)
+            .ok_or(FileError::Container("dict directory offset overflows"))?;
         Ok(v)
     };
-    let header_len = take(&mut pos)? as usize;
+    let header_len = usize::try_from(take(&mut pos)?)
+        .map_err(|_| FileError::Container("dict header length too large"))?;
+    let header_end = pos
+        .checked_add(header_len)
+        .ok_or(FileError::Container("dict directory offset overflows"))?;
     let header = bytes
-        .get(pos..pos.saturating_add(header_len))
+        .get(pos..header_end)
         .ok_or(FileError::Container("truncated dict header"))?;
-    let meta = crate::dict::parse_meta(header)
+    let meta = crate::dict::parse_meta_header_fragment(header)
         .map_err(|_| FileError::Container("malformed dict header"))?;
-    pos += header_len;
+    pos = header_end;
 
-    let num_chunks = take(&mut pos)? as usize;
+    let num_chunks = usize::try_from(take(&mut pos)?)
+        .map_err(|_| FileError::Container("dict chunk count too large"))?;
+    let expected_runs = u64::from(meta.term_count).div_ceil(u64::from(meta.restart_interval));
+    if (expected_runs == 0) != (num_chunks == 0) {
+        return Err(FileError::Container(
+            "dict chunk count disagrees with restart table",
+        ));
+    }
+    if num_chunks > bytes.len().saturating_sub(pos) / 3 {
+        return Err(FileError::Container("dict chunk count exceeds directory"));
+    }
     let mut entries = Vec::with_capacity(num_chunks.min(bytes.len()));
     let mut lens = Vec::with_capacity(num_chunks.min(bytes.len()));
-    let mut prev_run = 0usize;
-    for _ in 0..num_chunks {
-        let drun = take(&mut pos)? as usize;
-        let klen = take(&mut pos)? as usize;
+    let mut prev_run = None;
+    for chunk_index in 0..num_chunks {
+        let drun = take(&mut pos)?;
+        let klen = usize::try_from(take(&mut pos)?)
+            .map_err(|_| FileError::Container("dict chunk term length too large"))?;
+        let key_end = pos
+            .checked_add(klen)
+            .ok_or(FileError::Container("dict directory offset overflows"))?;
         let key = bytes
-            .get(pos..pos.saturating_add(klen))
+            .get(pos..key_end)
             .ok_or(FileError::Container("truncated dict chunk key"))?
             .to_vec();
-        pos += klen;
+        pos = key_end;
         let clen = take(&mut pos)?;
-        let first_run = prev_run + drun;
+        materializable_len(clen)
+            .map_err(|_| FileError::Container("dict chunk length too large"))?;
+        let first_run = prev_run
+            .unwrap_or(0u64)
+            .checked_add(drun)
+            .ok_or(FileError::Container("dict chunk run overflows"))?;
+        if (chunk_index == 0 && first_run != 0)
+            || first_run >= expected_runs
+            || prev_run.is_some_and(|previous| first_run <= previous)
+        {
+            return Err(FileError::Container("dict chunk run outside restart table"));
+        }
+        let first_run = u32::try_from(first_run)
+            .map_err(|_| FileError::Container("dict chunk run exceeds u32"))?;
+        let first_run = usize::try_from(first_run)
+            .map_err(|_| FileError::Container("dict chunk run exceeds usize"))?;
         let body_start = meta
             .restart_offsets
             .get(first_run)
@@ -750,9 +802,13 @@ fn parse_chunked_dict_dir(
             end: 0,
         });
         lens.push(clen);
-        prev_run = first_run;
+        prev_run = Some(
+            u64::try_from(first_run)
+                .map_err(|_| FileError::Container("dict chunk run exceeds u64"))?,
+        );
     }
-    let mut start = pos as u64;
+    let mut start =
+        u64::try_from(pos).map_err(|_| FileError::Container("dict directory offset too large"))?;
     for (e, len) in entries.iter_mut().zip(lens) {
         let end = start
             .checked_add(len)
@@ -794,10 +850,34 @@ fn read_dict_dir_ranged<R: RangeReader>(
     let hbase = n0; // first byte of the header body
     let (term_count, n1) = read_uvarint(head.get(hbase..).unwrap_or(&[]))
         .ok_or(FileError::Container("truncated dict term_count"))?;
-    let (restart_interval, _n2) = read_uvarint(head.get(hbase + n1..).unwrap_or(&[]))
+    let interval_start = hbase
+        .checked_add(n1)
+        .ok_or(FileError::Container("dict header offset overflows"))?;
+    let (restart_interval, n2) = read_uvarint(head.get(interval_start..).unwrap_or(&[]))
         .ok_or(FileError::Container("truncated dict interval"))?;
     if restart_interval == 0 {
         return Err(FileError::Container("zero restart interval"));
+    }
+    let header_len_usize = usize::try_from(header_len)
+        .map_err(|_| FileError::Container("dict header length too large"))?;
+    let header_end = hbase
+        .checked_add(header_len_usize)
+        .ok_or(FileError::Container("dict header offset overflows"))?;
+    let restart_count_start = interval_start
+        .checked_add(n2)
+        .ok_or(FileError::Container("dict header offset overflows"))?;
+    let (num_restarts, n3) = read_uvarint(head.get(restart_count_start..).unwrap_or(&[]))
+        .ok_or(FileError::Container("truncated dict restart count"))?;
+    let restart_count_end = restart_count_start
+        .checked_add(n3)
+        .filter(|&end| end <= header_end)
+        .ok_or(FileError::Container("dict restart count overruns header"))?;
+    if u64::try_from(header_end - restart_count_end)
+        .ok()
+        .filter(|&available| available >= num_restarts)
+        .is_none()
+    {
+        return Err(FileError::Container("dict restart table overruns header"));
     }
     // The chunk directory begins right after the header body — i.e. past the
     // `header_len` bytes, which include the restart table we never materialize.
@@ -807,28 +887,50 @@ fn read_dict_dir_ranged<R: RangeReader>(
         .ok_or(FileError::Container("dict header overruns section"))?;
     let dir_total = total - dir_start;
     let meta = crate::dict::SectionMeta {
-        term_count: term_count as u32,
-        restart_interval: restart_interval as u32,
+        term_count: u32::try_from(term_count)
+            .map_err(|_| FileError::Container("dict term count exceeds u32"))?,
+        restart_interval: u32::try_from(restart_interval)
+            .map_err(|_| FileError::Container("dict restart interval exceeds u32"))?,
         restart_offsets: Vec::new(),
     };
+    let expected_restarts = u64::from(meta.term_count).div_ceil(u64::from(meta.restart_interval));
+    if num_restarts != expected_restarts {
+        return Err(FileError::Container(
+            "dict restart count disagrees with term count",
+        ));
+    }
     let finish = |mut entries: Vec<DictChunkEntry>| {
         for e in &mut entries {
-            e.start += dir_start; // dir-relative → section-relative
-            e.end += dir_start;
+            e.start = e
+                .start
+                .checked_add(dir_start)
+                .ok_or(FileError::Container("dict chunk offset overflows"))?;
+            e.end = e
+                .end
+                .checked_add(dir_start)
+                .ok_or(FileError::Container("dict chunk offset overflows"))?;
         }
-        (meta.clone(), entries)
+        Ok((meta.clone(), entries))
     };
     // Fast path: the directory already sits in the prefix we read (small section
     // — its restart table is tiny, so the ~few KiB over-read is negligible).
     // A short prefix is not wasted: those bytes seed the probe below.
     let mut have: Vec<u8> = Vec::new();
     if dir_start < head.len() as u64 {
-        match parse_chunk_dir_only(&head[dir_start as usize..], dir_total)? {
-            ChunkDirParse::Done(entries) => return Ok(finish(entries)),
-            ChunkDirParse::Truncated { .. } => have = head[dir_start as usize..].to_vec(),
+        let dir_start_usize = usize::try_from(dir_start)
+            .map_err(|_| FileError::Container("dict directory offset too large"))?;
+        match parse_chunk_dir_only(&head[dir_start_usize..], dir_total, expected_restarts)? {
+            ChunkDirParse::Done(entries) => return finish(entries),
+            ChunkDirParse::Truncated { .. } => {
+                have = head[dir_start_usize..].to_vec();
+            }
         }
     }
     // Big section: range-read the directory on its own, skipping the table.
+    let directory_offset = section
+        .offset
+        .checked_add(dir_start)
+        .ok_or(FileError::Container("dict directory offset overflows"))?;
     //
     // Nothing records the directory's byte length, so it has to be probed. Two
     // things keep that probe near ONE directory's worth of bytes. Each round
@@ -844,15 +946,21 @@ fn read_dict_dir_ranged<R: RangeReader>(
     loop {
         let held = have.len() as u64;
         if want > held {
-            let extra = reader.read_at(section.offset + dir_start + held, want - held)?;
+            let read_offset = directory_offset
+                .checked_add(held)
+                .ok_or(FileError::Container("dict directory offset overflows"))?;
+            let read_len = want - held;
+            materializable_len(read_len)
+                .map_err(|_| FileError::Container("dict directory length too large"))?;
+            let extra = reader.read_at(read_offset, read_len)?;
             if extra.is_empty() {
                 return Err(FileError::Container("truncated dict chunk directory"));
             }
             have.extend_from_slice(&extra);
         }
         let held = have.len() as u64;
-        match parse_chunk_dir_only(&have, dir_total)? {
-            ChunkDirParse::Done(entries) => return Ok(finish(entries)),
+        match parse_chunk_dir_only(&have, dir_total, expected_restarts)? {
+            ChunkDirParse::Done(entries) => return finish(entries),
             ChunkDirParse::Truncated { .. } if held >= dir_total => {
                 return Err(FileError::Container("truncated dict chunk directory"));
             }
@@ -906,44 +1014,100 @@ enum ChunkDirParse {
 /// is reported as [`ChunkDirParse::Truncated`], not an error: only bytes that
 /// cannot be a directory at any length (a chunk range overrunning the section)
 /// fail.
-fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, FileError> {
+fn parse_chunk_dir_only(
+    dir: &[u8],
+    dir_total: u64,
+    expected_runs: u64,
+) -> Result<ChunkDirParse, FileError> {
     let mut pos = 0usize;
-    let take = |pos: &mut usize| -> Option<u64> {
-        let (v, n) = read_uvarint(dir.get(*pos..).unwrap_or(&[]))?;
-        *pos += n;
-        Some(v)
+    let take = |pos: &mut usize| -> Result<Option<u64>, FileError> {
+        let remaining = dir.get(*pos..).unwrap_or(&[]);
+        let Some((v, n)) = read_uvarint(remaining) else {
+            let terminates = remaining.iter().take(10).any(|byte| byte & 0x80 == 0);
+            if terminates || remaining.len() >= 10 {
+                return Err(FileError::Container("malformed dict chunk directory"));
+            }
+            return Ok(None);
+        };
+        *pos = pos
+            .checked_add(n)
+            .ok_or(FileError::Container("dict directory offset overflows"))?;
+        Ok(Some(v))
     };
-    let Some(num_chunks) = take(&mut pos) else {
+    let Some(num_chunks) = take(&mut pos)? else {
         return Ok(ChunkDirParse::Truncated {
             parsed: 0,
             used: 0,
             total: 0,
         });
     };
-    let num_chunks = num_chunks as usize;
-    let mut entries = Vec::with_capacity(num_chunks.min(dir.len()));
-    let mut lens: Vec<u64> = Vec::with_capacity(num_chunks.min(dir.len()));
-    let mut prev_run = 0usize;
-    for _ in 0..num_chunks {
+    let num_chunks = usize::try_from(num_chunks)
+        .map_err(|_| FileError::Container("dict chunk count too large"))?;
+    if (expected_runs == 0) != (num_chunks == 0) {
+        return Err(FileError::Container(
+            "dict chunk count disagrees with restart table",
+        ));
+    }
+    if u64::try_from(num_chunks)
+        .ok()
+        .filter(|count| count.saturating_mul(3) <= dir_total)
+        .is_none()
+    {
+        return Err(FileError::Container("dict chunk count exceeds directory"));
+    }
+    let initial = num_chunks.min(dir.len().saturating_sub(pos) / 3);
+    let mut entries = Vec::with_capacity(initial);
+    let mut lens = Vec::with_capacity(initial);
+    let mut prev_run = None;
+    for chunk_index in 0..num_chunks {
         let entry_start = pos;
         let short = ChunkDirParse::Truncated {
             parsed: entries.len(),
             used: entry_start,
             total: num_chunks,
         };
-        let (Some(drun), Some(klen)) = (take(&mut pos), take(&mut pos)) else {
+        let Some(drun) = take(&mut pos)? else {
             return Ok(short);
         };
-        let (drun, klen) = (drun as usize, klen as usize);
-        let Some(key) = dir.get(pos..pos.saturating_add(klen)) else {
+        let Some(klen) = take(&mut pos)? else {
+            return Ok(short);
+        };
+        let klen = usize::try_from(klen)
+            .map_err(|_| FileError::Container("dict chunk term length too large"))?;
+        let key_end = pos
+            .checked_add(klen)
+            .ok_or(FileError::Container("dict directory offset overflows"))?;
+        if u64::try_from(key_end)
+            .ok()
+            .filter(|&end| end <= dir_total)
+            .is_none()
+        {
+            return Err(FileError::Container("dict chunk key overruns section"));
+        }
+        let Some(key) = dir.get(pos..key_end) else {
             return Ok(short);
         };
         let key = key.to_vec();
-        pos += klen;
-        let Some(clen) = take(&mut pos) else {
+        pos = key_end;
+        let Some(clen) = take(&mut pos)? else {
             return Ok(short);
         };
-        let first_run = prev_run + drun;
+        materializable_len(clen)
+            .map_err(|_| FileError::Container("dict chunk length too large"))?;
+        let first_run = prev_run
+            .unwrap_or(0u64)
+            .checked_add(drun)
+            .ok_or(FileError::Container("dict chunk run overflows"))?;
+        if (chunk_index == 0 && first_run != 0)
+            || first_run >= expected_runs
+            || prev_run.is_some_and(|previous| first_run <= previous)
+        {
+            return Err(FileError::Container("dict chunk run outside restart table"));
+        }
+        let first_run = u32::try_from(first_run)
+            .map_err(|_| FileError::Container("dict chunk run exceeds u32"))?;
+        let first_run = usize::try_from(first_run)
+            .map_err(|_| FileError::Container("dict chunk run exceeds usize"))?;
         entries.push(DictChunkEntry {
             first_run,
             key,
@@ -952,9 +1116,10 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, Fil
             end: 0,
         });
         lens.push(clen);
-        prev_run = first_run;
+        prev_run = Some(first_run as u64);
     }
-    let mut start = pos as u64;
+    let mut start =
+        u64::try_from(pos).map_err(|_| FileError::Container("dict directory offset too large"))?;
     for (e, len) in entries.iter_mut().zip(lens) {
         let end = start
             .checked_add(len)
@@ -982,7 +1147,18 @@ fn decode_chunked_dict_section(
                 e.first_run,
                 e.key,
                 e.body_start,
-                decompress(codec, &payload[e.start as usize..e.end as usize])?,
+                decompress(
+                    codec,
+                    payload
+                        .get(
+                            usize::try_from(e.start)
+                                .map_err(|_| FileError::Container("dict chunk offset too large"))?
+                                ..usize::try_from(e.end).map_err(|_| {
+                                    FileError::Container("dict chunk offset too large")
+                                })?,
+                        )
+                        .ok_or(FileError::Container("dict chunk overruns section"))?,
+                )?,
             ))
         })
         .collect::<Result<Vec<_>, FileError>>()?;
@@ -990,10 +1166,7 @@ fn decode_chunked_dict_section(
 }
 
 fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, FileError> {
-    let dsecs = decode_container(bytes, CODEC_NONE)?;
-    if dsecs.len() != 4 {
-        return Err(FileError::Container("expected 4 dictionary sections"));
-    }
+    let dsecs = decode_container(bytes, CODEC_NONE, 4)?;
     let mut sections = Vec::with_capacity(4);
     for sec in &dsecs {
         sections.push(decode_chunked_dict_section(sec, codec)?);
@@ -1002,6 +1175,786 @@ fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, Fi
         .try_into()
         .map_err(|_| FileError::Container("expected 4 dictionary sections"))?;
     Ok(Dictionary::from_chunked_sections(arr))
+}
+
+// --- Staged 0x06 paired-family container ------------------------------------
+//
+// This codec intentionally has no production writer or header dispatch in this
+// commit. Its byte contract is pinned here before Task 7 switches any reader.
+
+#[allow(dead_code)]
+const PREFIX2_FORMAT_BUDGET: usize = 64 * 1024;
+/// A staged family record is one physical tile.  This independent cap keeps a
+/// hostile compressed record from growing without bound before `TripleBlock`
+/// gets a chance to validate it.
+#[allow(dead_code)]
+const FAMILY_TILE_DECOMPRESSED_MAX: usize = 64 * 1024;
+#[allow(dead_code)]
+const FAMILY_FLAG_CONTINUES_PREVIOUS: u8 = 0b0000_0001;
+#[allow(dead_code)]
+const FAMILY_FLAG_CONTINUES_NEXT: u8 = 0b0000_0010;
+#[allow(dead_code)]
+const FAMILY_FLAG_MASK: u8 = FAMILY_FLAG_CONTINUES_PREVIOUS | FAMILY_FLAG_CONTINUES_NEXT;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct Prefix2Group {
+    pub a: u32,
+    pub a_body_offset: u32,
+    pub b_entries: Vec<(u32, u32, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[allow(dead_code)]
+pub(crate) struct Prefix2Meta {
+    pub groups: Vec<Prefix2Group>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[allow(dead_code)]
+pub(crate) struct FamilyDirectory {
+    pub ranges: Vec<(u32, u32)>,
+    pub first_flags: Vec<u8>,
+    pub second_flags: Vec<u8>,
+    pub first_lengths: Vec<u64>,
+    pub second_lengths: Vec<u64>,
+    pub first_prefix2_lengths: Vec<u64>,
+    pub second_prefix2_lengths: Vec<u64>,
+    pub first_prefix2: Vec<Prefix2Meta>,
+    pub second_prefix2: Vec<Prefix2Meta>,
+    pub first_synopses: Vec<Synopsis>,
+    pub second_synopses: Vec<Synopsis>,
+    pub first_records_offset: u64,
+    pub second_records_offset: u64,
+}
+
+#[allow(dead_code)]
+pub(crate) struct DecodedFamily {
+    pub first: Vec<crate::index::Tile>,
+    pub second: Vec<crate::index::Tile>,
+    pub directory: FamilyDirectory,
+}
+
+#[allow(dead_code)]
+fn family_compress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
+    match codec {
+        CODEC_NONE => Ok(bytes.to_vec()),
+        CODEC_ZSTD => {
+            #[cfg(feature = "compression")]
+            {
+                use std::io::Write;
+                let mut encoder =
+                    zstd::stream::Encoder::new(Vec::new(), ZSTD_LEVEL).map_err(FileError::Io)?;
+                // Match the staged decoder's fixed physical-tile window.
+                encoder.window_log(16).map_err(FileError::Io)?;
+                encoder.write_all(bytes).map_err(FileError::Io)?;
+                encoder.finish().map_err(FileError::Io)
+            }
+            #[cfg(not(feature = "compression"))]
+            {
+                let _ = bytes;
+                Err(FileError::UnknownCodec(codec))
+            }
+        }
+        other => Err(FileError::UnknownCodec(other)),
+    }
+}
+
+#[allow(dead_code)]
+fn family_continuation_flags(ranges: &[(u32, u32)]) -> Vec<u8> {
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(i, &(min_a, max_a))| {
+            let repeated_previous = i > 0 && ranges[i - 1] == (min_a, max_a);
+            let repeated_next = ranges.get(i + 1).copied() == Some((min_a, max_a));
+            let mut flags = 0;
+            if repeated_previous {
+                flags |= FAMILY_FLAG_CONTINUES_PREVIOUS;
+            }
+            if repeated_next {
+                flags |= FAMILY_FLAG_CONTINUES_NEXT;
+            }
+            flags
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+fn encode_prefix2(tile: &crate::index::Tile) -> Result<Vec<u8>, FileError> {
+    let block = crate::triples::TripleBlock::parse(tile.bytes())
+        .map_err(|_| FileError::Container("malformed tile for prefix-2"))?;
+    block
+        .validate_complete()
+        .map_err(|_| FileError::Container("malformed tile for prefix-2"))?;
+    let Some(groups) = block.group_directory().complete_prefix2() else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    write_uvarint(&mut out, groups.len() as u64);
+    let mut previous_a = 0u32;
+    for (a, a_body_offset, b_entries) in groups {
+        let a_delta = a
+            .checked_sub(previous_a)
+            .ok_or(FileError::Container("non-monotone prefix-2 a"))?;
+        write_uvarint(&mut out, a_delta as u64);
+        write_uvarint(&mut out, a_body_offset as u64);
+        write_uvarint(&mut out, b_entries.len() as u64);
+        previous_a = a;
+        let mut previous_b = 0u32;
+        for (b, c_body_offset, c_count) in b_entries {
+            let b_delta = b
+                .checked_sub(previous_b)
+                .ok_or(FileError::Container("non-monotone prefix-2 b"))?;
+            write_uvarint(&mut out, b_delta as u64);
+            write_uvarint(&mut out, c_body_offset as u64);
+            write_uvarint(&mut out, c_count as u64);
+            previous_b = b;
+        }
+    }
+    if out.len() > PREFIX2_FORMAT_BUDGET {
+        return Ok(Vec::new());
+    }
+    Ok(out)
+}
+
+#[allow(dead_code)]
+fn synopsis_for(tile: &crate::index::Tile) -> Result<Synopsis, FileError> {
+    let block = crate::triples::TripleBlock::parse(tile.bytes())
+        .map_err(|_| FileError::Container("malformed family tile"))?;
+    block
+        .validate_complete()
+        .map_err(|_| FileError::Container("malformed family tile"))?;
+    let zone = block.zone();
+    Ok((zone.min_b, zone.max_b, zone.min_c, zone.max_c))
+}
+
+/// Encode one paired physical family. The payload contains its own shared
+/// ranges, sibling directories, records, and synopsis trailers.
+#[allow(dead_code)]
+pub(crate) fn encode_family_container(
+    family: FamilyView<'_>,
+    codec: u8,
+) -> Result<Vec<u8>, FileError> {
+    debug_assert_eq!(NEXT_FORMAT_VERSION, LEGACY_FORMAT_VERSION + 1);
+    if family.first.len() != family.second.len() {
+        return Err(FileError::Container("family tile count mismatch"));
+    }
+    let count = family.first.len();
+    let mut ranges = Vec::with_capacity(count);
+    for (first, second) in family.first.iter().zip(family.second) {
+        let range = first.leading_range();
+        if range != second.leading_range() {
+            return Err(FileError::Container("family sibling ranges differ"));
+        }
+        ranges.push(range);
+    }
+    for pair in ranges.windows(2) {
+        if pair[0] == pair[1] {
+            if pair[1].0 != pair[1].1 {
+                return Err(FileError::Container(
+                    "continuation range is not a single leading group",
+                ));
+            }
+        } else if pair[1].0 <= pair[0].1 {
+            return Err(FileError::Container("family ranges overlap"));
+        }
+    }
+    let flags = family_continuation_flags(&ranges);
+    let mut first_prefix2 = Vec::with_capacity(count);
+    let mut second_prefix2 = Vec::with_capacity(count);
+    let mut first_payloads = Vec::with_capacity(count);
+    let mut second_payloads = Vec::with_capacity(count);
+    let mut first_synopses = Vec::with_capacity(count);
+    let mut second_synopses = Vec::with_capacity(count);
+    for tile in family.first {
+        if tile.bytes().len() > FAMILY_TILE_DECOMPRESSED_MAX {
+            return Err(FileError::Container(
+                "family tile exceeds fixed decompressed limit",
+            ));
+        }
+        first_prefix2.push(encode_prefix2(tile)?);
+        first_payloads.push(family_compress(codec, tile.bytes())?);
+        first_synopses.push(synopsis_for(tile)?);
+    }
+    for tile in family.second {
+        if tile.bytes().len() > FAMILY_TILE_DECOMPRESSED_MAX {
+            return Err(FileError::Container(
+                "family tile exceeds fixed decompressed limit",
+            ));
+        }
+        second_prefix2.push(encode_prefix2(tile)?);
+        second_payloads.push(family_compress(codec, tile.bytes())?);
+        second_synopses.push(synopsis_for(tile)?);
+    }
+
+    let mut out = Vec::new();
+    write_uvarint(&mut out, count as u64);
+    let mut previous_min = 0u32;
+    for &(min_a, max_a) in &ranges {
+        let delta = min_a
+            .checked_sub(previous_min)
+            .ok_or(FileError::Container("family ranges are not monotone"))?;
+        let span = max_a
+            .checked_sub(min_a)
+            .ok_or(FileError::Container("family range underflows"))?;
+        write_uvarint(&mut out, delta as u64);
+        write_uvarint(&mut out, span as u64);
+        previous_min = min_a;
+    }
+    for ((&flag, payload), prefix2) in flags.iter().zip(&first_payloads).zip(&first_prefix2) {
+        write_uvarint(&mut out, flag as u64);
+        write_uvarint(&mut out, payload.len() as u64);
+        write_uvarint(&mut out, prefix2.len() as u64);
+    }
+    for ((&flag, payload), prefix2) in flags.iter().zip(&second_payloads).zip(&second_prefix2) {
+        write_uvarint(&mut out, flag as u64);
+        write_uvarint(&mut out, payload.len() as u64);
+        write_uvarint(&mut out, prefix2.len() as u64);
+    }
+    for (prefix2, payload) in first_prefix2.iter().zip(&first_payloads) {
+        out.extend_from_slice(prefix2);
+        out.extend_from_slice(payload);
+    }
+    for (prefix2, payload) in second_prefix2.iter().zip(&second_payloads) {
+        out.extend_from_slice(prefix2);
+        out.extend_from_slice(payload);
+    }
+    for &(min_b, max_b, min_c, max_c) in &first_synopses {
+        write_uvarint(&mut out, min_b as u64);
+        write_uvarint(&mut out, (max_b - min_b) as u64);
+        write_uvarint(&mut out, min_c as u64);
+        write_uvarint(&mut out, (max_c - min_c) as u64);
+    }
+    for &(min_b, max_b, min_c, max_c) in &second_synopses {
+        write_uvarint(&mut out, min_b as u64);
+        write_uvarint(&mut out, (max_b - min_b) as u64);
+        write_uvarint(&mut out, min_c as u64);
+        write_uvarint(&mut out, (max_c - min_c) as u64);
+    }
+    Ok(out)
+}
+
+/// Encode the internal root container: exactly Subject, Predicate, Object
+/// family payloads, individually length-framed and never independently
+/// compressed. The production `0x05` root container remains untouched.
+#[allow(dead_code)]
+pub(crate) fn encode_family_index_container(
+    index: &GraphIndex,
+    codec: u8,
+) -> Result<Vec<u8>, FileError> {
+    let payloads = [
+        encode_family_container(index.family_view(IndexFamily::Subject), codec)?,
+        encode_family_container(index.family_view(IndexFamily::Predicate), codec)?,
+        encode_family_container(index.family_view(IndexFamily::Object), codec)?,
+    ];
+    let mut out = Vec::new();
+    write_uvarint(&mut out, payloads.len() as u64);
+    for payload in &payloads {
+        write_uvarint(&mut out, payload.len() as u64);
+        out.extend_from_slice(payload);
+    }
+    Ok(out)
+}
+
+#[allow(dead_code)]
+fn family_varint(bytes: &[u8], pos: &mut usize, what: &'static str) -> Result<u64, FileError> {
+    let mut value = 0u64;
+    for byte_index in 0..10usize {
+        let index = pos
+            .checked_add(byte_index)
+            .ok_or(FileError::Container("family offset overflows"))?;
+        let byte = *bytes.get(index).ok_or(FileError::Container(what))?;
+        let payload = u64::from(byte & 0x7f);
+        if byte_index == 9 && payload > 1 {
+            return Err(FileError::Container("family varint overflows u64"));
+        }
+        value |= payload << (byte_index * 7);
+        if byte & 0x80 == 0 {
+            let used = byte_index + 1;
+            let canonical = if value < (1u64 << 7) {
+                1
+            } else {
+                (64usize - value.leading_zeros() as usize).div_ceil(7)
+            };
+            if used != canonical {
+                return Err(FileError::Container("non-canonical family varint"));
+            }
+            *pos = index
+                .checked_add(1)
+                .ok_or(FileError::Container("family offset overflows"))?;
+            return Ok(value);
+        }
+    }
+    Err(FileError::Container("family varint exceeds ten bytes"))
+}
+
+#[allow(dead_code)]
+fn family_u32(bytes: &[u8], pos: &mut usize, what: &'static str) -> Result<u32, FileError> {
+    u32::try_from(family_varint(bytes, pos, what)?).map_err(|_| FileError::Container(what))
+}
+
+#[allow(dead_code)]
+fn family_bytes<'a>(
+    bytes: &'a [u8],
+    pos: &mut usize,
+    len: u64,
+    what: &'static str,
+) -> Result<&'a [u8], FileError> {
+    let len = usize::try_from(len).map_err(|_| FileError::Container(what))?;
+    let end = pos
+        .checked_add(len)
+        .ok_or(FileError::Container("family offset overflows"))?;
+    let result = bytes.get(*pos..end).ok_or(FileError::Container(what))?;
+    *pos = end;
+    Ok(result)
+}
+
+#[allow(dead_code)]
+fn decode_prefix2(bytes: &[u8]) -> Result<Prefix2Meta, FileError> {
+    let mut pos = 0usize;
+    let group_count = usize::try_from(family_varint(bytes, &mut pos, "truncated prefix-2 count")?)
+        .map_err(|_| FileError::Container("prefix-2 count too large"))?;
+    if group_count > bytes.len() / 3 {
+        return Err(FileError::Container("prefix-2 count exceeds blob"));
+    }
+    let mut groups = Vec::with_capacity(group_count.min(bytes.len() / 3));
+    let mut previous_a = 0u32;
+    for _ in 0..group_count {
+        let delta = family_u32(bytes, &mut pos, "malformed prefix-2 a delta")?;
+        let a = previous_a
+            .checked_add(delta)
+            .ok_or(FileError::Container("prefix-2 a overflows u32"))?;
+        if !groups.is_empty() && a <= previous_a {
+            return Err(FileError::Container(
+                "prefix-2 a is not strictly increasing",
+            ));
+        }
+        let a_body_offset = family_u32(bytes, &mut pos, "malformed prefix-2 a offset")?;
+        let b_count = usize::try_from(family_varint(
+            bytes,
+            &mut pos,
+            "malformed prefix-2 b count",
+        )?)
+        .map_err(|_| FileError::Container("prefix-2 b count too large"))?;
+        if b_count > bytes.len().saturating_sub(pos) / 3 {
+            return Err(FileError::Container("prefix-2 b count exceeds blob"));
+        }
+        let mut b_entries = Vec::with_capacity(b_count.min(bytes.len().saturating_sub(pos) / 3));
+        let mut previous_b = 0u32;
+        for _ in 0..b_count {
+            let delta = family_u32(bytes, &mut pos, "malformed prefix-2 b delta")?;
+            let b = previous_b
+                .checked_add(delta)
+                .ok_or(FileError::Container("prefix-2 b overflows u32"))?;
+            if !b_entries.is_empty() && b <= previous_b {
+                return Err(FileError::Container(
+                    "prefix-2 b is not strictly increasing",
+                ));
+            }
+            let c_body_offset = family_u32(bytes, &mut pos, "malformed prefix-2 c offset")?;
+            let c_count = family_u32(bytes, &mut pos, "malformed prefix-2 c count")?;
+            b_entries.push((b, c_body_offset, c_count));
+            previous_b = b;
+        }
+        groups.push(Prefix2Group {
+            a,
+            a_body_offset,
+            b_entries,
+        });
+        previous_a = a;
+    }
+    if pos != bytes.len() {
+        return Err(FileError::Container("trailing prefix-2 bytes"));
+    }
+    Ok(Prefix2Meta { groups })
+}
+
+#[allow(dead_code)]
+fn validate_prefix2(meta: &Prefix2Meta, payload: &[u8]) -> Result<(), FileError> {
+    let block = crate::triples::TripleBlock::parse(payload)
+        .map_err(|_| FileError::Container("malformed family tile payload"))?;
+    block
+        .validate_complete()
+        .map_err(|_| FileError::Container("malformed family tile payload"))?;
+    for group in &meta.groups {
+        if usize::try_from(group.a_body_offset)
+            .ok()
+            .filter(|&offset| offset < payload.len())
+            .is_none()
+        {
+            return Err(FileError::Container("prefix-2 a offset outside tile"));
+        }
+        for &(_, c_body_offset, _) in &group.b_entries {
+            if usize::try_from(c_body_offset)
+                .ok()
+                .filter(|&offset| offset < payload.len())
+                .is_none()
+            {
+                return Err(FileError::Container("prefix-2 c offset outside tile"));
+            }
+        }
+    }
+    let Some(expected) = block.group_directory().complete_prefix2() else {
+        return Err(FileError::Container(
+            "prefix-2 exceeds complete directory budget",
+        ));
+    };
+    let expected = Prefix2Meta {
+        groups: expected
+            .into_iter()
+            .map(|(a, a_body_offset, b_entries)| Prefix2Group {
+                a,
+                a_body_offset,
+                b_entries,
+            })
+            .collect(),
+    };
+    if &expected != meta {
+        return Err(FileError::Container(
+            "prefix-2 metadata does not match tile",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn decode_family_record(
+    bytes: &[u8],
+    pos: &mut usize,
+    prefix2_len: u64,
+    compressed_len: u64,
+    codec: u8,
+) -> Result<(Prefix2Meta, Vec<u8>), FileError> {
+    let prefix2 = family_bytes(bytes, pos, prefix2_len, "prefix-2 blob overruns family")?;
+    let compressed = family_bytes(bytes, pos, compressed_len, "tile payload overruns family")?;
+    let payload = decompress_family_tile_exact(codec, compressed)?;
+    let meta = if prefix2.is_empty() {
+        Prefix2Meta::default()
+    } else {
+        let meta = decode_prefix2(prefix2)?;
+        validate_prefix2(&meta, &payload)?;
+        meta
+    };
+    let block = crate::triples::TripleBlock::parse(&payload)
+        .map_err(|_| FileError::Container("malformed family tile payload"))?;
+    block
+        .validate_complete()
+        .map_err(|_| FileError::Container("malformed family tile payload"))?;
+    Ok((meta, payload))
+}
+
+/// Family records are deliberately stricter than legacy compressed sections:
+/// one declared slice must contain exactly one zstd frame and may decode to at
+/// most one fixed-size physical tile.
+#[allow(dead_code)]
+fn decompress_family_tile_exact(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
+    match codec {
+        CODEC_NONE => {
+            if bytes.len() > FAMILY_TILE_DECOMPRESSED_MAX {
+                return Err(FileError::Container(
+                    "family tile exceeds fixed decompressed limit",
+                ));
+            }
+            Ok(bytes.to_vec())
+        }
+        CODEC_ZSTD => {
+            use std::io::Read;
+            // ruzstd allocates its declared window while constructing the
+            // streaming decoder, so inspect the tiny frame header first.
+            let (frame, _) = ruzstd::frame::read_frame_header(bytes)
+                .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
+            let window = frame
+                .header
+                .window_size()
+                .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
+            if window > FAMILY_TILE_DECOMPRESSED_MAX as u64 {
+                return Err(FileError::Container(
+                    "family zstd window exceeds fixed limit",
+                ));
+            }
+            let content_size = frame.header.frame_content_size();
+            if content_size != 0 && content_size > FAMILY_TILE_DECOMPRESSED_MAX as u64 {
+                return Err(FileError::Container(
+                    "family zstd content size exceeds fixed limit",
+                ));
+            }
+            let mut decoder = ruzstd::StreamingDecoder::new(bytes)
+                .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
+            let mut out = Vec::with_capacity(FAMILY_TILE_DECOMPRESSED_MAX.min(bytes.len()));
+            let mut buf = [0u8; 8192];
+            loop {
+                let remaining = FAMILY_TILE_DECOMPRESSED_MAX
+                    .checked_add(1)
+                    .and_then(|limit| limit.checked_sub(out.len()))
+                    .ok_or(FileError::Container(
+                        "family tile exceeds fixed decompressed limit",
+                    ))?;
+                if remaining == 0 {
+                    return Err(FileError::Container(
+                        "family tile exceeds fixed decompressed limit",
+                    ));
+                }
+                let read_len = remaining.min(buf.len());
+                let read = decoder
+                    .read(&mut buf[..read_len])
+                    .map_err(FileError::Decompress)?;
+                if read == 0 {
+                    break;
+                }
+                out.extend_from_slice(&buf[..read]);
+            }
+            if out.len() > FAMILY_TILE_DECOMPRESSED_MAX {
+                return Err(FileError::Container(
+                    "family tile exceeds fixed decompressed limit",
+                ));
+            }
+            // `StreamingDecoder` can read ahead in its source; the frame
+            // decoder's own consumed-source counter is the exact boundary.
+            if decoder.decoder.bytes_read_from_source()
+                != u64::try_from(bytes.len())
+                    .map_err(|_| FileError::Container("family payload too large"))?
+            {
+                return Err(FileError::Container(
+                    "family zstd payload has trailing bytes",
+                ));
+            }
+            Ok(out)
+        }
+        other => Err(FileError::UnknownCodec(other)),
+    }
+}
+
+#[allow(dead_code)]
+fn decode_family_synopses(
+    bytes: &[u8],
+    pos: &mut usize,
+    count: usize,
+) -> Result<Vec<Synopsis>, FileError> {
+    let mut synopses = Vec::with_capacity(count.min(bytes.len().saturating_sub(*pos) / 4));
+    for _ in 0..count {
+        let min_b = family_u32(bytes, pos, "truncated family synopsis")?;
+        let span_b = family_u32(bytes, pos, "truncated family synopsis")?;
+        let min_c = family_u32(bytes, pos, "truncated family synopsis")?;
+        let span_c = family_u32(bytes, pos, "truncated family synopsis")?;
+        synopses.push((
+            min_b,
+            min_b
+                .checked_add(span_b)
+                .ok_or(FileError::Container("family synopsis b overflows u32"))?,
+            min_c,
+            min_c
+                .checked_add(span_c)
+                .ok_or(FileError::Container("family synopsis c overflows u32"))?,
+        ));
+    }
+    Ok(synopses)
+}
+
+/// Decode and fully validate one paired family payload. All count-dependent
+/// allocations are bounded by bytes already present in this payload.
+#[allow(dead_code)]
+pub(crate) fn decode_family_container(bytes: &[u8], codec: u8) -> Result<DecodedFamily, FileError> {
+    if !matches!(codec, CODEC_NONE | CODEC_ZSTD) {
+        return Err(FileError::UnknownCodec(codec));
+    }
+    let mut pos = 0usize;
+    let count = usize::try_from(family_varint(
+        bytes,
+        &mut pos,
+        "truncated family tile count",
+    )?)
+    .map_err(|_| FileError::Container("family tile count too large"))?;
+    // Every pair needs two range varints, six directory varints, and eight
+    // trailer varints, even when both payloads and prefix blobs are empty.
+    if count > bytes.len().saturating_sub(pos) / 16 {
+        return Err(FileError::Container("family tile count exceeds payload"));
+    }
+    let mut directory = FamilyDirectory {
+        ranges: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_flags: Vec::with_capacity(count.min(bytes.len() / 16)),
+        second_flags: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_lengths: Vec::with_capacity(count.min(bytes.len() / 16)),
+        second_lengths: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_prefix2_lengths: Vec::with_capacity(count.min(bytes.len() / 16)),
+        second_prefix2_lengths: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_prefix2: Vec::with_capacity(count.min(bytes.len() / 16)),
+        second_prefix2: Vec::with_capacity(count.min(bytes.len() / 16)),
+        first_synopses: Vec::new(),
+        second_synopses: Vec::new(),
+        first_records_offset: 0,
+        second_records_offset: 0,
+    };
+    let mut previous_min = 0u32;
+    for _ in 0..count {
+        let delta = family_u32(bytes, &mut pos, "malformed family minimum delta")?;
+        let span = family_u32(bytes, &mut pos, "malformed family range span")?;
+        let min_a = previous_min
+            .checked_add(delta)
+            .ok_or(FileError::Container("family minimum overflows u32"))?;
+        let max_a = min_a
+            .checked_add(span)
+            .ok_or(FileError::Container("family maximum overflows u32"))?;
+        directory.ranges.push((min_a, max_a));
+        previous_min = min_a;
+    }
+    for _ in 0..count {
+        let flags = u8::try_from(family_varint(
+            bytes,
+            &mut pos,
+            "truncated first family directory",
+        )?)
+        .map_err(|_| FileError::Container("first family flags exceed u8"))?;
+        if flags & !FAMILY_FLAG_MASK != 0 {
+            return Err(FileError::Container("reserved first family flags"));
+        }
+        directory.first_flags.push(flags);
+        directory.first_lengths.push(family_varint(
+            bytes,
+            &mut pos,
+            "truncated first family length",
+        )?);
+        directory.first_prefix2_lengths.push(family_varint(
+            bytes,
+            &mut pos,
+            "truncated first prefix-2 length",
+        )?);
+        if directory
+            .first_prefix2_lengths
+            .last()
+            .copied()
+            .unwrap_or_default()
+            > PREFIX2_FORMAT_BUDGET as u64
+        {
+            return Err(FileError::Container("prefix-2 blob exceeds fixed budget"));
+        }
+    }
+    for _ in 0..count {
+        let flags = u8::try_from(family_varint(
+            bytes,
+            &mut pos,
+            "truncated second family directory",
+        )?)
+        .map_err(|_| FileError::Container("second family flags exceed u8"))?;
+        if flags & !FAMILY_FLAG_MASK != 0 {
+            return Err(FileError::Container("reserved second family flags"));
+        }
+        directory.second_flags.push(flags);
+        directory.second_lengths.push(family_varint(
+            bytes,
+            &mut pos,
+            "truncated second family length",
+        )?);
+        directory.second_prefix2_lengths.push(family_varint(
+            bytes,
+            &mut pos,
+            "truncated second prefix-2 length",
+        )?);
+        if directory
+            .second_prefix2_lengths
+            .last()
+            .copied()
+            .unwrap_or_default()
+            > PREFIX2_FORMAT_BUDGET as u64
+        {
+            return Err(FileError::Container("prefix-2 blob exceeds fixed budget"));
+        }
+    }
+    for i in 0..count {
+        if directory.first_flags[i] != directory.second_flags[i] {
+            return Err(FileError::Container("sibling continuation flags differ"));
+        }
+        let repeated_previous = i > 0 && directory.ranges[i - 1] == directory.ranges[i];
+        let repeated_next = i + 1 < count && directory.ranges[i + 1] == directory.ranges[i];
+        if repeated_previous && directory.ranges[i].0 != directory.ranges[i].1 {
+            return Err(FileError::Container(
+                "continuation range is not a single leading group",
+            ));
+        }
+        let flags = directory.first_flags[i];
+        if (flags & FAMILY_FLAG_CONTINUES_PREVIOUS != 0) != repeated_previous
+            || (flags & FAMILY_FLAG_CONTINUES_NEXT != 0) != repeated_next
+        {
+            return Err(FileError::Container("impossible family continuation"));
+        }
+        if i > 0 && !repeated_previous && directory.ranges[i].0 <= directory.ranges[i - 1].1 {
+            return Err(FileError::Container("family ranges overlap"));
+        }
+    }
+    directory.first_records_offset =
+        u64::try_from(pos).map_err(|_| FileError::Container("family offset too large"))?;
+    let mut first_records = Vec::with_capacity(count.min(bytes.len() / 16));
+    for i in 0..count {
+        first_records.push(decode_family_record(
+            bytes,
+            &mut pos,
+            directory.first_prefix2_lengths[i],
+            directory.first_lengths[i],
+            codec,
+        )?);
+    }
+    directory.second_records_offset =
+        u64::try_from(pos).map_err(|_| FileError::Container("family offset too large"))?;
+    let mut second_records = Vec::with_capacity(count.min(bytes.len() / 16));
+    for i in 0..count {
+        second_records.push(decode_family_record(
+            bytes,
+            &mut pos,
+            directory.second_prefix2_lengths[i],
+            directory.second_lengths[i],
+            codec,
+        )?);
+    }
+    directory.first_synopses = decode_family_synopses(bytes, &mut pos, count)?;
+    directory.second_synopses = decode_family_synopses(bytes, &mut pos, count)?;
+    if pos != bytes.len() {
+        return Err(FileError::Container("trailing family bytes"));
+    }
+    for i in 0..count {
+        for ((_, payload), synopsis) in [
+            (&first_records[i], directory.first_synopses[i]),
+            (&second_records[i], directory.second_synopses[i]),
+        ] {
+            let block = crate::triples::TripleBlock::parse(payload)
+                .map_err(|_| FileError::Container("malformed family tile payload"))?;
+            let zone = block.zone();
+            if (zone.min_a, zone.max_a) != directory.ranges[i] {
+                return Err(FileError::Container(
+                    "family directory range disagrees with tile",
+                ));
+            }
+            if (zone.min_b, zone.max_b, zone.min_c, zone.max_c) != synopsis {
+                return Err(FileError::Container("family synopsis disagrees with tile"));
+            }
+        }
+    }
+    let first = first_records
+        .into_iter()
+        .zip(directory.ranges.iter().copied())
+        .zip(directory.first_synopses.iter().copied())
+        .map(|(((meta, payload), (min_a, max_a)), syn)| {
+            let mut tile = crate::index::Tile::local(min_a, max_a, payload);
+            tile.syn = Some(syn);
+            (meta, tile)
+        })
+        .collect::<Vec<_>>();
+    let second = second_records
+        .into_iter()
+        .zip(directory.ranges.iter().copied())
+        .zip(directory.second_synopses.iter().copied())
+        .map(|(((meta, payload), (min_a, max_a)), syn)| {
+            let mut tile = crate::index::Tile::local(min_a, max_a, payload);
+            tile.syn = Some(syn);
+            (meta, tile)
+        })
+        .collect::<Vec<_>>();
+    directory.first_prefix2 = first.iter().map(|(meta, _)| meta.clone()).collect();
+    directory.second_prefix2 = second.iter().map(|(meta, _)| meta.clone()).collect();
+    Ok(DecodedFamily {
+        first: first.into_iter().map(|(_, tile)| tile).collect(),
+        second: second.into_iter().map(|(_, tile)| tile).collect(),
+        directory,
+    })
 }
 
 /// Encode one permutation's tiled section payload (format v0.2):
@@ -1143,6 +2096,128 @@ fn parse_tile_directory(bytes: &[u8], total_len: u64) -> Result<Vec<TileDirEntry
     Ok(entries)
 }
 
+/// Fetch a tiled directory without crossing its exact byte boundary. Once the
+/// tile count is known, every unfinished field requires at least one byte, so
+/// bounded batches of that minimum size can advance without touching payloads.
+fn read_tile_directory_ranged_exact<R: RangeReader>(
+    reader: &R,
+    section: ByteRange,
+) -> Result<Vec<TileDirEntry>, FileError> {
+    const DIRECTORY_BATCH: u64 = 4096;
+
+    let section_end = checked_end(section.offset, section.len)?;
+    let mut read_offset = section.offset;
+    let mut count_bytes = Vec::with_capacity(10);
+    let num_tiles = loop {
+        if read_offset >= section_end || count_bytes.len() == 10 {
+            return Err(FileError::Container("truncated tile directory"));
+        }
+        let one = reader.read_at_precise(read_offset, 1)?;
+        if one.len() != 1 {
+            return Err(FileError::Container("truncated tile directory"));
+        }
+        let byte = one
+            .first()
+            .copied()
+            .ok_or(FileError::Container("truncated tile directory"))?;
+        read_offset = checked_end(read_offset, 1)?;
+        count_bytes.push(byte);
+        if byte & 0x80 == 0 {
+            if count_bytes.len() == 10 && byte > 1 {
+                return Err(FileError::Container("tile count overflows u64"));
+            }
+            break read_uvarint(&count_bytes)
+                .ok_or(FileError::Container("malformed tile count"))?
+                .0;
+        }
+    };
+    let num_tiles =
+        usize::try_from(num_tiles).map_err(|_| FileError::Container("tile count too large"))?;
+    let total_fields = num_tiles
+        .checked_mul(3)
+        .ok_or(FileError::Container("tile directory field count overflows"))?;
+    let section_capacity = usize::try_from(section.len).unwrap_or(usize::MAX);
+    // Neither the tile count nor a virtual section length is an allocation
+    // bound. Keep only a small proven-safe initial reserve; grow in proportion
+    // to directory records that were actually fetched and parsed.
+    let initial_capacity = num_tiles
+        .min(section_capacity)
+        .min(DIRECTORY_BATCH as usize);
+    let mut entries = Vec::with_capacity(initial_capacity);
+    let mut lens = Vec::with_capacity(initial_capacity);
+    let mut prev_min = 0u32;
+    let mut field_index = 0usize;
+    let mut pending = Vec::new();
+    let mut pending_pos = 0usize;
+    let mut fields = [0u64; 3];
+
+    while field_index < total_fields {
+        let available = &pending[pending_pos..];
+        let parsed = read_uvarint(available)
+            .and_then(|(value, used)| (used < 10 || available[9] <= 1).then_some((value, used)));
+        if let Some((value, used)) = parsed {
+            fields[field_index % 3] = value;
+            pending_pos += used;
+            field_index += 1;
+            if field_index.is_multiple_of(3) {
+                let dmin = u32::try_from(fields[0])
+                    .map_err(|_| FileError::Container("tile minimum delta too large"))?;
+                let span = u32::try_from(fields[1])
+                    .map_err(|_| FileError::Container("tile leading span too large"))?;
+                let min_a = prev_min
+                    .checked_add(dmin)
+                    .ok_or(FileError::Container("tile minimum overflows u32"))?;
+                let max_a = min_a
+                    .checked_add(span)
+                    .ok_or(FileError::Container("tile maximum overflows u32"))?;
+                entries.push(TileDirEntry {
+                    min_a,
+                    max_a,
+                    start: 0,
+                    end: 0,
+                });
+                lens.push(fields[2]);
+                prev_min = min_a;
+            }
+            continue;
+        }
+        if available.len() >= 10 {
+            return Err(FileError::Container("tile directory varint overflows"));
+        }
+
+        pending.drain(..pending_pos);
+        pending_pos = 0;
+        let unfinished_fields = total_fields - field_index;
+        let fetch_len = (unfinished_fields as u64).min(DIRECTORY_BATCH);
+        let fetch_end = checked_end(read_offset, fetch_len)?;
+        if fetch_end > section_end {
+            return Err(FileError::Container("truncated tile directory"));
+        }
+        let bytes = reader.read_at_precise(read_offset, fetch_len)?;
+        if bytes.len() as u64 != fetch_len {
+            return Err(FileError::Container("truncated tile directory"));
+        }
+        pending.extend_from_slice(&bytes);
+        read_offset = fetch_end;
+    }
+
+    if pending_pos != pending.len() {
+        return Err(FileError::Container("tile directory framing is ambiguous"));
+    }
+    let body_start = read_offset - section.offset;
+    let mut start = body_start;
+    for (entry, len) in entries.iter_mut().zip(lens) {
+        let end = start
+            .checked_add(len)
+            .filter(|&end| end <= section.len)
+            .ok_or(FileError::Container("tile overruns section"))?;
+        entry.start = start;
+        entry.end = end;
+        start = end;
+    }
+    Ok(entries)
+}
+
 /// Fetch and parse a remote tiled section's directory: read a small prefix and
 /// grow it geometrically until the directory parses, never fetching past the
 /// section. A directory that still fails on the whole section is corrupt.
@@ -1157,14 +2232,15 @@ fn read_tile_directory_ranged<R: RangeReader>(
         match parse_tile_directory(&prefix, total) {
             Ok(dir) => return Ok(dir),
             Err(_) if prefetch < total => prefetch = prefetch.saturating_mul(2).min(total),
-            Err(e) => return Err(e),
+            Err(error) => return Err(error),
         }
     }
 }
 
 /// Fetch and parse a remote section's **tile-synopsis trailer** (only when the
-/// header's [`FLAG_TILE_SYNOPSIS`] is set): one targeted range read of the bytes
-/// past the last tile, parsed into one synopsis per tile (directory order). A
+/// header's [`FLAG_TILE_SYNOPSIS`] is set): one targeted, format-bounded range
+/// read past the last tile, parsed into one synopsis per tile (directory order).
+/// Each synopsis contains four uvarints, at most ten bytes each. A
 /// missing/short/garbled trailer degrades to all-`None` — pruning simply doesn't
 /// fire, never a wrong result. The directory gives the trailer's start (the last
 /// tile's end).
@@ -1172,6 +2248,7 @@ fn read_tile_synopsis_ranged<R: RangeReader>(
     reader: &R,
     section: ByteRange,
     dir: &[TileDirEntry],
+    precise: bool,
 ) -> Vec<Option<TileSynopsis>> {
     let n = dir.len();
     let none = vec![None; n];
@@ -1180,8 +2257,22 @@ fn read_tile_synopsis_ranged<R: RangeReader>(
     if n == 0 || trailer_start >= total {
         return none; // no trailer bytes present
     }
-    let trailer_len = total - trailer_start;
-    let Ok(bytes) = reader.read_at(section.offset + trailer_start, trailer_len) else {
+    let Some(max_synopsis_len) = u64::try_from(n)
+        .ok()
+        .and_then(|count| count.checked_mul(4 * 10))
+    else {
+        return none;
+    };
+    let trailer_len = (total - trailer_start).min(max_synopsis_len);
+    let Ok(trailer_offset) = checked_end(section.offset, trailer_start) else {
+        return none;
+    };
+    let bytes = if precise {
+        reader.read_at_precise(trailer_offset, trailer_len)
+    } else {
+        reader.read_at(trailer_offset, trailer_len)
+    };
+    let Ok(bytes) = bytes else {
         return none;
     };
     match parse_tile_synopsis(&bytes, 0, n) {
@@ -1258,12 +2349,7 @@ fn decode_index_container(
     codec: u8,
     perms: PermSet,
 ) -> Result<GraphIndex, FileError> {
-    let mut isecs = decode_container(bytes, CODEC_NONE)?;
-    if isecs.len() != perms.len() {
-        return Err(FileError::Container(
-            "index container section count does not match the header permutation mask",
-        ));
-    }
+    let mut isecs = decode_container(bytes, CODEC_NONE, perms.len())?;
     let mut sections: [Vec<(u32, u32, Vec<u8>)>; NUM_PERMS] = Default::default();
     for (perm, sec) in perms.iter().zip(isecs.iter_mut()) {
         sections[perm.section_index()] = decode_tiled_section(sec, codec)?;
@@ -1325,6 +2411,254 @@ fn decode_index_section_ranges(
     Ok(out)
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
+struct RemoteGraphIndex {
+    index: GraphIndex,
+    section_ranges: [ByteRange; NUM_PERMS],
+    tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS],
+}
+
+/// View of a reader that preserves exact physical metadata ranges through
+/// wrappers which normally widen/cache [`RangeReader::read_at`] calls. Payload
+/// loaders keep the original reader and therefore retain ordinary caching.
+struct PreciseMetadataReader<'a, R: RangeReader + ?Sized> {
+    inner: &'a R,
+}
+
+impl<R: RangeReader + ?Sized> RangeReader for PreciseMetadataReader<'_, R> {
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.inner.read_at_precise(offset, len)
+    }
+
+    fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        self.inner.read_at_precise(offset, len)
+    }
+
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+}
+
+/// Construct a tile-faulting graph index from on-disk framing. Named graphs set
+/// `exact_payload_boundaries`: their lazy-open contract permits no payload
+/// fetch at all. The established default-graph path keeps its 4 KiB directory
+/// prefix to avoid adding dozens of high-latency metadata round trips.
+#[cfg(test)]
+fn open_remote_graph_index<R: RangeReader + Send + Sync + 'static>(
+    reader: std::sync::Arc<R>,
+    container: ByteRange,
+    codec: u8,
+    has_tile_synopsis: bool,
+    read_concurrency: usize,
+    exact_payload_boundaries: bool,
+) -> Result<RemoteGraphIndex, FileError> {
+    let adaptive_controller = reader.adaptive_controller();
+    let section_ranges = if exact_payload_boundaries {
+        locate_container_sections_ranged_exact::<R, NUM_PERMS>(reader.as_ref(), container)?
+    } else {
+        let mut ranges = [ByteRange { offset: 0, len: 0 }; NUM_PERMS];
+        for (si, range) in ranges.iter_mut().enumerate() {
+            *range = locate_container_section_ranged(
+                reader.as_ref(),
+                container.offset,
+                container.len,
+                si,
+                NUM_PERMS as u64,
+            )?;
+        }
+        ranges
+    };
+    let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
+    #[allow(clippy::type_complexity)]
+    let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; NUM_PERMS] = Default::default();
+
+    for si in 0..NUM_PERMS {
+        let section = section_ranges[si];
+        let dir = if exact_payload_boundaries {
+            read_tile_directory_ranged_exact(reader.as_ref(), section)?
+        } else {
+            read_tile_directory_ranged(reader.as_ref(), section)?
+        };
+        let synopsis = if has_tile_synopsis {
+            read_tile_synopsis_ranged(reader.as_ref(), section, &dir, exact_payload_boundaries)
+        } else {
+            vec![None; dir.len()]
+        };
+        directories[si] = dir
+            .iter()
+            .zip(synopsis)
+            .map(|(entry, synopsis)| (entry.min_a, entry.max_a, synopsis))
+            .collect();
+        tile_ranges[si] = dir
+            .into_iter()
+            .map(|entry| {
+                Ok((
+                    entry.min_a,
+                    entry.max_a,
+                    ByteRange {
+                        offset: checked_end(section.offset, entry.start)?,
+                        len: entry.end - entry.start,
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>, FileError>>()?;
+    }
+
+    let loader_ranges = tile_ranges.clone();
+    let loader_reader = reader.clone();
+    let loader: crate::index::TileLoader = Box::new(move |si, ti| {
+        let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
+        let compressed = loader_reader.read_at(range.offset, range.len).ok()?;
+        if compressed.len() as u64 != range.len {
+            return None;
+        }
+        let bytes = decompress(codec, &compressed).ok()?;
+        crate::triples::TripleBlock::parse(&bytes).ok()?;
+        Some(bytes)
+    });
+    let bulk_ranges = tile_ranges.clone();
+    let bulk_reader = reader;
+    let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis, intent| {
+        let section = bulk_ranges.get(si)?;
+        let want: Option<Vec<ByteRange>> = tis
+            .iter()
+            .map(|&ti| section.get(ti).map(|&(_, _, range)| range))
+            .collect();
+        let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP, intent)?;
+        blobs
+            .iter()
+            .map(|blob| {
+                let bytes = decompress(codec, blob).ok()?;
+                crate::triples::TripleBlock::parse(&bytes).ok()?;
+                Some(bytes)
+            })
+            .collect()
+    });
+    let mut index = GraphIndex::from_remote_directories(directories, PermSet::ALL, loader)
+        .with_bulk_loader(bulk);
+    index.set_tile_lens(std::array::from_fn(|si| {
+        tile_ranges[si]
+            .iter()
+            .map(|&(_, _, range)| range.len.min(u32::MAX as u64) as u32)
+            .collect()
+    }));
+    index.set_read_concurrency(read_concurrency);
+    index.set_adaptive_controller(adaptive_controller);
+
+    Ok(RemoteGraphIndex {
+        index,
+        section_ranges,
+        tile_ranges,
+    })
+}
+
+#[cfg(test)]
+fn open_named_graphs_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
+    reader: std::sync::Arc<R>,
+    section: ByteRange,
+    codec: u8,
+    has_tile_synopsis: bool,
+    read_concurrency: usize,
+) -> Result<Vec<(String, GraphIndex)>, FileError> {
+    let section_end = checked_end(section.offset, section.len)?;
+    let (graph_count, count_len) =
+        read_uvarint_at_exact(reader.as_ref(), section.offset, section_end)?;
+    let graph_count = usize::try_from(graph_count)
+        .map_err(|_| FileError::Container("named-graph count too large"))?;
+    // The count is untrusted and the section may advertise a virtual u64-sized
+    // range. Grow only after each complete, bounded graph record is parsed.
+    let mut graphs = Vec::new();
+    let mut pos = checked_end(section.offset, count_len)?;
+
+    for _ in 0..graph_count {
+        let (iri_len, iri_len_used) = read_uvarint_at_exact(reader.as_ref(), pos, section_end)?;
+        pos = checked_end(pos, iri_len_used)?;
+        let iri_end = checked_end(pos, iri_len)?;
+        if iri_end > section_end {
+            return Err(FileError::Container("named-graph IRI overruns section"));
+        }
+        let iri_len_usize = usize::try_from(iri_len)
+            .map_err(|_| FileError::Container("named-graph IRI too large"))?;
+        let iri_bytes = reader.read_at_precise(pos, iri_len)?;
+        if iri_bytes.len() != iri_len_usize {
+            return Err(FileError::Container("truncated named-graph IRI"));
+        }
+        let iri = String::from_utf8_lossy(&iri_bytes).into_owned();
+        pos = iri_end;
+
+        let (container_len, container_len_used) =
+            read_uvarint_at_exact(reader.as_ref(), pos, section_end)?;
+        pos = checked_end(pos, container_len_used)?;
+        let container_end = checked_end(pos, container_len)?;
+        if container_end > section_end {
+            return Err(FileError::Container(
+                "named-graph index container overruns section",
+            ));
+        }
+        let remote = open_remote_graph_index(
+            reader.clone(),
+            ByteRange {
+                offset: pos,
+                len: container_len,
+            },
+            codec,
+            has_tile_synopsis,
+            read_concurrency,
+            true,
+        )?;
+        graphs.push((iri, remote.index));
+        pos = container_end;
+    }
+
+    Ok(graphs)
+}
+
+fn read_uvarint_at_exact<R: RangeReader + ?Sized>(
+    reader: &R,
+    absolute_offset: u64,
+    container_end: u64,
+) -> Result<(u64, u64), FileError> {
+    if absolute_offset >= container_end {
+        return Err(FileError::Container("truncated container varint"));
+    }
+    // Framing precedes opaque payload bytes with no encoded framing length.
+    // Read one byte at a time until the varint terminates: even a 10-byte
+    // speculative probe could otherwise cross a tiny tile directory and fetch
+    // compressed tile bytes during a supposedly metadata-only lazy open. This
+    // costs at most ten tiny reads per framing value; tile directories use the
+    // bounded batched reader above once their field count is known.
+    let mut bytes = Vec::with_capacity(10);
+    for used in 0..10u64 {
+        let offset = checked_end(absolute_offset, used)?;
+        if offset >= container_end {
+            return Err(FileError::Container("truncated container varint"));
+        }
+        let one = reader.read_at_precise(offset, 1)?;
+        if one.len() != 1 {
+            return Err(FileError::Container("truncated container varint"));
+        }
+        let byte = one
+            .first()
+            .copied()
+            .ok_or(FileError::Container("truncated container varint"))?;
+        bytes.push(byte);
+        if byte & 0x80 == 0 {
+            if used == 9 && byte > 1 {
+                return Err(FileError::Container("container varint overflows u64"));
+            }
+            let (value, _) =
+                read_uvarint(&bytes).ok_or(FileError::Container("malformed container varint"))?;
+            return Ok((value, used + 1));
+        }
+    }
+    Err(FileError::Container("container varint overflows u64"))
+}
+
 fn read_uvarint_at<R: RangeReader>(
     reader: &R,
     absolute_offset: u64,
@@ -1339,6 +2673,45 @@ fn read_uvarint_at<R: RangeReader>(
     read_uvarint(&bytes)
         .map(|(value, used)| (value, used as u64))
         .ok_or(FileError::Container("truncated container varint"))
+}
+
+#[cfg(test)]
+fn locate_container_sections_ranged_exact<R: RangeReader, const SECTION_COUNT: usize>(
+    reader: &R,
+    container: ByteRange,
+) -> Result<[ByteRange; SECTION_COUNT], FileError> {
+    locate_container_sections_ranged_exact_dynamic(reader, container, SECTION_COUNT)?
+        .try_into()
+        .map_err(|_| FileError::Container("unexpected container section count"))
+}
+
+fn locate_container_sections_ranged_exact_dynamic<R: RangeReader + ?Sized>(
+    reader: &R,
+    container: ByteRange,
+    expected_sections: usize,
+) -> Result<Vec<ByteRange>, FileError> {
+    let container_end = checked_end(container.offset, container.len)?;
+    let (section_count, used) = read_uvarint_at_exact(reader, container.offset, container_end)?;
+    if section_count != expected_sections as u64 {
+        return Err(FileError::Container("unexpected container section count"));
+    }
+
+    let mut ranges = Vec::with_capacity(expected_sections);
+    let mut pos = checked_end(container.offset, used)?;
+    for _ in 0..expected_sections {
+        let (payload_len, len_used) = read_uvarint_at_exact(reader, pos, container_end)?;
+        pos = checked_end(pos, len_used)?;
+        let payload_end = checked_end(pos, payload_len)?;
+        if payload_end > container_end {
+            return Err(FileError::Container("section overruns buffer"));
+        }
+        ranges.push(ByteRange {
+            offset: pos,
+            len: payload_len,
+        });
+        pos = payload_end;
+    }
+    Ok(ranges)
 }
 
 /// Locate one section's payload byte range inside a remote container, walking
@@ -1397,6 +2770,7 @@ fn open_index_container_lazy(
     has_synopsis: bool,
     read_concurrency: usize,
     perms: PermSet,
+    exact_payload_boundaries: bool,
 ) -> Result<
     (
         GraphIndex,
@@ -1409,21 +2783,40 @@ fn open_index_container_lazy(
     let mut tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS] = Default::default();
     #[allow(clippy::type_complexity)]
     let mut directories: [Vec<(u32, u32, Option<TileSynopsis>)>; NUM_PERMS] = Default::default();
+    let exact_ranges = if exact_payload_boundaries {
+        Some(locate_container_sections_ranged_exact_dynamic(
+            reader.as_ref(),
+            container,
+            perms.len(),
+        )?)
+    } else {
+        None
+    };
     for (pos, perm) in perms.iter().enumerate() {
         let si = perm.section_index();
-        let section = locate_container_section_ranged(
-            reader,
-            container.offset,
-            container.len,
-            pos,
-            perms.len() as u64,
-        )?;
+        let section = if let Some(ranges) = &exact_ranges {
+            *ranges
+                .get(pos)
+                .ok_or(FileError::Container("container section not found"))?
+        } else {
+            locate_container_section_ranged(
+                reader,
+                container.offset,
+                container.len,
+                pos,
+                perms.len() as u64,
+            )?
+        };
         index_section_ranges[si] = section;
-        let dir = read_tile_directory_ranged(reader, section)?;
+        let dir = if exact_payload_boundaries {
+            read_tile_directory_ranged_exact(reader, section)?
+        } else {
+            read_tile_directory_ranged(reader, section)?
+        };
         // Tile synopses (one extra small tail read per section) let a routed
         // scan prune a tile by a bound secondary component before faulting it.
         let syn = if has_synopsis {
-            read_tile_synopsis_ranged(reader, section, &dir)
+            read_tile_synopsis_ranged(reader, section, &dir, exact_payload_boundaries)
         } else {
             vec![None; dir.len()]
         };
@@ -1435,16 +2828,16 @@ fn open_index_container_lazy(
         tile_ranges[si] = dir
             .into_iter()
             .map(|e| {
-                (
+                Ok((
                     e.min_a,
                     e.max_a,
                     ByteRange {
-                        offset: section.offset + e.start,
+                        offset: checked_end(section.offset, e.start)?,
                         len: (e.end - e.start),
                     },
-                )
+                ))
             })
-            .collect();
+            .collect::<Result<Vec<_>, FileError>>()?;
     }
 
     // The loader fetches and decompresses one tile per call; the bulk
@@ -1457,18 +2850,30 @@ fn open_index_container_lazy(
     let loader: crate::index::TileLoader = Box::new(move |si, ti| {
         let (_, _, range) = loader_ranges.get(si)?.get(ti)?;
         let bytes = loader_reader.read_at(range.offset, range.len).ok()?;
-        decompress(codec, &bytes).ok()
+        if bytes.len() as u64 != range.len {
+            return None;
+        }
+        let decoded = decompress(codec, &bytes).ok()?;
+        crate::triples::TripleBlock::parse(&decoded).ok()?;
+        Some(decoded)
     });
     let bulk_ranges = tile_ranges.clone();
     let bulk_reader = reader.clone();
-    let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis| {
+    let bulk: crate::index::TileBulkLoader = Box::new(move |si, tis, intent| {
         let section = bulk_ranges.get(si)?;
         let want: Option<Vec<ByteRange>> = tis
             .iter()
             .map(|&ti| section.get(ti).map(|&(_, _, r)| r))
             .collect();
-        let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP)?;
-        blobs.iter().map(|b| decompress(codec, b).ok()).collect()
+        let blobs = read_coalesced(bulk_reader.as_ref(), &want?, TILE_COALESCE_GAP, intent)?;
+        blobs
+            .iter()
+            .map(|bytes| {
+                let decoded = decompress(codec, bytes).ok()?;
+                crate::triples::TripleBlock::parse(&decoded).ok()?;
+                Some(decoded)
+            })
+            .collect()
     });
     let mut index =
         GraphIndex::from_remote_directories(directories, perms, loader).with_bulk_loader(bulk);
@@ -1484,6 +2889,7 @@ fn open_index_container_lazy(
     // desktop/CLI reader overlapping 16 range reads probes far more cheaply
     // than a phone's serial sync-XHR path.
     index.set_read_concurrency(read_concurrency);
+    index.set_adaptive_controller(reader.adaptive_controller());
     Ok((index, index_section_ranges, tile_ranges))
 }
 
@@ -2375,6 +3781,8 @@ struct LazyNamedGraphs {
     dir: std::sync::OnceLock<(usize, Box<[std::sync::OnceLock<Box<[NamedEntry]>>]>)>,
     walk: std::sync::Mutex<NamedWalk>,
     failed: std::sync::atomic::AtomicBool,
+    #[cfg(feature = "unsafe-decode-bench")]
+    unchecked_decode: std::sync::atomic::AtomicBool,
 }
 
 impl LazyNamedGraphs {
@@ -2396,6 +3804,8 @@ impl LazyNamedGraphs {
             dir: std::sync::OnceLock::new(),
             walk: std::sync::Mutex::new(NamedWalk::default()),
             failed: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "unsafe-decode-bench")]
+            unchecked_decode: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -2621,7 +4031,7 @@ impl LazyNamedGraphs {
     /// default graph, so a selective query over a huge named graph fetches
     /// only the tile directories plus the tiles it touches.
     fn open_graph(&self, range: ByteRange) -> Option<GraphIndex> {
-        if range.len <= NAMED_GRAPH_RESIDENT_MAX {
+        let graph = if range.len <= NAMED_GRAPH_RESIDENT_MAX {
             let bytes = self.container_bytes(range)?;
             match decode_index_container(&bytes, self.codec, self.perms) {
                 Ok(g) => Some(g),
@@ -2638,6 +4048,7 @@ impl LazyNamedGraphs {
                 self.has_synopsis,
                 self.read_concurrency,
                 self.perms,
+                true,
             ) {
                 Ok((g, _, _)) => Some(g),
                 Err(_) => {
@@ -2645,7 +4056,17 @@ impl LazyNamedGraphs {
                     None
                 }
             }
+        }?;
+        #[cfg(feature = "unsafe-decode-bench")]
+        if self
+            .unchecked_decode
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // SAFETY: the caller of `assume_valid_blocks` established this
+            // invariant for every graph opened later by this lazy catalog.
+            unsafe { graph.assume_valid_blocks() };
         }
+        Some(graph)
     }
 
     /// Visit every already-opened graph index (never triggers a fetch).
@@ -2659,6 +4080,17 @@ impl LazyNamedGraphs {
                 }
             }
         }
+    }
+
+    #[cfg(feature = "unsafe-decode-bench")]
+    unsafe fn assume_valid_blocks(&self) {
+        self.unchecked_decode
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.for_each_opened(|graph| {
+            // SAFETY: the caller established the contract for every already
+            // opened graph, and `open_graph` applies it to future graphs.
+            unsafe { graph.assume_valid_blocks() };
+        });
     }
 }
 
@@ -2740,6 +4172,22 @@ impl NamedGraphsSlot {
             }
         }
     }
+
+    #[cfg(feature = "unsafe-decode-bench")]
+    unsafe fn assume_valid_blocks(&self) {
+        match self {
+            NamedGraphsSlot::Resident(graphs) => {
+                for (_, graph) in graphs {
+                    // SAFETY: forwarded from this method's caller.
+                    unsafe { graph.assume_valid_blocks() };
+                }
+            }
+            NamedGraphsSlot::Lazy(graphs) => {
+                // SAFETY: forwarded from this method's caller.
+                unsafe { graphs.assume_valid_blocks() };
+            }
+        }
+    }
 }
 
 /// A read-only, in-memory view over a `.rete` file image.
@@ -2781,12 +4229,11 @@ impl Rete {
         // or corrupt from an arbitrary URL). Slice through a checked helper so a
         // bad region yields an error instead of panicking on an OOB index.
         let region = |off: u64, len: u64| -> Result<&[u8], FileError> {
-            let start = off as usize;
-            let end = start
-                .checked_add(len as usize)
-                .filter(|&e| e <= bytes.len())
-                .ok_or(FileError::Container("section range out of bounds"))?;
-            Ok(&bytes[start..end])
+            let range = checked_resident_range(off, len, bytes.len())
+                .map_err(|_| FileError::Container("section range out of bounds"))?;
+            bytes
+                .get(range)
+                .ok_or(FileError::Container("section range out of bounds"))
         };
 
         let dict = decode_dictionary_container(
@@ -3092,6 +4539,25 @@ impl Rete {
     /// The default-graph permutation index.
     pub fn default_index(&self) -> &GraphIndex {
         &self.index
+    }
+
+    /// Permanently select unchecked triple-block decoding for every graph in
+    /// this file instance. This API is compiled only for controlled benchmarks.
+    ///
+    /// # Safety
+    ///
+    /// Every default and named-graph index block, including every block later
+    /// returned by a lazy range loader, must be a complete immutable image
+    /// produced by rete's encoder. Malformed or truncated input can cause an
+    /// out-of-bounds read. Normal applications must not enable this mode.
+    #[cfg(feature = "unsafe-decode-bench")]
+    pub unsafe fn assume_valid_index_blocks(&mut self) {
+        // SAFETY: this method's caller establishes the same invariant for the
+        // default index and for every named graph below.
+        unsafe { self.index.assume_valid_blocks() };
+        // SAFETY: covered by this method's all-index-block contract, including
+        // named graphs that the lazy catalog opens after this call.
+        unsafe { self.named_graphs.assume_valid_blocks() };
     }
 
     /// Resolve every triple of a graph (`None` = default graph) back to terms.
@@ -3702,11 +5168,14 @@ impl Rete {
     }
 
     /// Open via an **owned** [`RangeReader`] with lazy tile faulting (tiled
-    /// v0.2 files): fetches the header, dictionary, pyramid meta, named graphs,
-    /// and each permutation's tile **directory** â€” but no default-graph tile
-    /// payloads. Tiles fault in (one range request each) the first time a scan
-    /// touches them, so a selective SPARQL query fetches O(touched tiles)
-    /// bytes instead of the whole index.
+    /// v0.2 files): fetches the header plus dictionary/index directory metadata;
+    /// pyramid and text data stay deferred. When named graphs exist, every
+    /// opening metadata read uses exact physical boundaries (including the
+    /// shared dictionary and default graph), so even a widening block-cache
+    /// wrapper cannot fetch a named tile payload. Default-only files retain
+    /// their bounded cached directory prefixes. No tile image is decompressed
+    /// until a scan touches it, so a selective SPARQL query fetches O(touched
+    /// tiles) bytes instead of the whole index.
     ///
     /// **Failure contract:** scans are infallible by design, so a failed tile
     /// fetch yields an empty tile and sets a sticky flag â€” after evaluating,
@@ -3715,7 +5184,10 @@ impl Rete {
     pub fn open_ranged_lazy<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
-        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        // The header tells us whether named graphs exist, so it must be precise
+        // before that decision: a block-aligned cache read could otherwise
+        // swallow a tiny file's named tile payload during the opening probe.
+        let head = reader.read_at_precise(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
         let reader = std::sync::Arc::new(reader);
         // Captured before the loader closures take the Arc: the reader's
@@ -3725,9 +5197,10 @@ impl Rete {
         // Lazily-chunked dictionary: locate the four sections, fetch each
         // section's header + restart table + chunk directory (small), and
         // fault the chunk bodies in on first term lookup.
-        let dict = ranged_chunked_dictionary(&reader, &header, [true; 4])?;
+        let has_named_graphs = header.named_graphs_len > 0;
+        let dict = ranged_chunked_dictionary(&reader, &header, [true; 4], has_named_graphs)?;
 
-        // Locate the six index section payloads (container framing only) and
+        // Locate the carried index section payloads (container framing only) and
         // fetch just their tile directories — shared with the per-named-graph
         // lazy opener, which opens a large graph's container the same way.
         let reader_dyn: std::sync::Arc<dyn RangeReader + Send + Sync> = reader.clone();
@@ -3741,6 +5214,7 @@ impl Rete {
             header.has_tile_synopsis(),
             read_concurrency,
             header.perms,
+            has_named_graphs,
         )?;
 
         // The pyramid meta is large on real graphs (tens of MB) and SPARQL never
@@ -4110,7 +5584,14 @@ fn fetch_routed_matches<R: RangeReader>(
         // mega-group; one otherwise).
         Some(a) => {
             for e in dir.iter().filter(|e| e.min_a <= a && a <= e.max_a) {
-                let bytes = reader.read_at(routed.section.offset + e.start, e.end - e.start)?;
+                let offset = checked_end(routed.section.offset, e.start)?;
+                let len = e
+                    .end
+                    .checked_sub(e.start)
+                    .ok_or(FileError::Container("tile range overflows"))?;
+                materializable_len(len)
+                    .map_err(|_| FileError::Container("tile length too large"))?;
+                let bytes = reader.read_at(offset, len)?;
                 let tile = decompress(codec, &bytes)?;
                 out.extend(GraphIndex::match_serialized_block(
                     &tile,
@@ -4124,11 +5605,31 @@ fn fetch_routed_matches<R: RangeReader>(
         None => {
             if let (Some(first), Some(last)) = (dir.first(), dir.last()) {
                 let base = first.start;
-                let body = reader.read_at(routed.section.offset + base, last.end - base)?;
+                let body_offset = checked_end(routed.section.offset, base)?;
+                let body_len = last
+                    .end
+                    .checked_sub(base)
+                    .ok_or(FileError::Container("tile range overflows"))?;
+                materializable_len(body_len)
+                    .map_err(|_| FileError::Container("tile body too large"))?;
+                let body = reader.read_at(body_offset, body_len)?;
                 for e in &dir {
+                    let start = usize::try_from(
+                        e.start
+                            .checked_sub(base)
+                            .ok_or(FileError::Container("tile range overflows"))?,
+                    )
+                    .map_err(|_| FileError::Container("tile offset too large"))?;
+                    let end = usize::try_from(
+                        e.end
+                            .checked_sub(base)
+                            .ok_or(FileError::Container("tile range overflows"))?,
+                    )
+                    .map_err(|_| FileError::Container("tile offset too large"))?;
                     let tile = decompress(
                         codec,
-                        &body[(e.start - base) as usize..(e.end - base) as usize],
+                        body.get(start..end)
+                            .ok_or(FileError::Container("tile overruns body"))?,
                     )?;
                     out.extend(GraphIndex::match_serialized_block(
                         &tile,
@@ -4182,6 +5683,7 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
     reader: &std::sync::Arc<R>,
     header: &Header,
     want: [bool; 4],
+    precise_metadata: bool,
 ) -> Result<Dictionary, FileError> {
     let mut dict_sections: Vec<crate::dict::ChunkedSection> = Vec::with_capacity(4);
     for si in 0..4 {
@@ -4197,21 +5699,43 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
             ));
             continue;
         }
-        let section = locate_container_section_ranged(
-            reader.as_ref(),
-            header.dictionary_offset,
-            header.dictionary_len,
-            si,
-            4,
-        )?;
-        let (meta, entries) = read_dict_dir_ranged(reader.as_ref(), section)?;
+        let (section, meta, entries) = if precise_metadata {
+            let metadata_reader = PreciseMetadataReader {
+                inner: reader.as_ref(),
+            };
+            let section = locate_container_section_ranged(
+                &metadata_reader,
+                header.dictionary_offset,
+                header.dictionary_len,
+                si,
+                4,
+            )?;
+            let (meta, entries) = read_dict_dir_ranged(&metadata_reader, section)?;
+            (section, meta, entries)
+        } else {
+            let section = locate_container_section_ranged(
+                reader.as_ref(),
+                header.dictionary_offset,
+                header.dictionary_len,
+                si,
+                4,
+            )?;
+            let (meta, entries) = read_dict_dir_ranged(reader.as_ref(), section)?;
+            (section, meta, entries)
+        };
         let ranges: Vec<ByteRange> = entries
             .iter()
-            .map(|e| ByteRange {
-                offset: section.offset + e.start,
-                len: (e.end - e.start),
+            .map(|e| {
+                let offset = checked_end(section.offset, e.start)?;
+                let len = e
+                    .end
+                    .checked_sub(e.start)
+                    .ok_or(FileError::Container("dict chunk range overflows"))?;
+                materializable_len(len)
+                    .map_err(|_| FileError::Container("dict chunk length too large"))?;
+                Ok(ByteRange { offset, len })
             })
-            .collect();
+            .collect::<Result<_, FileError>>()?;
         let chunks: Vec<crate::dict::SectionChunk> = entries
             .into_iter()
             .map(|e| crate::dict::SectionChunk::remote(e.first_run, e.key, e.body_start))
@@ -4222,15 +5746,18 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
         let loader: crate::dict::ChunkLoader = Box::new(move |ci| {
             let range = loader_ranges.get(ci)?;
             let bytes = chunk_reader.read_at(range.offset, range.len).ok()?;
+            if bytes.len() as u64 != range.len {
+                return None;
+            }
             decompress(codec, &bytes).ok()
         });
         // Full-section sweeps (export/dump) batch their chunk fetches:
         // adjacent chunk ranges coalesce into a handful of range reads.
         let bulk_reader = reader.clone();
-        let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis| {
+        let bulk: crate::dict::ChunkBulkLoader = Box::new(move |cis, intent| {
             let want: Option<Vec<ByteRange>> =
                 cis.iter().map(|&ci| ranges.get(ci).copied()).collect();
-            let blobs = read_coalesced(bulk_reader.as_ref(), &want?, DICT_COALESCE_GAP)?;
+            let blobs = read_coalesced(bulk_reader.as_ref(), &want?, DICT_COALESCE_GAP, intent)?;
             blobs.iter().map(|b| decompress(codec, b).ok()).collect()
         });
         dict_sections.push(
@@ -4392,7 +5919,7 @@ impl SearchView {
         // Sections 0 (shared) and 1 (subject-only) are the only ones a search
         // resolves — both modes return subject IRIs. Skipping 2 and 3 is what
         // makes this open cheap where a full one is not.
-        let dict = ranged_chunked_dictionary(&reader, &header, [true, true, false, false])?;
+        let dict = ranged_chunked_dictionary(&reader, &header, [true, true, false, false], false)?;
         let pyramid = ranged_pyramid_slot(&reader, &header);
         let text_index = ranged_text_index_slot(&reader, &header);
         Ok(Self {
@@ -4794,7 +6321,7 @@ pub(crate) fn dict_chunk_keys_for_test(image: &[u8]) -> Vec<Vec<Vec<u8>>> {
     let header = Header::from_bytes(&image[..HEADER_LEN]).unwrap();
     let s = header.dictionary_offset as usize;
     let e = s + header.dictionary_len as usize;
-    decode_container(&image[s..e], CODEC_NONE)
+    decode_container(&image[s..e], CODEC_NONE, 4)
         .unwrap()
         .iter()
         .map(|payload| {
@@ -4807,8 +6334,400 @@ pub(crate) fn dict_chunk_keys_for_test(image: &[u8]) -> Vec<Vec<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adaptive::{AdaptiveReadController, ReadIntent, ReadObservation};
     use crate::dictionary::DictionaryBuilder;
     use crate::index::GraphIndexBuilder;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    struct SparseReader {
+        len: u64,
+        bytes: BTreeMap<u64, u8>,
+    }
+
+    struct SynopsisProbeReader {
+        normal_reads: std::sync::Mutex<Vec<(u64, u64)>>,
+        precise_reads: std::sync::Mutex<Vec<(u64, u64)>>,
+    }
+
+    struct AdaptiveRecordingReader {
+        bytes: Vec<u8>,
+        controller: Option<Arc<AdaptiveReadController>>,
+        reads: Mutex<Vec<(u64, u64)>>,
+    }
+
+    struct NoMaterializeReader {
+        calls: std::sync::atomic::AtomicU64,
+    }
+
+    impl RangeReader for NoMaterializeReader {
+        fn len(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn read_at(&self, _offset: u64, _len: u64) -> std::io::Result<Vec<u8>> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(std::io::Error::other("must not materialize hostile range"))
+        }
+
+        fn read_many_with_intent(
+            &self,
+            _ranges: &[(u64, u64)],
+            _intent: ReadIntent,
+        ) -> std::io::Result<Vec<Vec<u8>>> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(std::io::Error::other("must not materialize hostile ranges"))
+        }
+    }
+
+    impl AdaptiveRecordingReader {
+        fn new(len: usize, controller: Option<Arc<AdaptiveReadController>>) -> Self {
+            Self {
+                bytes: vec![0x5e; len],
+                controller,
+                reads: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn reads(&self) -> Vec<(u64, u64)> {
+            self.reads.lock().unwrap().clone()
+        }
+    }
+
+    impl RangeReader for AdaptiveRecordingReader {
+        fn len(&self) -> u64 {
+            self.bytes.len() as u64
+        }
+
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            self.reads.lock().unwrap().push((offset, len));
+            Ok(self.bytes[offset as usize..(offset + len) as usize].to_vec())
+        }
+
+        fn read_many(&self, ranges: &[(u64, u64)]) -> std::io::Result<Vec<Vec<u8>>> {
+            ranges
+                .iter()
+                .map(|&(offset, len)| self.read_at(offset, len))
+                .collect()
+        }
+
+        fn concurrency(&self) -> usize {
+            8
+        }
+
+        fn adaptive_controller(&self) -> Option<Arc<AdaptiveReadController>> {
+            self.controller.clone()
+        }
+    }
+
+    fn train_network(controller: &AdaptiveReadController, bytes: u64, elapsed_micros: u64) {
+        for _ in 0..2 {
+            controller.observe(ReadObservation {
+                requested_bytes: bytes,
+                returned_bytes: bytes,
+                physical_ranges: 1,
+                elapsed_micros: Some(elapsed_micros),
+                success: true,
+            });
+        }
+    }
+
+    impl SynopsisProbeReader {
+        fn new() -> Self {
+            Self {
+                normal_reads: std::sync::Mutex::new(Vec::new()),
+                precise_reads: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn response(len: u64) -> std::io::Result<Vec<u8>> {
+            if len > 40 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "oversized synopsis request",
+                ));
+            }
+            Ok(vec![0; len as usize])
+        }
+    }
+
+    impl SparseReader {
+        fn with_uvarint(value: u64, len: u64) -> Self {
+            let mut encoded = Vec::new();
+            write_uvarint(&mut encoded, value);
+            Self {
+                len,
+                bytes: encoded
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, byte)| (offset as u64, byte))
+                    .collect(),
+            }
+        }
+    }
+
+    impl RangeReader for SparseReader {
+        fn len(&self) -> u64 {
+            self.len
+        }
+
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            let end = offset
+                .checked_add(len)
+                .filter(|&end| end <= self.len)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "sparse range out of bounds",
+                    )
+                })?;
+            (offset..end)
+                .map(|at| {
+                    self.bytes.get(&at).copied().ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "unmapped sparse byte",
+                        )
+                    })
+                })
+                .collect()
+        }
+    }
+
+    impl RangeReader for SynopsisProbeReader {
+        fn len(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            self.normal_reads.lock().unwrap().push((offset, len));
+            Self::response(len)
+        }
+
+        fn read_at_precise(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            self.precise_reads.lock().unwrap().push((offset, len));
+            Self::response(len)
+        }
+    }
+
+    #[test]
+    fn synopsis_reads_are_capped_by_format_for_normal_and_precise_paths() {
+        let section = ByteRange {
+            offset: 0,
+            len: u64::MAX,
+        };
+        // A zero-length tile is syntactically representable. Its directory end
+        // puts the synopsis at byte 4 while the hostile virtual section claims
+        // that virtually the entire u64 address space remains.
+        let directory = [TileDirEntry {
+            min_a: 0,
+            max_a: 0,
+            start: 4,
+            end: 4,
+        }];
+
+        for precise in [false, true] {
+            let reader = SynopsisProbeReader::new();
+            assert_eq!(
+                read_tile_synopsis_ranged(&reader, section, &directory, precise),
+                vec![Some((0, 0, 0, 0))]
+            );
+            let normal = reader.normal_reads.lock().unwrap().clone();
+            let exact = reader.precise_reads.lock().unwrap().clone();
+            if precise {
+                assert!(normal.is_empty());
+                assert_eq!(exact, vec![(4, 40)]);
+            } else {
+                assert_eq!(normal, vec![(4, 40)]);
+                assert!(exact.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn huge_untrusted_named_graph_count_is_a_clean_error() {
+        let len = usize::MAX as u64;
+        let reader = SparseReader::with_uvarint(usize::MAX as u64, len);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            open_named_graphs_ranged_lazy(
+                std::sync::Arc::new(reader),
+                ByteRange { offset: 0, len },
+                CODEC_NONE,
+                false,
+                1,
+            )
+        }));
+
+        assert!(result.is_ok(), "untrusted graph count must not panic");
+        assert!(result.unwrap().is_err(), "huge graph count must fail open");
+    }
+
+    #[test]
+    fn huge_untrusted_tile_count_is_a_clean_error() {
+        let len = usize::MAX as u64;
+        let reader = SparseReader::with_uvarint(usize::MAX as u64, len);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_tile_directory_ranged_exact(&reader, ByteRange { offset: 0, len })
+        }));
+
+        assert!(result.is_ok(), "untrusted tile count must not panic");
+        assert!(result.unwrap().is_err(), "huge tile count must fail open");
+    }
+
+    #[test]
+    fn chunked_dictionary_directory_rejects_untrusted_u64_ids_and_counts() {
+        let mut overlong_header = Vec::new();
+        write_uvarint(&mut overlong_header, 3);
+        write_uvarint(&mut overlong_header, u32::MAX as u64 + 1);
+        write_uvarint(&mut overlong_header, 1);
+        write_uvarint(&mut overlong_header, 0);
+        assert!(parse_chunked_dict_dir(&overlong_header, overlong_header.len() as u64).is_err());
+
+        let reader = crate::reader::SliceReader::new(&overlong_header);
+        assert!(read_dict_dir_ranged(
+            &reader,
+            ByteRange {
+                offset: 0,
+                len: overlong_header.len() as u64,
+            },
+        )
+        .is_err());
+
+        let mut overlong_count = Vec::new();
+        write_uvarint(&mut overlong_count, u64::MAX);
+        assert!(parse_chunk_dir_only(&overlong_count, overlong_count.len() as u64, 1).is_err());
+
+        let mut overlong_run = Vec::new();
+        write_uvarint(&mut overlong_run, 1);
+        write_uvarint(&mut overlong_run, 0);
+        write_uvarint(&mut overlong_run, u64::MAX);
+        write_uvarint(&mut overlong_run, 0);
+        assert!(parse_chunk_dir_only(&overlong_run, overlong_run.len() as u64, 1).is_err());
+
+        // The physical dictionary namespace is u32 even on a 64-bit host:
+        // accepting this run would later alias an ID during lookup.
+        let mut first_run_over_u32 = Vec::new();
+        write_uvarint(&mut first_run_over_u32, 2);
+        for delta in [0, u32::MAX as u64 + 1] {
+            write_uvarint(&mut first_run_over_u32, delta);
+            write_uvarint(&mut first_run_over_u32, 0);
+            write_uvarint(&mut first_run_over_u32, 0);
+        }
+        assert!(parse_chunk_dir_only(
+            &first_run_over_u32,
+            first_run_over_u32.len() as u64,
+            u64::MAX,
+        )
+        .is_err());
+
+        let mut overflowing_sum = Vec::new();
+        write_uvarint(&mut overflowing_sum, 2);
+        for delta in [u64::MAX, 1] {
+            write_uvarint(&mut overflowing_sum, delta);
+            write_uvarint(&mut overflowing_sum, 0);
+            write_uvarint(&mut overflowing_sum, 0);
+        }
+        assert!(
+            parse_chunk_dir_only(&overflowing_sum, overflowing_sum.len() as u64, u64::MAX,)
+                .is_err()
+        );
+    }
+
+    #[cfg(feature = "compression")]
+    #[test]
+    fn compressed_multi_run_dictionary_keeps_raw_restart_coordinates_valid() {
+        let mut builder = crate::dict::DictSectionBuilder::new().with_restart_interval(1);
+        for i in 0..2048u32 {
+            builder.push(format!(
+                "<http://example.org/repetitive/{i:06}/{}>",
+                "x".repeat(48)
+            ));
+        }
+        let raw = builder.build();
+        let encoded = encode_chunked_dict_section(&raw, CODEC_ZSTD);
+        assert!(encoded.len() < raw.len(), "fixture must be compressed");
+        let (meta, entries) = parse_chunked_dict_dir(&encoded, encoded.len() as u64).unwrap();
+        assert_eq!(meta.term_count, 2048);
+        assert!(!entries.is_empty());
+        let decoded = decode_chunked_dict_section(&encoded, CODEC_ZSTD).unwrap();
+        assert_eq!(decoded.term_count(), 2048);
+    }
+
+    #[test]
+    fn ranged_dictionary_rejects_wrong_restart_count_like_eager_decode() {
+        let mut builder = crate::dict::DictSectionBuilder::new().with_restart_interval(1);
+        for i in 0..300u32 {
+            builder.push(format!("<http://example.org/{i:03}>"));
+        }
+        let raw = builder.build();
+        let mut encoded = encode_chunked_dict_section(&raw, CODEC_NONE);
+        let (header_len, header_start) = read_uvarint(&encoded).unwrap();
+        assert!(header_len >= 300);
+        assert!(parse_chunked_dict_dir(&encoded, encoded.len() as u64).is_ok());
+        let reader = crate::reader::SliceReader::new(&encoded);
+        assert!(read_dict_dir_ranged(
+            &reader,
+            ByteRange {
+                offset: 0,
+                len: encoded.len() as u64
+            },
+        )
+        .is_ok());
+        let (_, term_used) = read_uvarint(&encoded[header_start..]).unwrap();
+        let (_, interval_used) = read_uvarint(&encoded[header_start + term_used..]).unwrap();
+        let restart_count_pos = header_start + term_used + interval_used;
+        // 300 and 301 have the same two-byte LEB128 width, preserving framing.
+        encoded[restart_count_pos] = 0xad;
+        assert!(parse_chunked_dict_dir(&encoded, encoded.len() as u64).is_err());
+        let reader = crate::reader::SliceReader::new(&encoded);
+        assert!(read_dict_dir_ranged(
+            &reader,
+            ByteRange {
+                offset: 0,
+                len: encoded.len() as u64
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ranged_dictionary_rejects_restart_table_shorter_than_declared_count() {
+        // `[header_len=3][term_count=3][interval=1][restart_count=3]` names
+        // three restart offsets but has no room for even one. The following
+        // bytes form a superficially valid one-chunk directory.
+        let malformed = [3, 3, 1, 3, 1, 0, 0, 0];
+        assert!(parse_chunked_dict_dir(&malformed, malformed.len() as u64).is_err());
+        let reader = crate::reader::SliceReader::new(&malformed);
+        assert!(read_dict_dir_ranged(
+            &reader,
+            ByteRange {
+                offset: 0,
+                len: malformed.len() as u64
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn allocation_sized_untrusted_tile_count_is_a_clean_error() {
+        let count = (isize::MAX as usize / std::mem::size_of::<TileDirEntry>()) + 1;
+        assert!(count.checked_mul(3).is_some());
+        let reader = SparseReader::with_uvarint(count as u64, u64::MAX);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_tile_directory_ranged_exact(
+                &reader,
+                ByteRange {
+                    offset: 0,
+                    len: u64::MAX,
+                },
+            )
+        }));
+
+        assert!(result.is_ok(), "untrusted tile count must not panic");
+        assert!(result.unwrap().is_err(), "huge tile count must fail open");
+    }
 
     /// A three-permutation file must survive every opener — resident, ranged,
     /// ranged-lazy — and answer every pattern shape with the rows the
@@ -4936,17 +6855,85 @@ mod tests {
         ];
         // Tight gap (16): nothing merges → one read per range.
         let r = CountingReader::new(SliceReader::new(&bytes));
-        let out = read_coalesced(&r, &ranges, 16).unwrap();
+        let out = read_coalesced(&r, &ranges, 16, ReadIntent::SelectiveProbe).unwrap();
         assert_eq!(out.len(), 3);
         assert_eq!(r.requests(), 3);
         // Gap 64 merges A+B (gap 32) but not C (gap 1024) → two reads.
         let r = CountingReader::new(SliceReader::new(&bytes));
-        read_coalesced(&r, &ranges, 64).unwrap();
+        read_coalesced(&r, &ranges, 64, ReadIntent::SelectiveProbe).unwrap();
         assert_eq!(r.requests(), 2);
         // Gap 4096 merges all three into one read, over-fetching the gaps.
         let r = CountingReader::new(SliceReader::new(&bytes));
-        read_coalesced(&r, &ranges, 4096).unwrap();
+        read_coalesced(&r, &ranges, 4096, ReadIntent::SelectiveProbe).unwrap();
         assert_eq!(r.requests(), 1);
+    }
+
+    #[test]
+    fn adaptive_coalescing_uses_the_observed_network_break_even() {
+        let ranges = [
+            ByteRange {
+                offset: 0,
+                len: 64 * 1024,
+            },
+            ByteRange {
+                offset: 96 * 1024,
+                len: 64 * 1024,
+            },
+            ByteRange {
+                offset: 672 * 1024,
+                len: 64 * 1024,
+            },
+        ];
+
+        let fast_high_rtt = Arc::new(AdaptiveReadController::new());
+        train_network(&fast_high_rtt, 1024 * 1024, 120_000);
+        let high = AdaptiveRecordingReader::new(1024 * 1024, Some(fast_high_rtt));
+        let out = read_coalesced(&high, &ranges, 4096, ReadIntent::SelectiveProbe).unwrap();
+        assert_eq!(out, vec![vec![0x5e; 64 * 1024]; 3]);
+        assert_eq!(high.reads(), vec![(0, 160 * 1024), (672 * 1024, 64 * 1024)]);
+
+        let slow_low_rtt = Arc::new(AdaptiveReadController::new());
+        train_network(&slow_low_rtt, 4 * 1024, 20_000);
+        let low = AdaptiveRecordingReader::new(1024 * 1024, Some(slow_low_rtt));
+        read_coalesced(&low, &ranges, 4096, ReadIntent::SelectiveProbe).unwrap();
+        assert_eq!(
+            low.reads(),
+            vec![
+                (0, 64 * 1024),
+                (96 * 1024, 64 * 1024),
+                (672 * 1024, 64 * 1024),
+            ]
+        );
+    }
+
+    #[test]
+    fn adaptive_coalescing_honors_gap_and_span_caps() {
+        let controller = Arc::new(AdaptiveReadController::new());
+        train_network(&controller, 1024 * 1024, 120_000);
+        let reader = AdaptiveRecordingReader::new(4 * 1024 * 1024, Some(controller));
+        let ranges = [
+            ByteRange {
+                offset: 0,
+                len: 1024 * 1024,
+            },
+            ByteRange {
+                offset: 1024 * 1024,
+                len: 1024 * 1024,
+            },
+            ByteRange {
+                offset: 2 * 1024 * 1024,
+                len: 1024 * 1024,
+            },
+        ];
+
+        read_coalesced(&reader, &ranges, 64 * 1024, ReadIntent::FullScan).unwrap();
+
+        let reads = reader.reads();
+        assert_eq!(
+            reads,
+            vec![(0, 2 * 1024 * 1024), (2 * 1024 * 1024, 1024 * 1024)]
+        );
+        assert!(reads.iter().all(|&(_, len)| len <= 2 * 1024 * 1024));
     }
 
     fn build_image() -> Vec<u8> {
@@ -4969,6 +6956,386 @@ mod tests {
 
         let (meta, levels) = build_pyramid_meta(&dict, &triples_ids(&dict), DEFAULT_TILE_BUDGET);
         write_file(&dict, &index, false, &meta, levels)
+    }
+
+    fn tiny_family_index() -> GraphIndex {
+        let mut builder = GraphIndexBuilder::new();
+        builder.push((1, 1, 1));
+        builder.build()
+    }
+
+    #[test]
+    fn family_container_matches_literal_bytes() {
+        assert_eq!(NEXT_FORMAT_VERSION, 0x06);
+        let index = tiny_family_index();
+        assert_eq!(
+            encode_family_container(
+                index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+                CODEC_NONE,
+            )
+            .unwrap(),
+            vec![
+                1, 1, 0, // pair count; shared leading range delta/span
+                0, 13, 7, // first order: flags, compressed length, prefix-2 length
+                0, 13, 7, // second order: flags, compressed length, prefix-2 length
+                1, 1, 10, 1, 1, 12, 1, // first complete prefix-2 directory
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // first TripleBlock
+                1, 1, 10, 1, 1, 12, 1, // second complete prefix-2 directory
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // second TripleBlock
+                1, 0, 1, 0, // first synopsis trailer
+                1, 0, 1, 0, // second synopsis trailer
+            ]
+        );
+    }
+
+    #[test]
+    fn eager_container_rejects_unmaterializable_lengths_without_panicking() {
+        let mut hostile = vec![1];
+        write_uvarint(&mut hostile, u64::MAX);
+        let result = std::panic::catch_unwind(|| decode_container(&hostile, CODEC_NONE, 1));
+        assert!(
+            result.is_ok(),
+            "hostile eager container length must not panic"
+        );
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn eager_container_rejects_unmaterializable_counts_without_panicking() {
+        let mut hostile = Vec::new();
+        write_uvarint(&mut hostile, u64::MAX);
+        let result = std::panic::catch_unwind(|| decode_container(&hostile, CODEC_NONE, 1));
+        assert!(
+            result.is_ok(),
+            "hostile eager container count must not panic"
+        );
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn fixed_container_count_rejects_hostile_empty_sections_before_decode() {
+        let declared = 1024usize;
+        let mut hostile = Vec::new();
+        write_uvarint(&mut hostile, declared as u64);
+        hostile.extend(std::iter::repeat_n(0, declared));
+
+        let error = decode_container(&hostile, CODEC_NONE, 4).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unexpected container section count"));
+    }
+
+    #[test]
+    fn eager_open_rejects_unrepresentable_resident_section_offsets() {
+        let mut bytes = build_image();
+        let mut header = Header::from_bytes(&bytes).unwrap();
+        header.dictionary_offset = u64::from(u32::MAX) + 1;
+        header.dictionary_len = 1;
+        bytes[..HEADER_LEN].copy_from_slice(&header.to_bytes());
+
+        let result = std::panic::catch_unwind(|| Rete::open(&bytes));
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn coalesced_reads_reject_unmaterializable_range_before_physical_io() {
+        let reader = NoMaterializeReader {
+            calls: std::sync::atomic::AtomicU64::new(0),
+        };
+        assert!(read_coalesced(
+            &reader,
+            &[ByteRange {
+                offset: 0,
+                len: u64::MAX,
+            }],
+            0,
+            ReadIntent::SelectiveProbe,
+        )
+        .is_none());
+        assert_eq!(reader.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn coalescing_rejects_an_unmaterializable_merged_span_before_io() {
+        let reader = NoMaterializeReader {
+            calls: std::sync::atomic::AtomicU64::new(0),
+        };
+        let ranges = [
+            ByteRange { offset: 0, len: 1 },
+            ByteRange {
+                offset: isize::MAX as u64,
+                len: 1,
+            },
+        ];
+        assert!(read_coalesced(&reader, &ranges, u64::MAX, ReadIntent::SelectiveProbe,).is_none());
+        assert_eq!(reader.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn dictionary_directory_rejects_unmaterializable_chunk_before_loading() {
+        let mut directory = Vec::new();
+        write_uvarint(&mut directory, 1); // one chunk for one restart run
+        write_uvarint(&mut directory, 0); // first run delta
+        write_uvarint(&mut directory, 1); // first-term length
+        directory.push(b'x');
+        write_uvarint(&mut directory, isize::MAX as u64 + 1);
+
+        assert!(parse_chunk_dir_only(&directory, u64::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn eager_dictionary_directory_rejects_unmaterializable_chunk_before_loading() {
+        let mut header = Vec::new();
+        write_uvarint(&mut header, 1); // one term
+        write_uvarint(&mut header, 1); // restart interval
+        write_uvarint(&mut header, 1); // one restart offset
+        write_uvarint(&mut header, 0); // raw body begins immediately after header
+
+        let mut payload = Vec::new();
+        write_uvarint(&mut payload, header.len() as u64);
+        payload.extend_from_slice(&header);
+        write_uvarint(&mut payload, 1); // one chunk
+        write_uvarint(&mut payload, 0); // first run delta
+        write_uvarint(&mut payload, 1); // first term length
+        payload.push(b'x');
+        write_uvarint(&mut payload, isize::MAX as u64 + 1);
+
+        assert!(parse_chunked_dict_dir(&payload, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn empty_family_root_is_three_zero_count_families() {
+        let index = GraphIndexBuilder::new().build();
+        assert_eq!(
+            encode_family_index_container(&index, CODEC_NONE).unwrap(),
+            vec![3, 1, 0, 1, 0, 1, 0]
+        );
+    }
+
+    #[test]
+    fn family_container_round_trips_prefix2_and_both_orders() {
+        let index = tiny_family_index();
+        let bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+        let decoded = decode_family_container(&bytes, CODEC_NONE).unwrap();
+        assert_eq!(decoded.first.len(), 1);
+        assert_eq!(decoded.second.len(), 1);
+        assert_eq!(decoded.first[0].bytes(), &[1; 13]);
+        assert_eq!(decoded.second[0].bytes(), &[1; 13]);
+        assert_eq!(
+            decoded.directory.first_prefix2[0].groups[0].a_body_offset,
+            10
+        );
+        assert_eq!(
+            decoded.directory.second_prefix2[0].groups[0].b_entries[0],
+            (1, 12, 1)
+        );
+    }
+
+    #[test]
+    fn family_encoder_rejects_raw_tile_over_fixed_decoder_limit() {
+        let mut builder = GraphIndexBuilder::new().with_tile_budget(256 * 1024);
+        for id in 1..20_000u32 {
+            builder.push((id, id, id));
+        }
+        let index = builder.build();
+        assert!(matches!(
+            encode_family_container(
+                index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+                CODEC_NONE,
+            ),
+            Err(FileError::Container(
+                "family tile exceeds fixed decompressed limit"
+            ))
+        ));
+    }
+
+    #[test]
+    fn family_literal_directory_and_trailer_cannot_create_false_pruning() {
+        let index = tiny_family_index();
+        let literal = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+
+        // Literal byte 1 is the shared leading-range delta.  If accepted, the
+        // route claims a=2 while the parsed blocks actually contain a=1.
+        let mut wrong_route = literal.clone();
+        wrong_route[1] = 2;
+        assert!(decode_family_container(&wrong_route, CODEC_NONE).is_err());
+
+        // Literal byte 49 is the first trailer's min-b.  If accepted, this
+        // forged synopsis would let `syn_admits(Some(1), _)` prune its own row.
+        let mut wrong_synopsis = literal;
+        wrong_synopsis[49] = 2;
+        assert!(decode_family_container(&wrong_synopsis, CODEC_NONE).is_err());
+    }
+
+    #[test]
+    fn family_varints_are_canonical_and_bounded() {
+        for malformed in [
+            vec![0x80, 0x00],
+            vec![0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02],
+        ] {
+            assert!(decode_family_container(&malformed, CODEC_NONE).is_err());
+        }
+    }
+
+    #[test]
+    fn family_rejects_prefix2_length_over_fixed_budget_before_record_decode() {
+        let mut malformed = vec![1, 1, 0, 0, 0];
+        write_uvarint(&mut malformed, PREFIX2_FORMAT_BUDGET as u64 + 1);
+        malformed.extend_from_slice(&[0; 11]);
+        assert!(matches!(
+            decode_family_container(&malformed, CODEC_NONE),
+            Err(FileError::Container("prefix-2 blob exceeds fixed budget"))
+        ));
+    }
+
+    #[cfg(feature = "compression")]
+    #[test]
+    fn family_zstd_requires_one_bounded_exact_frame() {
+        use std::io::Write;
+
+        let mut high_window_encoder = zstd::stream::Encoder::new(Vec::new(), 0).unwrap();
+        high_window_encoder.include_contentsize(false).unwrap();
+        high_window_encoder.window_log(20).unwrap();
+        high_window_encoder.write_all(&[1; 13]).unwrap();
+        let high_window = high_window_encoder.finish().unwrap();
+        assert!(matches!(
+            decompress_family_tile_exact(CODEC_ZSTD, &high_window),
+            Err(FileError::Container(
+                "family zstd window exceeds fixed limit"
+            ))
+        ));
+
+        let compressed = compress(CODEC_ZSTD, &[1; 13]);
+        let mut garbage = compressed.clone();
+        garbage.extend_from_slice(b"garbage");
+        assert!(decompress_family_tile_exact(CODEC_ZSTD, &garbage).is_err());
+
+        let mut second_frame = compressed;
+        second_frame.extend_from_slice(&compress(CODEC_ZSTD, &[2; 13]));
+        assert!(decompress_family_tile_exact(CODEC_ZSTD, &second_frame).is_err());
+
+        let huge = compress(CODEC_ZSTD, &vec![0; FAMILY_TILE_DECOMPRESSED_MAX + 1]);
+        assert!(decompress_family_tile_exact(CODEC_ZSTD, &huge).is_err());
+
+        let boundary = vec![0x5a; FAMILY_TILE_DECOMPRESSED_MAX];
+        let boundary_frame = family_compress(CODEC_ZSTD, &boundary).unwrap();
+        assert_eq!(
+            decompress_family_tile_exact(CODEC_ZSTD, &boundary_frame).unwrap(),
+            boundary
+        );
+    }
+
+    #[test]
+    fn family_container_rejects_malformed_directory_before_payload_allocation() {
+        let malformed = [
+            &[0x80][..],                                  // truncated count
+            &[1, 1, 0, 4, 0, 0, 0, 0, 0][..],             // reserved first-order flag
+            &[1, 1, 0, 0x80, 0x80, 0x80, 0x80, 0x10][..], // compressed length overflows u32
+            &[0xff, 0xff, 0xff, 0xff, 0x0f][..],          // huge count with no directory bytes
+        ];
+        for bytes in malformed {
+            let result = std::panic::catch_unwind(|| decode_family_container(bytes, CODEC_NONE));
+            assert!(result.is_ok(), "malformed family bytes must not panic");
+            assert!(result.unwrap().is_err(), "malformed family bytes must fail");
+        }
+    }
+
+    #[test]
+    fn family_container_rejects_bad_continuations_payloads_prefix2_and_trailers() {
+        let index = tiny_family_index();
+        let mut bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+
+        bytes[3] = 4; // reserved flag
+        assert!(decode_family_container(&bytes, CODEC_NONE).is_err());
+
+        let mut bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+        bytes[5] = 6; // prefix-2 blob now ends before its final c-count
+        assert!(decode_family_container(&bytes, CODEC_NONE).is_err());
+
+        let mut bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+        let first_payload = 9 + 7;
+        bytes[first_payload] = 0; // corrupt the leading zone map, conflicting with the directory range
+        assert!(decode_family_container(&bytes, CODEC_NONE).is_err());
+
+        let mut bytes = encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE,
+        )
+        .unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] = 0x80; // truncated second synopsis trailer
+        assert!(decode_family_container(&bytes, CODEC_NONE).is_err());
+
+        let mut continuation = Vec::new();
+        write_uvarint(&mut continuation, 2);
+        write_uvarint(&mut continuation, 1);
+        write_uvarint(&mut continuation, 0);
+        write_uvarint(&mut continuation, 0);
+        write_uvarint(&mut continuation, 0);
+        for flags in [2u8, 1] {
+            write_uvarint(&mut continuation, flags as u64);
+            write_uvarint(&mut continuation, 13);
+            write_uvarint(&mut continuation, 0);
+        }
+        for flags in [2u8, 1] {
+            write_uvarint(&mut continuation, flags as u64);
+            write_uvarint(&mut continuation, 13);
+            write_uvarint(&mut continuation, 0);
+        }
+        for _ in 0..4 {
+            continuation.extend_from_slice(&[1; 13]);
+        }
+        for _ in 0..4 {
+            continuation.extend_from_slice(&[1, 0, 1, 0]);
+        }
+        assert!(decode_family_container(&continuation, CODEC_NONE).is_ok());
+        continuation[11] = 0; // second-order first flag no longer matches its sibling.
+        assert!(decode_family_container(&continuation, CODEC_NONE).is_err());
+    }
+
+    #[test]
+    fn family_container_codec_rules_cover_none_and_zstd_without_encoder_feature() {
+        let index = tiny_family_index();
+        assert!(encode_family_container(
+            index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+            CODEC_NONE
+        )
+        .is_ok());
+        if cfg!(feature = "compression") {
+            let encoded = encode_family_container(
+                index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+                CODEC_ZSTD,
+            )
+            .unwrap();
+            assert!(decode_family_container(&encoded, CODEC_ZSTD).is_ok());
+        } else {
+            assert!(encode_family_container(
+                index.family_view(crate::build_pipeline::family::IndexFamily::Subject),
+                CODEC_ZSTD
+            )
+            .is_err());
+        }
     }
 
     fn triples_ids(dict: &Dictionary) -> Vec<(u32, u32, u32)> {
@@ -6868,6 +9235,7 @@ mod tests {
             header.has_tile_synopsis(),
             1,
             header.perms,
+            false,
         )
         .unwrap();
         let mut want = rete

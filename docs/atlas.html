@@ -804,7 +804,7 @@ python3 scripts/geo_to_rete.py basemaps \
 rete build dev/geo/history.nt -o web/history.rete
 
 # 2. the browser engine, then the page
-wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules
+wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
 python3 scripts/build_atlas.py            # → docs/atlas-app.html
 </code></pre>
 

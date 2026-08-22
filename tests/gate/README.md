@@ -138,7 +138,7 @@ which number went stale and what it is now.
 | **G1 engine-in-node** | the **production async wasm + Asyncify driver** (`docs/rete_wasm_async.js`) answers a lazy query with 4 OPTIONALs + ORDER BY cast over a local range server — no browser, catches a broken/stale async build immediately | ~10 s |
 | **G2 browser matrix** | see below | ~4 min |
 | **G2 catalog** (optional) | every catalog query through the real playground: 73 embedded, or all 431 including live R2 | minutes to hours |
-| **G3 engine** (manual) | `cargo test -p rete-core --release` in Docker; then rebuild **both** wasm variants + `build_playground.py` (the async variant is NOT rebuilt automatically — see below) | ~min |
+| **G3 engine** (manual) | `cargo test -p rete-core --release` in Docker; then run the canonical WASM build, which rebuilds and boots both regular targets, rebuilds Asyncify, and regenerates the playground | ~min |
 
 ## G2 matrix — the combinations that break independently
 
@@ -183,8 +183,9 @@ live-R2 matrix.
    stale if you skip it — `build_playground.py`, `docs/engine/`, the gate
    fixtures and `docs/wasm-build.json`, in that order. It also does two things
    the hand-run `wasm-pack` lines do not: build into wasm-only target dirs
-   (`scripts/wasm_target_dir.sh`) and stamp the page with the workspace version.
-   CI reruns the same script and byte-diffs its tracked output.
+   (`scripts/wasm_target_dir.sh`), boot-check both generated initializers, and
+   stamp the page with the workspace version. CI reruns the same script and
+   byte-diffs its tracked output.
 3. `bash tests/gate/gate.sh` → green → commit.
 
 If that byte diff goes red, `python3 -P scripts/wasm_parity_triage.py` reads the

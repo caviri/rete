@@ -42,6 +42,9 @@ threads = ["rete-core/parallel", "dep:wasm-bindgen-rayon"]
 # worker must drive the suspend/rewind loop — see scripts/build_playground_async.sh.
 # A separate artifact (web/pkg-nomodules-async); the default build is unchanged.
 asyncify = []
+# INTERNAL BENCHMARK ONLY. The adaptive range scheduler remains off in normal
+# browser artifacts until its pinned live-R2 acceptance gates pass.
+adaptive-read-bench = []
 
 [dependencies]
 # No default features: the C zstd encoder isn't available on wasm; the pure-Rust

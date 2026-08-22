@@ -1,0 +1,9 @@
+{
+  "name": "synthetic-8m-external",
+  "input": "synthetic/social-8m.nt",
+  "sha256": "8e9a1b8731183a23627a97ef6ec429ebfe8506b148b1d326e38013017ffc4861",
+  "mode": "external",
+  "args": [],
+  "gateClass": "external-primary",
+  "queries": []
+}

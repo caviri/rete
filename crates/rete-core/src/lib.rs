@@ -7,6 +7,13 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![warn(missing_docs)]
 
+mod build_pipeline;
+
+/// Non-default construction benchmark hook, used only by the release example.
+#[cfg(feature = "build-pipeline-bench")]
+#[doc(hidden)]
+pub mod preflight_bench;
+
 /// The engine version, as published on crates.io.
 ///
 /// Language bindings re-export this so a caller can always tell which engine is
@@ -17,6 +24,8 @@
 /// component moves independently for binding-only fixes.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[doc(hidden)]
+pub mod adaptive;
 #[doc(hidden)]
 pub mod bgp;
 #[doc(hidden)]
@@ -55,6 +64,8 @@ pub mod parallel;
 pub mod pyramid;
 #[doc(hidden)]
 pub mod reach;
+#[doc(hidden)]
+pub mod read_path_metrics;
 #[doc(hidden)]
 pub mod reader;
 #[doc(hidden)]
@@ -156,6 +167,7 @@ pub mod query {
 
 /// Stable byte-range and lazy-open API for local or remote `.rete` files.
 pub mod range {
+    pub use crate::adaptive::{AdaptiveReadController, ReadIntent, ReadObservation, ReadPlan};
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
         read_card_and_build_info_ranged, read_card_and_build_info_with_header,
@@ -163,8 +175,8 @@ pub mod range {
         read_text_index_token_table_len_ranged, ByteRange, LayoutSegment, SearchView, SummaryView,
     };
     pub use crate::reader::{
-        detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader,
-        POLYGLOT_DIGITS, POLYGLOT_MARKER,
+        detect_polyglot_base, CountingReader, OffsetReader, OwnedMemoryRangeReader, RangeReader,
+        SliceReader, POLYGLOT_DIGITS, POLYGLOT_MARKER,
     };
 }
 
@@ -186,6 +198,8 @@ pub mod reasoning {
     pub use crate::sparql::{eval_query_reasoned, eval_sparql_reasoned};
 }
 
+#[doc(hidden)]
+pub use adaptive::{AdaptiveReadController, ReadIntent, ReadObservation, ReadPlan};
 #[doc(hidden)]
 pub use bgp::{eval_bgp, Binding, PatternTerm, TriplePattern};
 #[doc(hidden)]
@@ -227,9 +241,11 @@ pub use pyramid::{
 #[doc(hidden)]
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};
 #[doc(hidden)]
+pub use read_path_metrics::{read_path_stats, reset_read_path_stats, ReadPathStats};
+#[doc(hidden)]
 pub use reader::{
-    detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader, POLYGLOT_DIGITS,
-    POLYGLOT_MARKER,
+    detect_polyglot_base, CountingReader, OffsetReader, OwnedMemoryRangeReader, RangeReader,
+    SliceReader, POLYGLOT_DIGITS, POLYGLOT_MARKER,
 };
 #[doc(hidden)]
 pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};

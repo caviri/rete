@@ -1,0 +1,60 @@
+mod common;
+
+use predicates::prelude::*;
+
+#[test]
+fn ordinary_and_external_builds_report_common_phases() {
+    let fixture = common::fixture();
+    let ordinary = fixture.path("ordinary.rete");
+    let external = fixture.path("external.rete");
+    let external_source = fixture.write(
+        "external.nt",
+        "<http://example.test/alice> <http://example.test/knows> <http://example.test/bob> .\n",
+    );
+
+    for (source, output, args) in [
+        (&fixture.source, &ordinary, vec!["--no-pyramid"]),
+        (
+            &external_source,
+            &external,
+            vec!["--memory-budget-mb", "16", "--no-pyramid"],
+        ),
+    ] {
+        common::rete()
+            .env("RETE_BUILD_TIMING", "1")
+            .arg("build")
+            .arg(source)
+            .arg("-o")
+            .arg(output)
+            .args(args)
+            .assert()
+            .success()
+            .stderr(
+                predicate::str::contains("  [build] parse+ingest:")
+                    .and(predicate::str::contains("  [build] canonicalize:"))
+                    .and(predicate::str::contains("  [build] index families:"))
+                    .and(predicate::str::contains("  [build] final write:"))
+                    .and(predicate::str::contains("  [build] total:")),
+            );
+    }
+}
+
+#[test]
+fn types_pyramid_fallback_is_reported_without_timing() {
+    let fixture = common::fixture();
+    let output = fixture.path("types.rete");
+
+    common::rete()
+        .env_remove("RETE_BUILD_TIMING")
+        .arg("build")
+        .arg(&fixture.source)
+        .arg("-o")
+        .arg(output)
+        .args(["--pyramid-algo", "types"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "  [pyramid] --pyramid-algo types: no usable rdf:type predicate \
+             — falling back to louvain",
+        ));
+}

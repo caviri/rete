@@ -1697,11 +1697,14 @@ starts right after the 1 KB header exactly as before — the output is
 byte-identical to a cardless build, and existing files keep verifying unchanged.</li>
 <li><strong>Integrity-covered.</strong> The card bytes are part of the <code>blake3</code> content hash, so
 <code>rete verify</code> validates the card too and any edit to it is detected.</li>
-<li><strong>Off the query path.</strong> Range-reading opens (<code>rete query-url</code>, <code>sparql-url</code>,
-<code>summary-url</code>, federation routing) fetch sections by offset and <strong>never read
-the card</strong>, so embedding one adds nothing to query-time bytes-on-the-wire. To
-read the card remotely without downloading the file, <code>rete card-url</code> fetches
-just the header + metadata range (two ranges, index untouched).</li>
+<li><strong>Off the remote-lazy query path.</strong> <code>rete query-url</code>, <code>summary-url</code>, federation
+routing, browser/WASM queries, and larger or eager-disabled native
+<code>sparql-url</code> opens fetch sections by offset and <strong>never read the card</strong>, so it
+adds nothing to their query-time bytes-on-the-wire. An eligible small native
+<code>sparql-url</code> object is transferred once in full, so that transfer includes the
+card bytes; the bounded in-memory range opener still does not decode the card.
+To read the card explicitly without downloading the file, <code>rete card-url</code>
+fetches just the header + metadata range (two ranges, index untouched).</li>
 <li><strong>Opaque to the writer's <em>layout</em>, not to the card.</strong> The metadata section is
 raw bytes as far as the file format is concerned — a general extension point,
 of which a card is just the first use. The card <em>itself</em>, both halves, lives

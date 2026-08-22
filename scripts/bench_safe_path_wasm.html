@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rete safe path WASM benchmark</title>
+  <style>
+    body { margin: 2rem auto; max-width: 72rem; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; }
+    pre { padding: 1rem; overflow: auto; background: #f3f5f7; border-radius: .5rem; }
+  </style>
+</head>
+<body>
+  <h1>rete safe path WASM benchmark</h1>
+  <p id="status">Starting Worker…</p>
+  <pre id="report" aria-live="polite"></pre>
+  <script type="module">
+    const status = document.querySelector("#status");
+    const report = document.querySelector("#report");
+    const variant = new URL(location.href).searchParams.get("variant") ?? "candidate";
+    const worker = new Worker("/scripts/bench_safe_path_worker.js", { type: "module" });
+
+    worker.onmessage = ({ data }) => {
+      if (data.kind === "progress") {
+        status.textContent = data.message;
+        return;
+      }
+      if (data.kind === "error") {
+        status.textContent = "FAIL";
+        report.textContent = data.error;
+        document.documentElement.dataset.benchmarkStatus = "fail";
+        return;
+      }
+      status.textContent = "PASS";
+      report.textContent = JSON.stringify(data.report, null, 2);
+      globalThis.retePathBenchmark = data.report;
+      document.documentElement.dataset.benchmarkStatus = "pass";
+    };
+    worker.onerror = (event) => {
+      status.textContent = "FAIL";
+      report.textContent = event.message;
+      document.documentElement.dataset.benchmarkStatus = "fail";
+    };
+    worker.postMessage({ samples: 15, variant });
+  </script>
+</body>
+</html>

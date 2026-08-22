@@ -75,6 +75,42 @@ A *parallel* Louvain would not be byte-identical (the partition depends on the
 sequential move order), so the pyramid stays single-threaded; the six index
 permutations and the dictionary/permutation sorts already use all cores (`rayon`).
 
+### Sorted tile encoder (Chemotion)
+
+The tile builders already receive sorted, duplicate-free slices. Encoding those
+slices directly avoids copying every tile into a general builder, re-sorting and
+deduplicating it, materializing nested a/b/c group vectors, and growing the
+output vector. The replacement makes one exact-size planning pass and one write
+pass; the public arbitrary-input builder still sorts and deduplicates before
+delegating.
+
+Measured on the pinned Chemotion export: **1,532,240 triples**, 324,926,543-byte
+N-Quads input, SHA-256
+`a60b7da39192fd2a1bef5b302d22d97291222f1a9805cbab9cc709c24b28c950`.
+Five alternating `rete build --pyramid-algo types --card` samples produced the
+same 6,239,535-byte file with SHA-256
+`df3a21c3032df922edca654a0a3d037a6347eef83736265a287239bf1367c55c`:
+
+| build | raw milliseconds | median |
+|---|---|---:|
+| baseline | `4855 4772 4821 4769 4912` | 4,821 ms |
+| direct encoder | `4970 4802 4810 4692 4738` | **4,802 ms** |
+
+The whole build moved only 0.4% because parsing and pyramid construction
+dominate. The existing exact counting-allocator profiler isolates the affected
+index phase:
+
+| index phase | baseline | direct encoder | change |
+|---|---:|---:|---:|
+| time | 210 ms | **51 ms** | **75.7% faster** |
+| phase peak heap | 179.45 MiB | **162.99 MiB** | **9.2% lower** |
+| live heap after phase | 56.85 MiB | **46.16 MiB** | **18.8% lower** |
+
+The whole-profile heap peak remained 818.14 MiB in both runs because raw input
+strings dominate before indexing. Reproduce the whole-build alternation with
+`scripts/bench_sorted_encoder.sh` and the phase profile with
+`rete-bench --build-mem`.
+
 ### Query result serialization (the WASM hot path)
 
 A query's result is returned to the browser as a JSON string. Writing that
@@ -121,6 +157,671 @@ payload. The **progressive path is cheaper still** for summary-safe queries:
 fetching just the coarse community graph (`summary-url`) reads only the header +
 dictionary + summary — e.g. **2.2 KB of a 15.6 KB file (14%) in 3 requests, the
 index never fetched** — the "overview first, drill down later" promise.
+
+### Cloudflare R2 connection reuse (Chemotion)
+
+Measured 2026-08-06 against the catalog's real
+`https://data.graphplaza.com/chemotion/chemotion.rete` object from the dev
+container (Cloudflare ZRH, `Cf-Cache-Status: DYNAMIC`). The object was pinned by
+length **7,566,404 bytes** and ETag
+`"6cefd111dee3c59c063f0bede9cd60f9"`. The baseline executable was SHA-256
+`734b4ef05320b0fa1c3f3d7ed72c240b51f7f2cb70c4dd5568d3e65ef9059b6a`;
+the optimized executable was
+`14c6d3cefcfbdf43699dc2819b59d0cb7ebd2a9c21a5fbb97efc67153a93c56e`.
+
+Each executable was warmed once per query, then run seven times in alternating
+order as a fresh `rete sparql-url <url> "<query>" --json` process. Reusing one
+`ureq::Agent` for the HEAD probe and range GETs, plus retaining each coalesced
+cache response as one shared allocation, produced:
+
+| Chemotion catalog query | bytes / ranges | baseline median | optimized median | wall-time reduction |
+|---|---:|---:|---:|---:|
+| Molecules with their structure | 1,769,472 / 21 | 3,245 ms | **2,586 ms** | **20.3%** (659 ms) |
+| Most common molecular formulas | 1,114,112 / 16 | 2,267 ms | **1,778 ms** | **21.6%** (489 ms) |
+| Every subtype of spectroscopy | 2,490,368 / 36 | 5,242 ms | **4,128 ms** | **21.3%** (1,114 ms) |
+
+Raw milliseconds (baseline / optimized):
+
+- selective: `3245 3194 3054 3288 3469 3327 3083` /
+  `2568 2761 2501 2748 2586 2683 2508`
+- aggregate: `2492 2655 2209 2267 2189 2329 2263` /
+  `1784 1664 1708 2219 2029 1778 1733`
+- property path: `5352 6239 5242 5090 5146 5344 5164` /
+  `4590 4128 3874 4373 4073 4221 4089`
+
+The result JSON was byte-identical for every sample (one stable hash per query),
+and byte/range counts were unchanged. Every paired optimized sample was faster;
+the gain is transport/allocation overhead, not less query work or different
+answers.
+
+### Cold R2 adaptive opening (Chemotion)
+
+Measured 2026-08-07 from the dev container against the same real R2 object,
+`https://data.graphplaza.com/chemotion/chemotion.rete` (length **7,566,404
+bytes**, ETag **`"6cefd111dee3c59c063f0bede9cd60f9"`**). The pinned lazy
+baseline executable was SHA-256
+`37b0d50f1a5feee32bbdf60a726576fd28dc8889482ee03d8c7289ee476c86e3`;
+the candidate was
+`10da5c99583e4a2845a0144ec85b7a6ff4509d2abbe6c4669db551eafd739b27`.
+
+Each cell is 15 fresh-process samples. Mode order uses a cyclic rotation rather
+than reversal, so each of the three comparison modes occupies each launch
+position five times; the four-mode threshold sweep likewise rotates every mode
+through every position. `p90` is nearest-rank;
+VmHWM is polled from `/proc/<pid>/status`. `baseline_lazy` is the pinned
+pre-change binary, `delegated_lazy` is the candidate forced lazy with
+`RETE_EAGER_MAX_MB=0`, and `eager_8` is the candidate at the 8 MiB policy. The
+`eager_8` harness label means one eager *transfer*, not an eager parser: the
+compressed file is retained in a bounded owned memory reader and opened with
+`Rete::open_ranged_lazy`, so dictionary chunks, default-graph index tiles, the
+pyramid, and text-index decompression remain demand-driven. That 2026-08-07
+candidate still decoded named graphs during open; the current behavior measured
+below opens their framing and directories without decoding tile payloads.
+The selective workload orders by `?name ?formula ?smiles` before `LIMIT 200`:
+without `ORDER BY`, SPARQL permits either plan to return a different valid
+200-row subset, which is unsuitable for an exact output-hash benchmark.
+
+That adjustment followed a deliberately preserved failed smoke of the original
+unordered workload. `/target/bench/cold-r2-smoke.jsonl` contains the two
+matching lazy records written before the eager hash gate stopped the run (2
+lines, 541 bytes, SHA-256
+`8bb7018301d372912b13be9c7692ff274695680e9c40475ea0e372b5beb6cf1a`).
+The raw lazy body was 79,495 bytes with SHA-256
+`9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`;
+the eager body was 68,689 bytes with SHA-256
+`75ed8d5a58786d94fa1c8b8bec82b276afe70f44d6898e5207492a5b517ae13b`.
+Each contained 200 unique rows, but their intersection was only five rows (195
+were unique to each valid unordered subset). A diagnostic ordered run then
+produced the same 79,495-byte body and
+`9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`
+hash in both modes. This isolated unordered LIMIT selection, rather than
+corrupt reads or JSON serialization, before the ordered workload was accepted.
+
+The accepted 15-sample comparison and 0/4/8/16 MiB sweep each issued HEAD both
+before and after their samples. Every before/after probe matched the pinned
+length **7,566,404** and ETag
+**`"6cefd111dee3c59c063f0bede9cd60f9"`**, so the accepted results never span a
+source-metadata change.
+
+| query | mode | bytes / GETs | wall median / p90 | VmHWM median / p90 / max |
+|---|---|---:|---:|---:|
+| molecules with their structure | baseline_lazy | 1,703,936 / 24 | 2,064 / 2,169 ms | 17,184 / 17,720 / 17,900 KiB |
+|  | delegated_lazy | 2,031,616 / 25 | 2,159 / 2,429 ms | 20,128 / 20,492 / 20,576 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **737 / 778 ms** | **22,600 / 23,200 / 23,284 KiB** |
+| most common molecular formulas | baseline_lazy | 1,114,112 / 16 | 1,433 / 1,512 ms | 12,492 / 12,748 / 12,764 KiB |
+|  | delegated_lazy | 1,114,112 / 16 | 1,470 / 1,631 ms | 12,556 / 12,656 / 12,804 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **728 / 767 ms** | **18,340 / 18,744 / 18,992 KiB** |
+| every subtype of spectroscopy | baseline_lazy | 2,490,368 / 36 | 3,262 / 3,408 ms | 23,788 / 23,956 / 23,956 KiB |
+|  | delegated_lazy | 2,490,368 / 36 | 3,215 / 3,438 ms | 23,752 / 23,904 / 23,928 KiB |
+|  | **eager_8** | **7,566,404 / 1** | **844 / 932 ms** | **28,296 / 28,472 / 28,700 KiB** |
+
+Relative to the same candidate's delegated-lazy path, the one-transfer mode
+reduced median / p90 wall time by **65.9% / 68.0%**, **50.5% / 53.0%**, and
+**73.7% / 72.9%**, respectively. Thus all three queries clear the required 25% median
+improvement (the gate required two), none regresses in median or p90, and every
+eligible sample performs exactly one data GET. Peak process RSS was **28,700
+KiB (28.0 MiB)**: the process retains the validated 7.22 MiB compressed image,
+but demand-decodes only the touched dictionary chunks and default-graph tiles;
+pyramid/text-index data stay deferred. That candidate still decoded named graphs
+during open rather than on first query use; the later named-tile work described
+below removes that open-time decode.
+
+Every sample for a query produced one byte-identical JSON hash across all
+modes:
+
+- molecules: `9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`
+- formulas: `43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640`
+- spectroscopy path: `359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc`
+
+Threshold sweep, again 15 cyclically rotated fresh processes per cell:
+
+| query | threshold | bytes / GETs | wall median / p90 | VmHWM median / p90 / max |
+|---|---:|---:|---:|---:|
+| molecules | 0 MiB | 2,031,616 / 25 | 2,125 / 2,345 ms | 20,000 / 20,464 / 20,640 KiB |
+|  | 4 MiB | 2,031,616 / 25 | 2,254 / 2,579 ms | 19,964 / 20,344 / 20,524 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **737 / 805 ms** | **22,116 / 23,036 / 23,524 KiB** |
+|  | **16 MiB** | **7,566,404 / 1** | **764 / 806 ms** | **22,416 / 23,160 / 23,224 KiB** |
+| formulas | 0 MiB | 1,114,112 / 16 | 1,380 / 1,519 ms | 12,544 / 12,636 / 12,728 KiB |
+|  | 4 MiB | 1,114,112 / 16 | 1,419 / 1,519 ms | 12,516 / 12,696 / 12,720 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **703 / 769 ms** | **18,468 / 18,632 / 18,672 KiB** |
+|  | **16 MiB** | **7,566,404 / 1** | **717 / 810 ms** | **18,552 / 18,652 / 18,696 KiB** |
+| spectroscopy path | 0 MiB | 2,490,368 / 36 | 3,314 / 3,592 ms | 23,636 / 23,844 / 23,856 KiB |
+|  | 4 MiB | 2,490,368 / 36 | 3,102 / 3,349 ms | 23,680 / 23,868 / 23,948 KiB |
+|  | **8 MiB** | **7,566,404 / 1** | **870 / 927 ms** | **28,184 / 28,524 / 28,740 KiB** |
+|  | **16 MiB** | **7,566,404 / 1** | **870 / 913 ms** | **28,232 / 28,464 / 28,468 KiB** |
+
+The 7.22 MiB object remains remote-lazy at thresholds 0 and 4, and switches to
+the same one-GET, lazy-from-memory path at 8 and 16. All sweep hashes match the values above.
+Decision: **keep the 8 MiB adaptive eager policy**.
+
+Reproduce with `scripts/bench_cold_r2.py`. The acceptance JSONL was written to
+`/target/bench/cold-r2-final-fix-15.jsonl` (SHA-256
+`625a46811d0a0ab1c45a297728c13d60d6270bf4f76c6ba897e2b79701a24a3f`),
+the sweep to `/target/bench/cold-r2-final-fix-thresholds.jsonl` (SHA-256
+`90c449dd978b67d0df45e35b96a62da1541c69065d737899432d206ea8897406`),
+and the final one-sample 0/8 pinned check to
+`/target/bench/cold-r2-final-fix-0-8.jsonl` (SHA-256
+`60fff7d0234fe662c788daf51c3fc772caac64304ef9ec5d783ed5b5ccfb7de1`):
+
+```sh
+python3 scripts/bench_cold_r2.py \
+  --baseline /target/bench/rete-cold-r2-baseline \
+  --baseline-revision <baseline-git-sha> \
+  --candidate /target/release/rete \
+  --candidate-revision <candidate-git-sha> --samples 15 \
+  --source https://data.graphplaza.com/chemotion/chemotion.rete \
+  --out /target/bench/cold-r2-final-fix-15.jsonl
+python3 scripts/bench_cold_r2.py \
+  --candidate /target/release/rete \
+  --candidate-revision <candidate-git-sha> \
+  --thresholds 0,4,8,16 --samples 15 \
+  --source https://data.graphplaza.com/chemotion/chemotion.rete \
+  --out /target/bench/cold-r2-final-fix-thresholds.jsonl
+```
+
+### Pinned R2 remediation matrix (2026-08-10)
+
+This rerun uses git revision
+`74aa48fb21c172f9df140f22baa5cf33b94ab0ab` and one immutable `rete 0.3.2`
+release executable with SHA-256
+`8f315597073222a66c6288bd568f2e76bcfafbc818ca71b5b1d1628d094625bc`.
+Every cell is 15 fresh processes. Threshold 0 forces native remote-lazy reads;
+threshold 8 permits native `sparql-url` to fetch an object at or below 8 MiB in
+one exact GET into owned memory, while parsing and tile decompression remain
+lazy. Before/after probes matched every length and ETag below, and all objects
+advertised `Accept-Ranges: bytes`.
+
+| object | URL | bytes | ETag |
+|---|---|---:|---|
+| Chemotion | `https://data.graphplaza.com/chemotion/chemotion.rete` | 7,566,404 | `"6cefd111dee3c59c063f0bede9cd60f9"` |
+| BOE | `https://data.graphplaza.com/boe/boe.rete` | 6,958,628 | `"460709f1f8c26dd15a02e5df5dbfecfa"` |
+| ChEBI Full | `https://data.graphplaza.com/chebi-full/chebi-full.rete` | 164,832,053 | `"2954435cf2b9677c9a38f84964b93668-3"` |
+
+The exact queries are the three built-in Chemotion queries in
+[`bench_cold_r2.py`](https://github.com/caviri/rete/blob/main/scripts/bench_cold_r2.py),
+the two-query pinned
+[`boe.json`](https://github.com/caviri/rete/blob/main/scripts/cold-r2-workloads/boe.json),
+and the selective pinned
+[`chebi-full.json`](https://github.com/caviri/rete/blob/main/scripts/cold-r2-workloads/chebi-full.json).
+Every limited
+`SELECT` has a complete deterministic `ORDER BY`.
+
+| dataset / query | threshold | bytes / GETs | wall median / p90 | VmHWM median / p90 / max | median change vs 0 |
+|---|---:|---:|---:|---:|---:|
+| Chemotion / molecules | 0 MiB | 2,032,640 / 26 | 2,437 / 2,605 ms | 19,644 / 19,772 / 19,780 KiB | — |
+|  | **8 MiB** | **7,566,404 / 1** | **708 / 801 ms** | 22,372 / 22,568 / 22,572 KiB | **70.9% faster** |
+| Chemotion / formulas | 0 MiB | 1,246,208 / 19 | 1,818 / 2,049 ms | 12,492 / 12,764 / 12,772 KiB | — |
+|  | **8 MiB** | **7,566,404 / 1** | **672 / 784 ms** | 18,752 / 19,016 / 19,028 KiB | **63.0% faster** |
+| Chemotion / spectroscopy path | 0 MiB | 2,491,392 / 37 | 3,443 / 3,848 ms | 22,828 / 22,988 / 23,284 KiB | — |
+|  | **8 MiB** | **7,566,404 / 1** | **871 / 975 ms** | 27,548 / 27,956 / 27,964 KiB | **74.7% faster** |
+| BOE / bound law | 0 MiB | 1,049,600 / 16 | 1,642 / 3,798 ms | 11,556 / 11,784 / 11,800 KiB | — |
+|  | **8 MiB** | **6,958,628 / 1** | **737 / 1,529 ms** | 17,176 / 17,480 / 17,608 KiB | **55.1% faster** |
+| BOE / type counts | 0 MiB | 852,992 / 14 | 1,482 / 1,746 ms | 10,952 / 11,432 / 11,452 KiB | — |
+|  | **8 MiB** | **6,958,628 / 1** | **714 / 5,386 ms** | 17,192 / 17,372 / 17,464 KiB | **51.8% faster** |
+| ChEBI Full / bound entity | 0 MiB | 5,374,976 / 39 | 3,830 / 5,001 ms | 20,512 / 20,644 / 20,768 KiB | — |
+|  | 8 MiB | 5,374,976 / 39 | 3,655 / 4,069 ms | 20,512 / 20,616 / 20,712 KiB | 4.6% observed |
+
+The five eligible small-object queries reduce the median by 51.8–74.7%, at the
+cost of retaining the compressed object and therefore raising RSS. BOE type
+counts also had a 5,386 ms threshold-8 p90 despite its faster median; this is a
+live-network tail, not a claim that one GET removes network variance. ChEBI Full
+is above the threshold, so both modes used exactly the same 39 GETs and bytes.
+Its 4.6% median difference is timing noise, not an adaptive-opening win.
+
+Against the accepted 2026-08-07 Chemotion threshold-8 cells above, two current
+medians improved and the path median was 3.2% slower; no current p90 was more
+than 4.7% higher. Peak RSS was within 36 KiB or lower, and the overall maximum
+fell from 28,700 to 27,964 KiB. The larger movement is on the multi-request lazy
+side, consistent with a different live-network sample rather than more query
+work or changed output.
+
+Within every query/mode group, transfer counts were stable and all 15 result
+hashes agreed. The per-query SHA-256 values were:
+
+- Chemotion molecules: `9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`
+- Chemotion formulas: `43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640`
+- Chemotion path: `359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc`
+- BOE bound law: `41c39d4d9bab9dd76633033e447e0f89538e2ac8c6f5baa2a91b752c05169bf4`
+- BOE type counts: `2515c9e778b81e2fa06a760d77178d83af4608b2ec4b9c83e6f0c33fc9f75d4a`
+- ChEBI Full bound entity: `29cea6b6cc8b29a2f2a5e5e7203d9941d302b5abe636caa04e5660c29b65c534`
+
+The ignored JSONL files are
+`chemotion-remediation-r2-20260810T093241Z.jsonl`,
+`boe-r2-20260810T093241Z.jsonl`, and
+`chebi-full-r2-20260810T093241Z.jsonl`; their SHA-256 values are respectively
+`2257521cc57d983e86906086a1a4e69dc763dbf76f107667d4810f16860c168b`,
+`f057065493525aa8b0a38698bc75dabc9b92021827405671040c65cb0a1802ae`, and
+`2341eab6ad57564f3d68b32b4facc13f61e2f821859bb00a2b6eef26b791ffb4`.
+
+### Experimental adaptive R2 scheduler (2026-08-16)
+
+A follow-up experiment replaced fixed remote batching decisions with a
+session-local controller. It times validated physical cache misses, labels
+already-routed work as selective, bounded, full-scan, or dictionary demand, and
+can adjust coalescing and scan windows. It does not change `.rete` bytes, admit
+an unrouted tile, relax validation, or add `unsafe` code.
+
+The static baseline was git
+`6562251d74f2158765844762c867bf92cf39f782`, executable SHA-256
+`8f315597073222a66c6288bd568f2e76bcfafbc818ca71b5b1d1628d094625bc`.
+The adaptive candidate was git
+`45dfdf00f82a133082b5a4024ef52edd7582c82e`, executable SHA-256
+`9845d225f8922bb3cd6b117181fbc9bf63739d41aefcb50c1b24479f81649269`.
+Both forced native remote-lazy reads with `RETE_EAGER_MAX_MB=0`. Each cell below
+is 15 rotating, fresh-process samples. The harness matched length and ETag
+before and after each complete matrix; these are the pinned Chemotion and ChEBI
+Full R2 objects listed above, both serving byte ranges.
+
+| dataset / query | policy | bytes / GETs | wall median / p90 | VmHWM median / p90 / max | median change |
+|---|---|---:|---:|---:|---:|
+| ChEBI Full / bound entity | static | 5,374,976 / 39 | 3,813 / 4,869 ms | 20,596 / 20,708 / 20,780 KiB | — |
+|  | adaptive | 5,374,976 / 39 | 3,673 / 4,527 ms | 20,700 / 20,932 / 20,992 KiB | 3.7% faster |
+| ChEBI Full / predicate counts (complete scan) | static | 16,385,024 / 32 | 5,742 / 7,588 ms | 105,428 / 106,156 / 106,408 KiB | — |
+|  | adaptive | 16,385,024 / 36 | 5,382 / 6,566 ms | 110,412 / 112,740 / 112,884 KiB | 6.3% faster |
+| Chemotion / molecules | static | 2,032,640 / 26 | 2,545 / 3,046 ms | 19,764 / 19,984 / 20,004 KiB | — |
+|  | adaptive | 2,032,640 / 26 | 2,465 / 3,816 ms | 19,856 / 20,036 / 20,092 KiB | 3.1% faster |
+| Chemotion / formulas | static | 1,246,208 / 19 | 1,880 / 2,941 ms | 12,688 / 12,844 / 12,848 KiB | — |
+|  | adaptive | 1,246,208 / 19 | 2,054 / 2,801 ms | 12,800 / 13,008 / 13,072 KiB | **9.3% slower** |
+| Chemotion / spectroscopy path | static | 2,491,392 / 37 | 3,632 / 3,975 ms | 22,876 / 23,048 / 23,104 KiB | — |
+|  | adaptive | 2,491,392 / 37 | 3,532 / 4,337 ms | 23,032 / 23,256 / 23,268 KiB | 2.8% faster |
+
+The acceptance gate failed. No selective median reached the required 15%
+improvement; the complete ChEBI scan improved its median by only 6.3% and added
+four physical GETs; and the Chemotion aggregate regressed 9.3%, beyond the 5%
+guardrail. Identical transfer work on all three Chemotion queries also shows
+that their small timing movements are live-network noise rather than a changed
+read plan. Result hashes were identical throughout, RSS stayed within the 10%
+limit, and deterministic tests kept the 2 MiB span, 256 KiB gap-overfetch, and
+256 MiB cache bounds.
+
+The output SHA-256 values were
+`29cea6b6cc8b29a2f2a5e5e7203d9941d302b5abe636caa04e5660c29b65c534`
+(ChEBI bound entity),
+`428ae8a4141531c9ed54f0707cc089712f8cd32e3ef95be563d21d75f0710323`
+(ChEBI predicate counts),
+`9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8`
+(Chemotion molecules),
+`43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640`
+(Chemotion formulas), and
+`359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc`
+(Chemotion path).
+
+Accordingly, adaptive scheduling is **not enabled by default**. Normal native
+HTTP and browser artifacts retain the static policy. The native benchmark can
+opt in with the internal `RETE_BENCH_READ_POLICY=adaptive_lazy` environment
+value; browser A/B builds use the non-default `rete-wasm/adaptive-read-bench`
+feature. A same-binary isolation check at git
+`4244878a4e6ba2fb7860e9efcc52ea1aafe7f362` (executable SHA-256
+`fee607d1f916f223ce7135e68eff527f654d055d086d0fd0104e8050651657ac`)
+reproduced static/adaptive ChEBI traffic as 39/39 GETs for the bound query and
+32/36 GETs for the complete scan. Browser live A/B was deliberately stopped
+after the native promotion gates had already failed; the default browser reader
+therefore remains the previously validated static implementation.
+
+The ignored raw sample files are
+`adaptive-chebi-full-20260816T120000Z.jsonl` (SHA-256
+`9dd3fc11bedf8473ad68e7b28ac7afdb54a9960e7c8ce75f7f782a87956e898f`),
+`adaptive-chemotion-20260816T121000Z.jsonl` (SHA-256
+`5d39e56b767c0e848ba1342820248f011b55ef7f2137034ee9fbda2586335b6e`),
+and `adaptive-chebi-policy-isolation-20260816T123000Z.jsonl` (SHA-256
+`34efb52c0b3eeb0aa87255e15461e05c554f7c4fe043b66509fa6aaec70d4436`).
+
+### Safe local and WASM property-path acceleration (2026-08-16)
+
+The next experiment targeted CPU work after a `.rete` file is resident. It
+kept the file format, on-disk bytes, query semantics, and default safe reader
+unchanged. The implementation adds a checked, fixed-width u32 LEB128 decoder
+for triple blocks; a per-tile `(a,b)` directory with a hard 64 KiB cap and
+safe a-only fallback; a neighbor-ID scan that retains normal tile routing; and
+one-time predicate resolution for each property-path tree. It adds no
+production `unsafe` block. Truncated/overflowing varints, corrupt directories,
+split groups, lazy read failures, reverse paths, and unsupported path shapes
+continue through checked error or fallback paths.
+
+The pinned input was the same Chemotion R2 object used above: 7,566,404 bytes,
+ETag `"6cefd111dee3c59c063f0bede9cd60f9"`, copied locally with SHA-256
+`b7cca2e3ebe5364e767fb1f34c138d7e100b3997db172357eb4ecf3a9adfa83a`.
+The exact path query was:
+
+```sparql
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?name WHERE {
+  ?sub rdfs:subClassOf+
+       <http://purl.obolibrary.org/obo/CHMO_0000228> ;
+       rdfs:label ?name
+}
+ORDER BY ?name LIMIT 200
+```
+
+#### Native fresh-process comparison
+
+The untouched baseline was git
+`6a776e42aee68d44bee1651774c6dcd3e46e4b26`, executable SHA-256
+`d16ff45a630735dd08073c9028c2b0828a86475ee7486a231e2b0e9a070409fe`.
+The safe candidate was git
+`c36b8276981c90e30c361c31bede573e6df7426a`, executable SHA-256
+`e877284995dea98e80c6c380f1e5d901a462c78dd10f9752072860d64563ff41`.
+Each row is one warm-up followed by 15 alternating fresh processes; hashes had
+to match before timing was accepted.
+
+| workload | baseline median / p90 | candidate median / p90 | median change | output SHA-256 |
+|---|---:|---:|---:|---|
+| property path | 280 / 301 ms | **149 / 165 ms** | **46.8% faster** | `359a554d0b00cbadc8334891b6d7526d4aec6f118d4d814e81bb5695f88f48cc` |
+| full triple count | 243 / 272 ms | **212 / 248 ms** | **12.8% faster** | `2556a29086cbd8324331ec3beabf7351ffe403f54cf56f7494ed05fa4025ed9d` |
+| selective molecule query | 158 / 171 ms | **126 / 134 ms** | **20.3% faster** | `9330e29295a2a66077a8ab1715efc9b3d986ff033fe9d6f438cbf50cac679fd8` |
+| formula aggregate | 149 / 164 ms | **118 / 123 ms** | **20.8% faster** | `43167d119ac2675261e57885b6dd0331cbe3819c218e5ccbe9cf29623e744640` |
+
+The path samples in sample-number order were:
+
+- baseline: `290, 285, 279, 280, 286, 277, 270, 269, 269, 285, 272, 272, 314, 301, 286` ms;
+- candidate: `155, 156, 153, 155, 149, 144, 143, 145, 144, 145, 148, 146, 156, 167, 165` ms.
+
+The controls did not expose a speed-for-correctness tradeoff: all four output
+hashes were identical between binaries, and every control became faster. The
+complete 120-row TSV is
+`safe-path-native-evidence-20260816.tsv` (10,788 bytes, SHA-256
+`28a4731460b52face15e84040ebc5819ff0b3cd7bd60a44f1e4c1259f277f5c8`).
+
+#### In-process counters
+
+The benchmark-only `read-path-metrics` feature is disabled in normal native
+and WASM artifacts. In one resident process, 15 sorted samples were
+`32.722792, 33.334517, 33.428173, 33.523684, 33.749006, 33.774301,
+33.875918, 34.395488, 34.455466, 34.649892, 34.658398, 34.877306,
+35.575910, 36.399107, 37.155320` ms: median **34.40 ms**, p90 **36.40
+ms**, and peak measured heap **0.19 MiB**. The result SHA-256 was
+`0de6b95111d573dc9904ba78513614f944c0b4d23f734726e7ea7d205ee96f2e`.
+
+The warm query decoded 4,262,047 varints, skipped 982,353 c-values, issued
+69,184 path probes, resolved one predicate, built 49 directories totalling
+221,040 bytes, retained at most **58,116 bytes in one tile**, and touched 49
+tiles. A steady query decoded 2,080,429 varints with the same skipped values,
+probes, one predicate resolution, and 49 touched tiles; it built zero new
+directories because the bounded per-tile directories were already cached.
+Thus the observed maximum stayed below the 65,536-byte cap. Local resident
+execution has no HTTP ranges to count. The complete output is
+`safe-path-inprocess-evidence-20260816.txt` (987 bytes, SHA-256
+`d524d7838a73849accaec9440935cbe488f2d1f934acd3e24be1b2f33b5f87b3`).
+
+#### Real-browser WASM comparison
+
+Both revisions were built as release `wasm-bindgen` web packages with
+`--no-opt`, avoiding the pinned Binaryen v108 multi-table issue documented
+below. Chrome 151 on Windows ran one resident `Graph`, one warm-up, and 15
+timed `graph.query(query, "json")` calls in a module Worker. The source
+length/hash was checked before opening, and every result had to equal the warm
+output byte for byte.
+
+| artifact | wasm bytes / SHA-256 | median / p90 | change |
+|---|---|---:|---:|
+| untouched baseline | 3,182,305 / `5231a352c9d4fc03bccfc4c090bcb494b16c1eae1ecfe4eb85186af323460c54` | 255.5 / 302.7 ms | — |
+| safe candidate | 3,191,348 / `2da81cdaa067063fd6cff8d1d74cf0b0880a36e1167830a9330415b5fd017510` | **54.9 / 67.7 ms** | **78.5% faster** |
+
+The final alternating pair's sorted samples were:
+
+- baseline: `231.9, 238.2, 238.3, 240.3, 242.1, 249.5, 250.6, 255.5, 257.8, 266.2, 282.7, 284.8, 296.0, 302.7, 309.7` ms;
+- candidate: `50.0, 50.3, 51.7, 51.7, 51.9, 53.8, 54.2, 54.9, 55.6, 55.9, 56.1, 57.5, 62.2, 67.7, 70.1` ms.
+
+Both produced 11,739-byte JSON with SHA-256
+`28ced2dd569eb12f1fb5888381bb2fe697b0234c7d714828182516af4a28b27e`.
+The candidate wasm grew 9,043 bytes (0.28%). The complete ignored report is
+`safe-path-wasm-evidence-20260816.json` (1,916 bytes, SHA-256
+`a8dc7aa28581dcdc26a0f2302389b67b224a1b778951284372d547546229b821`).
+
+**Verdict:** accepted for the default safe local and WASM paths. The primary
+native path cleared the 30% gate, all native controls beat the 3% regression
+guardrail, the per-tile memory cap held, browser output remained identical,
+and WASM improved substantially. This is independent of the experimental
+adaptive R2 scheduler and of the hidden unsafe decoder benchmark; neither is
+enabled to obtain these gains.
+
+### Query-specific local and resident-owned lazy opening (2026-08-17)
+
+Local query commands previously called the eager `Rete::open` path for files
+below 1 GiB, decoding all six index permutations before planning the query.
+They now use the same checked ranged-lazy opener as remote queries. Full-file
+operations such as export, merge, reasoning, verification, and repyramid retain
+their existing eager policy. The resident WASM `Graph` similarly owns the
+complete byte image but faults dictionary chunks and index tiles only when a
+query needs them; decoded data stays cached on that graph. This changes neither
+the file format nor validation and adds no `unsafe` code.
+
+The untouched baseline was git
+`b3697b1799306e20c85845998919655d13da289f`, executable SHA-256
+`8db290c498507c46039c3f5fb4c315ba37821ffea2010b526300343e06057d91`.
+The feature candidate was built from that revision plus the uncommitted lazy-
+opening diff, executable SHA-256
+`0c4b145ba9aa5131f988c9bd7d768ba939ecc287b50ef6e919fdd8e00a96a61a`.
+The pinned Chemotion and BOE R2 objects listed above were downloaded once and
+queried locally: respectively 7,566,404 bytes / SHA-256
+`b7cca2e3ebe5364e767fb1f34c138d7e100b3997db172357eb4ecf3a9adfa83a`
+and 6,958,628 bytes / SHA-256
+`b20d74cf407570dec47888348d0dac638565a457481ca6df4ea9dba71bde6a3b`.
+Each cell is 15 alternating fresh processes after two warm-ups. The OS file
+cache was not flushed, isolating open/decode/query CPU rather than disk latency.
+
+| dataset / query | eager median / p90 | lazy median / p90 | median change |
+|---|---:|---:|---:|
+| Chemotion / molecules | 150.5 / 160.8 ms | **63.2 / 69.2 ms** | **58.0% faster** |
+| Chemotion / formulas | 146.3 / 155.9 ms | **50.3 / 56.4 ms** | **65.6% faster** |
+| Chemotion / spectroscopy path | 170.9 / 183.3 ms | **101.0 / 105.0 ms** | **40.9% faster** |
+| BOE / bound law | 121.3 / 133.4 ms | **44.0 / 50.3 ms** | **63.7% faster** |
+| BOE / type counts | 125.8 / 130.0 ms | **46.3 / 52.3 ms** | **63.2% faster** |
+
+All 150 timed executions matched the established per-query output SHA-256
+values in the pinned R2 matrix above. The ignored raw report is
+`local-lazy-r2-evidence-20260817T210847Z.json` (SHA-256
+`afd704da4d0b9c2009015e84bf80790a0c3ac39bdfc22dabb2b258bc7e00dd2d`).
+
+The resident WASM constructor was measured separately on the BOE image. Both
+modules were initialized once; each `Graph` was then opened, its 447,128-quad
+header checked, and the handle freed. After two warm-ups, 15 alternating opens
+gave:
+
+| artifact | wasm bytes / SHA-256 | open median / p90 | change |
+|---|---|---:|---:|
+| eager baseline | 3,168,609 / `be60b8c67749abf9571b7f977f229331308cf9e86f72df1ce45270cccda83095` | 68.568 / 84.425 ms | — |
+| lazy owned candidate | 3,221,803 / `8ff781bb0a156cd8cb900dde03c4db64efd831f9523d2741a9dfb9f7066ac904` | **0.856 / 1.035 ms** | **98.75% faster** |
+
+This constructor number is deliberately not presented as an end-to-end query
+speedup: `Graph::new` still copies and owns the complete compressed image, and
+the first query pays to decode the tiles it selects. The win is removing all
+unselected permutation work from startup; selected tiles are then retained for
+later queries. The ignored report is
+`wasm-owned-lazy-evidence-20260817T211007Z.json` (SHA-256
+`ed3017ab355347cc70b270864e2c09e3e6174c3b27c05ecffc998fd073a8bb8e`).
+
+#### Browser, shared reader, and sharding
+
+The freshly regenerated browser artifact opened all six Wikidata XXL shards and answered
+both:
+
+```sparql
+ASK WHERE { <http://www.wikidata.org/entity/Q42> ?p ?o }
+
+SELECT ?p ?o WHERE {
+  <http://www.wikidata.org/entity/Q42> ?p ?o
+} ORDER BY ?p ?o LIMIT 10
+```
+
+The UI reported `ASK true` and exactly 10 rows, with
+`federated 6 source(s)` for both. The canonical ordered table header/cell text
+had SHA-256
+`d79d99c8b992ef900847b75f136ec410c5b36ac87a8cba292540638d21b6f026`.
+Every data response was a 206 range response; there was no full or unranged GET.
+
+| shard | pinned bytes | ETag | bytes read / GETs |
+|---:|---:|---|---:|
+| 0000 | 949,270,267 | `"c4b8ad492c00fc88f44cd4bcd505f25f-15"` | 75,283,195 / 141 |
+| 0001 | 554,800,567 | `"0674b3b74fd9a14a7754effbfc929c79-9"` | 6,396,343 / 14 |
+| 0002 | 708,499,856 | `"8b99a440d2f2e505b93b6953a2d98538-11"` | 6,479,248 / 14 |
+| 0003 | 849,908,311 | `"bbcc87cef8be7e23f0929df0c265b41f-13"` | 7,378,519 / 15 |
+| 0004 | 867,722,504 | `"27fad16c0ffd0b813f49d8d512f2cb8b-13"` | 8,939,784 / 18 |
+| 0005 | 942,757,112 | `"66fc645cb02c604146ec9138f1de1eb6-15"` | 7,428,344 / 16 |
+| **total** | **4,872,958,617** | — | **111,905,433 / 218** |
+
+The two deterministic checks therefore transferred 2.30% of the six pinned
+objects. HEAD probes before and after the queries matched all six pinned
+lengths/ETags and reported `Accept-Ranges: bytes`. The complete ignored evidence
+is `wikidata-xxl-browser-evidence-canonical-20260810T111500Z.json` (8,077 bytes,
+SHA-256
+`7f083e31cc4e18d74b5d8e87e621d731fbd894550d5fb8403ef82914a53d7e1c`).
+It includes both identity snapshots, canonical row content/hash, per-shard
+traffic, request failures, page errors, and the final verdict. The existing live
+catalog sweep also passed all four Wikidata XXL examples and reported all six
+sources. Its ignored report is
+`tests/gate/.cache/catalog-report-chromium-all-wikidata-xxl.json` (SHA-256
+`633ce58f4ccfa2eb3b4ac19c4d62ef139ddb2f417161fa1519acf116cd1c2ead`).
+Those broader examples ranged 6.5–333.0 MB per query and are compatibility
+coverage, not the deterministic transfer measurement above.
+
+The resident Asyncify harness was then run twice against pinned Imaging Plaza
+(223,233 bytes, ETag `"777c82386811e330ab755b7603d062d6"`). In both fresh
+sessions, open fetched 224,257 bytes in three requests: the complete object via
+two cache blocks plus the separate precise 1 KiB header read. The first ordered
+triple query added zero requests, and the identical second query added **0 bytes
+/ 0 requests**. This proves resident cache reuse, but the object is too small to
+prove a strict-subset open: two 128 KiB cache blocks cover it completely. Both
+before/after HEAD pairs matched the expected pin and the ten-row result SHA-256
+was `966bc8aa88807b4f723d273eff2ed78199b7a0be2390901d0a5363e841864aa2`.
+The ignored evidence files are
+`imaging-plaza-resident-evidence-canonical-1-20260810T112000Z.json` (SHA-256
+`9d0bb778b4d7fb94341337e5bf17c8e82636de34070b0bcdde6bfc70abbea519`)
+and `imaging-plaza-resident-evidence-canonical-2-20260810T112000Z.json` (SHA-256
+`69c17cf4b858860672ff20badd6b2e2dde34915b85cb2dddc2b5d9f5115d6e3a`).
+
+For that strict-subset control, pinned Jonas
+(`https://data.graphplaza.com/jonas/jonas.rete`, 2,163,156 bytes, ETag
+`"afe8ebf6962fc3af9b92eae1327352b1"`) ran this catalog-derived deterministic
+query through one resident remote graph:
+
+```sparql
+SELECT ?w ?siglum WHERE {
+  ?t <http://www.w3.org/2000/01/rdf-schema#label> "Lancelot" .
+  ?w <https://lostma-erc.github.io/jonas/prop/is_manifestation_of> ?t ;
+     <https://lostma-erc.github.io/jonas/prop/preferred_siglum> ?siglum .
+} ORDER BY ?w ?siglum LIMIT 50
+```
+
+Open read 1,049,600 bytes in nine requests; the first query read another 393,216
+bytes in three requests and returned 49 rows. Cumulative transfer was 1,442,816
+bytes (66.70% of the file), strictly below the object length. The second
+identical query added
+**0 bytes / 0 requests**. The production Asyncify host attaches `Range` to every
+data GET and rejects any status other than 206, so this successful run also
+rules out a silent full GET.
+Before/after HEAD probes both matched the Jonas pin, and the 49-row result
+SHA-256 was
+`0657bd63ff1331eebd7f7448b2fb38b327a0293dd1cbd3b078e78f08d8e13aa6`.
+The complete ignored evidence is
+`jonas-resident-evidence-canonical-20260810T112000Z.json` (SHA-256
+`46db5c7a302217e33d09a2c6c72c32573dd70941254def1c21d9395105f5d39d`).
+
+These final browser checks use the branch's freshly regenerated production
+playground and Asyncify artifacts. A diagnostic bare `wasm-pack build` first
+reproduced `WebAssembly.Table.grow(): failed to grow table by 4`: the pinned
+Binaryen v108 post-pass exported wasm-bindgen's fixed funcref table under the
+externref-table name. The canonical build already skips that incompatible pass
+with `--no-opt`; a new build/gate regression now boots both freshly generated
+`web` and `no-modules` artifacts through their JavaScript initializers. The
+canonical rebuild passed that check, and the live measurements above were then
+rerun against its output.
+
+The scope boundary is deliberate: the at-or-below-8-MiB one-GET policy belongs
+only to native `rete sparql-url`; `RETE_EAGER_MAX_MB=0` forces it off. Larger
+native objects remain lazy, the browser remains range-lazy even for eligible
+small objects, browser catalog sharding remains six-source fan-out, and the
+separate native `rete federate` command is unchanged. Named-graph tile laziness
+now avoids payload reads and decompression at lazy open, but query-triggered
+zstd tile decompression retains its existing uncapped-output behavior. This is
+not a global decompression hardening claim.
+
+### Experimental unchecked decoding
+
+The non-default `unsafe-decode-bench` feature compiles a second triple-block
+cursor that replaces the hot varint reader's checked slice access with
+`get_unchecked`. It is selected by a hidden `sparql-url --unsafe-decode` flag:
+
+```sh
+cargo build --release -p rete-cli --features unsafe-decode-bench
+target/release/rete sparql-url <trusted-url-or-path> '<query>' --json --unsafe-decode
+```
+
+This is **not safe for arbitrary files or URLs**. The operator must guarantee
+that every fetched block is a complete, immutable image produced by rete's
+encoder; malformed or truncated input can cause undefined behavior. Normal
+builds do not compile the cursor, do not accept the flag, and keep every bounds
+check. Feature builds also hide the flag from `--help` and print a warning when
+it is selected.
+
+Safe and unchecked measurements used the *same* feature-enabled release binary
+(SHA-256
+`3c78b43a7fae60cf13c6c35f8eeff33676d51d13587ae19dd75e866fd6e2052e`)
+and the same pinned Chemotion file (SHA-256
+`b7cca2e3ebe5364e767fb1f34c138d7e100b3997db172357eb4ecf3a9adfa83a`).
+Every compared JSON result was byte-identical and both modes read identical
+byte ranges.
+
+On the local lazy-reader path, 15 alternating samples of "Every subtype of
+spectroscopy" isolated the resolution-heavy decoder work:
+
+| mode | median | minâ€“max | raw milliseconds |
+|---|---:|---:|---|
+| safe | 145 ms | 143â€“156 | `145 147 151 146 143 143 156 145 147 144 145 144 145 143 146` |
+| unchecked | **86 ms** | 84â€“91 | `85 87 86 84 84 85 87 87 85 85 89 91 86 87 85` |
+
+That is a **40.7% local win (59 ms)** for this path-heavy query. A simpler local
+full-scan count moved only 113 ms â†’ 109 ms (3.5%), demonstrating that the gain
+depends strongly on how often query evaluation revisits encoded groups.
+
+Over the catalog's Cloudflare R2 URL (seven alternating samples per mode), the
+network-bound queries mostly hid the decoder saving:
+
+| query | safe median | unchecked median | result |
+|---|---:|---:|---:|
+| Molecules with their structure | **2,379 ms** | 2,387 ms | 0.3% slower / noise |
+| Most common molecular formulas | **1,786 ms** | 1,811 ms | 1.4% slower / noise |
+| Every subtype of spectroscopy | 4,209 ms | **3,955 ms** | **6.0% faster** |
+| spectroscopy repeat | 4,078 ms | **3,940 ms** | **3.4% faster** |
+
+Decision: retain the feature and hidden flag as a benchmark/controlled-data
+experiment because it materially accelerates path-heavy local work and gives a
+repeatable 3â€“6% R2 path win. Keep safe decoding as the only default: selective
+and aggregate R2 queries showed no benefit, while the unchecked failure mode is
+memory unsafety. Reproduce the alternating identity/timing run with
+`scripts/bench_unsafe_decode.sh` (`RETE_SOURCE=<local-file>` for the CPU-only
+case, `RETE_ONLY=path` to isolate the path query).
+
+### Rejected uninitialized FFI buffers
+
+The Java/Chicory and WASM Asyncify range imports currently allocate
+`vec![0u8; len]` before the host overwrites the buffer. A release microbenchmark
+used an opaque `extern "C"` full-buffer writer, alternated 15 samples per mode,
+and consumed every result so neither initialization nor the host write could be
+optimized away:
+
+| range size | zeroed buffer | uninitialized capacity + `set_len` | absolute saving |
+|---:|---:|---:|---:|
+| 64 KiB | 0.54 us | 0.27 us | 0.27 us |
+| 512 KiB | 3.24 us | 1.62 us | 1.62 us |
+| 2,490 KiB | 36.36 us | 18.18 us | 18.18 us |
+
+Skipping initialization halves this isolated memory operation, but even the
+largest representative buffer saves only **0.018 ms**. A complete Chemotion R2
+path takes about 4,000 ms and fetches 36 ranges; Java HTTP/Chicory and browser
+fetch/Asyncify overhead are orders of magnitude larger than this upper bound.
+The temporary benchmark was removed and production keeps initialized buffers:
+adding unsafe initialization state and more complex short/error paths has no
+credible end-to-end payoff.
+
+The other Polars-style techniques were also rejected for this architecture:
+
+- A custom `Send`/`Sync` raw-pointer wrapper is unnecessary: index permutations
+  are independent Rayon jobs, with no measured final-vector merge to eliminate.
+- Rust's `TrustedLen` contract is not a stable application-level API; the direct
+  encoder obtains the useful part safely by calculating exact capacity itself.
+- `transmute` has no target here: rete has no Arrow/Pandas/DuckDB in-memory FFI
+  representation to reinterpret, and its on-disk/network bytes remain untrusted.
 
 ## Scaling
 

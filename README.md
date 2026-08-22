@@ -51,8 +51,12 @@ The name comes from Latin **rēte**, meaning "net". Pronounce it **RAY-teh**
 summary, and a self-describing **schema pyramid** — into **one immutable `.rete`
 file**. Put that file on S3, GitHub Pages, or any HTTP host that supports range
 requests, hand a client the URL, and it runs **real SPARQL** against the file in
-place, **fetching only the bytes a query needs**. The same engine compiles to
-WebAssembly, so a **browser can query the file directly with no backend**.
+place. Remote-lazy paths **fetch only the bytes a query needs**; the native CLI
+may instead fetch an eligible small object once into bounded compressed memory,
+then lazily decode dictionary chunks, default-graph index tiles, the pyramid,
+and the text index from that memory. Named graphs still decode during open. The
+same engine compiles to WebAssembly, so a **browser can query the file directly
+with no backend**.
 
 > Think **Parquet** (for tables) or **PMTiles** (for maps) — but for **RDF
 > graphs + SPARQL**.
@@ -70,8 +74,10 @@ WebAssembly, so a **browser can query the file directly with no backend**.
   design and the SERVICE tests, which need a live endpoint — `SERVICE`
   federation itself [is supported](https://caviri.github.io/rete/sparql.html)).
 - **Lazy over HTTP — and on disk.** Range-read the file wherever it lives: a
-  selective query faults in only the dictionary chunks and index tiles it
-  touches, so a **1 GB graph stays interactive in the browser** and a **52 GB
+  selective query faults in only the dictionary chunks, default- or named-graph
+  index tiles, and optional sections it touches. Eligible small native HTTP
+  objects use one bounded full-file transfer, then lazily decode from the owned
+  compressed image. Thus a **1 GB graph stays interactive in the browser** and a **52 GB
   graph opens locally in KBs** (files past 1 GiB go through the same range
   reader).
 - **Bounded memory at any scale.** Aggregation streams through per-group
@@ -257,14 +263,20 @@ docker run --rm ghcr.io/caviri/rete-cli:latest \
 #   title   : OpenCitations Meta
 #   triples : 5178674356
 
+# 4. Or query straight from a URL — range-lazy, except small native SPARQL files:
+rete card-url   https://my-bucket.s3.amazonaws.com/social.rete   # 2 range requests
 rete query-url  https://my-bucket.s3.amazonaws.com/social.rete --object '<http://ex/Alice>'
 rete sparql-url https://my-bucket.s3.amazonaws.com/social.rete 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'
 ```
 
 `query-url` resolves bound terms from the dictionary, then range-fetches only the
-best-matching permutation payload for that triple pattern; `sparql-url`
-faults in index tiles as a query touches them. `rete cost --explain` shows when a
-query can use the summary-only or routed-pattern budgets.
+best-matching permutation payload for that triple pattern. Native `sparql-url`
+fetches an eligible small HTTP object once into bounded compressed memory and
+then lazily faults dictionary chunks and default-graph tiles there; pyramid and
+text-index data are also deferred, while named graphs decode during open. Larger
+or eager-disabled objects stay remote-lazy. Browser/WASM URLs are always
+remote-lazy. `rete cost --explain` shows when a query can use the summary-only or
+routed-pattern budgets.
 
 Prefer not to go through Docker at all? The same engine ships as
 `pip install rete-graph` and `npm install rete-graph` (see

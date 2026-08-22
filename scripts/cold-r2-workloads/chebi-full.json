@@ -1,0 +1,16 @@
+{
+  "name": "chebi-full",
+  "source": "https://data.graphplaza.com/chebi-full/chebi-full.rete",
+  "expected_length": 164832053,
+  "expected_etag": "\"2954435cf2b9677c9a38f84964b93668-3\"",
+  "queries": [
+    {
+      "name": "bound-entity",
+      "sparql": "SELECT ?p ?o WHERE { <http://purl.obolibrary.org/obo/CHEBI_15355> ?p ?o } ORDER BY ?p ?o LIMIT 200"
+    },
+    {
+      "name": "predicate-counts-full",
+      "sparql": "SELECT ?p (COUNT(*) AS ?count) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY ?p"
+    }
+  ]
+}
