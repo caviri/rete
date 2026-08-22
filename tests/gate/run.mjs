@@ -112,6 +112,25 @@ function g0() {
       String(e.stderr || e.stdout || e).slice(-160),
     );
   }
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_yasgui_wasm_parity.mjs`, {
+      encoding: "utf8",
+    });
+    const verdict = lastJson(out);
+    record(
+      "G0",
+      "yasgui embeds the canonical WASM glue",
+      verdict && verdict.verdict === "PASS",
+      verdict && verdict.verdict === "PASS" ? "" : out.slice(-200),
+    );
+  } catch (e) {
+    record(
+      "G0",
+      "yasgui embeds the canonical WASM glue",
+      false,
+      String(e.stderr || e.stdout || e).slice(-200),
+    );
+  }
 
   // The asyncify glue must normalize every wasm pointer it dereferences: above
   // 2 GiB an `i32` import arrives sign-extended and `mem.set` throws. The browser

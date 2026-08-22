@@ -56,9 +56,11 @@ jobs:
               - 'tests/gate/**'
               - 'scripts/build_wasm.sh'
               - 'scripts/build_playground.py'
+              - 'scripts/build_yasgui.py'
               - 'scripts/build_playground_async.sh'
               - 'scripts/stage_playground_datasets.py'
               - 'docs/playground.html'
+              - 'docs/yasgui.html'
               - 'docs/rete_wasm.js'
               - 'docs/rete_wasm_bg.wasm'
               - 'docs/rete_wasm_async.js'
@@ -235,7 +237,7 @@ jobs:
           # diff on them was a silent no-op) and docs/rete_wasm.js/_bg.wasm
           # never existed. docs/engine is refreshed by build_wasm.sh now, so
           # the ESM copy the standalone docs pages import is guarded too.
-          GUARDED="docs/playground.html docs/engine docs/rete_wasm_async.js docs/rete_wasm_async.wasm"
+          GUARDED="docs/playground.html docs/yasgui.html docs/engine docs/rete_wasm_async.js docs/rete_wasm_async.wasm"
           if git diff --quiet -- $GUARDED; then
             echo "browser artifacts: byte-identical to this commit."
             exit 0
@@ -261,6 +263,7 @@ jobs:
             web/pkg-nomodules
             web/pkg-nomodules-async
             docs/playground.html
+            docs/yasgui.html
             docs/rete_wasm.js
             docs/rete_wasm_bg.wasm
             docs/rete_wasm_async.js

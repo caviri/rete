@@ -12,8 +12,9 @@ docker compose run --rm wasm
 ```
 
 This runs `scripts/build_wasm.sh`: it builds `web/pkg`, `web/pkg-nomodules`, and
-`web/pkg-nomodules-async` from one checkout, regenerates the playground, and
-writes [wasm-build.json](wasm-build.json) with the source revision, pinned tool
+`web/pkg-nomodules-async` from one checkout, regenerates the playground and
+the self-contained yasgui·wasm IDE, and writes
+[wasm-build.json](wasm-build.json) with the source revision, pinned tool
 versions, sizes, and SHA-256 digests. The gitignored embedded `.rete` datasets
 listed in `scripts/build_playground.py` must already be staged under `web/`.
 

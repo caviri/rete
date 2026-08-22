@@ -655,12 +655,13 @@ the engine. In-memory files report <em>in-memory</em>; cached re-runs report <em
 GitHub releases and Zenodo all qualify. Build the file with <a href="cli.html"><code>rete build</code></a>, from RDF or
 <a href="data-engineering.html">anything else</a>.</p>
 <h2 id="how-its-built">How it's built</h2>
-<p><code>scripts/build_yasgui.py</code> inlines the CodeMirror bundle, the wasm-bindgen no-modules glue and the
-base64-encoded engine into <code>docs/yasgui.html</code> from <code>web/yasgui.template.html</code> +
-<code>web/yasgui-src/{app,worker}.js</code>. Queries run in a Blob-spawned Web Worker — the lazy remote reader
-uses synchronous XHR, which browsers only allow off the main thread. The end-to-end regression lives
-at <code>tests/gate/checks/check_yasgui.mjs</code> (run it manually after touching the sources; it is not part
-of the gate matrix).</p>
+<p><code>scripts/build_wasm.sh</code> invokes <code>scripts/build_yasgui.py</code>, which inlines the CodeMirror bundle, the
+wasm-bindgen no-modules glue and the base64-encoded engine into <code>docs/yasgui.html</code> from
+<code>web/yasgui.template.html</code> + <code>web/yasgui-src/{app,worker}.js</code>. Queries run in a Blob-spawned Web
+Worker — the lazy remote reader uses synchronous XHR, which browsers only allow off the main
+thread. The end-to-end regression lives at <code>tests/gate/checks/check_yasgui.mjs</code> (run it manually
+after touching the UI). The default G0 gate also byte-checks that the tracked page embeds the
+canonical no-modules glue.</p>
 <p>UI after <a href="https://yasgui.triply.cc/">Yasgui</a> by Triply — the tab model, the triangle query button, the
 YASR view plugins and the autocompleters are all loving imitations.</p>
 

@@ -617,8 +617,9 @@ client-side with no server. <code>web/index.html</code> is a working serverless 
 docker compose run --rm wasm
 </code></pre>
 <p>This runs <code>scripts/build_wasm.sh</code>: it builds <code>web/pkg</code>, <code>web/pkg-nomodules</code>, and
-<code>web/pkg-nomodules-async</code> from one checkout, regenerates the playground, and
-writes <a href="wasm-build.json">wasm-build.json</a> with the source revision, pinned tool
+<code>web/pkg-nomodules-async</code> from one checkout, regenerates the playground and
+the self-contained yasgui·wasm IDE, and writes
+<a href="wasm-build.json">wasm-build.json</a> with the source revision, pinned tool
 versions, sizes, and SHA-256 digests. The gitignored embedded <code>.rete</code> datasets
 listed in <code>scripts/build_playground.py</code> must already be staged under <code>web/</code>.</p>
 <p>When the checkout is a Windows Git worktree mounted into Linux, pass the

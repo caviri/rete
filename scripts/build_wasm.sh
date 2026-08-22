@@ -95,6 +95,9 @@ cp web/pkg/rete_wasm.js web/pkg/rete_wasm_bg.wasm docs/engine/
 bash scripts/build_playground_async.sh
 uv run python scripts/stage_playground_datasets.py
 uv run python scripts/build_playground.py
+# yasgui.html embeds the same no-modules glue and binary. Rebuild it here so a
+# wasm-bindgen API change cannot leave the standalone IDE on an older wrapper.
+uv run python scripts/build_yasgui.py
 # The gate's .rete fixtures. This used to be five inline `cargo run` lines here,
 # five more in .github/workflows/ci.yml, and a curl in tests/gate/gate.sh — three
 # producers of the same five files, which is how they drifted. One producer now,

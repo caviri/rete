@@ -45,6 +45,7 @@ from pathlib import Path
 # diff` in .github/workflows/ci.yml (which passes them explicitly).
 GUARDED = [
     "docs/playground.html",
+    "docs/yasgui.html",
     "docs/engine",
     "docs/rete_wasm_async.js",
     "docs/rete_wasm_async.wasm",

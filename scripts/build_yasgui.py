@@ -26,6 +26,7 @@ import argparse
 import base64
 import datetime
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -134,6 +135,23 @@ def b64(path: pathlib.Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def build_stamp() -> str:
+    """Return a reproducible release stamp or a useful ad-hoc one."""
+    if stamp := os.environ.get("RETE_BUILD_STAMP"):
+        return f"Built {stamp}."
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except Exception:
+        sha = "unknown"
+    return f"Built {datetime.date.today().isoformat()} from {sha}."
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(DEFAULT_OUT))
@@ -153,15 +171,6 @@ def main() -> None:
         if "</script" in text:
             die(f"{name} contains a literal </script> — cannot inline")
 
-    try:
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short=12", "HEAD"],
-            cwd=ROOT, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-    except Exception:
-        sha = "unknown"
-    stamp = f"Built {datetime.date.today().isoformat()} from {sha}."
-
     html = TEMPLATE.read_text(encoding="utf-8")
     for ph, text in chunks.items():
         html = html.replace(ph, text)
@@ -170,7 +179,7 @@ def main() -> None:
         .replace("__WASM_B64__", b64(WASM))
         .replace("__CATALOG_JSON__",
                  json.dumps(CATALOG, ensure_ascii=False, separators=(",", ":")))
-        .replace("__BUILD_STAMP__", stamp)
+        .replace("__BUILD_STAMP__", build_stamp())
         # app.js last: it must not contain the other placeholders
         .replace("__APP_JS__", APP_JS.read_text(encoding="utf-8").rstrip())
     )
