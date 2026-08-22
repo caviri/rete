@@ -75,6 +75,8 @@ impl BuildTiming {
     }
 
     pub(crate) fn lap(&mut self, phase: BuildPhase) {
+        #[cfg(target_arch = "wasm32")]
+        let _ = phase;
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(started) = self.lap_started.as_mut() {
             self.samples.push((phase, started.elapsed().as_millis()));

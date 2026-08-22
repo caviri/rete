@@ -218,7 +218,7 @@ docker compose run --rm dev cargo build -p rete-core --all-features
 docker compose run --rm dev bash scripts/smoke.sh
 ```
 
-- [ ] **Step 2: Commit the source merge checkpoint without a co-author trailer**
+- [x] **Step 2: Commit the source merge checkpoint without a co-author trailer**
 
 ```powershell
 git add -A
