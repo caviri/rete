@@ -394,7 +394,10 @@ DATASETS = [
     ("scholar", "scholar.rete"),
     ("scholar-noisy", "scholar-noisy.rete"),
     # A tiny causal ontology with planted coherence defects — powers the Coherence
-    # tab demo (rete build examples/causal.nt -o web/causal.rete).
+    # tab demo. Its card is part of the browser contract (examples + Card
+    # modal), so the reproducible rebuild must include the tracked card recipe:
+    # rete build examples/causal.nt -o web/causal.rete
+    #   --card-file web/playground-cards/causal.card.json
     ("causal", "causal.rete"),
     # Real-world knowledge graphs ingested for the playground (subgraphs built by the
     # fetch recipes in scripts/; see web/playground-src/catalog.js for the example queries):
