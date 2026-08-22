@@ -245,6 +245,12 @@ git add docs web
 git commit -m "build(wasm): regenerate browser artifacts after main sync"
 ```
 
-- [ ] **Step 6: Re-run the Task 6 independent review boundary**
+- [x] **Step 6: Re-run the Task 6 independent review boundary**
 
 Review the merge delta and the staged-family/materialization invariants before setting Task 6 complete or starting Task 7.
+
+Outcome: the final integration rereview found no Critical or Important issues and declared the branch
+merge-ready. Follow-up Minors were closed by making the canonical WASM build regenerate and guard
+the self-contained Yasgui page, then teaching the parity triage and its CI-triggered unit test about
+the deterministic Yasgui build stamp. The final browser gate passed 56/56 and the invalid-IRI suite
+passed 10/10 on a branch containing all of `origin/main`.
