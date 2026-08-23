@@ -23,12 +23,11 @@ DATASET_NAMES = (
     "antarctic-expeditions",
     "theographic-graph",
     "monarch",
-    "opencitations",
 )
 
 
-def rete_payload(marker: bytes) -> bytes:
-    return b"RETE\x05" + marker + b"RETE"
+def rete_payload(marker: bytes, version: int = 5) -> bytes:
+    return b"RETE" + bytes([version]) + marker + b"RETE"
 
 
 class StagePlaygroundDatasetsTests(unittest.TestCase):
@@ -100,7 +99,20 @@ class StagePlaygroundDatasetsTests(unittest.TestCase):
             self.assertEqual((web_dir / "scholar.rete").read_bytes(), existing)
             self.assertIn("does not match", result.stderr)
 
-    def test_rejects_a_dataset_that_is_not_v5(self) -> None:
+    def test_stages_a_readable_v6_dataset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            html = root / "playground.html"
+            payloads = {name: rete_payload(name.encode()) for name in DATASET_NAMES}
+            payloads["causal"] = rete_payload(b"paired", version=6)
+            self.write_html(html, payloads)
+
+            result = self.run_stage(html, root / "web")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / "web" / "causal.rete").read_bytes(), payloads["causal"])
+
+    def test_rejects_a_dataset_outside_the_readable_generations(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             html = root / "playground.html"
@@ -112,7 +124,7 @@ class StagePlaygroundDatasetsTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("causal", result.stderr)
-            self.assertIn("format v5", result.stderr)
+            self.assertIn("format v5 or v6", result.stderr)
 
 
 if __name__ == "__main__":

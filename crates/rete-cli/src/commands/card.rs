@@ -912,7 +912,16 @@ fn measure_card(
     let mut failed = Vec::new();
     for q in &wanted {
         let src = source.clone();
-        let m = measure_query(move || Ok(BudgetReader::new(src, budget)), q)?;
+        let budget_reader = BudgetReader::new(src, budget);
+        let exhausted = budget_reader.exhaustion_flag();
+        let mut m = measure_query(move || Ok(budget_reader), q)?;
+        if exhausted.load(std::sync::atomic::Ordering::Relaxed) {
+            let why = format!("byte budget exhausted: this query wanted more than {budget} bytes");
+            m.cost.rows = 0;
+            m.error = Some(why.clone());
+            m.useless = Some(why);
+            m.vacuous = false;
+        }
         if m.error.is_some() {
             failed.push(q.id.clone());
         }

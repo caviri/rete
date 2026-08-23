@@ -39,6 +39,23 @@ fn gzip(bytes: &[u8]) -> Vec<u8> {
     enc.finish().unwrap()
 }
 
+fn assert_external_matches_resident(external: &[u8], resident: &[u8]) {
+    let external_header = rete_core::Header::from_bytes(external).unwrap();
+    let resident_header = rete_core::Header::from_bytes(resident).unwrap();
+    assert_eq!(external_header.version, 0x05);
+    assert_eq!(resident_header.version, 0x06);
+    assert_eq!(external_header.quad_count, resident_header.quad_count);
+    assert_eq!(external_header.term_count, resident_header.term_count);
+
+    let external = rete_core::Rete::open(external).unwrap();
+    let resident = rete_core::Rete::open(resident).unwrap();
+    assert_eq!(external.dump(None), resident.dump(None));
+    assert_eq!(external.graph_names(), resident.graph_names());
+    for graph in external.graph_names() {
+        assert_eq!(external.dump(Some(graph)), resident.dump(Some(graph)));
+    }
+}
+
 /// `.ttl.gz` builds, and to the same bytes as the uncompressed `.ttl`.
 /// Compression is a transport detail; it must not reach the output.
 #[test]
@@ -90,8 +107,9 @@ fn concatenated_gzip_members_all_read() {
 }
 
 /// The external build accepts Turtle — the point of the exercise. Its output is
-/// documented to be byte-identical to a standard `--no-pyramid` build, and that
-/// promise must survive the new input path.
+/// remains query-equivalent to a standard `--no-pyramid` build while the
+/// transitional external writer stays on 0x05 and the resident writer emits
+/// paired generation 0x06.
 #[test]
 fn external_build_from_gzipped_turtle_matches_in_ram() {
     let f = fixture();
@@ -115,11 +133,56 @@ fn external_build_from_gzipped_turtle_matches_in_ram() {
         .assert()
         .success();
 
-    assert_eq!(
-        std::fs::read(&out_ext).unwrap(),
-        std::fs::read(&out_ram).unwrap(),
-        "external build of .ttl.gz must equal the in-RAM --no-pyramid build"
+    assert_external_matches_resident(
+        &std::fs::read(&out_ext).unwrap(),
+        &std::fs::read(&out_ram).unwrap(),
     );
+}
+
+#[test]
+fn external_card_reports_the_legacy_generation_it_writes() {
+    let f = fixture();
+    let src = f.write("card.ttl", TTL);
+    let out = f.path("card.rete");
+
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .args(["--memory-budget-mb", "64", "--card", "-o"])
+        .arg(&out)
+        .assert()
+        .success();
+
+    let bytes = std::fs::read(&out).unwrap();
+    let header = rete_core::Header::from_bytes(&bytes).unwrap();
+    let card = rete_core::card::load_card(&bytes)
+        .unwrap()
+        .expect("external card is embedded");
+    assert_eq!(header.version, 0x05);
+    assert_eq!(card.format_version, header.version);
+}
+
+#[test]
+fn ordinary_cards_report_the_selected_physical_generation() {
+    let f = fixture();
+    let src = f.write("ordinary-card.ttl", TTL);
+    for (permutations, expected) in [("3", 0x05), ("6", 0x06)] {
+        let out = f.path(&format!("ordinary-card-{permutations}.rete"));
+        rete()
+            .args(["build"])
+            .arg(&src)
+            .args(["--permutations", permutations, "--card", "-o"])
+            .arg(&out)
+            .assert()
+            .success();
+        let bytes = std::fs::read(&out).unwrap();
+        let header = rete_core::Header::from_bytes(&bytes).unwrap();
+        let card = rete_core::card::load_card(&bytes)
+            .unwrap()
+            .expect("ordinary card is embedded");
+        assert_eq!(header.version, expected);
+        assert_eq!(card.format_version, expected);
+    }
 }
 
 /// TriG parses, and its named graph survives into the file.
@@ -179,11 +242,10 @@ fn collapse_graphs_matches_the_default_graph_build() {
 }
 
 /// The external build carries named graphs through the same spill the default
-/// graph uses, so a TriG input must produce **byte-identical** output to the
-/// in-RAM `--no-pyramid` build — the guarantee `--memory-budget-mb` already made
-/// for the default graph, extended to quads (#139).
+/// graph uses. During the 0x05/0x06 transition its physical bytes differ from
+/// the in-RAM build, but all default/named graph content must remain identical.
 #[test]
-fn external_build_keeps_named_graphs_byte_identically() {
+fn external_build_keeps_named_graphs_identically() {
     let f = fixture();
     let src = f.write("g.trig", TRIG);
     let out_ext = f.path("ext.rete");
@@ -205,10 +267,9 @@ fn external_build_keeps_named_graphs_byte_identically() {
         .assert()
         .success();
 
-    assert_eq!(
-        std::fs::read(&out_ext).unwrap(),
-        std::fs::read(&out_ram).unwrap(),
-        "external build of a TriG must equal the in-RAM --no-pyramid build"
+    assert_external_matches_resident(
+        &std::fs::read(&out_ext).unwrap(),
+        &std::fs::read(&out_ram).unwrap(),
     );
     rete()
         .args(["graphs"])

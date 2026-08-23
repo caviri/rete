@@ -195,13 +195,15 @@ fn only_measures_the_queries_it_was_given() {
 #[test]
 fn a_byte_budget_stops_a_query_and_still_reports_the_spend() {
     let (_fixture, out) = carded(false, &[]);
-    // 20 KB: under what any of this fixture's queries needs, over what the
-    // header + card cost, so the budget bites mid-query rather than at open.
+    // 0.006 MiB (~6.3 KiB): over the paired file's cheapest cold query
+    // (~3.8 KiB), under its scans (~10.7 KiB), so the budget bites mid-query
+    // rather than at open. The prior 20 KiB threshold became obsolete when
+    // generation 0x06 removed three physical permutation directories.
     let doc = common::json(common::rete().arg("card-audit").arg(&out).args([
         "--measure",
         "--json",
         "--max-mb",
-        "0.02",
+        "0.006",
     ]));
     let stopped: Vec<_> = doc["findings"]
         .as_array()
@@ -211,14 +213,14 @@ fn a_byte_budget_stops_a_query_and_still_reports_the_spend() {
         .collect();
     assert!(
         !stopped.is_empty(),
-        "a 20 KB budget should stop at least one query on this fixture"
+        "a 0.006 MiB budget should stop at least one query on this fixture"
     );
     for f in stopped {
         assert!(f["observed"]["error"]
             .as_str()
             .unwrap()
             .contains("byte budget exhausted"));
-        assert!(f["observed"]["bytes"].as_u64().unwrap() <= 20 * 1024);
+        assert!(f["observed"]["bytes"].as_u64().unwrap() <= (0.006 * (1 << 20) as f64) as u64);
     }
     // A run that did not finish is not a cost record.
     common::rete()
@@ -229,7 +231,7 @@ fn a_byte_budget_stops_a_query_and_still_reports_the_spend() {
             "--write-costs",
             "--allow-empty",
             "--max-mb",
-            "0.02",
+            "0.006",
         ])
         .assert()
         .failure()

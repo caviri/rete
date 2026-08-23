@@ -492,6 +492,11 @@ impl GraphIndexBuilder {
     /// permutation parallelism of [`Self::build`] for a much lower peak RAM — the
     /// large-graph low-memory path. Output is byte-identical to [`Self::build`].
     pub fn build_seq(self) -> GraphIndex {
+        if self.perms == PermSet::ALL {
+            if let Ok(index) = self.build_families_seq() {
+                return index;
+            }
+        }
         let triples = &self.triples;
         let budget = self.tile_budget;
         let wanted: Vec<IndexPermutation> = self.perms.iter().collect();
@@ -531,6 +536,11 @@ impl GraphIndexBuilder {
     }
 
     pub fn build(self) -> GraphIndex {
+        if self.perms == PermSet::ALL {
+            if let Ok(index) = self.build_families() {
+                return index;
+            }
+        }
         let wanted: Vec<IndexPermutation> = self.perms.iter().collect();
         let triples = &self.triples;
         let budget = self.tile_budget;
@@ -552,10 +562,8 @@ impl GraphIndexBuilder {
         GraphIndex::from_sections(scatter(&wanted, built), self.perms)
     }
 
-    /// Build through the staged paired-family path without making it a public
-    /// production API before the format writer is ready.
-    #[allow(dead_code)] // Staged until the format writer consumes paired families.
-    pub(crate) fn build_families(self) -> Result<GraphIndex, BuildPipelineError> {
+    /// Build the three paired physical families used by format generation 0x06.
+    pub(crate) fn build_families(&self) -> Result<GraphIndex, BuildPipelineError> {
         let triples = &self.triples;
         #[cfg(feature = "parallel")]
         let families = {
@@ -581,6 +589,15 @@ impl GraphIndexBuilder {
             build_family_from_slice(triples, IndexFamily::Subject, self.tile_budget)?,
             build_family_from_slice(triples, IndexFamily::Predicate, self.tile_budget)?,
             build_family_from_slice(triples, IndexFamily::Object, self.tile_budget)?,
+        ];
+        Ok(GraphIndex::from_families(families))
+    }
+
+    fn build_families_seq(&self) -> Result<GraphIndex, BuildPipelineError> {
+        let families = [
+            build_family_from_slice(&self.triples, IndexFamily::Subject, self.tile_budget)?,
+            build_family_from_slice(&self.triples, IndexFamily::Predicate, self.tile_budget)?,
+            build_family_from_slice(&self.triples, IndexFamily::Object, self.tile_budget)?,
         ];
         Ok(GraphIndex::from_families(families))
     }

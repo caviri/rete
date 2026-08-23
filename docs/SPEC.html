@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>Format specification · rete docs</title>
-  <meta name="description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
+  <meta name="description" content="Status: Transitional generations 0x05 and 0x06 implemented; ordinary six-permutation builds write paired generation 0x06, while readers retain 0x05 support (no compatibility promise before 1.0.0) ·…" />
   <link rel="canonical" href="https://caviri.github.io/rete/SPEC.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="Format specification · rete docs" />
-  <meta property="og:description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
+  <meta property="og:description" content="Status: Transitional generations 0x05 and 0x06 implemented; ordinary six-permutation builds write paired generation 0x06, while readers retain 0x05 support (no compatibility promise before 1.0.0) ·…" />
   <meta property="og:url" content="https://caviri.github.io/rete/SPEC.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="Format specification · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Format specification · rete docs" />
-  <meta name="twitter:description" content="Status: Stable format generation 1, implemented (header byte 0x05, frozen 2026-07-14; no compatibility promise before 1.0.0) · File extension: .rete · Header magic: RETE" />
+  <meta name="twitter:description" content="Status: Transitional generations 0x05 and 0x06 implemented; ordinary six-permutation builds write paired generation 0x06, while readers retain 0x05 support (no compatibility promise before 1.0.0) ·…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/SPEC.png" />
   <meta name="rete:section" content="Development" />
   <script>
@@ -609,7 +609,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
     <div class="page">
       <article class="content">
 <h1 id="rete--a-cloud-native-range-queryable-rdf-graph-file">Rete — a cloud-native, range-queryable RDF graph file</h1>
-<p><strong>Status:</strong> Stable format generation <strong>1</strong>, implemented (header byte <code>0x05</code>, frozen 2026-07-14; no compatibility promise before 1.0.0) · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
+<p><strong>Status:</strong> Transitional generations <code>0x05</code> and <code>0x06</code> implemented; ordinary six-permutation builds write paired generation <code>0x06</code>, while readers retain <code>0x05</code> support (no compatibility promise before 1.0.0) · <strong>File extension:</strong> <code>.rete</code> · <strong>Header magic:</strong> <code>RETE</code></p>
 <blockquote>
 <p>One file. Put it on S3, GitHub, or any HTTP server that honors <code>Range</code>.
 Give a client the URL. Run SPARQL. No database server.</p>
@@ -669,8 +669,7 @@ aggregated edges). Each deeper level expands supernodes into their members.</li>
 </ol>
 <hr />
 <h2 id="4-file-layout">4. File layout</h2>
-<p>The stable generation-1 on-disk layout (what <code>write_file</code>/<code>write_dataset</code>
-actually emit). The
+<p>The shared top-level layout for readable generations <code>0x05</code> and <code>0x06</code>. The
 header is the directory: it carries the absolute offset+length of every section, so a
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.</p>
@@ -716,12 +715,14 @@ the fuller design and remain future work (see <code>docs/BENCHMARK.md</code>).</
 <p>The header is a fixed <strong>64-byte core</strong> followed by a <strong>typed section directory</strong> —
 up to 40 entries of 24 bytes each <code>(kind, flags, offset, length)</code> — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
-room to grow without a layout reshape. Format byte <code>0x05</code> is <strong>stable format
-generation 1</strong>, frozen on 2026-07-14 and first released in Rete <strong>0.3.0</strong>. It
-fixes this 1024-byte section-directory header and the six-wide permutation
-addressing — <em>how many</em> of those six a given file actually stores is its
-<strong>permutation mask</strong> (byte 50, §6), not its generation. Experimental formats
-<code>0x01</code> through <code>0x04</code> are not readable and must be rebuilt from RDF source.</p>
+room to grow without a layout reshape. Format byte <code>0x05</code> is stable format
+generation 1, frozen on 2026-07-14 and first released in Rete <strong>0.3.0</strong>.
+Generation <code>0x06</code> keeps this header and every non-index section, but pairs the
+six logical permutation streams into three physical families (§6.3). Current
+readers accept both. Ordinary six-permutation builds emit <code>0x06</code>; the
+memory-bounded external writer and <code>--permutations 3</code> remain <code>0x05</code> until their
+own paired-family cutovers. Experimental formats <code>0x01</code> through <code>0x04</code> are not
+readable and must be rebuilt from RDF source.</p>
 <blockquote>
 <p>There is no Rete 1.0.0. The generation number counts <em>format</em> generations and
 is independent of the release version (the workspace is 0.3.x); the Rust, CLI
@@ -731,7 +732,7 @@ and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
 <p><strong>Core (bytes 0..64):</strong></p>
 <table><thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead><tbody>
 <tr><td>0</td><td>4</td><td>magic <code>RETE</code></td></tr>
-<tr><td>4</td><td>1</td><td>format version (<code>0x05</code>, stable generation 1)</td></tr>
+<tr><td>4</td><td>1</td><td>format version (<code>0x05</code> legacy six-section index or <code>0x06</code> paired-family index)</td></tr>
 <tr><td>5</td><td>1</td><td>flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples)</td></tr>
 <tr><td>6</td><td>2</td><td>header length (= 1024)</td></tr>
 <tr><td>8</td><td>16</td><td>content hash (blake3, first 16 bytes) — also an ETag-like id</td></tr>
@@ -742,7 +743,7 @@ and WASM APIs are the surfaces waiting on 1.0.0, not the file format. See
 <tr><td>43</td><td>1</td><td>block codec id (e.g. zstd)</td></tr>
 <tr><td>44</td><td>2</td><td>section count (entries in the directory)</td></tr>
 <tr><td>46</td><td>4</td><td>schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, fetched at <code>pyramid_meta_offset + pyramid_meta_len − this</code> for an index/dictionary/summary-free schema-coherence read</td></tr>
-<tr><td>50</td><td>1</td><td><strong>index permutation mask</strong> (§6): bit <em>i</em> = permutation <em>i</em> of <code>SPO, POS, OSP, SOP, PSO, OPS</code> is stored. <code>0</code> means <strong>all six</strong> — the canonical spelling, so a full build is byte-identical to every file written before this byte was defined. A mask must contain SPO+POS+OSP (<code>0b000111</code>); anything else is rejected at header parse</td></tr>
+<tr><td>50</td><td>1</td><td><strong>index permutation mask</strong> (§6): bit <em>i</em> = permutation <em>i</em> of <code>SPO, POS, OSP, SOP, PSO, OPS</code> is stored. <code>0</code> means <strong>all six</strong>, the canonical spelling in both readable generations; their physical index layouts still differ. A mask must contain SPO+POS+OSP (<code>0b000111</code>); anything else is rejected at header parse</td></tr>
 <tr><td>51</td><td>13</td><td>reserved (zero)</td></tr>
 </tbody></table>
 <p><strong>Section directory (bytes 64…, <code>section_count</code> entries of 24 bytes):</strong></p>
@@ -991,21 +992,24 @@ into a term, compared for equality with one, or reported as one; and a key that
 is <em>not</em> a separator (a truncation, a fixed-size hash) mis-routes <strong>silently</strong> —
 <code>id → term</code>, <code>dump</code> and <code>export</code> route by <code>Δfirst_run</code> and stay byte-perfect
 while <code>term → id</code> returns wrong answers.</p>
-<h3 id="63-staged-paired-family-container-generation-0x06">6.3 Staged paired-family container (generation <code>0x06</code>)</h3>
-<p>The following is the exact internal contract for the next file generation. It
-is deliberately staged: this repository still writes and dispatches stable
-header generation <code>0x05</code> at this point. <code>0x06</code> is not emitted by production
-writers or selected by public readers. <code>CURRENT_FORMAT_VERSION</code> and the minimum
-stable read version both remain <code>0x05</code>. Task 11 will deliberately make the
-eventual <code>0x06</code>-only break and remove the <code>0x05</code> reader; that incompatibility is
-not part of this staged codec implementation.</p>
+<h3 id="63-paired-family-container-generation-0x06">6.3 Paired-family container (generation <code>0x06</code>)</h3>
+<p>Generation <code>0x06</code> is the current ordinary six-permutation writer layout.
+Readers dispatch <code>0x05</code> to the legacy six-section container and <code>0x06</code> to this
+three-family container; the two reconstruct the same six logical permutations.
+The external memory-bounded writer and three-permutation builds deliberately
+remain <code>0x05</code> during the transition. Removing the <code>0x05</code> reader is a separate,
+future compatibility decision.</p>
 <p>Its index root is exactly three uncompressed length-framed family payloads in
 <strong>Subject, Predicate, Object</strong> order. An empty graph is therefore
-<code>varint(3), varint(1), 0, varint(1), 0, varint(1), 0</code>: three zero-pair family
-payloads. A subject family pairs SPO/SOP, predicate pairs POS/PSO, and object
+<code>varint(3), varint(3), 0, 0, 0, varint(3), 0, 0, 0, varint(3), 0, 0, 0</code>:
+three empty family payloads, each containing zero count/directory/trailer
+lengths. A subject family pairs SPO/SOP, predicate pairs POS/PSO, and object
 pairs OSP/OPS.</p>
 <p>Each family payload is exactly:</p>
 <pre><code class="language-text">uvarint tile_pair_count
+uvarint directory_len
+uvarint synopsis_trailer_len
+directory_len bytes:
 tile_pair_count × (uvarint min_a_delta, uvarint max_a_span)
 tile_pair_count × (uvarint first_flags, uvarint first_compressed_len,
                    uvarint first_prefix2_len)
@@ -1013,14 +1017,18 @@ tile_pair_count × (uvarint second_flags, uvarint second_compressed_len,
                    uvarint second_prefix2_len)
 first records in order:  prefix-2 blob, then compressed §6.1 tile payload
 second records in order: prefix-2 blob, then compressed §6.1 tile payload
-first synopsis trailer:  tile_pair_count × 4 uvarints
-second synopsis trailer: tile_pair_count × 4 uvarints
+synopsis_trailer_len bytes:
+  first synopsis trailer:  tile_pair_count × 4 uvarints
+  second synopsis trailer: tile_pair_count × 4 uvarints
 </code></pre>
 <p><code>min_a_delta</code> is from the prior pair's <code>min_a</code> (first is absolute) and
 <code>max_a_span = max_a - min_a</code>. Both orders must have exactly the same pair count
 and leading range at every pair. Compressed lengths name only their compressed
-tile payload: they exclude the prefix-2 blob and both trailers. Record offsets
-are cumulative checked <code>u64</code> values.</p>
+tile payload: they exclude the prefix-2 blob and both trailers. Directory and
+trailer lengths are exact and exclude their own varints. They let a ranged
+opener fetch the two metadata blobs directly without probing through or
+transferring either sibling's tile payload. Record offsets are cumulative
+checked <code>u64</code> values.</p>
 <p>Flags bit 0 means this tile continues the previous tile's leading group; bit 1
 means that leading group continues into the next tile. All other bits are
 reserved and rejected. A continuation repeats the same <strong>singleton</strong> leading
@@ -1096,15 +1104,13 @@ range read at <code>text_index offset</code> and is the honest cost figure; the 
 length alone overstates it several-fold, since the postings blob is never read
 whole.</p>
 <p><strong>Compatibility:</strong> <code>0x05</code> is stable format generation 1. Every stable reader from
-Rete <strong>0.3.0</strong> onward reads <code>0x05</code> — there is no 1.0.0; the generation was frozen
-in the 0.3 line and the release version is a separate number.
-Optional sections and flags may extend it without changing its required semantics.
-A required layout change uses a new format byte. <strong>No backwards-compatibility
-promise is made before 1.0.0:</strong> a later generation may drop <code>0x05</code> read support
-and force a rebuild from RDF source. The staged paired-family plan makes that
-choice explicitly: Task 11 moves to <code>0x06</code> only and removes the <code>0x05</code> reader.
-Experimental formats <code>0x01</code> through <code>0x04</code> are already such a break and must be
-rebuilt from RDF source.</p>
+Rete <strong>0.3.0</strong> onward reads <code>0x05</code>; readers implementing this section accept
+both <code>0x05</code> and <code>0x06</code>. Older readers reject <code>0x06</code> at the header rather than
+misinterpreting its index. The generation is independent of the 0.3.x release
+number. <strong>No backwards-compatibility promise is made before 1.0.0:</strong> a future
+release may drop <code>0x05</code> read support and require rebuilding from RDF source, but
+this transitional release does not. Experimental formats <code>0x01</code> through <code>0x04</code>
+are already such a break and must be rebuilt from RDF source.</p>
 <hr />
 <h2 id="7-the-pyramid--community-summarization">7. The pyramid — community summarization</h2>
 <p>The headline feature. "Zoom" = level of graph detail.</p>

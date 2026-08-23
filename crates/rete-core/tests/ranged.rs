@@ -180,6 +180,146 @@ fn overlaps(r: (u64, u64), region: (u64, u64)) -> bool {
     start < region.1 && region.0 < end
 }
 
+fn test_uvarint(bytes: &[u8], pos: &mut usize) -> u64 {
+    let mut value = 0u64;
+    for shift in (0..70).step_by(7) {
+        let byte = bytes[*pos];
+        *pos += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return value;
+        }
+    }
+    panic!("test fixture contains an invalid varint")
+}
+
+/// Absolute compressed-payload ranges for the Subject family's SPO and SOP
+/// siblings in a generation-0x06 image.
+type PhysicalRanges = Vec<(u64, u64)>;
+
+fn subject_family_payload_ranges(image: &[u8]) -> (PhysicalRanges, PhysicalRanges) {
+    let header = Header::from_bytes(image).unwrap();
+    assert_eq!(header.version, 0x06);
+    let root_start = usize::try_from(header.root_dir_offset).unwrap();
+    let root_end = usize::try_from(header.root_dir_offset + header.root_dir_len).unwrap();
+    let root = &image[root_start..root_end];
+    let mut root_pos = 0usize;
+    assert_eq!(test_uvarint(root, &mut root_pos), 3);
+    let subject_len = usize::try_from(test_uvarint(root, &mut root_pos)).unwrap();
+    let subject_file_start = root_start + root_pos;
+    let family = &root[root_pos..root_pos + subject_len];
+
+    let mut pos = 0usize;
+    let count = usize::try_from(test_uvarint(family, &mut pos)).unwrap();
+    for _ in 0..count {
+        let _ = test_uvarint(family, &mut pos); // leading minimum delta
+        let _ = test_uvarint(family, &mut pos); // leading span
+    }
+    let mut first = Vec::with_capacity(count);
+    let mut second = Vec::with_capacity(count);
+    for _ in 0..count {
+        let _ = test_uvarint(family, &mut pos); // flags
+        let len = test_uvarint(family, &mut pos);
+        let prefix = test_uvarint(family, &mut pos);
+        first.push((prefix, len));
+    }
+    for _ in 0..count {
+        let _ = test_uvarint(family, &mut pos); // flags
+        let len = test_uvarint(family, &mut pos);
+        let prefix = test_uvarint(family, &mut pos);
+        second.push((prefix, len));
+    }
+    let records_start = pos;
+    let physical = |records: &[(u64, u64)], cursor: &mut usize| {
+        records
+            .iter()
+            .map(|&(prefix, len)| {
+                let prefix = usize::try_from(prefix).unwrap();
+                let len = usize::try_from(len).unwrap();
+                let start = subject_file_start + *cursor + prefix;
+                *cursor += prefix + len;
+                (start as u64, len as u64)
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut cursor = records_start;
+    let first_ranges = physical(&first, &mut cursor);
+    let second_ranges = physical(&second, &mut cursor);
+    (first_ranges, second_ranges)
+}
+
+fn paired_ranged_image() -> Vec<u8> {
+    let knows = "<http://ex/knows>";
+    let triples: Vec<(String, String, String)> = (0..80)
+        .map(|i| {
+            (
+                format!("<http://ex/person/{i:03}>"),
+                knows.to_string(),
+                format!(
+                    "<http://ex/person/{:03}>",
+                    if i == 2 { 1 } else { (i + 1) % 80 }
+                ),
+            )
+        })
+        .collect();
+    let mut db = DictionaryBuilder::new();
+    for (s, p, o) in &triples {
+        db.observe(s, p, o);
+    }
+    let dict = db.build();
+    let mut index = GraphIndexBuilder::new().with_tile_budget(64);
+    for (s, p, o) in &triples {
+        index.push(dict.encode(s, p, o).unwrap());
+    }
+    write_file(&dict, &index.build(), false, &[], 0)
+}
+
+#[test]
+fn paired_lazy_spo_query_never_reads_the_sop_payload() {
+    let image = paired_ranged_image();
+    let (_, sop_payloads) = subject_family_payload_ranges(&image);
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    let before = reader.reads().len();
+    let rows = rete.query(Some("<http://ex/person/000>"), None, None);
+    assert_eq!(rows.len(), 1);
+    assert!(!rete.index_incomplete());
+    for read in &reader.reads()[before..] {
+        for &(offset, len) in &sop_payloads {
+            assert!(
+                !overlaps(*read, (offset, offset + len)),
+                "SPO-only query read SOP payload {offset}..{} via {read:?}",
+                offset + len
+            );
+        }
+    }
+}
+
+/// Generation 0x06 frames each family's directory and synopsis trailer so a
+/// lazy open can fetch those two metadata blobs directly.  Opening must stay
+/// well below the old lengthless-varint walk's ~100 index requests while still
+/// transferring no tile payload bytes.
+#[test]
+fn paired_lazy_open_batches_family_metadata() {
+    let image = multi_tile_image();
+    let (idx_start, idx_end) = index_region(&image);
+    let reader = std::sync::Arc::new(RecordingReader::new(image));
+
+    let rete = Rete::open_ranged_lazy(reader.clone()).unwrap();
+    assert_eq!(rete.header().version, 0x06);
+
+    let index_reads = reader
+        .reads()
+        .iter()
+        .filter(|r| overlaps(**r, (idx_start, idx_end)))
+        .count();
+    assert!(
+        index_reads <= 28,
+        "paired lazy open issued {index_reads} index metadata reads; expected three framed \
+         family directories and trailers"
+    );
+}
+
 #[test]
 fn summary_view_never_reads_the_index() {
     let image = image_with_pyramid();
@@ -391,47 +531,103 @@ fn named_graph_layout(image: &[u8]) -> Vec<NamedGraphLayout> {
         let container_len = oracle_uvarint(image, &mut pos, end);
         let container_end = oracle_bound(pos, container_len, end);
         let section_count = oracle_uvarint(image, &mut pos, container_end);
-        assert_eq!(section_count, 6, "fixture index container has six sections");
         let mut sections = [ByteRange { offset: 0, len: 0 }; 6];
-        for section in &mut sections {
-            let len = oracle_uvarint(image, &mut pos, container_end);
-            let section_end = oracle_bound(pos, len, container_end);
-            *section = ByteRange {
-                offset: pos as u64,
-                len,
-            };
-            pos = section_end;
+        let mut tiles: [Vec<ByteRange>; 6] = Default::default();
+        if header.version == 0x05 {
+            assert_eq!(section_count, 6, "legacy fixture index has six sections");
+            for section in &mut sections {
+                let len = oracle_uvarint(image, &mut pos, container_end);
+                let section_end = oracle_bound(pos, len, container_end);
+                *section = ByteRange {
+                    offset: pos as u64,
+                    len,
+                };
+                pos = section_end;
+            }
+            tiles = std::array::from_fn(|section_index| {
+                let section = sections[section_index];
+                let mut dir_pos = usize::try_from(section.offset).unwrap();
+                let section_end = oracle_bound(dir_pos, section.len, image.len());
+                let tile_count =
+                    usize::try_from(oracle_uvarint(image, &mut dir_pos, section_end)).unwrap();
+                let mut lengths = Vec::with_capacity(tile_count);
+                for _ in 0..tile_count {
+                    let _delta_min = oracle_uvarint(image, &mut dir_pos, section_end);
+                    let _span = oracle_uvarint(image, &mut dir_pos, section_end);
+                    lengths.push(oracle_uvarint(image, &mut dir_pos, section_end));
+                }
+                lengths
+                    .into_iter()
+                    .map(|len| {
+                        let tile_end = oracle_bound(dir_pos, len, section_end);
+                        let range = ByteRange {
+                            offset: dir_pos as u64,
+                            len,
+                        };
+                        dir_pos = tile_end;
+                        range
+                    })
+                    .collect()
+            });
+        } else {
+            assert_eq!(section_count, 3, "paired fixture index has three families");
+            for family in 0..3usize {
+                let len = oracle_uvarint(image, &mut pos, container_end);
+                let family_end = oracle_bound(pos, len, container_end);
+                let physical = ByteRange {
+                    offset: pos as u64,
+                    len,
+                };
+                sections[family] = physical;
+                sections[family + 3] = physical;
+
+                let mut family_pos = pos;
+                let tile_count =
+                    usize::try_from(oracle_uvarint(image, &mut family_pos, family_end)).unwrap();
+                let directory_len = oracle_uvarint(image, &mut family_pos, family_end);
+                let trailer_len = oracle_uvarint(image, &mut family_pos, family_end);
+                let directory_end = oracle_bound(family_pos, directory_len, family_end);
+                for _ in 0..tile_count {
+                    let _ = oracle_uvarint(image, &mut family_pos, directory_end);
+                    let _ = oracle_uvarint(image, &mut family_pos, directory_end);
+                }
+                let mut first = Vec::with_capacity(tile_count);
+                let mut second = Vec::with_capacity(tile_count);
+                for target in [&mut first, &mut second] {
+                    for _ in 0..tile_count {
+                        let _flags = oracle_uvarint(image, &mut family_pos, directory_end);
+                        let payload = oracle_uvarint(image, &mut family_pos, directory_end);
+                        let prefix = oracle_uvarint(image, &mut family_pos, directory_end);
+                        target.push(prefix + payload);
+                    }
+                }
+                assert_eq!(family_pos, directory_end, "family directory is exact");
+                for (slot, lengths) in [(family, first), (family + 3, second)] {
+                    tiles[slot] = lengths
+                        .into_iter()
+                        .map(|record_len| {
+                            let record_end = oracle_bound(family_pos, record_len, family_end);
+                            let range = ByteRange {
+                                offset: family_pos as u64,
+                                len: record_len,
+                            };
+                            family_pos = record_end;
+                            range
+                        })
+                        .collect();
+                }
+                assert_eq!(
+                    oracle_bound(family_pos, trailer_len, family_end),
+                    family_end,
+                    "family trailer is exact"
+                );
+                pos = family_end;
+            }
         }
         assert_eq!(
             pos, container_end,
             "fixture container has no trailing bytes"
         );
-
-        let tiles = std::array::from_fn(|section_index| {
-            let section = sections[section_index];
-            let mut dir_pos = usize::try_from(section.offset).unwrap();
-            let section_end = oracle_bound(dir_pos, section.len, image.len());
-            let tile_count =
-                usize::try_from(oracle_uvarint(image, &mut dir_pos, section_end)).unwrap();
-            let mut lengths = Vec::with_capacity(tile_count);
-            for _ in 0..tile_count {
-                let _delta_min = oracle_uvarint(image, &mut dir_pos, section_end);
-                let _span = oracle_uvarint(image, &mut dir_pos, section_end);
-                lengths.push(oracle_uvarint(image, &mut dir_pos, section_end));
-            }
-            lengths
-                .into_iter()
-                .map(|len| {
-                    let tile_end = oracle_bound(dir_pos, len, section_end);
-                    let range = ByteRange {
-                        offset: dir_pos as u64,
-                        len,
-                    };
-                    dir_pos = tile_end;
-                    range
-                })
-                .collect()
-        });
         graphs.push(NamedGraphLayout {
             name,
             sections,
@@ -1102,14 +1298,15 @@ fn full_scan_coalesces_tile_fetches() {
     // so a full sweep costs O(log tiles) coalesced batch reads plus the tile
     // directories — a small constant, NOT one read per tile (which over 700+
     // tiles would be in the hundreds).
-    // The six permutation tile directories (+ their synopsis trailers) are read
-    // at open — a small constant — on top of the SPO scan's O(log n) coalesced
-    // batches; still nowhere near one read per tile (which over 700+ tiles would
-    // be in the hundreds).
+    // The three length-framed paired-family directories and synopsis trailers
+    // are fetched exactly at open; the remaining reads are the SPO scan's
+    // O(log n) coalesced tile batches.  The measured transition cost is 34,
+    // and this bound leaves modest transport variation without regressing to
+    // the old lengthless metadata walk.
     assert!(
-        index_reads < 64,
+        index_reads < 48,
         "full scan issued {index_reads} index-region reads over {spo_tiles} tiles — \
-         expected the six tile directories plus O(log n) coalesced batch reads"
+         expected three framed family directories plus O(log n) coalesced batches"
     );
 }
 
@@ -1254,7 +1451,7 @@ fn dump_over_lazy_open_coalesces_fetches() {
     let total_reads = reader.reads().len();
     assert!(
         total_reads < 80,
-        "lazy dump issued {total_reads} range reads — expected the six permutation \
+        "lazy dump issued {total_reads} range reads — expected three exact paired-family \
          directories plus coalesced chunk batches and O(log n) tile-prefetch batches"
     );
 }
@@ -1750,8 +1947,9 @@ fn exhaustive_graph_walk_bulk_fetches_the_section() {
     );
     // Bulk from the FIRST read: the whole remainder (capped at the 8 MiB
     // chunk ceiling) in one request, not a 64 KiB probe.
+    let first_bulk = section_len.min(8 * 1024 * 1024);
     assert!(
-        walk_reads[0] >= section_len - 64 * 1024,
+        walk_reads[0] >= first_bulk - 64 * 1024,
         "exhaustive walk started with a {} B read over a {section_len} B section — \
          the demand hint did not engage bulk fetching",
         walk_reads[0]
@@ -1759,7 +1957,7 @@ fn exhaustive_graph_walk_bulk_fetches_the_section() {
     // And a handful of section requests in total — count varint + bulk
     // chunk(s) — never one per graph or per 64 KiB.
     assert!(
-        walk_reads.len() <= 4,
+        walk_reads.len() <= 6,
         "exhaustive walk over 600 graphs issued {} section reads ({:?}...) — \
          expected the section in a few bulk chunks",
         walk_reads.len(),

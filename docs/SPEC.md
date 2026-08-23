@@ -1,6 +1,6 @@
 # Rete — a cloud-native, range-queryable RDF graph file
 
-**Status:** Stable format generation **1**, implemented (header byte `0x05`, frozen 2026-07-14; no compatibility promise before 1.0.0) · **File extension:** `.rete` · **Header magic:** `RETE`
+**Status:** Transitional generations `0x05` and `0x06` implemented; ordinary six-permutation builds write paired generation `0x06`, while readers retain `0x05` support (no compatibility promise before 1.0.0) · **File extension:** `.rete` · **Header magic:** `RETE`
 
 > One file. Put it on S3, GitHub, or any HTTP server that honors `Range`.
 > Give a client the URL. Run SPARQL. No database server.
@@ -69,8 +69,7 @@ Three transformations make it range-queryable:
 
 ## 4. File layout
 
-The stable generation-1 on-disk layout (what `write_file`/`write_dataset`
-actually emit). The
+The shared top-level layout for readable generations `0x05` and `0x06`. The
 header is the directory: it carries the absolute offset+length of every section, so a
 client finds everything from the first 1 KB read — no separate directory or
 metadata block to chase.
@@ -126,12 +125,14 @@ the fuller design and remain future work (see `docs/BENCHMARK.md`).
 The header is a fixed **64-byte core** followed by a **typed section directory** —
 up to 40 entries of 24 bytes each `(kind, flags, offset, length)` — zero-padded to
 1024. A new top-level section is added as a new directory entry, so the header has
-room to grow without a layout reshape. Format byte `0x05` is **stable format
-generation 1**, frozen on 2026-07-14 and first released in Rete **0.3.0**. It
-fixes this 1024-byte section-directory header and the six-wide permutation
-addressing — *how many* of those six a given file actually stores is its
-**permutation mask** (byte 50, §6), not its generation. Experimental formats
-`0x01` through `0x04` are not readable and must be rebuilt from RDF source.
+room to grow without a layout reshape. Format byte `0x05` is stable format
+generation 1, frozen on 2026-07-14 and first released in Rete **0.3.0**.
+Generation `0x06` keeps this header and every non-index section, but pairs the
+six logical permutation streams into three physical families (§6.3). Current
+readers accept both. Ordinary six-permutation builds emit `0x06`; the
+memory-bounded external writer and `--permutations 3` remain `0x05` until their
+own paired-family cutovers. Experimental formats `0x01` through `0x04` are not
+readable and must be rebuilt from RDF source.
 
 > There is no Rete 1.0.0. The generation number counts *format* generations and
 > is independent of the release version (the workspace is 0.3.x); the Rust, CLI
@@ -143,7 +144,7 @@ addressing — *how many* of those six a given file actually stores is its
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | magic `RETE` |
-| 4 | 1 | format version (`0x05`, stable generation 1) |
+| 4 | 1 | format version (`0x05` legacy six-section index or `0x06` paired-family index) |
 | 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples) |
 | 6 | 2 | header length (= 1024) |
 | 8 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
@@ -154,7 +155,7 @@ addressing — *how many* of those six a given file actually stores is its
 | 43 | 1 | block codec id (e.g. zstd) |
 | 44 | 2 | section count (entries in the directory) |
 | 46 | 4 | schema-pyramid block length (u32, 0 if none) — the trailing schema block within pyramid-meta, fetched at `pyramid_meta_offset + pyramid_meta_len − this` for an index/dictionary/summary-free schema-coherence read |
-| 50 | 1 | **index permutation mask** (§6): bit *i* = permutation *i* of `SPO, POS, OSP, SOP, PSO, OPS` is stored. `0` means **all six** — the canonical spelling, so a full build is byte-identical to every file written before this byte was defined. A mask must contain SPO+POS+OSP (`0b000111`); anything else is rejected at header parse |
+| 50 | 1 | **index permutation mask** (§6): bit *i* = permutation *i* of `SPO, POS, OSP, SOP, PSO, OPS` is stored. `0` means **all six**, the canonical spelling in both readable generations; their physical index layouts still differ. A mask must contain SPO+POS+OSP (`0b000111`); anything else is rejected at header parse |
 | 51 | 13 | reserved (zero) |
 
 **Section directory (bytes 64…, `section_count` entries of 24 bytes):**
@@ -431,26 +432,29 @@ is *not* a separator (a truncation, a fixed-size hash) mis-routes **silently** �
 `id → term`, `dump` and `export` route by `Δfirst_run` and stay byte-perfect
 while `term → id` returns wrong answers.
 
-### 6.3 Staged paired-family container (generation `0x06`)
+### 6.3 Paired-family container (generation `0x06`)
 
-The following is the exact internal contract for the next file generation. It
-is deliberately staged: this repository still writes and dispatches stable
-header generation `0x05` at this point. `0x06` is not emitted by production
-writers or selected by public readers. `CURRENT_FORMAT_VERSION` and the minimum
-stable read version both remain `0x05`. Task 11 will deliberately make the
-eventual `0x06`-only break and remove the `0x05` reader; that incompatibility is
-not part of this staged codec implementation.
+Generation `0x06` is the current ordinary six-permutation writer layout.
+Readers dispatch `0x05` to the legacy six-section container and `0x06` to this
+three-family container; the two reconstruct the same six logical permutations.
+The external memory-bounded writer and three-permutation builds deliberately
+remain `0x05` during the transition. Removing the `0x05` reader is a separate,
+future compatibility decision.
 
 Its index root is exactly three uncompressed length-framed family payloads in
 **Subject, Predicate, Object** order. An empty graph is therefore
-`varint(3), varint(1), 0, varint(1), 0, varint(1), 0`: three zero-pair family
-payloads. A subject family pairs SPO/SOP, predicate pairs POS/PSO, and object
+`varint(3), varint(3), 0, 0, 0, varint(3), 0, 0, 0, varint(3), 0, 0, 0`:
+three empty family payloads, each containing zero count/directory/trailer
+lengths. A subject family pairs SPO/SOP, predicate pairs POS/PSO, and object
 pairs OSP/OPS.
 
 Each family payload is exactly:
 
 ```text
 uvarint tile_pair_count
+uvarint directory_len
+uvarint synopsis_trailer_len
+directory_len bytes:
 tile_pair_count × (uvarint min_a_delta, uvarint max_a_span)
 tile_pair_count × (uvarint first_flags, uvarint first_compressed_len,
                    uvarint first_prefix2_len)
@@ -458,15 +462,19 @@ tile_pair_count × (uvarint second_flags, uvarint second_compressed_len,
                    uvarint second_prefix2_len)
 first records in order:  prefix-2 blob, then compressed §6.1 tile payload
 second records in order: prefix-2 blob, then compressed §6.1 tile payload
-first synopsis trailer:  tile_pair_count × 4 uvarints
-second synopsis trailer: tile_pair_count × 4 uvarints
+synopsis_trailer_len bytes:
+  first synopsis trailer:  tile_pair_count × 4 uvarints
+  second synopsis trailer: tile_pair_count × 4 uvarints
 ```
 
 `min_a_delta` is from the prior pair's `min_a` (first is absolute) and
 `max_a_span = max_a - min_a`. Both orders must have exactly the same pair count
 and leading range at every pair. Compressed lengths name only their compressed
-tile payload: they exclude the prefix-2 blob and both trailers. Record offsets
-are cumulative checked `u64` values.
+tile payload: they exclude the prefix-2 blob and both trailers. Directory and
+trailer lengths are exact and exclude their own varints. They let a ranged
+opener fetch the two metadata blobs directly without probing through or
+transferring either sibling's tile payload. Record offsets are cumulative
+checked `u64` values.
 
 Flags bit 0 means this tile continues the previous tile's leading group; bit 1
 means that leading group continues into the next tile. All other bits are
@@ -557,15 +565,13 @@ length alone overstates it several-fold, since the postings blob is never read
 whole.
 
 **Compatibility:** `0x05` is stable format generation 1. Every stable reader from
-Rete **0.3.0** onward reads `0x05` — there is no 1.0.0; the generation was frozen
-in the 0.3 line and the release version is a separate number.
-Optional sections and flags may extend it without changing its required semantics.
-A required layout change uses a new format byte. **No backwards-compatibility
-promise is made before 1.0.0:** a later generation may drop `0x05` read support
-and force a rebuild from RDF source. The staged paired-family plan makes that
-choice explicitly: Task 11 moves to `0x06` only and removes the `0x05` reader.
-Experimental formats `0x01` through `0x04` are already such a break and must be
-rebuilt from RDF source.
+Rete **0.3.0** onward reads `0x05`; readers implementing this section accept
+both `0x05` and `0x06`. Older readers reject `0x06` at the header rather than
+misinterpreting its index. The generation is independent of the 0.3.x release
+number. **No backwards-compatibility promise is made before 1.0.0:** a future
+release may drop `0x05` read support and require rebuilding from RDF source, but
+this transitional release does not. Experimental formats `0x01` through `0x04`
+are already such a break and must be rebuilt from RDF source.
 
 ---
 

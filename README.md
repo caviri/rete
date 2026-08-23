@@ -422,15 +422,16 @@ built from this repo and are not on Maven Central or CRAN.
 Working end-to-end — the single-file format, dictionary + permutation indexes, the
 community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
 lazy HTTP-range queries (with per-tile synopses that prune a routed tile before
-fetching it), and the browser/WASM engine. **Stable file-format generation 1**
-(header byte `0x05`, frozen 2026-07-14 and first released in 0.3.0) has not moved
-since that freeze — but "stable" names the generation and is not a compatibility
-promise: **no backwards-compatibility guarantee is made before 1.0.0**, and the
-format may still change in ways that require rebuilding a file you already
-published. The experimental generations `0x01`–`0x04` predate that freeze and
-must be rebuilt from RDF source. The generation number is not the release version
-— there is no Rete 1.0.0, and the Rust, CLI, and WASM APIs carry no semver
-promise until there is. SPARQL evaluation is exact for supported shapes
+fetching it), and the browser/WASM engine. Current readers accept both stable
+generation `0x05` and paired-index generation `0x06`; ordinary six-permutation
+builds write `0x06`, while memory-bounded and three-permutation builds remain
+`0x05` during the transition. Older readers reject `0x06` cleanly. **No
+backwards-compatibility guarantee is made before 1.0.0**, and the format may
+still change in ways that require rebuilding a file you already published. The
+experimental generations `0x01`–`0x04` must be rebuilt from RDF source. The
+generation number is not the release version — there is no Rete 1.0.0, and the
+Rust, CLI, and WASM APIs carry no semver promise until there is. SPARQL
+evaluation is exact for supported shapes
 (no implicit OWL/RDFS query-time entailment); cross-file federation is
 UNION-fan-out, while SPARQL 1.1 `SERVICE` calls external endpoints from inside a
 query.

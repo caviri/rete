@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "web" / "playground-src" / "catalog.js"
 LOCK = ROOT / "web" / "datasets.lock.json"
 RANGE_END = 1023
+READABLE_FORMAT_VERSIONS = {5, 6}
 REQUIRED_EXPOSED = {"content-range"}
 
 # Typed section directory (SPEC.md 4.1): a 64-byte core, then `section_count`
@@ -118,8 +119,8 @@ def validate_probe(
     if body[:4] != b"RETE":
         errors.append("header magic is not RETE")
     format_version = body[4] if len(body) > 4 else None
-    if format_version != 5:
-        errors.append(f"expected stable format byte 5, got {format_version}")
+    if format_version not in READABLE_FORMAT_VERSIONS:
+        errors.append(f"expected readable format byte 5 or 6, got {format_version}")
     content_hash = body[8:24].hex() if len(body) >= 24 else None
     sections = parse_sections(body)
     text_index_bytes = sum(

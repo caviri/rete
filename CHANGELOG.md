@@ -7,6 +7,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **Ordinary six-permutation builds now write paired-index generation `0x06`.**
+  SPO/SOP, POS/PSO and OSP/OPS share three physical family directories while
+  remaining six independent logical scan orders. Readers accept both `0x05`
+  and `0x06`; existing files, the memory-bounded external writer, and
+  `--permutations 3` remain on `0x05` during the transition. Older readers
+  reject `0x06` from the header instead of misreading it. Eager, ranged, named
+  graph and one-shot query paths all dispatch by generation, and corruption in
+  one sibling payload does not poison the other. Length-framed 0x06 directory
+  and synopsis metadata reduced a many-tile lazy open from 89 to 25 index range
+  reads without transferring tile payloads. External cards now stamp the 0x05
+  generation their writer actually emits.
+
 - **`rete build` counts the invalid IRIs it ingests; `rete export
   --sanitize-iris` can repair them on the way out (#233).** rete's
   N-Triples/N-Quads reader stores whatever sits between `<` and the next `>`,
@@ -83,7 +95,7 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   path the default graph always takes. Both are covered by the byte-identity
   tests.
 
-  The guarantee is unchanged and now extends to quads: **byte-identical output**
+  At format `0x05`, the guarantee extended to quads: **byte-identical output**
   to the standard `--no-pyramid` build. Verified on 2,000,009 real
   `switzerland-fedlex` quads across 43,812 named graphs — same SHA-256 from both
   builders — including a triple asserted in two graphs, a triple present in both
@@ -100,7 +112,11 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   | `--memory-budget-mb 1024` | **739 MiB** | 281 s |
   | in-RAM `--no-pyramid` | 809 MiB | 252 s |
 
-  All four files are byte-identical (one SHA-256). The peak tracks the budget
+  Those four `0x05` files were byte-identical (one SHA-256). During the `0x06`
+  transition above, the external writer deliberately remains on `0x05` while
+  an ordinary six-permutation build uses paired indexes; their RDF and query
+  results remain identical, but their physical bytes and hashes now differ.
+  The peak tracks the budget
   and stays under it; the 256 MiB build also ran inside a **hard 384 MiB cgroup
   limit**, which the in-RAM build cannot fit in at all.
 

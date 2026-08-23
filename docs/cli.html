@@ -676,6 +676,12 @@ The three orders are 36.8%–50.5% of a built file
 (<a href="BENCHMARK.html#the-merge-join-permutations-cost-vs-benefit">BENCHMARK.md</a>), and
 the file records its own set in the header, so <code>rete info</code> / <code>rete stats</code> and the
 card's <code>signals.permutations</code> all report it.</p>
+<p>The physical generation follows the selected writer during the transition:
+ordinary six-permutation builds use paired generation <code>0x06</code>; three-permutation
+builds use the legacy three-section form of <code>0x05</code>. Current readers accept both.
+<code>--memory-budget-mb</code> also remains <code>0x05</code> until the external sort writes paired
+families, even when it carries all six logical orders. Dataset Cards report the
+generation actually written.</p>
 <p><strong>A 3-permutation file is not readable by a Rete older than this one</strong> — it
 refuses loudly (<code>malformed container: expected 6 permutation sections</code>, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
@@ -730,7 +736,8 @@ memory-bounded external builder <code>rete build --memory-budget-mb</code> uses,
 chunks and spills under this command's own <code>--memory-budget-mb</code> (default 4096)
 into <code>--tmp-dir</code>. Shards carrying <strong>named graphs</strong> fold like any other: the
 builder puts the graph in its sort key, so each graph comes back out of the
-merge as one contiguous run. Card flags match <code>rete build</code>.</p>
+merge as one contiguous run. Card flags match <code>rete build</code>. The merged output
+currently uses generation <code>0x05</code>, because <code>merge</code> is an external build.</p>
 <p>The merged file carries the <strong>union</strong> of its inputs' permutation sets — an
 all-lean merge stays lean, and one six-permutation input is enough to keep the
 merge-join orders. Like <code>repyramid</code>, it has no <code>--permutations</code> flag: it

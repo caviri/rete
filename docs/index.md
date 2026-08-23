@@ -2,7 +2,7 @@
 
 **A single-file, range-queryable RDF graph format — put it on a URL, run SPARQL, no server.**
 
-[`github.com/caviri/rete`](https://github.com/caviri/rete) · crates **v0.3.0** · stable file-format generation **1** (`0x05`)
+[`github.com/caviri/rete`](https://github.com/caviri/rete) · crates **v0.3.0** · readable file generations `0x05` and paired-index `0x06`
 
 `rete` packs an RDF graph (or a full dataset of named graphs) into one immutable
 `.rete` file with its own dictionary, permutation indexes, and a pyramidal
@@ -144,8 +144,10 @@ The same engine, in your language of choice — every client opens local files
 Developed in the open at [github.com/caviri/rete](https://github.com/caviri/rete).
 The crates are **v0.3.0**, the first release on crates.io. Stable file-format
 generation 1 (header byte `0x05`) was frozen on 2026-07-14 and first released in
-0.3.0; the experimental generations `0x01`–`0x04` predate it and must be rebuilt
-from RDF source. **No backwards-compatibility promise is made before 1.0.0** —
+0.3.0. Current readers also accept paired-index generation `0x06`, which
+ordinary six-permutation builds now write; external and three-permutation builds
+remain `0x05` during the transition. Experimental generations `0x01`–`0x04`
+must be rebuilt from RDF source. **No backwards-compatibility promise is made before 1.0.0** —
 neither for the `.rete` format nor for the public Rust, CLI and WASM APIs. See
 [compatibility](compatibility.md#stable-rete-file-compatibility).
 Everything is built and tested in Docker — see

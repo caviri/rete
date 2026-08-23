@@ -617,6 +617,14 @@ stable Rete reader from 0.3.0 onward reads format <code>0x05</code>. Newer reade
 add optional sections and flags that preserve <code>0x05</code> semantics. A required layout
 change uses a new format byte. Older readers may reject a newer format cleanly;
 silent misinterpretation is never permitted.</p>
+<p>The current transition is exactly such a layout change. Ordinary builds that
+carry all six permutations write <code>0x06</code>, pairing SPO/SOP, POS/PSO and OSP/OPS
+into three physical index families. Current readers accept both generations and
+reconstruct the same six logical orders. The memory-bounded external writer and
+<code>--permutations 3</code> still write <code>0x05</code>; their cutovers are separate work. A reader
+that predates <code>0x06</code> rejects it from header byte 4 before touching the index.
+Published <code>0x05</code> files remain readable; this release performs no corpus
+migration and removes no legacy path.</p>
 <blockquote>
 <p><strong>No backwards-compatibility promise before 1.0.0.</strong> rete reserves the right to
 change the <code>.rete</code> format while it is pre-1.0, <strong>including in ways that require

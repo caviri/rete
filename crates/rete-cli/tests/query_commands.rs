@@ -112,28 +112,76 @@ fn take_uvarint(bytes: &[u8], pos: &mut usize) -> usize {
 fn corrupt_unused_ops_tile(image: &mut [u8]) {
     let header = Header::from_bytes(&image[..HEADER_LEN]).unwrap();
     let mut pos = usize::try_from(header.root_dir_offset).unwrap();
-    assert_eq!(take_uvarint(image, &mut pos), 6);
-
-    let ops = (0..6)
-        .find_map(|section| {
-            let len = take_uvarint(image, &mut pos);
-            let start = pos;
-            pos += len;
-            (section == 5).then_some((start, len))
-        })
-        .unwrap();
-    let mut dir = ops.0;
-    let tiles = take_uvarint(image, &mut dir);
-    assert!(tiles > 0);
-    let mut compressed_lens = Vec::with_capacity(tiles);
-    for _ in 0..tiles {
-        let _min_delta = take_uvarint(image, &mut dir);
-        let _leading_span = take_uvarint(image, &mut dir);
-        compressed_lens.push(take_uvarint(image, &mut dir));
+    match header.version {
+        0x05 => {
+            assert_eq!(take_uvarint(image, &mut pos), 6);
+            let ops = (0..6)
+                .find_map(|section| {
+                    let len = take_uvarint(image, &mut pos);
+                    let start = pos;
+                    pos += len;
+                    (section == 5).then_some((start, len))
+                })
+                .unwrap();
+            let mut dir = ops.0;
+            let tiles = take_uvarint(image, &mut dir);
+            assert!(tiles > 0);
+            let mut compressed_lens = Vec::with_capacity(tiles);
+            for _ in 0..tiles {
+                let _min_delta = take_uvarint(image, &mut dir);
+                let _leading_span = take_uvarint(image, &mut dir);
+                compressed_lens.push(take_uvarint(image, &mut dir));
+            }
+            let first_tile_end = dir + compressed_lens[0];
+            assert!(first_tile_end <= ops.0 + ops.1);
+            image[dir..first_tile_end].fill(0xff);
+        }
+        0x06 => {
+            // The three physical families are Subject, Predicate, Object;
+            // OPS is the Object family's second logical sibling.
+            assert_eq!(take_uvarint(image, &mut pos), 3);
+            let object = (0..3)
+                .find_map(|family| {
+                    let len = take_uvarint(image, &mut pos);
+                    let start = pos;
+                    pos += len;
+                    (family == 2).then_some((start, len))
+                })
+                .unwrap();
+            let mut family = object.0;
+            let tiles = take_uvarint(image, &mut family);
+            assert!(tiles > 0);
+            let directory_len = take_uvarint(image, &mut family);
+            let _trailer_len = take_uvarint(image, &mut family);
+            let directory_end = family + directory_len;
+            let mut dir = family;
+            for _ in 0..tiles {
+                let _min_delta = take_uvarint(image, &mut dir);
+                let _leading_span = take_uvarint(image, &mut dir);
+            }
+            let read_records = |image: &[u8], dir: &mut usize| {
+                (0..tiles)
+                    .map(|_| {
+                        let _flags = take_uvarint(image, dir);
+                        let compressed = take_uvarint(image, dir);
+                        let prefix = take_uvarint(image, dir);
+                        (prefix, compressed)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let first = read_records(image, &mut dir);
+            let second = read_records(image, &mut dir);
+            assert_eq!(dir, directory_end);
+            let first_bytes: usize = first.iter().map(|(prefix, body)| prefix + body).sum();
+            let second_start = directory_end + first_bytes;
+            let (prefix, compressed) = second[0];
+            let payload_start = second_start + prefix;
+            let payload_end = payload_start + compressed;
+            assert!(payload_end <= object.0 + object.1);
+            image[payload_start..payload_end].fill(0xff);
+        }
+        other => panic!("unexpected fixture format {other:#04x}"),
     }
-    let first_tile_end = dir + compressed_lens[0];
-    assert!(first_tile_end <= ops.0 + ops.1);
-    image[dir..first_tile_end].fill(0xff);
 }
 
 #[test]

@@ -9,6 +9,14 @@ use crate::commands::card::{self, CardArgs};
 use rete_core::card::{claim_of, Claim};
 use rete_core::ingest;
 
+fn card_format_version(perms: rete_core::PermSet) -> u8 {
+    if perms == rete_core::PermSet::ALL {
+        rete_core::CURRENT_FORMAT_VERSION
+    } else {
+        rete_core::extbuild::EXTERNAL_FORMAT_VERSION
+    }
+}
+
 /// Run the card's starter queries against the finished image and **remove the
 /// ones the run proves worthless**, returning the (possibly re-carded) image
 /// and the rows to record.
@@ -516,7 +524,9 @@ pub(crate) fn build(
                         curated,
                     );
                     rete_core::ingest::DeferredMetadata::new(move |counts| {
-                        let blob = card.with_final_counts(counts).to_json_bytes();
+                        let mut card = card.with_final_counts(counts);
+                        card.format_version = card_format_version(perms);
+                        let blob = card.to_json_bytes();
                         eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
                         blob
                     })
@@ -626,7 +636,9 @@ pub(crate) fn build(
                 // See the streaming path: the counts are stamped once the
                 // indexes have deduplicated the input.
                 rete_core::ingest::DeferredMetadata::new(move |counts| {
-                    let blob = dataset_card.with_final_counts(counts).to_json_bytes();
+                    let mut dataset_card = dataset_card.with_final_counts(counts);
+                    dataset_card.format_version = card_format_version(perms);
+                    let blob = dataset_card.to_json_bytes();
                     eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
                     blob
                 })
@@ -657,8 +669,9 @@ pub(crate) fn build(
 
 /// `rete build --memory-budget-mb <N>`: the **memory-bounded external build** —
 /// chunk the input to disk, merge, and stream the final file, holding roughly the
-/// budget in RAM regardless of graph size (`rete_core::extbuild`). Output is
-/// byte-identical to a standard `--no-pyramid` build of the same input.
+/// budget in RAM regardless of graph size (`rete_core::extbuild`). During the
+/// paired-index transition it writes generation 0x05; a standard six-permutation
+/// build writes 0x06. Both decode to identical RDF and query results.
 ///
 /// Named graphs are supported: the graph ordinal leads the external sort key, so
 /// each graph comes out as one contiguous run and is indexed from that run alone
@@ -792,12 +805,13 @@ pub(crate) fn build_external_cmd(
             tmp_dir: tmp_dir.map(std::path::PathBuf::from),
             metadata: Box::new(move |stats| match curated {
                 Some(curated) => {
-                    let blob = card::curated_counts_card(
+                    let mut card = card::curated_counts_card(
                         stats.statements as u64,
                         stats.terms as u64,
                         curated,
-                    )
-                    .to_json_bytes();
+                    );
+                    card.format_version = rete_core::extbuild::EXTERNAL_FORMAT_VERSION;
+                    let blob = card.to_json_bytes();
                     eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
                     blob
                 }
@@ -903,7 +917,9 @@ pub(crate) fn repyramid(
                     curated,
                 );
                 rete_core::ingest::DeferredMetadata::new(move |counts| {
-                    let blob = card.with_final_counts(counts).to_json_bytes();
+                    let mut card = card.with_final_counts(counts);
+                    card.format_version = card_format_version(perms);
+                    let blob = card.to_json_bytes();
                     eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
                     blob
                 })

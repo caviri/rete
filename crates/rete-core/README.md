@@ -5,8 +5,9 @@ graph format. It builds and opens immutable graph files, evaluates SPARQL,
 supports lazy byte-range readers, validates SHACL, and provides a bounded
 RDFS/OWL reasoning profile.
 
-This is a 0.x release: the `.rete` format is already at stable generation 1, but
-the Rust API carries no semantic-versioning promise until 1.0.0. Pin it
+This is a 0.x release: readers accept stable generation `0x05` and paired-index
+generation `0x06`, while the Rust API carries no semantic-versioning promise
+until 1.0.0. Pin it
 explicitly while the crates are 0.x:
 
 ```toml
