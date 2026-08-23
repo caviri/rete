@@ -1,10 +1,10 @@
 """Probe the format-generation byte of every remote .rete the playground catalog
 lists — one 8-byte Range request each.
 
-Header layout: b"RETE" magic, then byte 4 = format version. The engine reads
-0x05 only (MIN_STABLE_READ_VERSION..=CURRENT_FORMAT_VERSION); a pre-1.0 0x01-0x04
-file errors with "unsupported .rete format" in every client, so a catalog entry
-pointing at one is dead on arrival in the playground.
+Header layout: b"RETE" magic, then byte 4 = format version. The transitional
+engine reads 0x05 and 0x06 (MIN_STABLE_READ_VERSION..=CURRENT_FORMAT_VERSION);
+any other generation errors with "unsupported .rete format" in every client,
+so a catalog entry pointing at one is dead on arrival in the playground.
 
 Usage: python scripts/check_format_versions.py [--json]
 """
@@ -16,6 +16,7 @@ import urllib.request
 
 CAT = "web/playground-src/catalog.js"
 UA = "rete-format-audit"
+READABLE_FORMAT_VERSIONS = {5, 6}
 
 
 def urls():
@@ -41,7 +42,9 @@ def probe(item):
         if b[:4] != b"RETE":
             return key, url, code, None, "NOT a .rete (bad magic)"
         ver = b[4]
-        return key, url, code, ver, ("OK" if ver == 5 else "UNREADABLE — engine needs 0x05")
+        return key, url, code, ver, (
+            "OK" if ver in READABLE_FORMAT_VERSIONS else "UNREADABLE — engine needs 0x05 or 0x06"
+        )
     except Exception as e:
         return key, url, None, None, f"FETCH FAILED: {str(e)[:60]}"
 
@@ -56,7 +59,7 @@ def main():
             if note != "OK":
                 print(f"  !! {key:34s} v={ver} {note}", flush=True)
     bad = [r for r in rows if r["note"] != "OK"]
-    print(f"\n{len(rows) - len(bad)}/{len(rows)} serve format 0x05")
+    print(f"\n{len(rows) - len(bad)}/{len(rows)} serve readable format 0x05 or 0x06")
     if bad:
         print("PROBLEMS:")
         for r in bad:

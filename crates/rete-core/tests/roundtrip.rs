@@ -8,9 +8,79 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rete_core::{
-    build_pyramid_meta, write_dataset, DictionaryBuilder, GraphIndexBuilder, Rete,
-    DEFAULT_TILE_BUDGET,
+    build_pyramid_meta, write_dataset, DictionaryBuilder, GraphIndexBuilder, Header, Rete,
+    CURRENT_FORMAT_VERSION, DEFAULT_TILE_BUDGET,
 };
+
+#[test]
+fn paired_generation_round_trips_every_pattern_and_named_graph() {
+    let triples = [
+        ("<http://ex/alice>", "<http://ex/knows>", "<http://ex/bob>"),
+        ("<http://ex/alice>", "<http://ex/likes>", "<http://ex/cake>"),
+        ("<http://ex/bob>", "<http://ex/knows>", "<http://ex/carol>"),
+        ("<http://ex/carol>", "<http://ex/likes>", "<http://ex/cake>"),
+    ];
+    let named_triple = ("<http://ex/dan>", "<http://ex/knows>", "<http://ex/alice>");
+    let graph = "<http://ex/people>";
+
+    let mut db = DictionaryBuilder::new();
+    for &(s, p, o) in &triples {
+        db.observe(s, p, o);
+    }
+    db.observe(named_triple.0, named_triple.1, named_triple.2);
+    let dict = db.build();
+
+    let mut default = GraphIndexBuilder::new().with_tile_budget(64);
+    for &(s, p, o) in &triples {
+        default.push(dict.encode(s, p, o).unwrap());
+    }
+    let mut named = GraphIndexBuilder::new().with_tile_budget(64);
+    named.push(
+        dict.encode(named_triple.0, named_triple.1, named_triple.2)
+            .unwrap(),
+    );
+    let image = write_dataset(
+        &dict,
+        &default.build(),
+        &[(graph.to_string(), named.build())],
+        true,
+        &[],
+        0,
+    );
+
+    let header = Header::from_bytes(&image).unwrap();
+    assert_eq!(CURRENT_FORMAT_VERSION, 0x06);
+    assert_eq!(header.version, 0x06);
+    let rete = Rete::open(&image).expect("the current paired generation opens eagerly");
+
+    let sample = triples[0];
+    for (s, p, o) in [
+        (None, None, None),
+        (Some(sample.0), None, None),
+        (None, Some(sample.1), None),
+        (None, None, Some(sample.2)),
+        (Some(sample.0), Some(sample.1), None),
+        (Some(sample.0), None, Some(sample.2)),
+        (None, Some(sample.1), Some(sample.2)),
+        (Some(sample.0), Some(sample.1), Some(sample.2)),
+    ] {
+        let got = rete.query(s, p, o);
+        assert!(!got.is_empty(), "pattern {:?} lost its match", (s, p, o));
+    }
+    assert_eq!(
+        rete.query_in_graph(
+            Some(graph),
+            Some(named_triple.0),
+            Some(named_triple.1),
+            Some(named_triple.2),
+        ),
+        vec![(
+            named_triple.0.to_string(),
+            named_triple.1.to_string(),
+            named_triple.2.to_string(),
+        )]
+    );
+}
 
 /// A tiny deterministic LCG — no `rand` dependency, fully reproducible per seed.
 struct Lcg(u64);

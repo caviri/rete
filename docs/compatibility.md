@@ -10,6 +10,15 @@ add optional sections and flags that preserve `0x05` semantics. A required layou
 change uses a new format byte. Older readers may reject a newer format cleanly;
 silent misinterpretation is never permitted.
 
+The current transition is exactly such a layout change. Ordinary builds that
+carry all six permutations write `0x06`, pairing SPO/SOP, POS/PSO and OSP/OPS
+into three physical index families. Current readers accept both generations and
+reconstruct the same six logical orders. The memory-bounded external writer and
+`--permutations 3` still write `0x05`; their cutovers are separate work. A reader
+that predates `0x06` rejects it from header byte 4 before touching the index.
+Published `0x05` files remain readable; this release performs no corpus
+migration and removes no legacy path.
+
 > **No backwards-compatibility promise before 1.0.0.** rete reserves the right to
 > change the `.rete` format while it is pre-1.0, **including in ways that require
 > rebuilding a file you have already published**. `0x05` has not moved since it

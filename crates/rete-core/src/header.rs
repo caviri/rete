@@ -19,18 +19,17 @@ pub const MAGIC: [u8; 4] = *b"RETE";
 
 /// Current format generation written by this crate.
 ///
-/// `0x05` is stable format generation 1, frozen on 2026-07-14 and first
-/// released in Rete 0.3.0. It retains the six-wide index-permutation addressing
-/// and the 1 KiB section-directory layout finalized in the last experimental
-/// generation; *which* of those six a given file stores is [`Header::perms`]
-/// (byte 50), not the generation.
+/// `0x06` stores the six logical index permutations as three paired physical
+/// families. Readers still accept stable `0x05` files during the transition;
+/// external streaming builds remain explicitly pinned to that legacy layout
+/// until their family writer lands.
 ///
 /// The generation number is not a release version — there is no Rete 1.0.0, and
 /// it is the Rust/CLI/WASM APIs, not the format, that are waiting on one. Nor
 /// does it pin reader capability: writer semantics changed inside `0x05` nine
 /// days after the freeze (#68 split oversized index groups across tiles), so a
 /// `0x05` file can need a reader newer than the one that froze `0x05`.
-pub const CURRENT_FORMAT_VERSION: u8 = 0x05;
+pub const CURRENT_FORMAT_VERSION: u8 = 0x06;
 
 /// Oldest stable format generation accepted by this reader.
 ///
@@ -42,13 +41,12 @@ pub const CURRENT_FORMAT_VERSION: u8 = 0x05;
 /// `docs/compatibility.md`.
 pub const MIN_STABLE_READ_VERSION: u8 = 0x05;
 
-/// Stable generation retained by the production header while the paired-family
-/// codec is staged behind direct internal tests.
+/// Stable six-section generation retained for transitional readers and the
+/// external streaming writer.
 pub(crate) const LEGACY_FORMAT_VERSION: u8 = 0x05;
 
-/// The byte generation reserved for the staged paired-family container.
-/// Production writers and header dispatch deliberately do not use it yet.
-pub(crate) const NEXT_FORMAT_VERSION: u8 = 0x06;
+/// Paired-family generation written by ordinary in-memory builds.
+pub(crate) const NEXT_FORMAT_VERSION: u8 = CURRENT_FORMAT_VERSION;
 
 /// Fixed header size in bytes.
 pub const HEADER_LEN: usize = 1024;
@@ -204,8 +202,8 @@ pub struct Header {
     ///
     /// On disk this is one byte at `[50]`, inside the reserved core span, and
     /// **`0` means all six** — so every file written before the mask existed
-    /// decodes as [`PermSet::ALL`] and a full six-permutation build stays
-    /// byte-identical to what it always was. A lean file writes its mask
+    /// decodes as [`PermSet::ALL`]. Generation `0x06` retains that canonical
+    /// mask spelling while changing the physical index container. A lean file writes its mask
     /// (`0b000_0111` for SPO+POS+OSP), and its index container then holds three
     /// sections rather than six, which is what an older reader trips over.
     ///
@@ -233,8 +231,8 @@ impl Header {
         b[43] = self.block_codec;
         // [44..46) section_count written below.
         b[46..50].copy_from_slice(&self.schema_meta_len.to_le_bytes());
-        // [50] permutation mask; 0 = all six, so a full build is byte-identical
-        // to every file written before the field existed.
+        // [50] permutation mask; 0 is the canonical spelling of all six in
+        // both readable generations, independent of their physical layout.
         b[50] = if self.perms == crate::index::PermSet::ALL {
             0
         } else {
@@ -665,8 +663,8 @@ mod tests {
     #[test]
     fn stable_reader_accepts_v1_baseline_and_rejects_pre_v1() {
         let current = sample().to_bytes();
-        assert_eq!(current[4], 0x05);
-        assert_eq!(Header::from_bytes(&current).unwrap().version, 0x05);
+        assert_eq!(current[4], 0x06);
+        assert_eq!(Header::from_bytes(&current).unwrap().version, 0x06);
 
         for old in 0x01..=0x04 {
             let mut bytes = current;
@@ -677,7 +675,7 @@ mod tests {
                 HeaderError::UnsupportedVersion {
                     found,
                     min: 0x05,
-                    max: 0x05
+                    max: 0x06
                 } if *found == old
             ));
             assert!(error
@@ -685,7 +683,7 @@ mod tests {
                 .contains("Pre-1.0 files must be rebuilt from RDF source with `rete build`"));
         }
 
-        for unsupported in [0x00, 0x06, 0xff] {
+        for unsupported in [0x00, 0x07, 0xff] {
             let mut bytes = current;
             bytes[4] = unsupported;
             assert!(matches!(
@@ -693,16 +691,16 @@ mod tests {
                 Err(HeaderError::UnsupportedVersion {
                     found,
                     min: 0x05,
-                    max: 0x05
+                    max: 0x06
                 }) if found == unsupported
             ));
         }
     }
 
     #[test]
-    fn staged_paired_generation_does_not_switch_the_stable_header() {
+    fn paired_generation_keeps_the_legacy_reader_floor() {
         assert_eq!(LEGACY_FORMAT_VERSION, 0x05);
-        assert_eq!(CURRENT_FORMAT_VERSION, 0x05);
+        assert_eq!(CURRENT_FORMAT_VERSION, 0x06);
         assert_eq!(MIN_STABLE_READ_VERSION, 0x05);
         assert_eq!(NEXT_FORMAT_VERSION, 0x06);
     }

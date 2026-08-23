@@ -267,6 +267,7 @@ pub(crate) struct BudgetReader<R> {
     inner: R,
     budget: u64,
     spent: std::sync::atomic::AtomicU64,
+    exhausted: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl<R: RangeReader> BudgetReader<R> {
@@ -275,7 +276,16 @@ impl<R: RangeReader> BudgetReader<R> {
             inner,
             budget,
             spent: std::sync::atomic::AtomicU64::new(0),
+            exhausted: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Shared verdict retained by the measurement caller after this reader is
+    /// moved into the lazy index. Tile loaders intentionally erase individual
+    /// I/O errors into `index_incomplete`; this restores the budget-specific
+    /// diagnostic at that caller boundary.
+    pub(crate) fn exhaustion_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.exhausted.clone()
     }
 }
 
@@ -292,6 +302,8 @@ impl<R: RangeReader> RangeReader for BudgetReader<R> {
             .fetch_add(len, std::sync::atomic::Ordering::Relaxed)
             + len;
         if spent > self.budget {
+            self.exhausted
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             return Err(std::io::Error::other(format!(
                 "byte budget exhausted: this query wanted more than {} bytes",
                 self.budget
@@ -307,6 +319,8 @@ impl<R: RangeReader> RangeReader for BudgetReader<R> {
             .fetch_add(want, std::sync::atomic::Ordering::Relaxed)
             + want;
         if spent > self.budget {
+            self.exhausted
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             return Err(std::io::Error::other(format!(
                 "byte budget exhausted: this query wanted more than {} bytes",
                 self.budget
@@ -446,10 +460,20 @@ fn measure_one<R: RangeReader + Send + Sync + 'static>(
 ) -> Measured {
     let start = std::time::Instant::now();
     let graded = match Rete::open_ranged_lazy(reader.clone()) {
-        Ok(rete) => match eval_query(&rete, &q.sparql) {
-            Ok(result) => grade(&result),
-            Err(e) => Graded::failed(format!("failed to run: {e}")),
-        },
+        Ok(rete) => {
+            let evaluated = match eval_query(&rete, &q.sparql) {
+                Ok(result) => grade(&result),
+                Err(e) => Graded::failed(format!("failed to run: {e}")),
+            };
+            if rete.index_incomplete() {
+                Graded::failed(
+                    "a range request failed while streaming index data; results would be incomplete"
+                        .into(),
+                )
+            } else {
+                evaluated
+            }
+        }
         Err(e) => Graded::failed(format!("the file did not open: {e}")),
     };
     Measured {

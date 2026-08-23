@@ -3,8 +3,9 @@
 `rete-cli` installs the `rete` command for building, inspecting, verifying, and
 querying immutable `.rete` RDF graph files.
 
-This is a 0.x release: the `.rete` format is already at stable generation 1, but
-the CLI surface carries no semantic-versioning promise until 1.0.0. Pin the
+This is a 0.x release: readers accept stable generation `0x05` and paired-index
+generation `0x06`, while the CLI surface carries no semantic-versioning promise
+until 1.0.0. Pin the
 exact version while the crates are 0.x:
 
 ```sh

@@ -836,12 +836,13 @@ than no theme at all.</p>
 answer different questions and are never merged:</p>
 <table><thead><tr><th>field</th><th>owner</th><th>answers</th><th>example</th></tr></thead><tbody>
 <tr><td><code>version</code> (card, curated)</td><td>the <strong>publisher</strong></td><td>which release of the <em>data</em> is this?</td><td><code>2021.2</code></td></tr>
-<tr><td><code>format_version</code> (card, derived)</td><td>the <strong>spec</strong></td><td>which <code>.rete</code> format does the file conform to?</td><td><code>5</code></td></tr>
+<tr><td><code>format_version</code> (card, derived)</td><td>the <strong>spec</strong></td><td>which <code>.rete</code> format does the file conform to?</td><td><code>6</code> (ordinary paired build), <code>5</code> (external transition)</td></tr>
 <tr><td><code>builder</code> (build-info)</td><td>the <strong>tool</strong></td><td>which binary wrote the file?</td><td><code>rete-cli 0.3.2</code></td></tr>
 </tbody></table>
 <p><code>version</code> is yours: set it in the card file, bump it when the dataset changes.
-<code>format_version</code> is stamped by the builder and changes only when the format
-does. <code>builder</code> lives in the unhashed build-info section because it is a fact
+<code>format_version</code> is stamped from the physical generation actually written; it
+is <code>6</code> for an ordinary paired build and remains <code>5</code> for the external and
+three-permutation paths during the transition. <code>builder</code> lives in the unhashed build-info section because it is a fact
 about one build, not about the data.</p>
 <h2 id="the-description-markdown-not-html">The description: Markdown, not HTML</h2>
 <p><code>description</code> is the one curated field long enough to want structure, so it is

@@ -199,8 +199,10 @@ rete build dump.nq -o out.rete
 
 - Hundreds of millions of triples are routine builds (data.bnf.fr: 716 M;
   one 726 M-triple file). If RAM is the constraint, `rete build
-  --memory-budget-mb` runs the chunked external build — same byte-identical
-  file, bounded memory. It takes the dump **in the form it ships**: N-Triples,
+  --memory-budget-mb` runs the chunked external build — identical RDF and query
+  results with bounded memory. During the paired-index transition that path
+  writes generation `0x05`, while ordinary six-permutation builds write `0x06`,
+  so their physical bytes intentionally differ. It takes the dump **in the form it ships**: N-Triples,
   N-Quads, Turtle or TriG, gzipped or not, decompressed while streaming. So a
   public `dump.ttl.gz` needs no conversion pass and no room for the expanded
   copy, which is usually the larger of the two costs — SemOpenAlex measures

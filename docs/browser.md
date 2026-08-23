@@ -252,8 +252,9 @@ the remote backends.
 
 **Production catalog contract.** Playground datasets are served directly from
 `https://data.graphplaza.com` (Cloudflare R2), one folder per dataset, without a
-redirect or token. Every published `.rete` must use stable format generation 1
-(header byte `0x05`) and expose `Content-Range`, `Content-Length`,
+redirect or token. Every published `.rete` must use a currently readable format
+generation (`0x05` or paired-index `0x06` during the transition) and expose
+`Content-Range`, `Content-Length`,
 `Accept-Ranges`, and `ETag` to CORS callers. `web/datasets.lock.json` pins each
 catalog object's size, content hash, and format byte. Run
 `uv run python scripts/check_dataset_catalog.py --all` before a release to probe

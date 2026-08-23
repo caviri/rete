@@ -92,8 +92,11 @@ Flag che-sheet (full detail + memory/large-build guidance in
 A monolithic build holds the dictionary + index in RAM. If it OOMs:
 1. `--pyramid-algo types` + `--no-pyramid` first (pyramid is the biggest section).
 2. **`--memory-budget-mb <N> --tmp-dir <spill>`** — the external build: chunks
-   the input to disk and merges in bounded RAM, producing ONE byte-identical
-   .rete of any size (proven: ORCID 1.3B triples → one 17.5 GB file @ 16 GiB).
+   the input to disk and merges in bounded RAM, producing ONE .rete of any size
+   (proven: ORCID 1.3B triples → one 17.5 GB file @ 16 GiB). During the paired
+   transition it writes physical generation `0x05`, while an ordinary
+   six-permutation build writes `0x06`; both contain the same RDF and return the
+   same query results.
    For billion-scale runs follow the **external-build playbook** in
    [reference/build.md](reference/build.md): emit NT to disk then build in a
    DETACHED container, spill is resumable after a crash, and verify/query the

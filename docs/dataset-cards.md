@@ -269,12 +269,13 @@ answer different questions and are never merged:
 | field | owner | answers | example |
 |-------|-------|---------|---------|
 | `version` (card, curated) | the **publisher** | which release of the *data* is this? | `2021.2` |
-| `format_version` (card, derived) | the **spec** | which `.rete` format does the file conform to? | `5` |
+| `format_version` (card, derived) | the **spec** | which `.rete` format does the file conform to? | `6` (ordinary paired build), `5` (external transition) |
 | `builder` (build-info) | the **tool** | which binary wrote the file? | `rete-cli 0.3.2` |
 
 `version` is yours: set it in the card file, bump it when the dataset changes.
-`format_version` is stamped by the builder and changes only when the format
-does. `builder` lives in the unhashed build-info section because it is a fact
+`format_version` is stamped from the physical generation actually written; it
+is `6` for an ordinary paired build and remains `5` for the external and
+three-permutation paths during the transition. `builder` lives in the unhashed build-info section because it is a fact
 about one build, not about the data.
 
 ## The description: Markdown, not HTML

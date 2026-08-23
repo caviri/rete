@@ -752,8 +752,8 @@ direct origin that honors HTTP <strong>Range</strong> requests — mix them with
 <p>Each URL is opened with range reads (header → dictionary → index → pyramid),
 never a full download both routing and evaluation fetch only the bytes they need.
 The release catalog pins its public R2 objects in <code>web/datasets.lock.json</code>; the
-catalog audit also verifies that every shard is stable format generation 1 and
-exposes <code>Content-Range</code> to browser CORS callers.</p>
+catalog audit also verifies that every shard uses readable generation <code>0x05</code> or
+<code>0x06</code> and exposes <code>Content-Range</code> to browser CORS callers.</p>
 <h2 id="in-the-playground">In the playground</h2>
 <p>The <a href="playground.html">playground</a> brings the same federation to the browser:
 <strong>federation is a kind of SPARQL</strong>, so it lives in the SPARQL console rather than

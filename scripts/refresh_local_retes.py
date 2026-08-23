@@ -1,4 +1,4 @@
-"""Refresh stale local web/*.rete files to format generation 1 (0x05).
+"""Refresh stale local web/*.rete files to a readable generation (0x05/0x06).
 
 Files built before the format froze (0x01-0x04) are unreadable by every current
 engine, and they are dangerous to leave lying around: a page builder that embeds
@@ -9,7 +9,7 @@ counterpart, which need a rebuild from source or deletion.
 
 Usage:
   python scripts/refresh_local_retes.py            # report only
-  python scripts/refresh_local_retes.py --apply    # download the published 0x05
+  python scripts/refresh_local_retes.py --apply    # download the published readable copy
 """
 import glob
 import os
@@ -19,6 +19,7 @@ import urllib.request
 
 UA = "rete-local-refresh"
 CAT = "web/playground-src/catalog.js"
+READABLE_FORMAT_VERSIONS = {5, 6}
 
 
 def catalog_urls():
@@ -51,16 +52,16 @@ def main():
     stale, fixed, orphan = [], [], []
     for p in sorted(glob.glob("web/*.rete")):
         v = version_of(p)
-        if v is None or v == 5:
+        if v is None or v in READABLE_FORMAT_VERSIONS:
             continue
         key = os.path.basename(p)[:-5]
         stale.append((p, v, key))
 
-    print(f"stale local .rete files (format < 0x05): {len(stale)}\n")
+    print(f"stale local .rete files (outside readable 0x05/0x06): {len(stale)}\n")
     for p, v, key in stale:
         url = urls.get(key)
         rv = remote_version(url) if url else None
-        if url and rv == 5:
+        if url and rv in READABLE_FORMAT_VERSIONS:
             if apply:
                 tmp = p + ".new"
                 req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -70,22 +71,22 @@ def main():
                         if not chunk:
                             break
                         f.write(chunk)
-                if version_of(tmp) == 5:
+                if version_of(tmp) == rv:
                     os.replace(tmp, p)
-                    print(f"  FIXED  0x{v:02x} -> 0x05  {p}  ({os.path.getsize(p)/1e6:.1f} MB from R2)")
+                    print(f"  FIXED  0x{v:02x} -> 0x{rv:02x}  {p}  ({os.path.getsize(p)/1e6:.1f} MB from R2)")
                     fixed.append(p)
                 else:
                     os.remove(tmp)
                     print(f"  FAILED download did not verify: {p}")
             else:
-                print(f"  would fix  0x{v:02x} -> published 0x05   {p}  <- {url}")
+                print(f"  would fix  0x{v:02x} -> published 0x{rv:02x}   {p}  <- {url}")
                 fixed.append(p)
         else:
             print(f"  NO PUBLISHED COPY  0x{v:02x}  {p}"
                   + (f"  (catalog url {url} serves 0x{rv:02x})" if url and rv else "  (not in catalog)"))
             orphan.append(p)
 
-    print(f"\n{len(fixed)} refreshable from R2, {len(orphan)} have no published 0x05:")
+    print(f"\n{len(fixed)} refreshable from R2, {len(orphan)} have no published readable copy:")
     for p in orphan:
         print(f"  {p}  — rebuild from source or delete (nothing reads it once it is stale)")
     if not apply and fixed:

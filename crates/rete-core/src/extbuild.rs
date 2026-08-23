@@ -1,9 +1,9 @@
 //! **External (chunked, memory-bounded) build**: assemble an arbitrarily large
 //! single `.rete` file inside a caller-chosen memory budget by spilling sorted
 //! intermediate artifacts to disk and merging them, instead of holding the whole
-//! dictionary + id-triples + permutations in RAM (SPEC-compatible output;
-//! byte-identical to [`crate::ingest::assemble_dataset_streaming_algo`] with the
-//! pyramid and text index disabled).
+//! dictionary + id-triples + permutations in RAM. During the paired-index
+//! transition this path writes generation `0x05`; the resident six-permutation
+//! writer emits `0x06`. Both decode to identical dictionaries and RDF graphs.
 //!
 //! ## How the budget bounds memory
 //!
@@ -203,6 +203,14 @@ pub(crate) const CHUNK_BUDGET_FRACTION: f64 = 0.5;
 const PER_QUAD_OVERHEAD: u64 = 96;
 /// Per-tile-batch size for parallel tile compression.
 const TILE_COMPRESS_BATCH: usize = 512;
+
+/// Format generation emitted by the memory-bounded streaming writer.
+///
+/// The ordinary resident writer has moved to paired generation `0x06`, while
+/// this external path deliberately remains on the six-section `0x05` layout
+/// until its family-spill cutover.  Metadata producers can use this constant
+/// to stamp the generation that is actually written.
+pub const EXTERNAL_FORMAT_VERSION: u8 = crate::header::LEGACY_FORMAT_VERSION;
 
 /// Build a `.rete` at `output` from a **single-pass** quad stream within
 /// `opts.memory_budget`. Returns the same [`BuildStats`] as the in-RAM paths.
@@ -2176,7 +2184,9 @@ fn write_final_file(
     hash.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
 
     let header = Header {
-        version: crate::header::CURRENT_FORMAT_VERSION,
+        // The external streaming writer retains the stable six-section layout
+        // until its paired-family streaming cutover (Task 10).
+        version: EXTERNAL_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
             | if named_len > 0 { FLAG_HAS_QUADS } else { 0 }
             | if dict.has_quoted {
@@ -2318,6 +2328,31 @@ mod tests {
         (bytes, stats)
     }
 
+    fn assert_transitionally_equivalent(external: &[u8], ordinary: &[u8]) {
+        let external_header = crate::Header::from_bytes(external).unwrap();
+        let ordinary_header = crate::Header::from_bytes(ordinary).unwrap();
+        assert_eq!(
+            external_header.version,
+            crate::header::LEGACY_FORMAT_VERSION
+        );
+        assert_eq!(ordinary_header.version, crate::header::NEXT_FORMAT_VERSION);
+
+        let external = crate::Rete::open(external).unwrap();
+        let ordinary = crate::Rete::open(ordinary).unwrap();
+        assert_eq!(external.header().quad_count, ordinary.header().quad_count);
+        assert_eq!(external.header().term_count, ordinary.header().term_count);
+        assert_eq!(external.graph_names(), ordinary.graph_names());
+        let mut graphs = vec![None];
+        graphs.extend(external.graph_names().into_iter().map(Some));
+        for graph in graphs {
+            let mut got = external.dump(graph);
+            let mut want = ordinary.dump(graph);
+            got.sort_unstable();
+            want.sort_unstable();
+            assert_eq!(got, want, "0x05/0x06 graph differs for {graph:?}");
+        }
+    }
+
     #[test]
     fn external_build_counts_reject_target_width_overflow() {
         assert_eq!(
@@ -2421,9 +2456,10 @@ mod tests {
     }
 
     /// The heart of the feature: a tiny budget (forcing many chunks, many sort
-    /// runs) must produce **byte-identical** output to the in-RAM build.
+    /// runs) must produce the same logical file content as the in-RAM build,
+    /// across the transitional 0x05/0x06 physical layouts.
     #[test]
-    fn external_build_is_byte_identical_to_streaming() {
+    fn external_build_is_equivalent_to_streaming() {
         let quads = test_quads(3000);
         let reference = build_reference(quads.clone());
         // 64 MiB is the floor; to force chunking on a small graph we can't rely
@@ -2439,18 +2475,14 @@ mod tests {
             stats.statements < quads.len(),
             "fixture must contain duplicates for this to mean anything"
         );
-        assert_eq!(
-            bytes_floor, reference,
-            "single-chunk external build must be byte-identical"
-        );
+        assert_transitionally_equivalent(&bytes_floor, &reference);
     }
 
     /// Mega-group inputs (one predicate dominating the graph — the Crossref
     /// `cites` shape) exercise the mid-group tile cuts; the external and
-    /// in-RAM builds must STILL be byte-identical, proving both tilers cut at
-    /// the same boundaries (shared `GroupSizer`).
+    /// in-RAM builds must still decode to the same graph.
     #[test]
-    fn skewed_external_build_is_byte_identical() {
+    fn skewed_external_build_is_equivalent() {
         let mut quads: Vec<RawQuad> = Vec::new();
         for i in 0..30_000usize {
             quads.push((
@@ -2471,17 +2503,14 @@ mod tests {
         let reference = build_reference(quads.clone());
         let (bytes, stats) = build_ext(quads.clone(), 0);
         assert_eq!(stats.statements, quads.len());
-        assert_eq!(
-            bytes, reference,
-            "mega-group external build must be byte-identical"
-        );
+        assert_transitionally_equivalent(&bytes, &reference);
     }
 
     /// Multi-chunk path: shrink the chunk budget directly (bypassing the public
     /// floor) so a small graph is split across many chunks + runs, and the
-    /// merged output must STILL be byte-identical.
+    /// merged output must still be logically equivalent.
     #[test]
-    fn multi_chunk_external_build_is_byte_identical() {
+    fn multi_chunk_external_build_is_equivalent() {
         let quads = test_quads(3000);
         let reference = build_reference(quads.clone());
 
@@ -2555,10 +2584,7 @@ mod tests {
 
         let bytes = std::fs::read(&out).unwrap();
         assert_eq!(statements as usize, quads.len());
-        assert_eq!(
-            bytes, reference,
-            "multi-chunk external build must be byte-identical"
-        );
+        assert_transitionally_equivalent(&bytes, &reference);
         drop(tmp);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2594,10 +2620,7 @@ mod tests {
 
         let reference = build_reference(quads.clone());
         let (bytes, _) = build_ext(quads, 0);
-        assert_eq!(
-            bytes, reference,
-            "the external builder's chunk directory drifted from the in-RAM one"
-        );
+        assert_transitionally_equivalent(&bytes, &reference);
 
         // …and the directory they agree on really is multi-chunk and keyed by
         // separators, not by the 1,206-byte literals it used to copy.
@@ -2658,11 +2681,7 @@ mod tests {
 
         let reference = build_reference(quads.clone());
         let (bytes, stats) = build_ext(quads, 0);
-        assert_eq!(
-            bytes, reference,
-            "the external builder's chunk directory drifted from the in-RAM one \
-             once named graphs were in the input"
-        );
+        assert_transitionally_equivalent(&bytes, &reference);
         assert_eq!(stats.named_graphs, 30);
 
         let keys = crate::file::dict_chunk_keys_for_test(&bytes);
@@ -2864,16 +2883,13 @@ mod tests {
     }
 
     /// The acceptance criterion from #139: the same named-graph input built both
-    /// ways must be **byte-identical**, not merely equivalent.
+    /// ways must retain every graph and statement across the 0x05/0x06 transition.
     #[test]
-    fn named_graph_external_build_is_byte_identical() {
+    fn named_graph_external_build_is_equivalent() {
         let quads = fedlex_shaped_quads(60, 9);
         let reference = build_reference(quads.clone());
         let (bytes, stats) = build_ext(quads.clone(), 0);
-        assert_eq!(
-            bytes, reference,
-            "named-graph external build must be byte-identical"
-        );
+        assert_transitionally_equivalent(&bytes, &reference);
 
         let header = crate::Header::from_bytes(&bytes).unwrap();
         assert_eq!(stats.statements as u64, header.quad_count);
@@ -2893,7 +2909,7 @@ mod tests {
     /// are merged across chunk-local rankings, so a graph first seen in chunk 7
     /// must land in the same slot as the same graph seen in chunk 0.
     #[test]
-    fn multi_chunk_named_graph_build_is_byte_identical() {
+    fn multi_chunk_named_graph_build_is_equivalent() {
         let quads = fedlex_shaped_quads(80, 7);
         let reference = build_reference(quads.clone());
 
@@ -2912,19 +2928,16 @@ mod tests {
             chunks.len()
         );
         let bytes = finish_from_chunks(&tmp, &chunks, &out, 256, 4).unwrap();
-        assert_eq!(
-            bytes, reference,
-            "multi-chunk named-graph build must be byte-identical"
-        );
+        assert_transitionally_equivalent(&bytes, &reference);
         drop(tmp);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A graph too large for the budget takes the external per-permutation path
-    /// instead of `GraphIndexBuilder`. Both must produce the same container, so
-    /// force the spill with a 4-triple cap and compare against the in-RAM build.
+    /// instead of `GraphIndexBuilder`. Force the spill with a 4-triple cap and
+    /// compare its decoded graph against the in-RAM build.
     #[test]
-    fn oversized_named_graph_spills_and_stays_identical() {
+    fn oversized_named_graph_spills_and_stays_equivalent() {
         let mut quads: Vec<RawQuad> = Vec::new();
         for i in 0..4000usize {
             quads.push((
@@ -2962,10 +2975,7 @@ mod tests {
         // ram_triples = 4 forces `<http://ex/big>` (4,000 quads) down the spill
         // path while `<http://ex/tiny>` stays resident — both in one file.
         let bytes = finish_from_chunks(&tmp, &chunks, &out, 512, 4).unwrap();
-        assert_eq!(
-            bytes, reference,
-            "a spilled named graph must encode identically to an in-RAM one"
-        );
+        assert_transitionally_equivalent(&bytes, &reference);
         drop(tmp);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2973,7 +2983,7 @@ mod tests {
     /// Named graphs with an EMPTY default graph: the default index is still
     /// written (zero triples) and the header still says quads.
     #[test]
-    fn named_only_build_is_byte_identical() {
+    fn named_only_build_is_equivalent() {
         let quads: Vec<RawQuad> = (0..50usize)
             .map(|i| {
                 (
@@ -2986,7 +2996,7 @@ mod tests {
             .collect();
         let reference = build_reference(quads.clone());
         let (bytes, stats) = build_ext(quads, 0);
-        assert_eq!(bytes, reference, "named-only build must be byte-identical");
+        assert_transitionally_equivalent(&bytes, &reference);
         assert_eq!(stats.default_triples, 0);
         assert_eq!(stats.named_graphs, 5);
         let rete = crate::Rete::open(&bytes).unwrap();

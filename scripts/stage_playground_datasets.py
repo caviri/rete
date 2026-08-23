@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HTML = ROOT / "docs" / "playground.html"
 DEFAULT_WEB_DIR = ROOT / "web"
 DATASET_MAP_PATTERN = re.compile(r"\bconst\s+RETE_DATASETS_B64\s*=\s*")
+READABLE_FORMAT_VERSIONS = {5, 6}
 
 
 class StageError(RuntimeError):
@@ -52,7 +53,7 @@ def read_embedded_map(html_path: Path) -> dict[str, str]:
     return value
 
 
-def decode_v5(name: str, encoded: str) -> bytes:
+def decode_rete(name: str, encoded: str) -> bytes:
     try:
         payload = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as error:
@@ -61,10 +62,12 @@ def decode_v5(name: str, encoded: str) -> bytes:
     if (
         len(payload) < 9
         or payload[:4] != b"RETE"
-        or payload[4] != 5
+        or payload[4] not in READABLE_FORMAT_VERSIONS
         or payload[-4:] != b"RETE"
     ):
-        raise StageError(f"dataset {name!r} is not a complete rete format v5 file")
+        raise StageError(
+            f"dataset {name!r} is not a complete rete format v5 or v6 file"
+        )
     return payload
 
 
@@ -78,7 +81,7 @@ def stage(
             encoded = embedded[name]
         except KeyError as error:
             raise StageError(f"tracked playground is missing dataset {name!r}") from error
-        decoded.append((name, web_dir / filename, decode_v5(name, encoded)))
+        decoded.append((name, web_dir / filename, decode_rete(name, encoded)))
 
     # Validate the complete set before writing anything. Existing ignored files
     # are never silently replaced: a mismatch means the local build inputs have

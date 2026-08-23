@@ -181,8 +181,8 @@ rete federate \
 Each URL is opened with range reads (header → dictionary → index → pyramid),
 never a full download both routing and evaluation fetch only the bytes they need.
 The release catalog pins its public R2 objects in `web/datasets.lock.json`; the
-catalog audit also verifies that every shard is stable format generation 1 and
-exposes `Content-Range` to browser CORS callers.
+catalog audit also verifies that every shard uses readable generation `0x05` or
+`0x06` and exposes `Content-Range` to browser CORS callers.
 
 ## In the playground
 

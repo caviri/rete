@@ -79,6 +79,13 @@ The three orders are 36.8%–50.5% of a built file
 the file records its own set in the header, so `rete info` / `rete stats` and the
 card's `signals.permutations` all report it.
 
+The physical generation follows the selected writer during the transition:
+ordinary six-permutation builds use paired generation `0x06`; three-permutation
+builds use the legacy three-section form of `0x05`. Current readers accept both.
+`--memory-budget-mb` also remains `0x05` until the external sort writes paired
+families, even when it carries all six logical orders. Dataset Cards report the
+generation actually written.
+
 **A 3-permutation file is not readable by a Rete older than this one** — it
 refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
@@ -141,7 +148,8 @@ memory-bounded external builder `rete build --memory-budget-mb` uses, which
 chunks and spills under this command's own `--memory-budget-mb` (default 4096)
 into `--tmp-dir`. Shards carrying **named graphs** fold like any other: the
 builder puts the graph in its sort key, so each graph comes back out of the
-merge as one contiguous run. Card flags match `rete build`.
+merge as one contiguous run. Card flags match `rete build`. The merged output
+currently uses generation `0x05`, because `merge` is an external build.
 
 The merged file carries the **union** of its inputs' permutation sets — an
 all-lean merge stays lean, and one six-permutation input is enough to keep the

@@ -49,9 +49,9 @@ enum Command {
         /// term. Dumps that put all their data inside named graphs — TriG
         /// exports like SemOpenAlex, most Wikibase and GraphDB dumps — otherwise
         /// answer `?s ?p ?o` with nothing and build an empty pyramid, because in
-        /// SPARQL the default graph is not the union of the named ones. It is
-        /// also what makes such an input eligible for `--memory-budget-mb`,
-        /// which writes default-graph files only.
+        /// SPARQL the default graph is not the union of the named ones. The
+        /// external build carries named graphs, so this is a modelling choice
+        /// rather than a `--memory-budget-mb` requirement.
         #[arg(long = "collapse-graphs")]
         collapse_graphs: bool,
         /// Materialize RDFS/OWL-RL entailments at build time: run the reasoner
@@ -132,7 +132,9 @@ enum Command {
         /// this many MiB of RAM by cutting the input into disk-spilled chunks
         /// and merging them (the budget decides the number of chunks and the
         /// external-sort run sizes). For graphs too large for the in-RAM build.
-        /// Output is byte-identical to a standard `--no-pyramid` build.
+        /// During the paired-index transition this path writes generation
+        /// 0x05; a standard six-permutation build writes 0x06. Both decode to
+        /// identical RDF and query results.
         /// Named graphs are carried through the same spill (the graph leads the
         /// sort key), so a `.nq`/TriG input needs no `--collapse-graphs`.
         /// Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or not — RDF/XML
