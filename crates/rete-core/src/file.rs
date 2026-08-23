@@ -1190,6 +1190,12 @@ const PREFIX2_FORMAT_BUDGET: usize = 64 * 1024;
 /// gets a chance to validate it.
 #[allow(dead_code)]
 const FAMILY_TILE_DECOMPRESSED_MAX: usize = 64 * 1024;
+/// A compressed family tile is capped independently of address-space size so
+/// ranged readers can reject hostile record lengths before issuing a request.
+/// This is deliberately larger than zstd's worst-case output for one 64 KiB
+/// input tile while keeping every physical record request format-bounded.
+#[allow(dead_code)]
+const FAMILY_TILE_COMPRESSED_MAX: u64 = 128 * 1024;
 #[allow(dead_code)]
 const FAMILY_FLAG_CONTINUES_PREVIOUS: u8 = 0b0000_0001;
 #[allow(dead_code)]
@@ -1238,7 +1244,7 @@ pub(crate) struct DecodedFamily {
 
 #[allow(dead_code)]
 fn family_compress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
-    match codec {
+    let compressed = match codec {
         CODEC_NONE => Ok(bytes.to_vec()),
         CODEC_ZSTD => {
             #[cfg(feature = "compression")]
@@ -1258,7 +1264,19 @@ fn family_compress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
             }
         }
         other => Err(FileError::UnknownCodec(other)),
+    }?;
+    validate_family_compressed_len(compressed.len() as u64)?;
+    Ok(compressed)
+}
+
+#[allow(dead_code)]
+fn validate_family_compressed_len(len: u64) -> Result<(), FileError> {
+    if len > FAMILY_TILE_COMPRESSED_MAX {
+        return Err(FileError::Container(
+            "family compressed payload exceeds fixed budget",
+        ));
     }
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -1637,6 +1655,7 @@ fn decode_family_record(
     compressed_len: u64,
     codec: u8,
 ) -> Result<(Prefix2Meta, Vec<u8>), FileError> {
+    validate_family_compressed_len(compressed_len)?;
     let prefix2 = family_bytes(bytes, pos, prefix2_len, "prefix-2 blob overruns family")?;
     let compressed = family_bytes(bytes, pos, compressed_len, "tile payload overruns family")?;
     let payload = decompress_family_tile_exact(codec, compressed)?;
@@ -1862,11 +1881,13 @@ pub(crate) fn decode_family_container(bytes: &[u8], codec: u8) -> Result<Decoded
             return Err(FileError::Container("reserved first family flags"));
         }
         directory.first_flags.push(flags);
-        directory.first_lengths.push(family_varint(
+        let compressed_len = family_varint(
             directory_bytes,
             &mut directory_pos,
             "truncated first family length",
-        )?);
+        )?;
+        validate_family_compressed_len(compressed_len)?;
+        directory.first_lengths.push(compressed_len);
         directory.first_prefix2_lengths.push(family_varint(
             directory_bytes,
             &mut directory_pos,
@@ -1893,11 +1914,13 @@ pub(crate) fn decode_family_container(bytes: &[u8], codec: u8) -> Result<Decoded
             return Err(FileError::Container("reserved second family flags"));
         }
         directory.second_flags.push(flags);
-        directory.second_lengths.push(family_varint(
+        let compressed_len = family_varint(
             directory_bytes,
             &mut directory_pos,
             "truncated second family length",
-        )?);
+        )?;
+        validate_family_compressed_len(compressed_len)?;
+        directory.second_lengths.push(compressed_len);
         directory.second_prefix2_lengths.push(family_varint(
             directory_bytes,
             &mut directory_pos,
@@ -3356,6 +3379,7 @@ fn read_family_directory_ranged(
                 if entry[2] > PREFIX2_FORMAT_BUDGET as u64 {
                     return Err(FileError::Container("prefix-2 blob exceeds fixed budget"));
                 }
+                validate_family_compressed_len(entry[1])?;
                 let record_len = checked_end(entry[1], entry[2])?;
                 materializable_len(record_len)
                     .map_err(|_| FileError::Container("family payload too large"))?;
@@ -7230,6 +7254,56 @@ mod tests {
         calls: std::sync::atomic::AtomicU64,
     }
 
+    struct FamilyDirectoryProbeReader {
+        len: u64,
+        bytes: BTreeMap<u64, u8>,
+        reads: Mutex<Vec<(u64, u64)>>,
+    }
+
+    impl FamilyDirectoryProbeReader {
+        fn new(len: u64, metadata: &[u8]) -> Self {
+            Self {
+                len,
+                bytes: metadata
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(offset, byte)| (offset as u64, byte))
+                    .collect(),
+                reads: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl RangeReader for FamilyDirectoryProbeReader {
+        fn len(&self) -> u64 {
+            self.len
+        }
+
+        fn read_at(&self, offset: u64, len: u64) -> std::io::Result<Vec<u8>> {
+            self.reads.lock().unwrap().push((offset, len));
+            let end = offset
+                .checked_add(len)
+                .filter(|&end| end <= self.len)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "family probe range out of bounds",
+                    )
+                })?;
+            (offset..end)
+                .map(|at| {
+                    self.bytes.get(&at).copied().ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "family probe attempted to read payload bytes",
+                        )
+                    })
+                })
+                .collect()
+        }
+    }
+
     impl RangeReader for NoMaterializeReader {
         fn len(&self) -> u64 {
             u64::MAX
@@ -8135,6 +8209,63 @@ mod tests {
             decode_family_container(&malformed, CODEC_NONE),
             Err(FileError::Container("prefix-2 blob exceeds fixed budget"))
         ));
+    }
+
+    fn oversized_family_record_metadata() -> (Vec<u8>, u64) {
+        const EXPECTED_COMPRESSED_LIMIT: u64 = 128 * 1024;
+        let oversized = EXPECTED_COMPRESSED_LIMIT + 1;
+        let mut directory = Vec::new();
+        write_uvarint(&mut directory, 1); // min-a delta
+        write_uvarint(&mut directory, 0); // leading span
+        for compressed_len in [oversized, 0] {
+            write_uvarint(&mut directory, 0); // flags
+            write_uvarint(&mut directory, compressed_len);
+            write_uvarint(&mut directory, 0); // prefix-2 length
+        }
+        let mut metadata = Vec::new();
+        write_uvarint(&mut metadata, 1); // tile count
+        write_uvarint(&mut metadata, directory.len() as u64);
+        write_uvarint(&mut metadata, 8); // two four-field synopses
+        metadata.extend_from_slice(&directory);
+        let section_len = metadata.len() as u64 + oversized + 8;
+        (metadata, section_len)
+    }
+
+    #[test]
+    fn family_eager_decoder_rejects_oversized_compressed_record_from_metadata() {
+        let (metadata, _) = oversized_family_record_metadata();
+        assert!(matches!(
+            decode_family_container(&metadata, CODEC_NONE),
+            Err(FileError::Container(
+                "family compressed payload exceeds fixed budget"
+            ))
+        ));
+    }
+
+    #[test]
+    fn family_ranged_open_rejects_oversized_compressed_record_before_payload_read() {
+        let (metadata, section_len) = oversized_family_record_metadata();
+        let metadata_end = metadata.len() as u64;
+        let reader = FamilyDirectoryProbeReader::new(section_len, &metadata);
+
+        assert!(matches!(
+            read_family_directory_ranged(
+                &reader,
+                ByteRange {
+                    offset: 0,
+                    len: section_len,
+                },
+            ),
+            Err(FileError::Container(
+                "family compressed payload exceeds fixed budget"
+            ))
+        ));
+        assert!(reader
+            .reads
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|&(offset, len)| offset + len <= metadata_end));
     }
 
     #[cfg(feature = "compression")]

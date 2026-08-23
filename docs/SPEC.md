@@ -503,8 +503,11 @@ must equal its decompressed tile's zone map. Counts, flags, varint domains,
 ranges, continuation links, compressed slices, prefix-2 metadata, trailers,
 and trailing bytes are all exact framing checks. Family varints are canonical
 (at most ten bytes); prefix-2 blobs and decompressed tiles are each capped at
-64 KiB. A zstd record is exactly one fully consumed frame, and the staged
-decoder bounds count-dependent capacity by bytes already framed in the payload.
+64 KiB, and a compressed tile payload is capped at 128 KiB. The compressed
+limit is enforced while parsing the directory, before an eager allocation or a
+ranged payload request; a complete physical record is therefore at most 192
+KiB. A zstd record is exactly one fully consumed frame, and the staged decoder
+bounds count-dependent capacity by bytes already framed in the payload.
 Its frame header is checked before decoder construction: both declared window
 and any nonzero declared content size are at most 64 KiB; the staged encoder
 uses the same 64 KiB window limit.
