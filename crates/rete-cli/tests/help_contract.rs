@@ -87,3 +87,29 @@ fn sparql_url_help_distinguishes_full_transfer_from_lazy_parsing() {
         .stdout(predicate::str::contains("lazy ranged opener"))
         .stdout(predicate::str::contains("same adaptive transfer policy"));
 }
+
+#[test]
+fn memory_bounded_help_reports_its_transitional_physical_generation() {
+    common::rete()
+        .args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("generation 0x05"))
+        .stdout(predicate::str::contains(
+            "six-permutation build writes 0x06",
+        ))
+        .stdout(predicate::str::contains("identical RDF and query results"))
+        .stdout(predicate::str::contains("Output is byte-identical to a standard").not());
+}
+
+#[test]
+fn collapse_graphs_help_says_external_builds_keep_named_graphs() {
+    common::rete()
+        .args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "The external build carries named graphs",
+        ))
+        .stdout(predicate::str::contains("writes default-graph files only").not());
+}

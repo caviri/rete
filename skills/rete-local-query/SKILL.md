@@ -133,8 +133,9 @@ docker run --rm --memory=8g --memory-swap=8g -v "$PWD:/work" -w //work rete-dev:
   98%-full drive. If a point query takes >100 s, do NOT blame the mount first — apply
   the constant-MB/s diagnostic above; every "9p is catastrophically slow" reading in
   this repo's history turned out to be a read-the-whole-file binary.
-- **Format version:** the current binary reads format `0x05`. Files built pre-1.0
-  (`0x04`) error with *"unsupported .rete format"* — rebuild from RDF with `rete build`.
+- **Format version:** the current binary reads stable `0x05` and paired-index
+  `0x06`. Experimental `0x01`–`0x04` files and unknown `0x07+` generations error
+  with *"unsupported .rete format"* — rebuild old files from RDF with `rete build`.
 
 ## Remote is the *more* lazy path
 
