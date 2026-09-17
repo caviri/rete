@@ -250,8 +250,12 @@ find_local() { # name published_len -> path or ""
 # Run a command in the container. /repo is the checkout (rw: the .nq.gz lands
 # there), /data is the local .rete corpus, mounted READ-ONLY -- this script must
 # never be able to touch the shared checkout it reads from.
+# Bounded on purpose: an unbounded export over a 56 GB graph grew until
+# Docker Desktop's VM fell over. Override with RETE_EXPORT_MEM.
+MEM_LIMIT="${RETE_EXPORT_MEM:-12g}"
 in_docker() {
   MSYS_NO_PATHCONV=1 docker run --rm \
+    --memory "$MEM_LIMIT" --memory-swap "$MEM_LIMIT" \
     -v "$ROOT_HOST:/repo" -v "$DATA_HOST:/data:ro" \
     -w //repo "$IMAGE" bash -lc "$1"
 }
@@ -403,7 +407,7 @@ for r in "${sized[@]}"; do
   rm -f "$out"
   say "EXPORT   $name -> $out"
   t0=$(date +%s)
-  in_docker "set -o pipefail; '$RETE_BIN' export '$inpath' --format nq | pigz -p \$(nproc) -6 > '/repo/dev/scholar-nq/out/$name.nq.gz'; st=(\${PIPESTATUS[@]}); echo \"RETE_EXIT=\${st[0]} PIGZ_EXIT=\${st[1]}\"" \
+  in_docker "set -o pipefail; '$RETE_BIN' export '$inpath' --format nq --sanitize-iris | pigz -p \$(nproc) -6 > '/repo/dev/scholar-nq/out/$name.nq.gz'; st=(\${PIPESTATUS[@]}); echo \"RETE_EXIT=\${st[0]} PIGZ_EXIT=\${st[1]}\"" \
     > "$WORK/out/$name.exit" 2>>"$LOG"
   drc=$?
   ex="$(grep -o 'RETE_EXIT=[0-9]*' "$WORK/out/$name.exit" | grep -o '[0-9]*')"
