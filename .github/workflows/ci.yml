@@ -40,6 +40,7 @@ jobs:
         with:
           filters: |
             rust:
+              - '!**/*.md'
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -51,6 +52,7 @@ jobs:
               - '.devcontainer/**'
               - '.github/workflows/ci.yml'
             wasm:
+              - '!**/*.md'
               - 'crates/**'
               - 'web/**'
               - 'tests/gate/**'

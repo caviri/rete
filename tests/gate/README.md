@@ -64,7 +64,7 @@ The crate registry is not per project — `compose.yaml` pins it to the shared
 worktree. When you remove the worktree, remove its volume too:
 
 ```sh
-docker compose -p my-worktree down -v     # or, for everything that is gone:
+docker volume rm my-worktree_cargo-target   # or, for everything that is gone:
 scripts/docker_gc.sh --apply               # dry-run without --apply
 ```
 

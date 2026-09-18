@@ -11,8 +11,8 @@
 #
 # WHAT IT DOES (dry-run unless --apply)
 #   1. Compose projects whose config files no longer exist on disk are torn down
-#      (`docker compose -p NAME down -v --remove-orphans`): their exited
-#      containers and their volumes go together.
+#      (`docker compose -p NAME down --remove-orphans`, never `-v`: that would
+#      also delete the shared registry cache); their volumes go in step 2.
 #      Only rete-style projects count (a `compose.yaml` under a path containing
 #      "rete"); another repo's dead project is left alone.
 #   2. Volumes named `<project>_cargo-target`, `<project>_cargo-registry`,
@@ -91,8 +91,11 @@ for p in json.load(sys.stdin):
     print(p["Name"] + "	" + ("alive" if alive else ("dead-rete" if rete_style else "dead-other")))' 2> "${DOCKER_GC_STDERR:-/dev/null}")
 for p in "${dead_projects[@]:-}"; do
   [ -z "$p" ] && continue
-  would "docker compose -p $p down -v --remove-orphans"
-  [ "$APPLY" = 1 ] && docker compose -p "$p" down -v --remove-orphans 2>&1 | sed 's/^/     /'
+  # `down` without -v: with the registry pinned to a shared name, `down -v` would
+  # delete that cache for every project on the machine. The project's own target
+  # volume is removed by name in step 2.
+  would "docker compose -p $p down --remove-orphans"
+  [ "$APPLY" = 1 ] && docker compose -p "$p" down --remove-orphans 2>&1 | sed 's/^/     /'
 done
 [ ${#dead_projects[@]} -eq 0 ] && say "  none"
 

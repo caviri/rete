@@ -12,7 +12,8 @@ name: rete
 # uses for plain `docker run`), so a new worktree never re-downloads crates and
 # never leaves a 0.5 GB registry copy behind. The per-project target volume DOES
 # outlive its worktree — run `scripts/docker_gc.sh --apply` after removing one
-# (or `docker compose -p my-worktree down -v`). September 2026: 70 orphaned
+# (never `docker compose down -v`: it would also delete the shared registry
+# cache). September 2026: 70 orphaned
 # cargo volumes, 158 GB, had accumulated this way.
 #
 # tests/gate/fixtures.sh shells out to `docker compose run --rm dev`, so this
