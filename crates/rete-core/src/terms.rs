@@ -191,13 +191,23 @@ pub fn lang_dir(token: &TermToken) -> Option<String> {
 
 /// Numeric value of a term: the lexical part of a literal parsed as `f64`
 /// (`"30"^^<…int>` → `30.0`) or a bare numeric token, else `None`.
+///
+/// The literal's lexical value is taken through the escape-aware
+/// [`literal_lexical`] — closing quote located correctly, body unescaped, any
+/// `^^<datatype>` suffix dropped — rather than scanning to the *first* `"`. A
+/// value containing an embedded escaped quote (`"1\"2"`) is therefore read
+/// whole and simply fails to parse, instead of being truncated at the escaped
+/// quote. A language-tagged literal (`"5"@en`) is never a numeric literal in
+/// SPARQL/RDF, so it yields `None`.
 pub fn as_number(token: &TermToken) -> Option<f64> {
-    let lex = if let Some(rest) = token.strip_prefix('"') {
-        &rest[..rest.find('"')?]
+    if is_literal(token) {
+        if lang_tag(token).is_some_and(|tag| !tag.is_empty()) {
+            return None;
+        }
+        literal_lexical(token)?.parse::<f64>().ok()
     } else {
-        token
-    };
-    lex.parse::<f64>().ok()
+        token.parse::<f64>().ok()
+    }
 }
 
 /// Escape a string for use as the body of an N-Triples literal (`"…"`): the
@@ -324,6 +334,38 @@ mod tests {
         assert_eq!(as_number("3.5"), Some(3.5));
         assert_eq!(as_number("\"nope\""), None);
         assert_eq!(as_number("<http://x>"), None);
+    }
+
+    #[test]
+    fn as_number_escape_aware() {
+        // Plain and typed numeric literals parse as before.
+        assert_eq!(
+            as_number("\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>"),
+            Some(42.0)
+        );
+        assert_eq!(
+            as_number("\"12.5\"^^<http://www.w3.org/2001/XMLSchema#decimal>"),
+            Some(12.5)
+        );
+        assert_eq!(
+            as_number("\"6.022e23\"^^<http://www.w3.org/2001/XMLSchema#double>"),
+            Some(6.022e23)
+        );
+        // Plain literal, negative, and leading-`+`.
+        assert_eq!(as_number("\"5\""), Some(5.0));
+        assert_eq!(as_number("\"-5\"^^<int>"), Some(-5.0));
+        assert_eq!(as_number("\"+7\""), Some(7.0));
+        // Non-numeric literal → None.
+        assert_eq!(as_number("\"not a number\""), None);
+        // A value with an EMBEDDED escaped quote must be read whole (`1"2`),
+        // fail to parse, and never be truncated to `1` (or panic). This is the
+        // escape-aware path: the old first-`"` scan would have stopped early.
+        assert_eq!(as_number("\"1\\\"2\""), None);
+        // IRI and blank node → None.
+        assert_eq!(as_number("<http://example.org/n>"), None);
+        assert_eq!(as_number("_:b0"), None);
+        // A language-tagged literal is never numeric (SPARQL): `"5"@en` → None.
+        assert_eq!(as_number("\"5\"@en"), None);
     }
 
     #[test]
