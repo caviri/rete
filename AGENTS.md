@@ -34,7 +34,9 @@ static documentation site.
 The project is intentionally developed inside the Docker/devcontainer toolchain.
 Do not assume the host machine has a compatible Rust, wasm, zstd, or Python
 setup. Build the repo dev image with `docker compose build dev`, run commands
-with `docker compose run --rm dev ...`, or open the folder in the devcontainer. The base
+with `docker compose run --rm dev ...`, or open the folder in the devcontainer. A second
+worktree gets its own `COMPOSE_PROJECT_NAME` (see `compose.yaml`); when it is removed, run
+`scripts/docker_gc.sh --apply` so its cargo target volume goes with it. The base
 `rust:1.92-bookworm` image is not enough on its own because the repo also needs
 the wasm target, `wasm-pack`, rustfmt, clippy, Python, and `uv`.
 
