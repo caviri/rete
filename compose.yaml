@@ -3,9 +3,17 @@ name: rete
 # — and, less obviously, by every OTHER worktree of the repository: they all
 # resolve to the same `rete_cargo-target` and build into the same /target.
 # Working in a second checkout (or running two gates at once)? Give it its own
-# project and its own volumes come with it:
+# project and its own TARGET volume comes with it:
 #
-#     export COMPOSE_PROJECT_NAME=my-worktree
+#     export COMPOSE_PROJECT_NAME=my-worktree     # -> my-worktree_cargo-target
+#
+# The crate REGISTRY cache is deliberately NOT per project: `volumes:` below pins
+# it to the fixed name `rete-cargo-registry` (the same volume docker/README.md
+# uses for plain `docker run`), so a new worktree never re-downloads crates and
+# never leaves a 0.5 GB registry copy behind. The per-project target volume DOES
+# outlive its worktree — run `scripts/docker_gc.sh --apply` after removing one
+# (or `docker compose -p my-worktree down -v`). September 2026: 70 orphaned
+# cargo volumes, 158 GB, had accumulated this way.
 #
 # tests/gate/fixtures.sh shells out to `docker compose run --rm dev`, so this
 # applies to `bash tests/gate/gate.sh` too. See tests/gate/README.md.
@@ -145,7 +153,11 @@ services:
     command: ["bash", "-lc", "npm ci --no-audit --no-fund && node run.mjs --catalog=all"]
 
 volumes:
+  # Shared by every project / worktree (see the header): one crate cache.
   cargo-registry:
-  cargo-target:
+    name: rete-cargo-registry
   r-cargo-registry:
+    name: rete-r-cargo-registry
+  # Per project on purpose: two checkouts must not build into one /target.
+  cargo-target:
   r-cargo-target:

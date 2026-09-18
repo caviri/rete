@@ -59,6 +59,15 @@ export COMPOSE_PROJECT_NAME=my-worktree     # -> my-worktree_cargo-target
 
 The ports are already handled (see above); this is the other half.
 
+The crate registry is not per project — `compose.yaml` pins it to the shared
+`rete-cargo-registry` volume — but the target volume is, and it outlives the
+worktree. When you remove the worktree, remove its volume too:
+
+```sh
+docker compose -p my-worktree down -v     # or, for everything that is gone:
+scripts/docker_gc.sh --apply               # dry-run without --apply
+```
+
 ## From a fresh clone
 
 `gate.sh` needs two things a clone does not carry, both build output:
