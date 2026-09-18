@@ -521,17 +521,33 @@ fn simple_string(token: &str) -> Option<String> {
     }
 }
 
+/// SPARQL 1.1 §17.4.3 "argument compatibility" for the binary string functions
+/// CONTAINS, STRSTARTS, STRENDS, STRBEFORE and STRAFTER. `text` is arg1 (the
+/// haystack), `pat` is arg2 (the needle). The pair is compatible — and this
+/// returns `true` — iff **both** are string literals AND either `pat` is a simple
+/// literal or `xsd:string` (no language tag), or `text` and `pat` carry the same
+/// language tag. Equivalently, an incompatible pair is one where `pat` has a
+/// language tag that differs from `text`'s: a plain / `xsd:string` `pat` is always
+/// compatible, and only the *pattern*'s tag (against the text's) matters — a
+/// tagged `text` with a simple `pat` stays compatible, but a simple `text` with a
+/// tagged `pat` does not. A `false` result is a type error at every call site (row
+/// eliminated in a FILTER; unbound in value position).
+fn args_compatible(text: &str, pat: &str) -> bool {
+    let (Some(l_text), Some(l_pat)) = (string_arg(text), string_arg(pat)) else {
+        return false; // a non-string argument is itself a type error
+    };
+    l_pat.is_none() || l_pat == l_text
+}
+
 /// STRBEFORE/STRAFTER: both arguments must be string literals and be
-/// argument-compatible (`arg2` simple, or sharing `arg1`'s tag). Returns the
-/// tag to put on the result (`arg1`'s), or `None` for a type error.
+/// argument-compatible ([`args_compatible`]). Returns the tag to put on the
+/// result (`arg1`'s), or `None` for a type error.
 fn before_after_lang(arg1: &str, arg2: &str) -> Option<Option<String>> {
-    let l1 = string_arg(arg1)?;
-    let l2 = string_arg(arg2)?;
-    match l2 {
-        None => Some(l1),
-        Some(_) if l2 == l1 => Some(l1),
-        Some(_) => None,
+    if !args_compatible(arg1, arg2) {
+        return None;
     }
+    // args_compatible guarantees arg1 is a string literal, so this is `Some`.
+    string_arg(arg1)
 }
 
 /// Parse an `xsd:dateTime` lexical form `[-]YYYY-MM-DDThh:mm:ss[.fff][TZ]` into
@@ -831,12 +847,11 @@ fn hash_hex(f: Builtin, s: &str) -> String {
 /// Evaluate a boolean built-in (type checks / string predicates).
 fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
     let val = |i: usize| args.get(i).and_then(|e| e.value(ctx, b));
-    // CONTAINS/STRSTARTS/STRENDS take two string-literal args; a non-string is a
-    // type error → false in a FILTER (like CONCAT, which type-checks).
+    // CONTAINS/STRSTARTS/STRENDS take two string-literal args that must also be
+    // argument-compatible (SPARQL 1.1 §17.4.3). A non-string OR an incompatible
+    // pair is a type error → false in a FILTER (like CONCAT, which type-checks).
     let two = |g: fn(&str, &str) -> bool| match (val(0), val(1)) {
-        (Some(a), Some(c)) if string_arg(&a).is_some() && string_arg(&c).is_some() => {
-            g(&lexical(&a), &lexical(&c))
-        }
+        (Some(a), Some(c)) if args_compatible(&a, &c) => g(&lexical(&a), &lexical(&c)),
         _ => false,
     };
     match f {
@@ -1453,5 +1468,97 @@ mod tests {
         // A non-string datatype is still a type error for the string predicates.
         let int = lit("42", &format!("{XSD}integer"));
         assert!(!boolean(Builtin::Contains, &[&int, "\"4\""]));
+    }
+
+    /// SPARQL 1.1 §17.4.3 argument compatibility for the binary string functions.
+    /// The pattern (arg2) is compatible iff it is simple/`xsd:string`, or it
+    /// shares arg1's language tag; an incompatible pattern is a type error
+    /// (row eliminated in FILTER, unbound in value position). Only the pattern's
+    /// tag against the text's matters — a tagged text with a simple pattern stays
+    /// valid, a simple text with a tagged pattern does not.
+    #[test]
+    fn binary_string_functions_enforce_argument_compatibility() {
+        let rete = fixture();
+        let ctx = Ctx::new(&rete, Slots::new());
+        let row = ctx.slots.empty_row();
+        let boolean = |builtin, args: &[&str]| {
+            func_bool(
+                builtin,
+                &args
+                    .iter()
+                    .map(|v| FExpr::Const((*v).to_string()))
+                    .collect::<Vec<_>>(),
+                &ctx,
+                &row,
+            )
+        };
+
+        let en = r#""hello world"@en"#; // text, language-tagged
+        let xstr = format!(r#""hello world"^^<{XSD}string>"#); // text, xsd:string
+
+        // --- CONTAINS across every compatibility branch ---------------------
+        // simple text / simple pattern → compatible, matches.
+        assert!(boolean(
+            Builtin::Contains,
+            &["\"hello world\"", "\"world\""]
+        ));
+        // tagged text / simple pattern → compatible (the CAUTION case), matches.
+        assert!(boolean(Builtin::Contains, &[en, "\"world\""]));
+        // simple text / tagged pattern → INCOMPATIBLE (asymmetry) → type error.
+        assert!(!boolean(
+            Builtin::Contains,
+            &["\"hello world\"", "\"world\"@en"]
+        ));
+        // same language tag → compatible, matches.
+        assert!(boolean(Builtin::Contains, &[en, "\"world\"@en"]));
+        // different language tags (en vs fr) → INCOMPATIBLE → type error.
+        assert!(!boolean(Builtin::Contains, &[en, "\"world\"@fr"]));
+        // xsd:string text / xsd:string pattern → compatible, matches.
+        assert!(boolean(
+            Builtin::Contains,
+            &[&xstr, &lit("world", &format!("{XSD}string"))]
+        ));
+        // tagged text / xsd:string pattern → compatible (pattern untagged), matches.
+        assert!(boolean(
+            Builtin::Contains,
+            &[en, &lit("world", &format!("{XSD}string"))]
+        ));
+        // xsd:string text / tagged pattern → INCOMPATIBLE (text untagged) → type error.
+        assert!(!boolean(Builtin::Contains, &[&xstr, "\"world\"@en"]));
+
+        // --- STRSTARTS / STRENDS share the same helper ----------------------
+        assert!(boolean(Builtin::StrStarts, &[en, "\"hello\""])); // simple pattern ok
+        assert!(boolean(Builtin::StrStarts, &[en, "\"hello\"@en"])); // same tag ok
+        assert!(!boolean(Builtin::StrStarts, &[en, "\"hello\"@fr"])); // diff tag → error
+        assert!(boolean(Builtin::StrEnds, &[en, "\"world\"@en"])); // same tag ok
+        assert!(!boolean(Builtin::StrEnds, &[en, "\"world\"@de"])); // diff tag → error
+        assert!(!boolean(
+            Builtin::StrEnds,
+            &["\"hello world\"", "\"world\"@en"]
+        )); // simple/tagged → error
+
+        // --- STRBEFORE / STRAFTER: incompatible → unbound (None); compatible →
+        //     a result that carries arg1's language tag ----------------------
+        // Incompatible pattern → type error (None) in value position.
+        assert_eq!(call(&ctx, Builtin::StrBefore, &[en, "\"world\"@fr"]), None);
+        assert_eq!(call(&ctx, Builtin::StrAfter, &[en, "\"hello \"@de"]), None);
+        assert_eq!(
+            call(
+                &ctx,
+                Builtin::StrBefore,
+                &["\"hello world\"", "\"world\"@en"]
+            ),
+            None
+        );
+        // Simple pattern against tagged text → compatible; result keeps @en.
+        assert_eq!(
+            call(&ctx, Builtin::StrBefore, &[en, "\"world\""]).as_deref(),
+            Some(r#""hello "@en"#)
+        );
+        // Same-tag pattern → compatible; result keeps @en.
+        assert_eq!(
+            call(&ctx, Builtin::StrAfter, &[en, "\"hello \"@en"]).as_deref(),
+            Some(r#""world"@en"#)
+        );
     }
 }
