@@ -47,6 +47,11 @@ docker run --rm -v "$PWD:/work" -w /work \
   ghcr.io/caviri/rete-dev:latest cargo test --workspace --exclude rete-bench
 ```
 
+`rete-cargo-registry` is the same volume `compose.yaml` mounts, so plain
+`docker run` and `docker compose run` share one crate cache. Per-worktree
+`<project>_cargo-target` volumes are not shared and are not removed with the
+worktree: `scripts/docker_gc.sh --apply` collects the orphans.
+
 ## Running the relay — `rete-relay`
 
 Put one or more `.rete` files in a directory and mount it at `/data`:
