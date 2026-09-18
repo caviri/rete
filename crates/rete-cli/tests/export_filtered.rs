@@ -268,3 +268,40 @@ fn dump_cost_previews_a_dump_without_running_it() {
         .failure()
         .stderr(predicate::str::contains("--dump"));
 }
+
+/// The reader choice must not change the bytes. `rete export` streams through
+/// the lazy ranged reader by default; `--in-memory` forces the old whole-file
+/// load. Both must emit the identical dump (same order, same bytes) for every
+/// slice — the flag trades RAM for speed, never output. Guards the invariant the
+/// RSS win rests on: if these ever diverge, the default silently changed data.
+#[test]
+fn in_memory_and_ranged_dumps_are_byte_identical() {
+    let (_dir, file) = built();
+    let raw = |args: &[&str]| -> Vec<u8> {
+        let out = common::rete()
+            .arg("export")
+            .arg(&file)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "export {args:?} failed");
+        out.stdout
+    };
+    for slice in [
+        &["--format", "nq"][..],
+        &["--format", "nq", "--graph", ""][..],
+        &["--format", "nq", "--graph", "http://ex/g1"][..],
+        &["--format", "nq", "--predicate", "http://ex/knows"][..],
+        &["--format", "ttl"][..],
+        &["--format", "jsonld"][..],
+    ] {
+        let ranged = raw(slice);
+        let mut in_mem_args = slice.to_vec();
+        in_mem_args.push("--in-memory");
+        let in_memory = raw(&in_mem_args);
+        assert_eq!(
+            ranged, in_memory,
+            "ranged vs --in-memory dump differs for {slice:?}"
+        );
+    }
+}

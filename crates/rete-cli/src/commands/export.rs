@@ -1,7 +1,7 @@
 //! The `export` command plus the RDF serialization helpers (Turtle / JSON-LD)
 //! shared with the SPARQL CONSTRUCT output and `reason`.
 
-use crate::commands::range_source::open_local;
+use crate::commands::range_source::{open_local_eager, open_local_ranged};
 use crate::commands::render::term_to_json;
 
 /// Which slice of the dataset `rete export` should write.
@@ -81,8 +81,20 @@ pub(crate) fn export(
     format: &str,
     filter: &ExportFilter,
     sanitize_iris: bool,
+    in_memory: bool,
 ) -> anyhow::Result<()> {
-    let rete = open_local(file)?;
+    // Open through the lazy RANGED reader by DEFAULT so peak RSS stays bounded:
+    // the eager whole-file load holds the entire image resident and its RSS
+    // scaled ~3 GB per GB of file (6 GB for a 1.53 GB graph; a 52 GB file would
+    // need ~150 GB and OOM the Docker VM), while the writer already streams. The
+    // reader choice does NOT change the output — the scan and term resolution are
+    // identical — so `--in-memory` (faster for small files that fit in RAM) is a
+    // pure performance opt-in, byte-for-byte the same dump. See `range_source`.
+    let rete = if in_memory {
+        open_local_eager(file)?
+    } else {
+        open_local_ranged(file)?
+    };
     let (s, p, o) = filter.terms();
     // One report for the whole dump, so the summary is a single total across
     // every graph slot. `None` when the flag is off: the terms then take the

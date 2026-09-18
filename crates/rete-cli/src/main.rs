@@ -476,6 +476,17 @@ enum Command {
         /// N-Quads, and the summary says so.
         #[arg(long = "sanitize-iris")]
         sanitize_iris: bool,
+        /// Load the whole file into memory instead of streaming it from disk
+        /// (faster for small files, needs RAM ~= file size; the default streams
+        /// through the lazy ranged reader and is bounded).
+        ///
+        /// Export opens the `.rete` through the lazy ranged reader by default, so
+        /// peak RSS does not scale with the whole file — the eager load held the
+        /// entire image resident (~3 GB per GB of file), which OOMs on the large
+        /// scholar dumps. The dump is byte-identical either way; this flag only
+        /// trades RAM for speed on files small enough to fit.
+        #[arg(long = "in-memory")]
+        in_memory: bool,
     },
     /// Rebuild a `.rete`'s pyramid in place, reading triples straight from the
     /// file (no `export | build` N-Quads round-trip). Use to add a schema
@@ -1215,6 +1226,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             predicate,
             object,
             sanitize_iris,
+            in_memory,
         } => commands::export::export(
             &file,
             &format,
@@ -1227,6 +1239,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 object: object.as_deref().map(commands::export::canonical_term),
             },
             sanitize_iris,
+            in_memory,
         ),
         Command::Repyramid {
             file,

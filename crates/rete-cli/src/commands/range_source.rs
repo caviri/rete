@@ -59,6 +59,50 @@ pub(crate) fn open_local(path: &str) -> anyhow::Result<Rete> {
     if len <= lazy_threshold_bytes() {
         return Ok(Rete::open(&std::fs::read(path)?)?);
     }
+    open_local_lazy(path, len)
+}
+
+/// Open a local `.rete` through the lazy RANGED reader **regardless of size** —
+/// the header, section directories and index up front, then dictionary chunks
+/// and tiles faulted in on demand over a positional-read file handle.
+///
+/// This is what `rete export` uses by default. The motivation is peak RSS: the
+/// eager path (`Rete::open` over the whole file image, see [`open_local`]) holds
+/// the entire file resident plus its decompressed dictionary and all six index
+/// permutations, so export RSS scaled ~3 GB per GB of file — 6 GB for a 1.53 GB
+/// graph, and a 52 GB crossref/datacite would need ~150 GB and OOM the 50 GB
+/// Docker VM. The ranged reader never holds the raw file image or the unused
+/// permutations, so a filtered export (one predicate/graph) is bounded to the
+/// tiles it touches. A *full* dump still faults every dictionary chunk and those
+/// stay resident (the decompressed dictionary is the floor either way), so the
+/// win is largest for slices; but even a full dump avoids the raw-image and
+/// spare-permutation overhead the eager open pays on top of that floor.
+///
+/// `--in-memory` (→ [`open_local_eager`]) forces the old whole-file load back,
+/// which is faster for small files that fit in RAM.
+pub(crate) fn open_local_ranged(path: &str) -> anyhow::Result<Rete> {
+    let len = std::fs::metadata(path)?.len();
+    if std::env::var("RETE_OPEN_DEBUG").is_ok() {
+        eprintln!("[open_local_ranged] {path}: len={len} -> LAZY");
+    }
+    open_local_lazy(path, len)
+}
+
+/// Force the whole file resident: read the entire image and decode every
+/// dictionary chunk and index permutation up front (`Rete::open`). Needs RAM
+/// roughly equal to the file size; the opt-in `rete export --in-memory` path.
+pub(crate) fn open_local_eager(path: &str) -> anyhow::Result<Rete> {
+    if std::env::var("RETE_OPEN_DEBUG").is_ok() {
+        let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        eprintln!("[open_local_eager] {path}: len={len} -> EAGER (whole file)");
+    }
+    Ok(Rete::open(&std::fs::read(path)?)?)
+}
+
+/// The lazy open shared by [`open_local`] (above its size threshold) and
+/// [`open_local_ranged`] (always): a positional-read file handle behind a
+/// block-aligned cache, then `Rete::open_ranged_lazy`.
+fn open_local_lazy(path: &str, len: u64) -> anyhow::Result<Rete> {
     let reader = std::sync::Arc::new(LocalRangeReader::open(path)?);
     // `RETE_BLOCK_KB` wins (0 disables), else auto-tune by length — same knob
     // and heuristic as the URL commands, so local and remote behave alike.
