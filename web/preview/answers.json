@@ -20119,6 +20119,399 @@
    "error": "",
    "elapsedMs": 22617
   },
+  "davidrumsey:7": {
+   "id": "davidrumsey:7",
+   "dataset": "davidrumsey",
+   "index": 7,
+   "view": "table",
+   "ok": true,
+   "qmeta": "50 row(s) | 25 range req · 27.0 MB of 72.9 MB fetched (incl. opening the file) · 27.0 MB cached this session · 28300 ms · reliable reader (reasoning)",
+   "count": 50,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "4K AVIF (ours)",
+     "var": "img"
+    },
+    {
+     "label": "Title",
+     "var": "title"
+    },
+    {
+     "label": "Year",
+     "var": "year"
+    },
+    {
+     "label": "Matched by dct:spatia...",
+     "var": "matched"
+    },
+    {
+     "label": "drm:city",
+     "var": "cities"
+    },
+    {
+     "label": "drm:county",
+     "var": "counties"
+    },
+    {
+     "label": "drm:stateProvince",
+     "var": "states"
+    },
+    {
+     "label": "drm:region",
+     "var": "regions"
+    },
+    {
+     "label": "drm:country",
+     "var": "countries"
+    },
+    {
+     "label": "drm:worldArea",
+     "var": "worlds"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://data.graphplaza.com/davidrumsey/sources/avif4k/195/10891121.avif",
+      "media": false
+     },
+     {
+      "text": "(Ta. Superioris Indiae et Tartariae Maioris.)",
+      "media": false
+     },
+     {
+      "text": "1525",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "East Asia",
+      "media": false
+     },
+     {
+      "text": "China · Japan · Korea",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://data.graphplaza.com/davidrumsey/sources/avif4k/166/11325080.avif",
+      "media": false
+     },
+     {
+      "text": "Tabvla Svperioris Indiae & Tartariae maioris. (to accompany) Claudii Ptolemaei Alexandrini Geographicae ena...",
+      "media": false
+     },
+     {
+      "text": "1541",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "East Asia",
+      "media": false
+     },
+     {
+      "text": "China · Japan · Korea",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://data.graphplaza.com/davidrumsey/sources/avif4k/162/10000103.avif",
+      "media": false
+     },
+     {
+      "text": "Tatariae Sive Magni Chami Regni typus. Cum Privilegio.",
+      "media": false
+     },
+     {
+      "text": "1570",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Alaska",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "China · Japan · Russia",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://data.graphplaza.com/davidrumsey/sources/avif4k/162/10000105.avif",
+      "media": false
+     },
+     {
+      "text": "Indiae Orientalis, Insularumque Adiacientium Typus. Cum Privilegio.",
+      "media": false
+     },
+     {
+      "text": "1570",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Southeast Asia",
+      "media": false
+     },
+     {
+      "text": "China · India · Indonesia · Japan",
+      "media": false
+     },
+     {
+      "text": "Asia",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://data.graphplaza.com/davidrumsey/sources/avif4k/179/10130011.avif",
+      "media": false
+     },
+     {
+      "text": "Tavola Nona, Che Ha Sua Superiore La Tavola Terza. Libro Terzo.",
+      "media": false
+     },
+     {
+      "text": "1587",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "China · Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://data.graphplaza.com/davidrumsey/sources/avif4k/162/11201446.avif",
+      "media": false
+     },
+     {
+      "text": "Iapan I. (to accompany) Atlas minor Gerardi Mercatoris.",
+      "media": false
+     },
+     {
+      "text": "1607",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "Asia",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://data.graphplaza.com/davidrumsey/sources/avif4k/185/10501487.avif",
+      "media": false
+     },
+     {
+      "text": "China.",
+      "media": false
+     },
+     {
+      "text": "1607",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "China · Japan · Korea",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://data.graphplaza.com/davidrumsey/sources/avif4k/185/10501496.avif",
+      "media": false
+     },
+     {
+      "text": "laponia",
+      "media": false
+     },
+     {
+      "text": "1607",
+      "media": false
+     },
+     {
+      "text": "Japan",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "Japan · Korea",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 28331
+  },
   "dblp:0": {
    "id": "dblp:0",
    "dataset": "dblp",
