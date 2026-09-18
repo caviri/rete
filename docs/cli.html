@@ -858,7 +858,7 @@ section directory rather than read out of the card — see
 <code>rete info</code> shows the same catalog beneath the header when a card is present.</p>
 <h3 id="rete-graphs-file"><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
-<h3 id="rete-export-file---format-nqttljsonld---graph-g---subject-s---predicate-p---object-o---sanitize-iris"><code>rete export &lt;file&gt; [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris]</code></h3>
+<h3 id="rete-export-file---format-nqttljsonld---graph-g---subject-s---predicate-p---object-o---sanitize-iris---in-memory"><code>rete export &lt;file&gt; [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--in-memory]</code></h3>
 <p>Serialize the dataset, or a slice of it. <code>nq</code> (the default) dumps every
 triple/quad as N-Quads (default graph + named graphs) — a lossless round-trip.
 <code>ttl</code> emits Turtle and <code>jsonld</code> emits expanded JSON-LD; both serialize a
@@ -869,6 +869,18 @@ whole dataset.</p>
 rete export data.rete --format ttl    # Turtle
 rete export data.rete --format jsonld # expanded JSON-LD
 </code></pre>
+<p><strong>Export streams from disk by default.</strong> The file is opened through the lazy
+ranged reader — header, section directories and index up front, then dictionary
+chunks and tiles faulted in as the scan reaches them — so the raw file image is
+never held resident. The old behaviour read the whole file into memory and
+decoded every dictionary chunk and all six index permutations first, so export
+RSS scaled ~3 GB per GB of file (6 GB on a 1.53 GB graph; a 52 GB dump would
+need ~150 GB and OOM). <code>--in-memory</code> forces that whole-file load back — faster
+for small files that comfortably fit in RAM, but it needs RAM ≈ the file size.
+The dump is <strong>byte-identical</strong> either way: the reader choice changes only how
+the bytes are fetched, never the order or content. A <em>filtered</em> export benefits
+most (only the touched tiles are read); a <em>full</em> dump still faults every
+dictionary chunk, so its floor is the resident dictionary, not the file.</p>
 <p><code>--sanitize-iris</code> percent-encodes IRIs that are outside the N-Triples/N-Quads
 grammar (see <a href="#invalid-iris">Invalid IRIs</a>), so the dump loads into a strict
 store instead of being rejected — and a bulk loader rejects the whole <em>chunk</em>,

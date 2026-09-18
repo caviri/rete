@@ -297,7 +297,7 @@ section directory rather than read out of the card — see
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).
 
-### `rete export <file> [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris]`
+### `rete export <file> [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--in-memory]`
 Serialize the dataset, or a slice of it. `nq` (the default) dumps every
 triple/quad as N-Quads (default graph + named graphs) — a lossless round-trip.
 `ttl` emits Turtle and `jsonld` emits expanded JSON-LD; both serialize a
@@ -310,6 +310,19 @@ rete export data.rete                 # N-Quads (default)
 rete export data.rete --format ttl    # Turtle
 rete export data.rete --format jsonld # expanded JSON-LD
 ```
+
+**Export streams from disk by default.** The file is opened through the lazy
+ranged reader — header, section directories and index up front, then dictionary
+chunks and tiles faulted in as the scan reaches them — so the raw file image is
+never held resident. The old behaviour read the whole file into memory and
+decoded every dictionary chunk and all six index permutations first, so export
+RSS scaled ~3 GB per GB of file (6 GB on a 1.53 GB graph; a 52 GB dump would
+need ~150 GB and OOM). `--in-memory` forces that whole-file load back — faster
+for small files that comfortably fit in RAM, but it needs RAM ≈ the file size.
+The dump is **byte-identical** either way: the reader choice changes only how
+the bytes are fetched, never the order or content. A *filtered* export benefits
+most (only the touched tiles are read); a *full* dump still faults every
+dictionary chunk, so its floor is the resident dictionary, not the file.
 
 `--sanitize-iris` percent-encodes IRIs that are outside the N-Triples/N-Quads
 grammar (see [Invalid IRIs](#invalid-iris)), so the dump loads into a strict

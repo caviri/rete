@@ -153,6 +153,7 @@ check "level leaf"      "Astronomer"                -- $B summary "$T/onto.rete"
 check "level out of range" "out of range|level"     -- bash -c "$B summary '$T/onto.rete' --level 99; true"
 
 check "export"     "Alice"                          -- $B export "$T/g.rete"
+check "export in-memory" "Alice"                    -- $B export "$T/g.rete" --in-memory
 check "export ttl" "<http://ex/Alice>"              -- $B export "$T/g.rete" --format ttl
 check "export jsonld" '"@id": "http://ex/Alice"'    -- $B export "$T/g.rete" --format jsonld
 
