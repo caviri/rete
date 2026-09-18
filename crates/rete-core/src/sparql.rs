@@ -436,15 +436,14 @@ fn exists_matches(b: &crate::row::Row, entry: &ExistsEntry) -> bool {
     }
 }
 
-/// Lexical value of a term token: the text inside a literal's quotes, else the
-/// IRI/blank-node text unchanged.
+/// Lexical value of a term token: a literal's body with its N-Triples escapes
+/// resolved (the `@lang` / `^^<dt>` suffix dropped), else the IRI/blank-node
+/// token unchanged. The literal branch defers to [`crate::terms`] so that an
+/// escaped `\"` inside the body is part of the value — a naive scan to the
+/// first `"` cut `"He said \"hi\" loudly"` down to `He said \`, so CONTAINS /
+/// REGEX / STRSTARTS / STRENDS / LANGMATCHES / GROUP_CONCAT never saw the rest.
 fn lexical(token: &str) -> String {
-    if let Some(rest) = token.strip_prefix('"') {
-        if let Some(end) = rest.find('"') {
-            return rest[..end].to_string();
-        }
-    }
-    token.to_string()
+    crate::terms::literal_lexical(token).unwrap_or_else(|| token.to_string())
 }
 
 /// Numeric value of a term: the lexical part of a literal (`"30"^^...` → 30) or
@@ -2142,5 +2141,67 @@ mod tests {
         let (_, sols) =
             eval_sparql(&rete, "SELECT ?x WHERE { ?x <http://ex/p> ?y } LIMIT 2").unwrap();
         assert_eq!(sols.len(), 2);
+    }
+
+    /// End to end through the file and the memoizing resolver: a literal with an
+    /// escaped quote in its value matches on the text AFTER the quote. The
+    /// boolean string predicates used to read the stored token only up to its
+    /// first `"`, so of these four labels CONTAINS("Quantum") found one instead
+    /// of three and CONTAINS("Gases") none — while STRLEN, on the other code
+    /// path, already saw all 25 characters.
+    #[test]
+    fn string_filters_see_past_an_embedded_quote() {
+        let bytes = rete_from(&[
+            (
+                "<http://ex/a>",
+                "<http://ex/label>",
+                "\"plain Quantum here\"",
+            ),
+            (
+                "<http://ex/b>",
+                "<http://ex/label>",
+                r#""He said \"Quantum\" loudly"@en"#,
+            ),
+            (
+                "<http://ex/c>",
+                "<http://ex/label>",
+                r#""Theory of \"Quantum\" Gases""#,
+            ),
+            ("<http://ex/d>", "<http://ex/label>", "\"no match at all\""),
+            (
+                "<http://ex/e>",
+                "<http://ex/label>",
+                "\"tab\\there\\nline two\"^^<http://www.w3.org/2001/XMLSchema#string>",
+            ),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let subjects = |filter: &str| {
+            let q = format!("SELECT ?s WHERE {{ ?s <http://ex/label> ?l FILTER({filter}) }}");
+            let (_, sols) = eval_sparql(&rete, &q).unwrap();
+            let mut out: Vec<String> = sols.iter().map(|b| b["s"].clone()).collect();
+            out.sort();
+            out
+        };
+        let (a, b, c, e) = (
+            "<http://ex/a>",
+            "<http://ex/b>",
+            "<http://ex/c>",
+            "<http://ex/e>",
+        );
+        assert_eq!(subjects(r#"CONTAINS(?l, "Quantum")"#), vec![a, b, c]);
+        assert_eq!(subjects(r#"CONTAINS(?l, "Gases")"#), vec![c]);
+        assert_eq!(subjects(r#"STRENDS(?l, "loudly")"#), vec![b]);
+        assert_eq!(subjects(r#"STRSTARTS(?l, "Theory of \"Q")"#), vec![c]);
+        assert_eq!(subjects(r#"REGEX(?l, "gases$", "i")"#), vec![c]);
+        assert_eq!(subjects(r#"REGEX(?l, "^line two$", "m")"#), vec![e]);
+        assert_eq!(subjects(r#"CONTAINS(?l, "\there")"#), vec![e]);
+        assert_eq!(subjects(r#"LANGMATCHES(LANG(?l), "en")"#), vec![b]);
+        assert_eq!(subjects(r#"STRAFTER(?l, "Quantum") = "\" Gases""#), vec![c]);
+        assert_eq!(
+            subjects(r#"STRBEFORE(?l, " loudly") = "He said \"Quantum\""@en"#),
+            vec![b]
+        );
+        assert_eq!(subjects(r#"STRLEN(?l) = 25"#), vec![c]);
+        assert_eq!(subjects(r#"STRLEN(?l) = 24"#), vec![b]);
     }
 }

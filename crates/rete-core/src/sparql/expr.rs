@@ -1326,4 +1326,132 @@ mod tests {
         assert!(lang_matches("en-US", "en"));
         assert!(!lang_matches("english", "en"));
     }
+
+    /// The string built-ins operate on the WHOLE unescaped lexical value. The
+    /// boolean predicates used to scan a literal token only up to its first `"`
+    /// — escaped or not — so `CONTAINS("He said \"hi\" loudly", "loudly")` was
+    /// false and the text after an embedded quote was invisible to CONTAINS /
+    /// STRSTARTS / STRENDS / REGEX / LANGMATCHES. STRLEN and the other
+    /// value-returning functions already read the full value; they are pinned
+    /// here so the two paths cannot drift apart again.
+    #[test]
+    fn string_builtins_read_past_embedded_quotes_and_escapes() {
+        let rete = fixture();
+        let ctx = Ctx::new(&rete, Slots::new());
+        let row = ctx.slots.empty_row();
+        let boolean = |builtin, args: &[&str]| {
+            func_bool(
+                builtin,
+                &args
+                    .iter()
+                    .map(|v| FExpr::Const((*v).to_string()))
+                    .collect::<Vec<_>>(),
+                &ctx,
+                &row,
+            )
+        };
+        // N-Triples token for the value `Theory of "Quantum" Gases` (25 chars).
+        let quoted = r#""Theory of \"Quantum\" Gases""#;
+        // Text before, inside, and after the embedded quotes.
+        for needle in [
+            "\"Theory\"",
+            "\"Quantum\"",
+            "\"Gases\"",
+            "\"\\\"Quantum\\\" G\"",
+        ] {
+            assert!(boolean(Builtin::Contains, &[quoted, needle]), "{needle}");
+        }
+        assert!(boolean(
+            Builtin::StrStarts,
+            &[quoted, "\"Theory of \\\"Q\""]
+        ));
+        assert!(boolean(Builtin::StrEnds, &[quoted, "\"\\\" Gases\""]));
+        assert!(boolean(Builtin::Regex, &[quoted, "\"gases$\"", "\"i\""]));
+        assert!(boolean(
+            Builtin::Regex,
+            &[quoted, "\"^Theory of .Quantum. Gases$\""]
+        ));
+        // The needle `Quantum"` (an escaped quote of its own) is in the value…
+        assert!(boolean(Builtin::Contains, &[quoted, "\"Quantum\\\"\""]));
+        // …while the backslash of the escape is not: `Theory of \` was exactly
+        // the truncated value the old scan produced.
+        assert!(!boolean(Builtin::Contains, &[quoted, "\"Theory of \\\\\""]));
+        assert_eq!(
+            call(&ctx, Builtin::StrBefore, &[quoted, "\"Gases\""]).as_deref(),
+            Some(r#""Theory of \"Quantum\" ""#)
+        );
+        assert_eq!(
+            call(&ctx, Builtin::StrAfter, &[quoted, "\"Quantum\""]).as_deref(),
+            Some(r#""\" Gases""#)
+        );
+        assert_eq!(
+            call(
+                &ctx,
+                Builtin::Replace,
+                &[quoted, "\"Gases\"", "\"Liquids\""]
+            )
+            .as_deref(),
+            Some(r#""Theory of \"Quantum\" Liquids""#)
+        );
+        assert_eq!(
+            call(&ctx, Builtin::UCase, &[quoted]).as_deref(),
+            Some(r#""THEORY OF \"QUANTUM\" GASES""#)
+        );
+        assert_eq!(
+            call(&ctx, Builtin::SubStr, &[quoted, "12", "7"]).as_deref(),
+            Some("\"Quantum\"")
+        );
+        assert_eq!(
+            call(&ctx, Builtin::Concat, &[quoted, "\"!\""]).as_deref(),
+            Some(r#""Theory of \"Quantum\" Gases!""#)
+        );
+        assert_eq!(
+            call(&ctx, Builtin::StrLen, &[quoted]).as_deref(),
+            Some(&*lit("25", &format!("{XSD}integer"))),
+            "STRLEN counted the full value before the fix and must keep doing so"
+        );
+
+        // Backslash and newline escapes resolve to the characters they denote.
+        let escaped = r#""a\\b\nc""#; // the value `a\b<newline>c`
+        assert!(boolean(Builtin::Contains, &[escaped, "\"\\\\b\""]));
+        assert!(boolean(Builtin::StrEnds, &[escaped, "\"\\nc\""]));
+        assert!(boolean(Builtin::Regex, &[escaped, "\"^a.b.c$\"", "\"s\""]));
+        assert!(boolean(Builtin::Regex, &[escaped, "\"^c$\"", "\"m\""]));
+        assert_eq!(
+            call(&ctx, Builtin::StrLen, &[escaped]).as_deref(),
+            Some(&*lit("5", &format!("{XSD}integer")))
+        );
+        assert_eq!(
+            call(&ctx, Builtin::EncodeForUri, &[escaped]).as_deref(),
+            Some("\"a%5Cb%0Ac\"")
+        );
+
+        // A language tag or datatype suffix is never part of the value, and an
+        // embedded quote does not make the suffix look like the value's end.
+        let tagged = r#""He said \"Quantum\" loudly"@en"#;
+        assert!(boolean(Builtin::Contains, &[tagged, "\"loudly\""]));
+        assert!(!boolean(Builtin::Contains, &[tagged, "\"@en\""]));
+        assert!(boolean(Builtin::StrEnds, &[tagged, "\"loudly\"@en"]));
+        assert!(boolean(Builtin::LangMatches, &["\"en-GB\"", "\"en\""]));
+        assert_eq!(
+            call(&ctx, Builtin::StrAfter, &[tagged, "\"said \""]).as_deref(),
+            Some(r#""\"Quantum\" loudly"@en"#),
+            "the tag survives on the result, not inside the value"
+        );
+        assert_eq!(
+            call(&ctx, Builtin::StrLen, &[tagged]).as_deref(),
+            Some(&*lit("24", &format!("{XSD}integer")))
+        );
+        let typed = format!(r#""He said \"Quantum\" loudly"^^<{XSD}string>"#);
+        assert!(boolean(Builtin::Contains, &[&typed, "\"loudly\""]));
+        assert!(!boolean(Builtin::Contains, &[&typed, "\"^^\""]));
+        assert!(boolean(Builtin::Regex, &[&typed, "\"loudly$\""]));
+        assert_eq!(
+            call(&ctx, Builtin::StrBefore, &[&typed, "\" loudly\""]).as_deref(),
+            Some(r#""He said \"Quantum\"""#)
+        );
+        // A non-string datatype is still a type error for the string predicates.
+        let int = lit("42", &format!("{XSD}integer"));
+        assert!(!boolean(Builtin::Contains, &[&int, "\"4\""]));
+    }
 }
