@@ -1,6 +1,7 @@
 //! The `export` command plus the RDF serialization helpers (Turtle / JSON-LD)
 //! shared with the SPARQL CONSTRUCT output and `reason`.
 
+use crate::commands::compress::{self, Codec};
 use crate::commands::range_source::{open_local_eager, open_local_ranged};
 use crate::commands::render::term_to_json;
 use crate::commands::turtle::{Grouping, NamespaceSample, PrefixTable, TurtleWriter, RDF_TYPE};
@@ -94,6 +95,28 @@ pub(crate) fn canonical_term(term: &str) -> String {
     }
 }
 
+/// Everything `rete export` takes that is not *which* statements to write.
+///
+/// A struct rather than six more positional parameters. The flag list is
+/// open-ended — this is the third feature to extend it — and a call site reading
+/// `bool, bool, &str, Option<i32>, bool, …` is exactly the shape where two flags
+/// get transposed and nothing complains.
+#[derive(Clone, Copy)]
+pub(crate) struct ExportOptions<'a> {
+    /// Percent-encode IRIs outside the N-Triples / RFC 3987 grammar.
+    pub sanitize_iris: bool,
+    /// Write full IRIs instead of QNames (Turtle and TriG only).
+    pub no_prefixes: bool,
+    /// `none` | `zstd` | `gzip`.
+    pub compress_with: &'a str,
+    /// Codec level; `None` takes the codec's own default.
+    pub compress_level: Option<i32>,
+    /// Read the whole file eagerly instead of streaming it.
+    pub in_memory: bool,
+    /// Cap on the reader's caches, in MiB; `Some(0)` means unlimited.
+    pub memory_budget_mb: Option<u64>,
+}
+
 /// `rete export <file> --format <fmt>`: write the graph — or a filtered slice of
 /// it — as N-Quads, Turtle, or JSON-LD.
 ///
@@ -106,11 +129,30 @@ pub(crate) fn export(
     file: &str,
     format: &str,
     filter: &ExportFilter,
-    sanitize_iris: bool,
-    no_prefixes: bool,
-    in_memory: bool,
-    memory_budget_mb: Option<u64>,
+    opts: &ExportOptions,
 ) -> anyhow::Result<()> {
+    let &ExportOptions {
+        sanitize_iris,
+        no_prefixes,
+        compress_with,
+        compress_level,
+        in_memory,
+        memory_budget_mb,
+    } = opts;
+    // Validate the codec and level BEFORE opening the file, so a typo costs a
+    // moment rather than an hour of scanning followed by a usage error.
+    let codec = Codec::parse(compress_with)?;
+    let level = compress::check_level(codec, compress_level)?;
+    if codec != Codec::None {
+        // stdout is now binary. Say so once, on stderr — which stays text, and
+        // which is where every other note this command prints already goes.
+        eprintln!(
+            "note: writing {}-compressed output (level {level}) to stdout; redirect it to a \
+             file, conventionally `{}`",
+            codec.name(),
+            codec.extension()
+        );
+    }
     // Peak RSS is bounded by `--memory-budget-mb` (default 4096): the ranged
     // reader's dictionary chunk cache and index tile cache are capped to a share
     // of it and evict least-recently-used bodies, so a full dump no longer keeps
@@ -148,12 +190,21 @@ pub(crate) fn export(
         "nq" => {
             use std::io::Write;
             let stdout = std::io::stdout();
-            let mut out = std::io::BufWriter::new(stdout.lock());
+            let mut out = compress::open(stdout.lock(), codec, level)?;
+            // The first write error latches and the rest of the scan is skipped.
+            // Uncompressed, discarding them was survivable — a short dump is
+            // visibly short. Compressed it is not: writes that quietly go nowhere
+            // followed by a frame that closes cleanly produce a *valid* archive
+            // with data missing, which is the worst possible failure here.
+            let mut err: std::io::Result<()> = Ok(());
             for slot in filter.slots(&rete) {
                 match &slot {
                     None => rete.dump_filtered_each(None, s, p, o, |s, p, o| {
+                        if err.is_err() {
+                            return;
+                        }
                         let (s, p, o) = clean(&mut iris, s, p, o);
-                        let _ = writeln!(out, "{s} {p} {o} .");
+                        err = writeln!(out, "{s} {p} {o} .");
                     }),
                     Some(g) => {
                         // The graph term labels every line of this slot, so it
@@ -165,8 +216,11 @@ pub(crate) fn export(
                             None => g.clone(),
                         };
                         rete.dump_filtered_each(Some(g), s, p, o, |s, p, o| {
+                            if err.is_err() {
+                                return;
+                            }
                             let (s, p, o) = clean(&mut iris, s, p, o);
-                            let _ = writeln!(out, "{s} {p} {o} {label} .");
+                            err = writeln!(out, "{s} {p} {o} {label} .");
                         });
                         // This slot is done: drop the graph's decoded index so a
                         // many-graph dump holds one graph's tiles at a time, not
@@ -175,8 +229,18 @@ pub(crate) fn export(
                         rete.release_named_graph(g);
                     }
                 }
+                std::mem::replace(&mut err, Ok(()))?;
             }
-            out.flush()?;
+            // `close` writes the codec's trailer and returns its error. Dropping
+            // the sink instead would emit a truncated frame that only fails at
+            // decompression — see `commands::compress`.
+            if let Err(e) = compress::close(out) {
+                // A closed downstream pipe is how `rete export … | head` ends.
+                if e.kind() != std::io::ErrorKind::BrokenPipe {
+                    return Err(e.into());
+                }
+                return Ok(());
+            }
             if std::env::var("RETE_OPEN_DEBUG").is_ok() {
                 let d = rete.dict_cache_stats();
                 eprintln!(
@@ -224,8 +288,9 @@ pub(crate) fn export(
             // whenever the ladder picked one, and wrapping them would emit TriG
             // syntax under a `.ttl` name.
             let wrap = format == "trig";
-            match write_turtle_stream(&mut rete, &slots, table, grouping, s, p, o, &mut iris, wrap)
-            {
+            match write_turtle_stream(
+                &mut rete, &slots, table, grouping, s, p, o, &mut iris, wrap, codec, level,
+            ) {
                 Ok(()) => {}
                 // A closed downstream pipe is how `rete export … | head` ends,
                 // not a failure. The nq arm reaches the same outcome by
@@ -252,7 +317,18 @@ pub(crate) fn export(
                     *t = (s, p, o);
                 }
             }
-            println!("{}", export_jsonld(&triples));
+            // JSON-LD is built whole (see above), but it still goes through the
+            // same sink so `--compress` applies to it like any other text format.
+            use std::io::Write;
+            let stdout = std::io::stdout();
+            let mut out = compress::open(stdout.lock(), codec, level)?;
+            writeln!(out, "{}", export_jsonld(&triples))?;
+            // The codec's trailer, and its error — the returned lock is the
+            // stdout handle we already had, so there is nothing to do with it.
+            // The codec's trailer, and its error. `close` hands back the
+            // stdout lock we already had; dropping it explicitly is the point —
+            // an ignored `must_use` here would hide the error, not the lock.
+            let _lock = compress::close(out)?;
         }
         other => anyhow::bail!("unknown export format: {other}"),
     }
@@ -310,10 +386,15 @@ fn write_turtle_stream(
     o: Option<&str>,
     iris: &mut Option<rete_core::iri::IriReport>,
     wrap_graphs: bool,
+    codec: Codec,
+    level: i32,
 ) -> std::io::Result<()> {
-    use std::io::Write;
     let stdout = std::io::stdout();
-    let mut w = TurtleWriter::new(std::io::BufWriter::new(stdout.lock()), table, grouping);
+    let mut w = TurtleWriter::new(
+        compress::open(stdout.lock(), codec, level)?,
+        table,
+        grouping,
+    );
     w.declare_all()?;
     if std::env::var("RETE_OPEN_DEBUG").is_ok() {
         eprintln!(
@@ -367,10 +448,11 @@ fn write_turtle_stream(
         // reuses it.
         std::mem::replace(&mut err, Ok(()))?;
     }
-    // `finish` hands the sink back rather than dropping it: a `BufWriter` dropped
-    // on the floor swallows the error from its final write, which is how a
-    // truncated dump gets mistaken for a complete one.
-    w.finish()?.flush()
+    // `finish` hands the sink back rather than dropping it, and `close` then
+    // writes the codec's trailer. Dropping either would swallow the error from
+    // the final write — which is how a truncated dump, or a truncated
+    // compression frame, gets mistaken for a complete one.
+    compress::close(w.finish()?).map(|_| ())
 }
 
 /// Pick the one graph a single-graph format (Turtle, JSON-LD) will write.
