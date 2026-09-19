@@ -3273,14 +3273,36 @@ impl Rete {
         // faulted, so `rete export` of a single-graph file is unchanged:
         // `figshare.rete` (222 MB, a 126 MB dictionary) peaks at 874 MB lazily
         // either way. The resident dictionary is the floor there, not this.
-        const RESOLVE_BATCH: usize = 4096;
-        let mut ids: Vec<(u32, u32, u32)> = Vec::with_capacity(RESOLVE_BATCH);
-        let mut nodes: Vec<u32> = Vec::with_capacity(RESOLVE_BATCH * 2);
-        let mut preds: Vec<u32> = Vec::with_capacity(RESOLVE_BATCH);
-        let mut flush = |ids: &mut Vec<(u32, u32, u32)>, f: &mut F| {
+        //
+        // Within each window, term resolution is CHUNK-ORDERED, not row-ordered
+        // (`Dictionary::resolve_window`, bounded-export phase 1): the window's
+        // ids are grouped by the `(section, chunk)` they live in and each chunk
+        // is decoded once and its runs walked once, filling every slot that
+        // chunk owns, then the rows are emitted in the original scan order. Two
+        // things follow. First, a window's objects — which scatter across the
+        // object-only section for one subject — touch each chunk a single time
+        // instead of re-faulting it per row. Second, the per-id re-walk from a
+        // run's start that the old row-order path did for *every* id collapses
+        // to one monotonic forward pass per run. The output is byte-for-byte
+        // identical (same bytes per id, same emission order, same
+        // all-three-resolved emit rule); the cap is still unlimited, so this is
+        // structural preparation for the real bound (phase 2), plus a small
+        // free speedup. The coalesced bulk fault (`prefetch_terms`) is
+        // unchanged, so the read pattern and peak residency are as before.
+        const WINDOW: usize = 4096;
+        let mut ids: Vec<(u32, u32, u32)> = Vec::with_capacity(WINDOW);
+        let mut nodes: Vec<u32> = Vec::with_capacity(WINDOW * 2);
+        let mut preds: Vec<u32> = Vec::with_capacity(WINDOW);
+        let mut resolver = crate::dictionary::WindowResolver::default();
+        let mut flush = |ids: &mut Vec<(u32, u32, u32)>,
+                         resolver: &mut crate::dictionary::WindowResolver,
+                         f: &mut F| {
             if ids.is_empty() {
                 return;
             }
+            // Coalesced bulk fault of exactly the chunks this window needs
+            // — unchanged from the row-order path, so reads and residency
+            // are identical; `resolve_window` then hits the warmed cache.
             nodes.clear();
             preds.clear();
             for &(s, p, o) in ids.iter() {
@@ -3289,24 +3311,16 @@ impl Rete {
                 preds.push(p);
             }
             dict.prefetch_terms(&nodes, &preds);
-            for &(s, p, o) in ids.iter() {
-                if let (Some(s), Some(p), Some(o)) = (
-                    dict.subject_term(s),
-                    dict.predicate_term(p),
-                    dict.object_term(o),
-                ) {
-                    f(&s, &p, &o);
-                }
-            }
+            dict.resolve_window(ids, resolver, |s, p, o| f(s, p, o));
             ids.clear();
         };
         for t in index.scan_iter(pattern) {
             ids.push(t);
-            if ids.len() == RESOLVE_BATCH {
-                flush(&mut ids, &mut f);
+            if ids.len() == WINDOW {
+                flush(&mut ids, &mut resolver, &mut f);
             }
         }
-        flush(&mut ids, &mut f);
+        flush(&mut ids, &mut resolver, &mut f);
     }
 
     /// What a [`dump_filtered_each`](Self::dump_filtered_each) over this graph
