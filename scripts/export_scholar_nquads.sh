@@ -106,6 +106,26 @@
 #   --audit-only        export to /dev/null: collect the invalid-IRI report, the
 #                       peak RSS and the wall time, record `audited`; write no
 #                       .nq.gz, upload nothing, need no bucket CLI
+#   --no-upload         export for real and verify the gz, but do NOT upload:
+#                       the .nq.gz stays in --work/out (implies --keep) and the
+#                       row is recorded `done`. Needs no bucket CLI. Every name
+#                       it records is also appended to <work>/not-uploaded.txt,
+#                       because a `done` row normally means "confirmed in the
+#                       bucket" and here it does not. THE PUBLISHER MUST RUN
+#                       WITH --recheck: that re-lists the key for every `done`
+#                       row and re-does the ones the bucket does not have.
+#                       Separating export from publication is deliberate -- the
+#                       sweep is a long unattended data job and an audit role
+#                       that cannot upload cannot mis-publish.
+#   --memory-budget-mb N
+#                       pass `--memory-budget-mb N` to `rete export` (rete >=
+#                       #247). N caps the resident decoded dictionary/index;
+#                       peak RSS tracks it (256 -> 778 MB, 4096 -> 4282 MB
+#                       measured on epfl-infoscience) instead of growing to the
+#                       whole decompressed dictionary. 0 = unlimited. Unset
+#                       leaves rete's own default (4096). Output is
+#                       byte-identical at every budget; a budget below the
+#                       dictionary size costs time, not correctness.
 #   --manifest FILE     dataset<TAB>name<TAB>url   (default: the file above)
 #   --bucket NS/NAME    destination bucket (default $RETE_HF_BUCKET)
 #   --prefix P          destination prefix (default scholar)
@@ -185,6 +205,8 @@ HEADROOM_GB=15
 RATIO="1.0"
 DRY_RUN=0
 AUDIT_ONLY=0
+NO_UPLOAD=0
+MEM_BUDGET_MB=""
 ALL=0
 KEEP=0
 FORCE=0
@@ -198,6 +220,8 @@ while [ $# -gt 0 ]; do
     --all)          ALL=1; shift ;;
     --dry-run)      DRY_RUN=1; shift ;;
     --audit-only)   AUDIT_ONLY=1; shift ;;
+    --no-upload)    NO_UPLOAD=1; KEEP=1; shift ;;
+    --memory-budget-mb) MEM_BUDGET_MB="${2:?}"; shift 2 ;;
     --manifest)     MANIFEST="${2:?}"; shift 2 ;;
     --bucket)       BUCKET="${2:?}"; shift 2 ;;
     --prefix)       PREFIX="${2:?}"; shift 2 ;;
@@ -256,7 +280,7 @@ trap cleanup EXIT INT TERM
 # missing, unauthenticated or offline lists nothing, which would make every
 # object look absent and every file look like it still needs uploading. An
 # audit uploads nothing, so it does not need the CLI at all.
-if [ "$AUDIT_ONLY" = "0" ] && ! hf buckets ls "$BUCKET" --json >/dev/null 2>&1; then
+if [ "$AUDIT_ONLY" = "0" ] && [ "$NO_UPLOAD" = "0" ] && ! hf buckets ls "$BUCKET" --json >/dev/null 2>&1; then
   echo "cannot list $BUCKET (hf missing, not logged in, or offline)" >&2
   exit 4
 fi
@@ -401,6 +425,11 @@ find_local() { # name published_len -> path or ""
 # Bounded on purpose: an unbounded export over a 56 GB graph grew until
 # Docker Desktop's VM fell over. Override with RETE_EXPORT_MEM.
 MEM_LIMIT="${RETE_EXPORT_MEM:-12g}"
+# Extra flags for `rete export`. --memory-budget-mb bounds the resident decoded
+# dictionary, so the container cap above stops being the thing that decides
+# whether a big file exports at all.
+EXPORT_FLAGS="--format nq --sanitize-iris"
+[ -n "$MEM_BUDGET_MB" ] && EXPORT_FLAGS="$EXPORT_FLAGS --memory-budget-mb $MEM_BUDGET_MB"
 in_docker() {
   MSYS_NO_PATHCONV=1 docker run --rm \
     --memory "$MEM_LIMIT" --memory-swap "$MEM_LIMIT" \
@@ -430,6 +459,8 @@ done < "$MANIFEST"
 if [ ${#rows[@]} -eq 0 ]; then echo "nothing selected: pass names or --all" >&2; usage 2; fi
 
 mode_note=""; [ "$AUDIT_ONLY" = "1" ] && mode_note=", audit-only"
+[ "$NO_UPLOAD" = "1" ] && mode_note="$mode_note, no-upload"
+[ -n "$MEM_BUDGET_MB" ] && mode_note="$mode_note, memory-budget-mb=$MEM_BUDGET_MB"
 say "=== $(now) scholar -> hf://buckets/$BUCKET/$PREFIX/ (dry-run=$DRY_RUN$mode_note, ${#rows[@]} file(s), $(gb "$(free_bytes)") GiB free, $(wc -l < "$RETE_INDEX") local .rete indexed) ==="
 
 # Size every row, then order LARGEST FIRST (see the header).
@@ -591,11 +622,11 @@ for r in "${sized[@]}"; do
   t0=$(date +%s)
   if [ "$AUDIT_ONLY" = "1" ]; then
     say "AUDIT    $name -> /dev/null (report: $iri)"
-    in_docker "TF='$WORK_IN/out/$name.time'; $TIME_PROLOGUE; \$T '$RETE_BIN' export '$inpath' --format nq --sanitize-iris > /dev/null 2> '$WORK_IN/out/$name.iri.txt'; echo \"RETE_EXIT=\$? PIGZ_EXIT=0\"; $CG_EPILOGUE" \
+    in_docker "TF='$WORK_IN/out/$name.time'; $TIME_PROLOGUE; \$T '$RETE_BIN' export '$inpath' $EXPORT_FLAGS > /dev/null 2> '$WORK_IN/out/$name.iri.txt'; echo \"RETE_EXIT=\$? PIGZ_EXIT=0\"; $CG_EPILOGUE" \
       > "$exitf" 2>>"$LOG"
   else
     say "EXPORT   $name -> $out"
-    in_docker "set -o pipefail; TF='$WORK_IN/out/$name.time'; $TIME_PROLOGUE; \$T '$RETE_BIN' export '$inpath' --format nq --sanitize-iris 2> '$WORK_IN/out/$name.iri.txt' | pigz -p \$(nproc) -6 > '$WORK_IN/out/$name.nq.gz'; st=(\${PIPESTATUS[@]}); echo \"RETE_EXIT=\${st[0]} PIGZ_EXIT=\${st[1]}\"; $CG_EPILOGUE" \
+    in_docker "set -o pipefail; TF='$WORK_IN/out/$name.time'; $TIME_PROLOGUE; \$T '$RETE_BIN' export '$inpath' $EXPORT_FLAGS 2> '$WORK_IN/out/$name.iri.txt' | pigz -p \$(nproc) -6 > '$WORK_IN/out/$name.nq.gz'; st=(\${PIPESTATUS[@]}); echo \"RETE_EXIT=\${st[0]} PIGZ_EXIT=\${st[1]}\"; $CG_EPILOGUE" \
       > "$exitf" 2>>"$LOG"
   fi
   drc=$?
@@ -654,6 +685,19 @@ for r in "${sized[@]}"; do
   say "OK       $name: $(gb "$len") GiB .rete -> $(gb "$osize") GiB .nq.gz ($(awk -v a="$osize" -v b="$len" 'BEGIN{printf "%.3f", a/b}')x), $lines quads, $((t1-t0))s container, rete ${R_SECS}s peak ${R_RSS_MB} MB"
 
   # -- 3. upload, then 4. RE-LIST -------------------------------------------
+  # --no-upload stops here: the dump is exported and its gzip stream proven
+  # complete, which is everything the audit role is allowed to do. The row is
+  # `done` so a resumed sweep does not re-export it, and the name goes into
+  # not-uploaded.txt so the publisher knows this `done` was never in a bucket.
+  if [ "$NO_UPLOAD" = "1" ]; then
+    say "HOLD     $name: --no-upload, $out kept, NOT published to $key"
+    printf '%s\t%s\t%s\t%s\n' "$name" "$key" "$osize" "$(now)" >> "$WORK/not-uploaded.txt"
+    record done "$name" "$len" "$osize" "$lines" "$url"
+    ok=$((ok+1)); tot_in=$((tot_in+len)); tot_out=$((tot_out+osize))
+    rm -f "$exitf"
+    say "FREE     $(gb "$(free_bytes)") GiB after $name"
+    continue
+  fi
   say "PUT      $name -> $key ($(gb "$osize") GiB)"
   hf buckets cp "$out" "hf://buckets/$BUCKET/$key" >>"$LOG" 2>&1; urc=$?
   landed="$(bucket_size "$key")"
@@ -683,5 +727,6 @@ if [ "$AUDIT_ONLY" = "1" ]; then
   [ "$failed" -eq 0 ]; exit $?
 fi
 say "done: ok=$ok skipped=$skipped failed=$failed (of which schemeless=$schemeless); $(gb "$tot_in") GiB .rete -> $(gb "$tot_out") GiB .nq.gz"
+[ "$NO_UPLOAD" = "1" ] && say "NOTE: --no-upload -- nothing was published. $WORK/not-uploaded.txt lists every 'done' row still only on local disk; the publisher must run with --recheck."
 [ "$failed" -eq 0 ]
 exit $?
