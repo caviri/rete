@@ -111,6 +111,10 @@ already found most of what TriG removes structurally. TriG still wins on both,
 and it wins *before* decompression too, which is the case that matters when
 something has to parse the file rather than just store it.
 
+(That table is at `zstd -3`, so the two formats are compared without codec time
+dominating. `--compress zstd` defaults to level 6, which is smaller than both
+columns shown.)
+
 So: `--format trig --compress zstd` is the smallest lossless option, and
 `--format nq` is the one every line-oriented tool can `split` and `grep`.
 

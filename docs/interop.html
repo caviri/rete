@@ -693,6 +693,9 @@ once); zstd removes <em>byte</em> repetition. On a 4M-quad dump:</p>
 already found most of what TriG removes structurally. TriG still wins on both,
 and it wins <em>before</em> decompression too, which is the case that matters when
 something has to parse the file rather than just store it.</p>
+<p>(That table is at <code>zstd -3</code>, so the two formats are compared without codec time
+dominating. <code>--compress zstd</code> defaults to level 6, which is smaller than both
+columns shown.)</p>
 <p>So: <code>--format trig --compress zstd</code> is the smallest lossless option, and
 <code>--format nq</code> is the one every line-oriented tool can <code>split</code> and <code>grep</code>.</p>
 <p><code>export</code> reads a local file. For a remote <code>.rete</code>, download it first (it is
