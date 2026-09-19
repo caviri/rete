@@ -624,11 +624,56 @@ graph. The default format is <strong>N-Quads, lossless</strong>: default graph +
 graphs, RDF-star quoted triples included.</p>
 <pre><code class="language-sh">rete export data.rete | gzip &gt; dump.nq.gz
 </code></pre>
-<p>The other formats serialize the default graph only (Turtle and JSON-LD have
-no named-graph story) — for migration, always N-Quads:</p>
-<pre><code class="language-sh">rete export data.rete --format ttl     &gt; default-graph.ttl
-rete export data.rete --format jsonld  &gt; default-graph.jsonld
+<p><strong>TriG is the compact lossless alternative.</strong> It is Turtle syntax wrapped in
+<code>GRAPH &lt;g&gt; { … }</code> blocks, so it keeps every named graph exactly as N-Quads does,
+while writing each subject and each namespace once instead of once per
+statement:</p>
+<pre><code class="language-sh">rete export data.rete --format trig &gt; dump.trig
 </code></pre>
+<p>Both <code>nq</code> and <code>trig</code> stream, so peak memory follows <code>--memory-budget-mb</code> rather
+than the size of the graph, and both are byte-identical at any budget. TriG is
+the smaller of the two — substantially so on data with many statements per
+subject — and every store on this page loads it. Use N-Quads when the consumer
+is a line-oriented pipeline (<code>split</code>, <code>grep</code>, a Spark reader); use TriG when the
+consumer is an RDF parser and the file has to travel.</p>
+<h3 id="the-single-graph-formats">The single-graph formats</h3>
+<p>Turtle and JSON-LD carry no graph term, so they serialize <strong>one</strong> graph. Which
+one follows a fixed ladder, and the choice is always reported on stderr:</p>
+<table><thead><tr><th>situation</th><th>what is exported</th></tr></thead><tbody>
+<tr><td><code>--graph &lt;iri&gt;</code></td><td>that graph; an error naming the real graphs if it does not exist</td></tr>
+<tr><td><code>--graph ''</code></td><td>the default graph, explicitly</td></tr>
+<tr><td>no <code>--graph</code>, default graph has content</td><td>the default graph, with a note that named graphs were left out</td></tr>
+<tr><td>no <code>--graph</code>, default graph empty, one named graph</td><td>that graph</td></tr>
+<tr><td>no <code>--graph</code>, default graph empty, several named graphs</td><td>an error listing them</td></tr>
+</tbody></table>
+<p>Graphs are never silently merged and a non-empty selection is never silently
+dropped — a quads file that cannot be written as Turtle says so instead of
+producing a plausible-looking partial dump.</p>
+<pre><code class="language-sh">rete export data.rete --format ttl                        &gt; default-graph.ttl
+rete export data.rete --format ttl --graph http://g/1     &gt; one-graph.ttl
+rete export data.rete --format jsonld                     &gt; default-graph.jsonld
+</code></pre>
+<p><code>ttl</code> streams like <code>nq</code> and <code>trig</code>. <code>jsonld</code> does not — expanded JSON-LD is a
+single JSON array, so it is built in memory and is not the format for a file
+that does not fit in RAM.</p>
+<h3 id="prefix-compression">Prefix compression</h3>
+<p><code>ttl</code> and <code>trig</code> abbreviate IRIs to QNames, which is where most of their size
+advantage over N-Quads comes from: the namespace is the repeated part of an IRI,
+and writing it once in an <code>@prefix</code> line removes it from every term that uses it.</p>
+<p>The bindings come from two places. Well-known vocabularies (<code>rdf</code>, <code>rdfs</code>, <code>owl</code>,
+<code>xsd</code>, <code>dct</code>, <code>skos</code>, <code>foaf</code>, <code>prov</code>, <code>schema</code>, <code>sh</code>, <code>void</code>, the SPAR family,
+Wikibase, and the common scholarly identifier namespaces) keep their conventional
+names. On top of that, the exporter reads a bounded sample of the data — a
+hundred thousand statements, whatever the file's size — and gives a name to the
+namespaces that are actually frequent in <em>this</em> file, derived from their own last
+path segment. That second group is usually where the bytes are: a dataset's own
+entity namespace typically outnumbers every standard vocabulary in it by an order
+of magnitude.</p>
+<p>An IRI is only abbreviated when the part after the namespace is a legal Turtle
+<code>PN_LOCAL</code> without backslash escaping; anything else is written in full. The
+result is a file that is smaller but never a file that will not parse.</p>
+<p><code>--no-prefixes</code> turns all of this off and writes every IRI in full — for a
+consumer that cannot resolve QNames, or to diff two dumps term by term.</p>
 <p><code>export</code> reads a local file. For a remote <code>.rete</code>, download it first (it is
 one GET) — harvesting through paginated <code>CONSTRUCT</code> works but is far
 slower than a dump.</p>

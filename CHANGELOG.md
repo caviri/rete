@@ -7,6 +7,49 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **`rete export --format trig`, and a Turtle exporter that streams and
+  compresses.** Turtle used to collect every triple into a `Vec`, build a
+  `BTreeMap` over all of it and render one `String` — peak memory O(graph), and
+  no `@prefix` declarations at all, so its output was *larger* than the
+  N-Triples it was meant to abbreviate. Both halves are replaced.
+
+  **Streaming.** `ttl` now goes through the same `dump_filtered_each` scan as
+  `nq`, into a `BufWriter`, holding one statement of state. `--memory-budget-mb`
+  and `--in-memory` behave exactly as they do for N-Quads, and the output is
+  byte-identical at every budget. Subject grouping — writing a subject once and
+  hanging its predicate/object list off it — works because the scan already
+  arrives grouped; that is read off the engine's own routing plan rather than
+  assumed, and where the routed permutation does not provide it (a bound
+  predicate routes to POS, which is ordered by object) the writer degrades to one
+  statement per line instead of buffering the graph.
+
+  **Prefix compression.** IRIs are abbreviated to QNames. Well-known
+  vocabularies keep their conventional names; on top of those, a bounded sample
+  of the data — a hundred thousand statements, whatever the file's size — names
+  the namespaces that are frequent in *this* file, which on real data is where
+  the bytes are: a dataset's own entity namespace typically outnumbers every
+  standard vocabulary in it by an order of magnitude. A QName is only emitted
+  when the local part is a legal Turtle `PN_LOCAL` needing no backslash escaping;
+  anything else is written in full, because a smaller file that does not parse is
+  not a smaller file. `--no-prefixes` turns it off.
+
+  **TriG (`--format trig`)** is that writer inside `GRAPH <g> { … }` blocks: the
+  lossless counterpart to N-Quads, keeping every named graph, in substantially
+  fewer bytes. `rete export --format trig | rete build - --format trig`
+  round-trips quad-for-quad, and the output loads into Oxigraph and comes back
+  out identical.
+
+  **Graph selection for the single-graph formats is now explicit.** Turtle and
+  JSON-LD carry no graph term, so they write one graph, chosen by a stated
+  ladder — `--graph` if given, otherwise the default graph; if the default graph
+  is empty and exactly one named graph exists, that one; if several do, an error
+  listing them and pointing at `--graph` and `--format trig`. The choice is
+  always reported on stderr. Previously a quads file with an empty default graph
+  exported as Turtle produced an empty document and said nothing.
+
+  `rete validate --format` also learned `trig`, which `rete build --format`
+  already accepted and `input_format()` already detected by extension.
+
 - **`rete build` counts the invalid IRIs it ingests; `rete export
   --sanitize-iris` can repair them on the way out (#233).** rete's
   N-Triples/N-Quads reader stores whatever sits between `<` and the next `>`,

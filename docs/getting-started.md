@@ -109,7 +109,7 @@ an external convert-to-RDF step first; see
 The build is **parallel and allocation-frugal** by design (the CLI enables the
 `parallel` feature): the dictionary dedups terms with a `HashSet` and sorts once,
 and the permutation indexes (six by default: SPO/POS/OSP/SOP/PSO/OPS, or three
-with [`build --permutations 3`](cli.md#rete-build-inputs--o-outrete---format-ntnqttlrdfxml))
+with [`build --permutations 3`](cli.md#rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml))
 are built concurrently with parallel sorts. This is what lets it scale to millions of *unique* terms
 (definitions, synonyms, SMILES/InChI strings) without the build collapsing into
 allocation churn — and the output is **byte-identical** to a serial build, so the
