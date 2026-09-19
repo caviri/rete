@@ -858,7 +858,7 @@ section directory rather than read out of the card — see
 <code>rete info</code> shows the same catalog beneath the header when a card is present.</p>
 <h3 id="rete-graphs-file"><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
-<h3 id="rete-export-file---format-nqttltrigjsonld---graph-g---subject-s---predicate-p---object-o---sanitize-iris---no-prefixes---in-memory"><code>rete export &lt;file&gt; [--format nq|ttl|trig|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--in-memory]</code></h3>
+<h3 id="rete-export-file---format-nqttltrigjsonld---graph-g---subject-s---predicate-p---object-o---sanitize-iris---no-prefixes---compress-nonezstdgzip---compress-level-n---in-memory"><code>rete export &lt;file&gt; [--format nq|ttl|trig|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--compress none|zstd|gzip] [--compress-level N] [--in-memory]</code></h3>
 <p>Serialize the dataset, or a slice of it.</p>
 <p>Two formats keep every graph and are lossless round-trips:</p>
 <ul>
@@ -902,6 +902,37 @@ their own last path segment. An IRI is abbreviated only when the part after the
 namespace is a legal Turtle <code>PN_LOCAL</code> needing no backslash escapes — otherwise
 it is written in full, because a smaller file that does not parse is not a
 smaller file. <code>--no-prefixes</code> writes every IRI in full.</p>
+<p><strong>Compression (<code>--compress</code>).</strong> <code>zstd</code> or <code>gzip</code>, applied as the dump is
+written. The codec sits <em>in</em> the writer chain, so <code>--memory-budget-mb</code> still
+bounds peak memory and a dump far larger than RAM still works — nothing is
+buffered up to be compressed afterwards.</p>
+<pre><code class="language-sh">rete export data.rete --format trig --compress zstd &gt; dump.trig.zst
+rete export data.rete --compress zstd --compress-level 19 &gt; archive.nq.zst
+</code></pre>
+<p>Prefer zstd. Measured on a 609 MB N-Quads dump (see the table below), zstd at
+its default level produces a file 21% smaller than gzip's default while
+compressing 2.4x faster and decompressing 1.5x faster — which is the trade that
+matters for a dump written once and read repeatedly.</p>
+<table><thead><tr><th>codec</th><th>bytes</th><th>of plain</th><th>compress</th><th>decompress</th></tr></thead><tbody>
+<tr><td>plain</td><td>609,574,054</td><td>100%</td><td>—</td><td>—</td></tr>
+<tr><td>zstd -1</td><td>31,411,730</td><td>5.15%</td><td>3.19s</td><td>3.36s</td></tr>
+<tr><td>zstd -3</td><td>30,417,765</td><td>4.99%</td><td>3.12s</td><td>3.27s</td></tr>
+<tr><td><strong>zstd -6</strong> (default)</td><td><strong>27,926,890</strong></td><td><strong>4.58%</strong></td><td><strong>3.27s</strong></td><td><strong>3.26s</strong></td></tr>
+<tr><td>zstd -9</td><td>26,718,710</td><td>4.38%</td><td>3.24s</td><td>3.41s</td></tr>
+<tr><td>zstd -19</td><td>23,760,373</td><td>3.90%</td><td>195.30s</td><td>3.33s</td></tr>
+<tr><td>gzip -1</td><td>42,476,408</td><td>6.97%</td><td>6.51s</td><td>4.86s</td></tr>
+<tr><td>gzip -6</td><td>35,249,561</td><td>5.78%</td><td>7.92s</td><td>4.86s</td></tr>
+<tr><td>gzip -9</td><td>32,656,726</td><td>5.36%</td><td>13.75s</td><td>5.18s</td></tr>
+</tbody></table>
+<p><code>--compress-level</code> defaults to <strong>6</strong> for both codecs. For zstd that is
+deliberately not the library's own default of 3: the 3 -&gt; 6 step is the largest
+remaining gain on the ratio curve (-8.2%), and everything after it returns less
+(-4.4% to level 9, -0.9% to level 12) until level 19, which costs 60x the time
+for 10% more. Negative zstd levels are accepted and trade ratio for speed.</p>
+<p><strong>stdout becomes binary</strong> when a codec is selected. Every note and report <code>rete export</code> prints already goes to stderr, so redirecting stdout to a file is safe —
+but do not pipe a compressed dump into something expecting text.</p>
+<p>Compression applies to the text formats. Decompress with the standard tools;
+the output is ordinary zstd and gzip, verified against both CLIs.</p>
 <p><strong>Export streams from disk by default.</strong> The file is opened through the lazy
 ranged reader — header, section directories and index up front, then dictionary
 chunks and tiles faulted in as the scan reaches them — so the raw file image is

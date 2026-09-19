@@ -622,8 +622,14 @@ engines must answer every query identically, on every CI run.</p>
 <p><code>rete export</code> streams the dataset with constant memory — it never loads the
 graph. The default format is <strong>N-Quads, lossless</strong>: default graph + named
 graphs, RDF-star quoted triples included.</p>
-<pre><code class="language-sh">rete export data.rete | gzip &gt; dump.nq.gz
+<pre><code class="language-sh">rete export data.rete --compress zstd &gt; dump.nq.zst
 </code></pre>
+<p><code>--compress</code> compresses the dump as it is written, streaming, so the
+memory bound is unaffected. zstd is the default recommendation over gzip on
+measured grounds: about 21% smaller output than gzip at the same nominal level,
+compressed 2.4x faster and decompressed 1.5x faster (numbers and method in the
+<a href="cli.html">CLI reference</a>). <code>--compress gzip</code> is there for consumers that only
+take gzip; piping through an external <code>gzip</code> still works too.</p>
 <p><strong>TriG is the compact lossless alternative.</strong> It is Turtle syntax wrapped in
 <code>GRAPH &lt;g&gt; { … }</code> blocks, so it keeps every named graph exactly as N-Quads does,
 while writing each subject and each namespace once instead of once per
@@ -674,6 +680,24 @@ of magnitude.</p>
 result is a file that is smaller but never a file that will not parse.</p>
 <p><code>--no-prefixes</code> turns all of this off and writes every IRI in full — for a
 consumer that cannot resolve QNames, or to diff two dumps term by term.</p>
+<h3 id="compression-and-the-two-wins-together">Compression and the two wins together</h3>
+<p>Prefix compression and a general-purpose codec attack different redundancy, and
+they compose — but not additively, which is worth knowing before choosing.
+Turtle/TriG remove <em>structural</em> repetition (a subject and its namespaces written
+once); zstd removes <em>byte</em> repetition. On a 4M-quad dump:</p>
+<table><thead><tr><th></th><th>raw</th><th>zstd -3</th></tr></thead><tbody>
+<tr><td>nq</td><td>626,336,881</td><td>32,787,635</td></tr>
+<tr><td>trig</td><td>259,715,103</td><td>23,308,451</td></tr>
+</tbody></table>
+<p>TriG is 41% of N-Quads raw, but 71% of it after compression — the codec had
+already found most of what TriG removes structurally. TriG still wins on both,
+and it wins <em>before</em> decompression too, which is the case that matters when
+something has to parse the file rather than just store it.</p>
+<p>(That table is at <code>zstd -3</code>, so the two formats are compared without codec time
+dominating. <code>--compress zstd</code> defaults to level 6, which is smaller than both
+columns shown.)</p>
+<p>So: <code>--format trig --compress zstd</code> is the smallest lossless option, and
+<code>--format nq</code> is the one every line-oriented tool can <code>split</code> and <code>grep</code>.</p>
 <p><code>export</code> reads a local file. For a remote <code>.rete</code>, download it first (it is
 one GET) — harvesting through paginated <code>CONSTRUCT</code> works but is far
 slower than a dump.</p>

@@ -8,6 +8,7 @@ pub(crate) mod buildinfo;
 pub(crate) mod card;
 pub(crate) mod card_jsonld;
 pub(crate) mod communities;
+pub(crate) mod compress;
 pub(crate) mod cost;
 pub(crate) mod estimate;
 pub(crate) mod export;

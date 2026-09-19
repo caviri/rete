@@ -34,6 +34,12 @@ oxttl.workspace = true
 # no C toolchain requirement; `MultiGzDecoder` also handles the concatenated
 # members that `cat a.gz b.gz` produces.
 flate2 = "1"
+# Streaming zstd ENCODER for `rete export --compress zstd`. Already a workspace
+# dependency (rete-core reads zstd-framed `.rete` sections with it), and the CLI
+# is always native, so the C toolchain it needs is always present. rete-core
+# keeps it behind its optional `compression` feature precisely so the wasm build
+# can drop it; nothing here changes that split.
+zstd = { workspace = true }
 # Standard SPARQL Results JSON output + the Dataset Card schema (serde derive).
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true

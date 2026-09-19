@@ -297,7 +297,7 @@ section directory rather than read out of the card — see
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).
 
-### `rete export <file> [--format nq|ttl|trig|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--in-memory]`
+### `rete export <file> [--format nq|ttl|trig|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--compress none|zstd|gzip] [--compress-level N] [--in-memory]`
 Serialize the dataset, or a slice of it.
 
 Two formats keep every graph and are lossless round-trips:
@@ -348,6 +348,46 @@ their own last path segment. An IRI is abbreviated only when the part after the
 namespace is a legal Turtle `PN_LOCAL` needing no backslash escapes — otherwise
 it is written in full, because a smaller file that does not parse is not a
 smaller file. `--no-prefixes` writes every IRI in full.
+
+**Compression (`--compress`).** `zstd` or `gzip`, applied as the dump is
+written. The codec sits *in* the writer chain, so `--memory-budget-mb` still
+bounds peak memory and a dump far larger than RAM still works — nothing is
+buffered up to be compressed afterwards.
+
+```sh
+rete export data.rete --format trig --compress zstd > dump.trig.zst
+rete export data.rete --compress zstd --compress-level 19 > archive.nq.zst
+```
+
+Prefer zstd. Measured on a 609 MB N-Quads dump (see the table below), zstd at
+its default level produces a file 21% smaller than gzip's default while
+compressing 2.4x faster and decompressing 1.5x faster — which is the trade that
+matters for a dump written once and read repeatedly.
+
+| codec | bytes | of plain | compress | decompress |
+| --- | --- | --- | --- | --- |
+| plain | 609,574,054 | 100% | — | — |
+| zstd -1 | 31,411,730 | 5.15% | 3.19s | 3.36s |
+| zstd -3 | 30,417,765 | 4.99% | 3.12s | 3.27s |
+| **zstd -6** (default) | **27,926,890** | **4.58%** | **3.27s** | **3.26s** |
+| zstd -9 | 26,718,710 | 4.38% | 3.24s | 3.41s |
+| zstd -19 | 23,760,373 | 3.90% | 195.30s | 3.33s |
+| gzip -1 | 42,476,408 | 6.97% | 6.51s | 4.86s |
+| gzip -6 | 35,249,561 | 5.78% | 7.92s | 4.86s |
+| gzip -9 | 32,656,726 | 5.36% | 13.75s | 5.18s |
+
+`--compress-level` defaults to **6** for both codecs. For zstd that is
+deliberately not the library's own default of 3: the 3 -> 6 step is the largest
+remaining gain on the ratio curve (-8.2%), and everything after it returns less
+(-4.4% to level 9, -0.9% to level 12) until level 19, which costs 60x the time
+for 10% more. Negative zstd levels are accepted and trade ratio for speed.
+
+**stdout becomes binary** when a codec is selected. Every note and report `rete
+export` prints already goes to stderr, so redirecting stdout to a file is safe —
+but do not pipe a compressed dump into something expecting text.
+
+Compression applies to the text formats. Decompress with the standard tools;
+the output is ordinary zstd and gzip, verified against both CLIs.
 
 **Export streams from disk by default.** The file is opened through the lazy
 ranged reader — header, section directories and index up front, then dictionary

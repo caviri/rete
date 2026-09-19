@@ -7,6 +7,49 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **`rete export --compress zstd|gzip` — streaming compression.** The motivating
+  case is a large text dump: a full N-Quads export of a big graph runs to tens or
+  hundreds of gibibytes, and it is written once and read many times, which is
+  exactly the shape compression pays for.
+
+  **Streaming, so the memory bound survives.** The codec sits *in* the writer
+  chain — `statements -> BufWriter -> codec -> stdout` — so `--memory-budget-mb`
+  still bounds peak RSS and a dump far larger than RAM still works. Nothing is
+  buffered to be compressed afterwards, and the compressed bytes are identical at
+  every budget just as the uncompressed ones are.
+
+  **zstd by default, on measured grounds.** On a 609,574,054-byte N-Quads dump,
+  zstd at level 6 produces 27,926,890 bytes in 3.27s and decompresses in 3.26s;
+  gzip at level 6 produces 35,249,561 bytes in 7.92s and decompresses in 4.86s.
+  That is 21% smaller, 2.4x faster to compress and 1.5x faster to decompress.
+  `gzip` is offered anyway for consumers that only accept it, and cost nothing to
+  add — `flate2` was already a dependency for transparent `.gz` build inputs.
+
+  **`--compress-level` defaults to 6, not the zstd library's 3.** The 3 -> 6 step
+  is the largest remaining gain on the ratio curve (-8.2%); after it the returns
+  fall away (-4.4% to level 9, -0.9% to level 12) until level 19, which costs
+  **60x the compression time for 10% more**. Negative zstd levels are accepted
+  and trade ratio for speed. An out-of-range level, or a level with no codec,
+  fails before the export starts rather than after it.
+
+  **The frame is always finished.** Dropping a codec instead of finishing it
+  emits a *truncated frame* — bytes that look like a file and fail only at
+  decompression, possibly elsewhere, later. Ending a stream goes through one
+  function that calls the codec's `finish` and returns its error, every caller
+  propagates it, and there is a test asserting that an abandoned encoder produces
+  something that does **not** decode, so the distinction cannot quietly stop
+  being true. Relatedly, N-Quads no longer discards per-statement write errors:
+  uncompressed a short dump is visibly short, but compressed, writes that go
+  nowhere followed by a cleanly closed frame produce a valid archive with data
+  missing.
+
+  **stdout becomes binary** with a codec selected. Every note and report this
+  command prints already went to stderr; there is now a test pinning that,
+  including for the multi-line `--sanitize-iris` report.
+
+  Applies to the text formats (nq, ttl, trig, jsonld). Uncompressed output is
+  byte-for-byte unchanged.
+
 - **`rete export --format trig`, and a Turtle exporter that streams and
   compresses.** Turtle used to collect every triple into a `Vec`, build a
   `BTreeMap` over all of it and render one `String` — peak memory O(graph), and

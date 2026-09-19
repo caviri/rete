@@ -505,6 +505,35 @@ enum Command {
         /// spelling changes.
         #[arg(long = "no-prefixes")]
         no_prefixes: bool,
+        /// Compress the dump as it is written: none (default) | zstd | gzip.
+        ///
+        /// The compression is STREAMING — the codec sits in the writer chain, so
+        /// `--memory-budget-mb` still bounds peak memory and a dump far larger
+        /// than RAM still works. Nothing is buffered to be compressed afterwards.
+        ///
+        /// Prefer `zstd`: on rete's own export output it compresses better than
+        /// gzip while being several times faster at both ends, which is the trade
+        /// that matters for a dump written once and read many times. `gzip` is
+        /// here for consumers that only accept it.
+        ///
+        /// **stdout becomes binary.** Every note and report this command prints
+        /// already goes to stderr, so `rete export … --compress zstd > dump.nq.zst`
+        /// is safe — but do not pipe it into something expecting text.
+        ///
+        /// Applies to the text formats (nq, ttl, trig, jsonld).
+        #[arg(long, value_parser = ["none", "zstd", "gzip"], default_value = "none")]
+        compress: String,
+        /// Compression level for `--compress` (zstd -7..=22, gzip 0..=9).
+        ///
+        /// Defaults to 6 for both. For zstd that is deliberately not the
+        /// library's own default of 3: measured on rete export output, 3 -> 6
+        /// takes a further ~7% off the file for ~35% more time, while 6 -> 12
+        /// buys ~2% for over four times the time. 6 is the knee of that curve.
+        ///
+        /// Negative zstd levels trade ratio for speed and are accepted — they are
+        /// a reasonable choice for a dump that will be read once.
+        #[arg(long = "compress-level", allow_negative_numbers = true)]
+        compress_level: Option<i32>,
         /// Load the whole file into memory instead of streaming it from disk
         /// (faster for small files, needs RAM ~= file size; the default streams
         /// through the lazy ranged reader and is bounded).
@@ -1269,6 +1298,8 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             object,
             sanitize_iris,
             no_prefixes,
+            compress,
+            compress_level,
             in_memory,
             memory_budget_mb,
         } => commands::export::export(
@@ -1282,10 +1313,14 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 predicate: predicate.as_deref().map(commands::export::canonical_term),
                 object: object.as_deref().map(commands::export::canonical_term),
             },
-            sanitize_iris,
-            no_prefixes,
-            in_memory,
-            memory_budget_mb,
+            &commands::export::ExportOptions {
+                sanitize_iris,
+                no_prefixes,
+                compress_with: &compress,
+                compress_level,
+                in_memory,
+                memory_budget_mb,
+            },
         ),
         Command::Repyramid {
             file,

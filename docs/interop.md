@@ -18,8 +18,15 @@ graph. The default format is **N-Quads, lossless**: default graph + named
 graphs, RDF-star quoted triples included.
 
 ```sh
-rete export data.rete | gzip > dump.nq.gz
+rete export data.rete --compress zstd > dump.nq.zst
 ```
+
+`--compress` compresses the dump as it is written, streaming, so the
+memory bound is unaffected. zstd is the default recommendation over gzip on
+measured grounds: about 21% smaller output than gzip at the same nominal level,
+compressed 2.4x faster and decompressed 1.5x faster (numbers and method in the
+[CLI reference](cli.md)). `--compress gzip` is there for consumers that only
+take gzip; piping through an external `gzip` still works too.
 
 **TriG is the compact lossless alternative.** It is Turtle syntax wrapped in
 `GRAPH <g> { … }` blocks, so it keeps every named graph exactly as N-Quads does,
@@ -86,6 +93,30 @@ result is a file that is smaller but never a file that will not parse.
 
 `--no-prefixes` turns all of this off and writes every IRI in full — for a
 consumer that cannot resolve QNames, or to diff two dumps term by term.
+
+### Compression and the two wins together
+
+Prefix compression and a general-purpose codec attack different redundancy, and
+they compose — but not additively, which is worth knowing before choosing.
+Turtle/TriG remove *structural* repetition (a subject and its namespaces written
+once); zstd removes *byte* repetition. On a 4M-quad dump:
+
+| | raw | zstd -3 |
+| --- | --- | --- |
+| nq | 626,336,881 | 32,787,635 |
+| trig | 259,715,103 | 23,308,451 |
+
+TriG is 41% of N-Quads raw, but 71% of it after compression — the codec had
+already found most of what TriG removes structurally. TriG still wins on both,
+and it wins *before* decompression too, which is the case that matters when
+something has to parse the file rather than just store it.
+
+(That table is at `zstd -3`, so the two formats are compared without codec time
+dominating. `--compress zstd` defaults to level 6, which is smaller than both
+columns shown.)
+
+So: `--format trig --compress zstd` is the smallest lossless option, and
+`--format nq` is the one every line-oriented tool can `split` and `grep`.
 
 `export` reads a local file. For a remote `.rete`, download it first (it is
 one GET) — harvesting through paginated `CONSTRUCT` works but is far

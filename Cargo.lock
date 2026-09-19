@@ -1380,6 +1380,7 @@ dependencies = [
  "thiserror",
  "tiny_http",
  "ureq",
+ "zstd",
 ]
 
 [[package]]
