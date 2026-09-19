@@ -16,10 +16,10 @@ maintained as hand-written copies of the CLI definition.
 
 ## Building
 
-### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|rdfxml]`
+### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml]`
 Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (`.nt` / `.nq` / `.ttl`, plus `.rdf` / `.owl` /
-`.rdfxml` for RDF/XML — how most OWL ontologies ship); `-` reads stdin and
+Format is detected by extension (`.nt` / `.nq` / `.ttl` / `.trig`, plus `.rdf` /
+`.owl` / `.rdfxml` for RDF/XML — how most OWL ontologies ship); `-` reads stdin and
 defaults to N-Triples; `--format` forces a format for all inputs (use `--format
 rdfxml` for an RDF/XML file with a non-standard extension). N-Quads inputs produce
 a dataset with named graphs.
@@ -297,19 +297,57 @@ section directory rather than read out of the card — see
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).
 
-### `rete export <file> [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--in-memory]`
-Serialize the dataset, or a slice of it. `nq` (the default) dumps every
-triple/quad as N-Quads (default graph + named graphs) — a lossless round-trip.
-`ttl` emits Turtle and `jsonld` emits expanded JSON-LD; both serialize a
-**single graph** (the default graph unless `--graph` names one), because
-Turtle/JSON-LD carry no default-vs-named distinction — use `nq` to export the
-whole dataset.
+### `rete export <file> [--format nq|ttl|trig|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--in-memory]`
+Serialize the dataset, or a slice of it.
+
+Two formats keep every graph and are lossless round-trips:
+
+- `nq` (the default) — N-Quads, one statement per line.
+- `trig` — TriG: Turtle syntax plus `GRAPH <g> { … }` blocks. The same data, in
+  fewer bytes, because a subject and its namespaces are written once rather than
+  once per statement.
+
+Two carry no graph term and therefore serialize a **single graph**:
+
+- `ttl` — Turtle.
+- `jsonld` — expanded JSON-LD.
+
+`nq`, `ttl` and `trig` stream: peak memory follows `--memory-budget-mb` and the
+output is byte-identical at every budget. `jsonld` builds the whole document in
+memory, so it is not the format for a file that does not fit in RAM.
 
 ```sh
-rete export data.rete                 # N-Quads (default)
-rete export data.rete --format ttl    # Turtle
-rete export data.rete --format jsonld # expanded JSON-LD
+rete export data.rete                   # N-Quads (default, lossless)
+rete export data.rete --format trig     # TriG — lossless and smaller
+rete export data.rete --format ttl      # Turtle, one graph
+rete export data.rete --format jsonld   # expanded JSON-LD, one graph
 ```
+
+**Which graph a single-graph format writes.** `--graph` if given, otherwise the
+default graph. The full ladder, which `ttl` and `jsonld` share and which always
+reports its choice on stderr:
+
+| situation | what is exported |
+| --- | --- |
+| `--graph <iri>` | that graph; an error naming the real graphs if it does not exist |
+| `--graph ''` | the default graph, explicitly |
+| no `--graph`, default graph has content | the default graph, noting that named graphs were left out |
+| no `--graph`, default graph empty, one named graph | that graph |
+| no `--graph`, default graph empty, several named graphs | an error listing them, pointing at `--graph` and `--format trig` |
+
+Graphs are never silently merged, and a non-empty selection is never silently
+dropped.
+
+**Prefix compression (`ttl` and `trig`).** IRIs are abbreviated to QNames —
+`rdfs:label` rather than `<http://www.w3.org/2000/01/rdf-schema#label>` — which
+is where most of the size advantage over N-Quads comes from. Well-known
+vocabularies keep their conventional prefix names; on top of that the exporter
+reads a bounded sample of the data (a hundred thousand statements, whatever the
+file's size) and names the namespaces that are frequent in *this* file, from
+their own last path segment. An IRI is abbreviated only when the part after the
+namespace is a legal Turtle `PN_LOCAL` needing no backslash escapes — otherwise
+it is written in full, because a smaller file that does not parse is not a
+smaller file. `--no-prefixes` writes every IRI in full.
 
 **Export streams from disk by default.** The file is opened through the lazy
 ranged reader — header, section directories and index up front, then dictionary

@@ -190,8 +190,8 @@ enum Command {
         /// Input files (or `-` for stdin).
         #[arg(required = true, num_args = 1..)]
         inputs: Vec<String>,
-        /// Force input format for all inputs: nt | nq | ttl | rdfxml.
-        #[arg(long, value_parser = ["nt", "nq", "ttl", "rdfxml"])]
+        /// Force input format for all inputs: nt | nq | ttl | trig | rdfxml.
+        #[arg(long, value_parser = ["nt", "nq", "ttl", "trig", "rdfxml"])]
         format: Option<String>,
         /// Fail on the first invalid IRI instead of counting them (same rule as
         /// `rete build --strict`).
@@ -434,15 +434,29 @@ enum Command {
         /// Path to the `.rete` file.
         file: String,
     },
-    /// Export the dataset. `nq` (default) emits N-Quads (default graph + named
-    /// graphs, lossless). `ttl` emits Turtle and `jsonld` expanded JSON-LD — both
-    /// serialize the **default graph only** (named graphs are skipped, since
-    /// Turtle/JSON-LD have no default-vs-named distinction here).
+    /// Export the dataset as RDF text.
+    ///
+    /// Two of the four formats keep every graph:
+    ///
+    /// * `nq` (default) — N-Quads, one statement per line, lossless.
+    /// * `trig` — TriG: Turtle syntax plus `GRAPH <g> { … }` blocks. Lossless
+    ///   like N-Quads, and substantially smaller, because a subject and its
+    ///   namespaces are written once instead of once per statement.
+    ///
+    /// The other two carry no graph term, so they serialize ONE graph, chosen by
+    /// `--graph` if given and otherwise the default graph (the exact rule, and
+    /// which graph was picked, is reported on stderr):
+    ///
+    /// * `ttl` — Turtle.
+    /// * `jsonld` — expanded JSON-LD.
+    ///
+    /// `nq`, `ttl` and `trig` stream: peak memory follows `--memory-budget-mb`,
+    /// not the size of the graph. `jsonld` builds the whole document in memory.
     Export {
         /// Path to the `.rete` file.
         file: String,
-        /// Output format: nq | ttl | jsonld.
-        #[arg(long, value_parser = ["nq", "ttl", "jsonld"], default_value = "nq")]
+        /// Output format: nq | ttl | trig | jsonld.
+        #[arg(long, value_parser = ["nq", "ttl", "trig", "jsonld"], default_value = "nq")]
         format: String,
         /// Export ONE graph: a named-graph IRI, or the empty string for the
         /// default graph. Omit for the default graph plus every named graph.
@@ -476,6 +490,21 @@ enum Command {
         /// N-Quads, and the summary says so.
         #[arg(long = "sanitize-iris")]
         sanitize_iris: bool,
+        /// Write every IRI in full, with no `@prefix` declarations (Turtle and
+        /// TriG only).
+        ///
+        /// By default those two formats abbreviate IRIs to QNames — `rdfs:label`
+        /// rather than `<http://www.w3.org/2000/01/rdf-schema#label>` — using
+        /// well-known prefixes plus the namespaces that a bounded sample of the
+        /// data shows are actually frequent in it. That is where most of the size
+        /// win over N-Quads comes from, since the namespace is the repeated part
+        /// of an IRI.
+        ///
+        /// Turn it off for a consumer that cannot resolve QNames, or to diff two
+        /// dumps term by term. The graph is identical either way; only the
+        /// spelling changes.
+        #[arg(long = "no-prefixes")]
+        no_prefixes: bool,
         /// Load the whole file into memory instead of streaming it from disk
         /// (faster for small files, needs RAM ~= file size; the default streams
         /// through the lazy ranged reader and is bounded).
@@ -1239,6 +1268,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             predicate,
             object,
             sanitize_iris,
+            no_prefixes,
             in_memory,
             memory_budget_mb,
         } => commands::export::export(
@@ -1253,6 +1283,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 object: object.as_deref().map(commands::export::canonical_term),
             },
             sanitize_iris,
+            no_prefixes,
             in_memory,
             memory_budget_mb,
         ),

@@ -25,4 +25,5 @@ pub(crate) mod render;
 pub(crate) mod serve;
 pub(crate) mod service_http;
 pub(crate) mod shacl;
+pub(crate) mod turtle;
 pub(crate) mod url;

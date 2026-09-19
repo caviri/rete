@@ -21,13 +21,71 @@ graphs, RDF-star quoted triples included.
 rete export data.rete | gzip > dump.nq.gz
 ```
 
-The other formats serialize the default graph only (Turtle and JSON-LD have
-no named-graph story) — for migration, always N-Quads:
+**TriG is the compact lossless alternative.** It is Turtle syntax wrapped in
+`GRAPH <g> { … }` blocks, so it keeps every named graph exactly as N-Quads does,
+while writing each subject and each namespace once instead of once per
+statement:
 
 ```sh
-rete export data.rete --format ttl     > default-graph.ttl
-rete export data.rete --format jsonld  > default-graph.jsonld
+rete export data.rete --format trig > dump.trig
 ```
+
+Both `nq` and `trig` stream, so peak memory follows `--memory-budget-mb` rather
+than the size of the graph, and both are byte-identical at any budget. TriG is
+the smaller of the two — substantially so on data with many statements per
+subject — and every store on this page loads it. Use N-Quads when the consumer
+is a line-oriented pipeline (`split`, `grep`, a Spark reader); use TriG when the
+consumer is an RDF parser and the file has to travel.
+
+### The single-graph formats
+
+Turtle and JSON-LD carry no graph term, so they serialize **one** graph. Which
+one follows a fixed ladder, and the choice is always reported on stderr:
+
+| situation | what is exported |
+| --- | --- |
+| `--graph <iri>` | that graph; an error naming the real graphs if it does not exist |
+| `--graph ''` | the default graph, explicitly |
+| no `--graph`, default graph has content | the default graph, with a note that named graphs were left out |
+| no `--graph`, default graph empty, one named graph | that graph |
+| no `--graph`, default graph empty, several named graphs | an error listing them |
+
+Graphs are never silently merged and a non-empty selection is never silently
+dropped — a quads file that cannot be written as Turtle says so instead of
+producing a plausible-looking partial dump.
+
+```sh
+rete export data.rete --format ttl                        > default-graph.ttl
+rete export data.rete --format ttl --graph http://g/1     > one-graph.ttl
+rete export data.rete --format jsonld                     > default-graph.jsonld
+```
+
+`ttl` streams like `nq` and `trig`. `jsonld` does not — expanded JSON-LD is a
+single JSON array, so it is built in memory and is not the format for a file
+that does not fit in RAM.
+
+### Prefix compression
+
+`ttl` and `trig` abbreviate IRIs to QNames, which is where most of their size
+advantage over N-Quads comes from: the namespace is the repeated part of an IRI,
+and writing it once in an `@prefix` line removes it from every term that uses it.
+
+The bindings come from two places. Well-known vocabularies (`rdf`, `rdfs`, `owl`,
+`xsd`, `dct`, `skos`, `foaf`, `prov`, `schema`, `sh`, `void`, the SPAR family,
+Wikibase, and the common scholarly identifier namespaces) keep their conventional
+names. On top of that, the exporter reads a bounded sample of the data — a
+hundred thousand statements, whatever the file's size — and gives a name to the
+namespaces that are actually frequent in *this* file, derived from their own last
+path segment. That second group is usually where the bytes are: a dataset's own
+entity namespace typically outnumbers every standard vocabulary in it by an order
+of magnitude.
+
+An IRI is only abbreviated when the part after the namespace is a legal Turtle
+`PN_LOCAL` without backslash escaping; anything else is written in full. The
+result is a file that is smaller but never a file that will not parse.
+
+`--no-prefixes` turns all of this off and writes every IRI in full — for a
+consumer that cannot resolve QNames, or to diff two dumps term by term.
 
 `export` reads a local file. For a remote `.rete`, download it first (it is
 one GET) — harvesting through paginated `CONSTRUCT` works but is far

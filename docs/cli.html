@@ -621,10 +621,10 @@ the <code>rete(1)</code> man page. Maintainers generate these from the exact bin
 hidden <code>rete generate --output &lt;directory&gt;</code> packaging command; they are never
 maintained as hand-written copies of the CLI definition.</p>
 <h2 id="building">Building</h2>
-<h3 id="rete-build-inputs--o-outrete---format-ntnqttlrdfxml"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|rdfxml]</code></h3>
+<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml]</code></h3>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
-Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code>, plus <code>.rdf</code> / <code>.owl</code> /
-<code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
+Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code> / <code>.trig</code>, plus <code>.rdf</code> /
+<code>.owl</code> / <code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
 defaults to N-Triples; <code>--format</code> forces a format for all inputs (use <code>--format rdfxml</code> for an RDF/XML file with a non-standard extension). N-Quads inputs produce
 a dataset with named graphs.</p>
 <pre><code class="language-sh">rete build a.nt b.nt -o merged.rete
@@ -858,17 +858,50 @@ section directory rather than read out of the card — see
 <code>rete info</code> shows the same catalog beneath the header when a card is present.</p>
 <h3 id="rete-graphs-file"><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
-<h3 id="rete-export-file---format-nqttljsonld---graph-g---subject-s---predicate-p---object-o---sanitize-iris---in-memory"><code>rete export &lt;file&gt; [--format nq|ttl|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--in-memory]</code></h3>
-<p>Serialize the dataset, or a slice of it. <code>nq</code> (the default) dumps every
-triple/quad as N-Quads (default graph + named graphs) — a lossless round-trip.
-<code>ttl</code> emits Turtle and <code>jsonld</code> emits expanded JSON-LD; both serialize a
-<strong>single graph</strong> (the default graph unless <code>--graph</code> names one), because
-Turtle/JSON-LD carry no default-vs-named distinction — use <code>nq</code> to export the
-whole dataset.</p>
-<pre><code class="language-sh">rete export data.rete                 # N-Quads (default)
-rete export data.rete --format ttl    # Turtle
-rete export data.rete --format jsonld # expanded JSON-LD
+<h3 id="rete-export-file---format-nqttltrigjsonld---graph-g---subject-s---predicate-p---object-o---sanitize-iris---no-prefixes---in-memory"><code>rete export &lt;file&gt; [--format nq|ttl|trig|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--in-memory]</code></h3>
+<p>Serialize the dataset, or a slice of it.</p>
+<p>Two formats keep every graph and are lossless round-trips:</p>
+<ul>
+<li><code>nq</code> (the default) — N-Quads, one statement per line.</li>
+<li><code>trig</code> — TriG: Turtle syntax plus <code>GRAPH &lt;g&gt; { … }</code> blocks. The same data, in
+fewer bytes, because a subject and its namespaces are written once rather than
+once per statement.</li>
+</ul>
+<p>Two carry no graph term and therefore serialize a <strong>single graph</strong>:</p>
+<ul>
+<li><code>ttl</code> — Turtle.</li>
+<li><code>jsonld</code> — expanded JSON-LD.</li>
+</ul>
+<p><code>nq</code>, <code>ttl</code> and <code>trig</code> stream: peak memory follows <code>--memory-budget-mb</code> and the
+output is byte-identical at every budget. <code>jsonld</code> builds the whole document in
+memory, so it is not the format for a file that does not fit in RAM.</p>
+<pre><code class="language-sh">rete export data.rete                   # N-Quads (default, lossless)
+rete export data.rete --format trig     # TriG — lossless and smaller
+rete export data.rete --format ttl      # Turtle, one graph
+rete export data.rete --format jsonld   # expanded JSON-LD, one graph
 </code></pre>
+<p><strong>Which graph a single-graph format writes.</strong> <code>--graph</code> if given, otherwise the
+default graph. The full ladder, which <code>ttl</code> and <code>jsonld</code> share and which always
+reports its choice on stderr:</p>
+<table><thead><tr><th>situation</th><th>what is exported</th></tr></thead><tbody>
+<tr><td><code>--graph &lt;iri&gt;</code></td><td>that graph; an error naming the real graphs if it does not exist</td></tr>
+<tr><td><code>--graph ''</code></td><td>the default graph, explicitly</td></tr>
+<tr><td>no <code>--graph</code>, default graph has content</td><td>the default graph, noting that named graphs were left out</td></tr>
+<tr><td>no <code>--graph</code>, default graph empty, one named graph</td><td>that graph</td></tr>
+<tr><td>no <code>--graph</code>, default graph empty, several named graphs</td><td>an error listing them, pointing at <code>--graph</code> and <code>--format trig</code></td></tr>
+</tbody></table>
+<p>Graphs are never silently merged, and a non-empty selection is never silently
+dropped.</p>
+<p><strong>Prefix compression (<code>ttl</code> and <code>trig</code>).</strong> IRIs are abbreviated to QNames —
+<code>rdfs:label</code> rather than <code>&lt;http://www.w3.org/2000/01/rdf-schema#label&gt;</code> — which
+is where most of the size advantage over N-Quads comes from. Well-known
+vocabularies keep their conventional prefix names; on top of that the exporter
+reads a bounded sample of the data (a hundred thousand statements, whatever the
+file's size) and names the namespaces that are frequent in <em>this</em> file, from
+their own last path segment. An IRI is abbreviated only when the part after the
+namespace is a legal Turtle <code>PN_LOCAL</code> needing no backslash escapes — otherwise
+it is written in full, because a smaller file that does not parse is not a
+smaller file. <code>--no-prefixes</code> writes every IRI in full.</p>
 <p><strong>Export streams from disk by default.</strong> The file is opened through the lazy
 ranged reader — header, section directories and index up front, then dictionary
 chunks and tiles faulted in as the scan reaches them — so the raw file image is

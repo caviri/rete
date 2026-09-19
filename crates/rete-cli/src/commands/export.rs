@@ -3,6 +3,32 @@
 
 use crate::commands::range_source::{open_local_eager, open_local_ranged};
 use crate::commands::render::term_to_json;
+use crate::commands::turtle::{Grouping, NamespaceSample, PrefixTable, TurtleWriter, RDF_TYPE};
+
+/// How many statements the namespace prescan looks at before it decides which
+/// `@prefix` bindings the document gets.
+///
+/// The prescan exists so the declarations land in a block at the top of the file
+/// instead of being sprinkled through it. It is a *presentation* choice, not a
+/// correctness one — a namespace that only shows up after the sample is still
+/// abbreviated, its declaration just appears where it is first needed (see
+/// `turtle`'s module docs). So this wants to be large enough to see a file's
+/// real vocabulary and small enough to be free on a 52 GB input: 100k statements
+/// is a few hundred index tiles and the dictionary chunks behind them, and those
+/// chunks are exactly the ones the real scan will want next.
+const PREFIX_SAMPLE_STATEMENTS: usize = 100_000;
+
+/// At most this many namespaces learned from the data earn a `@prefix` line, on
+/// top of the well-known table. Real files use a handful; the cap stops a
+/// pathological input from producing a preamble longer than its data.
+const MAX_LEARNED_PREFIXES: usize = 32;
+
+/// How many graph slots the prescan looks at. See `sample_namespaces`.
+const MAX_SAMPLE_SLOTS: usize = 32;
+
+/// A namespace must appear at least this often in the sample to earn a line.
+/// Below it, the `@prefix` line costs more bytes than the abbreviation saves.
+const MIN_PREFIX_OCCURRENCES: u64 = 16;
 
 /// Which slice of the dataset `rete export` should write.
 ///
@@ -81,6 +107,7 @@ pub(crate) fn export(
     format: &str,
     filter: &ExportFilter,
     sanitize_iris: bool,
+    no_prefixes: bool,
     in_memory: bool,
     memory_budget_mb: Option<u64>,
 ) -> anyhow::Result<()> {
@@ -158,14 +185,62 @@ pub(crate) fn export(
                 );
             }
         }
-        // Turtle / JSON-LD are single-graph formats here: the default graph
-        // unless `--graph` names one (they have no default-vs-named distinction,
-        // so an all-graphs export would silently merge them).
-        "ttl" | "jsonld" => {
-            let g = match &filter.graph {
-                None | Some(None) => None,
-                Some(Some(g)) => Some(canonical_graph(&rete, g)),
+        // Turtle and TriG: the same streaming, prefix-compressed writer, differing
+        // only in whether statements are wrapped in `GRAPH <g> { … }` blocks.
+        "ttl" | "trig" => {
+            // Turtle has no default-vs-named distinction, so it serializes ONE
+            // graph, chosen by the ladder in `select_single_graph`. TriG carries
+            // the graph term, so it writes every slot — it is the lossless
+            // compact counterpart of N-Quads, and the reason `--format trig`
+            // exists.
+            let slots: Vec<Option<String>> = if format == "trig" {
+                filter.slots(&rete)
+            } else {
+                vec![select_single_graph(&rete, filter, "Turtle")?]
             };
+
+            // Which prefixes the document declares, learned from a bounded
+            // prescan of the very scan about to be written. `--no-prefixes`
+            // turns abbreviation off entirely, which is the escape hatch for a
+            // consumer that cannot resolve QNames.
+            let table = if no_prefixes {
+                PrefixTable::empty()
+            } else {
+                let sample = sample_namespaces(&rete, &slots, s, p, o, sanitize_iris);
+                PrefixTable::from_sample(&sample, MAX_LEARNED_PREFIXES, MIN_PREFIX_OCCURRENCES)
+            };
+
+            // Subject grouping — writing a subject once and hanging its
+            // predicate/object list off it — is only sound if consecutive
+            // statements actually arrive grouped by subject. That is a property
+            // of the permutation the scan routes to, so it is READ OFF the
+            // engine's own plan rather than assumed. When the answer is no, the
+            // writer degrades to one statement per line instead of buffering the
+            // graph to create the grouping, which is the whole point of this path.
+            let grouping = subject_grouping(&rete, &slots, s, p, o);
+
+            // Only TriG has `GRAPH … { }` blocks. Turtle writes bare statements
+            // even when the slot it was handed is a NAMED graph — which happens
+            // whenever the ladder picked one, and wrapping them would emit TriG
+            // syntax under a `.ttl` name.
+            let wrap = format == "trig";
+            match write_turtle_stream(&mut rete, &slots, table, grouping, s, p, o, &mut iris, wrap)
+            {
+                Ok(()) => {}
+                // A closed downstream pipe is how `rete export … | head` ends,
+                // not a failure. The nq arm reaches the same outcome by
+                // discarding every write error; this one propagates them, so it
+                // has to name the benign case rather than inherit it.
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        // JSON-LD has no streaming form here: the expanded serialization is one
+        // JSON array, and writing it incrementally would mean hand-rolling the
+        // encoder. It keeps the eager path, and the same single-graph ladder as
+        // Turtle so `--graph` behaves identically across the two.
+        "jsonld" => {
+            let g = select_single_graph(&rete, filter, "JSON-LD")?;
             let mut triples = rete.query_in_graph(g.as_deref(), s, p, o);
             if let Some(report) = iris.as_mut() {
                 for t in triples.iter_mut() {
@@ -177,11 +252,7 @@ pub(crate) fn export(
                     *t = (s, p, o);
                 }
             }
-            if format == "ttl" {
-                print!("{}", export_turtle(&triples));
-            } else {
-                println!("{}", export_jsonld(&triples));
-            }
+            println!("{}", export_jsonld(&triples));
         }
         other => anyhow::bail!("unknown export format: {other}"),
     }
@@ -211,41 +282,335 @@ fn clean<'a>(
     }
 }
 
-/// Serialize a default-graph triple list (canonical N-Triples tokens) to Turtle.
+/// Stream one graph selection as Turtle or TriG.
 ///
-/// The term tokens (`<iri>`, `"lit"`, `"lit"^^<dt>`, `"lit"@lang`, `_:b`) are
-/// already valid Turtle term syntax, so they pass through verbatim; we only group
-/// statements by subject and abbreviate `rdf:type` to `a` for idiomatic output.
-pub(crate) fn export_turtle(triples: &[(String, String, String)]) -> String {
-    use std::collections::BTreeMap;
-
-    const RDF_TYPE_IRI: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
-
-    // subject → predicate → [objects], all in stable (sorted) order.
-    let mut by_subject: BTreeMap<&str, BTreeMap<&str, Vec<&str>>> = BTreeMap::new();
-    for (s, p, o) in triples {
-        by_subject
-            .entry(s)
-            .or_default()
-            .entry(p)
-            .or_default()
-            .push(o);
-    }
-
-    let mut out = String::new();
-    for (s, preds) in &by_subject {
-        out.push_str(s);
-        out.push('\n');
-        let pred_count = preds.len();
-        for (i, (p, objs)) in preds.iter().enumerate() {
-            let pred = if *p == RDF_TYPE_IRI { "a" } else { p };
-            let objects = objs.join(" , ");
-            let terminator = if i + 1 == pred_count { " ." } else { " ;" };
-            out.push_str(&format!("    {pred} {objects}{terminator}\n"));
+/// Split out of `export` so the whole write is one `io::Result`, which lets the
+/// caller distinguish a real I/O failure from a downstream pipe closing — and so
+/// that every `?` here is a write error rather than a mix of write errors and
+/// argument errors.
+///
+/// `wrap_graphs` is what separates the two formats: TriG puts each named slot in
+/// a `GRAPH <g> { … }` block, Turtle writes bare statements because it has no
+/// graph term to write. Turtle still *reaches* this function with a named slot —
+/// the selection ladder hands it one whenever the default graph is empty and
+/// exactly one named graph exists — so this is not a theoretical distinction.
+///
+/// Errors from inside `dump_filtered_each`'s callback are parked in `err` rather
+/// than returned, because the callback cannot fail the scan; the first failure
+/// latches and the remaining statements are skipped, so a full disk stops
+/// writing instead of spinning through a 50 GB graph discarding every line.
+#[allow(clippy::too_many_arguments)]
+fn write_turtle_stream(
+    rete: &mut rete_core::Rete,
+    slots: &[Option<String>],
+    table: PrefixTable,
+    grouping: Grouping,
+    s: Option<&str>,
+    p: Option<&str>,
+    o: Option<&str>,
+    iris: &mut Option<rete_core::iri::IriReport>,
+    wrap_graphs: bool,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut w = TurtleWriter::new(std::io::BufWriter::new(stdout.lock()), table, grouping);
+    w.declare_all()?;
+    if std::env::var("RETE_OPEN_DEBUG").is_ok() {
+        eprintln!(
+            "[export] {} prefix binding(s), grouping={grouping:?}",
+            w.table().len()
+        );
+        for (prefix, ns) in w.table().bindings() {
+            eprintln!("[export]   {prefix}: {ns}");
         }
-        out.push('\n');
     }
-    out
+    let mut err: std::io::Result<()> = Ok(());
+    for slot in slots {
+        match slot {
+            None => {
+                rete.dump_filtered_each(None, s, p, o, |s, p, o| {
+                    if err.is_err() {
+                        return;
+                    }
+                    let (s, p, o) = clean(iris, s, p, o);
+                    err = w.write_triple(&s, &p, &o);
+                });
+            }
+            Some(g) => {
+                // Same rule as the nq arm: the graph term labels the whole block,
+                // so it is sanitized — and therefore counted — once per graph
+                // rather than once per statement. Turtle has no block to label,
+                // so it does not pay even that once.
+                if wrap_graphs {
+                    let label = match iris.as_mut() {
+                        Some(r) => r.sanitize(g).into_owned(),
+                        None => g.clone(),
+                    };
+                    w.begin_graph(&label)?;
+                }
+                rete.dump_filtered_each(Some(g), s, p, o, |s, p, o| {
+                    if err.is_err() {
+                        return;
+                    }
+                    let (s, p, o) = clean(iris, s, p, o);
+                    err = w.write_triple(&s, &p, &o);
+                });
+                if wrap_graphs {
+                    w.end_graph()?;
+                }
+                // Drop this graph's decoded index before the next slot, so a
+                // many-graph dump holds one graph's tiles at a time.
+                rete.release_named_graph(g);
+            }
+        }
+        // Take the error rather than move out of the accumulator: the next slot
+        // reuses it.
+        std::mem::replace(&mut err, Ok(()))?;
+    }
+    // `finish` hands the sink back rather than dropping it: a `BufWriter` dropped
+    // on the floor swallows the error from its final write, which is how a
+    // truncated dump gets mistaken for a complete one.
+    w.finish()?.flush()
+}
+
+/// Pick the one graph a single-graph format (Turtle, JSON-LD) will write.
+///
+/// Turtle and JSON-LD carry no graph term, so writing several graphs into one
+/// document would silently merge them — a lossy operation that looks like a
+/// successful one. The rule is therefore "a named graph can be specified;
+/// otherwise the default graph", spelled out so the choice is never silent:
+///
+/// * `--graph <iri>` — exactly that graph. If the file does not have it, fail and
+///   name the graphs it does have, because the alternative is an empty dump that
+///   is indistinguishable from an empty graph.
+/// * `--graph ''` — the default graph, explicitly.
+/// * no `--graph`, default graph has content — the default graph, noting on
+///   stderr that any named graphs were left out and that `--format trig` keeps
+///   them.
+/// * no `--graph`, default graph empty, exactly one named graph — that graph. A
+///   quads file whose data all lives in one named graph is the ordinary shape of
+///   a TriG dump, and refusing it would be pedantry.
+/// * no `--graph`, default graph empty, several named graphs — the one genuinely
+///   ambiguous case. Fail, list them, and point at both ways out.
+///
+/// Every branch reports its choice on stderr; stdout stays the dump.
+fn select_single_graph(
+    rete: &rete_core::Rete,
+    filter: &ExportFilter,
+    format_label: &str,
+) -> anyhow::Result<Option<String>> {
+    let names: Vec<String> = rete
+        .graph_names()
+        .iter()
+        .map(|g| (*g).to_string())
+        .collect();
+    match &filter.graph {
+        Some(Some(g)) => {
+            let canon = canonical_graph(rete, g);
+            if !names.contains(&canon) {
+                anyhow::bail!(
+                    "no named graph {canon} in this file.\nnamed graphs: {}\n\
+                     hint: `--format trig` writes every graph, losslessly.",
+                    graph_list(&names)
+                );
+            }
+            eprintln!("note: {format_label} export of named graph {canon}");
+            Ok(Some(canon))
+        }
+        Some(None) => {
+            eprintln!("note: {format_label} export of the default graph");
+            Ok(None)
+        }
+        None => {
+            let (s, p, o) = filter.terms();
+            // One pulled row is enough to know the default graph has content, and
+            // `query_iter` stops there — this does not scan the graph to find out.
+            if rete.query_iter(None, s, p, o).next().is_some() {
+                eprintln!("note: {format_label} export of the default graph");
+                if !names.is_empty() {
+                    eprintln!(
+                        "note: {} named graph(s) are NOT included — {format_label} has no graph \
+                         term. Use `--format trig` for a lossless dump, or `--graph <iri>` to \
+                         pick one.",
+                        names.len()
+                    );
+                }
+                return Ok(None);
+            }
+            match names.len() {
+                0 => {
+                    eprintln!("note: {format_label} export of the default graph (which is empty)");
+                    Ok(None)
+                }
+                1 => {
+                    eprintln!(
+                        "note: the default graph is empty; exporting the only named graph, {}",
+                        names[0]
+                    );
+                    Ok(Some(names[0].clone()))
+                }
+                _ => anyhow::bail!(
+                    "the default graph is empty and this file has {} named graphs, so there is no \
+                     single graph to write as {format_label}.\nnamed graphs: {}\n\
+                     hint: `--graph <iri>` picks one, or `--format trig` writes them all, \
+                     losslessly.",
+                    names.len(),
+                    graph_list(&names)
+                ),
+            }
+        }
+    }
+}
+
+/// The graph names for a diagnostic, capped so a file with thousands of graphs
+/// does not turn one error message into a screenful.
+fn graph_list(names: &[String]) -> String {
+    const SHOWN: usize = 12;
+    let mut s = names
+        .iter()
+        .take(SHOWN)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if names.len() > SHOWN {
+        s.push_str(&format!(", ... ({} more)", names.len() - SHOWN));
+    }
+    s
+}
+
+/// Will consecutive statements of this scan share a subject?
+///
+/// Asked of the engine rather than assumed. `dump_filtered_each` streams in the
+/// **routed permutation's** order, and which permutation that is depends on which
+/// of `s`/`p`/`o` are bound. `ScanPlan::permutation` reports the choice before a
+/// single tile is fetched, and its `name()` — `"SPO"`, `"POS"`, … — spells out
+/// the column order directly.
+///
+/// The test is then: every column the permutation sorts on *before* the subject
+/// must be bound. A bound column is one constant for the whole scan, so it cannot
+/// separate two statements about the same subject; an unbound one can and will.
+/// Concretely: all three unbound routes to SPO and is grouped; a bound predicate
+/// routes to POS and is **not** (it is sorted by object, then subject); a bound
+/// object routes to OSP and *is*, because the object is constant and the next
+/// column is the subject.
+///
+/// Reading the order out of `name()` keeps this change inside `rete-cli`. The
+/// same order is available as `IndexPermutation::roles()`, but that is
+/// `pub(crate)` to `rete-core`, and widening it would pull a serialization change
+/// into the crate whose wasm artifacts are provenance-checked — a
+/// disproportionate blast radius for three characters of routing metadata.
+fn subject_grouping(
+    rete: &rete_core::Rete,
+    slots: &[Option<String>],
+    s: Option<&str>,
+    p: Option<&str>,
+    o: Option<&str>,
+) -> Grouping {
+    // Routing depends only on which components are bound, which is the same for
+    // every slot, so the first slot that yields a plan answers for all of them.
+    // (A slot yields none when the graph is absent or a bound term is unknown —
+    // then there is nothing to write and the answer does not matter.)
+    let Some(scan) = slots
+        .iter()
+        .find_map(|slot| rete.dump_plan(slot.as_deref(), s, p, o).scan)
+    else {
+        return Grouping::BySubject;
+    };
+    for col in scan.permutation.name().chars() {
+        match col {
+            'S' => return Grouping::BySubject,
+            'P' if p.is_some() => continue,
+            'O' if o.is_some() => continue,
+            _ => return Grouping::PerStatement,
+        }
+    }
+    Grouping::PerStatement
+}
+
+/// Learn the document's namespaces from a bounded prefix of the scan.
+///
+/// Pulls at most [`PREFIX_SAMPLE_STATEMENTS`] statements, split across the graph
+/// slots so a TriG dump whose graphs use different vocabularies sees all of them.
+/// `query_iter` is the lazy pull form of the same routed scan, so `take` really
+/// does stop early: this costs the tiles and dictionary chunks of the sample and
+/// nothing more, and those are the ones the real scan is about to want anyway.
+///
+/// With `--sanitize-iris` the sample is sanitized too, through a throwaway report
+/// — the namespaces that matter are the ones that will actually be written, and
+/// counting the repairs twice would make the user-facing summary wrong.
+fn sample_namespaces(
+    rete: &rete_core::Rete,
+    slots: &[Option<String>],
+    s: Option<&str>,
+    p: Option<&str>,
+    o: Option<&str>,
+    sanitize_iris: bool,
+) -> NamespaceSample {
+    let mut sample = NamespaceSample::default();
+    let mut scratch = sanitize_iris.then(rete_core::iri::IriReport::default);
+    // Spread the budget across slots, but over at most MAX_SAMPLE_SLOTS of them.
+    // Each slot costs a routed scan to set up, and a file can have half a million
+    // named graphs (switzerland-fedlex has 497,905) — dividing the budget by that
+    // would turn a bounded sample into half a million one-row scans. A few dozen
+    // graphs is already far more vocabulary than a prefix table can hold.
+    let n = slots.len().clamp(1, MAX_SAMPLE_SLOTS);
+    let per_slot = PREFIX_SAMPLE_STATEMENTS.div_ceil(n);
+    for slot in slots.iter().take(MAX_SAMPLE_SLOTS) {
+        for (ts, tp, to) in rete.query_iter(slot.as_deref(), s, p, o).take(per_slot) {
+            // `rdf:type` is always written as the keyword `a`, so observing it
+            // must not be what earns `rdf:` a declaration line nothing uses.
+            let tp = (tp != RDF_TYPE).then_some(tp);
+            match scratch.as_mut() {
+                Some(r) => {
+                    sample.observe(&r.sanitize(&ts));
+                    if let Some(tp) = &tp {
+                        sample.observe(&r.sanitize(tp));
+                    }
+                    sample.observe(&r.sanitize(&to));
+                }
+                None => {
+                    sample.observe(&ts);
+                    if let Some(tp) = &tp {
+                        sample.observe(tp);
+                    }
+                    sample.observe(&to);
+                }
+            }
+        }
+    }
+    sample
+}
+
+/// Serialize a triple list to Turtle in memory — the eager wrapper around the
+/// streaming [`TurtleWriter`], for a caller that already holds every triple.
+///
+/// `rete export --format ttl` does **not** come through here; it streams. This is
+/// for `rete reason --materialize --format ttl`, whose input is an inferred
+/// closure that is a `Vec` by construction, so there is nothing to stream from.
+/// Routing it through the same writer means the tool has one Turtle serializer
+/// rather than two that can drift apart.
+///
+/// The list is sorted first: subject grouping needs grouped input, and a
+/// reasoner emits in derivation order.
+pub(crate) fn export_turtle(triples: &[(String, String, String)]) -> String {
+    let mut sorted: Vec<&(String, String, String)> = triples.iter().collect();
+    sorted.sort();
+    let mut sample = NamespaceSample::default();
+    for (s, p, o) in &sorted {
+        sample.observe(s);
+        if p != RDF_TYPE {
+            sample.observe(p);
+        }
+        sample.observe(o);
+    }
+    let table = PrefixTable::from_sample(&sample, MAX_LEARNED_PREFIXES, MIN_PREFIX_OCCURRENCES);
+    let mut w = TurtleWriter::new(Vec::new(), table, Grouping::BySubject);
+    // The sink is a `Vec<u8>`, so none of these writes can fail.
+    let _ = w.declare_all();
+    for (s, p, o) in sorted {
+        let _ = w.write_triple(s, p, o);
+    }
+    String::from_utf8(w.finish().unwrap_or_default()).unwrap_or_default()
 }
 
 /// Serialize a default-graph triple list to expanded JSON-LD: an array of node
@@ -353,17 +718,26 @@ mod tests {
     #[test]
     fn turtle_export_groups_and_abbreviates() {
         let ttl = export_turtle(&sample_triples());
-        // One subject block, predicates sorted, `rdf:type` shown as `a`.
-        assert!(ttl.starts_with("<http://ex/Alice>\n"));
-        assert!(ttl.contains("    a <http://ex/Person>"), "got:\n{ttl}");
-        // Datatype literal passes through verbatim (valid Turtle term syntax).
+        // One subject block; predicates in sorted order, `rdf:type` shown as `a`.
+        assert!(ttl.contains("<http://ex/Alice>\n"), "got:\n{ttl}");
+        assert_eq!(
+            ttl.matches("<http://ex/Alice>").count(),
+            1,
+            "the subject is written once, not once per statement:\n{ttl}"
+        );
+        assert!(ttl.contains("a <http://ex/Person>"), "got:\n{ttl}");
+        // The datatype IRI abbreviates; the lexical form is untouched.
         assert!(
-            ttl.contains("\"30\"^^<http://www.w3.org/2001/XMLSchema#integer>"),
+            ttl.contains("@prefix xsd: <http://www.w3.org/2001/XMLSchema#> ."),
             "got:\n{ttl}"
         );
+        assert!(ttl.contains("\"30\"^^xsd:integer"), "got:\n{ttl}");
+        // `rdf:type` became `a`, so the rdf prefix is never needed — and so is
+        // never declared.
+        assert!(!ttl.contains("@prefix rdf:"), "got:\n{ttl}");
         // Lang tag + escaped quote preserved exactly.
         assert!(ttl.contains("\"héllo \\\"quote\\\"\"@en"), "got:\n{ttl}");
-        // Blank node passes through; statement list ends with ` .`.
+        // Blank node passes through; the block ends with ` .`.
         assert!(ttl.contains("_:b0"));
         assert!(ttl.trim_end().ends_with(" ."));
     }
