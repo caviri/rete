@@ -528,6 +528,13 @@ impl ChunkedSection {
         self.meta.term_count
     }
 
+    /// The shared chunk cache backing this section (all four sections of a
+    /// [`crate::dictionary::Dictionary`] share one instance) — the handle the
+    /// bounded-export budget (phase 2) sets a byte cap on.
+    pub(crate) fn cache(&self) -> &Arc<ChunkCache> {
+        &self.cache
+    }
+
     /// Did any chunk fetch fail since this section was opened — or since the
     /// last [`reset_load_failure`](Self::reset_load_failure)?
     pub fn load_incomplete(&self) -> bool {

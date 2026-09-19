@@ -82,18 +82,32 @@ pub(crate) fn export(
     filter: &ExportFilter,
     sanitize_iris: bool,
     in_memory: bool,
+    memory_budget_mb: Option<u64>,
 ) -> anyhow::Result<()> {
-    // Open through the lazy RANGED reader by DEFAULT so peak RSS stays bounded:
-    // the eager whole-file load holds the entire image resident and its RSS
-    // scaled ~3 GB per GB of file (6 GB for a 1.53 GB graph; a 52 GB file would
-    // need ~150 GB and OOM the Docker VM), while the writer already streams. The
-    // reader choice does NOT change the output — the scan and term resolution are
-    // identical — so `--in-memory` (faster for small files that fit in RAM) is a
-    // pure performance opt-in, byte-for-byte the same dump. See `range_source`.
-    let rete = if in_memory {
+    // Peak RSS is bounded by `--memory-budget-mb` (default 4096): the ranged
+    // reader's dictionary chunk cache and index tile cache are capped to a share
+    // of it and evict least-recently-used bodies, so a full dump no longer keeps
+    // the whole decompressed dictionary resident (the old ~4.3 GB-per-1.5-GB-file
+    // floor). `0` means unlimited. `--in-memory` reads the whole file eagerly, so
+    // it is unbounded by definition and IGNORES the budget (with a note if one
+    // was passed) — both are byte-for-byte the same dump at any budget, since the
+    // reader choice and cache cap change only memory, never the scan or the
+    // resolved terms. See `range_source` and `Rete::set_memory_budget`.
+    let budget: Option<u64> = if in_memory {
+        if memory_budget_mb.is_some() {
+            eprintln!("note: --in-memory reads the whole file, so --memory-budget-mb is ignored");
+        }
+        None
+    } else {
+        match memory_budget_mb.unwrap_or(rete_core::DEFAULT_EXPORT_BUDGET_MB) {
+            0 => None, // 0 = unlimited (no eviction), like --in-memory's cap
+            mb => Some(mb.saturating_mul(1 << 20)),
+        }
+    };
+    let mut rete = if in_memory {
         open_local_eager(file)?
     } else {
-        open_local_ranged(file)?
+        open_local_ranged(file, budget)?
     };
     let (s, p, o) = filter.terms();
     // One report for the whole dump, so the summary is a single total across
@@ -126,11 +140,23 @@ pub(crate) fn export(
                         rete.dump_filtered_each(Some(g), s, p, o, |s, p, o| {
                             let (s, p, o) = clean(&mut iris, s, p, o);
                             let _ = writeln!(out, "{s} {p} {o} {label} .");
-                        })
+                        });
+                        // This slot is done: drop the graph's decoded index so a
+                        // many-graph dump holds one graph's tiles at a time, not
+                        // all of them (the next floor once the dictionary is
+                        // bounded). No borrow of `rete` outlives the dump above.
+                        rete.release_named_graph(g);
                     }
                 }
             }
             out.flush()?;
+            if std::env::var("RETE_OPEN_DEBUG").is_ok() {
+                let d = rete.dict_cache_stats();
+                eprintln!(
+                    "[export] dict cache: decoded_chunks={} decoded_bytes={} evictions={} resident_bytes={} hits={} misses={}",
+                    d.decoded_chunks, d.decoded_bytes, d.evictions, d.resident_bytes, d.hits, d.misses,
+                );
+            }
         }
         // Turtle / JSON-LD are single-graph formats here: the default graph
         // unless `--graph` names one (they have no default-vs-named distinction,

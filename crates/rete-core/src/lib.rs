@@ -202,10 +202,10 @@ pub use file::{
     plan_build_info, read_build_info, read_card_and_build_info_ranged,
     read_card_and_build_info_with_header, read_metadata_ranged, read_schema_coherence_ranged,
     read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata,
-    schema_classes, schema_coherence, schema_summary, verify, write_dataset,
+    schema_classes, schema_coherence, schema_summary, split_memory_budget, verify, write_dataset,
     write_dataset_with_metadata, write_file, BuildInfoPlan, ByteRange, DumpPlan, LayoutSegment,
-    Rete, SearchView, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD,
-    DEFAULT_TILE_BUDGET, RDF_TYPE,
+    MemoryBudget, Rete, SearchView, SummaryView, TermTriple, TripleProvenance, CODEC_NONE,
+    CODEC_ZSTD, DEFAULT_EXPORT_BUDGET_MB, DEFAULT_TILE_BUDGET, RDF_TYPE,
 };
 #[doc(hidden)]
 pub use header::{

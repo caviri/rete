@@ -700,6 +700,37 @@ impl GraphIndex {
         self.perms
     }
 
+    /// Set the byte cap of this index's tile cache (bounded-export phase 2).
+    /// `u64::MAX` (the open-time default) is unlimited — a scanned permutation
+    /// stays resident exactly as before. A finite cap evicts least-recently-used
+    /// tiles, so a full scan's tile residency is bounded.
+    ///
+    /// Only safe on an index whose tiles can be **re-faulted** (a remote/ranged
+    /// index with a loader). A locally-built index has no loader — an evicted
+    /// tile could never be reloaded — so the caller must not cap those; the
+    /// bounded-export path caps only the ranged default-graph index and leaves
+    /// resident named-graph indexes unlimited (released per slot instead).
+    pub fn set_cache_cap(&self, cap: u64) {
+        self.cache.set_cap(cap);
+    }
+
+    /// The current tile-cache byte cap (`u64::MAX` = unlimited).
+    pub fn cache_cap(&self) -> u64 {
+        self.cache.cap()
+    }
+
+    /// Does this index fault its tiles through a loader (a remote/ranged open)?
+    /// Only such an index is safe to give a finite tile-cache cap: a locally
+    /// decoded index has no loader, so an evicted tile could never be reloaded.
+    pub fn is_lazy(&self) -> bool {
+        self.loader.is_some()
+    }
+
+    /// A snapshot of the tile cache's observability counters.
+    pub fn cache_stats(&self) -> crate::chunk_cache::CacheStats {
+        self.cache.stats()
+    }
+
     /// A **remote** index: only the tile directories (leading-id ranges per
     /// permutation, ascending) are known; tile payloads fault in through
     /// `loader` on first scan. Check [`load_incomplete`](Self::load_incomplete)

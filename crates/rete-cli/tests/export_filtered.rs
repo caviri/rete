@@ -369,5 +369,50 @@ fn windowed_multichunk_dump_matches_eager() {
             ranged, in_memory,
             "windowed multi-chunk dump differs for {slice:?}"
         );
+        // Bounded-export phase 2: a small `--memory-budget-mb` must emit the
+        // identical bytes — the budget bounds memory, never output.
+        let mut budgeted_args = slice.to_vec();
+        budgeted_args.extend_from_slice(&["--memory-budget-mb", "64"]);
+        let budgeted = raw(&budgeted_args);
+        assert_eq!(
+            ranged, budgeted,
+            "--memory-budget-mb 64 dump differs from default for {slice:?}"
+        );
+    }
+}
+
+/// **Bounded-export phase 2 gate:** `--memory-budget-mb 64` yields byte-for-byte
+/// the `--in-memory` dump, for the full dump and a filtered slice. The budget
+/// caps the evictable dictionary/tile caches; it must change memory, not bytes.
+#[test]
+fn memory_budget_dump_matches_in_memory() {
+    let (_dir, file) = built();
+    let raw = |args: &[&str]| -> Vec<u8> {
+        let out = common::rete()
+            .arg("export")
+            .arg(&file)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "export {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out.stdout
+    };
+    for slice in [
+        &["--format", "nq"][..],
+        &["--format", "nq", "--predicate", "http://ex/knows"][..],
+    ] {
+        let mut budgeted = slice.to_vec();
+        budgeted.extend_from_slice(&["--memory-budget-mb", "64"]);
+        let mut in_mem = slice.to_vec();
+        in_mem.push("--in-memory");
+        assert_eq!(
+            raw(&budgeted),
+            raw(&in_mem),
+            "--memory-budget-mb 64 vs --in-memory differ for {slice:?}"
+        );
     }
 }

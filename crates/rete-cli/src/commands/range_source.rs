@@ -59,7 +59,7 @@ pub(crate) fn open_local(path: &str) -> anyhow::Result<Rete> {
     if len <= lazy_threshold_bytes() {
         return Ok(Rete::open(&std::fs::read(path)?)?);
     }
-    open_local_lazy(path, len)
+    open_local_lazy(path, len, None)
 }
 
 /// Open a local `.rete` through the lazy RANGED reader **regardless of size** —
@@ -80,12 +80,16 @@ pub(crate) fn open_local(path: &str) -> anyhow::Result<Rete> {
 ///
 /// `--in-memory` (→ [`open_local_eager`]) forces the old whole-file load back,
 /// which is faster for small files that fit in RAM.
-pub(crate) fn open_local_ranged(path: &str) -> anyhow::Result<Rete> {
+///
+/// `budget` is the total `--memory-budget-mb` in bytes (`None` = unlimited): it
+/// caps the block cache proportionally here and the dictionary/tile caches on
+/// the opened `Rete`, bounding peak RSS to roughly the budget (plan §5.2).
+pub(crate) fn open_local_ranged(path: &str, budget: Option<u64>) -> anyhow::Result<Rete> {
     let len = std::fs::metadata(path)?.len();
     if std::env::var("RETE_OPEN_DEBUG").is_ok() {
         eprintln!("[open_local_ranged] {path}: len={len} -> LAZY");
     }
-    open_local_lazy(path, len)
+    open_local_lazy(path, len, budget)
 }
 
 /// Force the whole file resident: read the entire image and decode every
@@ -102,7 +106,7 @@ pub(crate) fn open_local_eager(path: &str) -> anyhow::Result<Rete> {
 /// The lazy open shared by [`open_local`] (above its size threshold) and
 /// [`open_local_ranged`] (always): a positional-read file handle behind a
 /// block-aligned cache, then `Rete::open_ranged_lazy`.
-fn open_local_lazy(path: &str, len: u64) -> anyhow::Result<Rete> {
+fn open_local_lazy(path: &str, len: u64, budget: Option<u64>) -> anyhow::Result<Rete> {
     let reader = std::sync::Arc::new(LocalRangeReader::open(path)?);
     // `RETE_BLOCK_KB` wins (0 disables), else auto-tune by length — same knob
     // and heuristic as the URL commands, so local and remote behave alike.
@@ -113,11 +117,22 @@ fn open_local_lazy(path: &str, len: u64) -> anyhow::Result<Rete> {
         Some(kb) => kb * 1024,
         None => auto_block(len),
     };
-    Ok(if block == 0 {
+    // A finite budget caps the raw-block LRU too (its share of the split); an
+    // unlimited budget keeps the reader's default cap.
+    let block_cap = rete_core::split_memory_budget(budget.unwrap_or(u64::MAX)).block_cache;
+    let rete = if block == 0 {
         Rete::open_ranged_lazy(reader)?
     } else {
-        Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(reader, block)))?
-    })
+        let mut bc = BlockCacheReader::new(reader, block);
+        if block_cap != u64::MAX {
+            bc = bc.with_cache_cap(block_cap);
+        }
+        Rete::open_ranged_lazy(std::sync::Arc::new(bc))?
+    };
+    // Cap the dictionary chunk cache and the index tile cache to the rest of the
+    // budget (no-op when unlimited).
+    rete.set_memory_budget(budget);
+    Ok(rete)
 }
 
 pub(crate) enum RangedSourceReader {
