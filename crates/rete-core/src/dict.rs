@@ -16,6 +16,40 @@ pub const DEFAULT_RESTART_INTERVAL: u32 = 16;
 /// Reserved ID meaning "no such term".
 pub const ABSENT: u32 = 0;
 
+/// How many not-yet-resident chunks a windowed resolution
+/// ([`ChunkedSection::decode_and_walk`]) faults concurrently in one group. It
+/// bounds the transient set of decoded bodies held at once (this many `Arc`s,
+/// each ≤ one chunk), so the parallel decode's memory is a small constant on top
+/// of the `--memory-budget-mb` cache, independent of the window size or budget.
+/// Also the group size, so a larger value means fewer (larger) parallel
+/// dispatches — amortizing the per-dispatch cost on the tight-budget path where
+/// real decoding happens.
+#[cfg(feature = "parallel")]
+const PAR_DECODE_FANOUT: usize = 32;
+
+/// A small, dedicated rayon pool for parallel chunk decode. Separate from (and
+/// smaller than) the global pool so the number of decode worker threads — and
+/// thus their allocator arenas, the dominant driver of the resident-set bump
+/// under parallel decode — is a small constant, not the machine's full core
+/// count. Decode is memory-bandwidth/CPU bound and a handful of threads saturate
+/// it, so this bounds peak RSS without materially costing throughput. Built once.
+#[cfg(feature = "parallel")]
+fn decode_pool() -> &'static rayon::ThreadPool {
+    use std::sync::OnceLock;
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let n = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .clamp(1, 8);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .thread_name(|i| format!("rete-decode-{i}"))
+            .build()
+            .expect("build dedicated chunk-decode thread pool")
+    })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DictError {
     #[error("malformed dictionary section: {0}")]
@@ -696,10 +730,16 @@ impl ChunkedSection {
         // Sort by id: chunks and runs are contiguous ascending id ranges, so
         // this groups jobs by chunk and by run in one pass.
         jobs.sort_unstable_by_key(|&(id, _)| id);
+        // Partition the sorted jobs into contiguous per-chunk segments
+        // `(chunk, [start, end))`. Every job of a chunk is one contiguous slice
+        // (chunks are ascending id ranges, `jobs` is id-sorted). Absent (id
+        // `ABSENT` = 0) and out-of-range (`id > tc`) ids sort to the ends and
+        // belong to no chunk — they form no segment, so their slots stay None,
+        // exactly as `term(id) == None` leaves them.
+        let mut segments: Vec<(usize, usize, usize)> = Vec::new();
         let mut i = 0;
         while i < jobs.len() {
             let id0 = jobs[i].0;
-            // Absent / out of range: `term(id)` is None. Leave the slot None.
             if id0 == ABSENT || id0 > tc {
                 i += 1;
                 continue;
@@ -708,89 +748,190 @@ impl ChunkedSection {
                 i += 1;
                 continue;
             };
-            // Fault the chunk once. A failed fault -> `term(id)` is None for
-            // every id this chunk holds; advance past them, slots left None.
-            let Some(entry) = self.chunk_entry(ci) else {
-                while i < jobs.len() {
-                    let id = jobs[i].0;
-                    if id == ABSENT || id > tc {
-                        i += 1;
-                        continue;
-                    }
-                    if self.chunk_of_run((id - 1) as usize / ri) != Some(ci) {
-                        break;
-                    }
-                    i += 1;
-                }
-                continue;
-            };
-            let bytes: &[u8] = entry.body();
-            // Walk this chunk's runs, one forward pass per run.
+            let start = i;
+            i += 1;
             while i < jobs.len() {
                 let id = jobs[i].0;
                 if id == ABSENT || id > tc {
                     i += 1;
                     continue;
                 }
-                let run = (id - 1) as usize / ri;
-                if self.chunk_of_run(run) != Some(ci) {
+                if self.chunk_of_run((id - 1) as usize / ri) != Some(ci) {
                     break; // first id of the next chunk
                 }
-                // Decode this run's restart entry. Any failure here means
-                // `term(id)` is None for the whole run — skip every job in it.
-                let run_start = self.run_off_in_chunk(ci, run, &entry, ri).and_then(|off| {
-                    let mut buf = Vec::new();
-                    run_entry_into(bytes, off, &mut buf).map(|pos| (buf, pos))
+                i += 1;
+            }
+            segments.push((ci, start, i));
+        }
+        if segments.is_empty() {
+            return;
+        }
+        self.decode_and_walk(&segments, jobs, out, ri, tc);
+    }
+
+    /// Fault each segment's chunk and fill its slots. The chunk decodes are
+    /// independent and CPU-bound (zstd), so with the `parallel` feature a group
+    /// whose chunks are **not yet resident** is decoded concurrently on a
+    /// bounded pool before its (serial) fill; without it, one at a time — the
+    /// exact behavior this refactor extracted. Either way each chunk is faulted
+    /// once and its slots filled in segment order, so the output is byte-for-byte
+    /// identical.
+    ///
+    /// **Parallel decode runs only where there is decode work.** A group whose
+    /// chunks are already resident (a generous `--memory-budget-mb` after the
+    /// window prefetch warmed them, or a chunk re-touched by a later window) is
+    /// walked serially with **no** parallel dispatch — so the single-pass /
+    /// large-budget export keeps its serial speed and the rayon fan-out only
+    /// pays for itself in the tight-budget regime, where the whole dictionary
+    /// does not fit and chunks are genuinely re-decoded. Skipping the dispatch
+    /// on cache-warm windows is what keeps a large budget from regressing.
+    ///
+    /// The bound matters for `--memory-budget-mb`: a decoding group holds at
+    /// most [`PAR_DECODE_FANOUT`] decoded bodies at once (a small constant,
+    /// independent of the window size or the budget) and each is held behind its
+    /// cache `Arc` for the group's fill — so even a budget that evicts a body
+    /// the moment it lands cannot force a re-decode before the fill consumes it.
+    /// The decode runs on a small dedicated pool ([`decode_pool`]), so the number
+    /// of worker threads (and their allocator arenas) is bounded regardless of
+    /// the machine's core count.
+    #[cfg(feature = "parallel")]
+    fn decode_and_walk(
+        &self,
+        segments: &[(usize, usize, usize)],
+        jobs: &[(u32, usize)],
+        out: &mut [Option<String>],
+        ri: usize,
+        tc: u32,
+    ) {
+        use rayon::prelude::*;
+        for group in segments.chunks(PAR_DECODE_FANOUT) {
+            let has_miss = group
+                .iter()
+                .any(|&(ci, _, _)| !self.cache.contains((self.section_index, ci as u32)));
+            if has_miss {
+                // Real decode work: fault this group's chunks in parallel on the
+                // bounded pool (order preserved so each entry lines up with its
+                // segment), then fill serially. A failed fault yields `None`
+                // (recorded in `self.failed`), same as the serial path.
+                let entries: Vec<Option<Arc<CacheEntry>>> = decode_pool().install(|| {
+                    group
+                        .par_iter()
+                        .map(|&(ci, _, _)| self.chunk_entry(ci))
+                        .collect()
                 });
-                let Some((mut buf, mut pos)) = run_start else {
-                    while i < jobs.len() {
-                        let id = jobs[i].0;
-                        if id == ABSENT || id > tc {
-                            i += 1;
-                            continue;
-                        }
-                        if (id - 1) as usize / ri != run {
-                            break;
-                        }
-                        i += 1;
+                for (&(ci, s, e), entry) in group.iter().zip(entries) {
+                    if let Some(entry) = entry {
+                        self.walk_chunk(ci, &entry, &jobs[s..e], out, ri, tc);
                     }
-                    continue;
-                };
-                // `buf` holds the run's term #`cur_step`; advance monotonically.
-                let mut cur_step = 0usize;
-                let mut broken = false;
-                while i < jobs.len() {
-                    let id = jobs[i].0;
+                }
+            } else {
+                // Cache-warm: no decode to parallelize, so avoid the dispatch.
+                for &(ci, s, e) in group {
+                    if let Some(entry) = self.chunk_entry(ci) {
+                        self.walk_chunk(ci, &entry, &jobs[s..e], out, ri, tc);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Serial fallback for builds without the `parallel` feature (wasm, and
+    /// `--no-default-features`): fault and walk one chunk at a time.
+    #[cfg(not(feature = "parallel"))]
+    fn decode_and_walk(
+        &self,
+        segments: &[(usize, usize, usize)],
+        jobs: &[(u32, usize)],
+        out: &mut [Option<String>],
+        ri: usize,
+        tc: u32,
+    ) {
+        for &(ci, s, e) in segments {
+            if let Some(entry) = self.chunk_entry(ci) {
+                self.walk_chunk(ci, &entry, &jobs[s..e], out, ri, tc);
+            }
+        }
+    }
+
+    /// Fill the output slots owned by one chunk: `chunk_jobs` is the id-sorted
+    /// slice of `(id, slot)` jobs that all live in chunk `ci`, and `entry` is
+    /// that chunk's already-faulted body. Walks the chunk's front-coded runs
+    /// once each, forward, picking off every requested id as the decode passes
+    /// it — the single-pass twin of `term(id)`, writing exactly the bytes
+    /// `term(id)` would for each id and leaving a slot None where `term(id)` is
+    /// None (a malformed run entry, past which no larger id in that run decodes).
+    fn walk_chunk(
+        &self,
+        ci: usize,
+        entry: &CacheEntry,
+        chunk_jobs: &[(u32, usize)],
+        out: &mut [Option<String>],
+        ri: usize,
+        tc: u32,
+    ) {
+        let bytes: &[u8] = entry.body();
+        let mut k = 0;
+        while k < chunk_jobs.len() {
+            let id = chunk_jobs[k].0;
+            if id == ABSENT || id > tc {
+                k += 1;
+                continue;
+            }
+            let run = (id - 1) as usize / ri;
+            // Decode this run's restart entry. Any failure here means
+            // `term(id)` is None for the whole run — skip every job in it.
+            let run_start = self.run_off_in_chunk(ci, run, entry, ri).and_then(|off| {
+                let mut buf = Vec::new();
+                run_entry_into(bytes, off, &mut buf).map(|pos| (buf, pos))
+            });
+            let Some((mut buf, mut pos)) = run_start else {
+                while k < chunk_jobs.len() {
+                    let id = chunk_jobs[k].0;
                     if id == ABSENT || id > tc {
-                        i += 1;
+                        k += 1;
                         continue;
                     }
                     if (id - 1) as usize / ri != run {
-                        break; // next run (or chunk)
+                        break;
                     }
-                    let steps = (id - 1) as usize % ri;
-                    if !broken {
-                        while cur_step < steps {
-                            match entry_into(bytes, pos, &mut buf) {
-                                Some(next) => {
-                                    pos = next;
-                                    cur_step += 1;
-                                }
-                                None => {
-                                    // Malformed past this point: `term(id)` is
-                                    // None here and for every larger id in the
-                                    // run (they all decode through this entry).
-                                    broken = true;
-                                    break;
-                                }
+                    k += 1;
+                }
+                continue;
+            };
+            // `buf` holds the run's term #`cur_step`; advance monotonically.
+            let mut cur_step = 0usize;
+            let mut broken = false;
+            while k < chunk_jobs.len() {
+                let id = chunk_jobs[k].0;
+                if id == ABSENT || id > tc {
+                    k += 1;
+                    continue;
+                }
+                if (id - 1) as usize / ri != run {
+                    break; // next run
+                }
+                let steps = (id - 1) as usize % ri;
+                if !broken {
+                    while cur_step < steps {
+                        match entry_into(bytes, pos, &mut buf) {
+                            Some(next) => {
+                                pos = next;
+                                cur_step += 1;
+                            }
+                            None => {
+                                // Malformed past this point: `term(id)` is None
+                                // here and for every larger id in the run (they
+                                // all decode through this entry).
+                                broken = true;
+                                break;
                             }
                         }
-                        if !broken && cur_step == steps {
-                            out[jobs[i].1] = Some(String::from_utf8_lossy(&buf).into_owned());
-                        }
                     }
-                    i += 1;
+                    if !broken && cur_step == steps {
+                        out[chunk_jobs[k].1] = Some(String::from_utf8_lossy(&buf).into_owned());
+                    }
                 }
+                k += 1;
             }
         }
     }

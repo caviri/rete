@@ -33,8 +33,10 @@ spargebra.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 blake3.workspace = true
-# Pure-Rust zstd *decoder* — always available (incl. wasm). Encoding uses the
-# faster C `zstd` below when the `compression` feature is on.
+# Pure-Rust zstd *decoder* — the decode path for a target WITHOUT a C toolchain
+# (wasm, or a `--no-default-features` build). When the `compression` feature is
+# on (native, incl. the CLI), BOTH encode and decode go through the faster C
+# `zstd` below instead; this crate is then only the wasm decoder.
 ruzstd = "0.7"
 # Tiny pure-Rust regex engine for SPARQL `REGEX(...)` — `regex-lite` keeps the
 # wasm small (no SIMD/aho-corasick), unlike the full `regex` crate.
