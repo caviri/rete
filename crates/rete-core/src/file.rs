@@ -417,6 +417,85 @@ const TILE_COALESCE_GAP: u64 = 4096;
 /// cheaper than another request's RTT.
 const DICT_COALESCE_GAP: u64 = 64 * 1024;
 
+/// The default `rete export --memory-budget-mb` when the flag is omitted — the
+/// same number `rete build`/`merge` default to, so one figure governs both the
+/// build and the export of a file. Comfortably above a sub-4-GB-dictionary
+/// file's decompressed dictionary (those export in a single pass at today's
+/// speed), and far under a large VM's RAM so a 50-GB-class file is bounded
+/// rather than OOM. See [`split_memory_budget`].
+pub const DEFAULT_EXPORT_BUDGET_MB: u64 = 4096;
+
+/// The lowest byte cap the dictionary chunk cache is ever given, whatever the
+/// budget. It only has to guarantee forward progress and hold a handful of
+/// chunks (a single front-coded run can dwarf the 64 KiB chunk budget — a
+/// base64-embedded image, say). Correctness never depends on it: the cache's
+/// `Arc` handout keeps a chunk alive across its one decode even if it is
+/// evicted the instant it is inserted, so a full dump completes at *any* cap.
+/// This floor only keeps a pathologically small `--memory-budget-mb` from
+/// thrashing the whole dictionary chunk-by-chunk.
+const MIN_DICT_CACHE_CAP: u64 = 64 << 20; // 64 MiB
+
+/// How a total `--memory-budget-mb` splits across the export's three bounded
+/// consumers. The window's per-row string buffer and the id buffer are small
+/// (bounded by the fixed window row count, not the file), so they are left in
+/// the slack between this sum and the total rather than given a named cap; peak
+/// RSS is therefore `≈ total + window_string_buffer + fixed open overhead`.
+#[derive(Debug, Clone, Copy)]
+pub struct MemoryBudget {
+    /// Raw file-block LRU (the `BlockCacheReader` that backs the ranged reader).
+    pub block_cache: u64,
+    /// Decompressed dictionary chunk bodies (the old ~4.3 GB export floor).
+    pub dict_cache: u64,
+    /// Decoded index tiles of the scanned permutation.
+    pub tile_cache: u64,
+}
+
+/// Split a total byte budget across the block cache, the dictionary chunk cache
+/// and the index tile cache (bounded-export phase 2, plan §5.2). `u64::MAX`
+/// (unlimited, e.g. `--in-memory` or `--memory-budget-mb 0`) passes straight
+/// through to every consumer.
+///
+/// The dictionary is the dominant consumer on scholar files (literal-heavy
+/// object section), and its chunks recur across windows, so it gets the bulk of
+/// the budget; the tile cache is small (a scanned permutation is far smaller
+/// than the dictionary) and the block cache stays modest, capped like every
+/// other ranged reader at [`crate::block_cache::DEFAULT_CACHE_CAP`].
+pub fn split_memory_budget(total: u64) -> MemoryBudget {
+    if total == u64::MAX {
+        return MemoryBudget {
+            block_cache: u64::MAX,
+            dict_cache: u64::MAX,
+            tile_cache: u64::MAX,
+        };
+    }
+    // Raw file blocks: min(256 MiB, total/8). Repeated directory/header reads
+    // must stay cheap, but this cache is not where the floor lived.
+    let block_cache = (total / 8).min(crate::block_cache::DEFAULT_CACHE_CAP);
+    // Scanned-permutation tiles: modest — tens of MB on epfl-class files. Cap
+    // at total/16 (≤ 256 MiB) so the dictionary keeps the rest.
+    let tile_cache = (total / 16).min(256 << 20);
+    // The dictionary chunk cache gets everything else, floored so a tiny budget
+    // still holds a working set of chunks.
+    let dict_cache = total
+        .saturating_sub(block_cache)
+        .saturating_sub(tile_cache)
+        .max(MIN_DICT_CACHE_CAP);
+    MemoryBudget {
+        block_cache,
+        dict_cache,
+        tile_cache,
+    }
+}
+
+/// Format a cache byte cap for `RETE_OPEN_DEBUG` (`unlimited` for `u64::MAX`).
+fn fmt_cap(cap: u64) -> String {
+    if cap == u64::MAX {
+        "unlimited".to_string()
+    } else {
+        format!("{}MiB", cap >> 20)
+    }
+}
+
 /// Fetch a set of ascending, disjoint byte ranges, coalescing ranges whose gap
 /// is at most `gap` into one span, then fetching the spans through
 /// [`RangeReader::read_many`] (which a parallelizable reader issues
@@ -2396,6 +2475,12 @@ struct LazyNamedGraphs {
     dir: std::sync::OnceLock<(usize, Box<[std::sync::OnceLock<Box<[NamedEntry]>>]>)>,
     walk: std::sync::Mutex<NamedWalk>,
     failed: std::sync::atomic::AtomicBool,
+    /// Tile-cache byte cap applied to each LARGE (lazily-opened, loader-bearing)
+    /// named graph as it is opened (bounded-export phase 2). `u64::MAX` =
+    /// unlimited. Small resident graphs (no loader, ≤ 1 MiB) are never capped —
+    /// an evicted tile could not be reloaded — but they are bounded by size and
+    /// released per slot, so they need no cap.
+    tile_cap: std::sync::atomic::AtomicU64,
 }
 
 impl LazyNamedGraphs {
@@ -2417,7 +2502,21 @@ impl LazyNamedGraphs {
             dir: std::sync::OnceLock::new(),
             walk: std::sync::Mutex::new(NamedWalk::default()),
             failed: std::sync::atomic::AtomicBool::new(false),
+            tile_cap: std::sync::atomic::AtomicU64::new(u64::MAX),
         }
+    }
+
+    /// Set the tile-cache cap for large named graphs: records it for graphs
+    /// opened later, and re-caps every large graph already opened. Small
+    /// resident (loaderless) graphs are left unlimited.
+    fn set_tile_cap(&self, cap: u64) {
+        self.tile_cap
+            .store(cap, std::sync::atomic::Ordering::Relaxed);
+        self.for_each_opened(|g| {
+            if g.is_lazy() {
+                g.set_cache_cap(cap);
+            }
+        });
     }
 
     /// Record a fetch/parse failure (checked by `index_incomplete`).
@@ -2660,10 +2759,46 @@ impl LazyNamedGraphs {
                 self.read_concurrency,
                 self.perms,
             ) {
-                Ok((g, _, _)) => Some(g),
+                Ok((g, _, _)) => {
+                    // A large graph faults its tiles through a loader, so bound
+                    // its tile residency to the budget's share (an evicted tile
+                    // simply re-faults). No-op when unlimited.
+                    let cap = self.tile_cap.load(std::sync::atomic::Ordering::Relaxed);
+                    if cap != u64::MAX {
+                        g.set_cache_cap(cap);
+                    }
+                    Some(g)
+                }
                 Err(_) => {
                     self.fail();
                     None
+                }
+            }
+        }
+    }
+
+    /// Drop the decoded index of the graph named `iri`, if it has been opened,
+    /// so its tiles and per-graph tile cache are freed. Takes `&mut self`:
+    /// `OnceLock::take` needs unique access, which the export loop has between
+    /// slots. Leaves the entry's `meta` (iri + range) so the graph re-opens
+    /// lazily if touched again. A no-op if the graph is absent or never opened.
+    fn release(&mut self, iri: &str) {
+        let Some((_, table)) = self.dir.get_mut() else {
+            return;
+        };
+        for slab in table.iter_mut() {
+            let Some(entries) = slab.get_mut() else {
+                continue;
+            };
+            for e in entries.iter_mut() {
+                let matches = e
+                    .meta
+                    .get()
+                    .map(|(name, _)| name.as_str() == iri)
+                    .unwrap_or(false);
+                if matches {
+                    e.index.take();
+                    return;
                 }
             }
         }
@@ -3290,6 +3425,19 @@ impl Rete {
         // free speedup. The coalesced bulk fault (`prefetch_terms`) is
         // unchanged, so the read pattern and peak residency are as before.
         const WINDOW: usize = 4096;
+        // The whole-window coalesced prefetch (`prefetch_terms`) materializes
+        // every distinct chunk the window touches at once — up to ~2·WINDOW
+        // chunks for scattered objects. Under a GENEROUS budget that transient
+        // fits and the coalesced reads are the fast path (small/normal files,
+        // `--in-memory`, unlimited). Under a TIGHT budget it would blow the cap
+        // and thrash (insert-then-evict every chunk, then re-fault it in
+        // `resolve_window`), so skip it: `resolve_window` is chunk-ordered and
+        // holds one chunk `Arc` at a time (plan §3.5), keeping the window's
+        // working set to a single chunk regardless of how the objects scatter.
+        // Output is byte-identical either way — prefetch only warms the cache.
+        let cap = dict.cache_cap();
+        let prefetch_window =
+            cap == u64::MAX || cap >= (WINDOW as u64) * 2 * (DICT_CHUNK_BUDGET as u64);
         let mut ids: Vec<(u32, u32, u32)> = Vec::with_capacity(WINDOW);
         let mut nodes: Vec<u32> = Vec::with_capacity(WINDOW * 2);
         let mut preds: Vec<u32> = Vec::with_capacity(WINDOW);
@@ -3300,17 +3448,19 @@ impl Rete {
             if ids.is_empty() {
                 return;
             }
-            // Coalesced bulk fault of exactly the chunks this window needs
-            // — unchanged from the row-order path, so reads and residency
-            // are identical; `resolve_window` then hits the warmed cache.
-            nodes.clear();
-            preds.clear();
-            for &(s, p, o) in ids.iter() {
-                nodes.push(dict.subject_node(s));
-                nodes.push(dict.object_node(o));
-                preds.push(p);
+            // Coalesced bulk fault of exactly the chunks this window needs —
+            // only under a generous budget (see `prefetch_window` above); a
+            // tight budget faults chunk-by-chunk inside `resolve_window`.
+            if prefetch_window {
+                nodes.clear();
+                preds.clear();
+                for &(s, p, o) in ids.iter() {
+                    nodes.push(dict.subject_node(s));
+                    nodes.push(dict.object_node(o));
+                    preds.push(p);
+                }
+                dict.prefetch_terms(&nodes, &preds);
             }
-            dict.prefetch_terms(&nodes, &preds);
             dict.resolve_window(ids, resolver, |s, p, o| f(s, p, o));
             ids.clear();
         };
@@ -3847,6 +3997,85 @@ impl Rete {
         self.index.reset_load_failure();
         self.dict.reset_load_failure();
         self.named_graphs.reset_load_failures();
+    }
+
+    /// Bound peak resident memory to roughly `budget` bytes by capping the
+    /// evictable dictionary chunk cache and the default-graph index tile cache
+    /// (bounded-export phase 2). `None` or `u64::MAX` means unlimited — nothing
+    /// is evicted and residency is identical to a plain open, which is what
+    /// `--in-memory` and every query/wasm path use.
+    ///
+    /// Sound at any cap: the dictionary and the default-graph index both fault
+    /// their chunks/tiles through a loader, so an evicted body is simply
+    /// re-faulted on its next touch; the export dump reads each needed body
+    /// while holding it (the cache `Arc` handout invariant), so eviction never
+    /// drops bytes in use. Named-graph indexes are **not** capped here — a small
+    /// resident graph has no loader and could never reload an evicted tile — so
+    /// they stay unlimited and are released whole per slot instead (see
+    /// [`release_named_graph`](Self::release_named_graph)).
+    ///
+    /// Returns the split actually applied, for `RETE_OPEN_DEBUG` logging.
+    pub fn set_memory_budget(&self, budget: Option<u64>) -> MemoryBudget {
+        let total = budget.unwrap_or(u64::MAX);
+        let split = split_memory_budget(total);
+        self.dict.set_cache_cap(split.dict_cache);
+        self.index.set_cache_cap(split.tile_cache);
+        // Large named graphs (opened lazily, loader-bearing) get the same tile
+        // cap; small resident ones stay unlimited (bounded by size + per-slot
+        // release). Combined with `release_named_graph`, a many-graph dump holds
+        // one graph's tiles at a time, each capped.
+        if let NamedGraphsSlot::Lazy(lazy) = &self.named_graphs {
+            lazy.set_tile_cap(split.tile_cache);
+        }
+        if std::env::var("RETE_OPEN_DEBUG").is_ok() {
+            eprintln!(
+                "[memory-budget] total={} dict_cache={} tile_cache={} block_cache={}",
+                if total == u64::MAX {
+                    "unlimited".to_string()
+                } else {
+                    format!("{}MiB", total >> 20)
+                },
+                fmt_cap(split.dict_cache),
+                fmt_cap(split.tile_cache),
+                fmt_cap(split.block_cache),
+            );
+        }
+        split
+    }
+
+    /// The dictionary chunk cache's observability counters (decoded chunks and
+    /// bytes, hits/misses, evictions, resident bytes) — for the bounded-export
+    /// work-accounting tests and `RETE_OPEN_DEBUG`.
+    pub fn dict_cache_stats(&self) -> crate::chunk_cache::CacheStats {
+        self.dict.cache_stats()
+    }
+
+    /// The default-graph index tile cache's observability counters.
+    pub fn index_cache_stats(&self) -> crate::chunk_cache::CacheStats {
+        self.index.cache_stats()
+    }
+
+    /// The current dictionary chunk-cache byte cap (`u64::MAX` = unlimited).
+    pub fn dict_cache_cap(&self) -> u64 {
+        self.dict.cache_cap()
+    }
+
+    /// Release a named graph's decoded index after its slot has been exported,
+    /// dropping its `GraphIndex` (and, with it, that graph's decoded tiles and
+    /// its own tile cache) so a many-graph dump does not accumulate one resident
+    /// index per graph — the next linear floor on many-graph files once the
+    /// dictionary is bounded (plan §6). A no-op for the default graph, an
+    /// unknown IRI, a resident (in-memory/eager) open, or a graph never opened.
+    ///
+    /// Takes `&mut self`: the export loop finishes one slot's dump (which only
+    /// borrows `&self`) before releasing, so no outstanding borrow of the index
+    /// exists. Correct because a released index is simply re-opened (headers +
+    /// tile directory) on a later access — the same lazy contract as a chunk
+    /// that was never faulted.
+    pub fn release_named_graph(&mut self, iri: &str) {
+        if let NamedGraphsSlot::Lazy(lazy) = &mut self.named_graphs {
+            lazy.release(iri);
+        }
     }
 
     fn resolve_query_pattern(
@@ -7429,6 +7658,167 @@ mod tests {
             "dumping half the graph faulted {pulled} B of a {dict_len} B dictionary — \
              the other graph's chunks are being pulled in too"
         );
+    }
+
+    /// Build a multi-chunk single-graph ranged file image for the eviction
+    /// tests: 4000 distinct ~70-byte object literals overflow the 64 KiB
+    /// dictionary chunk budget into several chunks, and one multi-KiB literal
+    /// forces a large run/chunk boundary — the shape a tiny budget must survive.
+    #[cfg(test)]
+    fn build_multichunk_image() -> Vec<u8> {
+        use crate::index::PermSet;
+        let mut db = DictionaryBuilder::new();
+        let mut triples: Vec<(String, String, String)> = (0..4000u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s/{i:07}>"),
+                    format!("<http://ex/p/{}>", i % 8),
+                    format!("\"object literal number {i:07} with padding text to widen the term\""),
+                )
+            })
+            .collect();
+        triples.push((
+            "<http://ex/s/big>".to_string(),
+            "<http://ex/p/big>".to_string(),
+            format!("\"{}\"", "Z".repeat(8000)),
+        ));
+        for (s, p, o) in &triples {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mut idx = GraphIndexBuilder::new()
+            .with_tile_budget(64)
+            .with_perms(PermSet::ALL);
+        for (s, p, o) in &triples {
+            idx.push(dict.encode(s, p, o).unwrap());
+        }
+        write_dataset(&dict, &idx.build(), &[], true, &[], 0)
+    }
+
+    /// **Bounded-export phase 2: eviction is byte-transparent, and progress is
+    /// guaranteed at any cap.** A cap far below the decompressed dictionary
+    /// forces the chunk cache to evict during a full dump, yet the dump is
+    /// byte-for-byte the unlimited-cap dump — the `Arc` handout keeps every
+    /// chunk alive across its one decode, so eviction never drops bytes in use.
+    /// A 1-byte cap (smaller than any single chunk, so every insert evicts
+    /// itself immediately) still completes with identical output: it is the
+    /// handout invariant, not residency, that makes a window make progress.
+    #[test]
+    fn tiny_dict_cache_evicts_yet_dump_is_byte_identical() {
+        use crate::reader::SliceReader;
+        let leaked: &'static [u8] = Box::leak(build_multichunk_image().into_boxed_slice());
+        let dump = |cap: u64| -> (
+            Vec<(String, String, String)>,
+            crate::chunk_cache::CacheStats,
+        ) {
+            let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+            rete.dict.set_cache_cap(cap);
+            let mut out = Vec::new();
+            rete.dump_filtered_each(None, None, None, None, |s, p, o| {
+                out.push((s.to_string(), p.to_string(), o.to_string()))
+            });
+            assert!(
+                !rete.index_incomplete(),
+                "no lazy fault should fail at cap {cap}"
+            );
+            let stats = rete.dict_cache_stats();
+            (out, stats)
+        };
+
+        let (unlimited, us) = dump(u64::MAX);
+        assert_eq!(unlimited.len(), 4001, "every triple dumped");
+        assert_eq!(us.evictions, 0, "unlimited cap evicts nothing");
+
+        // A cap far below the decompressed dictionary: eviction happens, output
+        // unchanged.
+        let (tiny, ts) = dump(128 * 1024);
+        assert_eq!(tiny, unlimited, "128 KiB-cap dump differs from unlimited");
+        assert!(ts.evictions > 0, "a tiny cap must evict (stats {ts:?})");
+
+        // Progress guarantee: a 1-byte cap still completes, byte-identical.
+        let (starved, ss) = dump(1);
+        assert_eq!(starved, unlimited, "1-byte-cap dump differs from unlimited");
+        assert!(
+            ss.evictions > 0,
+            "1-byte cap evicts every insert (stats {ss:?})"
+        );
+    }
+
+    /// **Bounded-export phase 2: per-graph index release.** After a named
+    /// graph's slot is exported, [`Rete::release_named_graph`] drops its decoded
+    /// index (and its tiles) so a many-graph dump holds one graph's index at a
+    /// time, not all of them. The graph re-opens lazily if touched again.
+    #[test]
+    fn releasing_a_named_graph_drops_and_reopens_its_index() {
+        use crate::index::PermSet;
+        use crate::reader::SliceReader;
+        let mut db = DictionaryBuilder::new();
+        let all: Vec<(String, String, String)> = (0..40u32)
+            .map(|i| {
+                (
+                    format!("<http://ex/s{}>", i % 7),
+                    format!("<http://ex/p{}>", i % 3),
+                    format!("<http://ex/o{}>", i % 5),
+                )
+            })
+            .collect();
+        for (s, p, o) in &all {
+            db.observe(s, p, o);
+        }
+        let dict = db.build();
+        let mk = |take: fn(u32) -> bool| {
+            let mut g = GraphIndexBuilder::new()
+                .with_tile_budget(16)
+                .with_perms(PermSet::ALL);
+            for (i, (s, p, o)) in all.iter().enumerate() {
+                if take(i as u32) {
+                    g.push(dict.encode(s, p, o).unwrap());
+                }
+            }
+            g.build()
+        };
+        let def = mk(|_| true);
+        let g1 = mk(|i| i % 2 == 0);
+        let g2 = mk(|i| i % 3 == 0);
+        let image = write_dataset(
+            &dict,
+            &def,
+            &[
+                ("<http://ex/g1>".to_string(), g1),
+                ("<http://ex/g2>".to_string(), g2),
+            ],
+            true,
+            &[],
+            0,
+        );
+        let leaked: &'static [u8] = Box::leak(image.into_boxed_slice());
+        let mut rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+
+        let opened = |r: &Rete| -> usize {
+            match &r.named_graphs {
+                NamedGraphsSlot::Lazy(l) => {
+                    let mut n = 0;
+                    l.for_each_opened(|_| n += 1);
+                    n
+                }
+                _ => 0,
+            }
+        };
+
+        assert_eq!(opened(&rete), 0, "nothing opened before first touch");
+        // Touching g1 opens its index.
+        assert!(rete.graph_index("<http://ex/g1>").is_some());
+        assert_eq!(opened(&rete), 1, "g1 opened");
+        // Release it: the index is dropped.
+        rete.release_named_graph("<http://ex/g1>");
+        assert_eq!(opened(&rete), 0, "g1 released");
+        // Releasing an unknown / already-released graph is a no-op.
+        rete.release_named_graph("<http://ex/absent>");
+        rete.release_named_graph("<http://ex/g1>");
+        assert_eq!(opened(&rete), 0);
+        // The graph re-opens lazily on the next access.
+        assert!(rete.graph_index("<http://ex/g1>").is_some());
+        assert_eq!(opened(&rete), 1, "g1 re-opened after release");
     }
 
     /// **The filtered-dump correctness invariant** (#117 point 1): for every

@@ -487,6 +487,19 @@ enum Command {
         /// trades RAM for speed on files small enough to fit.
         #[arg(long = "in-memory")]
         in_memory: bool,
+        /// Bound peak memory to about N MiB (default 4096). The ranged reader's
+        /// decompressed-dictionary chunk cache and index tile cache are capped
+        /// to a share of N and evict least-recently-used bodies, so a full dump
+        /// no longer keeps the whole decompressed dictionary resident — the old
+        /// floor that scaled RSS with file size and OOM'd 50-GB-class files.
+        /// Peak RSS ends up roughly N MiB plus a small fixed working set.
+        ///
+        /// A smaller budget costs extra decompression passes but the same
+        /// output; `0` means unlimited (no eviction). Ignored with `--in-memory`
+        /// (which reads the whole file and is unbounded by definition). The dump
+        /// is byte-identical at every budget — this only trades memory for time.
+        #[arg(long = "memory-budget-mb")]
+        memory_budget_mb: Option<u64>,
     },
     /// Rebuild a `.rete`'s pyramid in place, reading triples straight from the
     /// file (no `export | build` N-Quads round-trip). Use to add a schema
@@ -1227,6 +1240,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             object,
             sanitize_iris,
             in_memory,
+            memory_budget_mb,
         } => commands::export::export(
             &file,
             &format,
@@ -1240,6 +1254,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             },
             sanitize_iris,
             in_memory,
+            memory_budget_mb,
         ),
         Command::Repyramid {
             file,

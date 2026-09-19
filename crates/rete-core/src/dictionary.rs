@@ -170,6 +170,30 @@ impl Dictionary {
         self.sections.iter().map(|s| s.term_count()).sum()
     }
 
+    /// Set the byte cap of the shared chunk cache (bounded-export phase 2).
+    /// `u64::MAX` (the default from every open) means unlimited — no eviction,
+    /// residency identical to the pre-budget design. A finite cap evicts
+    /// least-recently-used chunk bodies down to it on every fault, so a full
+    /// dump's peak dictionary residency is bounded rather than the whole
+    /// decompressed dictionary. All four sections share one cache; setting it on
+    /// each is idempotent (they are the same `Arc`).
+    pub fn set_cache_cap(&self, cap: u64) {
+        for s in &self.sections {
+            s.cache().set_cap(cap);
+        }
+    }
+
+    /// The current chunk-cache byte cap (`u64::MAX` = unlimited).
+    pub fn cache_cap(&self) -> u64 {
+        self.sections[0].cache().cap()
+    }
+
+    /// A snapshot of the shared chunk cache's observability counters — for
+    /// `RETE_OPEN_DEBUG` accounting and the eviction tests.
+    pub fn cache_stats(&self) -> crate::chunk_cache::CacheStats {
+        self.sections[0].cache().stats()
+    }
+
     /// Does this dataset contain RDF-star quoted triples? Meaningful only for a
     /// freshly built dictionary (a read-back one carries the truth in the file
     /// header's `FLAG_HAS_QUOTED_TRIPLES`, not here).
