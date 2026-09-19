@@ -219,7 +219,13 @@ pub(crate) fn export(
             // graph to create the grouping, which is the whole point of this path.
             let grouping = subject_grouping(&rete, &slots, s, p, o);
 
-            match write_turtle_stream(&mut rete, &slots, table, grouping, s, p, o, &mut iris) {
+            // Only TriG has `GRAPH … { }` blocks. Turtle writes bare statements
+            // even when the slot it was handed is a NAMED graph — which happens
+            // whenever the ladder picked one, and wrapping them would emit TriG
+            // syntax under a `.ttl` name.
+            let wrap = format == "trig";
+            match write_turtle_stream(&mut rete, &slots, table, grouping, s, p, o, &mut iris, wrap)
+            {
                 Ok(()) => {}
                 // A closed downstream pipe is how `rete export … | head` ends,
                 // not a failure. The nq arm reaches the same outcome by
@@ -283,6 +289,12 @@ fn clean<'a>(
 /// that every `?` here is a write error rather than a mix of write errors and
 /// argument errors.
 ///
+/// `wrap_graphs` is what separates the two formats: TriG puts each named slot in
+/// a `GRAPH <g> { … }` block, Turtle writes bare statements because it has no
+/// graph term to write. Turtle still *reaches* this function with a named slot —
+/// the selection ladder hands it one whenever the default graph is empty and
+/// exactly one named graph exists — so this is not a theoretical distinction.
+///
 /// Errors from inside `dump_filtered_each`'s callback are parked in `err` rather
 /// than returned, because the callback cannot fail the scan; the first failure
 /// latches and the remaining statements are skipped, so a full disk stops
@@ -297,6 +309,7 @@ fn write_turtle_stream(
     p: Option<&str>,
     o: Option<&str>,
     iris: &mut Option<rete_core::iri::IriReport>,
+    wrap_graphs: bool,
 ) -> std::io::Result<()> {
     use std::io::Write;
     let stdout = std::io::stdout();
@@ -326,12 +339,15 @@ fn write_turtle_stream(
             Some(g) => {
                 // Same rule as the nq arm: the graph term labels the whole block,
                 // so it is sanitized — and therefore counted — once per graph
-                // rather than once per statement.
-                let label = match iris.as_mut() {
-                    Some(r) => r.sanitize(g).into_owned(),
-                    None => g.clone(),
-                };
-                w.begin_graph(&label)?;
+                // rather than once per statement. Turtle has no block to label,
+                // so it does not pay even that once.
+                if wrap_graphs {
+                    let label = match iris.as_mut() {
+                        Some(r) => r.sanitize(g).into_owned(),
+                        None => g.clone(),
+                    };
+                    w.begin_graph(&label)?;
+                }
                 rete.dump_filtered_each(Some(g), s, p, o, |s, p, o| {
                     if err.is_err() {
                         return;
@@ -339,7 +355,9 @@ fn write_turtle_stream(
                     let (s, p, o) = clean(iris, s, p, o);
                     err = w.write_triple(&s, &p, &o);
                 });
-                w.end_graph()?;
+                if wrap_graphs {
+                    w.end_graph()?;
+                }
                 // Drop this graph's decoded index before the next slot, so a
                 // many-graph dump holds one graph's tiles at a time.
                 rete.release_named_graph(g);
