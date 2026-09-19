@@ -13,6 +13,7 @@ pub(crate) mod cost;
 pub(crate) mod estimate;
 pub(crate) mod export;
 pub(crate) mod federate;
+pub(crate) mod hdt;
 pub(crate) mod inspect;
 pub(crate) mod iri_report;
 pub(crate) mod manifest;

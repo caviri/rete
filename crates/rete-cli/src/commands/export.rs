@@ -143,6 +143,18 @@ pub(crate) fn export(
     // moment rather than an hour of scanning followed by a usage error.
     let codec = Codec::parse(compress_with)?;
     let level = compress::check_level(codec, compress_level)?;
+    if format == "hdt" && codec != Codec::None {
+        // HDT exists to be queried in place: a reader memory-maps it and answers
+        // patterns against the mapped bytes without decoding anything. Wrapping
+        // it in a compression frame removes exactly that property and leaves a
+        // binary blob that is worse than a compressed text dump at every job.
+        anyhow::bail!(
+            "--compress cannot be used with --format hdt: HDT is designed to be queried \
+             in place, and a compression frame has to be decoded before anything can read it.\n\
+             hint: `--format trig --compress zstd` is the compact *text* option, or write the \
+             HDT uncompressed and compress it yourself if you only need to move it."
+        );
+    }
     if codec != Codec::None {
         // stdout is now binary. Say so once, on stderr — which stays text, and
         // which is where every other note this command prints already goes.
@@ -300,6 +312,43 @@ pub(crate) fn export(
                 Err(e) => return Err(e.into()),
             }
         }
+        // HDT: a compact binary serialization that stays queryable without being
+        // decompressed. Triples-only, so it takes one graph by the same ladder
+        // Turtle uses, and it is bounded by a refusal rather than by streaming —
+        // see `commands::hdt` for why it cannot stream.
+        "hdt" => {
+            use std::io::Write;
+            let limit = match memory_budget_mb {
+                Some(0) => u64::MAX,
+                Some(mb) => mb.saturating_mul(1 << 20),
+                None => rete_core::DEFAULT_EXPORT_BUDGET_MB.saturating_mul(1 << 20),
+            };
+            // Refuse BEFORE any work, from counts the header already carries.
+            let budget = crate::commands::hdt::check_limits(&rete, limit)?;
+            let g = select_single_graph(&rete, filter, "HDT")?;
+            eprintln!(
+                "note: building HDT in memory (~{} estimated from {} terms, {} triples, \
+                 {} of dictionary; {} distinct objects) - HDT cannot be written in one pass",
+                crate::commands::hdt::human_bytes(budget.estimated_bytes),
+                budget.terms,
+                budget.quads,
+                crate::commands::hdt::human_bytes(budget.dict_bytes),
+                budget.object_ids,
+            );
+            let built =
+                crate::commands::hdt::build(&mut rete, g.as_deref(), s, p, o, &mut iris, file);
+            eprintln!(
+                "note: {} triples; dictionary {} shared / {} subjects / {} predicates / {} objects",
+                built.triples, built.shared, built.subjects, built.predicates, built.objects,
+            );
+            let stdout = std::io::stdout();
+            let mut out = std::io::BufWriter::new(stdout.lock());
+            match out.write_all(&built.bytes).and_then(|()| out.flush()) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
+                Err(e) => return Err(e.into()),
+            }
+        }
         // JSON-LD has no streaming form here: the expanded serialization is one
         // JSON array, and writing it incrementally would mean hand-rolling the
         // encoder. It keeps the eager path, and the same single-graph ladder as
@@ -341,7 +390,7 @@ pub(crate) fn export(
 /// Sanitize one quad's three terms when the flag is on, or hand them straight
 /// back when it is off. Returned as owned `String`s only where a repair
 /// happened; `Cow` keeps the untouched (overwhelming) majority allocation-free.
-fn clean<'a>(
+pub(crate) fn clean<'a>(
     report: &mut Option<rete_core::iri::IriReport>,
     s: &'a str,
     p: &'a str,

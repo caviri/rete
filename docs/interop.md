@@ -71,6 +71,36 @@ rete export data.rete --format jsonld                     > default-graph.jsonld
 single JSON array, so it is built in memory and is not the format for a file
 that does not fit in RAM.
 
+### HDT: queryable without decompressing
+
+```sh
+rete export data.rete --format hdt > data.hdt
+```
+
+Everything else on this page is text that a store has to parse before it can
+answer anything. [HDT](https://www.rdfhdt.org/) is the exception: a reader
+memory-maps the file and answers triple patterns against the mapped bytes.
+Opening the 1.39 GB reference file costs 50.7 MB of RSS and 0.31 s regardless of
+its size, and `hdtSearch`, `rdflib-hdt` and the Rust `hdt` crate all read it.
+
+It is worth being equally plain about what it costs:
+
+| | |
+| --- | --- |
+| graphs | **triples only** — one graph, chosen by the same ladder Turtle uses |
+| streaming | **no** — the graph is built in memory, so there is a size ceiling |
+| ceiling | whichever binds first: the memory estimate, or 2^32 object ids |
+| compression | refused; it would remove the in-place property |
+
+Both limits are **enforced before any work starts**, from counts in the file
+header, and the refusal names the real limit, this file's numbers and the way
+out. The object-id cap exists because the reference implementation truncates
+object ids to 32 bits when it builds its index — a file above it would load and
+then answer queries wrongly, so rete does not produce one.
+
+Above the ceiling, `--format trig --compress zstd` is the compact lossless
+option and has no such limit.
+
 ### Prefix compression
 
 `ttl` and `trig` abbreviate IRIs to QNames, which is where most of their size

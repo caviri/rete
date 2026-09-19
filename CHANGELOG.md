@@ -7,6 +7,51 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **`rete export --format hdt`.** HDT is a compact binary RDF serialization whose
+  point is that it stays **queryable without being decompressed**: a reader
+  memory-maps it and answers triple patterns against the mapped bytes. Opening
+  the 1.39 GB reference file costs 50.7 MB of RSS and 0.31 s whatever its size,
+  which is the thing a compressed text dump cannot do.
+
+  **Validated against the reference implementation, not against itself.**
+  `hdt-cpp` loads what rete writes, `hdt2rdf` recovers every triple exactly, and
+  `hdtSearch` answers spot patterns with the same counts `rete export`'s own
+  filters give. On the 2017 DBLP file rete's dictionary partition reproduces the
+  published HDT's section counts exactly — shared 1,812,715 / subjects 3,313,221
+  / predicates 27 / objects 34,601,065.
+
+  **It cannot stream, and the ceiling is enforced rather than documented.** rete
+  stores IRIs as `<http://…>` and HDT stores them bare; removing the brackets
+  reorders the dictionary (blank nodes and IRIs swap blocks, and any IRI that is
+  a prefix of another inverts against it), so the id remap is a non-monotonic
+  permutation and rete's SPO scan is no longer ascending in HDT's id space. The
+  triples therefore have to be re-sorted, in memory. `rete export` estimates the
+  cost from the file header and **refuses before doing any work** when it exceeds
+  `--memory-budget-mb`, naming both numbers — measured at ~512 bytes per distinct
+  term plus 16 per triple.
+
+  **A second cap, for a sharper reason: 2^32 object ids.** `hdt-cpp` truncates
+  object dictionary ids to `unsigned int` while building its query index
+  (`BitmapTriples.cpp:341`, still present at HEAD). A file above that bound would
+  be written successfully and then answer queries *incorrectly* on whoever read
+  it. That is not something to warn about in documentation, so rete refuses to
+  produce such a file.
+
+  Triples-only, so it takes one graph by the same ladder Turtle uses; HDTQ is not
+  implemented. `--compress` is refused with it, because wrapping an
+  in-place-queryable format in a codec removes the only advantage it has.
+
+### Fixed
+
+- **Literals were stored with their escapes unresolved when written as HDT.**
+  rete keeps a term in N-Triples lexical form, so a literal containing a newline
+  is the two characters `\` and `n`; HDT stores the resolved character and
+  re-escapes on output. Copying rete's form through produced a file that loaded
+  and queried, and handed back a literal containing TWO characters, `\\` then
+  `slash`, where the graph said one backslash followed by `slash`.
+  Found by the round-trip conformance check against `hdt-cpp` rather than by any
+  in-repo test, which is the argument for having it.
+
 - **`rete export --compress zstd|gzip` — streaming compression.** The motivating
   case is a large text dump: a full N-Quads export of a big graph runs to tens or
   hundreds of gibibytes, and it is written once and read many times, which is
