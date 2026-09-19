@@ -293,6 +293,10 @@ pub(crate) struct PrefixTable {
     entries: Vec<Entry>,
 }
 
+/// A learned namespace must account for at least `1/SHARE_DIVISOR` of the terms
+/// the sample examined. See [`PrefixTable::from_sample`].
+const SHARE_DIVISOR: u64 = 1000;
+
 /// How many distinct namespaces the bounded sample will track before it stops
 /// learning new ones. A dump with more than this many distinct namespaces in its
 /// sample is not one prefix compression can help much anyway, and the cap is
@@ -396,9 +400,22 @@ impl PrefixTable {
     /// vocabulary by 10:1 or more — a table of nothing but well-known prefixes
     /// abbreviates the rarest terms and leaves the common ones at full length.
     ///
-    /// `min_count` is an absolute floor: a namespace seen once or twice in the
-    /// sample would spend a whole `@prefix` line to save a few bytes.
+    /// A namespace has to clear **both** a floor and a share to earn a line.
+    ///
+    /// `min_count` is the floor: a namespace seen once or twice would spend a
+    /// whole `@prefix` line to save a few bytes. The share —
+    /// `1/SHARE_DIVISOR` of the terms sampled — is the one that matters, and it
+    /// exists because the sample is a *prefix* of a subject-ordered scan, not a
+    /// random draw. Early subjects are over-represented, so a namespace local to
+    /// a handful of them clears any fixed floor while being worthless globally.
+    ///
+    /// Measured: exporting one predicate of a figshare graph produced 25
+    /// bindings named `creator:`, `creator2:` … `creator23:` — one per *document*
+    /// (`https://doi.org/10.…/creator/`), each seen just often enough in the
+    /// sample because a single paper has that many authors. The share test drops
+    /// all of them and keeps the namespaces that are actually the file's.
     pub(crate) fn from_sample(sample: &NamespaceSample, max_auto: usize, min_count: u64) -> Self {
+        let min_count = min_count.max(sample.terms / SHARE_DIVISOR);
         let mut entries: Vec<Entry> = Vec::new();
         let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -984,9 +1001,11 @@ mod tests {
         );
         assert_eq!(
             out,
-            format!("@prefix ex: <http://ex/> .
+            format!(
+                "@prefix ex: <http://ex/> .
 {token} ex:said {token} .
-")
+"
+            )
         );
     }
 
@@ -1150,6 +1169,31 @@ mod tests {
         assert!(
             !got.iter().any(|(_, ns)| *ns == "http://rare.example/"),
             "below the floor: {got:?}"
+        );
+    }
+
+    #[test]
+    fn a_namespace_local_to_a_few_subjects_does_not_earn_a_line() {
+        // The shape that motivated the share test: one namespace per document,
+        // each seen often enough to clear any fixed floor, none of them the
+        // file's. Plus one namespace that really is the file's.
+        let mut sample = NamespaceSample::default();
+        for doc in 0..20 {
+            for author in 0..20 {
+                sample.observe(&format!(
+                    "<https://doi.org/10.1234/paper{doc}/creator/a{author}>"
+                ));
+            }
+        }
+        for i in 0..100_000 {
+            sample.observe(&format!("<https://w3id.org/rete/datacite#p{i}>"));
+        }
+        let table = PrefixTable::from_sample(&sample, 32, 16);
+        let got: Vec<(&str, &str)> = table.bindings().collect();
+        assert_eq!(
+            got,
+            vec![("datacite", "https://w3id.org/rete/datacite#")],
+            "only the file-wide namespace should earn a line"
         );
     }
 

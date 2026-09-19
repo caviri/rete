@@ -535,7 +535,7 @@ fn sample_namespaces(
     // named graphs (switzerland-fedlex has 497,905) — dividing the budget by that
     // would turn a bounded sample into half a million one-row scans. A few dozen
     // graphs is already far more vocabulary than a prefix table can hold.
-    let n = slots.len().min(MAX_SAMPLE_SLOTS).max(1);
+    let n = slots.len().clamp(1, MAX_SAMPLE_SLOTS);
     let per_slot = PREFIX_SAMPLE_STATEMENTS.div_ceil(n);
     for slot in slots.iter().take(MAX_SAMPLE_SLOTS) {
         for (ts, tp, to) in rete.query_iter(slot.as_deref(), s, p, o).take(per_slot) {
