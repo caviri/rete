@@ -925,6 +925,21 @@ refuses to produce such a file at all.</li>
 </ul>
 <p>Which limit binds depends on the graph's shape: a sparse graph with a huge object
 vocabulary hits the id cap, a dense one hits memory.</p>
+<p><strong>HDT is not the format to archive or ship in, and the numbers say so.</strong>
+Measured on a 1.5M-triple graph: HDT 14,217,647 bytes against <code>trig.zst</code>'s
+4,296,486 — HDT is <strong>3.3x larger</strong>, and larger than the source <code>.rete</code>
+(11,810,101) too. On the 88M-triple DBLP graph the ratio is the same: HDT
+1,378,298,174 against <code>trig.zst</code>'s 462,563,780, <strong>3.0x larger</strong>.</p>
+<p>So pick by what happens to the file next:</p>
+<table><thead><tr><th>you want to…</th><th>use</th></tr></thead><tbody>
+<tr><td>store or ship it</td><td><code>--format trig --compress zstd</code> — smallest, lossless, no ceiling</td></tr>
+<tr><td>feed a line-oriented pipeline</td><td><code>--format nq</code></td></tr>
+<tr><td><strong>query it in place</strong></td><td><code>--format hdt</code></td></tr>
+</tbody></table>
+<p>HDT earns its place on the last row only, and that advantage is real and
+measured: a reader memory-maps it and answers patterns in ~50 MB of RSS without
+decompressing anything, where <code>trig.zst</code> has to be decompressed and parsed in
+full before it can answer at all.</p>
 <p>Above either limit, use <code>--format trig --compress zstd</code> — lossless, compact, and
 with no ceiling.</p>
 <p><code>--compress</code> is rejected with <code>--format hdt</code>: wrapping an in-place-queryable

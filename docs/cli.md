@@ -375,6 +375,25 @@ Three limitations, all enforced rather than merely documented:
 Which limit binds depends on the graph's shape: a sparse graph with a huge object
 vocabulary hits the id cap, a dense one hits memory.
 
+**HDT is not the format to archive or ship in, and the numbers say so.**
+Measured on a 1.5M-triple graph: HDT 14,217,647 bytes against `trig.zst`'s
+4,296,486 — HDT is **3.3x larger**, and larger than the source `.rete`
+(11,810,101) too. On the 88M-triple DBLP graph the ratio is the same: HDT
+1,378,298,174 against `trig.zst`'s 462,563,780, **3.0x larger**.
+
+So pick by what happens to the file next:
+
+| you want to… | use |
+| --- | --- |
+| store or ship it | `--format trig --compress zstd` — smallest, lossless, no ceiling |
+| feed a line-oriented pipeline | `--format nq` |
+| **query it in place** | `--format hdt` |
+
+HDT earns its place on the last row only, and that advantage is real and
+measured: a reader memory-maps it and answers patterns in ~50 MB of RSS without
+decompressing anything, where `trig.zst` has to be decompressed and parsed in
+full before it can answer at all.
+
 Above either limit, use `--format trig --compress zstd` — lossless, compact, and
 with no ceiling.
 

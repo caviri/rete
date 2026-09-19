@@ -177,7 +177,7 @@ pub(crate) fn bits_for(n: u64) -> u8 {
 /// ```
 ///
 /// `numbits` is a bit *width* and is written as one raw byte — note the contrast
-/// with [`BitSequence375`], whose length field is a VByte. The data is a flat
+/// with [`BitSequence`] (HDT's `BitSequence375`), whose length field is a VByte. The data is a flat
 /// LSB-first bitstream: entry `i` occupies bits `[i*numbits, (i+1)*numbits)`,
 /// low-order bit at the lowest position. `hdt-cpp` packs into `size_t` words,
 /// but the machine is little-endian so the word structure is invisible on disk.

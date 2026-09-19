@@ -98,6 +98,18 @@ out. The object-id cap exists because the reference implementation truncates
 object ids to 32 bits when it builds its index — a file above it would load and
 then answer queries wrongly, so rete does not produce one.
 
+**It is also not the smallest, and that is worth being blunt about.** On a
+1.5M-triple graph HDT is 14,217,647 bytes against `trig.zst`'s 4,296,486 — 3.3x
+larger, and larger than the source `.rete` as well. On 88M triples it is
+1,378,298,174 against 462,563,780, the same 3x. **HDT is not the recommended
+archival or transfer format**; `--format trig --compress zstd` wins on size and
+has no ceiling.
+
+What HDT buys is the other axis. `trig.zst` must be decompressed and parsed in
+full before it answers anything; HDT answers a triple pattern against the mapped
+file in ~50 MB of RSS. Choose it when something will *query* the file, not when
+it will be stored or moved.
+
 Above the ceiling, `--format trig --compress zstd` is the compact lossless
 option and has no such limit.
 
