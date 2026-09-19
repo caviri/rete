@@ -13,8 +13,9 @@
 //! independently, so a ranged reader can fetch just the tiles a query needs.
 //! v0.1 single-block sections are still read (one tile per permutation).
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
+use crate::chunk_cache::{CacheEntry, ChunkCache};
 use crate::triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder};
 
 /// A triple pattern: `None` is an unbound variable, `Some(id)` a bound term.
@@ -68,21 +69,24 @@ pub struct Tile {
     /// tile, in-memory image size for a local one; 0 = unknown). Feeds the join
     /// planner's fatness gates without faulting any data.
     len: u32,
-    data: OnceLock<Vec<u8>>,
+    /// Build-time staging only: a locally-built or locally-decoded tile's body
+    /// waits here until [`GraphIndex::from_sections`] moves it into the shared
+    /// [`ChunkCache`] (keyed by `(section, tile)`) and clears it. `None`
+    /// afterward, and for a remote tile whose body faults in through the loader.
+    /// The long-lived retention is the cache, not this field.
+    staged: Option<Vec<u8>>,
     dir: OnceLock<GroupDirectory>,
 }
 
 impl Tile {
     fn local(min_a: u32, max_a: u32, bytes: Vec<u8>) -> Self {
         let len = bytes.len().min(u32::MAX as usize) as u32;
-        let data = OnceLock::new();
-        let _ = data.set(bytes);
         Tile {
             min_a,
             max_a,
             syn: None,
             len,
-            data,
+            staged: Some(bytes),
             dir: OnceLock::new(),
         }
     }
@@ -93,18 +97,18 @@ impl Tile {
             max_a,
             syn,
             len: 0,
-            data: OnceLock::new(),
+            staged: None,
             dir: OnceLock::new(),
         }
     }
 
-    /// Encoded byte length (see the field doc); falls back to the loaded image
-    /// size when the directory didn't provide one.
+    /// Encoded byte length (see the field doc); falls back to a still-staged
+    /// body's size when the directory didn't provide one.
     pub(crate) fn encoded_len(&self) -> u64 {
         if self.len > 0 {
             self.len as u64
         } else {
-            self.data.get().map_or(0, |d| d.len() as u64)
+            self.staged.as_ref().map_or(0, |d| d.len() as u64)
         }
     }
 
@@ -126,13 +130,6 @@ impl Tile {
                 ok(pb, min_b, max_b) && ok(pc, min_c, max_c)
             }
         }
-    }
-
-    /// The tile's serialized (uncompressed) [`TripleBlock`] image, if present
-    /// locally (always, for built/opened indexes; empty for an unfaulted
-    /// remote tile — the writer never sees those).
-    pub fn bytes(&self) -> &[u8] {
-        self.data.get().map(Vec::as_slice).unwrap_or(&[])
     }
 }
 
@@ -655,10 +652,25 @@ pub struct GraphIndex {
     /// The reader's concurrent-range fan-out (1 = strictly sequential) — see
     /// [`set_read_concurrency`](Self::set_read_concurrency).
     read_concurrency: usize,
+    /// Decompressed tile bodies live here, keyed by `(section, tile)`, faulted
+    /// in on first scan and evictable. Phase 0 caps it at unlimited, so a
+    /// scanned permutation stays resident exactly as it did in the old per-tile
+    /// `OnceLock`s.
+    cache: Arc<ChunkCache>,
 }
 
 impl GraphIndex {
-    fn from_sections(sections: [Vec<Tile>; NUM_PERMS], perms: PermSet) -> Self {
+    fn from_sections(mut sections: [Vec<Tile>; NUM_PERMS], perms: PermSet) -> Self {
+        // Move every locally-built/decoded tile body into the shared cache and
+        // clear its staging slot, so the descriptors hold routing metadata only.
+        let cache = ChunkCache::unlimited_arc();
+        for (si, tiles) in sections.iter_mut().enumerate() {
+            for (ti, tile) in tiles.iter_mut().enumerate() {
+                if let Some(body) = tile.staged.take() {
+                    cache.insert((si as u8, ti as u32), Arc::from(body));
+                }
+            }
+        }
         GraphIndex {
             sections,
             perms,
@@ -666,6 +678,7 @@ impl GraphIndex {
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
+            cache,
         }
     }
 
@@ -710,6 +723,7 @@ impl GraphIndex {
             bulk: None,
             load_failed: std::sync::atomic::AtomicBool::new(false),
             read_concurrency: 1,
+            cache: ChunkCache::unlimited_arc(),
         }
     }
 
@@ -775,9 +789,14 @@ impl GraphIndex {
     /// retries each one (recording failures) when the scan reaches it.
     fn prefetch_span(&self, section: usize, start: usize, end: usize) {
         let missing: Vec<usize> = (start..end)
-            .filter(|&ti| self.sections[section][ti].data.get().is_none())
+            .filter(|&ti| !self.tile_resident(section, ti))
             .collect();
         self.bulk_fault(section, &missing);
+    }
+
+    /// Is tile `(section, tile)`'s body currently resident in the cache?
+    fn tile_resident(&self, section: usize, tile: usize) -> bool {
+        self.cache.contains((section as u8, tile as u32))
     }
 
     /// Bulk-fault a set of (possibly scattered, ascending) missing tile indices in
@@ -794,7 +813,8 @@ impl GraphIndex {
         if let Some(images) = bulk(section, tiles) {
             if images.len() == tiles.len() {
                 for (&ti, img) in tiles.iter().zip(images) {
-                    let _ = self.sections[section][ti].data.set(img);
+                    self.cache
+                        .insert((section as u8, ti as u32), Arc::from(img));
                 }
             }
         }
@@ -819,9 +839,7 @@ impl GraphIndex {
             let si = perm.section_index();
             let (start, end) = self.tile_span(si, pa);
             for ti in start..end {
-                if self.sections[si][ti].syn_admits(pb, pc)
-                    && self.sections[si][ti].data.get().is_none()
-                {
+                if self.sections[si][ti].syn_admits(pb, pc) && !self.tile_resident(si, ti) {
                     want[si].insert(ti);
                 }
             }
@@ -832,28 +850,39 @@ impl GraphIndex {
         }
     }
 
-    /// The tile's block image, faulting it in through the loader if remote.
-    /// A FAILED fetch records the failure and returns an empty slice WITHOUT
-    /// caching it, so a later evaluation retries the tile — a transient
-    /// network error must not permanently poison a long-lived (resident)
-    /// session with an empty tile masquerading as data.
-    fn tile_data(&self, section: usize, tile: usize) -> &[u8] {
-        let cell = &self.sections[section][tile].data;
-        if let Some(d) = cell.get() {
-            return d;
+    /// The tile's cache entry, faulting its block image in through the loader if
+    /// remote. Returns an owned [`CacheEntry`] handle (an `Arc`) the caller
+    /// holds for the duration of one parse/scan — valid even if a later eviction
+    /// drops the map slot (the handout invariant).
+    ///
+    /// A FAILED fetch records the failure and caches nothing (returns `None`),
+    /// so a later evaluation retries the tile — a transient network error must
+    /// not permanently poison a long-lived (resident) session. A local tile
+    /// with no body returns an empty entry (constructed empty on purpose).
+    fn tile_entry(&self, section: usize, tile: usize) -> Option<Arc<CacheEntry>> {
+        let key = (section as u8, tile as u32);
+        if let Some(e) = self.cache.get(key) {
+            return Some(e);
         }
         match &self.loader {
             Some(load) => match load(section, tile) {
-                Some(bytes) => cell.get_or_init(|| bytes),
+                Some(bytes) => Some(self.cache.insert(key, Arc::from(bytes))),
                 None => {
                     self.load_failed
                         .store(true, std::sync::atomic::Ordering::Relaxed);
-                    &[]
+                    None
                 }
             },
-            // A local tile with no data was constructed empty on purpose.
-            None => cell.get_or_init(Vec::new),
+            None => Some(self.cache.insert(key, Arc::from(Vec::new()))),
         }
+    }
+
+    /// The tile's decompressed block image as a shared handle, for the file
+    /// writer (local indexes, all tiles resident). Empty on a miss.
+    pub(crate) fn tile_body(&self, section: usize, tile: usize) -> Arc<[u8]> {
+        self.tile_entry(section, tile)
+            .map(|e| e.body_arc())
+            .unwrap_or_else(|| Arc::from(Vec::new()))
     }
 
     /// Total triple count (sum of the SPO tiles' zone counts). For a remote
@@ -861,8 +890,12 @@ impl GraphIndex {
     pub fn triple_count(&self) -> u32 {
         self.prefetch_span(0, 0, self.sections[0].len());
         (0..self.sections[0].len())
-            .filter_map(|ti| TripleBlock::parse(self.tile_data(0, ti)).ok())
-            .map(|b| b.zone().count)
+            .filter_map(|ti| {
+                let entry = self.tile_entry(0, ti)?;
+                TripleBlock::parse(entry.body())
+                    .ok()
+                    .map(|b| b.zone().count)
+            })
             .sum()
     }
 
@@ -1105,14 +1138,16 @@ impl GraphIndex {
                 from_a = 0;
                 continue;
             }
-            if self.sections[si][ti].data.get().is_none() {
+            if !self.tile_resident(si, ti) {
                 self.prefetch_span(si, ti, (ti + window).min(end));
                 window = window.saturating_mul(2).min(PREFETCH_WINDOW_MAX);
             }
             let tile = &self.sections[si][ti];
+            let entry = self.tile_entry(si, ti);
             let mut resume_at: Option<u32> = None;
-            if let Some(block) = TripleBlock::parse(self.tile_data(si, ti))
-                .ok()
+            if let Some(block) = entry
+                .as_deref()
+                .and_then(|e| TripleBlock::parse(e.body()).ok())
                 .filter(|b| b.zone().may_contain(pa, pb, pc))
             {
                 let rows = match pa {
@@ -1217,24 +1252,32 @@ impl GraphIndex {
                 // Fault in (if remote), parse (untrusted bytes ⇒ `None` on
                 // malformed), and zone-prune per tile, then stream the
                 // matching groups.
-                if self.sections[si][ti].data.get().is_none() {
+                if !self.tile_resident(si, ti) {
                     let w = window.get();
                     self.prefetch_span(si, ti, (ti + w).min(end));
                     window.set(w.saturating_mul(2).min(PREFETCH_WINDOW_MAX));
                 }
                 let tile = &self.sections[si][ti];
-                TripleBlock::parse(self.tile_data(si, ti))
-                    .ok()
-                    .filter(|b| b.zone().may_contain(pa, pb, pc))
-                    .map(|b| match pa {
-                        Some(a) => {
-                            let dir = tile.dir.get_or_init(|| b.group_directory());
-                            b.scan_from(dir, a, pb, pc)
-                        }
-                        None => b.scan(pa, pb, pc),
-                    })
-                    .into_iter()
-                    .flatten()
+                // Decode the tile once and materialize its matching rows into an
+                // owned `Vec`, so the borrowed block/cursor never outlives the
+                // tile's cache handle (an `Arc` dropped at the end of this
+                // closure). The buffer is bounded to one tile's rows; the scan
+                // stays lazy *across* tiles, so a `LIMIT` still stops early.
+                let rows: Vec<Triple> = match self.tile_entry(si, ti) {
+                    Some(entry) => TripleBlock::parse(entry.body())
+                        .ok()
+                        .filter(|b| b.zone().may_contain(pa, pb, pc))
+                        .map(|b| match pa {
+                            Some(a) => {
+                                let dir = tile.dir.get_or_init(|| b.group_directory());
+                                b.scan_from(dir, a, pb, pc).collect()
+                            }
+                            None => b.scan(pa, pb, pc).collect(),
+                        })
+                        .unwrap_or_default(),
+                    None => Vec::new(),
+                };
+                rows.into_iter()
             })
             .map(move |abc| perm.back(abc))
     }
