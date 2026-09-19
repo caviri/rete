@@ -40,20 +40,35 @@ jobs:
         with:
           filters: |
             rust:
-              - '!**/*.md'
+              # NO blanket '!**/*.md' here: dorny/paths-filter ORs its patterns,
+              # so a lone negation matches every non-Markdown file and makes the
+              # list below dead code. A docs-only commit then ran the whole
+              # suite (coverage, wasm, interop, conformance) because the
+              # generated docs/*.html sibling is not Markdown. These are the
+              # real Rust inputs; docs prose reaches the `docs` filter only.
               - 'crates/**'
+              - 'fuzz/**'
+              - 'examples/**'
+              - 'tests/**'
+              - 'rdf-tests/**'
+              - 'docker/**'
+              - 'compose.yaml'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'deny.toml'
               - 'scripts/release_check.sh'
               - 'scripts/coverage.sh'
-              - 'tests/interop/**'
               - '.devcontainer/**'
               - '.github/workflows/ci.yml'
             wasm:
-              - '!**/*.md'
+              # Same reasoning as `rust` above. The docs/* entries below are the
+              # committed browser artifacts, which MUST still trigger the
+              # provenance/parity gate; docs prose must not.
               - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
               - 'web/**'
               - 'tests/gate/**'
               - 'scripts/build_wasm.sh'
