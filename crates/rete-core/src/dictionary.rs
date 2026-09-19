@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 
+use crate::chunk_cache::ChunkCache;
 use crate::dict::{ChunkedSection, DictSectionBuilder};
 use crate::terms::{NodeId, ObjectId, PredicateId, SubjectId};
 
@@ -127,9 +128,18 @@ pub struct Dictionary {
 
 impl Dictionary {
     /// Rebuild from four serialized sections (shared, subjects, objects,
-    /// predicates), e.g. when reading a `.rete` file.
+    /// predicates), e.g. when reading a `.rete` file. The four sections share one
+    /// [`ChunkCache`] (unlimited cap here, so every section body stays resident
+    /// exactly as before).
     pub fn from_sections(sections: [Vec<u8>; 4]) -> Self {
-        Self::from_chunked_sections(sections.map(ChunkedSection::local))
+        let cache = ChunkCache::unlimited_arc();
+        let mut section_index = 0u8;
+        let chunked = sections.map(|bytes| {
+            let s = ChunkedSection::local(bytes, cache.clone(), section_index);
+            section_index += 1;
+            s
+        });
+        Self::from_chunked_sections(chunked)
     }
 
     /// Rebuild from four already-chunked sections (the remote lazy-open path).

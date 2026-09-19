@@ -973,20 +973,26 @@ fn parse_chunk_dir_only(dir: &[u8], dir_total: u64) -> Result<ChunkDirParse, Fil
 fn decode_chunked_dict_section(
     payload: &[u8],
     codec: u8,
+    cache: std::sync::Arc<crate::chunk_cache::ChunkCache>,
+    section_index: u8,
 ) -> Result<crate::dict::ChunkedSection, FileError> {
     let (meta, entries) = parse_chunked_dict_dir(payload, payload.len() as u64)?;
     let chunks = entries
         .into_iter()
         .map(|e| {
-            Ok(crate::dict::SectionChunk::resident(
-                e.first_run,
-                e.key,
-                e.body_start,
-                decompress(codec, &payload[e.start as usize..e.end as usize])?,
+            let body = decompress(codec, &payload[e.start as usize..e.end as usize])?;
+            Ok((
+                crate::dict::SectionChunk::new(e.first_run, e.key, e.body_start),
+                body,
             ))
         })
         .collect::<Result<Vec<_>, FileError>>()?;
-    Ok(crate::dict::ChunkedSection::from_parts(meta, chunks, None))
+    Ok(crate::dict::ChunkedSection::resident(
+        meta,
+        chunks,
+        cache,
+        section_index,
+    ))
 }
 
 fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, FileError> {
@@ -994,9 +1000,17 @@ fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, Fi
     if dsecs.len() != 4 {
         return Err(FileError::Container("expected 4 dictionary sections"));
     }
+    // The four sections share one (unlimited) cache — residency is identical to
+    // the previous per-chunk `OnceLock`s.
+    let cache = crate::chunk_cache::ChunkCache::unlimited_arc();
     let mut sections = Vec::with_capacity(4);
-    for sec in &dsecs {
-        sections.push(decode_chunked_dict_section(sec, codec)?);
+    for (si, sec) in dsecs.iter().enumerate() {
+        sections.push(decode_chunked_dict_section(
+            sec,
+            codec,
+            cache.clone(),
+            si as u8,
+        )?);
     }
     let arr: [crate::dict::ChunkedSection; 4] = sections
         .try_into()
@@ -1009,20 +1023,27 @@ fn decode_dictionary_container(bytes: &[u8], codec: u8) -> Result<Dictionary, Fi
 /// each tile compressed independently with `codec` so a ranged reader can
 /// fetch and decompress exactly the tiles a query routes to. The directory
 /// itself is uncompressed (it must be readable before any tile).
-fn encode_tiled_section(tiles: &[crate::index::Tile], codec: u8) -> Vec<u8> {
+fn encode_tiled_section(index: &GraphIndex, si: usize, codec: u8) -> Vec<u8> {
+    let tiles = index.tile_sections()[si];
+    let n = tiles.len();
+    // Tile bodies live in the index's chunk cache (keyed by (section, tile));
+    // fetch each as a shared handle. For a locally-built index every tile is
+    // resident, so this is a cheap `Arc` clone under an uncontended lock.
     // Per-tile compression is the bulk of serialization time on a large graph and
     // the tiles are independent, so compress them across all cores. `par_iter`
     // preserves order, so the output is byte-identical to the serial map.
     #[cfg(feature = "parallel")]
     let compressed: Vec<Vec<u8>> = {
         use rayon::prelude::*;
-        tiles
-            .par_iter()
-            .map(|t| compress(codec, t.bytes()))
+        (0..n)
+            .into_par_iter()
+            .map(|ti| compress(codec, &index.tile_body(si, ti)))
             .collect()
     };
     #[cfg(not(feature = "parallel"))]
-    let compressed: Vec<Vec<u8>> = tiles.iter().map(|t| compress(codec, t.bytes())).collect();
+    let compressed: Vec<Vec<u8>> = (0..n)
+        .map(|ti| compress(codec, &index.tile_body(si, ti)))
+        .collect();
     let mut out = Vec::new();
     write_uvarint(&mut out, tiles.len() as u64);
     let mut prev_min = 0u32;
@@ -1043,8 +1064,9 @@ fn encode_tiled_section(tiles: &[crate::index::Tile], codec: u8) -> Vec<u8> {
     // reads it (backward-compatible). A reader honoring the flag reads it from the
     // section tail. On the (impossible for a built tile) parse failure, emit a
     // full range so nothing is ever wrongly pruned.
-    for tile in tiles {
-        let (min_b, max_b, min_c, max_c) = match crate::triples::TripleBlock::parse(tile.bytes()) {
+    for ti in 0..n {
+        let body = index.tile_body(si, ti);
+        let (min_b, max_b, min_c, max_c) = match crate::triples::TripleBlock::parse(&body) {
             Ok(b) => {
                 let z = b.zone();
                 (z.min_b, z.max_b, z.min_c, z.max_c)
@@ -1506,11 +1528,10 @@ pub fn write_file(
 /// sections — not six with three empty, which would be indistinguishable from
 /// an empty graph to a reader that does not check the header mask.
 pub(crate) fn encode_index_container(index: &GraphIndex, codec: u8) -> Vec<u8> {
-    let sections = index.tile_sections();
     let payloads: Vec<Vec<u8>> = index
         .perms()
         .iter()
-        .map(|perm| encode_tiled_section(sections[perm.section_index()], codec))
+        .map(|perm| encode_tiled_section(index, perm.section_index(), codec))
         .collect();
     let refs: Vec<&[u8]> = payloads.iter().map(|p| p.as_slice()).collect();
     encode_container(&refs, CODEC_NONE)
@@ -4183,6 +4204,9 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
     header: &Header,
     want: [bool; 4],
 ) -> Result<Dictionary, FileError> {
+    // One (unlimited) cache shared across the four sections, keyed by
+    // (section_index, chunk_index).
+    let cache = crate::chunk_cache::ChunkCache::unlimited_arc();
     let mut dict_sections: Vec<crate::dict::ChunkedSection> = Vec::with_capacity(4);
     for si in 0..4 {
         if !want[si] {
@@ -4194,6 +4218,8 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
                 },
                 Vec::new(),
                 None,
+                cache.clone(),
+                si as u8,
             ));
             continue;
         }
@@ -4214,7 +4240,7 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
             .collect();
         let chunks: Vec<crate::dict::SectionChunk> = entries
             .into_iter()
-            .map(|e| crate::dict::SectionChunk::remote(e.first_run, e.key, e.body_start))
+            .map(|e| crate::dict::SectionChunk::new(e.first_run, e.key, e.body_start))
             .collect();
         let chunk_reader = reader.clone();
         let codec = header.dict_codec;
@@ -4234,8 +4260,14 @@ fn ranged_chunked_dictionary<R: RangeReader + Send + Sync + 'static>(
             blobs.iter().map(|b| decompress(codec, b).ok()).collect()
         });
         dict_sections.push(
-            crate::dict::ChunkedSection::from_parts(meta, chunks, Some(loader))
-                .with_bulk_loader(bulk),
+            crate::dict::ChunkedSection::from_parts(
+                meta,
+                chunks,
+                Some(loader),
+                cache.clone(),
+                si as u8,
+            )
+            .with_bulk_loader(bulk),
         );
     }
     let dict_arr: [crate::dict::ChunkedSection; 4] = dict_sections
@@ -5087,12 +5119,12 @@ mod tests {
             ib.push((i, i % 7, i % 13));
         }
         let index = ib.build();
-        let tiles = index.tile_sections()[0];
-        assert!(tiles.len() > 3, "tiny budget forces many tiles");
+        let tile_count = index.tile_sections()[0].len();
+        assert!(tile_count > 3, "tiny budget forces many tiles");
 
-        let payload = encode_tiled_section(tiles, CODEC_NONE);
+        let payload = encode_tiled_section(&index, 0, CODEC_NONE);
         let dir = parse_tile_directory(&payload, payload.len() as u64).unwrap();
-        assert_eq!(dir.len(), tiles.len());
+        assert_eq!(dir.len(), tile_count);
         // The trailer sits past the last tile; the old directory parse stops there.
         let trailer_start = dir.iter().map(|e| e.end).max().unwrap();
         assert!(
@@ -5775,8 +5807,20 @@ mod tests {
             "separator payload is not smaller"
         );
 
-        let sec_s = decode_chunked_dict_section(&sep_payload, CODEC_NONE).unwrap();
-        let sec_v = decode_chunked_dict_section(&ver_payload, CODEC_NONE).unwrap();
+        let sec_s = decode_chunked_dict_section(
+            &sep_payload,
+            CODEC_NONE,
+            crate::chunk_cache::ChunkCache::unlimited_arc(),
+            0,
+        )
+        .unwrap();
+        let sec_v = decode_chunked_dict_section(
+            &ver_payload,
+            CODEC_NONE,
+            crate::chunk_cache::ChunkCache::unlimited_arc(),
+            0,
+        )
+        .unwrap();
 
         // 1. every present term → the same, correct id
         for (i, t) in terms.iter().enumerate() {
@@ -5913,8 +5957,20 @@ mod tests {
                     prop_assert!(es[i].key > es[i - 1].key);
                 }
 
-                let sec_s = decode_chunked_dict_section(&sep, CODEC_NONE).unwrap();
-                let sec_v = decode_chunked_dict_section(&ver, CODEC_NONE).unwrap();
+                let sec_s = decode_chunked_dict_section(
+                    &sep,
+                    CODEC_NONE,
+                    crate::chunk_cache::ChunkCache::unlimited_arc(),
+                    0,
+                )
+                .unwrap();
+                let sec_v = decode_chunked_dict_section(
+                    &ver,
+                    CODEC_NONE,
+                    crate::chunk_cache::ChunkCache::unlimited_arc(),
+                    0,
+                )
+                .unwrap();
 
                 for (i, t) in terms.iter().enumerate() {
                     prop_assert_eq!(sec_s.id(t), Some(i as u32 + 1));

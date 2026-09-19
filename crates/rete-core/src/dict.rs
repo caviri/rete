@@ -5,8 +5,9 @@
 //! in runs of `R`; each run starts with a full term and front-codes the rest.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::Arc;
 
+use crate::chunk_cache::{CacheEntry, ChunkCache};
 use crate::varint::{read_uvarint, write_uvarint};
 
 /// Default restart interval: a full term every `R` entries.
@@ -289,57 +290,20 @@ pub struct SectionChunk {
     /// Unused (empty) for the single local chunk.
     key: Vec<u8>,
     body_start: u64,
-    data: OnceLock<Vec<u8>>,
-    /// This chunk's per-run byte offsets, **relative to its own decompressed
-    /// body** — the chunk-local stand-in for the section-wide restart table.
-    /// Derived by scanning the body once on first lookup and cached, so a
-    /// remote open never materializes the section's millions of restart
-    /// offsets (a 50 M-term section's table is ~24 MiB — an iOS-Safari OOM).
-    runs: OnceLock<Vec<usize>>,
 }
 
 impl SectionChunk {
-    /// A remote chunk descriptor (data faults in through the loader). `key` is
-    /// the routing separator, **not a term** — see the `key` field.
-    pub fn remote(first_run: usize, key: Vec<u8>, body_start: u64) -> Self {
+    /// A chunk descriptor: routing metadata only. The decompressed body (and
+    /// its derived run-offset table) lives in the section's [`ChunkCache`],
+    /// keyed by `(section_index, chunk_index)`, faulted in on first touch and
+    /// evictable — not held here. `key` is the routing separator, **not a
+    /// term** (see the `key` field).
+    pub fn new(first_run: usize, key: Vec<u8>, body_start: u64) -> Self {
         SectionChunk {
             first_run,
             key,
             body_start,
-            data: OnceLock::new(),
-            runs: OnceLock::new(),
         }
-    }
-
-    /// A resident chunk (data already decoded). `key` is the routing separator,
-    /// **not a term** — see the `key` field.
-    pub fn resident(first_run: usize, key: Vec<u8>, body_start: u64, data: Vec<u8>) -> Self {
-        let cell = OnceLock::new();
-        let _ = cell.set(data);
-        SectionChunk {
-            first_run,
-            key,
-            body_start,
-            data: cell,
-            runs: OnceLock::new(),
-        }
-    }
-
-    /// The byte offset (into `data`) of each run in this chunk, computed once by
-    /// scanning the decompressed body and cached. `data` must be this chunk's
-    /// body. Offset 0 is the chunk's first run (chunks are run-aligned); every
-    /// `restart_interval` terms starts the next run. An EMPTY body (the
-    /// transient-fetch-failure sentinel — never a real chunk) is not cached, or
-    /// a failed chunk's empty offset table would outlive the retryable data.
-    fn run_offsets(&self, data: &[u8], restart_interval: usize) -> &[usize] {
-        if let Some(r) = self.runs.get() {
-            return r;
-        }
-        if data.is_empty() {
-            return &[];
-        }
-        self.runs
-            .get_or_init(|| chunk_run_offsets(data, restart_interval))
     }
 }
 
@@ -425,43 +389,52 @@ pub struct ChunkedSection {
     loader: Option<ChunkLoader>,
     bulk: Option<ChunkBulkLoader>,
     failed: AtomicBool,
+    /// Decompressed chunk bodies (and their derived run tables) live here, keyed
+    /// by `(section_index, chunk_index)`, faulted in on first touch and
+    /// evictable. Shared across a [`Dictionary`]'s four sections. Phase 0 caps
+    /// it at unlimited, so residency is identical to the old per-chunk
+    /// `OnceLock`s.
+    cache: Arc<ChunkCache>,
+    /// This section's discriminant in the shared cache's key space (0 shared,
+    /// 1 subject-only, 2 object-only, 3 predicates).
+    section_index: u8,
 }
 
 impl ChunkedSection {
     /// A local section: the whole serialized section (header + body) as one
-    /// pre-set chunk at coordinate 0, so the absolute restart offsets index it
+    /// resident chunk at coordinate 0, so the absolute restart offsets index it
     /// directly. Malformed bytes degrade to an empty section (no panics on
-    /// untrusted files), matching the previous reader behavior.
-    pub fn local(section_bytes: Vec<u8>) -> Self {
+    /// untrusted files), matching the previous reader behavior. The body is
+    /// stored in `cache` at `(section_index, 0)` (unlimited cap ⇒ resident for
+    /// the section's lifetime, exactly as before).
+    pub fn local(section_bytes: Vec<u8>, cache: Arc<ChunkCache>, section_index: u8) -> Self {
         let meta = parse_meta(&section_bytes).unwrap_or(SectionMeta {
             term_count: 0,
             restart_interval: 1,
             restart_offsets: Vec::new(),
         });
-        let data = OnceLock::new();
-        let _ = data.set(section_bytes);
+        cache.insert((section_index, 0), Arc::from(section_bytes));
         ChunkedSection {
             meta,
-            chunks: vec![SectionChunk {
-                first_run: 0,
-                key: Vec::new(),
-                body_start: 0,
-                data,
-                runs: OnceLock::new(),
-            }],
+            chunks: vec![SectionChunk::new(0, Vec::new(), 0)],
             loader: None,
             bulk: None,
             failed: AtomicBool::new(false),
+            cache,
+            section_index,
         }
     }
 
     /// A section from parsed parts: metadata + chunk list, with an optional
     /// loader for non-resident chunks (the remote lazy-open path) — resident
-    /// chunk lists (a locally-decoded chunked section) pass `None`.
+    /// chunk lists (a locally-decoded chunked section) supply their bodies
+    /// through `resident` instead.
     pub fn from_parts(
         meta: SectionMeta,
         chunks: Vec<SectionChunk>,
         loader: Option<ChunkLoader>,
+        cache: Arc<ChunkCache>,
+        section_index: u8,
     ) -> Self {
         ChunkedSection {
             meta,
@@ -469,6 +442,36 @@ impl ChunkedSection {
             loader,
             bulk: None,
             failed: AtomicBool::new(false),
+            cache,
+            section_index,
+        }
+    }
+
+    /// A section whose chunk bodies are already decoded (the local chunked-file
+    /// open path): the descriptors and their bodies arrive together and the
+    /// bodies are seeded into the cache. No loader — every chunk is resident.
+    pub fn resident(
+        meta: SectionMeta,
+        chunks: Vec<(SectionChunk, Vec<u8>)>,
+        cache: Arc<ChunkCache>,
+        section_index: u8,
+    ) -> Self {
+        let descriptors = chunks
+            .into_iter()
+            .enumerate()
+            .map(|(ci, (chunk, body))| {
+                cache.insert((section_index, ci as u32), Arc::from(body));
+                chunk
+            })
+            .collect();
+        ChunkedSection {
+            meta,
+            chunks: descriptors,
+            loader: None,
+            bulk: None,
+            failed: AtomicBool::new(false),
+            cache,
+            section_index,
         }
     }
 
@@ -500,7 +503,9 @@ impl ChunkedSection {
         let missing: Vec<usize> = cis
             .iter()
             .copied()
-            .filter(|&ci| self.chunks.get(ci).is_some_and(|c| c.data.get().is_none()))
+            .filter(|&ci| {
+                ci < self.chunks.len() && !self.cache.contains((self.section_index, ci as u32))
+            })
             .collect();
         if missing.len() < 2 {
             return;
@@ -508,7 +513,8 @@ impl ChunkedSection {
         if let Some(bodies) = bulk(&missing) {
             if bodies.len() == missing.len() {
                 for (&ci, body) in missing.iter().zip(bodies) {
-                    let _ = self.chunks[ci].data.set(body);
+                    self.cache
+                        .insert((self.section_index, ci as u32), Arc::from(body));
                 }
             }
         }
@@ -535,23 +541,30 @@ impl ChunkedSection {
         self.failed.store(false, Ordering::Relaxed);
     }
 
-    /// A FAILED fetch records the failure and returns an empty slice WITHOUT
-    /// caching it, so a later resolution retries the chunk — a transient
-    /// network error must not permanently poison a resident session.
-    fn chunk_data(&self, ci: usize) -> &[u8] {
-        let cell = &self.chunks[ci].data;
-        if let Some(d) = cell.get() {
-            return d;
+    /// The cache entry for chunk `ci`, faulting its body in through the loader
+    /// on a miss. Returns an owned [`CacheEntry`] handle (an `Arc`) the caller
+    /// holds for the duration of one decode — valid even if a later eviction
+    /// drops the map slot (the handout invariant).
+    ///
+    /// A FAILED fetch records the failure and caches nothing (returns `None`),
+    /// so a later resolution retries the chunk — a transient network error must
+    /// not permanently poison a resident session. A local section with no
+    /// loader returns an empty body for a missing chunk, matching the old
+    /// `get_or_init(Vec::new)` behavior.
+    fn chunk_entry(&self, ci: usize) -> Option<Arc<CacheEntry>> {
+        let key = (self.section_index, ci as u32);
+        if let Some(e) = self.cache.get(key) {
+            return Some(e);
         }
         match &self.loader {
             Some(load) => match load(ci) {
-                Some(bytes) => cell.get_or_init(|| bytes),
+                Some(bytes) => Some(self.cache.insert(key, Arc::from(bytes))),
                 None => {
                     self.failed.store(true, Ordering::Relaxed);
-                    &[]
+                    None
                 }
             },
-            None => cell.get_or_init(Vec::new),
+            None => Some(self.cache.insert(key, Arc::from(Vec::new()))),
         }
     }
 
@@ -573,15 +586,22 @@ impl ChunkedSection {
         self.chunk_of_run(run)
     }
 
-    /// The byte offset (into chunk `ci`'s decompressed body `bytes`) of `run`.
+    /// The byte offset (into chunk `ci`'s decompressed body) of `run`.
     /// Full/local sections use the section-wide restart table (unchanged
     /// behavior); a *lite* remote section (empty `restart_offsets`) derives it
-    /// from the chunk itself, so the open never holds the whole table.
-    fn run_off_in_chunk(&self, ci: usize, run: usize, bytes: &[u8], ri: usize) -> Option<usize> {
+    /// from the chunk itself — that per-chunk run table is cached inside the
+    /// `entry` (evicted with the body), so the open never holds the whole table.
+    fn run_off_in_chunk(
+        &self,
+        ci: usize,
+        run: usize,
+        entry: &CacheEntry,
+        ri: usize,
+    ) -> Option<usize> {
         let chunk = &self.chunks[ci];
         if self.meta.restart_offsets.is_empty() {
-            chunk
-                .run_offsets(bytes, ri)
+            entry
+                .runs(|b| chunk_run_offsets(b, ri))
                 .get(run.checked_sub(chunk.first_run)?)
                 .copied()
         } else {
@@ -595,13 +615,13 @@ impl ChunkedSection {
 
     /// One past the last run index held by chunk `ci` (its run range is
     /// `[first_run, run_end)`).
-    fn run_end_of_chunk(&self, ci: usize, bytes: &[u8], ri: usize) -> usize {
+    fn run_end_of_chunk(&self, ci: usize, entry: &CacheEntry, ri: usize) -> usize {
         if let Some(next) = self.chunks.get(ci + 1) {
             return next.first_run;
         }
         let chunk = &self.chunks[ci];
         if self.meta.restart_offsets.is_empty() {
-            chunk.first_run + chunk.run_offsets(bytes, ri).len()
+            chunk.first_run + entry.runs(|b| chunk_run_offsets(b, ri)).len()
         } else {
             self.meta.restart_offsets.len()
         }
@@ -626,8 +646,9 @@ impl ChunkedSection {
         let run = idx / ri;
         let steps = idx % ri;
         let ci = self.chunk_of_run(run)?;
-        let bytes = self.chunk_data(ci);
-        let off = self.run_off_in_chunk(ci, run, bytes, ri)?;
+        let entry = self.chunk_entry(ci)?;
+        let bytes: &[u8] = entry.body();
+        let off = self.run_off_in_chunk(ci, run, &entry, ri)?;
         let mut buf = Vec::new();
         let mut pos = run_entry_into(bytes, off, &mut buf)?;
         for _ in 0..steps {
@@ -666,16 +687,17 @@ impl ChunkedSection {
             i.checked_sub(1)?
         };
         let first_run = self.chunks[ci].first_run;
-        let bytes = self.chunk_data(ci);
+        let entry = self.chunk_entry(ci)?;
+        let bytes: &[u8] = entry.body();
 
         // Binary search this chunk's runs by their first (full) term.
-        let run_end = self.run_end_of_chunk(ci, bytes, ri);
+        let run_end = self.run_end_of_chunk(ci, &entry, ri);
         let mut buf = Vec::new();
         let mut lo = first_run;
         let mut hi = run_end;
         while lo < hi {
             let mid = (lo + hi) / 2;
-            let off = self.run_off_in_chunk(ci, mid, bytes, ri)?;
+            let off = self.run_off_in_chunk(ci, mid, &entry, ri)?;
             run_entry_into(bytes, off, &mut buf)?;
             if buf.as_slice() <= term.as_bytes() {
                 lo = mid + 1;
@@ -691,7 +713,7 @@ impl ChunkedSection {
             return None;
         }
         let run = lo - 1;
-        let off = self.run_off_in_chunk(ci, run, bytes, ri)?;
+        let off = self.run_off_in_chunk(ci, run, &entry, ri)?;
         let mut pos = run_entry_into(bytes, off, &mut buf)?;
         let base_id = (run * ri) as u32 + 1;
         // saturating_sub: corrupt metadata must not underflow-panic.
@@ -719,13 +741,15 @@ impl ChunkedSection {
     /// re-assembles them (header re-encoded from the metadata).
     pub fn raw_section_bytes(&self) -> Vec<u8> {
         if self.chunks.len() == 1 && self.chunks[0].body_start == 0 {
-            if let Some(bytes) = self.chunks[0].data.get() {
-                return bytes.clone();
+            if let Some(entry) = self.cache.get((self.section_index, 0)) {
+                return entry.body().to_vec();
             }
         }
         let mut out = encode_section_header(&self.meta);
         for ci in 0..self.chunks.len() {
-            out.extend_from_slice(self.chunk_data(ci));
+            if let Some(entry) = self.chunk_entry(ci) {
+                out.extend_from_slice(entry.body());
+            }
         }
         out
     }

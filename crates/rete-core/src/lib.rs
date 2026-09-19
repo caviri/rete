@@ -28,6 +28,8 @@ pub mod card_input;
 #[doc(hidden)]
 pub mod card_queries;
 #[doc(hidden)]
+pub mod chunk_cache;
+#[doc(hidden)]
 pub mod dict;
 #[doc(hidden)]
 pub mod dictionary;
