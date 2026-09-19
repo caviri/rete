@@ -391,8 +391,21 @@ pub(crate) fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
 pub(crate) fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {
     match codec {
         CODEC_NONE => Ok(bytes.to_vec()),
-        // Pure-Rust decode so any target (including wasm) can read compressed
-        // files, regardless of whether the C encoder was compiled in.
+        // Native (the `compression` feature — always on for the CLI, off for
+        // wasm) decodes through the C `zstd` library, the same one
+        // [`compress`] encodes with. It is roughly 2× the pure-Rust decoder
+        // and speeds every read path, not just export; the multi-pass tight
+        // budget of a bounded export (`--memory-budget-mb`) re-decodes the
+        // dictionary, so a faster decoder is the single largest lever there.
+        // A valid zstd frame decodes to the same bytes under any conformant
+        // decoder, so the output is byte-for-byte what `ruzstd` produced.
+        #[cfg(feature = "compression")]
+        CODEC_ZSTD => zstd::decode_all(bytes).map_err(FileError::Decompress),
+        // Pure-Rust decode so a target WITHOUT a C toolchain (wasm, or a
+        // `--no-default-features` build) can still read compressed files.
+        // This is the ONLY decode path wasm ever compiles — the C `zstd`
+        // crate is gated behind `compression`, which wasm never enables.
+        #[cfg(not(feature = "compression"))]
         CODEC_ZSTD => {
             use std::io::Read;
             let mut dec = ruzstd::StreamingDecoder::new(bytes)
