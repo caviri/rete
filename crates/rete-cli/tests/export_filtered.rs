@@ -305,3 +305,69 @@ fn in_memory_and_ranged_dumps_are_byte_identical() {
         );
     }
 }
+
+/// The same byte-identity guarantee, but on a dictionary that spans **many
+/// chunks** — the case the chunk-ordered windowed resolver (bounded-export
+/// phase 1) actually restructures. The small `QUADS` fixture fits every section
+/// in one chunk, so it never crosses a chunk boundary within a window; this
+/// builds a file whose subject and object sections each run to several ~64 KiB
+/// chunks (thousands of distinct terms, plus one multi-KiB literal that forces
+/// a run/chunk boundary around a large term), then asserts the ranged
+/// (windowed) dump is byte-for-byte the eager `--in-memory` dump — same order,
+/// same bytes — for the full dump and a predicate slice. If the window's
+/// chunk-order grouping or its scan-order emission ever changed a byte, these
+/// diverge.
+#[test]
+fn windowed_multichunk_dump_matches_eager() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("big.nt");
+    let out = dir.path().join("big.rete");
+    let mut nt = String::new();
+    // 4000 triples with distinct subjects and distinct ~70-byte object literals
+    // -> the subject and object dictionary sections each exceed the 64 KiB
+    // chunk budget and are cut into several chunks.
+    for i in 0..4000u32 {
+        nt.push_str(&format!(
+            "<http://example.org/subject/{i:07}> <http://example.org/p/{}> \
+             \"object literal number {i:07} with padding text to widen the term\" .\n",
+            i % 8
+        ));
+    }
+    // A multi-KiB literal forces a run/chunk boundary around a large term, the
+    // window edge case the reorder must not disturb.
+    nt.push_str(&format!(
+        "<http://example.org/subject/big> <http://example.org/p/big> \"{}\" .\n",
+        "Z".repeat(8000)
+    ));
+    std::fs::write(&src, &nt).unwrap();
+    common::build(&src, &out, &["--no-pyramid"]);
+
+    let raw = |args: &[&str]| -> Vec<u8> {
+        let o = common::rete()
+            .arg("export")
+            .arg(&out)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success(),
+            "export {args:?} failed: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        o.stdout
+    };
+    for slice in [
+        &["--format", "nq"][..],
+        &["--format", "nq", "--predicate", "http://example.org/p/3"][..],
+    ] {
+        let ranged = raw(slice);
+        assert!(!ranged.is_empty(), "expected rows for {slice:?}");
+        let mut mem = slice.to_vec();
+        mem.push("--in-memory");
+        let in_memory = raw(&mem);
+        assert_eq!(
+            ranged, in_memory,
+            "windowed multi-chunk dump differs for {slice:?}"
+        );
+    }
+}

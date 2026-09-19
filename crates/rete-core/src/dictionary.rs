@@ -111,6 +111,19 @@ impl DictionaryBuilder {
     }
 }
 
+/// Reusable per-window scratch for [`Dictionary::resolve_window`]: one job list
+/// per section (`(local_id, out_slot)` pairs) and the resolved-term output.
+/// Held across windows by the export loop so a window allocates only when a
+/// buffer must grow.
+#[derive(Default)]
+pub struct WindowResolver {
+    /// Jobs per dictionary section (shared, subject-only, object-only,
+    /// predicates): each `(section-local id, output slot)`.
+    jobs: [Vec<(u32, usize)>; 4],
+    /// Resolved terms, indexed by output slot `row * 3 + {0:s, 1:p, 2:o}`.
+    out: Vec<Option<String>>,
+}
+
 /// A read-only dictionary mapping terms ↔ role-specific IDs.
 ///
 /// Holds the four sections as [`ChunkedSection`]s — local files keep each
@@ -431,6 +444,74 @@ impl Dictionary {
             self.predicate_id(p)?,
             self.object_id(o)?,
         ))
+    }
+
+    /// Resolve a window of `(subject_id, predicate_id, object_id)` triples in
+    /// **chunk order** and emit each fully-resolved row through `emit` in the
+    /// window's **original order**.
+    ///
+    /// This is the batch twin of resolving each row with
+    /// [`subject_term`](Self::subject_term) /
+    /// [`predicate_term`](Self::predicate_term) /
+    /// [`object_term`](Self::object_term) and emitting on `(Some, Some, Some)`
+    /// — the exact thing it replaces inside `Rete::dump_filtered_each`. A row is
+    /// emitted only when all three of its terms resolve, and the bytes of each
+    /// term are identical to the per-row path, so the dump stays
+    /// byte-for-byte the same.
+    ///
+    /// What changes is *how* the terms are decoded. Each row contributes three
+    /// jobs to the section that owns its id (shared/subject-only for the
+    /// subject, predicates for the predicate, shared/object-only for the
+    /// object); each section then resolves its jobs in one chunk-ordered,
+    /// single-pass walk ([`ChunkedSection::resolve_into`]). A window whose
+    /// object ids scatter across the object-only section therefore touches each
+    /// chunk once — one faulted body, one forward walk — instead of the
+    /// scattered re-faults and per-row re-walks the row-order path performed.
+    ///
+    /// `w` carries the per-window scratch buffers so back-to-back windows cost
+    /// no allocation beyond growth.
+    ///
+    /// [`ChunkedSection::resolve_into`]: crate::dict::ChunkedSection::resolve_into
+    pub fn resolve_window(
+        &self,
+        ids: &[(SubjectId, PredicateId, ObjectId)],
+        w: &mut WindowResolver,
+        mut emit: impl FnMut(&str, &str, &str),
+    ) {
+        for j in &mut w.jobs {
+            j.clear();
+        }
+        w.out.clear();
+        w.out.resize(ids.len() * 3, None);
+        for (i, &(s, p, o)) in ids.iter().enumerate() {
+            // Subject role: shared (section 0) if `id <= S`, else subject-only
+            // (section 1) with the shared block subtracted — the exact routing
+            // of `subject_term`.
+            if s <= self.shared_len {
+                w.jobs[0].push((s, i * 3));
+            } else {
+                w.jobs[1].push((s - self.shared_len, i * 3));
+            }
+            // Predicate role: its own section (3).
+            w.jobs[3].push((p, i * 3 + 1));
+            // Object role: shared (section 0) if `id <= S`, else object-only
+            // (section 2) — the exact routing of `object_term`.
+            if o <= self.shared_len {
+                w.jobs[0].push((o, i * 3 + 2));
+            } else {
+                w.jobs[2].push((o - self.shared_len, i * 3 + 2));
+            }
+        }
+        for si in 0..4 {
+            self.sections[si].resolve_into(&mut w.jobs[si], &mut w.out);
+        }
+        for i in 0..ids.len() {
+            if let (Some(s), Some(p), Some(o)) =
+                (&w.out[i * 3], &w.out[i * 3 + 1], &w.out[i * 3 + 2])
+            {
+                emit(s, p, o);
+            }
+        }
     }
 
     /// The four serialized sections (header + body each), for the file writer.

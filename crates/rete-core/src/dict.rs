@@ -657,6 +657,137 @@ impl ChunkedSection {
         Some(String::from_utf8_lossy(&buf).into_owned())
     }
 
+    /// Resolve many ids of THIS section in one chunk-ordered, single-pass walk,
+    /// filling `out[slot]` for each `(id, slot)` in `jobs`.
+    ///
+    /// `jobs` is sorted in place by id. Because chunks and runs are *contiguous
+    /// ascending* id ranges, sorting by id also groups the jobs by chunk and by
+    /// run — so each chunk is faulted **once** and each run walked **once**
+    /// forward, picking off every requested id as the decode passes its
+    /// position. This is where the redundant per-id re-walk that
+    /// [`term`](Self::term) does (decode from the run start for *every* id)
+    /// disappears: within a run the walk advances monotonically across all the
+    /// window's ids that live there.
+    ///
+    /// For any id this fills `out[slot]` with exactly what [`term`](Self::term)
+    /// returns for that id (the same decoded bytes, the same
+    /// `String::from_utf8_lossy`), and leaves `out[slot]` untouched where
+    /// `term(id)` is `None` — an absent/out-of-range id, a failed chunk fault,
+    /// or malformed bytes. Duplicate ids each fill their own slot. It is the
+    /// batch twin of `term`, used by the export window
+    /// ([`Dictionary::resolve_window`](crate::dictionary::Dictionary::resolve_window))
+    /// so a window's scattered object ids touch each chunk once instead of
+    /// re-faulting and re-walking per row.
+    ///
+    /// [`crate::dictionary::Dictionary::resolve_window`]: the sole caller.
+    pub fn resolve_into(&self, jobs: &mut [(u32, usize)], out: &mut [Option<String>]) {
+        let ri = self.meta.restart_interval as usize;
+        if ri == 0 {
+            return;
+        }
+        let tc = self.meta.term_count;
+        // Sort by id: chunks and runs are contiguous ascending id ranges, so
+        // this groups jobs by chunk and by run in one pass.
+        jobs.sort_unstable_by_key(|&(id, _)| id);
+        let mut i = 0;
+        while i < jobs.len() {
+            let id0 = jobs[i].0;
+            // Absent / out of range: `term(id)` is None. Leave the slot None.
+            if id0 == ABSENT || id0 > tc {
+                i += 1;
+                continue;
+            }
+            let Some(ci) = self.chunk_of_run((id0 - 1) as usize / ri) else {
+                i += 1;
+                continue;
+            };
+            // Fault the chunk once. A failed fault -> `term(id)` is None for
+            // every id this chunk holds; advance past them, slots left None.
+            let Some(entry) = self.chunk_entry(ci) else {
+                while i < jobs.len() {
+                    let id = jobs[i].0;
+                    if id == ABSENT || id > tc {
+                        i += 1;
+                        continue;
+                    }
+                    if self.chunk_of_run((id - 1) as usize / ri) != Some(ci) {
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            };
+            let bytes: &[u8] = entry.body();
+            // Walk this chunk's runs, one forward pass per run.
+            while i < jobs.len() {
+                let id = jobs[i].0;
+                if id == ABSENT || id > tc {
+                    i += 1;
+                    continue;
+                }
+                let run = (id - 1) as usize / ri;
+                if self.chunk_of_run(run) != Some(ci) {
+                    break; // first id of the next chunk
+                }
+                // Decode this run's restart entry. Any failure here means
+                // `term(id)` is None for the whole run — skip every job in it.
+                let run_start = self.run_off_in_chunk(ci, run, &entry, ri).and_then(|off| {
+                    let mut buf = Vec::new();
+                    run_entry_into(bytes, off, &mut buf).map(|pos| (buf, pos))
+                });
+                let Some((mut buf, mut pos)) = run_start else {
+                    while i < jobs.len() {
+                        let id = jobs[i].0;
+                        if id == ABSENT || id > tc {
+                            i += 1;
+                            continue;
+                        }
+                        if (id - 1) as usize / ri != run {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                };
+                // `buf` holds the run's term #`cur_step`; advance monotonically.
+                let mut cur_step = 0usize;
+                let mut broken = false;
+                while i < jobs.len() {
+                    let id = jobs[i].0;
+                    if id == ABSENT || id > tc {
+                        i += 1;
+                        continue;
+                    }
+                    if (id - 1) as usize / ri != run {
+                        break; // next run (or chunk)
+                    }
+                    let steps = (id - 1) as usize % ri;
+                    if !broken {
+                        while cur_step < steps {
+                            match entry_into(bytes, pos, &mut buf) {
+                                Some(next) => {
+                                    pos = next;
+                                    cur_step += 1;
+                                }
+                                None => {
+                                    // Malformed past this point: `term(id)` is
+                                    // None here and for every larger id in the
+                                    // run (they all decode through this entry).
+                                    broken = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !broken && cur_step == steps {
+                            out[jobs[i].1] = Some(String::from_utf8_lossy(&buf).into_owned());
+                        }
+                    }
+                    i += 1;
+                }
+            }
+        }
+    }
+
     /// Resolve `term` to its ID. Chunk-level binary search runs on the (local)
     /// chunk directory, so this also costs at most one chunk fault.
     pub fn id(&self, term: &str) -> Option<u32> {
@@ -811,6 +942,117 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a *lite* (empty section-wide restart table), genuinely multi-chunk
+    /// [`ChunkedSection`] from `terms`: the exact shape a ranged open produces,
+    /// so `resolve_into`'s per-chunk run-table branch and its cross-chunk /
+    /// cross-run walk are all exercised. `runs_per_chunk` chops the runs into
+    /// several chunks regardless of size, so a tiny fixture still spans many.
+    fn lite_multichunk(terms: &[&str], ri: u32, runs_per_chunk: usize) -> (ChunkedSection, u32) {
+        let mut b = DictSectionBuilder::new().with_restart_interval(ri);
+        for t in terms {
+            b.push(*t);
+        }
+        let raw = b.build();
+        let full_meta = parse_meta(&raw).unwrap();
+        let n_runs = full_meta.restart_offsets.len();
+        let mut chunks = Vec::new();
+        let mut bodies: Vec<Vec<u8>> = Vec::new();
+        let mut r = 0;
+        while r < n_runs {
+            let first_run = r;
+            let start = full_meta.restart_offsets[r] as usize;
+            let r2 = (r + runs_per_chunk).min(n_runs);
+            let end = if r2 < n_runs {
+                full_meta.restart_offsets[r2] as usize
+            } else {
+                raw.len()
+            };
+            chunks.push(SectionChunk::new(first_run, Vec::new(), start as u64));
+            bodies.push(raw[start..end].to_vec());
+            r = r2;
+        }
+        assert!(chunks.len() > 1, "fixture must be multi-chunk");
+        // Lite: no section-wide restart table -> run offsets come from each
+        // decoded chunk body, cached in its cache entry (the ranged path).
+        let lite_meta = SectionMeta {
+            term_count: full_meta.term_count,
+            restart_interval: full_meta.restart_interval,
+            restart_offsets: Vec::new(),
+        };
+        let loader: ChunkLoader = Box::new(move |ci| bodies.get(ci).cloned());
+        let sec = ChunkedSection::from_parts(
+            lite_meta,
+            chunks,
+            Some(loader),
+            ChunkCache::unlimited_arc(),
+            0,
+        );
+        (sec, full_meta.term_count)
+    }
+
+    /// The windowed batch resolver must fill exactly what a per-id `term()`
+    /// would, for a scrambled, duplicated, out-of-range id set spread across
+    /// many chunks and runs — the byte-identity guarantee `dump_filtered_each`
+    /// rests on (phase 1). Also cross-checked against the ground-truth
+    /// `section_term` decoder.
+    #[test]
+    fn resolve_into_matches_term_across_chunks_and_runs() {
+        // Shared prefixes (front-coding), a long literal (a run that dwarfs its
+        // neighbors), blank nodes — 240 distinct terms.
+        let owned: Vec<String> = (0..240)
+            .map(|i| match i % 4 {
+                0 => format!("<http://example.org/entity/{i:05}>"),
+                1 => format!("<http://example.org/entity/{i:05}/sub/leaf>"),
+                2 => format!("\"literal value {} padded {}\"", i, "x".repeat(i % 50)),
+                _ => format!("_:b{i:05}"),
+            })
+            .collect();
+        let terms: Vec<&str> = owned.iter().map(String::as_str).collect();
+
+        for (ri, rpc) in [(1u32, 5usize), (4, 3), (16, 2)] {
+            let (sec, count) = lite_multichunk(&terms, ri, rpc);
+            let raw = {
+                let mut b = DictSectionBuilder::new().with_restart_interval(ri);
+                for t in &terms {
+                    b.push(*t);
+                }
+                b.build()
+            };
+            let full_meta = parse_meta(&raw).unwrap();
+
+            // A scrambled probe set: every id once, a run of duplicates, some
+            // out-of-range ids (0 and past the end) that must stay `None`.
+            let mut probe: Vec<u32> = (1..=count).collect();
+            probe.extend([1, 1, count, count, ABSENT, count + 3, count + 100]);
+            // Deterministic shuffle so chunk order != probe order.
+            let mut state = 0xDEAD_BEEF_1234_5678u64;
+            for k in (1..probe.len()).rev() {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                probe.swap(k, (state % (k as u64 + 1)) as usize);
+            }
+
+            let mut jobs: Vec<(u32, usize)> = probe.iter().map(|&id| (id, 0)).collect();
+            for (slot, j) in jobs.iter_mut().enumerate() {
+                j.1 = slot;
+            }
+            let mut out: Vec<Option<String>> = vec![None; probe.len()];
+            sec.resolve_into(&mut jobs, &mut out);
+
+            for (slot, &id) in probe.iter().enumerate() {
+                let via_term = sec.term(id);
+                assert_eq!(
+                    out[slot], via_term,
+                    "resolve_into(id={id}) != term(id) at ri={ri} rpc={rpc}"
+                );
+                // Ground truth for in-range ids.
+                let truth = section_term(&raw, &full_meta, id);
+                assert_eq!(out[slot], truth, "resolve_into(id={id}) != section_term");
+            }
+        }
+    }
 
     fn sample() -> Vec<String> {
         // Deliberately unsorted, with shared prefixes and a duplicate.
