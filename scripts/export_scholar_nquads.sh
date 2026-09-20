@@ -1052,3 +1052,6 @@ say "done: ok=$ok skipped=$skipped failed=$failed (of which unrepairable-IRI=$un
 [ "$NO_UPLOAD" = "1" ] && say "NOTE: --no-upload -- nothing was published. $WORK/not-uploaded.txt lists every 'done' row still only on local disk; the publisher must run with --recheck."
 [ "$failed" -eq 0 ]
 exit $?
+
+# (ci-filter proof: a comment-only change to this file, to see which jobs it now
+# triggers. This branch is not for merging.)
