@@ -192,9 +192,17 @@ warning: 5 statement(s) carry an invalid IRI (5 IRI occurrence(s)).
                   e.g. <http://example.org/a b>
 ```
 
-Five classes, from the `IRIREF` production
-(`'<' ([^#x00-#x20<>"{}|^`\] | UCHAR)* '>'`) plus RFC 3987, which the same
-grammar requires the content to satisfy as an **absolute** IRI:
+#### Validity is decided by a parser, not by a list
+
+Two documents apply: the `IRIREF` production
+(`'<' ([^#x00-#x20<>"{}|^`\] | UCHAR)* '>'`), which is a character set, and RFC
+3987, which the same grammar requires the content to satisfy as an **absolute**
+IRI. The first is settled by a scan. The second is settled by **`oxiri`** — the
+crate Oxigraph's own N-Triples reader validates with — so rete's answer to "will
+a strict loader take this" is the loader's answer, not an imitation of it.
+
+The classes below do not decide validity. They answer the *other* question:
+**can this be repaired, and how.**
 
 | class | example | repairable by escaping |
 |---|---|---|
@@ -203,12 +211,29 @@ grammar requires the content to satisfy as an **absolute** IRI:
 | `[` / `]` outside an IP-literal host | `<http://ex/a[b]>` | yes |
 | more than one `#` | `<http://ex/c#d#e>` | yes |
 | `%` not followed by two hex digits | `<http://ex/%x>` | yes |
+| rejected by RFC 3987, no class recognises it | `<https://::1>` | **no** |
 
-What is **not** judged: non-ASCII (RFC 3987 `ucschar` is legal — `<http://ex/café>`
-is a valid IRI and is never touched), `UCHAR` escapes (`é`), and scheme
-semantics (`<nonsense://x>` is well-formed). Flagging something valid would mean
-percent-encoding an IRI that was fine, which is the one failure mode a sanitizer
-must not have.
+That last row is the important one. An IRI the parser rejects that matches none
+of the repair shapes is still **counted** and still **blocks** — it is never
+silently passed. `<https://::1>` is an IPv6 literal in the authority without the
+brackets RFC 3987 requires; it has a scheme, no excluded character, no bracket,
+one `#` and no `%`, so the five repair classes are all blind to it. A dump
+carrying one was published and Oxigraph refused to load it. Since the parser
+decides, a future shape nobody has thought of fails the same way this one now
+does: as an unrepairable defect that stops the export, not as a zero.
+
+What is **not** judged: scheme semantics (`<nonsense://x>` is well-formed and
+accepted), whether the IRI resolves to anything, and normalisation — rete never
+case-folds a scheme or removes a dot segment, because that would change the
+dictionary key. Non-ASCII **is** judged now, by the parser: RFC 3987 `ucschar`
+is legal, so `<http://ex/café>` is valid and is never touched, while the narrow
+sub-ranges 3987 excludes are caught because the loader catches them too.
+
+`UCHAR` escapes are resolved before the parser sees the IRI — `<http://ex/café>`
+denotes `http://ex/café`, and the backslash is N-Triples syntax, not IRI content.
+Skipping that step would flag every escaped dump, and flagging something valid
+means percent-encoding an IRI that was fine, which is the one failure mode a
+sanitizer must not have.
 
 Three flags act on this, and they are separate on purpose:
 
@@ -222,7 +247,23 @@ An IRI with **no scheme** is reported and never rewritten. Escaping cannot
 repair it: resolving it needs a base IRI the `.rete` never recorded. This is the
 class that cost the most in the field — one such line made a bulk loader drop an
 entire ~102,000-line chunk — and the only honest thing a tool can do with it is
-say where it is.
+say where it is. The same holds for an unrecognised defect: rete will not invent
+a repair for something it cannot explain, because `<https://::1>` percent-encoded
+to `<https://%3A%3A1>` would name a different host entirely. Fix those at the
+source.
+
+**Automating on the report.** `--sanitize-iris` prints one line meant to be
+parsed:
+
+```
+--sanitize-iris: totals invalid=11 repairable=11 unrepairable=0 unclassified=0
+```
+
+A publication gate should key on **`unrepairable > 0`**, never on one named
+class. `unrepairable` is the count of occurrences that are still invalid after
+everything the sanitizer could do, and it includes the unclassified bucket by
+construction — which is precisely why a gate written against it does not need
+updating when a new defect shape turns up.
 
 ## Inspecting
 
@@ -481,6 +522,7 @@ one. Deciding to accept that is the exporter's call, which is why it is a flag.
 What it did goes to **stderr** (stdout is the dump), per class:
 
 ```
+--sanitize-iris: totals invalid=5 repairable=5 unrepairable=0 unclassified=0
 --sanitize-iris: percent-encoded 5 IRI occurrence(s). The dump's IRIs are NOT the
                  file's IRIs: it no longer joins against the source graph, and
                  rete → store → rete is no longer the identity.
@@ -489,11 +531,12 @@ What it did goes to **stderr** (stdout is the dump), per class:
                        …
 ```
 
-An IRI with no scheme cannot be repaired by escaping, so it is counted, named,
-and written **verbatim** — the dump is then still not valid N-Quads and the
-summary says exactly that rather than implying a fix it did not make. The
-[triple-store interop](interop.md) page has the measured Oxigraph round-trip for
-all three cases.
+An IRI escaping cannot repair — no scheme, or a defect no class recognises — is
+counted, named, and written **verbatim**. The dump is then still not valid
+N-Quads and the summary says exactly that rather than implying a fix it did not
+make; the `totals` line's `unrepairable` field is the machine-readable form of
+that statement. The [triple-store interop](interop.md) page has the measured
+Oxigraph round-trip for all three cases.
 
 **Filters prune the file; they are not `| grep`.** `--graph` /`--subject` /
 `--predicate` / `--object` become a triple pattern the engine routes: it picks

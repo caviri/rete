@@ -29,6 +29,10 @@ rust-version = "1.87"
 [workspace.dependencies]
 # RDF model + SPARQL, reused rather than reinvented (see docs/SPEC.md §2).
 # `rdf-star` enables quoted triples (`<< s p o >>`) in the parsers and SPARQL.
+# Oxigraph's own RFC 3987 IRI parser -- the crate its N-Triples reader
+# validates with. Already in this tree via `oxrdf`; named here so `rete-core`
+# can call it directly and decide validity the way the reference loader does.
+oxiri = "0.2"
 oxrdf = { version = "0.2", features = ["rdf-star"] }
 oxttl = { version = "0.1", features = ["rdf-star"] }
 oxrdfxml = "0.1"
