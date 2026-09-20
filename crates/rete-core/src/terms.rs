@@ -291,7 +291,7 @@ pub fn unescape_literal(s: &str) -> String {
 /// serializer.
 ///
 /// rete stores a quoted triple in one canonical token, the RDF-star surface
-/// `<<s p o>>` — see [`crate::ingest::take_term`], which accepts both surfaces
+/// `<<s p o>>` — see `ingest::take_term`, which accepts both surfaces
 /// on ingest and canonicalises them to that one. Current RDF 1.2 parsers
 /// (oxttl 0.2 and anything built on it, including the `oxigraph` CLI) do not
 /// read that surface: in N-Triples/N-Quads they **reject** it outright, and in

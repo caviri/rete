@@ -98,7 +98,7 @@ pub(crate) fn canonical_term(term: &str) -> String {
 /// Which **surface** the text writers spell a quoted triple in.
 ///
 /// rete stores exactly one canonical token for a quoted triple, the RDF-star
-/// surface `<<s p o>>`, and [`rete_core::ingest::take_term`] accepts *both*
+/// surface `<<s p o>>`, and `rete_core`'s `ingest::take_term` accepts *both*
 /// surfaces on ingest and canonicalises them to it. That is a storage decision
 /// and it does not change here. This is a **writer** decision: which of the two
 /// spellings a dump carries.
