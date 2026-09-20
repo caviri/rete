@@ -795,13 +795,23 @@ fact, when, with what confidence).</p>
                            :individualCount 5 ;
                            :observedOn "2023-05-01"^^xsd:date .
 </code></pre>
-<p><strong>Ingest &amp; storage.</strong> Quoted triples parse from both <strong>N-Triples-star</strong> and
-<strong>Turtle-star</strong> (<code>rete build data.ttls</code>, <code>rete validate</code>) and are stored as
-ordinary dictionary terms — no format change, no version bump, and an old reader
-stays forward-compatible. A file that contains any quoted triple sets a header
-flag (<code>FLAG_HAS_QUOTED_TRIPLES</code>), so a plain-RDF consumer can tell from the header
-alone, without scanning; <code>rete info</code> shows it. Quoted triples round-trip
-losslessly through <code>rete export</code>, and <code>rete verify</code> covers them.</p>
+<p><strong>Ingest &amp; storage.</strong> Quoted triples parse from <strong>N-Triples-star</strong>,
+<strong>Turtle-star</strong> and their <strong>RDF 1.2</strong> equivalents (<code>rete build data.ttls</code>,
+<code>rete validate</code>) and are stored as ordinary dictionary terms — no format change,
+no version bump, and an old reader stays forward-compatible. A file that
+contains any quoted triple sets a header flag (<code>FLAG_HAS_QUOTED_TRIPLES</code>), so a
+plain-RDF consumer can tell from the header alone, without scanning; <code>rete info</code>
+shows it. Quoted triples round-trip losslessly through <code>rete export</code>, and
+<code>rete verify</code> covers them.</p>
+<p><strong>Input surface.</strong> In Turtle/TriG, <code>&lt;&lt; s p o &gt;&gt;</code> is a quoted triple under
+RDF-star and a <em>reifier</em> under RDF 1.2, so <code>rete build</code> and <code>rete validate</code> take
+<code>--quoted-triple-syntax rdf12|rdf-star</code> (default <code>rdf-star</code>) to say which. Under
+<code>rdf12</code> a reifier expands to <code>_:r rdf:reifies &lt;&lt;( s p o )&gt;&gt;</code> plus a statement
+about <code>_:r</code> — ordinary triples, queried with ordinary SPARQL, no <code>&lt;&lt; &gt;&gt;</code> pattern
+needed. That is the shape to write a query against if your source is RDF 1.2
+reification rather than RDF-star quoting; the two are different data models and
+rete stores whichever one the file actually contains. See
+<a href="cli.html#quoted-triple-syntax-on-input"><code>rete build</code></a>.</p>
 <p><strong>Export surface.</strong> <code>rete export --format nq|ttl|trig</code> writes the ratified
 <strong>RDF 1.2 triple term</strong> <code>&lt;&lt;( s p o )&gt;&gt;</code> by default — that is what current
 parsers read — and <code>--quoted-triple-syntax rdf-star</code> writes the stored

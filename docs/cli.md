@@ -16,7 +16,7 @@ maintained as hand-written copies of the CLI definition.
 
 ## Building
 
-### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml]`
+### `rete build <inputs…> -o <out.rete> [--format nt|nq|ttl|trig|rdfxml] [--quoted-triple-syntax rdf12|rdf-star]`
 Build a file from one or more RDF inputs, merged under one shared dictionary.
 Format is detected by extension (`.nt` / `.nq` / `.ttl` / `.trig`, plus `.rdf` /
 `.owl` / `.rdfxml` for RDF/XML — how most OWL ontologies ship); `-` reads stdin and
@@ -66,6 +66,56 @@ output is byte-identical to a plain build.
 grammar and RFC 3987 disallow. It is **off** by default and the build only
 *counts* them — see [Invalid IRIs](#invalid-iris) for what that means and why the
 default is a warning.
+
+<a id="quoted-triple-syntax-on-input"></a>
+**Quoted triples on input (`--quoted-triple-syntax`).** The same flag name and
+the same two values `rete export` takes, pointed the other way: which surface a
+`<< … >>` in a **Turtle or TriG** input *means*. `rete validate` takes it too.
+
+| value | `<< s p o >>` reads as | `<<( s p o )>>` reads as |
+| --- | --- | --- |
+| `rdf-star` (default) | a **quoted triple** — one term, subject or object position | a syntax error |
+| `rdf12` | a **reifier**: `_:r rdf:reifies <<( s p o )>>` plus a statement about `_:r` | a **triple term**, object position only |
+
+The same file parses into **two different graphs** under the two values. That is
+not a rete quirk — RDF-star and RDF 1.2 genuinely give `<< s p o >>` different
+meanings, and nothing in the bytes says which one the author meant, so it cannot
+be detected and has to be told.
+
+`rdf12` also reads the rest of RDF 1.2 Turtle: `{| … |}` annotations (which
+expand to a reifier carrying the annotation's properties) and `"…"@lang--dir`
+directional literals.
+
+**Why the input default is `rdf-star` while the export default is `rdf12`.**
+They answer different questions. Export asks *who can read this?* — and current
+parsers want RDF 1.2. Input asks *what did the author mean?*, where the two
+possible mistakes are not equal:
+
+- An RDF-star file read as `rdf12` **parses**, and gives you a different graph.
+  Silently. That is the failure this flag exists to prevent, and it is the same
+  one [#262](https://github.com/caviri/rete/pull/262) found on the write side.
+- An RDF 1.2 file read as `rdf-star` is a **hard parse error**, because `<<(`
+  belongs to RDF 1.2 alone. rete detects that case and names the flag in the
+  error rather than complaining about a stray `(`.
+
+Only one of those is recoverable, so the default is the one that makes the other
+mistake loud. The consequence to know: `rete export --format trig` writes
+`rdf12` by default, so re-ingesting rete's own dump takes
+`--quoted-triple-syntax rdf12` — or export with `--quoted-triple-syntax
+rdf-star` and it re-ingests with no flag at all.
+
+**N-Triples, N-Quads and RDF/XML ignore the flag.** Their reader is rete's own,
+it has accepted both `<< s p o >>` and `<<( s p o )>>` since 0.3.2, and RDF 1.2
+N-Triples has no reifier syntax for `<< … >>` to be — so there is no ambiguity
+to resolve and nothing to choose.
+
+**Nothing is stored differently.** Either surface lands rete's one canonical
+token `<<s p o>>`, and an RDF 1.2 reifier is ordinary RDF — a blank node, an
+IRI and a term — which rete stored long before the flag existed. A file with no
+quoted triples builds byte-for-byte identically under either value. See
+[Triple-store interop](interop.md#quoted-triples-two-surfaces-one-graph),
+which also covers using the two flags together to **translate** between the two
+worlds.
 
 `--permutations 3|6` (default **6**) chooses how many index permutations to
 store. `6` writes SPO, POS, OSP, SOP, PSO and OPS; `3` writes only SPO, POS and
@@ -155,7 +205,7 @@ rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
 
 ## Validating
 
-### `rete validate <inputs…> [--format nt|nq|ttl] [--strict]`
+### `rete validate <inputs…> [--format nt|nq|ttl] [--strict] [--quoted-triple-syntax rdf12|rdf-star]`
 Parse RDF input(s) without building, to check they are well-formed
 N-Triples/N-Quads/Turtle. Reports statement and named-graph counts, or exits
 non-zero with a precise parse error (file, line, column).
@@ -168,6 +218,16 @@ curl -s https://host/data.nt | rete validate - --format nt
 It also reports **invalid IRIs**, because "it parses" and "it is valid RDF" are
 different claims and only the second one predicts whether a dump will load
 anywhere else. `--strict` turns the report into a non-zero exit.
+
+`--quoted-triple-syntax` means exactly what it means on
+[`build`](#quoted-triple-syntax-on-input), which makes `validate` the cheap way
+to ask *which surface is this file actually in?* — the counts differ, because
+the graphs do:
+
+```sh
+rete validate claims.ttl                               # 2 statement(s)  — << >> is a quoted triple
+rete validate claims.ttl --quoted-triple-syntax rdf12  # 4 statement(s)  — << >> is a reifier
+```
 
 ### Invalid IRIs
 
@@ -414,11 +474,14 @@ Two edges worth knowing:
   RDF-star, and legal rete — has no RDF 1.2 spelling at all, so the export
   refuses it by name and points at `--quoted-triple-syntax rdf-star`, rather
   than writing a dump no parser will accept.
-- **rete's own Turtle/TriG reader takes the RDF-star surface only** (it is
-  oxttl 0.1; the N-Quads path is rete's own tokenizer and takes both). So a
-  default `--format trig` dump containing triple terms is readable by current
-  third-party parsers and *not* by `rete build`. The export says so on stderr
-  when it writes one. `--format nq` round-trips through rete in either surface.
+- **Reading a dump back takes the matching input surface.** `rete build` and
+  `rete validate` accept the *same* `--quoted-triple-syntax` flag with the same
+  two values (see [above](#quoted-triple-syntax-on-input)), but their default is
+  `rdf-star`, not `rdf12` — so a default `--format trig` or `--format ttl` dump
+  containing triple terms needs `rete build --quoted-triple-syntax rdf12`. The
+  export says so on stderr when it writes one. `--format nq` round-trips with no
+  flag in either surface: that reader is rete's own tokenizer and takes both
+  spellings unconditionally.
 
 `--format jsonld` and `--format hdt` have no term kind for a quoted triple at
 all and **refuse** a file that contains one, naming `--format trig`. They used

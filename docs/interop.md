@@ -74,7 +74,67 @@ the load succeeds and the graph is not the one you exported.
 rete *stores* the RDF-star surface and its N-Quads reader takes both, so a
 `rete → nq → rete` round trip is the identity either way. Use `--quoted-triple-syntax
 rdf-star` for a consumer on the older stack (Jena's RDF-star mode, GraphDB's,
-anything on `oxttl` 0.1 — which includes rete's own Turtle/TriG reader).
+anything on `oxttl` 0.1).
+
+**The same flag reads.** `rete build` and `rete validate` take
+`--quoted-triple-syntax` with the same two values, so Turtle and TriG go both
+ways too:
+
+```sh
+rete build claims.ttl -o claims.rete                               # << s p o >> is a quoted triple
+rete build claims.ttl -o claims.rete --quoted-triple-syntax rdf12  # << s p o >> is a REIFIER
+```
+
+Those two commands read the same file into **different graphs**, and both are
+right — RDF-star and RDF 1.2 assign that syntax different meanings, and nothing
+in the bytes says which. `rdf12` additionally reads RDF 1.2's `<<( s p o )>>`
+triple terms, `{| … |}` annotations and `"…"@lang--dir` literals.
+
+The **input** default is `rdf-star`, not `rdf12`, and the asymmetry with the
+export default is deliberate. An RDF-star file read as RDF 1.2 *parses* and
+gives you the wrong graph; an RDF 1.2 file read as RDF-star cannot parse at all,
+because `<<(` is RDF 1.2's alone — and rete names the flag in the error:
+
+```
+Error: claims.ttl: turtle: Parser error at line 2 column 13: ( is not a valid RDF quoted triple subject: (
+hint: this input contains `<<(`, the RDF 1.2 triple-term syntax — which is what `rete export`
+writes by default. Reading it takes `--quoted-triple-syntax rdf12`; the default, `rdf-star`,
+reads `<< s p o >>` as a quoted triple instead.
+```
+
+Only one of the two mistakes is recoverable, so the default is the one that
+makes the other one loud. The price is that rete's own default TriG/Turtle dump
+needs `--quoted-triple-syntax rdf12` to come back in; `--format nq` needs
+nothing, and neither does an `--quoted-triple-syntax rdf-star` dump.
+
+### rete as a translator between the two worlds
+
+With a surface flag on both ends, `rete build` and `rete export` compose into a
+converter — the two standards' formats, through one graph model that is a
+superset of both:
+
+```sh
+# RDF-star Turtle  ->  RDF 1.2 TriG
+rete build legacy-star.ttl -o tmp.rete --no-pyramid
+rete export tmp.rete --format trig > modern-rdf12.trig
+
+# RDF 1.2 TriG  ->  RDF-star N-Quads (for a consumer still on the older stack)
+rete build modern-rdf12.trig -o tmp.rete --no-pyramid --quoted-triple-syntax rdf12
+rete export tmp.rete --format nq --quoted-triple-syntax rdf-star > legacy-star.nq
+```
+
+Both directions are lossless for the terms involved, because both surfaces land
+the *same* stored token. What the first one does **not** do is turn RDF-star
+quoted triples into RDF 1.2 *reification*: `<< s p o >>` in the input is a term,
+so it comes out as the term `<<( s p o )>>`, not as `_:r rdf:reifies …`. If you
+want reification, write it — `rdf12` on input reads `<< s p o >>`, `{| … |}` and
+an explicit `rdf:reifies` as exactly that, and they all become ordinary
+statements rete stores and SPARQL queries like any other.
+
+Two shapes have no RDF 1.2 spelling and are refused by name on export rather
+than mangled: a quoted triple in **subject** position, and one nested in another
+quoted triple's subject (`ttSubject ::= iri | BlankNode`). Export those with
+`--quoted-triple-syntax rdf-star`.
 
 Two things the surface cannot paper over:
 
@@ -84,8 +144,19 @@ Two things the surface cannot paper over:
 - `--format jsonld` and `--format hdt` have no term kind for one at all and
   refuse a file that contains any.
 
+One limit, stated plainly: the RDF 1.2 Turtle/TriG **reader** is native-only.
+`oxttl` 0.2 brings `oxrdf` 0.3, whose `rand`/`getrandom` 0.3 dependency has no
+backend on `wasm32-unknown-unknown` that does not also break the non-browser
+wasm hosts rete supports (Chicory on the JVM, WASI). So the in-browser builder
+reads RDF-star Turtle/TriG and **both** N-Triples/N-Quads surfaces, but not
+RDF 1.2 Turtle/TriG; the browser artifacts are otherwise unchanged by this
+feature (+7.6 KB, 0.22%). It is the `rdf12-turtle` Cargo feature, on by default
+for every native build.
+
 `tests/interop/oxigraph.sh` runs both surfaces against the real store, including
-the negative case — the rejection above is asserted, not remembered.
+the negative case — the rejection above is asserted, not remembered — and
+round-trips a dump in each surface back through `rete build` with the matching
+`--quoted-triple-syntax`.
 
 ### The single-graph formats
 

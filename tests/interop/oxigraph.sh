@@ -59,6 +59,11 @@ fail() {
 assert_eq() {
   if [ "$2" = "$3" ]; then pass "$1 [$3]"; else fail "$1" "expected [$2], got [$3]"; fi
 }
+# assert_ne NAME NOT_EXPECTED ACTUAL — for an exit code that must be non-zero,
+# where the exact value is the OS's business and only "it refused" is ours.
+assert_ne() {
+  if [ "$2" != "$3" ]; then pass "$1 [$3]"; else fail "$1" "expected not [$2], got [$3]"; fi
+}
 # assert_grep NAME PATTERN FILE
 assert_grep() {
   if [ -f "$3" ] && grep -qE "$2" "$3"; then
@@ -218,6 +223,52 @@ assert_eq "the TriG dump loads too" 0 "$?"
 ox dump --location /data/store-qtrig --file /data/qtrig-back.nq --format nq >/dev/null 2>&1
 assert_eq "…with the same quad count, so nothing was reified into existence" \
   "$(lines quoted-export.nq)" "$(lines qtrig-back.nq)"
+# The store's own TriG, for the rete reader to consume further down.
+ox dump --location /data/store-qtrig --file /data/qtrig-back.trig --format trig \
+  >/dev/null 2>&1
+
+# --- the input surface: rete reading Turtle/TriG back ------------------------
+echo "== rete: reading both quoted-triple surfaces =="
+# Until `rete build --quoted-triple-syntax`, this whole block was impossible:
+# rete's Turtle/TriG reader was oxttl 0.1 and took the RDF-star surface only, so
+# rete could not re-ingest the RDF 1.2 TriG it writes BY DEFAULT — an
+# interchange format failing its own round trip.
+assert_eq "rete re-ingests its own default (RDF 1.2) TriG" \
+  0 "$(cat build_trig_12.code 2>/dev/null || echo 99)"
+assert_eq "…as the same graph" "$(lines quoted-export.nq)" "$(lines trig12-back.nq)"
+assert_eq "rete re-ingests its own RDF-star TriG" \
+  0 "$(cat build_trig_star.code 2>/dev/null || echo 99)"
+assert_eq "…as the same graph" "$(lines quoted-export.nq)" "$(lines trigstar-back.nq)"
+# Both readings of the same data must agree, term for term.
+if diff -q <(LC_ALL=C sort trig12-back.nq) <(LC_ALL=C sort trigstar-back.nq) >/dev/null 2>&1; then
+  pass "the two input surfaces land one identical graph"
+else
+  fail "the two input surfaces land one identical graph" \
+    "$(diff <(LC_ALL=C sort trig12-back.nq) <(LC_ALL=C sort trigstar-back.nq) | head -8)"
+fi
+
+# The refusal, and the hint that makes it actionable. An RDF 1.2 dump read with
+# the default input surface CANNOT parse — `<<(` is RDF 1.2's alone — which is
+# exactly why that default is safe to keep.
+assert_ne "the default input surface refuses an RDF 1.2 dump" \
+  0 "$(cat build_trig_wrong.code 2>/dev/null || echo 0)"
+assert_grep "…naming the flag that reads it" \
+  'quoted-triple-syntax rdf12' build_trig_wrong.err
+
+# The ambiguity, from the other side: the RDF-star TriG read as RDF 1.2 parses
+# happily into a DIFFERENT graph — reifiers, blank nodes and `rdf:reifies` that
+# the file never wrote. Same bytes, two graphs, and no parser can tell which was
+# meant. This is the case the flag exists for, so it is asserted, not described.
+assert_eq "the RDF-star TriG also parses as RDF 1.2" \
+  0 "$(cat build_trig_reified.code 2>/dev/null || echo 99)"
+assert_grep "…as REIFICATION, which is a different graph" \
+  '22-rdf-syntax-ns#reifies' reified-back.nq
+if [ "$(lines reified-back.nq)" -gt "$(lines quoted-export.nq)" ]; then
+  pass "…with more statements than the file has, as reification must produce"
+else
+  fail "…with more statements than the file has, as reification must produce" \
+    "reified=$(lines reified-back.nq) original=$(lines quoted-export.nq)"
+fi
 
 # --- the cycle docs/interop.md documents -------------------------------------
 echo "== rete → Oxigraph → rete =="
@@ -237,6 +288,11 @@ assert_eq "the Oxigraph dump rebuilds as a .rete" 0 "$(cat build_back.code 2>/de
 # rete's N-Quads tokenizer canonicalises both surfaces to one stored token, so
 # the graph must come back unchanged.
 assert_eq "the quoted-triple dump rebuilds too" 0 "$(cat build_quoted_back.code 2>/dev/null || echo 99)"
+# The TriG half of that cycle, which is the one that needed a new reader: what
+# a third-party RDF 1.2 store dumps as TriG, read by rete.
+assert_eq "…and so does the store's own RDF 1.2 TriG dump" \
+  0 "$(cat build_qtrig_back.code 2>/dev/null || echo 99)"
+assert_eq "…as the same graph" "$(lines quoted-export.nq)" "$(lines qtrig-back-export.nq)"
 # Blank node LABELS are local to a document — Oxigraph mints its own on load, as
 # any conforming store may — so they are masked before the comparison. Everything
 # else, including the triple terms and the blank nodes *inside* them, must be

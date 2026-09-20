@@ -11,7 +11,16 @@ publish = false
 # disable default features to keep the build light.
 [dependencies]
 rete-core = { version = "=0.3.2", path = "../rete-core", features = ["parallel"] }
-oxigraph = { version = "0.5", default-features = false }
+# `rdf-12`, because rete-core's `rdf12-turtle` feature pulls `oxttl` 0.2, which
+# turns `oxrdf` 0.3's `rdf-12` on — and Cargo unifies features per crate
+# version, so Oxigraph's own graph sees that `oxrdf` too. `spargebra` 0.4 then
+# fails to compile: it matches `oxrdf::Term` non-exhaustively unless its
+# `sparql-12` feature is on, and the `rdf-12` variant `Term::Triple` has just
+# appeared under it. Oxigraph's `rdf-12` is the switch that turns that on
+# coherently across `oxrdfio` and `spareval`/`spargebra` at once. Without it
+# `cargo build -p rete-bench` breaks — which is a build only CI runs, and is
+# why this was found there rather than here.
+oxigraph = { version = "0.5", default-features = false, features = ["rdf-12"] }
 anyhow = "1"
 serde_json = { workspace = true }
 sha2 = "0.10"

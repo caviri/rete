@@ -116,27 +116,23 @@ pub(crate) fn canonical_term(term: &str) -> String {
 ///   consumer on that generation of the stack, or to diff a dump against the
 ///   dictionary term for term.
 ///
-/// rete re-ingests either one losslessly, so the round trip is safe both ways.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum QuotedTripleSyntax {
-    /// `<<( s p o )>>` — RDF 1.2 triple terms.
-    Rdf12,
-    /// `<<s p o>>` — the RDF-star surface, identical to the stored token.
-    RdfStar,
-}
+/// rete re-ingests either one losslessly, so the round trip is safe both ways —
+/// though which of the two `rete build` assumes when it is *not* told is the
+/// mirror-image question, answered the other way round: see
+/// [`QuotedTripleSurface`](rete_core::ingest::QuotedTripleSurface).
+///
+/// The type itself lives in `rete-core` because `rete build` and `rete validate`
+/// take the same flag with the same two values. One vocabulary, two directions,
+/// one enum — a reader who learns `--quoted-triple-syntax` on `export` has
+/// learned it on `build`.
+pub(crate) use rete_core::ingest::QuotedTripleSurface as QuotedTripleSyntax;
 
-impl QuotedTripleSyntax {
-    /// Parse the `--quoted-triple-syntax` value. Clap validates the spelling
-    /// first; this keeps the mapping in one place next to the enum.
-    pub(crate) fn parse(s: &str) -> anyhow::Result<Self> {
-        match s {
-            "rdf12" => Ok(Self::Rdf12),
-            "rdf-star" => Ok(Self::RdfStar),
-            other => anyhow::bail!(
-                "unknown --quoted-triple-syntax: {other} (expected `rdf12` or `rdf-star`)"
-            ),
-        }
-    }
+/// Parse the `--quoted-triple-syntax` value. Clap validates the spelling first;
+/// this turns the remaining `None` into the CLI's error type.
+pub(crate) fn parse_quoted_triple_syntax(s: &str) -> anyhow::Result<QuotedTripleSyntax> {
+    QuotedTripleSyntax::parse(s).ok_or_else(|| {
+        anyhow::anyhow!("unknown --quoted-triple-syntax: {s} (expected `rdf12` or `rdf-star`)")
+    })
 }
 
 /// Spell one statement's **object** in `syntax`, or say why RDF 1.2 cannot.
@@ -324,7 +320,7 @@ pub(crate) fn export(
     // moment rather than an hour of scanning followed by a usage error.
     let codec = Codec::parse(compress_with)?;
     let level = compress::check_level(codec, compress_level)?;
-    let qts = QuotedTripleSyntax::parse(quoted_triple_syntax)?;
+    let qts = parse_quoted_triple_syntax(quoted_triple_syntax)?;
     if format == "hdt" && codec != Codec::None {
         // HDT exists to be queried in place: a reader memory-maps it and answers
         // patterns against the mapped bytes without decoding anything. Wrapping
@@ -513,18 +509,22 @@ pub(crate) fn export(
                 // dump is incomplete.
                 Ok(()) => {
                     respell.check()?;
-                    // rete's own Turtle/TriG *ingest* is oxttl 0.1, which reads
-                    // the RDF-star surface only — `rete build` on this dump
-                    // would fail on the triple terms it just wrote. N-Quads has
+                    // rete's Turtle/TriG *ingest* now reads either surface, but
+                    // its default is `rdf-star` — the opposite of this writer's
+                    // — because only that direction makes the wrong guess fail
+                    // loudly (see `QuotedTripleSurface`). So the dump is still
+                    // not re-ingestible by a bare `rete build`, and saying so
+                    // here costs one line and saves a parse error. N-Quads has
                     // no such gap (that path is rete's own tokenizer, which
-                    // takes both surfaces), so the note is specific to these
-                    // two formats and to a dump that actually contains one.
+                    // takes both surfaces unconditionally), so the note is
+                    // specific to these two formats and to a dump that actually
+                    // contains a triple term.
                     if respell.rewrote() > 0 {
                         eprintln!(
-                            "note: wrote {} RDF 1.2 triple term(s) `<<( s p o )>>`. rete's own \
-                             Turtle/TriG reader takes the RDF-star surface only, so use \
-                             `--quoted-triple-syntax rdf-star` for a dump you will `rete build` \
-                             again, or `--format nq`, which round-trips in either surface.",
+                            "note: wrote {} RDF 1.2 triple term(s) `<<( s p o )>>`. Reading this \
+                             dump back takes `rete build --quoted-triple-syntax rdf12` (the input \
+                             default is `rdf-star`); or export with `--quoted-triple-syntax \
+                             rdf-star`, or `--format nq`, either of which re-ingests with no flag.",
                             respell.rewrote()
                         );
                     }

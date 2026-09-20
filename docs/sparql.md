@@ -222,13 +222,24 @@ fact, when, with what confidence).
                            :observedOn "2023-05-01"^^xsd:date .
 ```
 
-**Ingest & storage.** Quoted triples parse from both **N-Triples-star** and
-**Turtle-star** (`rete build data.ttls`, `rete validate`) and are stored as
-ordinary dictionary terms — no format change, no version bump, and an old reader
-stays forward-compatible. A file that contains any quoted triple sets a header
-flag (`FLAG_HAS_QUOTED_TRIPLES`), so a plain-RDF consumer can tell from the header
-alone, without scanning; `rete info` shows it. Quoted triples round-trip
-losslessly through `rete export`, and `rete verify` covers them.
+**Ingest & storage.** Quoted triples parse from **N-Triples-star**,
+**Turtle-star** and their **RDF 1.2** equivalents (`rete build data.ttls`,
+`rete validate`) and are stored as ordinary dictionary terms — no format change,
+no version bump, and an old reader stays forward-compatible. A file that
+contains any quoted triple sets a header flag (`FLAG_HAS_QUOTED_TRIPLES`), so a
+plain-RDF consumer can tell from the header alone, without scanning; `rete info`
+shows it. Quoted triples round-trip losslessly through `rete export`, and
+`rete verify` covers them.
+
+**Input surface.** In Turtle/TriG, `<< s p o >>` is a quoted triple under
+RDF-star and a *reifier* under RDF 1.2, so `rete build` and `rete validate` take
+`--quoted-triple-syntax rdf12|rdf-star` (default `rdf-star`) to say which. Under
+`rdf12` a reifier expands to `_:r rdf:reifies <<( s p o )>>` plus a statement
+about `_:r` — ordinary triples, queried with ordinary SPARQL, no `<< >>` pattern
+needed. That is the shape to write a query against if your source is RDF 1.2
+reification rather than RDF-star quoting; the two are different data models and
+rete stores whichever one the file actually contains. See
+[`rete build`](cli.md#quoted-triple-syntax-on-input).
 
 **Export surface.** `rete export --format nq|ttl|trig` writes the ratified
 **RDF 1.2 triple term** `<<( s p o )>>` by default — that is what current

@@ -99,9 +99,11 @@ _:b0 <http://example.org/attests> <<( _:b1 <http://example.org/label> "a > b, an
 EOF
 
 # The SAME graph in the RDF-star surface, which the referee REFUSES. This is the
-# bug, pinned: it is why `--quoted-triple-syntax` defaults to `rdf12`, and it is
-# what would catch a regression that quietly reverted the writer — the positive
-# case above would keep passing if the exporter emitted nothing at all.
+# bug, pinned: it is why `rete export --quoted-triple-syntax` defaults to
+# `rdf12` (the INPUT flag of the same name defaults the other way, and for the
+# opposite reason — see docs/cli.md), and it is what would catch a regression
+# that quietly reverted the writer: the positive case above would keep passing
+# if the exporter emitted nothing at all.
 mk quoted_star <<'EOF'
 <http://example.org/jsmith> <http://example.org/recorded> <<<http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Swallow>>> .
 EOF

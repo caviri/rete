@@ -132,26 +132,46 @@ as → RDF/XML"). Once ingested, OWL axioms are just triples you can query; to
 *materialize* OWL RL / RDFS entailments see [Reasoning](reasoning.md)
 (`rete build --reason` / `rete reason`).
 
-**RDF-star & RDF 1.2.** rete ingests, stores, and queries **quoted triples** —
-statements about statements — in the widely-deployed RDF-star surface
-`<< s p o >>` (subject or object), with the SPARQL-star patterns and built-ins
-(see [SPARQL support](sparql.md#rdf-star)). Its **N-Triples/N-Quads** reader also
-accepts the ratified **RDF 1.2** object triple-term syntax `<<( s p o )>>`,
-mapping it to the *same* canonical token, so an RDF 1.2 N-Quads file and an
-RDF-star one are interchangeable. (The Turtle/TriG reader is `oxttl` 0.1 and
-takes the RDF-star surface only.) On the way **out**, `rete export` writes
-either: `--quoted-triple-syntax rdf12` — the RDF 1.2 triple term, and the
-**default**, because that is what current parsers read — or `rdf-star` for the
-older surface. See [Triple-store interop](interop.md#quoted-triples-two-surfaces-one-graph)
-for what each one costs.
+**RDF-star & RDF 1.2 — both, and selectable.** rete ingests, stores, and queries
+**quoted triples** — statements about statements — with the SPARQL-star patterns
+and built-ins (see [SPARQL support](sparql.md#rdf-star)). Both surfaces are
+first-class in **both directions**, chosen by one flag that spells the same in
+each:
+
+| | RDF-star `<< s p o >>` | RDF 1.2 `<<( s p o )>>` |
+| --- | --- | --- |
+| N-Triples / N-Quads **in** | yes | yes (always — that reader is rete's own) |
+| Turtle / TriG **in** | `rete build --quoted-triple-syntax rdf-star` (**default**) | `--quoted-triple-syntax rdf12` |
+| N-Quads / Turtle / TriG **out** | `rete export --quoted-triple-syntax rdf-star` | `--quoted-triple-syntax rdf12` (**default**) |
+
+The two input defaults look inconsistent and are not: `<<( … )>>` is
+unambiguous, so reading an RDF 1.2 file as RDF-star fails loudly, whereas
+reading an RDF-star file as RDF 1.2 succeeds with a *different graph*. The
+export default optimises for who can read the dump; the input default optimises
+for not silently changing what a file means. Composing the two makes rete a
+**translator** between the RDF-star and RDF 1.2 worlds — see
+[Triple-store interop](interop.md#rete-as-a-translator-between-the-two-worlds).
+
+**RDF 1.2 reification is supported on input**, and needed no storage change:
+under `--quoted-triple-syntax rdf12` the Turtle/TriG reader takes `rdf:reifies`,
+the `<< s p o >>` *reifier* form and Turtle-1.2 **annotation syntax**
+(`{| … |}`), all of which expand to ordinary statements — a blank node, an IRI
+and a term — that rete has always stored and SPARQL has always queried. rete's
+term model turned out to be a superset of both standards; only the parse
+boundary differed. (rete's own **writers** emit triple terms, not reification:
+an exported quoted triple comes back as `<<( s p o )>>`, not as
+`_:r rdf:reifies …`.)
+
 **Base-direction language strings** (`"…"@lang--dir`, RDF 1.2's
 `rdf:dirLangString`) are modelled — `DATATYPE` reports `rdf:dirLangString` and
 `LANG` returns the language subtag — and a leading SPARQL 1.2 `VERSION "1.2"`
-declaration is accepted. Not yet: RDF 1.2 **reification** (`rdf:reifies` /
-Turtle-1.2 annotation syntax) and the new SPARQL 1.2 direction *functions*
-(`LANGDIR`…), which would require swapping the parser to the RDF-1.2 model that
-reinterprets `<< >>` as reification — deliberately deferred to keep the deployed
-RDF-star data working.
+declaration is accepted; `--quoted-triple-syntax rdf12` is also what lets the
+Turtle reader *parse* the `@lang--dir` form. Not yet: the new SPARQL 1.2
+direction *functions* (`LANGDIR`…), and the RDF 1.2 Turtle/TriG reader is
+**native-only** — the in-browser builder reads RDF-star Turtle/TriG and both
+N-Triples/N-Quads surfaces, because `oxttl` 0.2's `getrandom` 0.3 dependency has
+no `wasm32-unknown-unknown` backend compatible with the non-browser wasm hosts
+rete supports.
 
 **Current limits (not RDF-incompatible, just unimplemented):** OWL/XML and
 Functional Syntax need an external convert-to-RDF step (above); and there is no
