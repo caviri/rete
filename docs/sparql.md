@@ -230,6 +230,15 @@ flag (`FLAG_HAS_QUOTED_TRIPLES`), so a plain-RDF consumer can tell from the head
 alone, without scanning; `rete info` shows it. Quoted triples round-trip
 losslessly through `rete export`, and `rete verify` covers them.
 
+**Export surface.** `rete export --format nq|ttl|trig` writes the ratified
+**RDF 1.2 triple term** `<<( s p o )>>` by default — that is what current
+parsers read — and `--quoted-triple-syntax rdf-star` writes the stored
+`<<s p o>>` surface instead. Both re-ingest losslessly; see
+[Triple-store interop](interop.md#quoted-triples-two-surfaces-one-graph) for
+which consumer takes which. RDF 1.2 places a triple term in *object position
+only*, so a subject-position quoted triple is refused by name under `rdf12`
+rather than written as something no parser accepts.
+
 **Query — SPARQL-star.** A quoted triple can appear in a query pattern, with
 constants or inner variables:
 
@@ -271,9 +280,12 @@ SELECT ?occ ?who WHERE {
 templates. Nested quoting (`<< << … >> :p ?o >>`) works. rete follows the
 RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.
 
-**RDF 1.2 interop.** Ingest also accepts the ratified RDF 1.2 object triple-term
-syntax `<<( s p o )>>`, mapped to the *same* canonical token as `<< s p o >>` — so
-an RDF 1.2 N-Triples file and an RDF-star file are interchangeable. RDF 1.2
+**RDF 1.2 interop.** rete's **N-Triples/N-Quads** reader also accepts the
+ratified RDF 1.2 object triple-term syntax `<<( s p o )>>`, mapped to the *same*
+canonical token as `<< s p o >>` — so an RDF 1.2 N-Triples file and an RDF-star
+file are interchangeable. (Turtle and TriG go through `oxttl` 0.1, which reads
+the RDF-star surface only; the export prints a note when it writes a TriG dump
+rete itself could not read back.) RDF 1.2
 **base-direction strings** (`"…"@lang--dir`) are modelled: `DATATYPE` reports
 `rdf:dirLangString` and `LANG` returns the language subtag; a leading SPARQL 1.2
 `VERSION "1.2"` declaration is accepted. RDF 1.2 reification (`rdf:reifies`) and

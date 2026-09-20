@@ -287,9 +287,153 @@ pub fn unescape_literal(s: &str) -> String {
     out
 }
 
+/// Rewrite a term token into the **RDF 1.2 triple-term surface** for a text
+/// serializer.
+///
+/// rete stores a quoted triple in one canonical token, the RDF-star surface
+/// `<<s p o>>` — see `ingest::take_term`, which accepts both surfaces
+/// on ingest and canonicalises them to that one. Current RDF 1.2 parsers
+/// (oxttl 0.2 and anything built on it, including the `oxigraph` CLI) do not
+/// read that surface: in N-Triples/N-Quads they **reject** it outright, and in
+/// Turtle/TriG they read `<< s p o >>` as a *reifier* — one statement silently
+/// becomes two, with a blank node where the triple term was. So a dump in the
+/// stored surface is not interoperable, quietly in one format and loudly in the
+/// other. This is the translation that makes it so, at write time only: nothing
+/// about the file changes.
+///
+/// Returns:
+///
+/// * `Some(Borrowed(token))` when `token` is not a quoted triple. This is the
+///   overwhelming majority of terms and the only cost is a two-byte prefix
+///   check, so a dump with no quoted triples in it is byte-for-byte unchanged.
+/// * `Some(Owned(…))` with the token rewritten to `<<( s p o )>>`, recursively:
+///   a triple term nested in the object slot is rewritten too.
+/// * `None` when the token has **no RDF 1.2 spelling at all**. RDF 1.2 puts a
+///   triple term in *object position only* — the grammar is
+///   `tripleTerm ::= '<<(' ttSubject predicate ttObject ')>>'` with
+///   `ttSubject ::= iri | BlankNode` — so a quoted triple standing in the
+///   subject slot of another quoted triple cannot be written. (The caller is
+///   responsible for the same rule at statement level: a quoted triple in the
+///   *statement's* subject or predicate slot is equally unwritable, and the
+///   caller is the one that knows which slot a term came from.)
+///
+/// A token that is not well-formed — `<<` … `>>` that does not parse as three
+/// terms — also yields `None` rather than a mangled rewrite.
+pub fn rdf12_triple_term(token: &TermToken) -> Option<Cow<'_, TermToken>> {
+    if !is_quoted_triple(token) {
+        return Some(Cow::Borrowed(token));
+    }
+    rewrite_rdf12(token).map(Cow::Owned)
+}
+
+/// The owned half of [`rdf12_triple_term`], split out so the recursion does not
+/// re-run the `is_quoted_triple` fast path on a token it already classified.
+fn rewrite_rdf12(token: &TermToken) -> Option<String> {
+    let (s, p, o) = crate::ingest::quoted_triple_parts(token)?;
+    // `ttSubject ::= iri | BlankNode` and `predicate ::= iri`: neither slot
+    // admits a triple term, at any depth.
+    if is_quoted_triple(&s) || is_quoted_triple(&p) {
+        return None;
+    }
+    // `ttObject` does admit one, which is where nesting lives.
+    let o = if is_quoted_triple(&o) {
+        rewrite_rdf12(&o)?
+    } else {
+        o
+    };
+    Some(format!("<<( {s} {p} {o} )>>"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- the RDF 1.2 writer surface ----------------------------------------
+
+    #[test]
+    fn a_plain_term_is_borrowed_unchanged() {
+        // The hot path. Every term that is not a quoted triple comes back
+        // borrowed, which is what makes a dump of a quoted-triple-free file
+        // byte-for-byte what it was.
+        for t in [
+            "<http://example.org/x>",
+            "_:b0",
+            "\"lit\"@en",
+            "\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            "\"a > b\"",
+        ] {
+            match rdf12_triple_term(t) {
+                Some(Cow::Borrowed(got)) => assert_eq!(got, t),
+                other => panic!("{t} should borrow unchanged, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_object_triple_term_gets_the_rdf12_surface() {
+        assert_eq!(
+            rdf12_triple_term("<<<http://ex/s> <http://ex/p> <http://ex/o>>>").unwrap(),
+            "<<( <http://ex/s> <http://ex/p> <http://ex/o> )>>"
+        );
+    }
+
+    #[test]
+    fn nesting_in_the_object_slot_recurses() {
+        // `ttObject` admits another triple term, so depth works — and the
+        // recursion has to rewrite the inner one too, not just the outer.
+        assert_eq!(
+            rdf12_triple_term(
+                "<<<http://ex/a> <http://ex/b> <<<http://ex/x> <http://ex/y> <http://ex/z>>>>>"
+            )
+            .unwrap(),
+            "<<( <http://ex/a> <http://ex/b> <<( <http://ex/x> <http://ex/y> <http://ex/z> )>> )>>"
+        );
+    }
+
+    #[test]
+    fn a_literal_object_survives_verbatim() {
+        // Term boundaries come from `take_term`, not from splitting on spaces,
+        // so a literal carrying spaces, a `>` and a `<<` does not derail it.
+        assert_eq!(
+            rdf12_triple_term("<<_:b1 <http://ex/p> \"a > b << c\"@en>>").unwrap(),
+            "<<( _:b1 <http://ex/p> \"a > b << c\"@en )>>"
+        );
+    }
+
+    #[test]
+    fn a_triple_term_in_a_subject_slot_has_no_rdf12_spelling() {
+        // RDF 1.2: `ttSubject ::= iri | BlankNode`. A quoted triple nested in
+        // another one's subject cannot be written, at any depth, and the honest
+        // answer is `None` rather than a token no parser accepts.
+        assert!(rdf12_triple_term(
+            "<<<<<http://ex/x> <http://ex/y> <http://ex/z>>> <http://ex/p> <http://ex/o>>>"
+        )
+        .is_none());
+        // …including one level down.
+        assert!(rdf12_triple_term(
+            "<<<http://ex/a> <http://ex/b> <<<<<http://ex/x> <http://ex/y> <http://ex/z>>> <http://ex/p> <http://ex/o>>>>>"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn a_malformed_quoted_triple_is_refused_not_mangled() {
+        assert!(rdf12_triple_term("<<<http://ex/s> <http://ex/p>>>").is_none());
+        assert!(rdf12_triple_term("<<>>").is_none());
+    }
+
+    #[test]
+    fn the_rewrite_is_what_ingest_accepts_back() {
+        // The round-trip property, at the term level: what the writer emits is
+        // what `take_term` canonicalises back to the stored token. This is why
+        // rete -> nq -> rete is safe in either surface.
+        let stored =
+            "<<<http://ex/a> <http://ex/b> <<<http://ex/x> <http://ex/y> <http://ex/z>>>>>";
+        let written = rdf12_triple_term(stored).unwrap().into_owned();
+        let (back, rest) = crate::ingest::take_term(&written).unwrap();
+        assert_eq!(back, stored);
+        assert!(rest.trim().is_empty());
+    }
 
     #[test]
     fn term_kinds() {

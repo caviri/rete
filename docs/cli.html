@@ -889,7 +889,7 @@ section directory rather than read out of the card — see
 <code>rete info</code> shows the same catalog beneath the header when a card is present.</p>
 <h3 id="rete-graphs-file"><code>rete graphs &lt;file&gt;</code></h3>
 <p>List the named-graph IRIs in a dataset (the default graph is unnamed).</p>
-<h3 id="rete-export-file---format-nqttltrigjsonldhdt---graph-g---subject-s---predicate-p---object-o---sanitize-iris---no-prefixes---compress-nonezstdgzip---compress-level-n---in-memory"><code>rete export &lt;file&gt; [--format nq|ttl|trig|jsonld|hdt] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--compress none|zstd|gzip] [--compress-level N] [--in-memory]</code></h3>
+<h3 id="rete-export-file---format-nqttltrigjsonldhdt---graph-g---subject-s---predicate-p---object-o---sanitize-iris---no-prefixes---quoted-triple-syntax-rdf12rdf-star---compress-nonezstdgzip---compress-level-n---in-memory"><code>rete export &lt;file&gt; [--format nq|ttl|trig|jsonld|hdt] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--quoted-triple-syntax rdf12|rdf-star] [--compress none|zstd|gzip] [--compress-level N] [--in-memory]</code></h3>
 <p>Serialize the dataset, or a slice of it.</p>
 <p>Two formats keep every graph and are lossless round-trips:</p>
 <ul>
@@ -929,13 +929,47 @@ reports its choice on stderr:</p>
 </tbody></table>
 <p>Graphs are never silently merged, and a non-empty selection is never silently
 dropped.</p>
+<p><strong>Quoted triples: which surface (<code>--quoted-triple-syntax</code>).</strong> A quoted triple —
+a statement standing inside another statement — has two spellings in the wild,
+and <code>nq</code>, <code>ttl</code> and <code>trig</code> can write either. Both are supported; rete re-ingests
+either losslessly. They differ in who <em>else</em> can read the dump.</p>
+<table><thead><tr><th>value</th><th>surface</th><th>read by</th></tr></thead><tbody>
+<tr><td><code>rdf12</code> (default)</td><td><code>&lt;&lt;( s p o )&gt;&gt;</code>, the ratified RDF 1.2 <strong>triple term</strong></td><td>oxttl 0.2 and everything on it, incl. the <code>oxigraph</code> CLI; Jena 5.x, GraphDB 11</td></tr>
+<tr><td><code>rdf-star</code></td><td><code>&lt;&lt;s p o&gt;&gt;</code>, the RDF-star community-group surface — and the token rete stores</td><td>oxrdf 0.2 / oxttl 0.1 (the versions rete itself links), and RDF-star mode in older Jena/GraphDB</td></tr>
+</tbody></table>
+<p>The default is RDF 1.2 because the alternative is a dump current tooling will
+not take: <code>oxigraph convert --from-format nq</code> <strong>rejects</strong> <code>&lt;&lt;s p o&gt;&gt;</code> outright,
+and a load is atomic, so one such line costs the whole file. In Turtle and TriG
+the failure is quieter and worse — an RDF 1.2 parser reads <code>&lt;&lt; s p o &gt;&gt;</code> as a
+<em>reifier</em>, so one statement silently becomes two with a blank node where the
+triple term was. Pick the surface your consumer speaks; if you do not know, the
+default is the one that fails loudly rather than quietly.</p>
+<p>A file with no quoted triples in it is unaffected. The header records in one bit
+whether the file holds any, so the check is skipped entirely and the dump is
+byte-for-byte the same under either value.</p>
+<p>Two edges worth knowing:</p>
+<ul>
+<li><strong>RDF 1.2 puts a triple term in object position only</strong> (<code>ttSubject ::= iri | BlankNode</code>). A graph with a quoted triple in <em>subject</em> position — legal
+RDF-star, and legal rete — has no RDF 1.2 spelling at all, so the export
+refuses it by name and points at <code>--quoted-triple-syntax rdf-star</code>, rather
+than writing a dump no parser will accept.</li>
+<li><strong>rete's own Turtle/TriG reader takes the RDF-star surface only</strong> (it is
+oxttl 0.1; the N-Quads path is rete's own tokenizer and takes both). So a
+default <code>--format trig</code> dump containing triple terms is readable by current
+third-party parsers and <em>not</em> by <code>rete build</code>. The export says so on stderr
+when it writes one. <code>--format nq</code> round-trips through rete in either surface.</li>
+</ul>
+<p><code>--format jsonld</code> and <code>--format hdt</code> have no term kind for a quoted triple at
+all and <strong>refuse</strong> a file that contains one, naming <code>--format trig</code>. They used
+to write it as though it were an IRI — a file that loads cleanly and means
+something else.</p>
 <p><strong>HDT (<code>--format hdt</code>).</strong> A binary serialization whose point is that a reader
 memory-maps it and answers triple patterns against the mapped bytes. Opening the
 1.39 GB reference HDT costs 50.7 MB of RSS and 0.31 s, whatever the file's size —
 that is what a compressed text dump cannot do.</p>
 <pre><code class="language-sh">rete export data.rete --format hdt &gt; data.hdt
 </code></pre>
-<p>Three limitations, all enforced rather than merely documented:</p>
+<p>Four limitations, all enforced rather than merely documented:</p>
 <ul>
 <li><strong>Triples only.</strong> HDT has no graph term, so it takes one graph by the same
 ladder Turtle uses. The quad extension (HDTQ) is niche and poorly supported
@@ -948,6 +982,11 @@ the file header and <strong>refuses before doing any work</strong> if it exceeds
 <code>--memory-budget-mb</code>, naming both numbers. Measured, the estimate is about 512
 bytes per distinct term plus 16 per triple; an 88M-triple, 39.7M-term graph
 needs roughly 14 GB.</li>
+<li><strong>No quoted triples.</strong> HDT predates RDF-star and RDF 1.2 and has no term kind
+for a triple term. It did not notice: a quoted triple was interned into HDT's
+dictionary as an <em>IRI</em>, brackets stripped by the same rule that strips a real
+one's, so a consumer read back an "IRI" with spaces and angle brackets in it.
+<code>rete export</code> now refuses, from the header flag, before any work.</li>
 <li><strong>A second, independent cap: 2^32 object ids.</strong> The reference implementation
 truncates object dictionary ids to 32 bits while building its query index, so a
 larger file would be written successfully and then answer queries <em>incorrectly</em>

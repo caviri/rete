@@ -226,7 +226,10 @@ data.
   an IRI or literal, so the dictionary, the permutation indexes, and this layout
   need no change for RDF-star — hence no format-version bump. A file that contains
   any quoted triple sets header flag bit 2 (§4.1) so a plain-RDF reader can detect
-  it without scanning. See [SPARQL § RDF-star](sparql.html#rdf-star).
+  it without scanning. The **stored** surface is RDF-star, always; which surface a
+  text dump carries is a writer choice (`rete export --quoted-triple-syntax`,
+  default RDF 1.2 `<<( s p o )>>`) and does not touch the file. See
+  [SPARQL § RDF-star](sparql.html#rdf-star).
 - The dictionary is four independently-decompressible **sections** (shared /
   subjects / objects / predicates), each with a restart-indexed table (§5.1) that
   supports `O(log n)` term↔ID lookup once loaded. Each section is additionally

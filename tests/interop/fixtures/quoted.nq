@@ -1,0 +1,20 @@
+# A graph with RDF-star QUOTED TRIPLES, for the one direction this suite exists
+# to measure: rete writes, a THIRD-PARTY engine reads.
+#
+# rete stores a quoted triple as `<<s p o>>` and used to export it verbatim.
+# Oxigraph 0.5.x is built on oxrdf 0.3 / oxttl 0.2 — the RDF 1.2 generation — and
+# rejects that surface outright in N-Quads, so a dump with one in it loaded as
+# ZERO quads, the same all-or-nothing failure an invalid IRI causes. `rete
+# export` now writes the ratified RDF 1.2 triple term `<<( s p o )>>` instead,
+# and `--quoted-triple-syntax rdf-star` still writes the old one.
+#
+# Object position only: RDF 1.2 has no syntax for a triple term anywhere else
+# (`ttSubject ::= iri | BlankNode`), which is why the exporter refuses that case
+# by name rather than writing something this store would reject.
+#
+# 3 default + 2 named = 5 quads, one of them nested.
+<http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/BarnSwallow> .
+<http://example.org/jsmith> <http://example.org/recorded> << <http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/BarnSwallow> >> .
+<http://example.org/claim1> <http://example.org/states> << <http://example.org/occ1> <http://example.org/individualCount> "5"^^<http://www.w3.org/2001/XMLSchema#integer> >> .
+<http://example.org/meta> <http://example.org/about> << <http://example.org/jsmith> <http://example.org/recorded> << <http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/BarnSwallow> >> >> <http://example.org/graph/provenance> .
+_:src <http://example.org/attests> << _:obs <http://example.org/label> "a > b, and a << inside"@en >> <http://example.org/graph/provenance> .

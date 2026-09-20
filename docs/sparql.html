@@ -802,6 +802,14 @@ stays forward-compatible. A file that contains any quoted triple sets a header
 flag (<code>FLAG_HAS_QUOTED_TRIPLES</code>), so a plain-RDF consumer can tell from the header
 alone, without scanning; <code>rete info</code> shows it. Quoted triples round-trip
 losslessly through <code>rete export</code>, and <code>rete verify</code> covers them.</p>
+<p><strong>Export surface.</strong> <code>rete export --format nq|ttl|trig</code> writes the ratified
+<strong>RDF 1.2 triple term</strong> <code>&lt;&lt;( s p o )&gt;&gt;</code> by default — that is what current
+parsers read — and <code>--quoted-triple-syntax rdf-star</code> writes the stored
+<code>&lt;&lt;s p o&gt;&gt;</code> surface instead. Both re-ingest losslessly; see
+<a href="interop.html#quoted-triples-two-surfaces-one-graph">Triple-store interop</a> for
+which consumer takes which. RDF 1.2 places a triple term in <em>object position
+only</em>, so a subject-position quoted triple is refused by name under <code>rdf12</code>
+rather than written as something no parser accepts.</p>
 <p><strong>Query — SPARQL-star.</strong> A quoted triple can appear in a query pattern, with
 constants or inner variables:</p>
 <pre><code class="language-sparql"># Who recorded that occ1 is a Barn Swallow?  (concrete quoted triple)
@@ -835,9 +843,12 @@ SELECT ?occ ?who WHERE {
 <p><code>CONSTRUCT</code> (and <code>rete serve</code>'s SPARQL Update) may build quoted triples in their
 templates. Nested quoting (<code>&lt;&lt; &lt;&lt; … &gt;&gt; :p ?o &gt;&gt;</code>) works. rete follows the
 RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.</p>
-<p><strong>RDF 1.2 interop.</strong> Ingest also accepts the ratified RDF 1.2 object triple-term
-syntax <code>&lt;&lt;( s p o )&gt;&gt;</code>, mapped to the <em>same</em> canonical token as <code>&lt;&lt; s p o &gt;&gt;</code> — so
-an RDF 1.2 N-Triples file and an RDF-star file are interchangeable. RDF 1.2
+<p><strong>RDF 1.2 interop.</strong> rete's <strong>N-Triples/N-Quads</strong> reader also accepts the
+ratified RDF 1.2 object triple-term syntax <code>&lt;&lt;( s p o )&gt;&gt;</code>, mapped to the <em>same</em>
+canonical token as <code>&lt;&lt; s p o &gt;&gt;</code> — so an RDF 1.2 N-Triples file and an RDF-star
+file are interchangeable. (Turtle and TriG go through <code>oxttl</code> 0.1, which reads
+the RDF-star surface only; the export prints a note when it writes a TriG dump
+rete itself could not read back.) RDF 1.2
 <strong>base-direction strings</strong> (<code>"…"@lang--dir</code>) are modelled: <code>DATATYPE</code> reports
 <code>rdf:dirLangString</code> and <code>LANG</code> returns the language subtag; a leading SPARQL 1.2
 <code>VERSION "1.2"</code> declaration is accepted. RDF 1.2 reification (<code>rdf:reifies</code>) and

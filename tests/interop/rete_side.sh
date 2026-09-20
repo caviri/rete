@@ -35,6 +35,7 @@ case "$STAGE" in
     run build_strict        -- "$BIN" build repairable.nt   -o strict.rete --strict
     run build_unrepairable  -- "$BIN" build unrepairable.nt -o unrepairable.rete
     run build_named         -- "$BIN" build named.nq        -o named.rete
+    run build_quoted        -- "$BIN" build quoted.nq       -o quoted.rete
     run validate_repairable -- "$BIN" validate repairable.nt
 
     run export_raw   -- "$BIN" export repairable.rete   --format nq
@@ -42,10 +43,21 @@ case "$STAGE" in
     run export_unrep -- "$BIN" export unrepairable.rete --format nq --sanitize-iris
     run export_named -- "$BIN" export named.rete        --format nq
 
+    # Both quoted-triple surfaces, from one file: the default RDF 1.2 triple
+    # term, which this store reads, and the RDF-star surface it does not. The
+    # negative one is what makes the positive one mean something.
+    run export_quoted      -- "$BIN" export quoted.rete --format nq
+    run export_quoted_star -- "$BIN" export quoted.rete --format nq \
+      --quoted-triple-syntax rdf-star
+    run export_quoted_trig -- "$BIN" export quoted.rete --format trig
+
     cp export_raw.out   raw.nq
     cp export_clean.out clean.nq
     cp export_unrep.out unrepairable-sanitized.nq
     cp export_named.out named-export.nq
+    cp export_quoted.out      quoted-export.nq
+    cp export_quoted_star.out quoted-star.nq
+    cp export_quoted_trig.out quoted-export.trig
     ;;
   rebuild)
     # The other direction of the cycle docs/interop.md documents: take what
@@ -57,6 +69,14 @@ case "$STAGE" in
     run build_repaired_back  -- "$BIN" build clean-back.nq -o clean-back.rete
     run export_repaired_back -- "$BIN" export clean-back.rete --format nq
     cp export_repaired_back.out clean-back-export.nq
+
+    # The quoted-triple cycle. What comes back from Oxigraph is RDF 1.2, which
+    # rete's N-Quads tokenizer takes as readily as the surface it stores — so
+    # the comparison is against the SAME surface on both sides, and the only
+    # thing being tested is whether the graph survived.
+    run build_quoted_back  -- "$BIN" build quoted-back.nq -o quoted-back.rete
+    run export_quoted_back -- "$BIN" export quoted-back.rete --format nq
+    cp export_quoted_back.out quoted-back-export.nq
     ;;
   *)
     echo "unknown stage: $STAGE (expected 'export' or 'rebuild')" >&2

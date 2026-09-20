@@ -188,6 +188,37 @@ assert_grep "a sanitized dump with a relative IRI is STILL rejected" \
 ox dump --location /data/store-unrep --file /data/unrep-back.nq --format nq >/dev/null 2>&1
 assert_eq "…and it too costs the whole file" 0 "$(lines unrep-back.nq)"
 
+# --- quoted triples: the two surfaces, and which one this store reads --------
+echo "== Oxigraph: quoted triples =="
+# Oxigraph 0.5.x is oxrdf 0.3 / oxttl 0.2 — the RDF 1.2 generation. rete links
+# oxrdf 0.2 / oxttl 0.1 and STORES the RDF-star surface, so the exporter writing
+# its stored token verbatim produced a dump this store refuses, and a load is
+# atomic: zero quads, not "the quoted ones dropped". The exporter now writes the
+# ratified triple term by default. The negative case first, because without it
+# the positive one only proves the store is lenient.
+assert_grep "rete writes RDF 1.2 triple terms by default" '<<\( ' quoted-export.nq
+assert_grep "…and the legacy surface on request"          '<<<'   quoted-star.nq
+ox load --location /data/store-qstar --file /data/quoted-star.nq >ox_qstar.log 2>&1
+assert_grep "Oxigraph REJECTS the RDF-star surface" \
+  'must be an IRI, a blank node or a literal' ox_qstar.log
+ox dump --location /data/store-qstar --file /data/qstar-back.nq --format nq >/dev/null 2>&1
+assert_eq "…and it costs the whole file, as every parse error does" 0 "$(lines qstar-back.nq)"
+
+ox load --location /data/store-quoted --file /data/quoted-export.nq >ox_quoted.log 2>&1
+q_code=$?
+assert_eq "Oxigraph LOADS the RDF 1.2 dump" 0 "$q_code"
+[ $q_code -ne 0 ] && sed 's/^/         > /' ox_quoted.log | head -5
+ox dump --location /data/store-quoted --file /data/quoted-back.nq --format nq >/dev/null 2>&1
+assert_eq "…and holds every quad the dump had" "$(lines quoted-export.nq)" "$(lines quoted-back.nq)"
+# TriG carries the same terms. It is worth its own case because the failure mode
+# there is not a rejection: an RDF 1.2 parser reads `<< s p o >>` as a REIFIER,
+# so the RDF-star surface would load "successfully" as a different graph.
+ox load --location /data/store-qtrig --file /data/quoted-export.trig >ox_qtrig.log 2>&1
+assert_eq "the TriG dump loads too" 0 "$?"
+ox dump --location /data/store-qtrig --file /data/qtrig-back.nq --format nq >/dev/null 2>&1
+assert_eq "…with the same quad count, so nothing was reified into existence" \
+  "$(lines quoted-export.nq)" "$(lines qtrig-back.nq)"
+
 # --- the cycle docs/interop.md documents -------------------------------------
 echo "== rete → Oxigraph → rete =="
 ox load --location /data/store-named --file /data/named-export.nq >ox_named.log 2>&1
@@ -202,6 +233,22 @@ $DEV_RUN bash tests/interop/rete_side.sh rebuild >/dev/null 2>&1
 cd "$WORK" || exit 2
 
 assert_eq "the Oxigraph dump rebuilds as a .rete" 0 "$(cat build_back.code 2>/dev/null || echo 99)"
+# The quoted-triple half of the same cycle: what Oxigraph dumps is RDF 1.2, and
+# rete's N-Quads tokenizer canonicalises both surfaces to one stored token, so
+# the graph must come back unchanged.
+assert_eq "the quoted-triple dump rebuilds too" 0 "$(cat build_quoted_back.code 2>/dev/null || echo 99)"
+# Blank node LABELS are local to a document — Oxigraph mints its own on load, as
+# any conforming store may — so they are masked before the comparison. Everything
+# else, including the triple terms and the blank nodes *inside* them, must be
+# identical. (The other cycle above uses a fixture with no blank nodes at all,
+# which is why it can diff the bytes.)
+bmask() { sed -E 's/_:[A-Za-z0-9]+/_:b/g' "$1" | LC_ALL=C sort; }
+if diff -q <(bmask quoted-export.nq) <(bmask quoted-back-export.nq) >/dev/null 2>&1; then
+  pass "rete → RDF 1.2 → Oxigraph → rete is the identity for quoted triples"
+else
+  fail "rete → RDF 1.2 → Oxigraph → rete is the identity for quoted triples" \
+    "$(diff <(bmask quoted-export.nq) <(bmask quoted-back-export.nq) | head -8)"
+fi
 if diff -q <(sort named-export.nq) <(sort named-back-export.nq) >/dev/null 2>&1; then
   pass "on CLEAN data the cycle is the identity, quad for quad"
 else

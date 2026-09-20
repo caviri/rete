@@ -338,7 +338,7 @@ section directory rather than read out of the card — see
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).
 
-### `rete export <file> [--format nq|ttl|trig|jsonld|hdt] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--compress none|zstd|gzip] [--compress-level N] [--in-memory]`
+### `rete export <file> [--format nq|ttl|trig|jsonld|hdt] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--quoted-triple-syntax rdf12|rdf-star] [--compress none|zstd|gzip] [--compress-level N] [--in-memory]`
 Serialize the dataset, or a slice of it.
 
 Two formats keep every graph and are lossless round-trips:
@@ -385,6 +385,46 @@ reports its choice on stderr:
 Graphs are never silently merged, and a non-empty selection is never silently
 dropped.
 
+**Quoted triples: which surface (`--quoted-triple-syntax`).** A quoted triple —
+a statement standing inside another statement — has two spellings in the wild,
+and `nq`, `ttl` and `trig` can write either. Both are supported; rete re-ingests
+either losslessly. They differ in who *else* can read the dump.
+
+| value | surface | read by |
+| --- | --- | --- |
+| `rdf12` (default) | `<<( s p o )>>`, the ratified RDF 1.2 **triple term** | oxttl 0.2 and everything on it, incl. the `oxigraph` CLI; Jena 5.x, GraphDB 11 |
+| `rdf-star` | `<<s p o>>`, the RDF-star community-group surface — and the token rete stores | oxrdf 0.2 / oxttl 0.1 (the versions rete itself links), and RDF-star mode in older Jena/GraphDB |
+
+The default is RDF 1.2 because the alternative is a dump current tooling will
+not take: `oxigraph convert --from-format nq` **rejects** `<<s p o>>` outright,
+and a load is atomic, so one such line costs the whole file. In Turtle and TriG
+the failure is quieter and worse — an RDF 1.2 parser reads `<< s p o >>` as a
+*reifier*, so one statement silently becomes two with a blank node where the
+triple term was. Pick the surface your consumer speaks; if you do not know, the
+default is the one that fails loudly rather than quietly.
+
+A file with no quoted triples in it is unaffected. The header records in one bit
+whether the file holds any, so the check is skipped entirely and the dump is
+byte-for-byte the same under either value.
+
+Two edges worth knowing:
+
+- **RDF 1.2 puts a triple term in object position only** (`ttSubject ::= iri |
+  BlankNode`). A graph with a quoted triple in *subject* position — legal
+  RDF-star, and legal rete — has no RDF 1.2 spelling at all, so the export
+  refuses it by name and points at `--quoted-triple-syntax rdf-star`, rather
+  than writing a dump no parser will accept.
+- **rete's own Turtle/TriG reader takes the RDF-star surface only** (it is
+  oxttl 0.1; the N-Quads path is rete's own tokenizer and takes both). So a
+  default `--format trig` dump containing triple terms is readable by current
+  third-party parsers and *not* by `rete build`. The export says so on stderr
+  when it writes one. `--format nq` round-trips through rete in either surface.
+
+`--format jsonld` and `--format hdt` have no term kind for a quoted triple at
+all and **refuse** a file that contains one, naming `--format trig`. They used
+to write it as though it were an IRI — a file that loads cleanly and means
+something else.
+
 **HDT (`--format hdt`).** A binary serialization whose point is that a reader
 memory-maps it and answers triple patterns against the mapped bytes. Opening the
 1.39 GB reference HDT costs 50.7 MB of RSS and 0.31 s, whatever the file's size —
@@ -394,7 +434,7 @@ that is what a compressed text dump cannot do.
 rete export data.rete --format hdt > data.hdt
 ```
 
-Three limitations, all enforced rather than merely documented:
+Four limitations, all enforced rather than merely documented:
 
 - **Triples only.** HDT has no graph term, so it takes one graph by the same
   ladder Turtle uses. The quad extension (HDTQ) is niche and poorly supported
@@ -407,6 +447,11 @@ Three limitations, all enforced rather than merely documented:
   `--memory-budget-mb`, naming both numbers. Measured, the estimate is about 512
   bytes per distinct term plus 16 per triple; an 88M-triple, 39.7M-term graph
   needs roughly 14 GB.
+- **No quoted triples.** HDT predates RDF-star and RDF 1.2 and has no term kind
+  for a triple term. It did not notice: a quoted triple was interned into HDT's
+  dictionary as an *IRI*, brackets stripped by the same rule that strips a real
+  one's, so a consumer read back an "IRI" with spaces and angle brackets in it.
+  `rete export` now refuses, from the header flag, before any work.
 - **A second, independent cap: 2^32 object ids.** The reference implementation
   truncates object dictionary ids to 32 bits while building its query index, so a
   larger file would be written successfully and then answer queries *incorrectly*
