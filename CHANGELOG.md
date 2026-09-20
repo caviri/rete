@@ -43,6 +43,48 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **A dump could be reported as valid and still refuse to load: IRI validity is
+  now decided by an RFC 3987 parser, not by a list of known-bad shapes.**
+  `<https://::1>` is an IPv6 literal in the authority without the brackets RFC
+  3987 requires. It has a scheme, contains no excluded character, no bracket (the
+  defect is their *absence*), one `#` and no `%` — so it matched none of the five
+  defect classes, `--sanitize-iris` reported zero, and the dump was published.
+  Oxigraph rejected it: `Parser error … Invalid character ':'`. Of eleven dumps
+  in the September audit sweep, an independent parser refused one.
+
+  The bug was structural, not a missing case: the export gate asked the
+  exporter's own classifier whether the exporter's output was valid, and a
+  classifier enumerates shapes it has already seen. So the two questions are now
+  separate. **Validity** is `oxiri` — the crate Oxigraph's own N-Triples reader
+  validates with, and already in rete's dependency tree via `oxrdf`/`oxttl`, so
+  this costs no new dependency and no new wasm surface. The **classes** are kept
+  only to answer "can we repair this, and how".
+
+  A defect the parser rejects that no class recognises lands in a new
+  `IriDefect::Unclassified` bucket: **counted, unrepairable, and blocking**. A gap
+  in the taxonomy is now benign — we failed to repair something we might have —
+  instead of harmful, which is a published dump that does not load. A repairable
+  class is likewise only *claimed* when escaping verifiably lands an IRI the
+  parser accepts, so `<https://::1/a[b]>` is not reported as a fixable bracket.
+
+  `--sanitize-iris` gained a machine-readable line, `totals invalid=… repairable=…
+  unrepairable=… unclassified=…`; a publication gate should key on
+  `unrepairable > 0` rather than on any single class.
+
+  Verified three ways: a differential test against `oxttl`'s parser over an
+  exhaustive ASCII-position sweep and 12k generated strings (exact agreement in
+  both directions); the eleven audited dumps re-measured, 283,200,750 IRI
+  occurrences, flagging **exactly** the one Oxigraph rejects and none of the other
+  ten; and a new `iri` fuzz target.
+
+- **`--sanitize-iris` could claim to have repaired an RDF-star quoted triple it
+  had only partly repaired.** `<<<relative/x> <p> <http://ex/o[1]>>>` had its
+  object escaped and its subject left alone, and the rebuilt term — still invalid
+  — was counted as repaired. Worse, only the *first* defect in a term was ever
+  recorded, so the relative IRI never reached the unrepairable count and never
+  blocked. A quoted triple is now all-or-nothing, and the report counts every IRI
+  a term carries rather than the first. Found by the new `iri` fuzz target.
+
 - **Literals were stored with their escapes unresolved when written as HDT.**
   rete keeps a term in N-Triples lexical form, so a literal containing a newline
   is the two characters `\` and `n`; HDT stores the resolved character and

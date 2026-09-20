@@ -14,6 +14,24 @@
 //!   a sanitized dump no longer joins against the graph it came from. The
 //!   summary states that every time it does anything, rather than reading as a
 //!   clean bill of health.
+//!
+//! # The `totals` line is a machine interface
+//!
+//! `report_sanitized` prints one line that is meant to be *parsed*:
+//!
+//! ```text
+//! --sanitize-iris: totals invalid=11 repairable=11 unrepairable=0 unclassified=0
+//! ```
+//!
+//! `scripts/export_scholar_nquads.sh` reads it to decide whether a dump may be
+//! published, because `unrepairable` is the one number that answers "will a
+//! strict loader take this". Prose wording may change; **this line's shape may
+//! not** without changing that script in the same commit, or the script reads a
+//! missing field as a zero and opens the gate on a broken dump.
+//!
+//! The per-class rows below it are a second machine surface: the script matches
+//! a stable fragment of each `IriDefect::reason()`. A reason it does not
+//! recognise is counted as unknown and warned about — never dropped.
 
 use rete_core::iri::IriReport;
 
@@ -73,11 +91,21 @@ pub(crate) fn warn_after_build(report: &IriReport) {
 /// "nothing needed changing" is the answer to that question.
 pub(crate) fn report_sanitized(report: &IriReport) {
     if report.is_empty() {
+        eprintln!("--sanitize-iris: totals invalid=0 repairable=0 unrepairable=0 unclassified=0");
         eprintln!(
             "--sanitize-iris: no invalid IRIs found; the dump is byte-identical to a plain export."
         );
         return;
     }
+    // Parsed downstream — see the module docs. Printed first so it is there even
+    // when a later line is truncated.
+    eprintln!(
+        "--sanitize-iris: totals invalid={} repairable={} unrepairable={} unclassified={}",
+        report.occurrences(),
+        report.repairable(),
+        report.unrepairable(),
+        report.unclassified()
+    );
     if report.repaired() > 0 {
         eprintln!(
             "--sanitize-iris: percent-encoded {} IRI occurrence(s). The dump's IRIs are NOT the",
@@ -105,6 +133,21 @@ pub(crate) fn report_sanitized(report: &IriReport) {
             if let Some(s) = sample {
                 eprintln!("                          e.g. {}", elide(s));
             }
+        }
+        if report.unclassified() > 0 {
+            eprintln!(
+                "                 The unclassified ones are invalid by RFC 3987 — the parser this"
+            );
+            eprintln!(
+                "                 tool shares with Oxigraph's N-Triples reader refused them — but"
+            );
+            eprintln!(
+                "                 match no repair rete knows, so nothing was changed. `<https://::1>`"
+            );
+            eprintln!(
+                "                 (an IPv6 host missing its brackets) is the shape that taught us to"
+            );
+            eprintln!("                 count these rather than pass them.");
         }
     }
 }

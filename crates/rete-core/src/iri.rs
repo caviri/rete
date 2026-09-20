@@ -13,7 +13,7 @@
 //! audit (`rete build`, `rete validate`) and the export-time repair
 //! (`rete export --sanitize-iris`).
 //!
-//! # What counts as invalid
+//! # Validity is decided by a parser; the classes only say how to repair
 //!
 //! Two documents apply, and both must hold:
 //!
@@ -23,9 +23,26 @@
 //! * **RFC 3987**, which the same grammar requires the content to satisfy as an
 //!   *absolute* IRI (with an optional fragment).
 //!
-//! The five classes below are what that combination rules out in practice. They
-//! are the classes measured in the published `scholar/` exports; each one was
-//! seen in real data.
+//! The first is a character set, so a one-pass scan settles it. The second is a
+//! grammar, and it is **not** settled by enumerating bad shapes: a taxonomy of
+//! known defects can only recognise what has already been seen, so making it the
+//! arbiter of validity guarantees that the next unseen shape is published as
+//! valid. That is not hypothetical — `<https://::1>` (an IPv6 literal in the
+//! authority without the brackets 3987 requires) matched none of the five
+//! classes, and a dump carrying it passed the export gate and was rejected by
+//! Oxigraph.
+//!
+//! So the two questions are separated:
+//!
+//! * **Is it valid?** `oxiri` answers, and nothing else does. That is the
+//!   crate Oxigraph's own N-Triples reader validates with — `oxttl`'s lexer
+//!   tokenises `<`…`>` per the `IRIREF` production and hands the content to
+//!   `oxiri::Iri::parse` — so rete's verdict agrees with the reference loader's
+//!   *by construction* rather than by our keeping a list up to date. `oxiri` is
+//!   already in this crate's dependency tree via `oxrdf`/`oxttl`, so deciding it
+//!   properly costs no new dependency and no new wasm surface.
+//! * **Can we repair it, and how?** The classes below answer, and only that.
+//!   Each names a shape percent-encoding can fix without inventing information.
 //!
 //! | class | example | repairable by escaping |
 //! |---|---|---|
@@ -34,26 +51,61 @@
 //! | [`IriDefect::Bracket`]       | `<http://ex/a[b]>`           | yes |
 //! | [`IriDefect::ExtraHash`]     | `<http://ex/c#d#e>`          | yes |
 //! | [`IriDefect::BadPercent`]    | `<http://ex/%x>`             | yes |
+//! | [`IriDefect::Unclassified`]  | `<https://::1>`              | **no** |
+//!
+//! [`IriDefect::Unclassified`] is the load-bearing one: an IRI the parser
+//! rejects that **no class recognises**. It is still counted and it is still
+//! unrepairable, so it still blocks. A gap in the taxonomy is now benign — we
+//! failed to repair something we might have — instead of harmful, which is a
+//! published dump that does not load. A class that is added later only moves
+//! occurrences out of this bucket; it never changes a verdict from invalid to
+//! valid.
+//!
+//! A repairable class is only reported when escaping actually **lands a valid
+//! IRI**: `<https://::1/a[b]>` has a bracket, but encoding it leaves an IRI the
+//! parser still rejects, so it is reported as [`IriDefect::Unclassified`] rather
+//! than as a `Bracket` the sanitizer would claim to have fixed.
+//!
+//! # `UCHAR` escapes are syntax, not content
+//!
+//! `<http://ex/café>` is a legal `IRIREF` whose IRI is `http://ex/café` —
+//! the backslash belongs to N-Triples, not to the IRI. The escapes are therefore
+//! resolved *before* the parser sees the string, exactly as `oxttl` does.
+//! Handing the raw bracket content to an RFC 3987 parser would reject `\` and
+//! make every escaped dump a false positive.
 //!
 //! # What this deliberately does not judge
 //!
-//! * **Non-ASCII.** RFC 3987 admits `ucschar`, so `<http://ex/café>` is a valid
-//!   IRI. Bytes ≥ `0x80` are passed through untouched. The narrow sub-ranges
-//!   3987 excludes (surrogates, `iprivate` outside the query) are not policed:
-//!   flagging them risks percent-encoding an IRI that was fine, which is the one
-//!   failure mode a sanitizer must not have.
-//! * **Scheme semantics.** `<nonsense://x>` is well-formed and accepted.
-//! * **A relative IRI** ([`IriDefect::NotAbsolute`]) is *reported and left
-//!   alone*. Escaping cannot repair it — resolving it needs a base IRI that the
-//!   `.rete` never recorded — so [`sanitize_iri_content`] returns `None` and the
-//!   term is emitted verbatim. A dump containing one is still not valid N-Quads,
-//!   and `--sanitize-iris` says so rather than implying a fix it did not make.
+//! * **Scheme semantics.** `<nonsense://x>` is syntactically a fine IRI and is
+//!   accepted. Whether the scheme is registered, resolvable or meaningful is not
+//!   this module's question.
+//! * **Whether the IRI names anything.** A 404, a typo'd host and a dead DOI are
+//!   all valid IRIs.
+//! * **Normalisation.** `<HTTP://EX/a/../b>` is valid and is left exactly as it
+//!   was given; rete never case-folds a scheme or removes a dot segment, because
+//!   both change the dictionary key and break the round-trip.
+//! * **Anything escaping cannot fix.** A relative IRI ([`IriDefect::NotAbsolute`])
+//!   and an [`IriDefect::Unclassified`] one are *reported and left alone* —
+//!   [`sanitize_iri_content`] returns `None` and the term is emitted verbatim. A
+//!   dump containing one is still not valid N-Quads, and `--sanitize-iris` says
+//!   so rather than implying a fix it did not make.
+//!
+//! **Non-ASCII used to be on this list and no longer is.** RFC 3987 admits
+//! `ucschar`, so `<http://ex/café>` is valid — but the narrow sub-ranges 3987
+//! excludes (surrogates, `iprivate` outside the query) were previously not
+//! policed at all. The parser polices them now, because it is the same parser
+//! the loader uses: if it accepts a character, so does the dump's reader.
 
 use std::borrow::Cow;
 
-/// Why an IRI is not one. The classes are ordered by how they are found, not by
-/// severity; [`IriDefect::NotAbsolute`] is checked first because it is a
-/// property of the whole IRI and is the only one escaping cannot repair.
+/// Why an IRI is not one — a **repair** classification, not the validity
+/// verdict. [`iri_content_defect`] decides validity with an RFC 3987 parser and
+/// uses these only to say what, if anything, can be done about it.
+///
+/// The classes are ordered by how they are found, not by severity;
+/// [`IriDefect::NotAbsolute`] is checked first because it is a property of the
+/// whole IRI, and [`IriDefect::Unclassified`] last because it is what is left
+/// when no other class explains a parser rejection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IriDefect {
     /// No `scheme:` prefix, so the `IRIREF` is relative. N-Triples requires an
@@ -76,10 +128,22 @@ pub enum IriDefect {
     /// escaping mistake (`%x`, `%p`) — escaping it makes the dump loadable
     /// without making the IRI *right*, which is the publisher's bug to fix.
     BadPercent,
+    /// **The RFC 3987 parser rejected it and no class above explains why.**
+    /// Either the defect is a shape this taxonomy has never seen (`https://::1`
+    /// — an IPv6 literal in the authority without its brackets, the case this
+    /// bucket was added for), or escaping the shape that *was* recognised still
+    /// leaves an IRI the parser refuses.
+    ///
+    /// **Not repairable** — we do not know what is wrong, so we cannot claim to
+    /// have fixed it. It is counted and it blocks, which is the whole point: a
+    /// gap in the taxonomy must never read as a clean bill of health. Adding a
+    /// class later only moves occurrences out of here; it never turns an invalid
+    /// IRI into a valid one.
+    Unclassified,
 }
 
 /// Number of [`IriDefect`] classes — the width of a report's counter array.
-pub const DEFECT_CLASSES: usize = 5;
+pub const DEFECT_CLASSES: usize = 6;
 
 impl IriDefect {
     /// Every class, in declaration order — the iteration order of a report.
@@ -89,6 +153,7 @@ impl IriDefect {
         IriDefect::Bracket,
         IriDefect::ExtraHash,
         IriDefect::BadPercent,
+        IriDefect::Unclassified,
     ];
 
     /// Index into a report's per-class counters.
@@ -100,10 +165,15 @@ impl IriDefect {
             IriDefect::Bracket => 2,
             IriDefect::ExtraHash => 3,
             IriDefect::BadPercent => 4,
+            IriDefect::Unclassified => 5,
         }
     }
 
     /// A short human reason, for a warning line.
+    ///
+    /// These strings are **parsed downstream** — `scripts/export_scholar_nquads.sh`
+    /// matches a stable fragment of each to fill `state.tsv`. Changing one means
+    /// changing that parser in the same commit.
     pub fn reason(self) -> &'static str {
         match self {
             IriDefect::NotAbsolute => "no scheme — a relative IRI, not an absolute one",
@@ -113,16 +183,24 @@ impl IriDefect {
             IriDefect::Bracket => "'[' or ']' outside an IP-literal host",
             IriDefect::ExtraHash => "more than one '#'",
             IriDefect::BadPercent => "'%' not followed by two hex digits",
+            IriDefect::Unclassified => {
+                "rejected by the RFC 3987 parser, and no repair class recognises it"
+            }
         }
     }
 
     /// Can percent-encoding repair it without inventing information?
     ///
     /// Everything except [`IriDefect::NotAbsolute`], which needs a base IRI the
-    /// file does not carry.
+    /// file does not carry, and [`IriDefect::Unclassified`], where we do not
+    /// know what is wrong.
+    ///
+    /// Callers deciding whether a dump may be published must ask **this**, over
+    /// every class — never whether a particular class is present. Hardcoding one
+    /// class is how `<https://::1>` got through.
     #[inline]
     pub fn repairable(self) -> bool {
-        self != IriDefect::NotAbsolute
+        !matches!(self, IriDefect::NotAbsolute | IriDefect::Unclassified)
     }
 }
 
@@ -188,12 +266,64 @@ fn ip_literal_brackets(s: &str, colon: usize) -> Option<(usize, usize)> {
     Some((start, close))
 }
 
-/// Classify the **content of an `IRIREF`** — what sits between `<` and `>` —
-/// returning the first defect found, or `None` when it is a valid absolute IRI.
+/// Resolve the `UCHAR` escapes (`\uXXXX` / `\UXXXXXXXX`) an `IRIREF` may carry,
+/// yielding the IRI the escapes *denote*.
 ///
-/// The scan is one pass over the bytes with no allocation, so it is affordable
-/// on every term of a billion-statement ingest.
-pub fn iri_content_defect(s: &str) -> Option<IriDefect> {
+/// The backslash belongs to N-Triples, not to the IRI: `<http://ex/café>`
+/// names `http://ex/café`. Handing the raw bracket content to an RFC 3987 parser
+/// would reject the `\` and make every escaped dump a false positive, so the
+/// escapes are resolved first — which is exactly what `oxttl`'s lexer does
+/// before it calls the same parser.
+///
+/// `None` when an escape is malformed or names a surrogate, both of which a
+/// strict reader rejects outright (`char::from_u32` refuses `D800`–`DFFF`).
+///
+/// Borrows — and so costs nothing — for the overwhelmingly common IRI that
+/// carries no backslash at all.
+fn resolve_uchars(s: &str) -> Option<Cow<'_, str>> {
+    if !s.as_bytes().contains(&b'\\') {
+        return Some(Cow::Borrowed(s));
+    }
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'\\' {
+            let start = i;
+            while i < b.len() && b[i] != b'\\' {
+                i += 1;
+            }
+            out.push_str(&s[start..i]);
+            continue;
+        }
+        // Only UCHAR is legal inside an IRIREF — ECHAR (`\n`, `\"`, `\\`) is
+        // not, and `uchar_len` accepts nothing else.
+        let n = uchar_len(b, i)?;
+        let cp = u32::from_str_radix(&s[i + 2..i + n], 16).ok()?;
+        out.push(char::from_u32(cp)?);
+        i += n;
+    }
+    Some(Cow::Owned(out))
+}
+
+/// **The validity verdict.** Does `s` parse as an absolute RFC 3987 IRI?
+///
+/// Decided by `oxiri`, the crate Oxigraph's own N-Triples reader validates with,
+/// so the answer agrees with the loader that will read the dump. Nothing else in
+/// this module decides validity; the [`IriDefect`] classes only describe repairs.
+fn parses_as_absolute_iri(s: &str) -> bool {
+    match resolve_uchars(s) {
+        Some(resolved) => oxiri::Iri::parse(resolved.as_ref()).is_ok(),
+        None => false,
+    }
+}
+
+/// The **repair** classification: the N-Triples `IRIREF` character set plus the
+/// whole-IRI shapes escaping is known to fix. Says nothing about validity —
+/// [`iri_content_defect`] is the entry point, and it asks the parser.
+///
+/// One pass over the bytes with no allocation.
+fn shape_defect(s: &str) -> Option<IriDefect> {
     let colon = match scheme_colon(s) {
         Some(c) => c,
         // A whole-IRI property, and the unrepairable one: report it before any
@@ -250,6 +380,47 @@ pub fn iri_content_defect(s: &str) -> Option<IriDefect> {
     None
 }
 
+/// Classify the **content of an `IRIREF`** — what sits between `<` and `>` —
+/// returning `None` when it is a valid absolute IRI, and otherwise the class
+/// that says what can be done about it.
+///
+/// **Validity is the parser's call, not the taxonomy's.** The order is:
+///
+/// 1. the cheap `shape_defect` scan, which settles the `IRIREF` character set
+///    and names a repair when it recognises one;
+/// 2. a repairable shape is only *reported* as repairable when escaping it
+///    verifiably lands an IRI the parser accepts — otherwise the IRI carries a
+///    second defect no class names, and calling it `Bracket` would have the
+///    sanitizer claim a fix it did not make;
+/// 3. anything the scan finds nothing wrong with still has to satisfy RFC 3987,
+///    and [`IriDefect::Unclassified`] is what a rejection with no known shape is
+///    called. It is counted, it is unrepairable, and it blocks.
+///
+/// The common case — a valid IRI — costs one byte scan plus one `oxiri` parse,
+/// with no allocation. The re-escape in step 2 runs only for an IRI that is
+/// already known to be broken, which is the rare case by construction.
+pub fn iri_content_defect(s: &str) -> Option<IriDefect> {
+    match shape_defect(s) {
+        // A shape we know how to escape — but only if escaping it works.
+        Some(d) if d.repairable() => {
+            let fixed = escape_shape_defects(s);
+            match fixed {
+                Some(f) if shape_defect(&f).is_none() && parses_as_absolute_iri(&f) => Some(d),
+                _ => Some(IriDefect::Unclassified),
+            }
+        }
+        // NotAbsolute: no scheme, so there is nothing for a parser to add.
+        Some(d) => Some(d),
+        None => {
+            if parses_as_absolute_iri(s) {
+                None
+            } else {
+                Some(IriDefect::Unclassified)
+            }
+        }
+    }
+}
+
 fn push_pct(out: &mut Vec<u8>, byte: u8) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     out.push(b'%');
@@ -259,9 +430,20 @@ fn push_pct(out: &mut Vec<u8>, byte: u8) {
 
 /// Percent-encode the offending characters of an `IRIREF`'s content.
 ///
-/// Returns `None` when there is nothing to do (`s` is already valid) **and**
-/// when the defect is [`IriDefect::NotAbsolute`], which escaping cannot repair.
-/// A `Some` result is guaranteed to satisfy [`iri_content_defect`].
+/// Returns `None` when there is nothing to do (`s` is already a valid IRI) and
+/// when the defect is not repairable by escaping — [`IriDefect::NotAbsolute`],
+/// which needs a base IRI the file never recorded, and
+/// [`IriDefect::Unclassified`], where we do not know what is wrong.
+///
+/// **A `Some` result is guaranteed to satisfy [`iri_content_defect`]** — and,
+/// since that now asks a real RFC 3987 parser, guaranteed to be an IRI the
+/// loader accepts. `iri_content_defect` establishes this before it names a
+/// repairable class, so the check is not repeated here.
+///
+/// **`None` for an IRI that was already fine** is the other half of the
+/// contract, and the one failure mode a sanitizer must not have: this function
+/// never percent-encodes something valid. It is `iri_content_defect` that
+/// decides "fine", and it decides it with the parser.
 ///
 /// This changes the IRI. `<http://ex/a[b]>` becomes `<http://ex/a%5Bb%5D>`,
 /// which is a *different* IRI: a sanitized dump no longer joins against the
@@ -272,6 +454,16 @@ pub fn sanitize_iri_content(s: &str) -> Option<String> {
     if !defect.repairable() {
         return None;
     }
+    escape_shape_defects(s)
+}
+
+/// The escaping pass itself: percent-encode every character `shape_defect`
+/// objects to, and nothing else. Pure syntax — it does not decide whether the
+/// result is valid, which is [`iri_content_defect`]'s job.
+///
+/// `None` only when `s` has no scheme, where there is no authority to locate and
+/// so no way to tell a host's brackets from a path's.
+fn escape_shape_defects(s: &str) -> Option<String> {
     let colon = scheme_colon(s)?;
     let brackets = ip_literal_brackets(s, colon);
     let b = s.as_bytes();
@@ -359,10 +551,48 @@ pub fn term_defect(token: &str) -> Option<IriDefect> {
     None
 }
 
+/// **Every** defect a term carries, not only the first.
+///
+/// A term is not always one IRI: an RDF-star quoted triple holds three, each
+/// able to be broken in its own way. [`term_defect`] answers "is this term
+/// invalid" and stops at the first reason, which is all a strict caller needs —
+/// but a *report* that stopped there would count `<<<http://ex/a[b]> <http://ex/p>
+/// <relative>>>` as a repairable `Bracket` and never record the relative IRI that
+/// actually blocks the dump. So the report counts per IRI, and this is what it
+/// walks.
+///
+/// Returns an empty `Vec` — which does not allocate — for a clean term, so the
+/// hot path pays nothing.
+pub fn term_defects(token: &str) -> Vec<IriDefect> {
+    let mut out = Vec::new();
+    collect_term_defects(token, &mut out);
+    out
+}
+
+fn collect_term_defects(token: &str, out: &mut Vec<IriDefect>) {
+    if let Some((s, p, o)) = crate::ingest::quoted_triple_parts(token) {
+        collect_term_defects(&s, out);
+        collect_term_defects(&p, out);
+        collect_term_defects(&o, out);
+        return;
+    }
+    if crate::terms::is_iri(token) {
+        out.extend(iri_content_defect(&token[1..token.len() - 1]));
+    } else if token.starts_with('"') {
+        out.extend(literal_datatype_content(token).and_then(iri_content_defect));
+    }
+}
+
 /// Percent-encode every repairable IRI inside a canonical term token, returning
 /// `None` when nothing changed. The token-level counterpart of
 /// [`sanitize_iri_content`]; it rebuilds quoted triples and literal datatypes
 /// around the repaired IRI so the result is still a canonical token.
+///
+/// **A `Some` result carries no defect**, exactly as for
+/// [`sanitize_iri_content`]. A quoted triple whose subject cannot be repaired is
+/// therefore returned as `None` even when its object could be: a *partial*
+/// repair changes IRIs without making the term loadable, and the report would
+/// count it as fixed. Found by the `iri` fuzz target.
 pub fn sanitize_term(token: &str) -> Option<String> {
     if let Some((s, p, o)) = crate::ingest::quoted_triple_parts(token) {
         let (rs, rp, ro) = (sanitize_term(&s), sanitize_term(&p), sanitize_term(&o));
@@ -370,12 +600,11 @@ pub fn sanitize_term(token: &str) -> Option<String> {
             return None;
         }
         let pick = |r: Option<String>, orig: String| r.unwrap_or(orig);
-        return Some(format!(
-            "<<{} {} {}>>",
-            pick(rs, s),
-            pick(rp, p),
-            pick(ro, o)
-        ));
+        let rebuilt = format!("<<{} {} {}>>", pick(rs, s), pick(rp, p), pick(ro, o));
+        // All or nothing: a component we could not fix leaves the whole term
+        // invalid, and claiming the repair would be the lie this module exists
+        // to prevent.
+        return term_defect(&rebuilt).is_none().then_some(rebuilt);
     }
     if crate::terms::is_iri(token) {
         return sanitize_iri_content(&token[1..token.len() - 1]).map(|c| format!("<{c}>"));
@@ -416,12 +645,16 @@ impl IriReport {
         }
     }
 
-    /// Classify one term token and record any defect. Returns it, so a strict
-    /// caller can fail on the spot.
+    /// Classify one term token and record **every** defect it carries — an
+    /// RDF-star quoted triple holds three IRIs and can be broken in three ways.
+    /// Returns the first, so a strict caller can fail on the spot.
     pub fn observe_term(&mut self, token: &str) -> Option<IriDefect> {
-        let d = term_defect(token)?;
-        self.note(d, token);
-        Some(d)
+        let defects = term_defects(token);
+        let first = defects.first().copied();
+        for d in defects {
+            self.note(d, token);
+        }
+        first
     }
 
     /// Classify a whole statement — subject, predicate, object and (for
@@ -451,18 +684,21 @@ impl IriReport {
     /// counted and returned **unchanged** — the caller is told, and the data is
     /// not silently dropped or invented.
     pub fn sanitize<'a>(&mut self, token: &'a str) -> Cow<'a, str> {
-        match term_defect(token) {
-            None => Cow::Borrowed(token),
-            Some(d) => {
-                self.note(d, token);
-                match sanitize_term(token) {
-                    Some(fixed) => {
-                        self.repaired += 1;
-                        Cow::Owned(fixed)
-                    }
-                    None => Cow::Borrowed(token),
-                }
+        let defects = term_defects(token);
+        if defects.is_empty() {
+            return Cow::Borrowed(token);
+        }
+        for &d in &defects {
+            self.note(d, token);
+        }
+        match sanitize_term(token) {
+            // `sanitize_term` only returns `Some` for a term that is now clean,
+            // so every defect above really was repaired.
+            Some(fixed) => {
+                self.repaired += defects.len() as u64;
+                Cow::Owned(fixed)
             }
+            None => Cow::Borrowed(token),
         }
     }
 
@@ -488,13 +724,41 @@ impl IriReport {
         self.repaired
     }
 
-    /// Occurrences no escaping can repair — every [`IriDefect::NotAbsolute`].
+    /// Occurrences no escaping can repair — **every class** for which
+    /// [`IriDefect::repairable`] is false, asked class by class rather than
+    /// named one at a time.
+    ///
+    /// This is the number a publication gate must look at. `> 0` means the dump
+    /// contains an IRI that is still invalid after everything the sanitizer
+    /// could do, so a strict loader will reject it. Gating on one specific class
+    /// instead is how an unrecognised defect gets published.
     pub fn unrepairable(&self) -> u64 {
         IriDefect::ALL
             .iter()
             .filter(|d| !d.repairable())
             .map(|d| self.counts[d.index()])
             .sum()
+    }
+
+    /// Occurrences escaping *can* repair. Complements [`IriReport::unrepairable`]
+    /// — the two partition [`IriReport::occurrences`].
+    pub fn repairable(&self) -> u64 {
+        IriDefect::ALL
+            .iter()
+            .filter(|d| d.repairable())
+            .map(|d| self.counts[d.index()])
+            .sum()
+    }
+
+    /// Occurrences the RFC 3987 parser rejected that **no repair class
+    /// recognised** — [`IriDefect::Unclassified`].
+    ///
+    /// Reported separately because it is the number that says the taxonomy has a
+    /// gap. It is already inside [`IriReport::unrepairable`], so a gate that
+    /// reads that one does not need this; it is for the human who has to decide
+    /// whether a new class is worth adding.
+    pub fn unclassified(&self) -> u64 {
+        self.counts[IriDefect::Unclassified.index()]
     }
 
     /// Per-class occurrence count.
@@ -555,6 +819,110 @@ mod tests {
             assert_eq!(iri_content_defect(ok), None, "{ok} should be valid");
             assert_eq!(sanitize_iri_content(ok), None, "{ok} should need no repair");
         }
+    }
+
+    /// The false-positive set. A wrong flag blocks a valid dump, so these are
+    /// the critical cases: every one is legal RFC 3987 and must stay clean.
+    #[test]
+    fn legal_iris_are_never_flagged() {
+        for ok in [
+            "http://user:pass@host/",    // ':' inside userinfo
+            "http://[::1]:8080/p",       // bracketed IPv6 with a port
+            "urn:isbn:0451450523",       // no authority; colons are path
+            "mailto:a@b.com",            // no authority; '@' is path
+            "http://host:8080/a:b",      // colons in the path
+            "http://caf\u{e9}.example/", // RFC 3987 admits `ucschar`
+            "http://example.org/caf\u{e9}",
+            "https://[2001:db8::1]:443/x?q=1#f",
+            "http://host/", // empty port is legal
+            "http://host:/p",
+            "ftp://ftp.example.org/pub/",
+            "did:example:123456789abcdefghi",
+            "http://example.org/a?b=c&d=%20e#frag",
+        ] {
+            assert_eq!(iri_content_defect(ok), None, "{ok} must not be flagged");
+            assert_eq!(
+                sanitize_iri_content(ok),
+                None,
+                "{ok} was already fine and must not be rewritten"
+            );
+        }
+    }
+
+    /// The authority defects the five-class taxonomy could not see. Each must be
+    /// flagged, and flagged as something that BLOCKS.
+    #[test]
+    fn a_bad_authority_is_flagged_and_unrepairable() {
+        for bad in [
+            "https://::1",   // the incident: unbracketed IPv6
+            "http://h:80x/", // non-digit port
+            "http://a@b@c/", // two '@' in the authority
+            "http://[::1/x", // unclosed bracket
+            "http://ho st/", // (space is ForbiddenChar first — see below)
+        ] {
+            let d = iri_content_defect(bad).unwrap_or_else(|| panic!("{bad} not flagged"));
+            assert!(
+                d == IriDefect::Unclassified || !d.repairable() || d == IriDefect::ForbiddenChar,
+                "{bad} -> {d:?}"
+            );
+        }
+        // Specifically: the incident IRI, and it does not repair.
+        assert_eq!(
+            iri_content_defect("https://::1"),
+            Some(IriDefect::Unclassified)
+        );
+        assert_eq!(sanitize_iri_content("https://::1"), None);
+        assert_eq!(
+            iri_content_defect("http://h:80x/"),
+            Some(IriDefect::Unclassified)
+        );
+        assert_eq!(
+            iri_content_defect("http://a@b@c/"),
+            Some(IriDefect::Unclassified)
+        );
+    }
+
+    /// A repairable shape wrapped around an unrepairable one must NOT be
+    /// reported as repairable: escaping the bracket leaves an IRI the parser
+    /// still rejects, and claiming a repair there is how a broken dump gets
+    /// marked publishable.
+    #[test]
+    fn a_repair_that_would_not_land_valid_is_not_claimed() {
+        let bad = "https://::1/a[b]";
+        assert_eq!(shape_defect(bad), Some(IriDefect::Bracket));
+        assert_eq!(iri_content_defect(bad), Some(IriDefect::Unclassified));
+        assert_eq!(sanitize_iri_content(bad), None);
+    }
+
+    /// `UCHAR` is N-Triples syntax, not IRI content. Resolving it before the
+    /// parser sees it is what keeps an escaped dump from being a false positive.
+    #[test]
+    fn uchar_escapes_are_resolved_before_the_parser_sees_them() {
+        // `é` denotes `é`, which RFC 3987 allows.
+        assert_eq!(iri_content_defect("http://example.org/\\u00E9"), None);
+        assert_eq!(sanitize_iri_content("http://example.org/\\u00E9"), None);
+        assert_eq!(iri_content_defect("http://example.org/a\\U0001F600b"), None);
+        // An escape can smuggle a character the raw grammar forbids. The parser
+        // is the only thing that catches it, and it must.
+        for smuggled in [
+            "http://example.org/a\\u0020b", // space
+            "http://example.org/a\\u003Eb", // '>'
+            "http://example.org/a\\u005Cb", // '\'
+            "http://example.org/a\\u0022b", // '"'
+        ] {
+            assert_eq!(
+                iri_content_defect(smuggled),
+                Some(IriDefect::Unclassified),
+                "{smuggled}"
+            );
+        }
+        // A surrogate is not a character; a strict reader refuses it.
+        assert_eq!(
+            iri_content_defect("http://example.org/\\uD800"),
+            Some(IriDefect::Unclassified)
+        );
+        // `#` and `?` arrive legally through an escape.
+        assert_eq!(iri_content_defect("http://example.org/a\\u003Fq"), None);
     }
 
     #[test]
@@ -683,6 +1051,41 @@ mod tests {
         assert_eq!(r.unrepairable(), 1);
         assert_eq!(r.sample(IriDefect::Bracket), Some("<http://ex/a[b]>"));
         assert_eq!(r.classes().count(), 3);
+    }
+
+    /// Found by the `iri` fuzz target. A quoted triple whose subject is a
+    /// relative IRI and whose object is merely badly escaped used to be
+    /// "repaired" into a term that was still invalid — and, worse, counted as
+    /// repaired, with only the *first* defect recorded, so the relative IRI
+    /// never reached `unrepairable()` and never blocked.
+    #[test]
+    fn a_partly_repairable_quoted_triple_is_not_claimed_as_repaired() {
+        let token = "<<<relative/x> <http://ex/p> <http://ex/o[1]>>>";
+        assert_eq!(sanitize_term(token), None, "a partial repair was claimed");
+
+        let mut r = IriReport::default();
+        assert_eq!(r.sanitize(token), token, "the term must be left verbatim");
+        assert_eq!(r.repaired(), 0);
+        // BOTH defects are recorded, not just the first.
+        assert_eq!(r.occurrences(), 2);
+        assert_eq!(r.count(IriDefect::NotAbsolute), 1);
+        assert_eq!(r.count(IriDefect::Bracket), 1);
+        // And the one that blocks is visible to the gate.
+        assert_eq!(r.unrepairable(), 1);
+    }
+
+    /// The other half: when every component *can* be repaired, it is.
+    #[test]
+    fn a_fully_repairable_quoted_triple_still_repairs() {
+        let token = "<<<http://ex/a[b]> <http://ex/p> <http://ex/c#d#e>>>";
+        let mut r = IriReport::default();
+        assert_eq!(
+            r.sanitize(token),
+            "<<<http://ex/a%5Bb%5D> <http://ex/p> <http://ex/c#d%23e>>>"
+        );
+        assert_eq!(r.occurrences(), 2);
+        assert_eq!(r.repaired(), 2);
+        assert_eq!(r.unrepairable(), 0);
     }
 
     #[test]

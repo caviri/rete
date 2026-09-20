@@ -248,8 +248,14 @@ dump carried. But this is not free, and it is opt-in for that reason:
   Fix those at the source; nothing downstream can.
 
 `rete build --strict` refuses such input outright, if you would rather find out
-at build time. Full rules and the five classes: [CLI → Invalid
-IRIs](cli.md#invalid-iris).
+at build time.
+
+rete decides whether an IRI is valid with **`oxiri`**, the crate Oxigraph's own
+N-Triples reader validates with — so the two agree by construction rather than
+by our keeping a list of known-bad shapes in step. An IRI Oxigraph will refuse is
+one rete already counted, including shapes rete has no repair for; those are
+reported as unrepairable and block a sanitized export instead of passing as
+clean. Full rules and the classes: [CLI → Invalid IRIs](cli.md#invalid-iris).
 
 ### Load into GraphDB
 

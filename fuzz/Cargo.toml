@@ -7,6 +7,7 @@
 #   cargo install cargo-fuzz
 #   cargo +nightly fuzz run open          # eager open + query
 #   cargo +nightly fuzz run open_lazy     # lazy/ranged open + query
+#   cargo +nightly fuzz run iri           # IRI classifier + sanitizer contract
 #   cargo +nightly fuzz run open -- -max_total_time=600
 [package]
 name = "rete-fuzz"
@@ -38,6 +39,16 @@ bench = false
 [[bin]]
 name = "open_lazy"
 path = "fuzz_targets/open_lazy.rs"
+test = false
+doc = false
+bench = false
+
+# The IRI classifier/sanitizer: not a file-format surface, but it runs over every
+# term of every ingest and its output decides whether a dump is publishable. The
+# invariants it asserts are in the target's header.
+[[bin]]
+name = "iri"
+path = "fuzz_targets/iri.rs"
 test = false
 doc = false
 bench = false

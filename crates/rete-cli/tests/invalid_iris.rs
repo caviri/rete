@@ -42,6 +42,16 @@ const UNREPAIRABLE: &str = concat!(
     "<noscheme/path> <http://example.org/p> \"no scheme\" .\n",
 );
 
+/// The shape that started this: an IPv6 literal in the authority without the
+/// brackets RFC 3987 requires. It has a scheme, no forbidden character, no
+/// bracket, one `#` and no `%`, so **none of the five repair classes sees it** —
+/// and until the parser became the arbiter of validity, `--sanitize-iris`
+/// reported zero and the export gate published the dump. Oxigraph refused it.
+const UNBRACKETED_IPV6: &str = concat!(
+    "<http://example.org/ok> <http://example.org/p> \"fine\" .\n",
+    "<https://github.com/steamfoundry> <http://example.org/homepage> <https://::1> .\n",
+);
+
 fn stderr_of(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
@@ -327,4 +337,133 @@ fn sanitize_iris_covers_the_graph_term() {
         .success();
     let text = String::from_utf8_lossy(&dump.get_output().stdout).into_owned();
     assert!(text.contains("<http://example.org/g%5B1%5D>"), "{text}");
+}
+
+/// **The regression.** `<https://::1>` must be counted, must be reported as
+/// unrepairable, and must therefore block — even though no repair class
+/// recognises it. This is the property that stops the next unknown shape from
+/// becoming the next incident.
+#[test]
+fn an_unclassified_defect_is_counted_and_blocks() {
+    let f = fixture();
+    let src = f.write("ipv6.nt", UNBRACKETED_IPV6);
+    let out = f.path("ipv6.rete");
+    let build = rete()
+        .args(["build"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .success();
+    // The build audit sees it too — it is not an export-only check.
+    let berr = stderr_of(build.get_output());
+    assert!(
+        berr.contains("1 statement(s) carry an invalid IRI"),
+        "the build audit missed it:\n{berr}"
+    );
+    assert!(berr.contains("RFC 3987"), "{berr}");
+
+    let dump = rete()
+        .args(["export"])
+        .arg(&out)
+        .arg("--sanitize-iris")
+        .assert()
+        .success();
+    let text = String::from_utf8_lossy(&dump.get_output().stdout).into_owned();
+    let err = stderr_of(dump.get_output());
+
+    // Counted, and counted as the thing that blocks.
+    assert!(
+        err.contains("totals invalid=1 repairable=0 unrepairable=1 unclassified=1"),
+        "the totals line is what the export gate reads:\n{err}"
+    );
+    assert!(err.contains("CANNOT be repaired"), "{err}");
+    assert!(err.contains("still not valid N-Quads"), "{err}");
+    assert!(
+        err.contains("no repair class recognises it"),
+        "the report must say the taxonomy did not recognise it:\n{err}"
+    );
+    // Never invented a repair: `https://%3A%3A1` would be a different host.
+    assert!(
+        text.contains("<https://::1>"),
+        "an unrepairable IRI is written verbatim:\n{text}"
+    );
+}
+
+/// The other half of the same guarantee: an IRI that is *valid* must never be
+/// touched, and the totals must read zero. A sanitizer that percent-encodes
+/// something that was already fine is worse than one that misses a defect.
+#[test]
+fn a_clean_dump_reports_zero_totals_and_is_untouched() {
+    let f = fixture();
+    let src = f.write(
+        "clean.nt",
+        concat!(
+            "<http://user:pass@host/> <http://example.org/p> \"colon in userinfo\" .\n",
+            "<http://[::1]:8080/p> <http://example.org/p> \"bracketed IPv6 with a port\" .\n",
+            "<urn:isbn:0451450523> <http://example.org/p> \"no authority\" .\n",
+            "<mailto:a@b.com> <http://example.org/p> \"'@' is path here\" .\n",
+            "<http://host:8080/a:b> <http://example.org/p> \"colons in the path\" .\n",
+            "<http://caf\u{e9}.example/> <http://example.org/p> \"RFC 3987 ucschar\" .\n",
+        ),
+    );
+    let out = f.path("clean.rete");
+    let build = rete()
+        .args(["build"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .success();
+    assert!(
+        !stderr_of(build.get_output()).contains("invalid IRI"),
+        "false positive on legal IRIs:\n{}",
+        stderr_of(build.get_output())
+    );
+
+    let plain = rete().args(["export"]).arg(&out).assert().success();
+    let sanitized = rete()
+        .args(["export"])
+        .arg(&out)
+        .arg("--sanitize-iris")
+        .assert()
+        .success();
+    let err = stderr_of(sanitized.get_output());
+    assert!(
+        err.contains("totals invalid=0 repairable=0 unrepairable=0 unclassified=0"),
+        "{err}"
+    );
+    assert_eq!(
+        plain.get_output().stdout,
+        sanitized.get_output().stdout,
+        "--sanitize-iris rewrote a dump that was already valid"
+    );
+}
+
+/// A dump with only *repairable* defects must still read as publishable: the
+/// generalised gate keys on `unrepairable`, and a false refusal costs as much as
+/// a false pass.
+#[test]
+fn a_fully_repairable_dump_reports_zero_unrepairable() {
+    let f = fixture();
+    let src = f.write("rep.nt", REPAIRABLE);
+    let out = f.path("rep.rete");
+    rete()
+        .args(["build"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .success();
+    let dump = rete()
+        .args(["export"])
+        .arg(&out)
+        .arg("--sanitize-iris")
+        .assert()
+        .success();
+    let err = stderr_of(dump.get_output());
+    assert!(
+        err.contains("totals invalid=4 repairable=4 unrepairable=0 unclassified=0"),
+        "{err}"
+    );
 }

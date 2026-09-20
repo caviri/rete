@@ -797,8 +797,13 @@ rejected (<code>No scheme found in an absolute IRI</code>, again with an empty s
 Fix those at the source; nothing downstream can.</li>
 </ul>
 <p><code>rete build --strict</code> refuses such input outright, if you would rather find out
-at build time. Full rules and the five classes: <a href="cli.html#invalid-iris">CLI → Invalid
-IRIs</a>.</p>
+at build time.</p>
+<p>rete decides whether an IRI is valid with <strong><code>oxiri</code></strong>, the crate Oxigraph's own
+N-Triples reader validates with — so the two agree by construction rather than
+by our keeping a list of known-bad shapes in step. An IRI Oxigraph will refuse is
+one rete already counted, including shapes rete has no repair for; those are
+reported as unrepairable and block a sanitized export instead of passing as
+clean. Full rules and the classes: <a href="cli.html#invalid-iris">CLI → Invalid IRIs</a>.</p>
 <h3 id="load-into-graphdb">Load into GraphDB</h3>
 <p>For big files use the server-side bulk importer (<code>importrdf</code>), pointing at
 a repository config:</p>

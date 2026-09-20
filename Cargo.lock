@@ -1390,6 +1390,7 @@ dependencies = [
  "blake3",
  "getrandom 0.2.17",
  "md-5",
+ "oxiri",
  "oxrdf 0.2.4",
  "oxrdfxml 0.1.7",
  "oxttl 0.1.8",
