@@ -279,6 +279,25 @@ pub(crate) fn to_jsonld(
         d.insert("rete:namedGraphs".into(), json!(card.named_graph_count));
     }
     d.insert("rete:terms".into(), json!(card.term_count));
+    // Whether this dataset carries quoted triples, and what a consumer gets if
+    // they export it. The boolean is written **whenever the signal was
+    // measured** — a consumer branching on "does this graph have triple terms"
+    // needs `false` stated, not inferred from an absent key. It is absent only
+    // for a card read out of a saved JSON document, where nobody measured
+    // anything and `false` would be a guess. The two surface terms follow only
+    // when there is a choice to make.
+    if let Some(q) = &card.signals.quoted_triples {
+        d.insert("rete:quotedTriples".into(), json!(q.present));
+        if !q.export_surfaces.is_empty() {
+            d.insert(
+                "rete:quotedTripleExportSurfaces".into(),
+                Value::Array(q.export_surfaces.iter().map(|s| json!(s)).collect()),
+            );
+        }
+        if let Some(def) = &q.export_default {
+            d.insert("rete:quotedTripleExportDefault".into(), json!(def));
+        }
+    }
     if card.truncated {
         d.insert("rete:truncated".into(), json!(true));
         if card.top_n > 0 {

@@ -125,8 +125,9 @@ pub mod card {
     pub use crate::card_derive::{
         curated_counts_card, derive_card, derive_card_encoded, derive_card_from, load_card,
         CardInput, CardTripleSource, ClassLink, Coherence, Creator, DatasetCard, ExampleQuery,
-        PermutationsSignal, Publisher, Signals, TextIndexSignal, Tier, CARD_TOP_N, GEO_ASWKT,
-        GEO_HASGEOMETRY, O_LITERAL,
+        PermutationsSignal, Publisher, QuotedTriplesSignal, Signals, TextIndexSignal, Tier,
+        CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY, O_LITERAL, QUOTED_TRIPLE_SURFACE_RDF12,
+        QUOTED_TRIPLE_SURFACE_RDF_STAR,
     };
     pub use crate::card_input::{
         canonicalize_json, check_description_len, compose_curated_card, json_depth,
