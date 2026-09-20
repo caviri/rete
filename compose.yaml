@@ -77,6 +77,19 @@ services:
         condition: service_completed_successfully
     command: ["bash", "scripts/release_check.sh"]
 
+  # The scholar export driver's independent parse check, tested from INSIDE the
+  # container — which is only possible because the image now carries a pinned
+  # `oxigraph` binary (.devcontainer/Dockerfile). There is no docker in here, so
+  # a pass can only have come from that binary.
+  #   docker compose run --rm scholar-parse-check
+  scholar-parse-check:
+    <<: *rete-dev
+    user: vscode
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    command: ["bash", "tests/scholar/parse_check.sh"]
+
   docs:
     <<: *rete-dev
     user: vscode
