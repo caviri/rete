@@ -115,10 +115,63 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   in **object position only** (`ttSubject ::= iri | BlankNode`), so a
   subject-position quoted triple — legal RDF-star, legal rete — is refused by
   name, pointing at `--quoted-triple-syntax rdf-star`, instead of being written
-  as something no parser accepts. And rete's own Turtle/TriG *reader* is
-  `oxttl` 0.1, which takes the RDF-star surface only, so a default TriG dump
-  carrying triple terms is readable by third-party parsers and not by
-  `rete build`; the export says so on stderr when it writes one.
+  as something no parser accepts. And rete's own Turtle/TriG *reader* takes the
+  RDF-star surface by default, so a default TriG dump carrying triple terms
+  needs `rete build --quoted-triple-syntax rdf12` to come back in; the export
+  says so on stderr when it writes one.
+
+- **`rete build --quoted-triple-syntax rdf12|rdf-star`** (and `rete validate`) —
+  the input half of the same flag, so the two directions are one feature with
+  one vocabulary.
+
+  In **Turtle and TriG**, `<< s p o >>` means a *quoted triple* under RDF-star
+  and a *reifier* under RDF 1.2 — the same bytes, two different graphs, and
+  nothing in the file says which. It cannot be detected, so it is chosen:
+
+  - `rdf-star` (**the default**) — `<< s p o >>` is a quoted triple, in subject
+    or object position. Exactly what every rete release before this read, with
+    no flag and no migration.
+  - `rdf12` — `<<( s p o )>>` is a triple term and `<< s p o >>` is a reifier
+    (`_:r rdf:reifies <<( s p o )>>` plus a statement about `_:r`). Turtle-1.2
+    **annotation syntax** `{| … |}` and `"…"@lang--dir` directional literals are
+    read too.
+
+  This closes the round trip that #262 left open: `rete export --format trig`
+  defaults to `rdf12`, and `rete build` could not read that back at all. It also
+  makes rete a **translator** between the two worlds — build an RDF-star Turtle
+  file, export it as RDF 1.2 TriG, and the migration is done (see
+  [interop.md](docs/interop.md#rete-as-a-translator-between-the-two-worlds)).
+
+  **Why the input default is `rdf-star` while the export default is `rdf12`.**
+  The two directions answer different questions, and the mistakes are not
+  symmetric. An RDF-star file read as `rdf12` *parses*, and silently yields a
+  different graph — the write-side version of exactly that bug is what #262
+  fixed. An RDF 1.2 file read as `rdf-star` is a hard parse error, because
+  `<<(` belongs to RDF 1.2 alone; rete detects that case and names the flag in
+  the error instead of complaining about a stray `(`. Only one of the two is
+  recoverable, so the default is the one that makes the other loud.
+
+  **No storage change, and no dataset needs rebuilding.** rete's term model was
+  already a superset of both standards: a triple term is a term, and RDF 1.2
+  reification is ordinary RDF — a blank node, an IRI, a term. Both surfaces land
+  the same canonical token `<<s p o>>`. A file with no quoted triples builds
+  byte-for-byte identically under either value; verified by sha256 across `nq`,
+  `ttl` and `trig` on real files of 2 MB, 134 MB and 801 MB, and by rebuilding a
+  42k-line TriG dump through both readers to byte-identical `.rete` output.
+
+  N-Triples, N-Quads and RDF/XML ignore the flag: that reader is rete's own, it
+  has taken both spellings since 0.3.2, and RDF 1.2 N-Triples has no reifier
+  syntax for `<< … >>` to be.
+
+  Implemented by depending on **both** `oxttl` 0.1 and 0.2 and dispatching on
+  the flag — Cargo already carried `oxrdf` 0.2 and 0.3 side by side. The RDF 1.2
+  reader is the `rdf12-turtle` feature, on by default for every native build and
+  **off for wasm**: `oxttl` 0.2 brings `oxrdf` 0.3 → `rand` 0.9 → `getrandom`
+  0.3, which has no `wasm32-unknown-unknown` backend that does not also break
+  the non-browser wasm hosts rete supports (Chicory on the JVM, WASI). The
+  browser builder therefore reads RDF-star Turtle/TriG and both
+  N-Triples/N-Quads surfaces; the engine grew 7,583 bytes (+0.22%) and the
+  Asyncify artifact shrank by 1,865.
 
 - **`rete export --format hdt`.** HDT is a compact binary RDF serialization whose
   point is that it stays **queryable without being decompressed**: a reader

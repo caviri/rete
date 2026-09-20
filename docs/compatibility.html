@@ -724,26 +724,42 @@ convert them to RDF first (e.g. <code>owlready2</code>, <code>robot convert</cod
 as → RDF/XML"). Once ingested, OWL axioms are just triples you can query; to
 <em>materialize</em> OWL RL / RDFS entailments see <a href="reasoning.html">Reasoning</a>
 (<code>rete build --reason</code> / <code>rete reason</code>).</p>
-<p><strong>RDF-star &amp; RDF 1.2.</strong> rete ingests, stores, and queries <strong>quoted triples</strong> —
-statements about statements — in the widely-deployed RDF-star surface
-<code>&lt;&lt; s p o &gt;&gt;</code> (subject or object), with the SPARQL-star patterns and built-ins
-(see <a href="sparql.html#rdf-star">SPARQL support</a>). Its <strong>N-Triples/N-Quads</strong> reader also
-accepts the ratified <strong>RDF 1.2</strong> object triple-term syntax <code>&lt;&lt;( s p o )&gt;&gt;</code>,
-mapping it to the <em>same</em> canonical token, so an RDF 1.2 N-Quads file and an
-RDF-star one are interchangeable. (The Turtle/TriG reader is <code>oxttl</code> 0.1 and
-takes the RDF-star surface only.) On the way <strong>out</strong>, <code>rete export</code> writes
-either: <code>--quoted-triple-syntax rdf12</code> — the RDF 1.2 triple term, and the
-<strong>default</strong>, because that is what current parsers read — or <code>rdf-star</code> for the
-older surface. See <a href="interop.html#quoted-triples-two-surfaces-one-graph">Triple-store interop</a>
-for what each one costs.
-<strong>Base-direction language strings</strong> (<code>"…"@lang--dir</code>, RDF 1.2's
+<p><strong>RDF-star &amp; RDF 1.2 — both, and selectable.</strong> rete ingests, stores, and queries
+<strong>quoted triples</strong> — statements about statements — with the SPARQL-star patterns
+and built-ins (see <a href="sparql.html#rdf-star">SPARQL support</a>). Both surfaces are
+first-class in <strong>both directions</strong>, chosen by one flag that spells the same in
+each:</p>
+<table><thead><tr><th></th><th>RDF-star <code>&lt;&lt; s p o &gt;&gt;</code></th><th>RDF 1.2 <code>&lt;&lt;( s p o )&gt;&gt;</code></th></tr></thead><tbody>
+<tr><td>N-Triples / N-Quads <strong>in</strong></td><td>yes</td><td>yes (always — that reader is rete's own)</td></tr>
+<tr><td>Turtle / TriG <strong>in</strong></td><td><code>rete build --quoted-triple-syntax rdf-star</code> (<strong>default</strong>)</td><td><code>--quoted-triple-syntax rdf12</code></td></tr>
+<tr><td>N-Quads / Turtle / TriG <strong>out</strong></td><td><code>rete export --quoted-triple-syntax rdf-star</code></td><td><code>--quoted-triple-syntax rdf12</code> (<strong>default</strong>)</td></tr>
+</tbody></table>
+<p>The two input defaults look inconsistent and are not: <code>&lt;&lt;( … )&gt;&gt;</code> is
+unambiguous, so reading an RDF 1.2 file as RDF-star fails loudly, whereas
+reading an RDF-star file as RDF 1.2 succeeds with a <em>different graph</em>. The
+export default optimises for who can read the dump; the input default optimises
+for not silently changing what a file means. Composing the two makes rete a
+<strong>translator</strong> between the RDF-star and RDF 1.2 worlds — see
+<a href="interop.html#rete-as-a-translator-between-the-two-worlds">Triple-store interop</a>.</p>
+<p><strong>RDF 1.2 reification is supported on input</strong>, and needed no storage change:
+under <code>--quoted-triple-syntax rdf12</code> the Turtle/TriG reader takes <code>rdf:reifies</code>,
+the <code>&lt;&lt; s p o &gt;&gt;</code> <em>reifier</em> form and Turtle-1.2 <strong>annotation syntax</strong>
+(<code>{| … |}</code>), all of which expand to ordinary statements — a blank node, an IRI
+and a term — that rete has always stored and SPARQL has always queried. rete's
+term model turned out to be a superset of both standards; only the parse
+boundary differed. (rete's own <strong>writers</strong> emit triple terms, not reification:
+an exported quoted triple comes back as <code>&lt;&lt;( s p o )&gt;&gt;</code>, not as
+<code>_:r rdf:reifies …</code>.)</p>
+<p><strong>Base-direction language strings</strong> (<code>"…"@lang--dir</code>, RDF 1.2's
 <code>rdf:dirLangString</code>) are modelled — <code>DATATYPE</code> reports <code>rdf:dirLangString</code> and
 <code>LANG</code> returns the language subtag — and a leading SPARQL 1.2 <code>VERSION "1.2"</code>
-declaration is accepted. Not yet: RDF 1.2 <strong>reification</strong> (<code>rdf:reifies</code> /
-Turtle-1.2 annotation syntax) and the new SPARQL 1.2 direction <em>functions</em>
-(<code>LANGDIR</code>…), which would require swapping the parser to the RDF-1.2 model that
-reinterprets <code>&lt;&lt; &gt;&gt;</code> as reification — deliberately deferred to keep the deployed
-RDF-star data working.</p>
+declaration is accepted; <code>--quoted-triple-syntax rdf12</code> is also what lets the
+Turtle reader <em>parse</em> the <code>@lang--dir</code> form. Not yet: the new SPARQL 1.2
+direction <em>functions</em> (<code>LANGDIR</code>…), and the RDF 1.2 Turtle/TriG reader is
+<strong>native-only</strong> — the in-browser builder reads RDF-star Turtle/TriG and both
+N-Triples/N-Quads surfaces, because <code>oxttl</code> 0.2's <code>getrandom</code> 0.3 dependency has
+no <code>wasm32-unknown-unknown</code> backend compatible with the non-browser wasm hosts
+rete supports.</p>
 <p><strong>Current limits (not RDF-incompatible, just unimplemented):</strong> OWL/XML and
 Functional Syntax need an external convert-to-RDF step (above); and there is no
 in-place SPARQL Update — the file is immutable by design, though

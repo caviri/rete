@@ -692,7 +692,7 @@ an external convert-to-RDF step first; see
 <p>The build is <strong>parallel and allocation-frugal</strong> by design (the CLI enables the
 <code>parallel</code> feature): the dictionary dedups terms with a <code>HashSet</code> and sorts once,
 and the permutation indexes (six by default: SPO/POS/OSP/SOP/PSO/OPS, or three
-with <a href="cli.html#rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml"><code>build --permutations 3</code></a>)
+with <a href="cli.html#rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml---quoted-triple-syntax-rdf12rdf-star"><code>build --permutations 3</code></a>)
 are built concurrently with parallel sorts. This is what lets it scale to millions of <em>unique</em> terms
 (definitions, synonyms, SMILES/InChI strings) without the build collapsing into
 allocation churn — and the output is <strong>byte-identical</strong> to a serial build, so the

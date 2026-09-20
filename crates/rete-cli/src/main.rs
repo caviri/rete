@@ -10,6 +10,50 @@ use std::process::ExitCode;
 
 pub(crate) const JSON_SCHEMA_VERSION: u8 = 1;
 
+/// `--help` text for the INPUT half of `--quoted-triple-syntax`, shared by
+/// `build` and `validate` so the two cannot drift apart.
+///
+/// It is long because the thing it describes is a trap: one piece of syntax,
+/// two standards, two different graphs, and no way to tell from the bytes which
+/// was meant.
+const INPUT_QUOTED_TRIPLE_SYNTAX_HELP: &str = "\
+Which surface a `<< … >>` in a **Turtle or TriG** input means. `rdf-star` (the \
+default) or `rdf12` — the same two values `rete export --quoted-triple-syntax` \
+writes, so one flag name covers both directions.
+
+  rdf-star   `<< s p o >>` is a QUOTED TRIPLE, one term, in subject or object
+             position. rete's own storage token. `<<( s p o )>>` is a syntax
+             error.
+  rdf12      `<<( s p o )>>` is a TRIPLE TERM (object position only).
+             `<< s p o >>` is a REIFIER: it becomes
+             `_:r rdf:reifies <<( s p o )>>` plus a statement about `_:r`, so
+             one line of input becomes two statements with a blank node that
+             was not written anywhere. `{| … |}` annotations and
+             `\"…\"@lang--dir` literals are read too.
+
+The SAME FILE parses into two DIFFERENT graphs under the two values. That is not
+a rete quirk: RDF-star and RDF 1.2 genuinely assign `<< s p o >>` different
+meanings, and nothing in the bytes says which one the author had in mind.
+
+Why the default is `rdf-star` while `rete export`'s is `rdf12`: they answer
+different questions. Export asks \"who can read this?\" — and the answer is
+current parsers, which want RDF 1.2. Input asks \"what did the author mean?\",
+where the two mistakes are not equal. Reading an RDF-star file as RDF 1.2
+succeeds and gives you the wrong graph, silently. Reading an RDF 1.2 file as
+RDF-star is a hard parse error, because `<<(` is RDF 1.2's alone — and rete adds
+a hint naming this flag. Only one of those is recoverable, so the default is the
+one that makes the other mistake loud.
+
+The consequence to know: `rete export --format trig` writes `rdf12` by default,
+so re-ingesting rete's own dump takes `--quoted-triple-syntax rdf12`. Exporting
+with `--quoted-triple-syntax rdf-star` gives a dump that re-ingests with no flag
+at all.
+
+N-Triples, N-Quads and RDF/XML ignore this flag: their reader is rete's own, it
+has taken both `<< s p o >>` and `<<( s p o )>>` since v0.3.2, and RDF 1.2
+N-Triples has no reifier syntax for `<< … >>` to be — so there is no ambiguity
+to resolve.";
+
 #[derive(Parser)]
 #[command(name = "rete", version, about = "Cloud-native RDF graph files")]
 struct Cli {
@@ -181,6 +225,16 @@ enum Command {
         /// offending statement fails the build, naming the IRI and the rule.
         #[arg(long)]
         strict: bool,
+        /// Which surface a **Turtle/TriG** `<< … >>` in the INPUT means:
+        /// `rdf-star` (default) or `rdf12`. The mirror of
+        /// `rete export --quoted-triple-syntax`, same two values.
+        #[arg(
+            long = "quoted-triple-syntax",
+            value_parser = ["rdf12", "rdf-star"],
+            default_value = "rdf-star",
+            long_help = INPUT_QUOTED_TRIPLE_SYNTAX_HELP
+        )]
+        quoted_triple_syntax: String,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
     /// RDF-XML, without building. Reports counts, or fails with a parse error.
@@ -197,6 +251,17 @@ enum Command {
         /// `rete build --strict`).
         #[arg(long)]
         strict: bool,
+        /// Which surface a **Turtle/TriG** `<< … >>` in the INPUT means:
+        /// `rdf-star` (default) or `rdf12`. Same flag, same values, same
+        /// meaning as on `rete build` — `validate` is the cheap way to ask
+        /// which surface a file is actually in.
+        #[arg(
+            long = "quoted-triple-syntax",
+            value_parser = ["rdf12", "rdf-star"],
+            default_value = "rdf-star",
+            long_help = INPUT_QUOTED_TRIPLE_SYNTAX_HELP
+        )]
+        quoted_triple_syntax: String,
     },
     /// Estimate a build's output size, wall time and spill **before** running it.
     ///
@@ -1163,11 +1228,13 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             tmp_dir,
             permutations,
             strict,
+            quoted_triple_syntax,
         } => {
             let perms = match permutations.as_str() {
                 "3" => rete_core::PermSet::CORE,
                 _ => rete_core::PermSet::ALL,
             };
+            let surface = commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?;
             let card_args = commands::card::CardArgs {
                 enabled: card,
                 file: card_file,
@@ -1191,6 +1258,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     card_args,
                     perms,
                     strict,
+                    surface,
                 )
             } else {
                 commands::build::build(
@@ -1208,6 +1276,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     no_card_costs,
                     perms,
                     strict,
+                    surface,
                 )
             }
         }
@@ -1215,7 +1284,13 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             inputs,
             format,
             strict,
-        } => commands::build::validate(&inputs, format.as_deref(), strict),
+            quoted_triple_syntax,
+        } => commands::build::validate(
+            &inputs,
+            format.as_deref(),
+            strict,
+            commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?,
+        ),
         Command::Estimate {
             inputs,
             format,

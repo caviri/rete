@@ -35,6 +35,19 @@ rust-version = "1.87"
 oxiri = "0.2"
 oxrdf = { version = "0.2", features = ["rdf-star"] }
 oxttl = { version = "0.1", features = ["rdf-star"] }
+# The RDF 1.2 Turtle/TriG reader, ALONGSIDE the 0.1 line above rather than
+# instead of it. The two are semver-incompatible, which is the whole reason they
+# coexist: 0.1 reads `<< s p o >>` as an RDF-star QUOTED TRIPLE, 0.2 reads the
+# same bytes as an RDF 1.2 REIFIER, and no single parser can mean both at once.
+# `--quoted-triple-syntax` says which one an input file means. Renamed because
+# one `[dependencies]` table cannot hold two entries called `oxttl`; it is the
+# same crate, two major lines, the way `oxrdf` 0.2 and 0.3 already sit in
+# Cargo.lock together.
+oxttl12 = { package = "oxttl", version = "0.2", features = ["rdf-12"] }
+# The RDF 1.2 term model the 0.2 parsers hand back. `oxttl` does not re-export
+# it, so naming it here is the only way to match on a `GraphName`; it adds no
+# code that `oxttl12` was not already pulling in.
+oxrdf12 = { package = "oxrdf", version = "0.3", features = ["rdf-12"] }
 oxrdfxml = "0.1"
 spargebra = { version = "0.3", features = ["rdf-star"] }
 serde_json = "1"

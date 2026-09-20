@@ -621,7 +621,7 @@ the <code>rete(1)</code> man page. Maintainers generate these from the exact bin
 hidden <code>rete generate --output &lt;directory&gt;</code> packaging command; they are never
 maintained as hand-written copies of the CLI definition.</p>
 <h2 id="building">Building</h2>
-<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml]</code></h3>
+<h3 id="rete-build-inputs--o-outrete---format-ntnqttltrigrdfxml---quoted-triple-syntax-rdf12rdf-star"><code>rete build &lt;inputs…&gt; -o &lt;out.rete&gt; [--format nt|nq|ttl|trig|rdfxml] [--quoted-triple-syntax rdf12|rdf-star]</code></h3>
 <p>Build a file from one or more RDF inputs, merged under one shared dictionary.
 Format is detected by extension (<code>.nt</code> / <code>.nq</code> / <code>.ttl</code> / <code>.trig</code>, plus <code>.rdf</code> /
 <code>.owl</code> / <code>.rdfxml</code> for RDF/XML — how most OWL ontologies ship); <code>-</code> reads stdin and
@@ -665,6 +665,48 @@ output is byte-identical to a plain build.</p>
 grammar and RFC 3987 disallow. It is <strong>off</strong> by default and the build only
 <em>counts</em> them — see <a href="#invalid-iris">Invalid IRIs</a> for what that means and why the
 default is a warning.</p>
+<p><a id="quoted-triple-syntax-on-input"></a>
+<strong>Quoted triples on input (<code>--quoted-triple-syntax</code>).</strong> The same flag name and
+the same two values <code>rete export</code> takes, pointed the other way: which surface a
+<code>&lt;&lt; … &gt;&gt;</code> in a <strong>Turtle or TriG</strong> input <em>means</em>. <code>rete validate</code> takes it too.</p>
+<table><thead><tr><th>value</th><th><code>&lt;&lt; s p o &gt;&gt;</code> reads as</th><th><code>&lt;&lt;( s p o )&gt;&gt;</code> reads as</th></tr></thead><tbody>
+<tr><td><code>rdf-star</code> (default)</td><td>a <strong>quoted triple</strong> — one term, subject or object position</td><td>a syntax error</td></tr>
+<tr><td><code>rdf12</code></td><td>a <strong>reifier</strong>: <code>_:r rdf:reifies &lt;&lt;( s p o )&gt;&gt;</code> plus a statement about <code>_:r</code></td><td>a <strong>triple term</strong>, object position only</td></tr>
+</tbody></table>
+<p>The same file parses into <strong>two different graphs</strong> under the two values. That is
+not a rete quirk — RDF-star and RDF 1.2 genuinely give <code>&lt;&lt; s p o &gt;&gt;</code> different
+meanings, and nothing in the bytes says which one the author meant, so it cannot
+be detected and has to be told.</p>
+<p><code>rdf12</code> also reads the rest of RDF 1.2 Turtle: <code>{| … |}</code> annotations (which
+expand to a reifier carrying the annotation's properties) and <code>"…"@lang--dir</code>
+directional literals.</p>
+<p><strong>Why the input default is <code>rdf-star</code> while the export default is <code>rdf12</code>.</strong>
+They answer different questions. Export asks <em>who can read this?</em> — and current
+parsers want RDF 1.2. Input asks <em>what did the author mean?</em>, where the two
+possible mistakes are not equal:</p>
+<ul>
+<li>An RDF-star file read as <code>rdf12</code> <strong>parses</strong>, and gives you a different graph.
+Silently. That is the failure this flag exists to prevent, and it is the same
+one <a href="https://github.com/caviri/rete/pull/262">#262</a> found on the write side.</li>
+<li>An RDF 1.2 file read as <code>rdf-star</code> is a <strong>hard parse error</strong>, because <code>&lt;&lt;(</code>
+belongs to RDF 1.2 alone. rete detects that case and names the flag in the
+error rather than complaining about a stray <code>(</code>.</li>
+</ul>
+<p>Only one of those is recoverable, so the default is the one that makes the other
+mistake loud. The consequence to know: <code>rete export --format trig</code> writes
+<code>rdf12</code> by default, so re-ingesting rete's own dump takes
+<code>--quoted-triple-syntax rdf12</code> — or export with <code>--quoted-triple-syntax rdf-star</code> and it re-ingests with no flag at all.</p>
+<p><strong>N-Triples, N-Quads and RDF/XML ignore the flag.</strong> Their reader is rete's own,
+it has accepted both <code>&lt;&lt; s p o &gt;&gt;</code> and <code>&lt;&lt;( s p o )&gt;&gt;</code> since 0.3.2, and RDF 1.2
+N-Triples has no reifier syntax for <code>&lt;&lt; … &gt;&gt;</code> to be — so there is no ambiguity
+to resolve and nothing to choose.</p>
+<p><strong>Nothing is stored differently.</strong> Either surface lands rete's one canonical
+token <code>&lt;&lt;s p o&gt;&gt;</code>, and an RDF 1.2 reifier is ordinary RDF — a blank node, an
+IRI and a term — which rete stored long before the flag existed. A file with no
+quoted triples builds byte-for-byte identically under either value. See
+<a href="interop.html#quoted-triples-two-surfaces-one-graph">Triple-store interop</a>,
+which also covers using the two flags together to <strong>translate</strong> between the two
+worlds.</p>
 <p><code>--permutations 3|6</code> (default <strong>6</strong>) chooses how many index permutations to
 store. <code>6</code> writes SPO, POS, OSP, SOP, PSO and OPS; <code>3</code> writes only SPO, POS and
 OSP — the orders that decide <em>routing</em>. Those three tie the longest bound prefix
@@ -739,7 +781,7 @@ consolidates shards, it does not re-decide how they were built.</p>
   --card --card-file curated.json
 </code></pre>
 <h2 id="validating">Validating</h2>
-<h3 id="rete-validate-inputs---format-ntnqttl---strict"><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl] [--strict]</code></h3>
+<h3 id="rete-validate-inputs---format-ntnqttl---strict---quoted-triple-syntax-rdf12rdf-star"><code>rete validate &lt;inputs…&gt; [--format nt|nq|ttl] [--strict] [--quoted-triple-syntax rdf12|rdf-star]</code></h3>
 <p>Parse RDF input(s) without building, to check they are well-formed
 N-Triples/N-Quads/Turtle. Reports statement and named-graph counts, or exits
 non-zero with a precise parse error (file, line, column).</p>
@@ -749,6 +791,13 @@ curl -s https://host/data.nt | rete validate - --format nt
 <p>It also reports <strong>invalid IRIs</strong>, because "it parses" and "it is valid RDF" are
 different claims and only the second one predicts whether a dump will load
 anywhere else. <code>--strict</code> turns the report into a non-zero exit.</p>
+<p><code>--quoted-triple-syntax</code> means exactly what it means on
+<a href="#quoted-triple-syntax-on-input"><code>build</code></a>, which makes <code>validate</code> the cheap way
+to ask <em>which surface is this file actually in?</em> — the counts differ, because
+the graphs do:</p>
+<pre><code class="language-sh">rete validate claims.ttl                               # 2 statement(s)  — &lt;&lt; &gt;&gt; is a quoted triple
+rete validate claims.ttl --quoted-triple-syntax rdf12  # 4 statement(s)  — &lt;&lt; &gt;&gt; is a reifier
+</code></pre>
 <h3 id="invalid-iris">Invalid IRIs</h3>
 <p>rete's N-Triples/N-Quads reader is deliberately tolerant: it stores whatever
 sits between <code>&lt;</code> and the next <code>&gt;</code>, so the file is a faithful container of what
@@ -953,11 +1002,14 @@ byte-for-byte the same under either value.</p>
 RDF-star, and legal rete — has no RDF 1.2 spelling at all, so the export
 refuses it by name and points at <code>--quoted-triple-syntax rdf-star</code>, rather
 than writing a dump no parser will accept.</li>
-<li><strong>rete's own Turtle/TriG reader takes the RDF-star surface only</strong> (it is
-oxttl 0.1; the N-Quads path is rete's own tokenizer and takes both). So a
-default <code>--format trig</code> dump containing triple terms is readable by current
-third-party parsers and <em>not</em> by <code>rete build</code>. The export says so on stderr
-when it writes one. <code>--format nq</code> round-trips through rete in either surface.</li>
+<li><strong>Reading a dump back takes the matching input surface.</strong> <code>rete build</code> and
+<code>rete validate</code> accept the <em>same</em> <code>--quoted-triple-syntax</code> flag with the same
+two values (see <a href="#quoted-triple-syntax-on-input">above</a>), but their default is
+<code>rdf-star</code>, not <code>rdf12</code> — so a default <code>--format trig</code> or <code>--format ttl</code> dump
+containing triple terms needs <code>rete build --quoted-triple-syntax rdf12</code>. The
+export says so on stderr when it writes one. <code>--format nq</code> round-trips with no
+flag in either surface: that reader is rete's own tokenizer and takes both
+spellings unconditionally.</li>
 </ul>
 <p><code>--format jsonld</code> and <code>--format hdt</code> have no term kind for a quoted triple at
 all and <strong>refuse</strong> a file that contains one, naming <code>--format trig</code>. They used

@@ -25,6 +25,12 @@ thiserror.workspace = true
 oxiri.workspace = true
 oxrdf.workspace = true
 oxttl.workspace = true
+# The RDF 1.2 Turtle/TriG reader (`--quoted-triple-syntax rdf12`). Behind a
+# feature because it is a SECOND complete Turtle/TriG parser and rete-core is
+# also the wasm engine; see the `rdf12-turtle` feature below for what it costs
+# and who pays.
+oxttl12 = { workspace = true, optional = true }
+oxrdf12 = { workspace = true, optional = true }
 oxrdfxml.workspace = true
 spargebra.workspace = true
 # Derive-based (de)serialization for the Dataset Card types in `card_derive` /
@@ -65,9 +71,30 @@ rayon = { version = "1", optional = true }
 proptest = "1"
 
 [features]
-default = ["compression"]
+default = ["compression", "rdf12-turtle"]
 # zstd needs a C toolchain; disable for targets that lack one (e.g. wasm).
 compression = ["dep:zstd"]
+# Read the **RDF 1.2** Turtle/TriG surface (`<<( s p o )>>` triple terms,
+# `<< s p o >>` reifiers, `{| … |}` annotations, `"…"@lang--dir` literals) as
+# well as the RDF-star one, under `--quoted-triple-syntax rdf12`. It is a whole
+# second Turtle/TriG parser — `oxttl` 0.2 + `oxrdf` 0.3 beside the 0.1/0.2 pair
+# — so it is a feature, not a fact.
+#
+# ON by default, which means every NATIVE build has it: the CLI, the Python /
+# R / Tauri clients, the fuzzer. It is OFF for wasm, and NOT as a size decision.
+# `oxrdf` 0.3 depends on `rand` 0.9 -> `getrandom` 0.3, which has no backend at
+# all on `wasm32-unknown-unknown`; supplying one means
+# `RUSTFLAGS=--cfg getrandom_backend="wasm_js"`, which links wasm-bindgen JS
+# glue into the module and breaks precisely the non-browser wasm hosts this
+# crate goes out of its way to support (Chicory on the JVM, WASI — see the
+# `wasm-js` feature below). The browser engine therefore keeps `oxttl` 0.1 and
+# the browser artifacts are byte-for-byte what they were.
+#
+# Turning it off costs only the RDF 1.2 *Turtle/TriG* reader. N-Triples and
+# N-Quads still take `<<( s p o )>>` everywhere, because that reader is rete's
+# own; asking for `--quoted-triple-syntax rdf12` on Turtle/TriG in such a build
+# is refused by name rather than read as RDF-star.
+rdf12-turtle = ["dep:oxttl12", "dep:oxrdf12"]
 # Prototype data-parallel query evaluator. NOT default; wasm must never enable it
 # (wasm has no threads). Enables the `parallel` module + `rayon`.
 parallel = ["dep:rayon"]

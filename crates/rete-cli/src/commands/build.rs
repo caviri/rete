@@ -343,10 +343,15 @@ fn ingest_error(input: Option<&str>, e: ingest::IngestError) -> anyhow::Error {
 /// `audit` is the invalid-IRI tally (see `rete_core::iri`): every input feeds the
 /// same one, so a multi-input build reports a single total. With
 /// `audit.strict` the first offending statement aborts the parse.
+/// `surface` decides what a Turtle/TriG `<< s p o >>` means — a quoted triple
+/// or an RDF 1.2 reifier. It reaches the line-based readers too and is ignored
+/// there by design: rete's own N-Triples/N-Quads tokenizer takes both spellings
+/// and RDF 1.2 N-Triples has no reifier syntax, so there is nothing to choose.
 fn parse_inputs(
     inputs: &[String],
     format: Option<&str>,
     audit: &mut ingest::IriAudit,
+    surface: ingest::QuotedTripleSurface,
 ) -> anyhow::Result<Vec<ingest::RawQuad>> {
     let mut quads: Vec<ingest::RawQuad> = Vec::new();
     for input in inputs {
@@ -364,21 +369,23 @@ fn parse_inputs(
                 .map_err(|e| ingest_error(Some(input), e))?
         } else {
             let text = read_input(input)?;
-            ingest::parse_statements_audited(&text, fmt, Some(audit)).map_err(|e| {
-                // OWL/XML and Functional Syntax look like ".owl" but are NOT RDF, so
-                // the RDF/XML reader rejects them. Point the user at the fix instead
-                // of leaving a cryptic XML error.
-                if fmt == "rdfxml" && looks_like_non_rdf_owl(&text) {
-                    anyhow::anyhow!(
-                        "{input}: {e}\n\
+            ingest::parse_statements_audited_surface(&text, fmt, Some(audit), surface).map_err(
+                |e| {
+                    // OWL/XML and Functional Syntax look like ".owl" but are NOT RDF, so
+                    // the RDF/XML reader rejects them. Point the user at the fix instead
+                    // of leaving a cryptic XML error.
+                    if fmt == "rdfxml" && looks_like_non_rdf_owl(&text) {
+                        anyhow::anyhow!(
+                            "{input}: {e}\n\
                          hint: this looks like OWL/XML or OWL Functional Syntax, which \
                          are not RDF. Convert to RDF/XML or Turtle first (e.g. owlready2, \
                          `robot convert`, or Protégé → Save as → RDF/XML), then build that."
-                    )
-                } else {
-                    ingest_error(Some(input), e)
-                }
-            })?
+                        )
+                    } else {
+                        ingest_error(Some(input), e)
+                    }
+                },
+            )?
         };
         // Move the first input's vec in; only pay an extend-copy when merging more.
         if quads.is_empty() {
@@ -397,9 +404,10 @@ pub(crate) fn validate(
     inputs: &[String],
     format: Option<&str>,
     strict: bool,
+    surface: ingest::QuotedTripleSurface,
 ) -> anyhow::Result<()> {
     let mut audit = iri_audit(strict);
-    let quads = parse_inputs(inputs, format, &mut audit)?;
+    let quads = parse_inputs(inputs, format, &mut audit, surface)?;
     let named: std::collections::BTreeSet<&String> =
         quads.iter().filter_map(|(_, _, _, g)| g.as_ref()).collect();
     let in_default = quads.iter().filter(|(_, _, _, g)| g.is_none()).count();
@@ -435,6 +443,7 @@ pub(crate) fn build(
     no_card_costs: bool,
     perms: rete_core::PermSet,
     strict: bool,
+    surface: ingest::QuotedTripleSurface,
 ) -> anyhow::Result<()> {
     // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
     // reasoning is requested, assemble by STREAMING the inputs twice instead of
@@ -483,6 +492,9 @@ pub(crate) fn build(
             for (path, fmt) in &inputs_fmt {
                 let rd = open_reader(path)
                     .map_err(|e| ingest::IngestError::Io(format!("{path}: {e}")))?;
+                // No surface is threaded here on purpose: `streamable` above
+                // admits only `nt`/`nq` files, whose reader takes both spellings
+                // unconditionally. There is nothing for the flag to decide.
                 if collapse_graphs {
                     let mut flatten = |q: ingest::RawQuad| visit((q.0, q.1, q.2, None));
                     ingest::stream_reader_audited(rd, fmt, sink.as_deref_mut(), &mut flatten)?;
@@ -548,7 +560,7 @@ pub(crate) fn build(
 
     // 1. Parse every input into quads (triples → default graph, `None`).
     let mut audit = iri_audit(strict);
-    let mut quads = parse_inputs(inputs, format, &mut audit)?;
+    let mut quads = parse_inputs(inputs, format, &mut audit, surface)?;
     // 1a. `--collapse-graphs`: drop the graph term so everything lands in the
     // default graph. Done before reasoning, which only sees the default graph —
     // so collapsing a named-graph dump is also what makes it reasonable over.
@@ -683,6 +695,7 @@ pub(crate) fn build_external_cmd(
     card_args: CardArgs,
     perms: rete_core::PermSet,
     strict: bool,
+    surface: ingest::QuotedTripleSurface,
 ) -> anyhow::Result<()> {
     if materialize || reason {
         anyhow::bail!(
@@ -778,7 +791,13 @@ pub(crate) fn build_external_cmd(
                         e.to_string(),
                     ))
                 })?;
-                let res = ingest::stream_reader_audited(rd, fmt, Some(&mut *guard), &mut on_quad);
+                let res = ingest::stream_reader_audited_surface(
+                    rd,
+                    fmt,
+                    Some(&mut *guard),
+                    surface,
+                    &mut on_quad,
+                );
                 if let Some(e) = err {
                     return Err(e);
                 }
@@ -980,6 +999,7 @@ mod tests {
             !measure,
             rete_core::PermSet::ALL,
             false,
+            ingest::QuotedTripleSurface::default(),
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1170,6 +1190,7 @@ mod tests {
                 false,
                 rete_core::PermSet::ALL,
                 false,
+                ingest::QuotedTripleSurface::default(),
             )
             .unwrap();
             std::fs::read(out).unwrap()
@@ -1263,6 +1284,7 @@ mod tests {
             false,
             rete_core::PermSet::ALL,
             false,
+            ingest::QuotedTripleSurface::default(),
         )
         .unwrap();
         let bytes = std::fs::read(&out).unwrap();
@@ -1301,6 +1323,7 @@ mod tests {
             false,
             rete_core::PermSet::ALL,
             false,
+            ingest::QuotedTripleSurface::default(),
         )
         .unwrap();
 
@@ -1325,6 +1348,7 @@ mod tests {
             false,
             rete_core::PermSet::ALL,
             false,
+            ingest::QuotedTripleSurface::default(),
         )
         .unwrap();
         let plain = Rete::open(&std::fs::read(&out).unwrap()).unwrap();

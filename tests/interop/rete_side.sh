@@ -50,6 +50,8 @@ case "$STAGE" in
     run export_quoted_star -- "$BIN" export quoted.rete --format nq \
       --quoted-triple-syntax rdf-star
     run export_quoted_trig -- "$BIN" export quoted.rete --format trig
+    run export_quoted_trig_star -- "$BIN" export quoted.rete --format trig \
+      --quoted-triple-syntax rdf-star
 
     cp export_raw.out   raw.nq
     cp export_clean.out clean.nq
@@ -58,6 +60,36 @@ case "$STAGE" in
     cp export_quoted.out      quoted-export.nq
     cp export_quoted_star.out quoted-star.nq
     cp export_quoted_trig.out quoted-export.trig
+    cp export_quoted_trig_star.out quoted-star.trig
+
+    # rete reading its OWN TriG back, in each surface. The store on the other
+    # side of this suite proves the dumps are valid RDF 1.2 / RDF-star; these
+    # two prove rete can re-ingest what it wrote, which is a different claim and
+    # was false until `rete build --quoted-triple-syntax` existed.
+    run build_trig_12 -- "$BIN" build quoted-export.trig -o trig12.rete \
+      --format trig --quoted-triple-syntax rdf12
+    run build_trig_star -- "$BIN" build quoted-star.trig -o trigstar.rete \
+      --format trig --quoted-triple-syntax rdf-star
+    run export_trig_12   -- "$BIN" export trig12.rete   --format nq
+    run export_trig_star -- "$BIN" export trigstar.rete --format nq
+    cp export_trig_12.out   trig12-back.nq
+    cp export_trig_star.out trigstar-back.nq
+
+    # The default input surface on an RDF 1.2 dump: a REFUSAL, and one that
+    # names the flag. This is the whole reason the input default is `rdf-star`
+    # while the output default is `rdf12` — the opposite mistake would have
+    # parsed, quietly, into a different graph.
+    run build_trig_wrong -- "$BIN" build quoted-export.trig -o wrong.rete \
+      --format trig
+
+    # And the ambiguity itself, in rete's own terms: the RDF-star TriG read as
+    # RDF 1.2 parses fine and yields a DIFFERENT graph (reifiers, blank nodes,
+    # `rdf:reifies`). Asserted rather than assumed, because "both values work"
+    # would also be true of a flag that did nothing.
+    run build_trig_reified -- "$BIN" build quoted-star.trig -o reified.rete \
+      --format trig --quoted-triple-syntax rdf12
+    run export_trig_reified -- "$BIN" export reified.rete --format nq
+    cp export_trig_reified.out reified-back.nq
     ;;
   rebuild)
     # The other direction of the cycle docs/interop.md documents: take what
@@ -77,6 +109,14 @@ case "$STAGE" in
     run build_quoted_back  -- "$BIN" build quoted-back.nq -o quoted-back.rete
     run export_quoted_back -- "$BIN" export quoted-back.rete --format nq
     cp export_quoted_back.out quoted-back-export.nq
+
+    # The same cycle through TRIG, which is the half that needed a new reader:
+    # what Oxigraph dumps as TriG is RDF 1.2 Turtle syntax, and until
+    # `--quoted-triple-syntax rdf12` rete could not read it at all.
+    run build_qtrig_back  -- "$BIN" build qtrig-back.trig -o qtrig-back.rete \
+      --format trig --quoted-triple-syntax rdf12
+    run export_qtrig_back -- "$BIN" export qtrig-back.rete --format nq
+    cp export_qtrig_back.out qtrig-back-export.nq
     ;;
   *)
     echo "unknown stage: $STAGE (expected 'export' or 'rebuild')" >&2

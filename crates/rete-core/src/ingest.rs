@@ -29,6 +29,90 @@ pub type RawTriple = (String, String, String);
 /// A parsed quad: the triple plus an optional graph term (`None` = default graph).
 pub type RawQuad = (String, String, String, Option<String>);
 
+/// Which **surface** a `<< … >>` in Turtle/TriG input is read as — the input
+/// half of `rete export --quoted-triple-syntax`, same vocabulary, same two
+/// values.
+///
+/// The flag exists because the two standards give one piece of syntax two
+/// meanings, and no amount of looking at the bytes can tell them apart:
+///
+/// | written            | under [`RdfStar`](Self::RdfStar) | under [`Rdf12`](Self::Rdf12)          |
+/// |--------------------|----------------------------------|---------------------------------------|
+/// | `<< s p o >>`      | a **quoted triple**, one term    | a **reifier**: `_:r rdf:reifies <<( s p o )>>`, plus a blank node standing where it was |
+/// | `<<( s p o )>>`    | a syntax error                   | a **triple term**, object position only |
+/// | `{\| … \|}`         | a syntax error                   | an annotation on the statement before it |
+///
+/// One file, two readings, two different graphs — see the round-trip matrix in
+/// `crates/rete-cli/tests/quoted_triple_surfaces.rs`, which asserts both.
+///
+/// `<<( s p o )>>` is unambiguous: it is RDF 1.2's and nothing else's. That
+/// asymmetry is why [`RdfStar`](Self::RdfStar) is the **default**. Reading an
+/// RDF-star file as RDF 1.2 silently yields a different graph; reading an
+/// RDF 1.2 file as RDF-star is a hard parse error that names the flag. Only one
+/// of the two mistakes is survivable, so the default is the one that makes the
+/// other mistake loud.
+///
+/// **N-Triples and N-Quads ignore this entirely.** Their reader is rete's own
+/// (`take_term`), it has accepted both `<< s p o >>` and `<<( s p o )>>` since
+/// #262, and RDF 1.2 N-Triples has no reifier syntax for `<< … >>` to be — so
+/// there is no ambiguity to resolve and nothing to choose. The same goes for
+/// RDF/XML.
+///
+/// Whichever surface reads the file, what gets **stored** is the same canonical
+/// token `<<s p o>>`. rete's term model is a superset of both: a triple term is
+/// a term, and RDF 1.2 reification is ordinary RDF — a blank node, a predicate
+/// and a term — which rete already stored before this flag existed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub enum QuotedTripleSurface {
+    /// `<< s p o >>` is a **quoted triple** (RDF-star), in subject or object
+    /// position — rete's own storage token. The default, and byte-for-byte the
+    /// behaviour every rete release before this flag had.
+    #[default]
+    RdfStar,
+    /// `<<( s p o )>>` is a **triple term** and `<< s p o >>` is a **reifier**
+    /// (RDF 1.2), with `{| … |}` annotations read too.
+    Rdf12,
+}
+
+impl QuotedTripleSurface {
+    /// Parse the `--quoted-triple-syntax` value, `None` for anything else.
+    /// Shared by `rete build`, `rete validate` and `rete export` so the flag
+    /// cannot come to mean two things in two directions.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            crate::card_derive::QUOTED_TRIPLE_SURFACE_RDF12 => Some(Self::Rdf12),
+            crate::card_derive::QUOTED_TRIPLE_SURFACE_RDF_STAR => Some(Self::RdfStar),
+            _ => None,
+        }
+    }
+
+    /// The flag spelling of this surface — the inverse of [`Self::parse`].
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rdf12 => crate::card_derive::QUOTED_TRIPLE_SURFACE_RDF12,
+            Self::RdfStar => crate::card_derive::QUOTED_TRIPLE_SURFACE_RDF_STAR,
+        }
+    }
+}
+
+/// The one-line hint appended to a Turtle/TriG parse error when the input looks
+/// like RDF 1.2 and was read as RDF-star — i.e. the exact mistake
+/// [`QuotedTripleSurface`]'s default makes, made loud.
+const RDF12_SURFACE_HINT: &str = "\nhint: this input contains `<<(`, the RDF 1.2 triple-term \
+     syntax — which is what `rete export` writes by default. Reading it takes \
+     `--quoted-triple-syntax rdf12`; the default, `rdf-star`, reads `<< s p o >>` as a quoted \
+     triple instead.";
+
+/// Does `text` look like it carries RDF 1.2 triple terms? A deliberately dumb
+/// substring test: `<<(` cannot begin anything else in Turtle, and this is only
+/// ever consulted to *explain a parse that already failed*, never to decide how
+/// to read a file. A `<<(` inside a string literal would make it a false
+/// positive on some other error's hint, which costs one confusing sentence and
+/// nothing else.
+fn looks_like_rdf12(text: &str) -> bool {
+    text.contains("<<(")
+}
+
 /// Why an ingest failed. Parser errors from `oxttl`/`oxrdfxml` and I/O errors
 /// are flattened to their `Display` string rather than wrapped: the variants
 /// then carry no foreign types, which keeps the error usable from the wasm
@@ -52,6 +136,15 @@ pub enum IngestError {
     /// The requested format is not one this crate can parse.
     #[error("unknown input format: {0} (expected nt, nq, ttl, trig, or rdf/xml)")]
     UnknownFormat(String),
+    /// [`QuotedTripleSurface::Rdf12`] was asked for on a Turtle/TriG input, but
+    /// this build of `rete-core` has the `rdf12-turtle` feature off, so the
+    /// RDF 1.2 reader was not compiled in. Refused by name rather than read as
+    /// RDF-star, which would be the wrong graph told in silence.
+    #[error(
+        "this build cannot read the RDF 1.2 Turtle/TriG surface: rete-core was compiled without \
+         the `rdf12-turtle` feature (N-Triples/N-Quads still accept `<<( s p o )>>`)"
+    )]
+    Rdf12TurtleUnavailable,
     /// The input could not be read (streaming builds surface the path here).
     #[error("io: {0}")]
     Io(String),
@@ -267,8 +360,20 @@ pub fn parse_reader_audited<R: std::io::BufRead>(
     cap: usize,
     audit: Option<&mut IriAudit>,
 ) -> Result<Vec<RawQuad>, IngestError> {
+    parse_reader_audited_surface(reader, format, cap, audit, QuotedTripleSurface::default())
+}
+
+/// [`parse_reader_audited`] reading `<< … >>` in the given
+/// [`QuotedTripleSurface`] (Turtle/TriG only — see the enum).
+pub fn parse_reader_audited_surface<R: std::io::BufRead>(
+    reader: R,
+    format: &str,
+    cap: usize,
+    audit: Option<&mut IriAudit>,
+    surface: QuotedTripleSurface,
+) -> Result<Vec<RawQuad>, IngestError> {
     let mut out = Vec::with_capacity(cap);
-    stream_reader_audited(reader, format, audit, &mut |q| out.push(q))?;
+    stream_reader_audited_surface(reader, format, audit, surface, &mut |q| out.push(q))?;
     Ok(out)
 }
 
@@ -304,9 +409,37 @@ pub fn stream_reader<R: std::io::BufRead>(
 pub fn stream_reader_audited<R: std::io::BufRead>(
     reader: R,
     format: &str,
-    mut audit: Option<&mut IriAudit>,
+    audit: Option<&mut IriAudit>,
     f: &mut dyn FnMut(RawQuad),
 ) -> Result<(), IngestError> {
+    stream_reader_audited_surface(reader, format, audit, QuotedTripleSurface::default(), f)
+}
+
+/// [`stream_reader_audited`] reading `<< … >>` in the given
+/// [`QuotedTripleSurface`].
+///
+/// The surface reaches only the `"ttl"` and `"trig"` arms: the line-based
+/// readers are rete's own and take both spellings unconditionally, and RDF/XML
+/// has no syntax for either. Under [`QuotedTripleSurface::Rdf12`] Turtle/TriG go
+/// through `oxttl` 0.2 instead of 0.1, and the RDF 1.2 triple terms it hands
+/// back (`<<( s p o )>>`) are folded to rete's stored token on the way out, so
+/// the dictionary a file lands in does not depend on which reader read it.
+///
+/// **This entry point does not carry the RDF 1.2 hint** that the text path adds
+/// to a failed RDF-star parse: it is handed a reader, not a string, and sniffing
+/// the input would mean buffering the 60 GB file this function exists to avoid
+/// buffering. `rete build --memory-budget-mb file.ttl` therefore reports the raw
+/// parser error; every other route reports the hint.
+pub fn stream_reader_audited_surface<R: std::io::BufRead>(
+    reader: R,
+    format: &str,
+    mut audit: Option<&mut IriAudit>,
+    surface: QuotedTripleSurface,
+    f: &mut dyn FnMut(RawQuad),
+) -> Result<(), IngestError> {
+    if surface == QuotedTripleSurface::Rdf12 && matches!(format, "ttl" | "trig") {
+        return rdf12::stream(reader, format, audit, f);
+    }
     match format {
         "nt" | "nq" => {
             for (i, line) in reader.lines().enumerate() {
@@ -321,49 +454,8 @@ pub fn stream_reader_audited<R: std::io::BufRead>(
             }
             Ok(())
         }
-        "ttl" => {
-            for r in oxttl::TurtleParser::new()
-                .with_quoted_triples()
-                .for_reader(reader)
-            {
-                let t = r.map_err(|e| IngestError::Turtle(e.to_string()))?;
-                let q = (
-                    t.subject.to_string(),
-                    t.predicate.to_string(),
-                    t.object.to_string(),
-                    None,
-                );
-                audit_quad(audit.as_deref_mut(), &q.0, &q.1, &q.2, None, || {
-                    "turtle".into()
-                })?;
-                f(q);
-            }
-            Ok(())
-        }
-        "trig" => {
-            for r in oxttl::TriGParser::new()
-                .with_quoted_triples()
-                .for_reader(reader)
-            {
-                let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
-                let q = (
-                    q.subject.to_string(),
-                    q.predicate.to_string(),
-                    q.object.to_string(),
-                    graph_token(&q.graph_name),
-                );
-                audit_quad(
-                    audit.as_deref_mut(),
-                    &q.0,
-                    &q.1,
-                    &q.2,
-                    q.3.as_deref(),
-                    || "trig".into(),
-                )?;
-                f(q);
-            }
-            Ok(())
-        }
+        "ttl" => turtle_star(reader, audit, f),
+        "trig" => trig_star(reader, audit, f),
         "rdfxml" => {
             for r in oxrdfxml::RdfXmlParser::new().for_reader(reader) {
                 let t = r.map_err(|e| IngestError::RdfXml(e.to_string()))?;
@@ -384,6 +476,69 @@ pub fn stream_reader_audited<R: std::io::BufRead>(
     }
 }
 
+/// Stream **RDF-star** Turtle: `with_quoted_triples` accepts `<< s p o >>` in
+/// subject/object position, and oxrdf 0.2's `Term::Triple` Displays as the
+/// canonical `<<…>>` token rete's own N-Triples-star tokenizer emits — so no
+/// translation is needed on the way out.
+///
+/// Its own function, and called directly from both the reader path and the text
+/// path, so that the wasm engine — which reaches only the text path and has no
+/// RDF 1.2 reader compiled in — links this and nothing else.
+fn turtle_star<R: std::io::BufRead>(
+    reader: R,
+    mut audit: Option<&mut IriAudit>,
+    f: &mut dyn FnMut(RawQuad),
+) -> Result<(), IngestError> {
+    for r in oxttl::TurtleParser::new()
+        .with_quoted_triples()
+        .for_reader(reader)
+    {
+        let t = r.map_err(|e| IngestError::Turtle(e.to_string()))?;
+        let q = (
+            t.subject.to_string(),
+            t.predicate.to_string(),
+            t.object.to_string(),
+            None,
+        );
+        audit_quad(audit.as_deref_mut(), &q.0, &q.1, &q.2, None, || {
+            "turtle".into()
+        })?;
+        f(q);
+    }
+    Ok(())
+}
+
+/// [`turtle_star`] for TriG — Turtle plus named-graph blocks (`<g> { … }`), the
+/// shape most large RDF dumps ship in.
+fn trig_star<R: std::io::BufRead>(
+    reader: R,
+    mut audit: Option<&mut IriAudit>,
+    f: &mut dyn FnMut(RawQuad),
+) -> Result<(), IngestError> {
+    for r in oxttl::TriGParser::new()
+        .with_quoted_triples()
+        .for_reader(reader)
+    {
+        let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
+        let q = (
+            q.subject.to_string(),
+            q.predicate.to_string(),
+            q.object.to_string(),
+            graph_token(&q.graph_name),
+        );
+        audit_quad(
+            audit.as_deref_mut(),
+            &q.0,
+            &q.1,
+            &q.2,
+            q.3.as_deref(),
+            || "trig".into(),
+        )?;
+        f(q);
+    }
+    Ok(())
+}
+
 /// The canonical graph token for a parsed quad — `None` for the default graph,
 /// otherwise the same `<iri>` / `_:b` spelling the N-Quads reader produces, so
 /// TriG and N-Quads inputs land identical dictionary keys. `GraphName`'s own
@@ -396,43 +551,192 @@ fn graph_token(g: &oxrdf::GraphName) -> Option<String> {
     }
 }
 
-/// Parse Turtle into canonical N-Triples-token triples via oxttl.
-pub fn parse_turtle(text: &str) -> Result<Vec<RawTriple>, IngestError> {
-    let mut out = Vec::new();
-    // `with_quoted_triples` accepts RDF-star quoted triples (`<< s p o >>`) in
-    // subject/object position; oxrdf's `Term::Triple` then Displays as the
-    // canonical `<< … >>` token our N-Triples-star tokenizer also emits.
-    for r in oxttl::TurtleParser::new()
-        .with_quoted_triples()
-        .for_reader(text.as_bytes())
-    {
-        let t = r.map_err(|e| IngestError::Turtle(e.to_string()))?;
-        out.push((
-            t.subject.to_string(),
-            t.predicate.to_string(),
-            t.object.to_string(),
-        ));
+/// The **RDF 1.2** Turtle/TriG reader — `oxttl` 0.2 with its `rdf-12` feature,
+/// living beside the `oxttl` 0.1 reader above rather than replacing it.
+///
+/// Everything RDF 1.2 adds over RDF 1.1 arrives through this one module:
+/// `<<( s p o )>>` triple terms, `<< s p o >>` reifiers (which expand to
+/// `_:r rdf:reifies <<( s p o )>>` plus the statement that mentioned them),
+/// `{| … |}` annotations, and `"…"@lang--dir` directional literals. None of it
+/// needs a storage change, which is the point: a reifier is a blank node, an
+/// IRI and a term, and rete has stored those since v0.
+///
+/// The one translation is at the term boundary. `oxrdf` 0.3 renders a triple
+/// term as `<<( s p o )>>`; rete's dictionary key is `<<s p o>>`. [`take_term`]
+/// already reads both — that is what made RDF 1.2 N-Quads ingestible in #262 —
+/// so the fold is a re-scan of a token oxttl has already validated.
+#[cfg(feature = "rdf12-turtle")]
+mod rdf12 {
+    use super::{audit_quad, take_term, IngestError, IriAudit, RawQuad};
+
+    /// Fold `oxrdf` 0.3's `<<( s p o )>>` rendering of a triple term into rete's
+    /// stored `<<s p o>>`, recursively (a nested triple term folds with it).
+    /// Every other token — the overwhelming majority, and all of them in a file
+    /// with no triple terms — is returned untouched, not even copied.
+    pub(super) fn fold_triple_term(t: String) -> String {
+        if !t.starts_with("<<(") {
+            return t;
+        }
+        match take_term(&t) {
+            Some((token, rest)) if rest.trim().is_empty() => token,
+            // oxttl only ever hands back a well-formed term, so this is
+            // unreachable; returning the original beats mangling it silently.
+            _ => t,
+        }
     }
-    Ok(out)
+
+    /// `super::graph_token` for `oxrdf` 0.3's `GraphName` — the same rule, a
+    /// different crate version, which is exactly why it cannot be shared.
+    fn graph_token(g: &oxrdf12::GraphName) -> Option<String> {
+        match g {
+            oxrdf12::GraphName::DefaultGraph => None,
+            other => Some(other.to_string()),
+        }
+    }
+
+    /// Stream one RDF 1.2 Turtle (`"ttl"`) or TriG (`"trig"`) input, auditing
+    /// every quad the way the RDF-star reader does.
+    pub(super) fn stream<R: std::io::BufRead>(
+        reader: R,
+        format: &str,
+        mut audit: Option<&mut IriAudit>,
+        f: &mut dyn FnMut(RawQuad),
+    ) -> Result<(), IngestError> {
+        if format == "ttl" {
+            for r in oxttl12::TurtleParser::new().for_reader(reader) {
+                let t = r.map_err(|e| IngestError::Turtle(e.to_string()))?;
+                let q = (
+                    t.subject.to_string(),
+                    t.predicate.to_string(),
+                    fold_triple_term(t.object.to_string()),
+                    None,
+                );
+                audit_quad(audit.as_deref_mut(), &q.0, &q.1, &q.2, None, || {
+                    "turtle".into()
+                })?;
+                f(q);
+            }
+        } else {
+            for r in oxttl12::TriGParser::new().for_reader(reader) {
+                let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
+                let q = (
+                    q.subject.to_string(),
+                    q.predicate.to_string(),
+                    fold_triple_term(q.object.to_string()),
+                    graph_token(&q.graph_name),
+                );
+                audit_quad(
+                    audit.as_deref_mut(),
+                    &q.0,
+                    &q.1,
+                    &q.2,
+                    q.3.as_deref(),
+                    || "trig".into(),
+                )?;
+                f(q);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The stand-in for [`rdf12`] in a build with `rdf12-turtle` off: it refuses by
+/// name. Reading the file as RDF-star instead would answer a question nobody
+/// asked, with a different graph.
+#[cfg(not(feature = "rdf12-turtle"))]
+mod rdf12 {
+    use super::{IngestError, IriAudit, RawQuad};
+
+    pub(super) fn stream<R: std::io::BufRead>(
+        _reader: R,
+        _format: &str,
+        _audit: Option<&mut IriAudit>,
+        _f: &mut dyn FnMut(RawQuad),
+    ) -> Result<(), IngestError> {
+        Err(IngestError::Rdf12TurtleUnavailable)
+    }
+}
+
+/// Parse Turtle into canonical N-Triples-token triples via oxttl, reading
+/// `<< s p o >>` as an RDF-star quoted triple. [`parse_turtle_surface`] chooses.
+pub fn parse_turtle(text: &str) -> Result<Vec<RawTriple>, IngestError> {
+    parse_turtle_surface(text, QuotedTripleSurface::default())
+}
+
+/// [`parse_turtle`] in the given [`QuotedTripleSurface`].
+pub fn parse_turtle_surface(
+    text: &str,
+    surface: QuotedTripleSurface,
+) -> Result<Vec<RawTriple>, IngestError> {
+    Ok(parse_text_surface(text, "ttl", surface)?
+        .into_iter()
+        .map(|(s, p, o, _)| (s, p, o))
+        .collect())
 }
 
 /// Parse TriG into canonical quads via oxttl — Turtle plus named-graph blocks
-/// (`<g> { … }`), the shape most large RDF dumps ship in.
+/// (`<g> { … }`), the shape most large RDF dumps ship in. Reads `<< s p o >>` as
+/// an RDF-star quoted triple; [`parse_trig_surface`] chooses.
 pub fn parse_trig(text: &str) -> Result<Vec<RawQuad>, IngestError> {
+    parse_trig_surface(text, QuotedTripleSurface::default())
+}
+
+/// [`parse_trig`] in the given [`QuotedTripleSurface`].
+pub fn parse_trig_surface(
+    text: &str,
+    surface: QuotedTripleSurface,
+) -> Result<Vec<RawQuad>, IngestError> {
+    parse_text_surface(text, "trig", surface)
+}
+
+/// The shared Turtle/TriG text path: stream the string through whichever reader
+/// `surface` selects, and — this is the part only the text path can do, because
+/// only it holds the input — say so when an RDF-star parse fails on what is
+/// plainly RDF 1.2.
+///
+/// It does not audit: the Turtle/TriG text callers audit over the finished quads
+/// (see [`parse_statements_audited_surface`]), and auditing here too would count
+/// every IRI twice.
+///
+/// The RDF-star arm calls `oxttl` 0.1 **directly** rather than routing through
+/// [`stream_reader_audited_surface`]. That is not style: this is the only ingest
+/// path the wasm engine reaches, and going through the generic reader would
+/// monomorphize it over `&[u8]` and pull the whole `match format` — every
+/// syntax's reader — into a module that previously linked one Turtle parser.
+/// Measured at +17 KB of wasm for code no browser can run, since the RDF 1.2
+/// reader is not compiled there at all. Keeping the arm direct keeps the
+/// browser artifacts what they were.
+fn parse_text_surface(
+    text: &str,
+    format: &str,
+    surface: QuotedTripleSurface,
+) -> Result<Vec<RawQuad>, IngestError> {
     let mut out = Vec::new();
-    for r in oxttl::TriGParser::new()
-        .with_quoted_triples()
-        .for_reader(text.as_bytes())
-    {
-        let q = r.map_err(|e| IngestError::TriG(e.to_string()))?;
-        out.push((
-            q.subject.to_string(),
-            q.predicate.to_string(),
-            q.object.to_string(),
-            graph_token(&q.graph_name),
-        ));
+    let r = if surface == QuotedTripleSurface::Rdf12 {
+        rdf12::stream(text.as_bytes(), format, None, &mut |q| out.push(q))
+    } else if format == "ttl" {
+        turtle_star(text.as_bytes(), None, &mut |q| out.push(q))
+    } else {
+        trig_star(text.as_bytes(), None, &mut |q| out.push(q))
+    };
+    match r {
+        Ok(()) => Ok(out),
+        // The default surface met `<<(`: that is an RDF 1.2 file being read as
+        // RDF-star, the one mistake this flag exists to prevent, and the parse
+        // error alone ("unexpected character") would send the reader hunting for
+        // a typo that is not there.
+        Err(IngestError::Turtle(m))
+            if surface == QuotedTripleSurface::RdfStar && looks_like_rdf12(text) =>
+        {
+            Err(IngestError::Turtle(format!("{m}{RDF12_SURFACE_HINT}")))
+        }
+        Err(IngestError::TriG(m))
+            if surface == QuotedTripleSurface::RdfStar && looks_like_rdf12(text) =>
+        {
+            Err(IngestError::TriG(format!("{m}{RDF12_SURFACE_HINT}")))
+        }
+        Err(e) => Err(e),
     }
-    Ok(out)
 }
 
 /// Parse RDF/XML into canonical N-Triples-token triples via oxrdfxml. This is how
@@ -464,7 +768,21 @@ pub fn parse_statements(text: &str, format: &str) -> Result<Vec<RawQuad>, Ingest
 pub fn parse_statements_audited(
     text: &str,
     format: &str,
+    audit: Option<&mut IriAudit>,
+) -> Result<Vec<RawQuad>, IngestError> {
+    parse_statements_audited_surface(text, format, audit, QuotedTripleSurface::default())
+}
+
+/// [`parse_statements_audited`] reading `<< … >>` in the given
+/// [`QuotedTripleSurface`]. This is the entry point `rete build` and
+/// `rete validate` use for everything but a streamed line-based input, and the
+/// one that turns "RDF 1.2 file, RDF-star reader" into an error that names the
+/// flag instead of a bare syntax complaint.
+pub fn parse_statements_audited_surface(
+    text: &str,
+    format: &str,
     mut audit: Option<&mut IriAudit>,
+    surface: QuotedTripleSurface,
 ) -> Result<Vec<RawQuad>, IngestError> {
     let quads = match format {
         "nq" => return parse_quads_audited(text, audit),
@@ -474,11 +792,11 @@ pub fn parse_statements_audited(
                 .map(|(s, p, o)| (s, p, o, None))
                 .collect())
         }
-        "ttl" => parse_turtle(text)?
-            .into_iter()
-            .map(|(s, p, o)| (s, p, o, None))
-            .collect(),
-        "trig" => parse_trig(text)?,
+        // Straight to the quad path for both: going via `parse_turtle_surface`
+        // would build a `Vec<RawQuad>`, rebuild it as a `Vec<RawTriple>` to
+        // satisfy that function's signature, and rebuild it as quads again —
+        // three copies of every term String on the biggest input rete takes.
+        "ttl" | "trig" => parse_text_surface(text, format, surface)?,
         "rdfxml" => parse_rdfxml(text)?
             .into_iter()
             .map(|(s, p, o)| (s, p, o, None))
