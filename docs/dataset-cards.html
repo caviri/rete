@@ -700,6 +700,7 @@ newlines.</p>
 <tr><td><code>signals.text_index</code></td><td><strong>measured</strong></td><td>Whether the file carries a <strong>full-text (TEXT_INDEX) section</strong> — <code>{present, bytes, token_table_bytes}</code>. Derived from the file's <em>sections</em> rather than its triples, and never written into the file. See <a href="#the-full-text-signal-measured-not-stored">The full-text signal</a>.</td></tr>
 <tr><td><code>signals.permutations</code></td><td><strong>measured</strong></td><td>Which <strong>index permutations</strong> the file stores — <code>{count, names, merge_join}</code>. Also derived, from the header's permutation mask, and also never written. See <a href="#the-permutation-signal-measured-not-stored">The permutation signal</a>.</td></tr>
 <tr><td><code>signals.quoted_triples</code></td><td><strong>measured</strong></td><td>Whether the dataset holds <strong>quoted triples</strong>, and which surfaces an export can write them in — <code>{present, export_surfaces, export_default}</code>. Derived from header flag bit 2, and also never written. See <a href="#the-quoted-triple-signal-measured-not-stored">The quoted-triple signal</a>.</td></tr>
+<tr><td><code>signals.annotation_predicates</code>, <code>signals.quoting_predicates</code>, <code>signals.annotated_statement</code></td><td>derived</td><td>The <strong>vocabulary of the RDF-star layer</strong>, when there is one: the predicates that annotate a statement, the predicates whose <em>value</em> is a statement, and the one <code>(quoted predicate, annotating predicate)</code> pair witnessed on a statement this graph both asserts and annotates. Empty and omitted on a graph with no quoted triples. See <a href="#querying-the-star-layer">Querying the star layer</a>.</td></tr>
 <tr><td><code>queries</code></td><td>derived</td><td>The auto-generated, <strong>tiered starter-query library</strong> (see below).</td></tr>
 <tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial).</td></tr>
 <tr><td><code>top_n</code></td><td>derived</td><td>The cap the profile lists were derived under — the number <code>truncated</code> was hinting at without stating.</td></tr>
@@ -840,6 +841,50 @@ cardinality. Counting would mean decoding the dictionary, which is outside the
 CARD tier's budget (header + metadata, never the dictionary) — and a count could
 only ever be written by builds newer than this signal, which is exactly the
 <code>null</code>-on-every-published-file failure above.</p>
+<h3 id="querying-the-star-layer">Querying the star layer</h3>
+<p>Presence answers <em>will I meet triple terms here</em>. It cannot answer <em>what do I
+ask</em>, and for exactly the reason that makes it work on every published file: a
+header bit names no vocabulary. A starter query has to be written in the
+dataset's own predicates, and only a pass over the statements knows them — so
+the card carries a <strong>second, stored</strong> signal, derived at build time beside the
+rest of the profile:</p>
+<pre><code class="language-json">"signals": {
+  "annotation_predicates": ["&lt;http://ex/recordedBy&gt;", "&lt;http://ex/confidence&gt;"],
+  "quoting_predicates":    ["&lt;http://ex/states&gt;"],
+  "annotated_statement":   ["&lt;…22-rdf-syntax-ns#type&gt;", "&lt;http://ex/recordedBy&gt;"]
+}
+</code></pre>
+<p>The two halves stay independent on purpose. Presence keeps reporting correctly
+for every already-published file with no rebuild; the vocabulary — and the
+<code>qt-*</code> starter queries generated from it — arrive with the next build. A file
+whose card has no <code>qt-*</code> query is not a file with no quoted triples; it is a
+file carded before this existed.</p>
+<p>The three fields are counted apart because <strong>presence is not position</strong>. A
+statement standing in the <em>subject</em> of another (<code>&lt;&lt; s p o &gt;&gt; :recordedBy :who</code>)
+and one standing in its <em>object</em> (<code>:claim :states &lt;&lt; s p o &gt;&gt;</code>) are different
+shapes, the header flag cannot tell them apart, and a query written for the
+wrong one returns nothing at all.</p>
+<p><code>annotated_statement</code> is the RDF-star <strong>witness</strong>, the same role <code>class_links</code>
+plays for <code>LABELED_CLASS</code>: the derivation records a pair only when it matched an
+<em>asserted</em> statement against the annotations of that same statement, which is
+what lets one body pin both predicates (see
+<a href="#presence-is-not-co-occurrence">Presence is not co-occurrence</a>). The match is
+sampled over the first few thousand annotated statements rather than all of
+them, so the derivation's memory does not scale with the star layer; a miss can
+only drop <code>qt-coverage</code>, never ship a broken one.</p>
+<p>The family it generates — dimension <code>statements</code>, all of it emitted only when
+the corresponding signal is non-empty:</p>
+<table><thead><tr><th>id</th><th>question</th><th>needs</th></tr></thead><tbody>
+<tr><td><code>qt-sample</code></td><td>Which statements does this dataset say something about, and what does it say?</td><td>an annotation predicate</td></tr>
+<tr><td><code>qt-about</code></td><td>Which predicates qualify a statement rather than an entity, and how often?</td><td>any annotated statement</td></tr>
+<tr><td><code>qt-qualifiers</code></td><td>How many assertions does each distinct qualifier value account for?</td><td>an annotation predicate</td></tr>
+<tr><td><code>qt-coverage</code></td><td>Of the statements that get annotated most, how many actually carry an annotation?</td><td>the witnessed pair</td></tr>
+<tr><td><code>qt-quoted-object</code></td><td>Which statements are referenced as the value of another statement?</td><td>a quoting predicate</td></tr>
+</tbody></table>
+<p>The bodies are written in the <strong>RDF-star</strong> surface <code>&lt;&lt; s p o &gt;&gt;</code>, because that
+is what the query parser accepts (<a href="sparql.html#rdf-star">SPARQL-star</a>). The
+ratified RDF 1.2 spelling <code>&lt;&lt;( s p o )&gt;&gt;</code> is an <em>export</em> surface: a query body
+written in it does not parse, which is the worst content a card can carry.</p>
 <h3 id="where-to-get-theme-iris">Where to get <code>theme</code> IRIs</h3>
 <p><code>theme</code> rejects free text, which is only helpful if you know where an IRI
 comes from. Pick a <strong>published concept scheme</strong> and copy the concept's IRI —
@@ -1299,7 +1344,7 @@ statements live</strong> (see <a href="#named-graph-datasets">Named-graph datase
 Each query carries:</p>
 <ul>
 <li>a full <strong>PREFIX block</strong> (the engine injects none, so every query is runnable as-is);</li>
-<li>a <code>dimension</code> (overview / identity / labels / types / topology / links / literals / time / space / graphs);</li>
+<li>a <code>dimension</code> (overview / identity / labels / types / topology / links / literals / time / space / graphs / statements);</li>
 <li>a <code>tier</code> tag (<code>card</code> / <code>summary</code> / <code>index</code>) — the cheapest tier that answers it;</li>
 <li>the <code>requires</code> capability keys that gated its emission.</li>
 </ul>
@@ -1320,6 +1365,7 @@ quotient — is the proof. The capabilities that carry a witness are:</p>
 <tr><td><code>OBJECT_PRED</code></td><td>the most frequent relation whose object is not a literal — one a path query can walk</td><td>a <code>class_links</code> row whose <code>o_class</code> is not <code>(literal)</code></td></tr>
 <tr><td><code>WKT_PATH</code></td><td>how this dataset hangs a geometry off a subject (<code>geo:asWKT</code>, or <code>geo:hasGeometry?/geo:asWKT</code>)</td><td>the predicates the card recorded</td></tr>
 <tr><td><code>EXTERNAL_IRI</code></td><td>that some recorded IRI lies outside the base IRI</td><td><code>classes</code> / <code>in_hubs</code></td></tr>
+<tr><td><code>ANNOTATED_PRED</code></td><td>the predicate <em>inside</em> a quoted triple that <code>ANNOTATION_PRED</code> was seen annotating</td><td><code>signals.annotated_statement</code> — a statement the graph both asserts and annotates</td></tr>
 </tbody></table>
 <p><code>LABELED_CLASS</code> equals <code>TOP_CLASS</code> on every dataset whose top class <em>is</em>
 labelled, so the common case is unchanged. Where the card cannot prove a

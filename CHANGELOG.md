@@ -35,6 +35,39 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **A dataset whose statements quote other statements now ships starter queries
+  for them.** Five `qt-*` queries, dimension `statements`, instantiated with the
+  dataset's own annotation vocabulary: which statements it says something about
+  (`qt-sample`), which predicates qualify a statement rather than an entity
+  (`qt-about`), how many assertions each distinct qualifier value accounts for
+  (`qt-qualifiers`), how much of the annotated relation actually carries an
+  annotation (`qt-coverage`), and which statements are held as another
+  statement's value (`qt-quoted-object`). A dataset with no quoted triples gains
+  none of them, no empty section, and a byte-identical card.
+
+  This needed a **second** signal, derived rather than measured, and the two do
+  not substitute for each other. `signals.quoted_triples` is read off the header
+  at display time, which is what makes it true for every already-published file —
+  and it names no vocabulary, so nothing can be written into a query from it. The
+  new `signals.annotation_predicates` / `signals.quoting_predicates` /
+  `signals.annotated_statement` are derived from the statements at build time and
+  stored, because only a pass over them knows which predicates annotate and which
+  hold a statement as a value. The subject and object positions are counted apart
+  on purpose: the header flag cannot tell them apart and a body written for the
+  wrong one returns nothing.
+
+  `annotated_statement` is the co-occurrence **witness** the conjoined body
+  (`qt-coverage`) needs — a statement this graph was seen both to assert and to
+  annotate — playing the role `class_links` plays for `LABELED_CLASS`, so the
+  two predicates it pins are never two independent maxima. `rete card-audit`
+  decides that conjunction from the witness and reports `suspect` when a
+  published body pins a pair the card no longer witnesses. Bodies use the
+  RDF-star query surface `<< s p o >>`; the ratified `<<( s p o )>>` is an export
+  spelling and would not parse.
+
+  Presence keeps answering for files built before any of this; the queries arrive
+  with the next build.
+
 - **The dataset card says whether a file holds quoted triples, and what an
   export of it will write.** `signals.quoted_triples` —
   `{present, export_surfaces, export_default}` — so a consumer can answer "will

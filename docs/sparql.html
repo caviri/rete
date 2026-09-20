@@ -843,6 +843,14 @@ SELECT ?occ ?who WHERE {
 <p><code>CONSTRUCT</code> (and <code>rete serve</code>'s SPARQL Update) may build quoted triples in their
 templates. Nested quoting (<code>&lt;&lt; &lt;&lt; … &gt;&gt; :p ?o &gt;&gt;</code>) works. rete follows the
 RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.</p>
+<p><strong>You do not have to write the first one.</strong> A dataset built with <code>--card</code> whose
+statements quote other statements ships a <code>qt-*</code> family of starter queries in
+its <a href="dataset-cards.html#querying-the-star-layer">dataset card</a>, instantiated with
+its own annotation vocabulary — what gets said about statements, who says it,
+and how much of the data is qualified — and every one of them is run against the
+finished file at build time, so a shipped query is one that answers. Note that
+those bodies are written in the <code>&lt;&lt; s p o &gt;&gt;</code> surface above: the ratified RDF 1.2
+<code>&lt;&lt;( s p o )&gt;&gt;</code> is an <strong>export</strong> spelling and does not parse in a query.</p>
 <p><strong>RDF 1.2 interop.</strong> rete's <strong>N-Triples/N-Quads</strong> reader also accepts the
 ratified RDF 1.2 object triple-term syntax <code>&lt;&lt;( s p o )&gt;&gt;</code>, mapped to the <em>same</em>
 canonical token as <code>&lt;&lt; s p o &gt;&gt;</code> — so an RDF 1.2 N-Triples file and an RDF-star

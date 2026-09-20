@@ -280,6 +280,15 @@ SELECT ?occ ?who WHERE {
 templates. Nested quoting (`<< << … >> :p ?o >>`) works. rete follows the
 RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.
 
+**You do not have to write the first one.** A dataset built with `--card` whose
+statements quote other statements ships a `qt-*` family of starter queries in
+its [dataset card](dataset-cards.md#querying-the-star-layer), instantiated with
+its own annotation vocabulary — what gets said about statements, who says it,
+and how much of the data is qualified — and every one of them is run against the
+finished file at build time, so a shipped query is one that answers. Note that
+those bodies are written in the `<< s p o >>` surface above: the ratified RDF 1.2
+`<<( s p o )>>` is an **export** spelling and does not parse in a query.
+
 **RDF 1.2 interop.** rete's **N-Triples/N-Quads** reader also accepts the
 ratified RDF 1.2 object triple-term syntax `<<( s p o )>>`, mapped to the *same*
 canonical token as `<< s p o >>` — so an RDF 1.2 N-Triples file and an RDF-star

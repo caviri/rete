@@ -95,6 +95,21 @@ enum Cap {
     NamedGraphs,
     Link,
     HasLiterals,
+    /// At least one statement in this graph is **about a statement** — its
+    /// subject is a quoted triple. The gate for the bodies that write
+    /// `<< ?s ?p ?o >>` in subject position with nothing substituted into it.
+    AnnotatedStatements,
+    /// The most frequent predicate that annotates a statement — the outer
+    /// predicate of `<< s p o >> :recordedBy :who`.
+    AnnotationPred,
+    /// The predicate **inside** a quoted triple that [`Cap::AnnotationPred`]
+    /// was seen annotating. Jointly derived with it (`annotated_statement` is
+    /// the witness), so a body may pin both.
+    AnnotatedPred,
+    /// The most frequent predicate whose **object** is a quoted triple —
+    /// `:claim :states << s p o >>`, the other position a triple term stands
+    /// in, and a different query from the annotation one.
+    QuotingPred,
 }
 
 /// Every capability, in declaration order — the substitution table and the
@@ -115,6 +130,10 @@ const ALL_CAPS: &[Cap] = &[
     Cap::NamedGraphs,
     Cap::Link,
     Cap::HasLiterals,
+    Cap::AnnotatedStatements,
+    Cap::AnnotationPred,
+    Cap::AnnotatedPred,
+    Cap::QuotingPred,
 ];
 
 impl Cap {
@@ -136,6 +155,10 @@ impl Cap {
             Cap::NamedGraphs => "NAMED_GRAPHS",
             Cap::Link => "LINK",
             Cap::HasLiterals => "HAS_LITERALS",
+            Cap::AnnotatedStatements => "ANNOTATED_STATEMENTS",
+            Cap::AnnotationPred => "ANNOTATION_PRED",
+            Cap::AnnotatedPred => "ANNOTATED_PRED",
+            Cap::QuotingPred => "QUOTING_PRED",
         }
     }
 
@@ -154,11 +177,15 @@ impl Cap {
             Cap::BaseIri => "{{BASE_IRI}}",
             Cap::WktPath => "{{WKT_PATH}}",
             Cap::Bbox => "{{BBOX_POLYGON}}",
+            Cap::AnnotationPred => "{{ANNOTATION_PRED}}",
+            Cap::AnnotatedPred => "{{ANNOTATED_PRED}}",
+            Cap::QuotingPred => "{{QUOTING_PRED}}",
             Cap::ExternalIri
             | Cap::GeoLatLong
             | Cap::NamedGraphs
             | Cap::Link
-            | Cap::HasLiterals => return None,
+            | Cap::HasLiterals
+            | Cap::AnnotatedStatements => return None,
         })
     }
 
@@ -177,6 +204,15 @@ impl Cap {
             // one pair the card can witness, and the one the label queries need.
             Cap::LabeledClass => &[Cap::LabelPred],
             Cap::LabelPred => &[Cap::LabeledClass],
+            // `ANNOTATED_PRED` *is* "the predicate inside the statements that
+            // `ANNOTATION_PRED` was seen annotating". `signals
+            // .annotated_statement` holds the two as they occurred together on
+            // one statement, so a body may write them into one pattern. Chosen
+            // apart they would be the two-maxima shape again: the most-used
+            // annotation predicate need not be the one attached to the
+            // most-annotated kind of statement.
+            Cap::AnnotatedPred => &[Cap::AnnotationPred],
+            Cap::AnnotationPred => &[Cap::AnnotatedPred],
             _ => &[],
         }
     }
@@ -194,6 +230,24 @@ fn class_carries(card: &DatasetCard, class: &str, pred: &str) -> bool {
     card.class_links
         .iter()
         .any(|l| l.s_class == class && l.predicate == pred)
+}
+
+/// The RDF-star co-occurrence witness, in the one place both halves read it:
+/// `(the predicate inside a quoted triple, the predicate annotating it)` for a
+/// statement this graph was seen to **assert and annotate**.
+///
+/// It plays exactly the role [`class_carries`] plays for `LABELED_CLASS`. The
+/// derivation records the pair only when it matched an asserted statement
+/// against the annotations of that same statement, so a hit proves both halves
+/// of `qt-coverage`'s aggregate are non-zero — `?s p ?o` matches, and the
+/// `OPTIONAL` binds at least once. Both the generator (resolving
+/// [`Cap::AnnotatedPred`]) and [`audit`] ask through here, so "does the card
+/// prove these meet?" keeps having exactly one implementation.
+fn annotated_statement(card: &DatasetCard) -> Option<(&str, &str)> {
+    card.signals
+        .annotated_statement
+        .as_ref()
+        .map(|(quoted, about)| (quoted.as_str(), about.as_str()))
 }
 
 /// Why a template's emitted query cannot come back empty. Declared per template
@@ -867,6 +921,124 @@ const TEMPLATES: &[Template] = &[
         provably_empty: None,
         hook_is_exact: false,
     },
+    // --- Statements about statements (RDF-star) ---
+    //
+    // Emitted only for a dataset whose own statements were seen to quote
+    // other statements, and written in the RDF-star surface `<< s p o >>`,
+    // which is what the SPARQL parser accepts (`docs/sparql.md#rdf-star`).
+    // The RDF 1.2 spelling `<<( s p o )>>` is an EXPORT surface, not a query
+    // one, and a body written in it would not parse — the worst thing a card
+    // can carry.
+    //
+    // None of these has a `named_body`: the profile they are instantiated from
+    // is derived from the default graph, so on a named-graph-only file the
+    // capabilities are simply absent and nothing is emitted.
+    Template {
+        id: "qt-sample",
+        title: "A statement someone made a statement about",
+        dimension: "statements",
+        question: "Which statements does this dataset say something about, and what does it say?",
+        // The family's entry point, and the one shape worth copying: the inner
+        // variables bind the quoted statement's own subject, predicate and
+        // object, so one row shows both the assertion and what qualifies it.
+        // The annotation predicate is pinned rather than left a variable so
+        // the scan routes on a predicate instead of walking the whole index.
+        body: "SELECT ?s ?p ?o ?value WHERE { << ?s ?p ?o >> {{ANNOTATION_PRED}} ?value } LIMIT 25",
+        named_body: None,
+        mixed_body: None,
+        tier: Tier::Index,
+        // One substitution, from a predicate the derivation counted on a
+        // statement whose subject really is a quoted triple.
+        requires: &[Cap::AnnotationPred],
+        nonempty: NonEmpty::Witnessed,
+        fallback: None,
+        provably_empty: None,
+        hook_is_exact: false,
+    },
+    Template {
+        id: "qt-about",
+        title: "What gets said about statements?",
+        dimension: "statements",
+        question: "Which predicates qualify a statement rather than an entity, and how often?",
+        // The annotation schema: the `ov-pred-hist` of the star layer. The
+        // annotation predicate is a variable here on purpose — that IS the
+        // question — so the gate is the pure "such statements exist" bool.
+        body: "SELECT ?about (COUNT(*) AS ?n) WHERE { << ?s ?p ?o >> ?about ?value } GROUP BY ?about ORDER BY DESC(?n) LIMIT 50",
+        named_body: None,
+        mixed_body: None,
+        tier: Tier::Index,
+        requires: &[Cap::AnnotatedStatements],
+        // A GROUP BY yields no group over an empty sequence — but the card
+        // counted at least one statement whose subject is a quoted triple, and
+        // every statement has a predicate to group by.
+        nonempty: NonEmpty::Witnessed,
+        fallback: None,
+        provably_empty: None,
+        hook_is_exact: false,
+    },
+    Template {
+        id: "qt-qualifiers",
+        title: "Who (or what) qualifies the assertions?",
+        dimension: "statements",
+        question: "How many assertions does each distinct qualifier value account for?",
+        // "Count assertions by whatever qualifies them" — the recorder, the
+        // source, the confidence band. Grouping on the VALUE, not on the
+        // predicate, is what makes this a different question from `qt-about`.
+        body: "SELECT ?value (COUNT(*) AS ?n) WHERE { << ?s ?p ?o >> {{ANNOTATION_PRED}} ?value } GROUP BY ?value ORDER BY DESC(?n) LIMIT 50",
+        named_body: None,
+        mixed_body: None,
+        tier: Tier::Index,
+        requires: &[Cap::AnnotationPred],
+        nonempty: NonEmpty::Witnessed,
+        fallback: None,
+        provably_empty: None,
+        hook_is_exact: false,
+    },
+    Template {
+        id: "qt-coverage",
+        title: "How much of the data is qualified?",
+        dimension: "statements",
+        question: "Of the statements that get annotated most, how many actually carry an annotation?",
+        // The `cmp-coverage` of the star layer, and the question a provenance
+        // graph is really about: 40,000 assertions, 300 of them sourced.
+        //
+        // `{{ANNOTATED_PRED}}` is written twice — once in a regular pattern to
+        // enumerate the assertions, once inside the quoted pattern to reach
+        // their annotations. `?s`/`?o` are bound by the regular pattern, so
+        // the quoted occurrence lowers to a join on them (`sameTerm`), not a
+        // second enumeration. The two predicates conjoined here are the ONE
+        // pair the derivation saw on a single statement
+        // (`signals.annotated_statement`), never two independent maxima.
+        body: "SELECT (COUNT(*) AS ?asserted) (COUNT(?value) AS ?qualified) WHERE { ?s {{ANNOTATED_PRED}} ?o OPTIONAL { << ?s {{ANNOTATED_PRED}} ?o >> {{ANNOTATION_PRED}} ?value } }",
+        named_body: None,
+        mixed_body: None,
+        tier: Tier::Index,
+        requires: &[Cap::AnnotatedPred, Cap::AnnotationPred],
+        nonempty: NonEmpty::Aggregate,
+        fallback: None,
+        provably_empty: None,
+        hook_is_exact: false,
+    },
+    Template {
+        id: "qt-quoted-object",
+        title: "Statements held as values",
+        dimension: "statements",
+        question: "Which statements are referenced as the value of another statement?",
+        // The OTHER position a triple term stands in — `:claim :states
+        // << s p o >>` — and a separate capability, because a dataset can have
+        // one shape and not the other: a query written for the subject
+        // position returns nothing at all on an object-position file (and the
+        // header's presence bit cannot tell them apart).
+        body: "SELECT ?s ?qs ?qp ?qo WHERE { ?s {{QUOTING_PRED}} << ?qs ?qp ?qo >> } LIMIT 25",
+        named_body: None,
+        mixed_body: None,
+        tier: Tier::Index,
+        requires: &[Cap::QuotingPred],
+        nonempty: NonEmpty::Witnessed,
+        fallback: None,
+        provably_empty: None,
+        hook_is_exact: false,
+    },
 ];
 
 /// What the template behind an emitted query claims about its emptiness — the
@@ -953,6 +1125,10 @@ struct Caps {
     named_graphs: bool,
     link: bool,
     has_literals: bool,
+    annotated_statements: bool,
+    annotation_pred: Option<String>,
+    annotated_pred: Option<String>,
+    quoting_pred: Option<String>,
 }
 
 impl Caps {
@@ -1025,6 +1201,29 @@ impl Caps {
                 })
         });
 
+        // RDF-star. The presence signal the card *displays* is read off the
+        // header at display time — true for every file ever built, which is
+        // what makes it honest about the already-published corpus, and useless
+        // here: it names no vocabulary and cannot be written into a query. So
+        // the `qt-*` family is gated on the profile derived from the
+        // statements instead, which a card only has if it was derived after
+        // this existed. Presence keeps answering on old files; queries arrive
+        // with the next build.
+        //
+        // `ANNOTATED_PRED` and `ANNOTATION_PRED` come from the ONE pair the
+        // derivation saw on a single statement, never from the two rankings
+        // independently — see `Cap::joint_with`.
+        let witness = annotated_statement(card);
+        let annotated_pred = witness.map(|(quoted, _)| quoted.to_string());
+        // The witnessed annotating predicate when there is one — so the pair
+        // `qt-coverage` writes really met, and so the whole family talks about
+        // one predicate (the reason `cmp-coverage` shares `lb-labels`' class).
+        // Otherwise the plain ranking, which is all the single-substitution
+        // bodies need; `ANNOTATED_PRED` is then absent and nothing conjoins.
+        let annotation_pred = witness
+            .map(|(_, about)| about.to_string())
+            .or_else(|| s.annotation_predicates.first().cloned());
+
         Caps {
             top_class: card.classes.first().map(|(c, _)| c.clone()),
             top_pred,
@@ -1041,6 +1240,10 @@ impl Caps {
             named_graphs: card.named_graph_count > 0,
             link: !s.link_predicates.is_empty(),
             has_literals: !card.datatypes.is_empty(),
+            annotated_statements: !s.annotation_predicates.is_empty(),
+            annotation_pred,
+            annotated_pred,
+            quoting_pred: s.quoting_predicates.first().cloned(),
         }
     }
 
@@ -1057,11 +1260,15 @@ impl Caps {
             Cap::BaseIri => self.base_iri.as_deref(),
             Cap::WktPath => self.wkt_path.as_deref(),
             Cap::Bbox => self.bbox_polygon.as_deref(),
+            Cap::AnnotationPred => self.annotation_pred.as_deref(),
+            Cap::AnnotatedPred => self.annotated_pred.as_deref(),
+            Cap::QuotingPred => self.quoting_pred.as_deref(),
             Cap::ExternalIri
             | Cap::GeoLatLong
             | Cap::NamedGraphs
             | Cap::Link
-            | Cap::HasLiterals => None,
+            | Cap::HasLiterals
+            | Cap::AnnotatedStatements => None,
         }
     }
 
@@ -1073,6 +1280,7 @@ impl Caps {
             Cap::NamedGraphs => self.named_graphs,
             Cap::Link => self.link,
             Cap::HasLiterals => self.has_literals,
+            Cap::AnnotatedStatements => self.annotated_statements,
             other => self.value(other).is_some(),
         }
     }
@@ -1526,6 +1734,20 @@ fn origins(card: &DatasetCard, v: &str) -> Vec<String> {
     if s.base_iri.as_deref() == Some(v) {
         o.push("signals.base_iri".to_string());
     }
+    if let Some(i) = s.annotation_predicates.iter().position(|p| p == v) {
+        o.push(format!("signals.annotation_predicates[{i}]"));
+    }
+    if let Some(i) = s.quoting_predicates.iter().position(|p| p == v) {
+        o.push(format!("signals.quoting_predicates[{i}]"));
+    }
+    if let Some((quoted, about)) = annotated_statement(card) {
+        if v == quoted {
+            o.push("signals.annotated_statement.0".to_string());
+        }
+        if v == about {
+            o.push("signals.annotated_statement.1".to_string());
+        }
+    }
     o
 }
 
@@ -1906,6 +2128,47 @@ fn finding(
                 revision,
                 &binds,
             )
+        };
+    }
+
+    // --- 6b. The RDF-star conjunction. `ANNOTATED_PRED` (inside the quoted
+    //         triple) and `ANNOTATION_PRED` (outside it) are the second pair
+    //         the card can witness, so step 7 below — which would see two
+    //         ranked predicates and decline — must not reach them. What the
+    //         published body actually bound is compared against the card's own
+    //         witness: a re-derivation can move the pair, and a body carrying
+    //         the old one is no longer proven.
+    if let (Some(quoted), Some(about)) = (
+        bound(&binds, "ANNOTATED_PRED"),
+        bound(&binds, "ANNOTATION_PRED"),
+    ) {
+        return match annotated_statement(card) {
+            Some((q, a)) if q == quoted && a == about => mk(
+                Verdict::Answers,
+                format!(
+                    "signals.annotated_statement witnesses a {quoted} statement this graph \
+                     both asserts and annotates with {about}"
+                ),
+                revision,
+                &binds,
+            ),
+            Some((q, a)) => mk(
+                Verdict::Suspect,
+                format!(
+                    "the body pins {quoted} / {about}, but the card's witnessed pair is \
+                     {q} / {a} — nothing here proves these two meet on one statement"
+                ),
+                revision,
+                &binds,
+            ),
+            None => mk(
+                Verdict::Undecidable,
+                "the card records no annotated-statement witness, so it cannot say whether \
+                 the quoted predicate and the annotating one ever meet"
+                    .to_string(),
+                revision,
+                &binds,
+            ),
         };
     }
 
@@ -2573,6 +2836,218 @@ mod tests {
             assert!(!ids.contains(&absent), "{absent} would return zero rows");
         }
         assert_every_query_returns_rows(&card, &rete);
+    }
+
+    // ---------------------------------------------------------------------
+    // RDF-star: the `qt-*` family.
+    // ---------------------------------------------------------------------
+
+    const RECORDED_BY: &str = "<http://ex/recordedBy>";
+    const CONFIDENCE: &str = "<http://ex/confidence>";
+    const STATES: &str = "<http://ex/states>";
+    const COUNT_OF: &str = "<http://ex/count>";
+
+    /// A provenance graph: every occurrence is typed, most of those type
+    /// assertions are themselves annotated with who recorded them, and two
+    /// claims hold a statement as their *value* — the object position, which
+    /// is a different capability from the subject one.
+    ///
+    /// Deliberately **partial**: `occ4`'s type assertion carries no annotation,
+    /// so `qt-coverage` reports a real ratio instead of a vacuous 100 %.
+    fn annotated_quads() -> Vec<(String, String, String, Option<String>)> {
+        let mut v = Vec::new();
+        for i in 0..4 {
+            let s = format!("<http://ex/occ/{i}>");
+            let species = if i < 2 {
+                "<http://ex/Swallow>"
+            } else {
+                "<http://ex/Robin>"
+            };
+            v.push(q(&s, TYPE, species));
+            v.push(q(&s, COUNT_OF, &format!("\"{}\"", i + 1)));
+            // The star layer: a statement about the type assertion above.
+            if i < 3 {
+                let quoted = format!("<<{s} {TYPE} {species}>>");
+                v.push(q(
+                    &quoted,
+                    RECORDED_BY,
+                    if i == 0 {
+                        "<http://ex/jsmith>"
+                    } else {
+                        "<http://ex/adoe>"
+                    },
+                ));
+                if i == 0 {
+                    v.push(q(&quoted, CONFIDENCE, "\"0.9\""));
+                }
+            }
+            // …and the other position: a claim whose VALUE is a statement.
+            if i < 2 {
+                v.push(q(
+                    &format!("<http://ex/claim/{i}>"),
+                    STATES,
+                    &format!("<<{s} {COUNT_OF} \"{}\">>", i + 1),
+                ));
+            }
+        }
+        v
+    }
+
+    /// The family emits, every query answers on the graph it came from, and
+    /// the coverage aggregate reports the ratio the fixture really has.
+    #[test]
+    fn statement_queries_are_generated_and_return_rows() {
+        let quads = annotated_quads();
+        let (card, rete) = card_and_graph(quads, 40, 0);
+
+        // The derive-time profile, which is what makes any of this possible:
+        // the header's presence bit names no vocabulary.
+        let s = &card.signals;
+        assert_eq!(s.annotation_predicates, vec![RECORDED_BY, CONFIDENCE]);
+        assert_eq!(s.quoting_predicates, vec![STATES]);
+        assert_eq!(
+            s.annotated_statement,
+            Some((TYPE.to_string(), RECORDED_BY.to_string())),
+            "the witness must be a statement the graph BOTH asserts and annotates"
+        );
+
+        let ids: Vec<&str> = card.queries.iter().map(|x| x.id.as_str()).collect();
+        for want in [
+            "qt-sample",
+            "qt-about",
+            "qt-qualifiers",
+            "qt-coverage",
+            "qt-quoted-object",
+        ] {
+            assert!(ids.contains(&want), "{want} should be emitted: {ids:?}");
+        }
+        for eq in card.queries.iter().filter(|x| x.id.starts_with("qt-")) {
+            assert_eq!(eq.dimension, "statements");
+            // The query surface is RDF-star (`<< s p o >>`). The ratified
+            // RDF 1.2 spelling `<<( s p o )>>` is an EXPORT surface; a body in
+            // it would not parse, which is the worst content a card can carry.
+            assert!(
+                !eq.sparql.contains("<<("),
+                "{}: RDF 1.2 triple-term syntax in a QUERY",
+                eq.id
+            );
+        }
+
+        // The whole point: every one of them answers on this graph.
+        assert_every_query_returns_rows(&card, &rete);
+
+        // And the coverage aggregate counts what the fixture actually holds:
+        // four type assertions, three of them annotated.
+        let cov = sparql_of(&card, "qt-coverage").unwrap();
+        assert_eq!(count_value(&rete, cov, "asserted"), 4);
+        assert_eq!(count_value(&rete, cov, "qualified"), 3);
+    }
+
+    /// The overwhelmingly common case: no quoted triples, so no `qt-*` query,
+    /// no empty section, and — because all three new signal fields serialize
+    /// only when non-empty — a card byte-identical to one built before the
+    /// family existed.
+    #[test]
+    fn a_graph_without_quoted_triples_gains_nothing() {
+        let quads = rich_quads();
+        let card = derive_card(&quads, 50, 0, CardInput::default());
+        let s = &card.signals;
+        assert!(s.annotation_predicates.is_empty());
+        assert!(s.quoting_predicates.is_empty());
+        assert!(s.annotated_statement.is_none());
+        assert!(
+            !card.queries.iter().any(|x| x.id.starts_with("qt-")),
+            "a graph with no quoted triple must gain no statement query"
+        );
+        // The card's own bytes say nothing about a layer it does not have.
+        let json = String::from_utf8(card.to_json_bytes()).unwrap();
+        for key in [
+            "annotation_predicates",
+            "quoting_predicates",
+            "annotated_statement",
+        ] {
+            assert!(!json.contains(key), "{key} reached a card that has none");
+        }
+    }
+
+    /// Presence is not position. A graph that only ever holds a statement as a
+    /// *value* has nothing for a subject-position body to match — the header's
+    /// `FLAG_HAS_QUOTED_TRIPLES` cannot tell the two apart, and a query written
+    /// for the wrong one is exactly the zero-rows failure this library exists
+    /// to prevent.
+    #[test]
+    fn a_statement_held_only_as_a_value_gets_only_the_object_position_query() {
+        let quads = vec![
+            q("<http://ex/a>", TYPE, "<http://ex/T>"),
+            q("<http://ex/a>", "<http://ex/p>", "<http://ex/b>"),
+            q(
+                "<http://ex/claim>",
+                STATES,
+                "<<<http://ex/a> <http://ex/p> <http://ex/b>>>",
+            ),
+        ];
+        let (card, rete) = card_and_graph(quads, 12, 0);
+        assert!(card.signals.annotation_predicates.is_empty());
+        assert_eq!(card.signals.quoting_predicates, vec![STATES]);
+
+        let ids: Vec<&str> = card.queries.iter().map(|x| x.id.as_str()).collect();
+        assert!(ids.contains(&"qt-quoted-object"));
+        for absent in ["qt-sample", "qt-about", "qt-qualifiers", "qt-coverage"] {
+            assert!(
+                !ids.contains(&absent),
+                "{absent} has no subject-position statement to match"
+            );
+        }
+        assert_every_query_returns_rows(&card, &rete);
+    }
+
+    /// A statement this graph annotates but never asserts cannot witness the
+    /// coverage query: `?s p ?o` would match nothing and the aggregate would
+    /// report `0 / 0`, which is the `mtg` "76990 / 0" failure one level up.
+    /// The other four still emit — the quoted layer is real, it is only the
+    /// join to the asserted one that is missing.
+    #[test]
+    fn an_annotation_of_an_unasserted_statement_witnesses_no_coverage() {
+        let quads = vec![
+            q("<http://ex/a>", TYPE, "<http://ex/T>"),
+            q(
+                "<<<http://ex/a> <http://ex/p> <http://ex/b>>>",
+                RECORDED_BY,
+                "<http://ex/jsmith>",
+            ),
+        ];
+        let (card, rete) = card_and_graph(quads, 10, 0);
+        assert_eq!(card.signals.annotation_predicates, vec![RECORDED_BY]);
+        assert!(
+            card.signals.annotated_statement.is_none(),
+            "nothing asserts <http://ex/a> <http://ex/p> <http://ex/b>"
+        );
+        let ids: Vec<&str> = card.queries.iter().map(|x| x.id.as_str()).collect();
+        assert!(
+            !ids.contains(&"qt-coverage"),
+            "no witness, no coverage query"
+        );
+        for want in ["qt-sample", "qt-about", "qt-qualifiers"] {
+            assert!(ids.contains(&want), "{want} needs only the star layer");
+        }
+        assert_every_query_returns_rows(&card, &rete);
+    }
+
+    /// The audit reaches the RDF-star conjunction through the card's witness
+    /// rather than through step 7, which would see two ranked predicates and
+    /// decline — and it stops vouching for a published body whose pair the
+    /// card no longer witnesses.
+    #[test]
+    fn the_audit_decides_the_star_conjunction_from_the_witness() {
+        let mut card = derive_card(&annotated_quads(), 40, 0, CardInput::default());
+        let findings = audit(&card);
+        assert_eq!(verdict_of(&findings, "qt-coverage"), Verdict::Answers);
+
+        // The same body on a card whose witness has moved: the pair is no
+        // longer proven, and the audit says so instead of vouching for it.
+        card.signals.annotated_statement = Some((COUNT_OF.to_string(), CONFIDENCE.to_string()));
+        let findings = audit(&card);
+        assert_eq!(verdict_of(&findings, "qt-coverage"), Verdict::Suspect);
     }
 
     /// The table-level audit: nothing in the library may conjoin two

@@ -106,6 +106,7 @@ newlines.
 | `signals.text_index` | **measured** | Whether the file carries a **full-text (TEXT_INDEX) section** — `{present, bytes, token_table_bytes}`. Derived from the file's *sections* rather than its triples, and never written into the file. See [The full-text signal](#the-full-text-signal-measured-not-stored). |
 | `signals.permutations` | **measured** | Which **index permutations** the file stores — `{count, names, merge_join}`. Also derived, from the header's permutation mask, and also never written. See [The permutation signal](#the-permutation-signal-measured-not-stored). |
 | `signals.quoted_triples` | **measured** | Whether the dataset holds **quoted triples**, and which surfaces an export can write them in — `{present, export_surfaces, export_default}`. Derived from header flag bit 2, and also never written. See [The quoted-triple signal](#the-quoted-triple-signal-measured-not-stored). |
+| `signals.annotation_predicates`, `signals.quoting_predicates`, `signals.annotated_statement` | derived | The **vocabulary of the RDF-star layer**, when there is one: the predicates that annotate a statement, the predicates whose *value* is a statement, and the one `(quoted predicate, annotating predicate)` pair witnessed on a statement this graph both asserts and annotates. Empty and omitted on a graph with no quoted triples. See [Querying the star layer](#querying-the-star-layer). |
 | `queries` | derived | The auto-generated, **tiered starter-query library** (see below). |
 | `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). |
 | `top_n` | derived | The cap the profile lists were derived under — the number `truncated` was hinting at without stating. |
@@ -275,6 +276,60 @@ cardinality. Counting would mean decoding the dictionary, which is outside the
 CARD tier's budget (header + metadata, never the dictionary) — and a count could
 only ever be written by builds newer than this signal, which is exactly the
 `null`-on-every-published-file failure above.
+
+### Querying the star layer
+
+Presence answers *will I meet triple terms here*. It cannot answer *what do I
+ask*, and for exactly the reason that makes it work on every published file: a
+header bit names no vocabulary. A starter query has to be written in the
+dataset's own predicates, and only a pass over the statements knows them — so
+the card carries a **second, stored** signal, derived at build time beside the
+rest of the profile:
+
+```json
+"signals": {
+  "annotation_predicates": ["<http://ex/recordedBy>", "<http://ex/confidence>"],
+  "quoting_predicates":    ["<http://ex/states>"],
+  "annotated_statement":   ["<…22-rdf-syntax-ns#type>", "<http://ex/recordedBy>"]
+}
+```
+
+The two halves stay independent on purpose. Presence keeps reporting correctly
+for every already-published file with no rebuild; the vocabulary — and the
+`qt-*` starter queries generated from it — arrive with the next build. A file
+whose card has no `qt-*` query is not a file with no quoted triples; it is a
+file carded before this existed.
+
+The three fields are counted apart because **presence is not position**. A
+statement standing in the *subject* of another (`<< s p o >> :recordedBy :who`)
+and one standing in its *object* (`:claim :states << s p o >>`) are different
+shapes, the header flag cannot tell them apart, and a query written for the
+wrong one returns nothing at all.
+
+`annotated_statement` is the RDF-star **witness**, the same role `class_links`
+plays for `LABELED_CLASS`: the derivation records a pair only when it matched an
+*asserted* statement against the annotations of that same statement, which is
+what lets one body pin both predicates (see
+[Presence is not co-occurrence](#presence-is-not-co-occurrence)). The match is
+sampled over the first few thousand annotated statements rather than all of
+them, so the derivation's memory does not scale with the star layer; a miss can
+only drop `qt-coverage`, never ship a broken one.
+
+The family it generates — dimension `statements`, all of it emitted only when
+the corresponding signal is non-empty:
+
+| id | question | needs |
+|---|---|---|
+| `qt-sample` | Which statements does this dataset say something about, and what does it say? | an annotation predicate |
+| `qt-about` | Which predicates qualify a statement rather than an entity, and how often? | any annotated statement |
+| `qt-qualifiers` | How many assertions does each distinct qualifier value account for? | an annotation predicate |
+| `qt-coverage` | Of the statements that get annotated most, how many actually carry an annotation? | the witnessed pair |
+| `qt-quoted-object` | Which statements are referenced as the value of another statement? | a quoting predicate |
+
+The bodies are written in the **RDF-star** surface `<< s p o >>`, because that
+is what the query parser accepts ([SPARQL-star](sparql.md#rdf-star)). The
+ratified RDF 1.2 spelling `<<( s p o )>>` is an *export* surface: a query body
+written in it does not parse, which is the worst content a card can carry.
 
 ### Where to get `theme` IRIs
 
@@ -809,7 +864,7 @@ statements live** (see [Named-graph datasets](#named-graph-datasets) below).
 Each query carries:
 
 - a full **PREFIX block** (the engine injects none, so every query is runnable as-is);
-- a `dimension` (overview / identity / labels / types / topology / links / literals / time / space / graphs);
+- a `dimension` (overview / identity / labels / types / topology / links / literals / time / space / graphs / statements);
 - a `tier` tag (`card` / `summary` / `index`) — the cheapest tier that answers it;
 - the `requires` capability keys that gated its emission.
 
@@ -834,6 +889,7 @@ quotient — is the proof. The capabilities that carry a witness are:
 | `OBJECT_PRED` | the most frequent relation whose object is not a literal — one a path query can walk | a `class_links` row whose `o_class` is not `(literal)` |
 | `WKT_PATH` | how this dataset hangs a geometry off a subject (`geo:asWKT`, or `geo:hasGeometry?/geo:asWKT`) | the predicates the card recorded |
 | `EXTERNAL_IRI` | that some recorded IRI lies outside the base IRI | `classes` / `in_hubs` |
+| `ANNOTATED_PRED` | the predicate *inside* a quoted triple that `ANNOTATION_PRED` was seen annotating | `signals.annotated_statement` — a statement the graph both asserts and annotates |
 
 `LABELED_CLASS` equals `TOP_CLASS` on every dataset whose top class *is*
 labelled, so the common case is unchanged. Where the card cannot prove a
