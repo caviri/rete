@@ -33,6 +33,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       wasm: ${{ steps.filter.outputs.wasm }}
       docs: ${{ steps.filter.outputs.docs }}
+      scholar: ${{ steps.filter.outputs.scholar }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -49,7 +50,15 @@ jobs:
               - 'crates/**'
               - 'fuzz/**'
               - 'examples/**'
-              - 'tests/**'
+              # Every subdirectory of tests/ is named, not `tests/**`. The
+              # scholar harness below lives under tests/ too and drives a shell
+              # script, not the engine — running coverage, conformance and msrv
+              # over a change to it is a cost with no question behind it. ADD
+              # NEW tests/ SUBDIRECTORIES HERE; the enumeration is the only
+              # thing keeping them covered.
+              - 'tests/gate/**'
+              - 'tests/interop/**'
+              - 'tests/conformance-baseline.json'
               - 'rdf-tests/**'
               - 'docker/**'
               - 'compose.yaml'
@@ -59,6 +68,14 @@ jobs:
               - 'deny.toml'
               - 'scripts/release_check.sh'
               - 'scripts/coverage.sh'
+              # Run by release_check.sh's `quality` stage — a broken smoke test
+              # fails that job, so it belongs on the same trigger as the job.
+              - 'scripts/smoke.sh'
+              # crates/rete-cli/tests/export_report_roundtrip.rs EXECUTES this
+              # script: it feeds the real exporter's stderr to the script's own
+              # awk parser. Editing the script can therefore fail `cargo test`,
+              # which is the `quality` job, which is gated on this filter.
+              - 'scripts/export_scholar_nquads.sh'
               - '.devcontainer/**'
               - '.github/workflows/ci.yml'
             wasm:
@@ -89,6 +106,18 @@ jobs:
               - 'scripts/check_docs_links.py'
               - '.devcontainer/**'
               - '.github/workflows/ci.yml'
+            scholar:
+              # The N-Quads export driver and its harness. Before this filter
+              # existed a change to `export_scholar_nquads.sh` — 700+ lines
+              # carrying the publication gate — matched nothing and ran NO job
+              # at all. Same reasoning as `rust` above: an allow-list, never a
+              # bare negation.
+              - 'scripts/export_scholar_nquads.sh'
+              - 'scripts/scholar-constellation.tsv'
+              - 'tests/scholar/**'
+              # Where the pinned `oxigraph` the parse check runs comes from.
+              - '.devcontainer/**'
+              - '.github/workflows/ci.yml'
 
   image:
     name: pinned development image
@@ -97,7 +126,8 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       needs.changes.outputs.rust == 'true' ||
       needs.changes.outputs.wasm == 'true' ||
-      needs.changes.outputs.docs == 'true'
+      needs.changes.outputs.docs == 'true' ||
+      needs.changes.outputs.scholar == 'true'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
@@ -181,6 +211,36 @@ jobs:
             -e CARGO_TARGET_DIR=/work/target
             -v ${{ github.workspace }}:/work -w /work ${{ needs.image.outputs.tag }}
         run: bash tests/interop/oxigraph.sh
+
+  scholar:
+    name: scholar export driver
+    # `scripts/export_scholar_nquads.sh` is 700+ lines and the publication gate
+    # for the N-Quads constellation lives in it. Until this job existed a change
+    # to it matched NO path filter and ran NO check whatsoever.
+    #
+    # It runs INSIDE the dev image, and that is the whole point: the image now
+    # carries the pinned `oxigraph` the driver's independent parse check needs,
+    # and there is no docker in there — so a passing parse can only have come
+    # from that binary. Unlike `interop`, this job pulls no third-party image:
+    # the referee arrived with the image every other job already builds.
+    needs: [changes, image]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.scholar == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.RETE_DEV_ARTIFACT }}
+          path: /tmp
+      - run: docker load --input /tmp/rete-dev.tar
+      - name: The independent parse check, and every way it can fail to run
+        run: |
+          docker run --rm --user root \
+            -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
+            sh -lc 'bash tests/scholar/parse_check.sh'
 
   msrv:
     name: msrv

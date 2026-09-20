@@ -63,9 +63,20 @@
 #   is the loader users are told to use (docs/interop.md) and it is NOT the code
 #   the exporter runs.
 #
-#   RETE_PARSE_IMAGE overrides the image. A parse check that cannot RUN — no
-#   image, no network, a container that dies — is a FAILURE, never a pass: an
-#   unverified dump is exactly the thing this is here to stop.
+#   WHERE THE PARSER COMES FROM. A local `oxigraph` on $PATH is used when there
+#   is one; otherwise the pinned container is launched. The repo's dev image
+#   carries the binary COPYed straight out of that same pinned image
+#   (.devcontainer/Dockerfile), so the two routes are the same bytes and cannot
+#   disagree — but only the local route works inside a container, which has no
+#   docker, and only the container route works on a host that never installed
+#   oxigraph. One code path, both environments; that is what made
+#   tests/scholar/parse_check.sh possible to write at all.
+#
+#   RETE_PARSE_IMAGE overrides the image, RETE_OXIGRAPH_BIN the binary (point it
+#   at something that does not exist to force the container route). A parse
+#   check that cannot RUN — no binary, no image, no network, a container that
+#   dies — is a FAILURE, never a pass: an unverified dump is exactly the thing
+#   this is here to stop. tests/scholar/parse_check.sh pins that property.
 #
 # RECLAIMING DISK
 #
@@ -286,7 +297,13 @@ PARSE_REPORT_ONLY=0
 PARSE_REPORT_FILE=""
 PARSE_CHECK_ONLY=0
 PARSE_CHECK_FILE=""
-PARSE_IMAGE="${RETE_PARSE_IMAGE:-oxigraph/oxigraph:latest}"
+# The referee. A local binary is preferred over the container (see parse_check):
+# the dev image carries `oxigraph` lifted out of the image below, so the same
+# code path works inside a container, where there is no docker, and on a
+# developer's machine, where there is no oxigraph. Both are PINNED -- the parse
+# check is a publication gate and a gate must not move underneath a release.
+PARSE_IMAGE="${RETE_PARSE_IMAGE:-oxigraph/oxigraph:0.5.11}"
+OXIGRAPH_BIN="${RETE_OXIGRAPH_BIN:-oxigraph}"
 WANT=()
 
 usage() { awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$0"; exit "${1:-0}"; }
@@ -533,10 +550,32 @@ parse_iri_report() { # file
 # draft of this did exactly that. Callers read $PARSE_ERR.
 PARSE_ERR=""
 
+# How the referee will be invoked, as an argv array, plus a human name for it.
+#
+# A LOCAL `oxigraph` first, the container second. The dev image carries the very
+# binary that lives in $PARSE_IMAGE (.devcontainer/Dockerfile lifts it out with
+# a COPY --from), so the two routes are the same code and cannot return
+# different verdicts -- but only the local one is available to a test running
+# inside a container, and only the container one is available on a host that has
+# never installed oxigraph. Resolving it per call rather than once at startup is
+# what lets a test take the binary away and watch the fallback fail closed.
+PARSER_ARGV=()
+PARSER_VIA=""
+parser_argv() {
+  if command -v "$OXIGRAPH_BIN" >/dev/null 2>&1; then
+    PARSER_ARGV=("$OXIGRAPH_BIN")
+    PARSER_VIA="$(command -v "$OXIGRAPH_BIN")"
+  else
+    PARSER_ARGV=(docker run --rm -i "$PARSE_IMAGE")
+    PARSER_VIA="docker $PARSE_IMAGE"
+  fi
+}
+
 parse_check() { # gz_path -> 0/1; sets R_PARSE and PARSE_ERR
   local gz="$1" errf err
   local -a st
   PARSE_ERR=""
+  parser_argv
   errf="$(mktemp)"
   # NOT inside a command substitution: a pipeline that runs in a subshell leaves
   # the PARENT's PIPESTATUS describing the assignment, not the pipeline, so the
@@ -544,7 +583,7 @@ parse_check() { # gz_path -> 0/1; sets R_PARSE and PARSE_ERR
   # this for the export pipeline; it is the same trap. The array is copied in
   # ONE command, for the same reason it is there.
   gzip -dc "$gz" 2>/dev/null \
-    | MSYS_NO_PATHCONV=1 docker run --rm -i "$PARSE_IMAGE" \
+    | MSYS_NO_PATHCONV=1 "${PARSER_ARGV[@]}" \
         convert --from-format nq --to-format nq >/dev/null 2>"$errf"
   st=("${PIPESTATUS[@]}")
   err="$(grep -m1 -i 'error' "$errf" 2>/dev/null)"
@@ -554,7 +593,7 @@ parse_check() { # gz_path -> 0/1; sets R_PARSE and PARSE_ERR
     PARSE_ERR="$err"; return 1
   fi
   if [ "${st[1]}" != "0" ]; then
-    PARSE_ERR="parser exited ${st[1]} (image $PARSE_IMAGE) and said nothing -- the dump is UNVERIFIED"
+    PARSE_ERR="parser exited ${st[1]} (via $PARSER_VIA) and said nothing -- the dump is UNVERIFIED"
     return 1
   fi
   if [ "${st[0]}" != "0" ]; then
@@ -617,7 +656,7 @@ fi
 # `--parse-check FILE.nq.gz`: the independent verdict on its own.
 if [ "${PARSE_CHECK_ONLY:-0}" = "1" ]; then
   if parse_check "$PARSE_CHECK_FILE"; then
-    echo "parse_check=pass $PARSE_CHECK_FILE ($PARSE_IMAGE)"
+    echo "parse_check=pass $PARSE_CHECK_FILE (via $PARSER_VIA)"
     exit 0
   fi
   echo "parse_check=fail $PARSE_CHECK_FILE -- $PARSE_ERR" >&2
@@ -917,7 +956,8 @@ for r in "${sized[@]}"; do
   # still a parse error here, so the sweep can never again publish a dump that
   # does not load. It is also the expensive step, so it runs last -- after the
   # cheap gate has already rejected what it can.
-  say "PARSE    $name: $PARSE_IMAGE convert (strict, output discarded)"
+  parser_argv
+  say "PARSE    $name: $PARSER_VIA convert (strict, output discarded)"
   p0=$(date +%s)
   if ! parse_check "$out"; then
     p1=$(date +%s)
@@ -934,7 +974,7 @@ for r in "${sized[@]}"; do
     continue
   fi
   p1=$(date +%s)
-  say "PARSED   $name: accepted by $PARSE_IMAGE in $((p1-p0))s"
+  say "PARSED   $name: accepted by $PARSER_VIA in $((p1-p0))s"
 
   say "OK       $name: $(gb "$len") GiB .rete -> $(gb "$osize") GiB .nq.gz ($(awk -v a="$osize" -v b="$len" 'BEGIN{printf "%.3f", a/b}')x), $lines quads, $((t1-t0))s container, rete ${R_SECS}s peak ${R_RSS_MB} MB"
 

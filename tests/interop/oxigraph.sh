@@ -29,7 +29,10 @@
 # Oxigraph side in `oxigraph/oxigraph`. Nothing is installed on the host.
 #
 # Environment:
-#   RETE_OXIGRAPH_IMAGE   default oxigraph/oxigraph:latest
+#   RETE_OXIGRAPH_IMAGE   default oxigraph/oxigraph:0.5.11 — pinned, because
+#                         this test asserts on the referee's exact error
+#                         wording, and `:latest` moving is indistinguishable
+#                         from rete having broken something
 #   RETE_DEV_RUN          how to launch the dev container. Default
 #                         `docker compose run --rm -T dev`; CI passes a
 #                         `docker run … <pinned image>` instead so it does not
@@ -42,7 +45,7 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 ROOT="$(git rev-parse --show-toplevel)"
 WORK="$ROOT/dev/interop"
 FIX="$ROOT/tests/interop/fixtures"
-OX_IMAGE="${RETE_OXIGRAPH_IMAGE:-oxigraph/oxigraph:latest}"
+OX_IMAGE="${RETE_OXIGRAPH_IMAGE:-oxigraph/oxigraph:0.5.11}"
 DEV_RUN="${RETE_DEV_RUN:-docker compose run --rm -T dev}"
 
 fails=0

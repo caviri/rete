@@ -149,6 +149,31 @@ N-Triples `UCHAR` escapes while rete stores the token verbatim, so a fixture
 must not contain both spellings of one IRI or the round-trip count silently
 drops by one.
 
+### The scholar export driver
+
+`scripts/export_scholar_nquads.sh` publishes the N-Quads constellation and
+carries its publication gate: no dump is recorded `done` until an independent
+parser has accepted it. That parser is `oxigraph`, and the dev image now
+**contains** it — `.devcontainer/Dockerfile` lifts the binary out of the pinned
+`oxigraph/oxigraph` image with a `COPY --from`, so it is the same bytes as the
+container route and the two cannot disagree. The driver prefers the local binary
+and falls back to `docker run`, which is what lets one code path serve a test
+inside a container and a sweep on a developer's laptop.
+
+```sh
+docker compose run --rm scholar-parse-check    # or: bash tests/scholar/parse_check.sh
+```
+
+The property that test exists for is the third one, not the first two: a parse
+check that **cannot run** — no binary, no docker, an image that will not pull, a
+container that dies without a word, a truncated gzip stream — must REFUSE, never
+pass. An unverified dump is the thing the gate exists to stop. Override the
+referee with `RETE_OXIGRAPH_BIN` (a path that does not exist forces the container
+route) and `RETE_PARSE_IMAGE`.
+
+CI runs it in the `scholar export driver` job, on the `scholar` path filter —
+which exists because until it did, editing those 700+ lines triggered *nothing*.
+
 ## Documentation
 
 - Edit Markdown in `docs/*.md`; then run `cargo run -q -p docgen` and commit the

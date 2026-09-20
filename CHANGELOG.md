@@ -41,6 +41,34 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   implemented. `--compress` is refused with it, because wrapping an
   in-place-queryable format in a codec removes the only advantage it has.
 
+- **The independent parse check is now reachable from inside the container, and
+  tested.** The scholar export driver refuses to record a dump `done` until
+  something that did not produce it has parsed it — but that parser lived in
+  `docker run oxigraph/oxigraph`, and a test running inside the dev container
+  has no docker, so the step was verified once by hand and by nothing since.
+
+  The dev image now carries the pinned `oxigraph` binary itself, lifted out of
+  `oxigraph/oxigraph:0.5.11` with a `COPY --from` rather than rebuilt, so the
+  parser inside the container and the parser the driver launches on a host are
+  the same bytes and cannot reach different verdicts. The driver prefers a local
+  `oxigraph` and falls back to the container, so one code path serves both
+  (`RETE_OXIGRAPH_BIN` overrides the binary, `RETE_PARSE_IMAGE` the image).
+  +24.6 MB on a 9.63 GB image, in the last layers, so the Rust tooling layers
+  above are untouched. `pigz` and `time`, which the driver also shells out to,
+  come with it.
+
+  `tests/scholar/parse_check.sh` is the test that was missing: a dump that
+  parses, a dump that does not (`<https://::1>` and a relative IRI), and — the
+  case worth the file — five ways the check can fail to RUN AT ALL, each of
+  which must refuse rather than pass. No binary and no docker, an image that
+  cannot be produced, a container that dies without a word, a local binary that
+  does the same, and a gzip stream that ends early. That property was already
+  implemented; it is one `if` from inverting, so it is pinned now.
+
+  `oxigraph/oxigraph:latest` is pinned to `:0.5.11` in `tests/interop/oxigraph.sh`
+  too: that test asserts on the referee's exact error wording, where `:latest`
+  moving is indistinguishable from rete having broken something.
+
 ### Fixed
 
 - **The scholar export driver gated on one defect class, and trusted the
