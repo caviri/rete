@@ -386,3 +386,5 @@ For native (non-endpoint) integration, the npm client ships an RDF/JS
 Migrate when you need writes, store-specific features (GraphDB's Lucene
 connectors, say), or co-location with data already living there;
 federate when you just need the answers.
+
+<!-- ci-filter proof: a documentation-only change. Not for merging. -->
