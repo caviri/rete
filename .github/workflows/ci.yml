@@ -218,17 +218,23 @@ jobs:
     # for the N-Quads constellation lives in it. Until this job existed a change
     # to it matched NO path filter and ran NO check whatsoever.
     #
-    # It runs INSIDE the dev image, and that is the whole point: the image now
-    # carries the pinned `oxigraph` the driver's independent parse check needs,
-    # and there is no docker in there — so a passing parse can only have come
-    # from that binary. Unlike `interop`, this job pulls no third-party image:
-    # the referee arrived with the image every other job already builds.
+    # Two halves. The parse check runs INSIDE the dev image, which is the whole
+    # point: the image now carries the pinned `oxigraph`, and there is no docker
+    # in there, so a passing parse can only have come from that binary. The
+    # end-to-end loop runs at the HOST tier, where the driver is what it is on a
+    # developer's machine.
+    #
+    # Deliberately NOT on the `rust` filter. What a rete change can break here
+    # is already covered twice: `quality` runs the report round-trip test, which
+    # feeds the real exporter's stderr to this script's own parser, and
+    # `interop` puts a real rete export through a real Oxigraph. What is unique
+    # to this job is the DRIVER's loop, and that changes when the script does.
     needs: [changes, image]
     if: >-
       github.event_name == 'workflow_dispatch' ||
       needs.changes.outputs.scholar == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -241,6 +247,15 @@ jobs:
           docker run --rm --user root \
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'bash tests/scholar/parse_check.sh'
+      - name: The driver's whole loop, with no bucket and no network
+        # Host tier, like `interop`: it orchestrates containers, so it cannot be
+        # one. The dev image is reused for the rete side and the file server;
+        # the driver, curl and the stub `hf` run on the runner. The driver's own
+        # parse check takes the CONTAINER route from here, which is the half the
+        # in-container step above cannot reach — between them both are covered.
+        env:
+          RETE_DEV_IMAGE: ${{ needs.image.outputs.tag }}
+        run: bash tests/scholar/driver_e2e.sh
 
   msrv:
     name: msrv

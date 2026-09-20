@@ -1,0 +1,13 @@
+# A dataset with nothing wrong with it. The control: this one must reach the
+# bucket, so every refusal below is a decision rather than the harness failing
+# to publish anything at all.
+#
+# Deliberately not trivial — a language tag, a datatype, a blank node and a
+# non-ASCII IRI that RFC 3987 admits — because "the exporter emitted something
+# Oxigraph accepts" is only worth asserting over output with shapes in it.
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice"@en .
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob> .
+<http://example.org/bob> <http://example.org/age> "42"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/bob> <http://example.org/note> _:n1 .
+_:n1 <http://example.org/text> "a blank node subject" .
+<http://example.org/café> <http://example.org/p> "a raw RFC 3987 ucschar in the IRI" .

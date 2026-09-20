@@ -162,6 +162,7 @@ inside a container and a sweep on a developer's laptop.
 
 ```sh
 docker compose run --rm scholar-parse-check    # or: bash tests/scholar/parse_check.sh
+bash tests/scholar/driver_e2e.sh               # the whole loop; HOST tier, needs docker
 ```
 
 The property that test exists for is the third one, not the first two: a parse
@@ -171,7 +172,22 @@ pass. An unverified dump is the thing the gate exists to stop. Override the
 referee with `RETE_OXIGRAPH_BIN` (a path that does not exist forces the container
 route) and `RETE_PARSE_IMAGE`.
 
-CI runs it in the `scholar export driver` job, on the `scholar` path filter —
+`driver_e2e.sh` runs the whole loop with no bucket and no network: a four-row
+manifest, the `.rete` files served over real HTTP by `python3 -m http.server` in
+a container, and `tests/scholar/hf_stub.sh` on `$PATH` as `hf` with a directory
+for a bucket. Everything else is the real thing — the real driver, the real
+`rete export --sanitize-iris`, the real gate, the real `state.tsv`. It proves
+plan → export → gate → refuse-or-publish → verify-by-re-listing → resume, and
+specifically that a dataset carrying `<https://::1>` ends `failed-invalid` and
+is never uploaded.
+
+Add a case by adding a fixture to `tests/scholar/fixtures/` and its name to
+`DATASETS` in the harness. The stub's `RETE_E2E_HF_DROP` makes an upload exit 0
+and store nothing, which is the shape of the failure that taught the driver to
+verify by re-listing rather than by exit code — a real bucket cannot be asked
+for that.
+
+CI runs both in the `scholar export driver` job, on the `scholar` path filter —
 which exists because until it did, editing those 700+ lines triggered *nothing*.
 
 ## Documentation

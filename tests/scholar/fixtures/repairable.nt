@@ -1,0 +1,15 @@
+# Invalid IRIs that percent-encoding CAN repair. `--sanitize-iris` rewrites
+# them, the exporter reports `unrepairable=0`, the gate opens, and the
+# independent parser must then ACCEPT the result.
+#
+# This is the case that would catch a referee stricter than the repair. If
+# Oxigraph refused a sanitized dump, every dataset in the constellation would be
+# unpublishable and the driver would look broken rather than the gate.
+#
+# One defect per line, one class each: bracket, a second '#', a '%' that is not
+# an escape, a raw space.
+<http://example.org/ok> <http://example.org/p> "a clean control" .
+<http://example.org/a[b]> <http://example.org/p> "bracket outside an IP-literal host" .
+<http://example.org/c#d#e> <http://example.org/p> "a second raw '#'" .
+<http://example.org/%x-template-artifact> <http://example.org/p> "'%' not followed by two hex digits" .
+<http://example.org/a b> <http://example.org/p> "a raw space" .

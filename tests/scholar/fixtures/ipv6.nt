@@ -1,0 +1,14 @@
+# THE REGRESSION. `<https://::1>` is an IPv6 literal in the authority without
+# the brackets RFC 3986/3987 require.
+#
+# In September 2026 a dump carrying this line passed the driver's gate and
+# Oxigraph refused to load it. rete's classifier had no class for the defect —
+# it has a scheme, no excluded character, no bracket (their ABSENCE is the
+# defect), one '#', no '%' — so the unrepairable count read zero and the gate
+# opened. #255 made validity the RFC 3987 parser's verdict rather than the
+# classifier's, #256 made an independent parse required, and this file is what
+# keeps both honest: a dataset containing this line must end `failed-invalid`
+# and must NOT be uploaded.
+<http://example.org/ok> <http://example.org/p> "a clean control" .
+<http://example.org/ok> <http://example.org/rel> <http://example.org/also-fine> .
+<https://::1> <http://example.org/p> "an IPv6 host that lost its brackets" .

@@ -219,6 +219,10 @@
 #
 # Env: RETE_HF_BUCKET (default katospiegel/rete-public)
 #      RETE_EXPORT_MEM (container memory cap, default 12g)
+#      RETE_DOCKER_RUN_ARGS (extra `docker run` flags for the export container;
+#        on a LINUX host whose uid is not 1000 you need
+#        `--user $(id -u):$(id -g)` or the container cannot write the dump into
+#        the work directory — see in_docker)
 #
 # Host tools: curl (downloads, resumable with -C -), hf (the bucket CLI; not
 # needed with --audit-only). Everything else runs in Docker.
@@ -694,8 +698,24 @@ MEM_LIMIT="${RETE_EXPORT_MEM:-12g}"
 # whether a big file exports at all.
 EXPORT_FLAGS="--format nq --sanitize-iris"
 [ -n "$MEM_BUDGET_MB" ] && EXPORT_FLAGS="$EXPORT_FLAGS --memory-budget-mb $MEM_BUDGET_MB"
+# Extra `docker run` flags for the export containers. Empty by default.
+#
+# WHAT THIS IS FOR. The image runs as uid 1000. On Windows and macOS the bind
+# mount ignores ownership, so that never matters; on LINUX the checkout belongs
+# to whoever is invoking this, and when that is not uid 1000 the container
+# cannot write the dump into the work directory. It surfaces as
+# `rete=1 pigz=1` — the redirection into <name>.iri.txt fails before rete is
+# reached — with the real reason nowhere in the message. A CI runner is uid
+# 1001, which is how this was found.
+#
+#   RETE_DOCKER_RUN_ARGS="--user $(id -u):$(id -g)"
+#
+# tests/scholar/driver_e2e.sh sets exactly that on Linux.
+DOCKER_RUN_ARGS=()
+[ -n "${RETE_DOCKER_RUN_ARGS:-}" ] && read -ra DOCKER_RUN_ARGS <<< "$RETE_DOCKER_RUN_ARGS"
 in_docker() {
   MSYS_NO_PATHCONV=1 docker run --rm \
+    ${DOCKER_RUN_ARGS[@]+"${DOCKER_RUN_ARGS[@]}"} \
     --memory "$MEM_LIMIT" --memory-swap "$MEM_LIMIT" \
     -v "$ROOT_HOST:/repo" -v "$DATA_HOST:/data:ro" \
     -w //repo "$IMAGE" bash -lc "$1"
