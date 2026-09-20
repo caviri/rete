@@ -34,6 +34,7 @@ jobs:
       wasm: ${{ steps.filter.outputs.wasm }}
       docs: ${{ steps.filter.outputs.docs }}
       scholar: ${{ steps.filter.outputs.scholar }}
+      shell: ${{ steps.filter.outputs.shell }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -117,6 +118,14 @@ jobs:
               - 'tests/scholar/**'
               # Where the pinned `oxigraph` the parse check runs comes from.
               - '.devcontainer/**'
+              - '.github/workflows/ci.yml'
+            shell:
+              # Every shell script in the repository, wherever it lives. The
+              # Rust is linted by clippy and the browser code by the gate; the
+              # shell was linted by nothing, including the 700+ lines that
+              # decide what gets published.
+              - '**/*.sh'
+              - 'tests/shellcheck/**'
               - '.github/workflows/ci.yml'
 
   image:
@@ -211,6 +220,23 @@ jobs:
             -e CARGO_TARGET_DIR=/work/target
             -v ${{ github.workspace }}:/work -w /work ${{ needs.image.outputs.tag }}
         run: bash tests/interop/oxigraph.sh
+
+  shellcheck:
+    name: shellcheck
+    # Needs no dev image and no build: a 4 MB pinned container over the tracked
+    # `*.sh`. That is why it can afford to sit on `**/*.sh` and run on any PR
+    # that touches a shell script, while the heavier scholar and interop jobs
+    # stay on their narrower triggers.
+    needs: changes
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.shell == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Lint every tracked shell script except the documented debt
+        run: bash tests/shellcheck/run.sh
 
   scholar:
     name: scholar export driver

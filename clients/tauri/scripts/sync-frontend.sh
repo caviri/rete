@@ -30,4 +30,5 @@ for f in "$SRC"/js/*.js; do
 done
 
 echo "sync-frontend: staged $(find "$DIST" -type f | wc -l) files into $DIST/"
+# shellcheck disable=SC2012  # printed for a human, never parsed
 echo "sync-frontend: js -> $(ls "$DIST/js" | tr '\n' ' ')"

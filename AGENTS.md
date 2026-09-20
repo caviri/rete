@@ -50,7 +50,37 @@ docker compose run --rm dev cargo test -p rete-core --no-default-features
 docker compose run --rm dev cargo build -p rete-core --all-features
 docker compose run --rm dev cargo build -p rete-bench
 docker compose run --rm dev bash scripts/smoke.sh
+bash tests/shellcheck/run.sh
 ```
+
+### Shell scripts are linted
+
+`bash tests/shellcheck/run.sh` runs a pinned `shellcheck` over **every tracked
+`*.sh`** except the paths listed in `tests/shellcheck/not-yet-clean.txt`. A
+deny-list, not an allow-list: a new script is covered the moment it is added,
+which is the opposite of how `scripts/export_scholar_nquads.sh` came to carry a
+publication gate with no check of any kind behind it.
+
+The excluded list only shrinks. The runner **fails** if an entry no longer
+exists, and **fails** if an entry has become clean — otherwise "fixed it but
+forgot the list" leaves a line that quietly excuses the next regression. The 23
+entries are dataset harvest and one-off build pipelines that run against corpora
+this repository does not contain; fix a file's findings when you next touch it
+for its own sake, and delete its line.
+
+A finding you are sure is wrong is disabled **on its line, with the reason**:
+
+```sh
+# shellcheck disable=SC2016  # $TF belongs to the shell inside the container
+```
+
+Never file-wide, and never by adding a file to `not-yet-clean.txt` — that list
+is for scripts nobody can test, not for new ones. `bash tests/shellcheck/run.sh
+--report` prints what the uncovered files owe.
+
+CI runs it in the `shellcheck` job, on any change to any `*.sh`. It needs no dev
+image and no build, which is why it can afford that trigger while the heavier
+jobs stay narrow.
 
 ### Regenerating the browser artifacts
 

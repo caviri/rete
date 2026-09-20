@@ -104,6 +104,32 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `RETE_DOCKER_RUN_ARGS="--user $(id -u):$(id -g)"` makes the driver work on a
   Linux host; the harness sets it automatically.
 
+- **Shell scripts are linted now.** The Rust is checked by clippy, the browser
+  code by the gate, and 84 tracked shell scripts — including the 700+ lines that
+  decide what gets published from the scholar constellation — by nothing at all.
+  `bash tests/shellcheck/run.sh` runs a pinned `koalaman/shellcheck:v0.10.0` over
+  every tracked `*.sh` except the paths in `tests/shellcheck/not-yet-clean.txt`,
+  and CI runs it in a `shellcheck` job on any change to any `*.sh`.
+
+  A deny-list, not an allow-list, so a new script is covered the moment it is
+  added — an allow-list would have reproduced exactly the gap being closed. The
+  list only shrinks: the runner fails on an entry that no longer exists, and on
+  an entry that has become clean, because otherwise "fixed it but forgot the
+  list" leaves a line that quietly excuses the next regression.
+
+  61 of the 84 were made clean, among them `export_scholar_nquads.sh`,
+  `smoke.sh` (which CI's `quality` job runs), `scholar_bucket_readme.sh`,
+  `package_release.sh`, `publish_pyodide_wheel.sh`, `r_cran_prep.sh`,
+  `docker_gc.sh` and the client build scripts. Two were real defects rather than
+  style: the driver's `sized=($(… sort))` word-split and GLOB-expanded rows that
+  carry URLs (now `mapfile`), and `scholar_bucket_readme.sh` shadowed its object
+  COUNT with a loop variable of the same name inside a `$(…)` subshell, where
+  neither end could see the other.
+
+  The 23 left out are dataset harvest and one-off build pipelines that run
+  against corpora this repository does not contain, so a change to them can be
+  read but not tested; each is named, with that reason, in the list.
+
 ### Fixed
 
 - **The scholar export driver gated on one defect class, and trusted the

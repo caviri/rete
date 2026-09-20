@@ -38,7 +38,10 @@ if [ -z "$wheel" ]; then
         --branch "py-v$version" --limit 1 --json databaseId --jq '.[0].databaseId')
   test -n "$run" || { echo "no publish run found for tag py-v$version" >&2; exit 1; }
   gh run download "$run" --name pyodide-legacy-wheel --dir "$tmp"
-  wheel=$(ls "$tmp"/*.whl | head -1)
+  # One wheel per run artifact, named by the build. A glob names it
+  # directly; `ls | head -1` would have parsed the name back out.
+  wheels=("$tmp"/*.whl)
+  wheel="${wheels[0]}"
 fi
 
 test -f "$wheel" || { echo "not a file: $wheel" >&2; exit 1; }

@@ -103,7 +103,7 @@ done
 say "== cargo volumes (size per docker system df -v)"
 declare -A size
 while read -r n _ s _; do size["$n"]="$s"; done < <(docker system df -v 2>/dev/null | awk '/^VOLUME NAME/{p=1; next} p && NF==0{p=0} p')
-total_rm=0; kept=0; removed=0
+kept=0; removed=0
 while IFS= read -r v; do
   [ -z "$v" ] && continue
   case " $ALWAYS_KEEP " in *" $v "*) say "  keep   $v  ${size[$v]:-?}  (documented shared volume)"; kept=$((kept+1)); continue ;; esac

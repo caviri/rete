@@ -30,7 +30,10 @@ echo "=== materializing rete-core (cargo package resolves workspace fields) ==="
 # foreign-platform artifacts (Docker on Windows), which breaks cargo package.
 PKG_TARGET="$(mktemp -d)"
 (cd "$ROOT" && CARGO_TARGET_DIR="$PKG_TARGET" cargo package -p rete-core --no-verify --allow-dirty >/dev/null)
-CRATE_TARBALL="$(ls -t "$PKG_TARGET"/package/rete-core-*.crate | head -1)"
+# $PKG_TARGET is a fresh mktemp -d and `cargo package` puts exactly one
+# .crate in it, so there is nothing for `ls -t` to order.
+crates=("$PKG_TARGET"/package/rete-core-*.crate)
+CRATE_TARBALL="${crates[0]}"
 mkdir -p "$STAGE/rete/src/rust/rete-core"
 tar xzf "$CRATE_TARBALL" -C "$STAGE/rete/src/rust/rete-core" --strip-components=1
 # .cargo-ok / .cargo_vcs_info are cargo-package bookkeeping, not sources.
