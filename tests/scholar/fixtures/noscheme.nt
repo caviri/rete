@@ -1,0 +1,9 @@
+# The unrepairable class the exporter DOES have a name for: a relative IRI.
+# Resolving it needs a base IRI the .rete never recorded, so `--sanitize-iris`
+# counts it, says so, and writes it verbatim.
+#
+# It is here next to ipv6.nt on purpose. That one proves an UNNAMED defect
+# blocks publication; this one proves the named path did not stop working while
+# the unnamed one was being fixed.
+<http://example.org/ok> <http://example.org/p> "a clean control" .
+<noscheme/path> <http://example.org/p> "no scheme at all" .

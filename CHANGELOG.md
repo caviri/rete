@@ -69,6 +69,41 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   too: that test asserts on the referee's exact error wording, where `:latest`
   moving is indistinguishable from rete having broken something.
 
+- **The export driver's whole loop is now tested, without a bucket or a
+  network.** Its pieces were each covered — the stderr parser by the report
+  round-trip test, the independent parse by the file above — but the loop that
+  strings them together wanted a manifest, HTTP-served files and an upload
+  target, so nothing drove it. A gate can be correct in every function and still
+  not fire.
+
+  `tests/scholar/driver_e2e.sh` substitutes exactly three things: a four-row
+  manifest, `python3 -m http.server` in a container serving the `.rete` files
+  over real HTTP (so the driver's `HEAD` for the published Content-Length and
+  `curl -C -` are the real ones), and `tests/scholar/hf_stub.sh` on `$PATH` as
+  `hf`, backed by a directory. The driver, the exporter, the report parser, the
+  gate, the parse check and `state.tsv` are all the real thing.
+
+  It runs plan → export → gate → refuse-or-publish → verify-by-re-listing →
+  `state.tsv` → resume, and asserts what each step decided. Three cases carry
+  the weight: a dataset containing `<https://::1>` ends `failed-invalid` with
+  `unrepairable=1`, `unclassified=1` and `schemeless=0` — the combination the
+  old gate read as publishable — and never reaches the bucket; a dataset whose
+  defects are all repairable is sanitized, accepted by the referee and
+  published, so the gate is not merely refusing everything; and an upload that
+  exits 0 having stored nothing is caught by the re-listing and recorded
+  `failed`, which is the failure that taught the driver not to trust an exit
+  code.
+
+  It found a real portability bug on its first CI run. The dev image runs as uid
+  1000; on Windows and macOS the bind mount ignores ownership, but on **Linux**
+  the checkout belongs to whoever invoked the driver, and when that is not uid
+  1000 the export container cannot write the dump into the work directory. It
+  surfaces as `rete=1 pigz=1` — the redirection into `<name>.iri.txt` fails
+  before rete is reached — with the real reason nowhere in the message.
+  `RETE_DOCKER_RUN_ARGS` now passes extra flags to the export container, so
+  `RETE_DOCKER_RUN_ARGS="--user $(id -u):$(id -g)"` makes the driver work on a
+  Linux host; the harness sets it automatically.
+
 ### Fixed
 
 - **The scholar export driver gated on one defect class, and trusted the
