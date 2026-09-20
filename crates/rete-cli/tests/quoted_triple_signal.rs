@@ -216,3 +216,200 @@ fn the_signal_survives_a_rebuild_of_the_same_graph() {
         true
     );
 }
+
+// --- the starter queries the derived card ships ------------------------------
+//
+// The presence bit above is read from the header at *display* time, which is
+// what makes it true for files built long before it existed. A starter query
+// cannot be: it has to be written in the dataset's own vocabulary, and only a
+// pass over the statements knows that. So the `qt-*` family is derived at
+// **build** time from a second, stored signal — and these tests check the join
+// between the two halves at the CLI surface: a newly built file gains queries
+// that really answer, and a file with no quoted triples gains nothing at all.
+
+/// A small provenance graph: occurrences, their type assertions, statements
+/// *about* those assertions, and a claim that holds a statement as its value.
+/// `occ3` is deliberately unannotated so the coverage query reports a real
+/// ratio rather than a vacuous 100 %.
+const ANNOTATED: &str = concat!(
+    "<http://ex/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Swallow> .\n",
+    "<http://ex/occ2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Swallow> .\n",
+    "<http://ex/occ3> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Robin> .\n",
+    "<http://ex/occ1> <http://ex/count> \"5\" .\n",
+    "<http://ex/occ2> <http://ex/count> \"3\" .\n",
+    "<< <http://ex/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Swallow> \
+     >> <http://ex/recordedBy> <http://ex/jsmith> .\n",
+    "<< <http://ex/occ2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Swallow> \
+     >> <http://ex/recordedBy> <http://ex/adoe> .\n",
+    "<< <http://ex/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://ex/Swallow> \
+     >> <http://ex/confidence> \"0.9\" .\n",
+    "<http://ex/claim1> <http://ex/states> << <http://ex/occ1> <http://ex/count> \"5\" >> .\n",
+);
+
+fn starter_ids(card: &serde_json::Value) -> Vec<String> {
+    card["queries"]
+        .as_array()
+        .expect("a derived card ships starter queries")
+        .iter()
+        .map(|q| q["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_derived_card_ships_statement_queries_in_the_datasets_own_vocabulary() {
+    let (_dir, file) = build(ANNOTATED, &["--card", "--title", "Annotated"]);
+    let card = card_json(&file);
+
+    // The derive-time profile the queries are instantiated from. The header
+    // bit says only "yes"; this says with what.
+    let s = &card["signals"];
+    assert_eq!(
+        s["annotation_predicates"],
+        serde_json::json!(["<http://ex/recordedBy>", "<http://ex/confidence>"])
+    );
+    assert_eq!(
+        s["quoting_predicates"],
+        serde_json::json!(["<http://ex/states>"])
+    );
+
+    let ids = starter_ids(&card);
+    for want in [
+        "qt-sample",
+        "qt-about",
+        "qt-qualifiers",
+        "qt-coverage",
+        "qt-quoted-object",
+    ] {
+        assert!(
+            ids.contains(&want.to_string()),
+            "{want} missing from {ids:?}"
+        );
+    }
+
+    // Written in the dataset's real vocabulary, and in the surface the query
+    // engine parses (`<< s p o >>`). The ratified `<<( s p o )>>` spelling is
+    // an EXPORT surface — a query body in it would not parse at all.
+    let sample = card["queries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|q| q["id"] == "qt-sample")
+        .unwrap();
+    let sparql = sample["sparql"].as_str().unwrap();
+    assert!(sparql.contains("<< ?s ?p ?o >>"), "{sparql}");
+    assert!(sparql.contains("<http://ex/recordedBy>"), "{sparql}");
+    assert!(!sparql.contains("<<("), "RDF 1.2 export syntax in a query");
+    assert_eq!(sample["dimension"], "statements");
+}
+
+#[test]
+fn every_statement_query_returns_rows_on_the_file_that_carries_it() {
+    // The acceptance the library exists for, measured rather than argued: the
+    // build ran each one, and `card-audit --measure` runs them again against
+    // the finished file. A zero here is a broken card, not a fact about the
+    // data.
+    let (_dir, file) = build(ANNOTATED, &["--card", "--title", "Annotated"]);
+    let doc = common::json(
+        common::rete()
+            .arg("card-audit")
+            .arg(&file)
+            .args(["--measure", "--json"]),
+    );
+    let mut measured = 0;
+    for f in doc["findings"].as_array().unwrap() {
+        let id = f["id"].as_str().unwrap();
+        if !id.starts_with("qt-") {
+            continue;
+        }
+        measured += 1;
+        let o = &f["observed"];
+        assert!(o["error"].is_null(), "{id}: {}", o["error"]);
+        assert!(
+            o["rows"].as_u64().unwrap() > 0,
+            "{id}: measured zero rows — a starter query that answers nothing reads as a \
+             broken file"
+        );
+        // …and the card's own reasoning agrees with the measurement.
+        assert_eq!(f["verdict"], "answers", "{id}: {}", f["why"]);
+    }
+    assert_eq!(measured, 5, "all five statement queries should be measured");
+
+    // `qt-coverage` reports the ratio the graph really has: three type
+    // assertions, two of them recorded.
+    let out = common::rete()
+        .arg("sparql")
+        .arg(&file)
+        .arg(
+            "SELECT (COUNT(*) AS ?asserted) (COUNT(?value) AS ?qualified) WHERE { ?s \
+             <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?o OPTIONAL { << ?s \
+             <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?o >> <http://ex/recordedBy> \
+             ?value } }",
+        )
+        .output()
+        .unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("?asserted=\"3\""), "{text}");
+    assert!(text.contains("?qualified=\"2\""), "{text}");
+}
+
+#[test]
+fn a_file_without_quoted_triples_gains_no_query_and_no_noise() {
+    // Most datasets are this one. No `qt-*` query, no empty section, and no
+    // trace of the three derived fields anywhere in the card.
+    let (_dir, file) = build(PLAIN, &["--card", "--title", "Plain"]);
+    let card = card_json(&file);
+    assert!(
+        !starter_ids(&card).iter().any(|id| id.starts_with("qt-")),
+        "a graph with no quoted triple gained a statement query"
+    );
+    for key in [
+        "annotation_predicates",
+        "quoting_predicates",
+        "annotated_statement",
+    ] {
+        assert!(card["signals"][key].is_null(), "{key} reached a plain card");
+    }
+    assert!(!card_text(&file).contains("qt-"));
+}
+
+#[test]
+fn a_file_that_only_holds_a_statement_as_a_value_gets_only_that_query() {
+    // The header flag cannot tell a subject-position quoted triple from an
+    // object-position one, and a query written for the wrong position returns
+    // nothing. `QUOTED` is object-position only.
+    let (_dir, file) = build(QUOTED, &["--card", "--title", "Annotated"]);
+    let ids = starter_ids(&card_json(&file));
+    assert!(ids.contains(&"qt-quoted-object".to_string()), "{ids:?}");
+    for absent in ["qt-sample", "qt-about", "qt-qualifiers", "qt-coverage"] {
+        assert!(
+            !ids.contains(&absent.to_string()),
+            "{absent} has no subject-position statement to match"
+        );
+    }
+}
+
+#[test]
+fn the_query_profile_is_stored_while_presence_stays_measured() {
+    // The two halves are deliberately different kinds of thing, and this is
+    // the difference. The vocabulary a query is written in has to be IN the
+    // file — nothing can recover it from a header — so it is stored. Presence
+    // must NOT be, or it would read `null` on every already-published file.
+    let (_dir, file) = build(ANNOTATED, &["--card", "--title", "Annotated"]);
+    let image = std::fs::read(&file).unwrap();
+    let text = String::from_utf8_lossy(&image);
+    assert!(
+        text.contains("annotation_predicates"),
+        "the query profile must be in the file's own bytes"
+    );
+    assert!(
+        !text.contains("quoted_triples"),
+        "presence must stay measured at read time"
+    );
+    // Both are reported, from their two different places.
+    let card = card_json(&file);
+    assert_eq!(card["signals"]["quoted_triples"]["present"], true);
+    assert!(!card["signals"]["annotation_predicates"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}

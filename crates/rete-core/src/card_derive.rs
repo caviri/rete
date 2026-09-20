@@ -282,6 +282,46 @@ pub struct Signals {
     /// Cross-dataset link predicates present (`owl:sameAs`/`skos:exactMatch`/…).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_predicates: Vec<String>,
+    /// Predicates that make a statement **about a statement** — the predicate
+    /// of a statement whose *subject* is a quoted triple
+    /// (`<< s p o >> :recordedBy :who`) — ranked by frequency.
+    ///
+    /// Derived from the triples, and therefore **stored**, unlike the
+    /// [`Signals::quoted_triples`] presence bit below, which is read off the
+    /// header at display time. The two answer different questions and neither
+    /// substitutes for the other: presence says *will I meet triple terms in
+    /// this file*, which every already-published file can answer for free;
+    /// this says *which vocabulary annotates statements here*, which only a
+    /// pass over the statements knows and which is what a starter query has to
+    /// be written in. Empty on the overwhelming majority of datasets, and the
+    /// whole `qt-*` query family is gated on it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotation_predicates: Vec<String>,
+    /// Predicates whose **object** is a quoted triple (`:claim :states
+    /// << s p o >>`) — the other place a triple term can stand — ranked by
+    /// frequency. A dataset can have one shape and not the other, and a query
+    /// written for the wrong one returns nothing, so they are counted apart.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quoting_predicates: Vec<String>,
+    /// The commonest **annotated statement shape**: `(the predicate inside the
+    /// quoted triple, the predicate that annotates it)`, for a statement this
+    /// graph was seen both to **assert** (`s p o`) and to **annotate**
+    /// (`<< s p o >> :about ?v`).
+    ///
+    /// The pair is the witness — the same role `class_links` plays for
+    /// `LABELED_CLASS`. `annotation_predicates[0]` and the commonest quoted
+    /// predicate are two independent maxima and need not describe the same
+    /// statement, so a body that pins both is only safe when the derivation
+    /// saw them together. Assertedness is part of the witness because RDF-star
+    /// does not entail it: `<< s p o >> :about ?v` says nothing about whether
+    /// `s p o` is in the graph, and a coverage query over a relation the graph
+    /// never asserts would report `0 / 0`.
+    ///
+    /// Matched over a sample of the star layer (`ANNOTATION_WITNESS_SAMPLE`),
+    /// so a miss can drop the query that needs it but can never ship a broken
+    /// one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotated_statement: Option<(String, String)>,
     /// Any `geo:asWKT` / `geo:wktLiteral` geometry present.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub geo_wkt: bool,
@@ -855,6 +895,23 @@ impl DatasetCard {
 /// card small and bounded; `truncated` flags when a list was actually cut.
 pub const CARD_TOP_N: usize = 100;
 
+/// How many distinct **annotated statements** the derivation remembers while
+/// looking for the [`Signals::annotated_statement`] witness.
+///
+/// The witness is a statement this graph both *asserts* (`s p o`) and *annotates*
+/// (`<< s p o >> :about ?v`) — the only thing that proves the coverage query
+/// (`qt-coverage`) can answer in both of its columns. Finding it means matching
+/// the two, which is why the star layer is learned in the pass that is already
+/// walking every statement.
+///
+/// It is **sampled**, not exhaustive, because remembering every annotated
+/// statement would make the derivation's memory scale with the star layer — on
+/// a fully-annotated graph, three IRIs per statement — and one witness is all a
+/// body needs. A graph whose first few thousand annotated statements happen to
+/// be ones it never asserts loses `qt-coverage`; it can never gain a broken
+/// one, which is the trade the geometry and label capabilities already make.
+const ANNOTATION_WITNESS_SAMPLE: usize = 4096;
+
 // Well-known IRIs (bracketed N-Triples term form, as they appear in the quads).
 const RDFS_LABEL: &str = "<http://www.w3.org/2000/01/rdf-schema#label>";
 const SKOS_PREFLABEL: &str = "<http://www.w3.org/2004/02/skos/core#prefLabel>";
@@ -999,11 +1056,27 @@ pub fn derive_card_from(
     named_graph_count: u64,
     curated: CardInput,
 ) -> DatasetCard {
-    // --- Pass 1: subject → class (last type wins, matching `schema_summary`). ---
+    // --- Pass 1: subject → class (last type wins, matching `schema_summary`),
+    // plus the shape of the RDF-star layer, learned here because pass 2 needs
+    // to recognize an *asserted* statement as one this graph also annotates
+    // and the two can appear in either file order. See
+    // `ANNOTATION_WITNESS_SAMPLE`. ---
     let mut class_of: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut quoted_subject_preds: BTreeSet<String> = BTreeSet::new();
+    let mut annotated_tokens: BTreeMap<String, String> = BTreeMap::new();
     src.replay(&mut |s, p, o| {
         if p == RDF_TYPE {
             class_of.insert(s.to_string(), o.to_string());
+        }
+        if crate::terms::is_quoted_triple(s) {
+            if let Some((_, quoted_p, _)) = crate::ingest::quoted_triple_parts(s) {
+                quoted_subject_preds.insert(quoted_p);
+            }
+            if annotated_tokens.len() < ANNOTATION_WITNESS_SAMPLE {
+                annotated_tokens
+                    .entry(s.to_string())
+                    .or_insert_with(|| p.to_string());
+            }
         }
     });
     let classify = |t: &str| -> String {
@@ -1033,6 +1106,14 @@ pub fn derive_card_from(
     let mut time_obj_hits: BTreeMap<String, u64> = BTreeMap::new();
     // Per-predicate numeric-object hits (for value-range queries).
     let mut num_obj_hits: BTreeMap<String, u64> = BTreeMap::new();
+    // RDF-star: statements ABOUT statements. `annotation_hits` counts the
+    // predicate of a statement whose subject is a quoted triple,
+    // `quoting_hits` the predicate of one whose object is; `witnessed_pairs`
+    // counts the pairs matched against pass 1's sample — the witness a body
+    // pinning both needs (see `Signals::annotated_statement`).
+    let mut annotation_hits: BTreeMap<String, u64> = BTreeMap::new();
+    let mut quoting_hits: BTreeMap<String, u64> = BTreeMap::new();
+    let mut witnessed_pairs: BTreeMap<(String, String), u64> = BTreeMap::new();
     // Objects of each candidate time predicate, grouped by datatype, for extent.
     let mut time_values: BTreeMap<String, (Option<String>, Option<String>)> = BTreeMap::new();
     let mut time_value_dt: BTreeMap<String, String> = BTreeMap::new();
@@ -1058,6 +1139,29 @@ pub fn derive_card_from(
         // special-case rdf:type, so the card precompute equals the query result.
         if !o.starts_with('"') {
             *in_degree.entry(o.to_string()).or_default() += 1;
+        }
+
+        // RDF-star, before the `rdf:type` early return below: a quoted triple
+        // may be typed (`<< s p o >> a :Claim`) like anything else, and that
+        // statement is still one made about a statement.
+        if crate::terms::is_quoted_triple(s) {
+            *annotation_hits.entry(p.to_string()).or_default() += 1;
+        }
+        if crate::terms::is_quoted_triple(o) {
+            *quoting_hits.entry(p.to_string()).or_default() += 1;
+        }
+        // The `annotated_statement` witness: THIS statement is asserted, and
+        // pass 1 saw it quoted and annotated. `quoted_subject_preds` is empty
+        // on every graph without an RDF-star layer — which is almost all of
+        // them — so the common path is one set-emptiness check per statement,
+        // and the token is only ever built for a predicate that really does
+        // appear inside a quoted triple.
+        if !quoted_subject_preds.is_empty() && quoted_subject_preds.contains(p) {
+            if let Some(about) = annotated_tokens.get(&format!("<<{s} {p} {o}>>")) {
+                *witnessed_pairs
+                    .entry((p.to_string(), about.clone()))
+                    .or_default() += 1;
+            }
         }
 
         if p == RDF_TYPE {
@@ -1160,6 +1264,34 @@ pub fn derive_card_from(
         num_ranked.iter().map(|(p, _)| p.to_string()).collect(),
         &mut truncated,
     );
+    // RDF-star vocabulary, ranked the same way (most statements first, ties by
+    // term) and capped through the same helper, so an over-long list also
+    // flips `truncated`. All three are empty/`None` on a graph with no quoted
+    // triples — which is almost every graph — and the whole `qt-*` family then
+    // does not exist, leaving those cards byte-identical.
+    let annotation_predicates = cap(
+        sort_desc_owned(annotation_hits)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect(),
+        &mut truncated,
+    );
+    let quoting_predicates = cap(
+        sort_desc_owned(quoting_hits)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect(),
+        &mut truncated,
+    );
+    // The single most-witnessed pair, not a list: one witness is all a body
+    // needs, and shipping the whole cross-product would cost the metadata
+    // section for nothing. Ties break on the key so the choice is
+    // deterministic (`max_by` keeps the last maximum, so the key comparison is
+    // reversed to make it the smallest one).
+    let annotated_statement = witnessed_pairs
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+        .map(|(pair, _)| pair);
     let geo_latlong = have_lat && have_lon;
     let temporal_extent = time_ranked
         .first()
@@ -1181,6 +1313,9 @@ pub fn derive_card_from(
         time_predicates,
         numeric_predicates,
         link_predicates,
+        annotation_predicates,
+        quoting_predicates,
+        annotated_statement,
         geo_wkt,
         geo_latlong,
         temporal_extent,
