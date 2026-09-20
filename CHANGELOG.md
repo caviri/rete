@@ -43,6 +43,29 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **The scholar export driver gated on one defect class, and trusted the
+  exporter's opinion of its own output.** `scripts/export_scholar_nquads.sh`
+  refused a dump only when `schemeless > 0`. `<https://::1>` is not schemeless,
+  so the gate opened on a dump Oxigraph will not load.
+
+  Two changes, because there were two mistakes. The gate now keys on the
+  **total** the exporter could not repair — `unrepairable > 0`, which includes
+  the bucket for defects it has no class for — so adding a class upstream never
+  needs a change here again. And no dump is recorded `done` until it has been
+  **parsed by something that did not produce it**: `oxigraph convert`, output
+  discarded, run over the finished `.nq.gz`. A parse check that cannot run is a
+  failure, never a pass. The second is the durable fix; the first only widens a
+  question the exporter was always the wrong party to answer.
+
+  The report format and the driver's `state.tsv` column parser are one interface
+  in two files, and a reworded line reads as a **zero** rather than an error —
+  which is the answer that opens a gate. `crates/rete-cli/tests/export_report_roundtrip.rs`
+  now runs the real exporter over real fixtures and feeds its real stderr to the
+  real parser (via a new `--parse-report` entry point), so a drift fails CI
+  instead of a sweep. `state.tsv` gains `unrepairable`, `unclassified` and
+  `parse_check` columns; columns are only ever appended, so existing rows still
+  resume correctly, and the old `failed-schemeless` status is still read.
+
 - **A dump could be reported as valid and still refuse to load: IRI validity is
   now decided by an RFC 3987 parser, not by a list of known-bad shapes.**
   `<https://::1>` is an IPv6 literal in the authority without the brackets RFC

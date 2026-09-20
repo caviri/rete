@@ -22,21 +22,59 @@
 #   2. /usr/bin/time -v rete export <f>.rete --format nq --sanitize-iris
 #         2> <name>.iri.txt | pigz -6  >  <name>.nq.gz
 #      then READ THE SUMMARY the sanitizer wrote on stderr (docs/cli.md,
-#      "Invalid IRIs"): a `no scheme` count above zero means the dump is not
+#      "Invalid IRIs"): an UNREPAIRABLE count above zero means the dump is not
 #      valid N-Quads and no escaping can make it one, so the file is REFUSED
-#      (state `failed-schemeless`) and never uploaded — the dataset needs a
+#      (state `failed-invalid`) and never uploaded — the dataset needs a
 #      source rebuild, not another export.
-#   3. hf buckets cp  ->  scholar/<dataset>/<name>.nq.gz
-#   4. VERIFY by re-listing the object and comparing its byte size
-#   5. delete BOTH the .nq.gz AND the .rete if we downloaded it
-#   6. only then start the next file
+#   3. PARSE THE DUMP with a strict, independent N-Quads parser (Oxigraph) —
+#      see PARSE CHECK below. No dump is ever recorded `done` without it.
+#   4. hf buckets cp  ->  scholar/<dataset>/<name>.nq.gz
+#   5. VERIFY by re-listing the object and comparing its byte size
+#   6. delete BOTH the .nq.gz AND the .rete if we downloaded it
+#   7. only then start the next file
 #
-#   Step 5 is the one that matters and it is easy to get half-right. The .nq.gz
+# TWO GATES, AND WHY BOTH
+#
+#   The exporter's own report (step 2) and an independent parser (step 3) answer
+#   the same question by different routes, and the second is the one that is
+#   sound.
+#
+#   In September 2026 eleven dumps passed step 2 and Oxigraph rejected one of
+#   them. The offending IRI was `<https://::1>` — an IPv6 literal in the
+#   authority without its brackets — and rete's classifier had no class for it,
+#   so it reported zero and this script's gate opened. Two things were wrong:
+#
+#     - the gate keyed on ONE class (`schemeless`), so any other unrepairable
+#       defect passed. It now keys on the TOTAL of everything the exporter says
+#       it could not repair, which includes a bucket for defects it cannot even
+#       name. Adding a class upstream never needs a change here again.
+#     - the gate asked the exporter whether the exporter's output was valid. No
+#       amount of generalising fixes that, because a classifier can only count
+#       what it recognises. So the dump is now also PARSED, by something that
+#       did not produce it, before it can be called done.
+#
+#   Step 2 is cheap and explains *what* is wrong. Step 3 is the verdict.
+#
+# PARSE CHECK
+#
+#   `oxigraph convert --from-format nq --to-format nq`, output discarded: it
+#   parses, it does not store, so nothing is written but a line of log and the
+#   cost is a stream through a container. Oxigraph is a fair referee here — it
+#   is the loader users are told to use (docs/interop.md) and it is NOT the code
+#   the exporter runs.
+#
+#   RETE_PARSE_IMAGE overrides the image. A parse check that cannot RUN — no
+#   image, no network, a container that dies — is a FAILURE, never a pass: an
+#   unverified dump is exactly the thing this is here to stop.
+#
+# RECLAIMING DISK
+#
+#   Step 6 is the one that matters and it is easy to get half-right. The .nq.gz
 #   must go too, not just the .rete: at the measured 0.42-0.96x the outputs
 #   ALONE would accumulate to roughly 220 GiB against ~197 GiB free, so keeping
 #   them "until the end" fails somewhere in the middle with no clear culprit.
 #
-#   Nothing is ever deleted before step 4 has confirmed the object is in the
+#   Nothing is ever deleted before step 5 has confirmed the object is in the
 #   bucket at the right size. Upload, then verify, then delete — in that order,
 #   every time.
 #
@@ -58,9 +96,13 @@
 # THE INVALID-IRI REPORT — what is parsed, and why the numbers are what they are
 #
 #   `rete export --sanitize-iris` ends with a summary on stderr (stdout is the
-#   dump), written by crates/rete-cli/src/commands/iri_report.rs. Three shapes:
+#   dump), written by crates/rete-cli/src/commands/iri_report.rs. It opens with
+#   a line that exists to be PARSED, and it is the only line this script's
+#   decisions rest on:
 #
-#     --sanitize-iris: no invalid IRIs found; the dump is byte-identical to a plain export.
+#     --sanitize-iris: totals invalid=2 repairable=1 unrepairable=1 unclassified=1
+#
+#   followed by prose and per-class rows:
 #
 #     --sanitize-iris: percent-encoded 1 IRI occurrence(s). The dump's IRIs are NOT the
 #                      file's IRIs: it no longer joins against the source graph, and
@@ -69,15 +111,25 @@
 #     --sanitize-iris: 1 occurrence(s) CANNOT be repaired by escaping and were written
 #                      verbatim — this dump is still not valid N-Quads. Fix them at the
 #                      source; a relative IRI needs a base IRI the file never recorded.
-#                            1  no scheme — a relative IRI, not an absolute one
-#                               e.g. <noscheme/thing>
+#                            1  rejected by the RFC 3987 parser, and no repair class recognises it
+#                               e.g. <https://::1>
 #
-#   Every class row is `<spaces><count>  <reason>`; the five reasons are fixed
-#   strings in crates/rete-core/src/iri.rs (IriDefect::reason). The counts are
-#   IRI OCCURRENCES (one per term, the graph label once per graph), not
-#   statements; the build-time warning is the one that counts statements. A run
-#   whose stderr carries no `--sanitize-iris:` line at all is recorded `failed`:
+#   Every class row is `<spaces><count>  <reason>`, the reasons being fixed
+#   strings in crates/rete-core/src/iri.rs (IriDefect::reason). Those rows fill
+#   the per-class columns of state.tsv and nothing else — `unrepairable` comes
+#   from the totals line, so a class this script has never heard of still counts
+#   toward the gate instead of quietly being worth zero.
+#
+#   The counts are IRI OCCURRENCES (one per term, the graph label once per
+#   graph), not statements; the build-time warning is the one that counts
+#   statements. A run whose stderr carries no totals line is recorded `failed`:
 #   an unaudited dump is not something this script will publish.
+#
+#   THE FORMAT AND THIS PARSER ARE ONE THING IN TWO FILES.
+#   crates/rete-cli/tests/export_report_roundtrip.rs runs the real exporter over
+#   real fixtures and feeds the real stderr to `parse_iri_report` (via
+#   `--parse-report`), so a wording change that breaks this parser fails CI
+#   rather than silently reading as a zero during a sweep.
 #
 # THINGS LEARNED THE HARD WAY, encoded here rather than in a comment elsewhere
 #
@@ -142,9 +194,15 @@
 #                       1.0 keeps the check honest, since the ratio is a
 #                       property of how literal-heavy a graph is, not a constant)
 #   --keep              do not delete downloads or .nq.gz after a verified upload
-#                       (or after a schemeless refusal)
+#                       (or after an invalid-IRI / parse-check refusal)
+#   --parse-report F    print what this script makes of one saved --sanitize-iris
+#                       stderr, and exit. Touches nothing else; it is how the
+#                       round-trip test checks this parser against the exporter.
+#   --parse-check F.gz  run only the independent strict parse over one .nq.gz and
+#                       exit non-zero if it is rejected. Re-verifies a dump kept
+#                       with --keep without re-exporting it.
 #   --force             re-export and re-upload even when the state file says
-#                       done, failed-schemeless or audited
+#                       done, failed-invalid or audited
 #   --recheck           confirm a `done` state record against the bucket before
 #                       trusting it (costs one listing per file)
 #
@@ -158,29 +216,42 @@
 #   dev/scholar-nq/state.tsv is append-only, one line per attempt:
 #     1 status  2 name  3 rete_bytes  4 nqgz_bytes  5 quads  6 url  7 utc
 #     8 invalid  9 repaired  10 schemeless  11 bracket  12 forbidden  13 hash
-#     14 percent  15 rss_mb  16 secs
-#   Columns 8-16 were appended later and are empty on older rows; the first
-#   seven never move, so old rows still parse. They are:
-#     invalid     invalid IRI occurrences in the dump (repaired + unrepairable)
-#     repaired    occurrences percent-encoded by --sanitize-iris
-#     schemeless  `no scheme` occurrences: NOT repairable, the dump is invalid
-#     bracket     '[' or ']' outside an IP-literal host
-#     forbidden   a character the IRIREF grammar excludes
-#     hash        more than one '#'
-#     percent     '%' not followed by two hex digits
-#     rss_mb      peak resident set of `rete export` (/usr/bin/time -v; the
-#                 container cgroup's memory.peak when time is missing)
-#     secs        wall time of `rete export` (seconds)
-#   status is done | failed | skipped-disk | failed-schemeless | audited.
-#   The LAST line for a name wins. A `done` line is written only after step 4
-#   confirmed the bytes, so a resumed run trusts it and touches no network;
-#   `failed` and `skipped-disk` lines are retried. A `failed-schemeless` line is
-#   NOT retried while the published size is unchanged -- the same file yields
-#   the same verdict; a rebuilt file has a new size and is picked up. Likewise a
-#   normal run skips a file whose last line is `audited` with schemeless>0 at the
-#   same size, and an --audit-only run skips a file already audited (any of the
-#   three statuses with column 10 filled) at the same size. --force overrides
-#   all of that. Re-listing the bucket to rebuild this costs ~50 minutes, which
+#     14 percent  15 rss_mb  16 secs  17 unrepairable  18 unclassified
+#     19 parse_check
+#   Columns are only ever APPENDED; 8-16 arrived in one batch and 17-19 in
+#   another, so every older row still parses and column N means the same thing
+#   it always did. They are:
+#     invalid       invalid IRI occurrences in the dump (repairable + unrepairable)
+#     repaired      occurrences percent-encoded by --sanitize-iris
+#     schemeless    `no scheme` occurrences: one unrepairable class among several
+#     bracket       '[' or ']' outside an IP-literal host
+#     forbidden     a character the IRIREF grammar excludes
+#     hash          more than one '#'
+#     percent       '%' not followed by two hex digits
+#     rss_mb        peak resident set of `rete export` (/usr/bin/time -v; the
+#                   container cgroup's memory.peak when time is missing)
+#     secs          wall time of `rete export` (seconds)
+#     unrepairable  ALL occurrences escaping cannot repair. THIS is the publication
+#                   gate; `schemeless` is one contributor to it. Reading column 10
+#                   as the verdict is what published a dump Oxigraph refused.
+#     unclassified  of those, the ones the RFC 3987 parser rejected and no repair
+#                   class recognised. A non-zero here says rete met a defect shape
+#                   it has no name for — worth a look, but it already blocked.
+#     parse_check   pass | fail | "" — the independent strict parse (step 3).
+#   status is done | failed | skipped-disk | failed-invalid | failed-parse |
+#   audited. `failed-schemeless` is the old name of `failed-invalid` and is
+#   still recognised on read, so an existing state file resumes correctly.
+#   The LAST line for a name wins. A `done` line is written only after step 5
+#   confirmed the bytes AND step 3 parsed the dump, so a resumed run trusts it
+#   and touches no network; `failed` and `skipped-disk` lines are retried. A
+#   `failed-invalid` line is NOT retried while the published size is unchanged --
+#   the same file yields the same verdict; a rebuilt file has a new size and is
+#   picked up. Likewise a normal run skips a file whose last line is `audited`
+#   with unrepairable>0 at the same size, and an --audit-only run skips a file
+#   already audited (any of those statuses with the IRI columns filled) at the
+#   same size. A `failed-parse` line IS retried: it can mean the referee could
+#   not run, which is not a property of the file.
+#   --force overrides all of that. Re-listing the bucket to rebuild this costs ~50 minutes, which
 #   is why it is kept. Pass --recheck to verify a `done` record anyway.
 #   Nothing is ever deleted from the bucket.
 #
@@ -211,6 +282,11 @@ ALL=0
 KEEP=0
 FORCE=0
 RECHECK=0
+PARSE_REPORT_ONLY=0
+PARSE_REPORT_FILE=""
+PARSE_CHECK_ONLY=0
+PARSE_CHECK_FILE=""
+PARSE_IMAGE="${RETE_PARSE_IMAGE:-oxigraph/oxigraph:latest}"
 WANT=()
 
 usage() { awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$0"; exit "${1:-0}"; }
@@ -235,20 +311,33 @@ while [ $# -gt 0 ]; do
     --keep)         KEEP=1; shift ;;
     --force)        FORCE=1; shift ;;
     --recheck)      RECHECK=1; shift ;;
+    # Self-test entry point: parse one saved --sanitize-iris stderr and print
+    # the numbers, touching nothing else. See parse_iri_report.
+    --parse-report) PARSE_REPORT_ONLY=1; PARSE_REPORT_FILE="${2:?}"; shift 2 ;;
+    # Run ONLY the independent parse check against a .nq.gz and exit. Useful on
+    # its own to re-verify a dump kept with --keep.
+    --parse-check)  PARSE_CHECK_ONLY=1; PARSE_CHECK_FILE="${2:?}"; shift 2 ;;
     -h|--help)      usage 0 ;;
     -*)             echo "unknown option: $1" >&2; usage 2 ;;
     *)              WANT+=("$1"); shift ;;
   esac
 done
 
-mkdir -p "$WORK/dl" "$WORK/out"
-WORK="$(cd "$WORK" && pwd)"
-# The container mounts the checkout at /repo and nothing else writable, so the
-# work dir's in-container path is its path relative to the checkout.
-case "$WORK" in
-  "$ROOT"/*) WORK_IN="/repo/${WORK#"$ROOT"/}" ;;
-  *) echo "--work $WORK is not under the checkout $ROOT, the container cannot see it" >&2; exit 2 ;;
-esac
+# `--parse-report` reads one file and exits, so it needs no work dir, no lock,
+# no container and no bucket. Keeping it out of the setup is what lets a unit
+# test call it without writing anything into the checkout.
+if [ "$PARSE_REPORT_ONLY" = "1" ] || [ "$PARSE_CHECK_ONLY" = "1" ]; then
+  WORK="$(mktemp -d)"; WORK_IN=""   # removed by cleanup() below
+else
+  mkdir -p "$WORK/dl" "$WORK/out"
+  WORK="$(cd "$WORK" && pwd)"
+  # The container mounts the checkout at /repo and nothing else writable, so the
+  # work dir's in-container path is its path relative to the checkout.
+  case "$WORK" in
+    "$ROOT"/*) WORK_IN="/repo/${WORK#"$ROOT"/}" ;;
+    *) echo "--work $WORK is not under the checkout $ROOT, the container cannot see it" >&2; exit 2 ;;
+  esac
+fi
 LOG="$WORK/export.$LOCK_NAME.log"
 STATE="$WORK/state.tsv"
 FAILURES="$WORK/failures.$LOCK_NAME.txt"
@@ -271,7 +360,13 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   exit 3
 fi
 echo "$$" > "$LOCK/pid"
-cleanup() { rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null; }
+cleanup() {
+  rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null
+  # --parse-report works in a throwaway dir rather than the checkout's, so it
+  # owns it and takes it with it.
+  { [ "$PARSE_REPORT_ONLY" = "1" ] || [ "$PARSE_CHECK_ONLY" = "1" ]; } && rm -rf "$WORK"
+  return 0
+}
 trap cleanup EXIT INT TERM
 
 [ -f "$MANIFEST" ] || { echo "no manifest at $MANIFEST" >&2; exit 2; }
@@ -279,8 +374,11 @@ trap cleanup EXIT INT TERM
 # Prove the bucket CLI answers before trusting an empty listing: an `hf` that is
 # missing, unauthenticated or offline lists nothing, which would make every
 # object look absent and every file look like it still needs uploading. An
-# audit uploads nothing, so it does not need the CLI at all.
-if [ "$AUDIT_ONLY" = "0" ] && [ "$NO_UPLOAD" = "0" ] && ! hf buckets ls "$BUCKET" --json >/dev/null 2>&1; then
+# audit uploads nothing, so it does not need the CLI at all, and neither does
+# `--parse-report`, which never leaves this process.
+if [ "$AUDIT_ONLY" = "0" ] && [ "$NO_UPLOAD" = "0" ] \
+   && [ "$PARSE_REPORT_ONLY" = "0" ] && [ "$PARSE_CHECK_ONLY" = "0" ] \
+   && ! hf buckets ls "$BUCKET" --json >/dev/null 2>&1; then
   echo "cannot list $BUCKET (hf missing, not logged in, or offline)" >&2
   exit 4
 fi
@@ -322,10 +420,22 @@ bucket_size() {
     | grep -o '"size": *[0-9]*' | grep -o '[0-9]*' | head -1
 }
 
+# Is this status a refusal on IRI grounds? `failed-schemeless` is the historical
+# spelling, kept readable so an existing state.tsv resumes the way it was written.
+was_refused() { [ "${1:-}" = "failed-invalid" ] || [ "${1:-}" = "failed-schemeless" ]; }
+
 # The last recorded attempt for a name:
-# "status<TAB>nqgz_bytes<TAB>rete_bytes<TAB>schemeless", or "".
+# "status<TAB>nqgz_bytes<TAB>rete_bytes<TAB>unrepairable", or "".
+#
+# Column 17 (unrepairable) is the verdict. Rows written before it existed carry
+# only column 10 (schemeless), which WAS the whole unrepairable count under the
+# old classifier, so falling back to it reads an old row exactly as the run that
+# wrote it meant it. An empty column 17 with a filled column 10 is an old row,
+# not a clean one.
 state_of() {
-  awk -F'\t' -v n="$2" '$2==n {s=$1"\t"$4"\t"$3"\t"$10} END{if(s)print s}' "$1"
+  awk -F'\t' -v n="$2" '
+    $2==n { u = ($17 != "" ? $17 : $10); s = $1"\t"$4"\t"$3"\t"u }
+    END{if(s)print s}' "$1"
 }
 
 # Per-attempt measurements, reset for every dataset and appended to the row.
@@ -333,29 +443,57 @@ state_of() {
 # skipped-disk), which is also what every pre-existing row carries.
 R_INVALID=""; R_REPAIRED=""; R_SCHEMELESS=""; R_BRACKET=""; R_FORBIDDEN=""
 R_HASH=""; R_PERCENT=""; R_RSS_MB=""; R_SECS=""
+R_UNREPAIRABLE=""; R_UNCLASSIFIED=""; R_PARSE=""
 reset_measures() {
   R_INVALID=""; R_REPAIRED=""; R_SCHEMELESS=""; R_BRACKET=""; R_FORBIDDEN=""
   R_HASH=""; R_PERCENT=""; R_RSS_MB=""; R_SECS=""
+  R_UNREPAIRABLE=""; R_UNCLASSIFIED=""; R_PARSE=""
 }
 
 record() { # status name rete_bytes nqgz_bytes quads url   (+ the R_* measures)
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$1" "$2" "$3" "${4:-}" "${5:-}" "$6" "$(now)" \
     "$R_INVALID" "$R_REPAIRED" "$R_SCHEMELESS" "$R_BRACKET" "$R_FORBIDDEN" \
-    "$R_HASH" "$R_PERCENT" "$R_RSS_MB" "$R_SECS" >> "$STATE"
+    "$R_HASH" "$R_PERCENT" "$R_RSS_MB" "$R_SECS" \
+    "$R_UNREPAIRABLE" "$R_UNCLASSIFIED" "$R_PARSE" >> "$STATE"
 }
 
 # Parse the --sanitize-iris summary (format in the header) into the R_* counts.
-# Returns 1 when stderr carries no summary at all. The class rows are matched on
-# stable fragments of IriDefect::reason(); the two totals the summary prints
-# are cross-checked against the class sum, and a mismatch is logged, because a
-# wording change upstream must show up here as a warning and not as a zero.
+#
+# THE TOTALS LINE IS THE CONTRACT. `rete export --sanitize-iris` prints
+#
+#   --sanitize-iris: totals invalid=N repairable=R unrepairable=U unclassified=C
+#
+# and `unrepairable` is the only number that answers "will a strict loader take
+# this". It is read here directly rather than derived from the per-class rows,
+# because deriving it means enumerating classes and a class this script has
+# never heard of would then be worth zero -- which is precisely the failure this
+# whole change exists to remove. The rows are still parsed, but only for the
+# per-class BREAKDOWN in state.tsv; they never decide anything.
+#
+# A report with NO totals line fails (returns 1). That means an exporter older
+# than this script, or a truncated stderr, and in both cases the honest answer
+# is "I cannot tell", which must not read as "publishable". Fail closed.
+#
+# The class rows are matched on stable fragments of IriDefect::reason(). A row
+# this script does not recognise is counted as unknown and warned about -- never
+# dropped -- and the cross-check against the totals makes a wording drift loud.
+# crates/rete-cli/tests/export_report_roundtrip.rs runs the real exporter and
+# feeds its real stderr to this function, so a drift fails CI, not a sweep.
 parse_iri_report() { # file
   local f="$1" parsed
   parsed="$(awk '
-    /^--sanitize-iris: no invalid IRIs found/            { seen=1 }
-    /^--sanitize-iris: percent-encoded [0-9]+ IRI occ/   { seen=1; rep=$3 }
-    /^--sanitize-iris: [0-9]+ occurrence\(s\) CANNOT/    { seen=1; unrep=$2 }
+    /^--sanitize-iris: totals / {
+      seen=1
+      for (i = 3; i <= NF; i++) {
+        split($i, kv, "=")
+        if      (kv[1] == "invalid")      inv   = kv[2]
+        else if (kv[1] == "repairable")   repbl = kv[2]
+        else if (kv[1] == "unrepairable") unrep = kv[2]
+        else if (kv[1] == "unclassified") uncl  = kv[2]
+      }
+    }
+    /^--sanitize-iris: percent-encoded [0-9]+ IRI occ/ { rep=$3 }
     /^ +[0-9]+  [^ ]/ {
       n=$1; r=$0; sub(/^ +[0-9]+  /, "", r); sub(/ +\[NOT repairable.*$/, "", r)
       if      (r ~ /^no scheme/)                 s+=n
@@ -363,17 +501,67 @@ parse_iri_report() { # file
       else if (r ~ /IRIREF grammar excludes/)    fc+=n
       else if (r ~ /more than one/)              h+=n
       else if (r ~ /not followed by two hex/)    pc+=n
+      else if (r ~ /RFC 3987/)                   uc+=n
       else                                       unknown+=n
     }
     END {
       if (!seen) exit 1
-      printf "%d %d %d %d %d %d %d %d %d\n", rep+unrep, rep, s, b, fc, h, pc, unknown, s+b+fc+h+pc
+      printf "%d %d %d %d %d %d %d %d %d %d %d %d\n",
+        inv, rep, s, b, fc, h, pc, unrep, uncl, repbl, unknown, s+b+fc+h+pc+uc
     }' "$f")" || return 1
-  local unknown clsum
-  read -r R_INVALID R_REPAIRED R_SCHEMELESS R_BRACKET R_FORBIDDEN R_HASH R_PERCENT unknown clsum <<< "$parsed"
+  local repbl unknown clsum
+  read -r R_INVALID R_REPAIRED R_SCHEMELESS R_BRACKET R_FORBIDDEN R_HASH \
+          R_PERCENT R_UNREPAIRABLE R_UNCLASSIFIED repbl unknown clsum <<< "$parsed"
   if [ "$unknown" != "0" ] || [ "$clsum" != "$R_INVALID" ]; then
-    say "WARN     $f: class rows sum to $clsum (+$unknown unrecognised) but the summary totals $R_INVALID -- check the report format"
+    say "WARN     $f: class rows sum to $clsum (+$unknown unrecognised) but the totals line says $R_INVALID -- the report format moved, check parse_iri_report"
   fi
+  if [ "$((R_UNREPAIRABLE + repbl))" != "$R_INVALID" ]; then
+    say "WARN     $f: totals do not add up (repairable=$repbl + unrepairable=$R_UNREPAIRABLE != invalid=$R_INVALID)"
+  fi
+  return 0
+}
+
+# Parse the dump with a strict N-Quads parser that did NOT produce it.
+#
+# Sets R_PARSE to pass|fail and echoes the first error line. Everything that is
+# not an unambiguous pass is a FAIL: a missing image, a dead network and a
+# container that will not start all mean the dump is unverified, and unverified
+# is the state this check exists to refuse.
+# Result of the last parse_check. A GLOBAL, not stdout, and deliberately:
+# `if ! msg="$(parse_check f)"` would run the function in a subshell, and the
+# R_PARSE it set there would never reach the row this script writes. The first
+# draft of this did exactly that. Callers read $PARSE_ERR.
+PARSE_ERR=""
+
+parse_check() { # gz_path -> 0/1; sets R_PARSE and PARSE_ERR
+  local gz="$1" errf err
+  local -a st
+  PARSE_ERR=""
+  errf="$(mktemp)"
+  # NOT inside a command substitution: a pipeline that runs in a subshell leaves
+  # the PARENT's PIPESTATUS describing the assignment, not the pipeline, so the
+  # parser's exit status would be read as the shell's. The header warns about
+  # this for the export pipeline; it is the same trap. The array is copied in
+  # ONE command, for the same reason it is there.
+  gzip -dc "$gz" 2>/dev/null \
+    | MSYS_NO_PATHCONV=1 docker run --rm -i "$PARSE_IMAGE" \
+        convert --from-format nq --to-format nq >/dev/null 2>"$errf"
+  st=("${PIPESTATUS[@]}")
+  err="$(grep -m1 -i 'error' "$errf" 2>/dev/null)"
+  rm -f "$errf"
+  R_PARSE=fail
+  if [ -n "$err" ]; then
+    PARSE_ERR="$err"; return 1
+  fi
+  if [ "${st[1]}" != "0" ]; then
+    PARSE_ERR="parser exited ${st[1]} (image $PARSE_IMAGE) and said nothing -- the dump is UNVERIFIED"
+    return 1
+  fi
+  if [ "${st[0]}" != "0" ]; then
+    PARSE_ERR="gzip exited ${st[0]} feeding the parser -- the stream ended early"
+    return 1
+  fi
+  R_PARSE=pass
   return 0
 }
 
@@ -394,10 +582,47 @@ parse_time_report() { # time_file exit_file host_secs
   CG_PEAK_MB="${cg:+$((cg / 1048576))}"
 }
 
+# THE GATE RULE, in one place so the sweep and the test cannot diverge.
+#
+# Any occurrence the exporter says it could not repair -- whichever class, and
+# including the bucket for defects it has no class for -- means the dump is
+# still not valid N-Quads. This used to be `[ "$R_SCHEMELESS" -gt 0 ]`, which is
+# a test for ONE class, and `<https://::1>` is not that class.
+gate_refuses() { [ "${R_UNREPAIRABLE:-0}" -gt 0 ]; }
+
 measures() { # one-line rendering for the log
-  printf 'invalid=%s repaired=%s schemeless=%s bracket=%s forbidden=%s hash=%s percent=%s rss_mb=%s secs=%s' \
-    "$R_INVALID" "$R_REPAIRED" "$R_SCHEMELESS" "$R_BRACKET" "$R_FORBIDDEN" "$R_HASH" "$R_PERCENT" "$R_RSS_MB" "$R_SECS"
+  printf 'invalid=%s repaired=%s unrepairable=%s unclassified=%s schemeless=%s bracket=%s forbidden=%s hash=%s percent=%s rss_mb=%s secs=%s' \
+    "$R_INVALID" "$R_REPAIRED" "$R_UNREPAIRABLE" "$R_UNCLASSIFIED" \
+    "$R_SCHEMELESS" "$R_BRACKET" "$R_FORBIDDEN" "$R_HASH" "$R_PERCENT" "$R_RSS_MB" "$R_SECS"
 }
+
+# `--parse-report FILE`: run ONLY the stderr parser and print what it made of
+# the file, then exit. The round-trip test drives this, so the parser is
+# exercised against the exporter's real output rather than against a fixture
+# someone updated by hand.
+if [ "${PARSE_REPORT_ONLY:-0}" = "1" ]; then
+  if parse_iri_report "$PARSE_REPORT_FILE"; then
+    # `verdict` comes from gate_refuses, the same call the sweep makes, so the
+    # test sees the decision rather than a re-implementation of it.
+    if gate_refuses; then verdict=refuse; else verdict=publishable; fi
+    printf 'invalid=%s repaired=%s unrepairable=%s unclassified=%s schemeless=%s bracket=%s forbidden=%s hash=%s percent=%s verdict=%s\n' \
+      "$R_INVALID" "$R_REPAIRED" "$R_UNREPAIRABLE" "$R_UNCLASSIFIED" \
+      "$R_SCHEMELESS" "$R_BRACKET" "$R_FORBIDDEN" "$R_HASH" "$R_PERCENT" "$verdict"
+    exit 0
+  fi
+  echo "no --sanitize-iris totals line in $PARSE_REPORT_FILE" >&2
+  exit 1
+fi
+
+# `--parse-check FILE.nq.gz`: the independent verdict on its own.
+if [ "${PARSE_CHECK_ONLY:-0}" = "1" ]; then
+  if parse_check "$PARSE_CHECK_FILE"; then
+    echo "parse_check=pass $PARSE_CHECK_FILE ($PARSE_IMAGE)"
+    exit 0
+  fi
+  echo "parse_check=fail $PARSE_CHECK_FILE -- $PARSE_ERR" >&2
+  exit 1
+fi
 
 # One sweep of $DATA_DIR, up front: size<TAB>path for every local .rete. The
 # corpus has ~900k files under it, so re-walking it per dataset would cost more
@@ -476,7 +701,7 @@ for r in "${rows[@]}"; do
 done
 IFS=$'\n' sized=($(printf '%s\n' "${sized[@]}" | LC_ALL=C sort -rn)); unset IFS
 
-ok=0; audited=0; failed=0; skipped=0; schemeless=0; tot_in=0; tot_out=0
+ok=0; audited=0; failed=0; skipped=0; unrepairable=0; tot_in=0; tot_out=0
 for r in "${sized[@]}"; do
   IFS=$'\t' read -r len ds name url <<< "$r"
   key="$PREFIX/$ds/$name.nq.gz"
@@ -488,7 +713,7 @@ for r in "${sized[@]}"; do
 
   # -- resume: the state file is the authority --------------------------------
   if [ "$FORCE" = "0" ]; then
-    IFS=$'\t' read -r st rec rbytes rsl <<< "$(state_of "$STATE" "$name")"
+    IFS=$'\t' read -r st rec rbytes runrep <<< "$(state_of "$STATE" "$name")"
     if [ "${st:-}" = "done" ] && [ "$AUDIT_ONLY" = "0" ]; then
       if [ "$RECHECK" = "1" ]; then
         landed="$(bucket_size "$key")"
@@ -502,17 +727,20 @@ for r in "${sized[@]}"; do
         skipped=$((skipped+1)); tot_in=$((tot_in+len)); tot_out=$((tot_out+${rec:-0})); continue
       fi
     fi
-    # The same file gives the same verdict: a refused or audited-schemeless
-    # record at the published size is final until the source is rebuilt.
-    if [ "$AUDIT_ONLY" = "0" ] && [ "${rbytes:-}" = "$len" ] && [ -n "${rsl:-}" ] && [ "$rsl" -gt 0 ] \
-       && { [ "${st:-}" = "failed-schemeless" ] || [ "${st:-}" = "audited" ]; }; then
-      say "SKIP     $name (state: $st, schemeless=$rsl at the published size; needs a source rebuild, --force to retry)"
-      echo "$name (state: $st schemeless=$rsl)" >> "$FAILURES"
-      schemeless=$((schemeless+1)); failed=$((failed+1)); continue
+    # The same file gives the same verdict: a refused or audited-invalid record
+    # at the published size is final until the source is rebuilt. `failed-invalid`
+    # is the current status; `failed-schemeless` is what it was called when the
+    # relative IRI was the only unrepairable class, and an existing state file is
+    # full of those.
+    if [ "$AUDIT_ONLY" = "0" ] && [ "${rbytes:-}" = "$len" ] && [ -n "${runrep:-}" ] && [ "$runrep" -gt 0 ] \
+       && { was_refused "${st:-}" || [ "${st:-}" = "audited" ]; }; then
+      say "SKIP     $name (state: $st, unrepairable=$runrep at the published size; needs a source rebuild, --force to retry)"
+      echo "$name (state: $st unrepairable=$runrep)" >> "$FAILURES"
+      unrepairable=$((unrepairable+1)); failed=$((failed+1)); continue
     fi
-    if [ "$AUDIT_ONLY" = "1" ] && [ "${rbytes:-}" = "$len" ] && [ -n "${rsl:-}" ] \
-       && { [ "${st:-}" = "audited" ] || [ "${st:-}" = "done" ] || [ "${st:-}" = "failed-schemeless" ]; }; then
-      say "SKIP     $name (state: $st, schemeless=$rsl at the published size; --force to re-audit)"
+    if [ "$AUDIT_ONLY" = "1" ] && [ "${rbytes:-}" = "$len" ] && [ -n "${runrep:-}" ] \
+       && { [ "${st:-}" = "audited" ] || [ "${st:-}" = "done" ] || was_refused "${st:-}"; }; then
+      say "SKIP     $name (state: $st, unrepairable=$runrep at the published size; --force to re-audit)"
       skipped=$((skipped+1)); continue
     fi
   fi
@@ -642,7 +870,7 @@ for r in "${sized[@]}"; do
 
   # -- 2b. the invalid-IRI verdict -------------------------------------------
   if ! parse_iri_report "$iri"; then
-    say "FAIL     $name: no --sanitize-iris summary on stderr ($iri) -- an unaudited dump is not published"
+    say "FAIL     $name: no '--sanitize-iris: totals ...' line on stderr ($iri) -- either the rete binary predates that line or stderr was truncated. Either way the dump is unaudited, and an unaudited dump is not published."
     echo "$name (no sanitize report)" >> "$FAILURES"; record failed "$name" "$len" "" "" "$url"
     failed=$((failed+1)); discard; continue
   fi
@@ -651,18 +879,19 @@ for r in "${sized[@]}"; do
   if [ "$AUDIT_ONLY" = "1" ]; then
     record audited "$name" "$len" "" "" "$url"
     audited=$((audited+1)); tot_in=$((tot_in+len))
-    [ "$R_SCHEMELESS" -gt 0 ] && schemeless=$((schemeless+1))
+    gate_refuses && unrepairable=$((unrepairable+1))
     rm -f "$exitf"
     if [ "$downloaded" != "0" ] && [ "$KEEP" = "0" ]; then rm -f "$src"; fi
     say "FREE     $(gb "$(free_bytes)") GiB after $name"
     continue
   fi
 
-  if [ "$R_SCHEMELESS" -gt 0 ]; then
-    say "REFUSE   $name: schemeless=$R_SCHEMELESS -- a relative IRI has no scheme, escaping cannot repair it and every strict loader rejects the dump; NOT uploading. The dataset needs a source rebuild (docs/cli.md, Invalid IRIs)."
-    echo "$name (schemeless=$R_SCHEMELESS, not uploaded)" >> "$FAILURES"
-    record failed-schemeless "$name" "$len" "$(fsize "$out")" "" "$url"
-    schemeless=$((schemeless+1)); failed=$((failed+1))
+  # THE GATE (rule in gate_refuses, above).
+  if gate_refuses; then
+    say "REFUSE   $name: unrepairable=$R_UNREPAIRABLE (schemeless=$R_SCHEMELESS unclassified=$R_UNCLASSIFIED) -- escaping cannot repair these and every strict loader rejects the dump; NOT uploading. The dataset needs a source rebuild (docs/cli.md, Invalid IRIs). Full report: $iri"
+    echo "$name (unrepairable=$R_UNREPAIRABLE, not uploaded)" >> "$FAILURES"
+    record failed-invalid "$name" "$len" "$(fsize "$out")" "" "$url"
+    unrepairable=$((unrepairable+1)); failed=$((failed+1))
     if [ "$KEEP" = "1" ]; then
       say "         keeping $out (--keep)"; rm -f "$exitf"
     else
@@ -682,6 +911,31 @@ for r in "${sized[@]}"; do
     echo "$name (gzip verify)" >> "$FAILURES"; record failed "$name" "$len" "$osize" "" "$url"
     failed=$((failed+1)); discard; continue
   fi
+  # -- 2d. the INDEPENDENT verdict -------------------------------------------
+  # The exporter's report says what rete thinks of its own output. This asks
+  # something else. It is the durable fix: a defect class rete does not have is
+  # still a parse error here, so the sweep can never again publish a dump that
+  # does not load. It is also the expensive step, so it runs last -- after the
+  # cheap gate has already rejected what it can.
+  say "PARSE    $name: $PARSE_IMAGE convert (strict, output discarded)"
+  p0=$(date +%s)
+  if ! parse_check "$out"; then
+    p1=$(date +%s)
+    say "FAIL     $name: independent parse REJECTED the dump after $((p1-p0))s -- $PARSE_ERR"
+    say "         rete's own report said unrepairable=$R_UNREPAIRABLE, so this is a defect rete does not recognise. That gap is the bug to fix; the dump is not published either way."
+    echo "$name (parse check: $PARSE_ERR)" >> "$FAILURES"
+    record failed-parse "$name" "$len" "$osize" "$lines" "$url"
+    failed=$((failed+1))
+    if [ "$KEEP" = "1" ]; then
+      say "         keeping $out (--keep) for diagnosis"; rm -f "$exitf"
+    else
+      discard
+    fi
+    continue
+  fi
+  p1=$(date +%s)
+  say "PARSED   $name: accepted by $PARSE_IMAGE in $((p1-p0))s"
+
   say "OK       $name: $(gb "$len") GiB .rete -> $(gb "$osize") GiB .nq.gz ($(awk -v a="$osize" -v b="$len" 'BEGIN{printf "%.3f", a/b}')x), $lines quads, $((t1-t0))s container, rete ${R_SECS}s peak ${R_RSS_MB} MB"
 
   # -- 3. upload, then 4. RE-LIST -------------------------------------------
@@ -723,10 +977,10 @@ done
 
 if [ "$DRY_RUN" = "1" ]; then say "DRY RUN complete"; exit 0; fi
 if [ "$AUDIT_ONLY" = "1" ]; then
-  say "audit done: audited=$audited skipped=$skipped failed=$failed; $schemeless file(s) with schemeless IRIs; $(gb "$tot_in") GiB .rete read"
+  say "audit done: audited=$audited skipped=$skipped failed=$failed; $unrepairable file(s) carry an IRI no escaping can repair; $(gb "$tot_in") GiB .rete read"
   [ "$failed" -eq 0 ]; exit $?
 fi
-say "done: ok=$ok skipped=$skipped failed=$failed (of which schemeless=$schemeless); $(gb "$tot_in") GiB .rete -> $(gb "$tot_out") GiB .nq.gz"
+say "done: ok=$ok skipped=$skipped failed=$failed (of which unrepairable-IRI=$unrepairable); $(gb "$tot_in") GiB .rete -> $(gb "$tot_out") GiB .nq.gz"
 [ "$NO_UPLOAD" = "1" ] && say "NOTE: --no-upload -- nothing was published. $WORK/not-uploaded.txt lists every 'done' row still only on local disk; the publisher must run with --recheck."
 [ "$failed" -eq 0 ]
 exit $?
