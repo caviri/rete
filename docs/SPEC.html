@@ -813,7 +813,10 @@ quoted triple is interned by its canonical N-Triples-star surface, exactly like
 an IRI or literal, so the dictionary, the permutation indexes, and this layout
 need no change for RDF-star — hence no format-version bump. A file that contains
 any quoted triple sets header flag bit 2 (§4.1) so a plain-RDF reader can detect
-it without scanning. See <a href="sparql.html#rdf-star">SPARQL § RDF-star</a>.</p>
+it without scanning. The <strong>stored</strong> surface is RDF-star, always; which surface a
+text dump carries is a writer choice (<code>rete export --quoted-triple-syntax</code>,
+default RDF 1.2 <code>&lt;&lt;( s p o )&gt;&gt;</code>) and does not touch the file. See
+<a href="sparql.html#rdf-star">SPARQL § RDF-star</a>.</p>
 </li>
 <li>
 <p>The dictionary is four independently-decompressible <strong>sections</strong> (shared /

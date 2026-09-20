@@ -135,9 +135,15 @@ as → RDF/XML"). Once ingested, OWL axioms are just triples you can query; to
 **RDF-star & RDF 1.2.** rete ingests, stores, and queries **quoted triples** —
 statements about statements — in the widely-deployed RDF-star surface
 `<< s p o >>` (subject or object), with the SPARQL-star patterns and built-ins
-(see [SPARQL support](sparql.md#rdf-star)). It also accepts the ratified **RDF 1.2**
-object triple-term syntax `<<( s p o )>>` on ingest, mapping it to the *same*
-canonical token, so an RDF 1.2 file and an RDF-star file are interoperable.
+(see [SPARQL support](sparql.md#rdf-star)). Its **N-Triples/N-Quads** reader also
+accepts the ratified **RDF 1.2** object triple-term syntax `<<( s p o )>>`,
+mapping it to the *same* canonical token, so an RDF 1.2 N-Quads file and an
+RDF-star one are interchangeable. (The Turtle/TriG reader is `oxttl` 0.1 and
+takes the RDF-star surface only.) On the way **out**, `rete export` writes
+either: `--quoted-triple-syntax rdf12` — the RDF 1.2 triple term, and the
+**default**, because that is what current parsers read — or `rdf-star` for the
+older surface. See [Triple-store interop](interop.md#quoted-triples-two-surfaces-one-graph)
+for what each one costs.
 **Base-direction language strings** (`"…"@lang--dir`, RDF 1.2's
 `rdf:dirLangString`) are modelled — `DATATYPE` reports `rdf:dirLangString` and
 `LANG` returns the language subtag — and a leading SPARQL 1.2 `VERSION "1.2"`

@@ -15,7 +15,9 @@ engines must answer every query identically, on every CI run.
 
 `rete export` streams the dataset with constant memory — it never loads the
 graph. The default format is **N-Quads, lossless**: default graph + named
-graphs, RDF-star quoted triples included.
+graphs, quoted triples included — written as **RDF 1.2 triple terms**
+`<<( s p o )>>`, which is what current parsers read (see
+[Quoted triples](#quoted-triples-two-surfaces-one-graph) below).
 
 ```sh
 rete export data.rete --compress zstd > dump.nq.zst
@@ -43,6 +45,47 @@ the smaller of the two — substantially so on data with many statements per
 subject — and every store on this page loads it. Use N-Quads when the consumer
 is a line-oriented pipeline (`split`, `grep`, a Spark reader); use TriG when the
 consumer is an RDF parser and the file has to travel.
+
+### Quoted triples: two surfaces, one graph
+
+A quoted triple — a statement standing inside another statement — has two
+spellings in the wild, and `rete export` writes either:
+
+```sh
+rete export data.rete --format nq                                  # <<( s p o )>>  RDF 1.2
+rete export data.rete --format nq --quoted-triple-syntax rdf-star  # <<s p o>>      RDF-star
+```
+
+**RDF 1.2 is the default**, and the reason is the rest of this page. Oxigraph
+0.5.x is built on `oxrdf` 0.3 / `oxttl` 0.2 — the RDF 1.2 generation — and its
+N-Quads reader rejects the RDF-star surface outright:
+
+```
+Error: Parser error at line 1 between columns 57 and 59:
+  The object of a triple must be an IRI, a blank node or a literal
+```
+
+A load is atomic, so that is not "the quoted lines were skipped": it is the
+whole file, the same all-or-nothing failure an invalid IRI causes. In Turtle and
+TriG the failure is quieter and worse — an RDF 1.2 parser reads `<< s p o >>` as
+a **reifier**, expanding it to a blank node plus an `rdf:reifies` statement, so
+the load succeeds and the graph is not the one you exported.
+
+rete *stores* the RDF-star surface and its N-Quads reader takes both, so a
+`rete → nq → rete` round trip is the identity either way. Use `--quoted-triple-syntax
+rdf-star` for a consumer on the older stack (Jena's RDF-star mode, GraphDB's,
+anything on `oxttl` 0.1 — which includes rete's own Turtle/TriG reader).
+
+Two things the surface cannot paper over:
+
+- RDF 1.2 places a triple term in **object position only**. A quoted triple in
+  subject position has no RDF 1.2 spelling, so the export refuses it by name
+  rather than writing something no parser accepts.
+- `--format jsonld` and `--format hdt` have no term kind for one at all and
+  refuse a file that contains any.
+
+`tests/interop/oxigraph.sh` runs both surfaces against the real store, including
+the negative case — the rejection above is asserted, not remembered.
 
 ### The single-graph formats
 

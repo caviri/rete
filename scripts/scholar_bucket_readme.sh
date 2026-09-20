@@ -59,8 +59,9 @@ cat <<'HDR'
 # The scholar constellation, as gzipped N-Quads
 
 Every file here is a **lossless N-Quads dump** of one published `.rete`
-knowledge graph — default graph *and* named graphs, RDF-star quoted triples
-included — gzipped, one file per dataset. N-Quads is the interchange format
+knowledge graph — default graph *and* named graphs, quoted triples included
+(written as RDF 1.2 triple terms `<<( s p o )>>`, which is what current parsers
+read) — gzipped, one file per dataset. N-Quads is the interchange format
 every triple store bulk-loads, so **nothing here needs `rete` to be useful**.
 
 ```

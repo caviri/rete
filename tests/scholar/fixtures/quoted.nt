@@ -1,0 +1,26 @@
+# A dataset with RDF-star QUOTED TRIPLES in it — the shape that was, until the
+# writers learned the RDF 1.2 surface, unpublishable.
+#
+# rete stores a quoted triple as `<<s p o>>`, and the exporter used to emit that
+# verbatim. `oxigraph convert --from-format nq` REJECTS it ("The object of a
+# triple must be an IRI, a blank node or a literal"), so the driver's required
+# parse check would have refused this dump in every spelling — recorded as a
+# latent limitation in #257 because none of the 11 swept datasets had one. This
+# fixture is what stops that from being latent: it goes through the real
+# exporter, the real gate and the real referee, and it must come out `done`.
+#
+# Everything here is in OBJECT position, which is where RDF 1.2 puts a triple
+# term (`ttSubject ::= iri | BlankNode`). A subject-position quoted triple has
+# no RDF 1.2 spelling at all and the exporter refuses it by name; that case is
+# covered by `cargo test -p rete-cli --test export_quoted_triples`, not here,
+# because this harness is about what DOES get published.
+#
+# Nesting, a typed literal inside the quoted triple, and a blank node on both
+# sides — the shapes a writer that split on spaces or counted angle brackets
+# would corrupt.
+<http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/BarnSwallow> .
+<http://example.org/jsmith> <http://example.org/recorded> << <http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/BarnSwallow> >> .
+<http://example.org/claim1> <http://example.org/states> << <http://example.org/occ1> <http://example.org/individualCount> "5"^^<http://www.w3.org/2001/XMLSchema#integer> >> .
+<http://example.org/claim2> <http://example.org/states> << <http://example.org/occ1> <http://example.org/observedOn> "2023-05-01"^^<http://www.w3.org/2001/XMLSchema#date> >> .
+<http://example.org/meta> <http://example.org/about> << <http://example.org/jsmith> <http://example.org/recorded> << <http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/BarnSwallow> >> >> .
+_:src <http://example.org/attests> << _:obs <http://example.org/label> "a > b, and a << inside"@en >> .

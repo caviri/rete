@@ -15,7 +15,7 @@
 #
 #   Three substitutions make it runnable, and only three:
 #
-#     - the manifest is a four-row TSV written here
+#     - the manifest is a five-row TSV written here
 #     - the published files are served by `python3 -m http.server` in a
 #       container, so `head_len`'s HEAD and `curl -C -`'s GET are the real ones
 #     - `hf` is tests/scholar/hf_stub.sh on $PATH, backed by a directory
@@ -37,6 +37,10 @@
 #       the gate is not simply refusing everything.
 #     - an upload that exits 0 and stores nothing is caught by the re-listing
 #       and recorded `failed`, not `done`.
+#     - a dump carrying RDF-star QUOTED TRIPLES is published, because the
+#       exporter now writes them as RDF 1.2 triple terms `<<( s p o )>>`. In
+#       the surface rete stores, the referee refuses the dump outright -- the
+#       limitation #257 recorded and this fixture stops from returning.
 #
 # TIER
 #
@@ -68,7 +72,7 @@ WORK="$ROOT/dev/scholar-e2e"
 PORT="${RETE_E2E_PORT:-8931}"
 BUCKET="e2e/rete-test-bucket"
 SRV="rete-scholar-e2e-$$"
-DATASETS="clean repairable ipv6 noscheme"
+DATASETS="clean repairable ipv6 noscheme quoted"
 
 # Scoped, never exported: a global MSYS_NO_PATHCONV breaks `git -C` on MSYS.
 dk() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' docker "$@"; }
@@ -161,7 +165,7 @@ dk run --rm --user root \
     set -e
     cargo build -q -p rete-cli
     install -m 0755 "$CARGO_TARGET_DIR/debug/rete" /repo/dev/scholar-e2e/bin/rete
-    for f in clean repairable ipv6 noscheme; do
+    for f in clean repairable ipv6 noscheme quoted; do
       # Invalid IRIs make `build` WARN and still succeed — that is the whole
       # premise: the defect survives into the dump and the gate is what must
       # catch it. `--strict` would refuse here and prove nothing downstream.
@@ -173,7 +177,7 @@ dk run --rm --user root \
 for d in $DATASETS; do
   [ -s "$WORK/www/$d.rete" ] || { echo "fixture $d.rete was not produced" >&2; exit 2; }
 done
-pass "built rete and 4 fixture .rete files"
+pass "built rete and 5 fixture .rete files"
 
 # --- the "published bucket": a file server -----------------------------------
 # Real HTTP, because `head_len` reads the published Content-Length with a HEAD
@@ -287,6 +291,32 @@ fi
 assert_grep "repairable: the referee accepted the repair" \
   'PARSED   repairable' "$WORK/2-sweep.log"
 
+echo "-- quoted triples are published, in the RDF 1.2 surface the referee reads --"
+# The point of the whole change. Until the writers learned `<<( s p o )>>`, the
+# exporter emitted rete's stored `<<s p o>>` token and `oxigraph` REFUSED the
+# dump — so a dataset with a quoted triple in it could not be published at all,
+# and nothing said so because none of the 11 swept datasets had one (#257). Here
+# the real exporter's output goes through the real gate and the real referee.
+assert_eq   "quoted: state is done"                  "done" "$(col quoted 1)"
+assert_eq   "quoted: the independent parser accepted it" pass "$(col quoted 19)"
+assert_grep "quoted: the referee named it"           'PARSED   quoted' "$WORK/2-sweep.log"
+# And it is RDF 1.2 in the published bytes, not merely "something that parsed":
+# the RDF-star surface would have been rejected, so this asserts the spelling
+# rather than inferring it from the verdict.
+QOBJ="$WORK/bucket/$BUCKET/scholar/e2e/quoted.nq.gz"
+if [ -s "$QOBJ" ] && gzip -dc "$QOBJ" | grep -q '<<( '; then
+  pass "quoted: the published dump carries RDF 1.2 triple terms"
+else
+  fail "quoted: the published dump carries RDF 1.2 triple terms" \
+    "$(gzip -dc "$QOBJ" 2>/dev/null | head -4)"
+fi
+if [ -s "$QOBJ" ] && gzip -dc "$QOBJ" | grep -q '<<<'; then
+  fail "quoted: …and none of the RDF-star surface" \
+    "$(gzip -dc "$QOBJ" 2>/dev/null | grep -n '<<<' | head -3)"
+else
+  pass "quoted: …and none of the RDF-star surface"
+fi
+
 echo "-- THE REGRESSION: <https://::1> is refused and never uploaded --"
 assert_eq   "ipv6: state is failed-invalid" failed-invalid "$(col ipv6 1)"
 if [ "$(col ipv6 17)" -gt 0 ] 2>/dev/null; then
@@ -320,13 +350,13 @@ else
 fi
 assert_no_grep "noscheme: never uploaded" 'buckets cp .*noscheme' "$HF_LOG"
 
-echo "-- exactly two objects, and the disk was reclaimed --"
-assert_eq "two uploads, not four" 2 "$(uploads)"
-assert_eq "two objects in the bucket" 2 "$(find "$WORK/bucket" -type f | wc -l)"
+echo "-- exactly three objects, and the disk was reclaimed --"
+assert_eq "three uploads, not five" 3 "$(uploads)"
+assert_eq "three objects in the bucket" 3 "$(find "$WORK/bucket" -type f | wc -l)"
 assert_eq "…and no .nq.gz left on disk" 0 "$(find "$WORK/run/out" -name '*.nq.gz' | wc -l)"
 assert_eq "…nor any downloaded .rete"   0 "$(find "$WORK/run/dl" -name '*.rete' | wc -l)"
 # The reports are evidence, not debris, and must survive the cleanup.
-assert_eq "the sanitizer reports are kept" 4 "$(find "$WORK/run/out" -name '*.iri.txt' | wc -l)"
+assert_eq "the sanitizer reports are kept" 5 "$(find "$WORK/run/out" -name '*.iri.txt' | wc -l)"
 if [ -n "$(col clean 15)" ] && [ -n "$(col clean 16)" ]; then
   pass "peak RSS and wall time were measured [rss_mb=$(col clean 15) secs=$(col clean 16)]"
 else

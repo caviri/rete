@@ -95,6 +95,183 @@ pub(crate) fn canonical_term(term: &str) -> String {
     }
 }
 
+/// Which **surface** the text writers spell a quoted triple in.
+///
+/// rete stores exactly one canonical token for a quoted triple, the RDF-star
+/// surface `<<s p o>>`, and [`rete_core::ingest::take_term`] accepts *both*
+/// surfaces on ingest and canonicalises them to it. That is a storage decision
+/// and it does not change here. This is a **writer** decision: which of the two
+/// spellings a dump carries.
+///
+/// Both are first-class. They differ in who can read the result:
+///
+/// * [`Rdf12`](Self::Rdf12) — `<<( s p o )>>`, the ratified RDF 1.2 triple
+///   term. What `oxttl` 0.2 and every parser built on it reads, including the
+///   pinned `oxigraph` CLI that is the scholar export driver's independent
+///   referee. **The default**, because a dump nothing current can parse is not
+///   an interchange format.
+/// * [`RdfStar`](Self::RdfStar) — `<<s p o>>`, the RDF-star community-group
+///   surface, which is also rete's storage token and what `oxrdf` 0.2 /
+///   `oxttl` 0.1 — the versions rete itself links — read. Choose it for a
+///   consumer on that generation of the stack, or to diff a dump against the
+///   dictionary term for term.
+///
+/// rete re-ingests either one losslessly, so the round trip is safe both ways.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum QuotedTripleSyntax {
+    /// `<<( s p o )>>` — RDF 1.2 triple terms.
+    Rdf12,
+    /// `<<s p o>>` — the RDF-star surface, identical to the stored token.
+    RdfStar,
+}
+
+impl QuotedTripleSyntax {
+    /// Parse the `--quoted-triple-syntax` value. Clap validates the spelling
+    /// first; this keeps the mapping in one place next to the enum.
+    pub(crate) fn parse(s: &str) -> anyhow::Result<Self> {
+        match s {
+            "rdf12" => Ok(Self::Rdf12),
+            "rdf-star" => Ok(Self::RdfStar),
+            other => anyhow::bail!(
+                "unknown --quoted-triple-syntax: {other} (expected `rdf12` or `rdf-star`)"
+            ),
+        }
+    }
+}
+
+/// Spell one statement's **object** in `syntax`, or say why RDF 1.2 cannot.
+///
+/// Only the object can change: RDF 1.2 places a triple term in *object position
+/// only*, so a quoted triple anywhere else is not a term to rewrite but a
+/// statement with no RDF 1.2 spelling. The grammar is
+///
+/// ```text
+/// object      ::= iri | BlankNode | literal | tripleTerm
+/// tripleTerm  ::= '<<(' ttSubject predicate ttObject ')>>'
+/// ttSubject   ::= iri | BlankNode
+/// ttObject    ::= iri | BlankNode | literal | tripleTerm
+/// ```
+///
+/// — verified against the pinned `oxigraph` 0.5.11 (`oxttl` 0.2), which rejects
+/// a triple term in the subject slot at either level with "The subject of a
+/// triple must be an IRI or a blank node".
+///
+/// The refusal is deliberate. Writing such a statement in the `<<(…)>>` spelling
+/// anyway would produce a dump the required parse check rejects — the exact bug
+/// this flag exists to fix — and spelling it as RDF 1.2 Turtle's *reified
+/// triple* `<< s p o >>` would change the graph, since that denotes a reifier
+/// resource and expands to two statements with a blank node.
+pub(crate) fn object_surface<'a>(
+    syntax: QuotedTripleSyntax,
+    s: &str,
+    p: &str,
+    o: &'a str,
+) -> anyhow::Result<std::borrow::Cow<'a, str>> {
+    use rete_core::terms::is_quoted_triple;
+    if syntax == QuotedTripleSyntax::RdfStar {
+        return Ok(std::borrow::Cow::Borrowed(o));
+    }
+    if is_quoted_triple(s) || is_quoted_triple(p) {
+        let slot = if is_quoted_triple(s) {
+            "subject"
+        } else {
+            "predicate"
+        };
+        anyhow::bail!(
+            "this graph has a quoted triple in the {slot} position of a statement, and RDF 1.2 \
+             has no syntax for one there: a triple term may stand in OBJECT position only \
+             (`ttSubject ::= iri | BlankNode`).\n\
+             statement: {s} {p} {o} .\n\
+             hint: `--quoted-triple-syntax rdf-star` writes the RDF-star surface `<<s p o>>`, \
+             which rete re-ingests losslessly — but current RDF 1.2 parsers reject it in \
+             N-Quads and read it as a reifier (a different graph) in Turtle/TriG."
+        );
+    }
+    rete_core::terms::rdf12_triple_term(o).ok_or_else(|| {
+        anyhow::anyhow!(
+            "this graph has a quoted triple nested in the SUBJECT of another quoted triple, and \
+             RDF 1.2 has no syntax for one there: `ttSubject ::= iri | BlankNode`.\n\
+             statement: {s} {p} {o} .\n\
+             hint: `--quoted-triple-syntax rdf-star` writes the RDF-star surface `<<s p o>>`, \
+             which rete re-ingests losslessly — but current RDF 1.2 parsers reject it."
+        )
+    })
+}
+
+/// The quoted-triple surface decision for one export, plus the latch a refusal
+/// lands in.
+///
+/// Both streaming writers run inside a `dump_filtered_each` callback that cannot
+/// fail the scan, so a statement RDF 1.2 has no spelling for is parked here the
+/// same way a write error is parked in `err` — the first one latches and the
+/// dump stops rather than finishing a file whose whole point is that a parser
+/// accepts it.
+pub(crate) struct Respell {
+    syntax: QuotedTripleSyntax,
+    /// False when the file's header says it holds no quoted triple at all, or
+    /// when the RDF-star surface was asked for. The check is then skipped
+    /// entirely and the dump is byte-for-byte what it was before this flag
+    /// existed — the standing guarantee of #245–#252.
+    active: bool,
+    refused: Option<anyhow::Error>,
+    /// How many objects were actually respelled, so a note can be printed only
+    /// when one was — the header bit is file-wide, but a single graph may hold
+    /// none.
+    rewrote: u64,
+}
+
+impl Respell {
+    pub(crate) fn new(syntax: QuotedTripleSyntax, header_has_quoted_triples: bool) -> Self {
+        Self {
+            syntax,
+            active: syntax == QuotedTripleSyntax::Rdf12 && header_has_quoted_triples,
+            refused: None,
+            rewrote: 0,
+        }
+    }
+
+    /// How many triple terms this export wrote in the RDF 1.2 surface.
+    pub(crate) fn rewrote(&self) -> u64 {
+        self.rewrote
+    }
+
+    /// The object token as it should be written, or `None` once a refusal has
+    /// latched (including this call's own).
+    pub(crate) fn object<'a>(
+        &mut self,
+        s: &str,
+        p: &str,
+        o: &'a str,
+    ) -> Option<std::borrow::Cow<'a, str>> {
+        if !self.active {
+            return Some(std::borrow::Cow::Borrowed(o));
+        }
+        if self.refused.is_some() {
+            return None;
+        }
+        match object_surface(self.syntax, s, p, o) {
+            Ok(o) => {
+                if matches!(o, std::borrow::Cow::Owned(_)) {
+                    self.rewrote += 1;
+                }
+                Some(o)
+            }
+            Err(e) => {
+                self.refused = Some(e);
+                None
+            }
+        }
+    }
+
+    /// Fail the export if a statement was refused. Called between graph slots
+    /// and once at the end, like `std::mem::replace(&mut err, Ok(()))?`.
+    pub(crate) fn check(&mut self) -> anyhow::Result<()> {
+        match self.refused.take() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+}
 /// Everything `rete export` takes that is not *which* statements to write.
 ///
 /// A struct rather than six more positional parameters. The flag list is
@@ -115,6 +292,9 @@ pub(crate) struct ExportOptions<'a> {
     pub in_memory: bool,
     /// Cap on the reader's caches, in MiB; `Some(0)` means unlimited.
     pub memory_budget_mb: Option<u64>,
+    /// Which surface the text writers spell a quoted triple in:
+    /// `rdf12` (default) or `rdf-star`. See [`QuotedTripleSyntax`].
+    pub quoted_triple_syntax: &'a str,
 }
 
 /// `rete export <file> --format <fmt>`: write the graph — or a filtered slice of
@@ -138,11 +318,13 @@ pub(crate) fn export(
         compress_level,
         in_memory,
         memory_budget_mb,
+        quoted_triple_syntax,
     } = opts;
     // Validate the codec and level BEFORE opening the file, so a typo costs a
     // moment rather than an hour of scanning followed by a usage error.
     let codec = Codec::parse(compress_with)?;
     let level = compress::check_level(codec, compress_level)?;
+    let qts = QuotedTripleSyntax::parse(quoted_triple_syntax)?;
     if format == "hdt" && codec != Codec::None {
         // HDT exists to be queried in place: a reader memory-maps it and answers
         // patterns against the mapped bytes without decoding anything. Wrapping
@@ -195,6 +377,11 @@ pub(crate) fn export(
     // every graph slot. `None` when the flag is off: the terms then take the
     // zero-cost `Cow::Borrowed` path and the export is byte-identical to before.
     let mut iris = sanitize_iris.then(rete_core::iri::IriReport::default);
+    // Whether any term has to be respelled at all. The header carries one bit
+    // that says whether the file holds a single quoted triple, so a file that
+    // holds none skips the check entirely and its dump is byte-for-byte what it
+    // was before this flag existed — the standing guarantee of #245–#252.
+    let mut respell = Respell::new(qts, rete.header().has_quoted_triples());
     match format {
         // N-Quads: lossless dump of the selected graph(s).
         // Streamed (dump_filtered_each) so a 100M+ triple file serializes in
@@ -216,6 +403,9 @@ pub(crate) fn export(
                             return;
                         }
                         let (s, p, o) = clean(&mut iris, s, p, o);
+                        let Some(o) = respell.object(&s, &p, &o) else {
+                            return;
+                        };
                         err = writeln!(out, "{s} {p} {o} .");
                     }),
                     Some(g) => {
@@ -232,6 +422,9 @@ pub(crate) fn export(
                                 return;
                             }
                             let (s, p, o) = clean(&mut iris, s, p, o);
+                            let Some(o) = respell.object(&s, &p, &o) else {
+                                return;
+                            };
                             err = writeln!(out, "{s} {p} {o} {label} .");
                         });
                         // This slot is done: drop the graph's decoded index so a
@@ -242,6 +435,7 @@ pub(crate) fn export(
                     }
                 }
                 std::mem::replace(&mut err, Ok(()))?;
+                respell.check()?;
             }
             // `close` writes the codec's trailer and returns its error. Dropping
             // the sink instead would emit a truncated frame that only fails at
@@ -301,9 +495,40 @@ pub(crate) fn export(
             // syntax under a `.ttl` name.
             let wrap = format == "trig";
             match write_turtle_stream(
-                &mut rete, &slots, table, grouping, s, p, o, &mut iris, wrap, codec, level,
+                &mut rete,
+                &slots,
+                table,
+                grouping,
+                s,
+                p,
+                o,
+                &mut iris,
+                &mut respell,
+                wrap,
+                codec,
+                level,
             ) {
-                Ok(()) => {}
+                // A refusal latched inside the callback: it cannot fail the
+                // scan, so the writer returns Ok and the latch is what says the
+                // dump is incomplete.
+                Ok(()) => {
+                    respell.check()?;
+                    // rete's own Turtle/TriG *ingest* is oxttl 0.1, which reads
+                    // the RDF-star surface only — `rete build` on this dump
+                    // would fail on the triple terms it just wrote. N-Quads has
+                    // no such gap (that path is rete's own tokenizer, which
+                    // takes both surfaces), so the note is specific to these
+                    // two formats and to a dump that actually contains one.
+                    if respell.rewrote() > 0 {
+                        eprintln!(
+                            "note: wrote {} RDF 1.2 triple term(s) `<<( s p o )>>`. rete's own \
+                             Turtle/TriG reader takes the RDF-star surface only, so use \
+                             `--quoted-triple-syntax rdf-star` for a dump you will `rete build` \
+                             again, or `--format nq`, which round-trips in either surface.",
+                            respell.rewrote()
+                        );
+                    }
+                }
                 // A closed downstream pipe is how `rete export … | head` ends,
                 // not a failure. The nq arm reaches the same outcome by
                 // discarding every write error; this one propagates them, so it
@@ -324,6 +549,7 @@ pub(crate) fn export(
                 None => rete_core::DEFAULT_EXPORT_BUDGET_MB.saturating_mul(1 << 20),
             };
             // Refuse BEFORE any work, from counts the header already carries.
+            refuse_quoted_triples(&rete, "HDT")?;
             let budget = crate::commands::hdt::check_limits(&rete, limit)?;
             let g = select_single_graph(&rete, filter, "HDT")?;
             eprintln!(
@@ -354,6 +580,7 @@ pub(crate) fn export(
         // encoder. It keeps the eager path, and the same single-graph ladder as
         // Turtle so `--graph` behaves identically across the two.
         "jsonld" => {
+            refuse_quoted_triples(&rete, "expanded JSON-LD")?;
             let g = select_single_graph(&rete, filter, "JSON-LD")?;
             let mut triples = rete.query_in_graph(g.as_deref(), s, p, o);
             if let Some(report) = iris.as_mut() {
@@ -387,6 +614,33 @@ pub(crate) fn export(
     Ok(())
 }
 
+/// Refuse a binary/JSON serialization that has no term kind for a quoted triple.
+///
+/// HDT and expanded JSON-LD both predate RDF-star and RDF 1.2 and have no
+/// concept of a triple term. Neither noticed: HDT interned
+/// `<<<http://ex/s> <http://ex/p> <http://ex/o>>>` into its dictionary as an
+/// *IRI*, brackets stripped by the same rule that strips a real IRI's, so a
+/// consumer reads back `<http://ex/s> <http://ex/p> <http://ex/o>` as one IRI
+/// with spaces in it; JSON-LD wrote it as an `@id`. Both produced a file that
+/// looks fine and means nothing — measured, not assumed, on a 4-quad fixture.
+///
+/// The header's `FLAG_HAS_QUOTED_TRIPLES` answers this for the whole file
+/// without a scan, so the refusal lands before any work, like the other two HDT
+/// ceilings. It is file-wide rather than per-selected-graph for the same reason
+/// those are: the header is what can be read for free.
+fn refuse_quoted_triples(rete: &rete_core::Rete, format_label: &str) -> anyhow::Result<()> {
+    if !rete.header().has_quoted_triples() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "this file contains RDF-star quoted triples (header flag FLAG_HAS_QUOTED_TRIPLES), and \
+         {format_label} has no term kind for one.\n\
+         Written anyway, a quoted triple would be serialized as though it were an IRI — a file \
+         that loads cleanly and means something else.\n\
+         hint: `--format trig` (or `--format nq`) writes them as RDF 1.2 triple terms \
+         `<<( s p o )>>`; add `--quoted-triple-syntax rdf-star` for the `<<s p o>>` surface."
+    )
+}
 /// Sanitize one quad's three terms when the flag is on, or hand them straight
 /// back when it is off. Returned as owned `String`s only where a repair
 /// happened; `Cow` keeps the untouched (overwhelming) majority allocation-free.
@@ -434,6 +688,7 @@ fn write_turtle_stream(
     p: Option<&str>,
     o: Option<&str>,
     iris: &mut Option<rete_core::iri::IriReport>,
+    respell: &mut Respell,
     wrap_graphs: bool,
     codec: Codec,
     level: i32,
@@ -463,6 +718,9 @@ fn write_turtle_stream(
                         return;
                     }
                     let (s, p, o) = clean(iris, s, p, o);
+                    let Some(o) = respell.object(&s, &p, &o) else {
+                        return;
+                    };
                     err = w.write_triple(&s, &p, &o);
                 });
             }
@@ -483,6 +741,9 @@ fn write_turtle_stream(
                         return;
                     }
                     let (s, p, o) = clean(iris, s, p, o);
+                    let Some(o) = respell.object(&s, &p, &o) else {
+                        return;
+                    };
                     err = w.write_triple(&s, &p, &o);
                 });
                 if wrap_graphs {

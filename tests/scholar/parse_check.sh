@@ -87,6 +87,25 @@ mk repaired <<'EOF'
 <http://example.org/uchar/café> <http://example.org/p> <http://example.org/o> .
 EOF
 
+# QUOTED TRIPLES, in the surface the exporter now writes: the ratified RDF 1.2
+# triple term. This is the case the gate could not accept before — rete stored
+# and wrote `<<s p o>>` and the referee refused it, which #257 recorded as a
+# latent limitation because none of the 11 swept dumps had one. Object position,
+# nested, with a literal that carries `>` and `<<`.
+mk quoted <<'EOF'
+<http://example.org/jsmith> <http://example.org/recorded> <<( <http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Swallow> )>> .
+<http://example.org/meta> <http://example.org/about> <<( <http://example.org/a> <http://example.org/b> <<( <http://example.org/x> <http://example.org/y> <http://example.org/z> )>> )>> <http://example.org/g1> .
+_:b0 <http://example.org/attests> <<( _:b1 <http://example.org/label> "a > b, and a << inside"@en )>> .
+EOF
+
+# The SAME graph in the RDF-star surface, which the referee REFUSES. This is the
+# bug, pinned: it is why `--quoted-triple-syntax` defaults to `rdf12`, and it is
+# what would catch a regression that quietly reverted the writer — the positive
+# case above would keep passing if the exporter emitted nothing at all.
+mk quoted_star <<'EOF'
+<http://example.org/jsmith> <http://example.org/recorded> <<<http://example.org/occ1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Swallow>>> .
+EOF
+
 # THE REAL BUG (#255/#256). An IPv6 literal in the authority without the
 # brackets RFC 3986/3987 requires. rete's classifier had no class for it, read
 # zero, and the gate opened; an independent parser does not care what classes
@@ -251,8 +270,14 @@ if [ "$have_local" = "1" ]; then
   fi
 fi
 expect_pass "a --sanitize-iris dump is accepted"    "$TMP/repaired.nq.gz"
+expect_pass "a dump with RDF 1.2 triple terms is accepted" "$TMP/quoted.nq.gz"
 
 echo "== a dump that does not parse =="
+# Why `rete export --quoted-triple-syntax` defaults to `rdf12`: the surface rete
+# STORES is the one the referee will not read, so a dump written in it cannot be
+# published however clean its data is.
+expect_fail "the RDF-star surface \`<<s p o>>\` is REFUSED" \
+  "parse_check=fail.*must be an IRI, a blank node or a literal" "$TMP/quoted_star.nq.gz"
 # The driver surfaces the referee's own words, because "it failed" is not
 # actionable and the column and character are how the offending line is found.
 expect_fail "an unbracketed IPv6 authority is REFUSED" \

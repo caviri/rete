@@ -558,6 +558,43 @@ enum Command {
         /// is byte-identical at every budget — this only trades memory for time.
         #[arg(long = "memory-budget-mb")]
         memory_budget_mb: Option<u64>,
+        /// Which surface a **quoted triple** is written in (nq, ttl, trig):
+        /// `rdf12` (default) or `rdf-star`. Both are supported output surfaces
+        /// and rete re-ingests either losslessly; they differ in who else can
+        /// read the dump.
+        ///
+        /// * `rdf12` — `<<( s p o )>>`, the ratified RDF 1.2 **triple term**.
+        ///   This is what current parsers read: oxttl 0.2 and everything built
+        ///   on it, including the `oxigraph` CLI the scholar export driver uses
+        ///   as its independent referee. The default, because the alternative
+        ///   is a dump no current tool accepts.
+        /// * `rdf-star` — `<<s p o>>`, the RDF-star community-group surface,
+        ///   which is also the token rete stores. Read by the oxrdf 0.2 /
+        ///   oxttl 0.1 generation — the versions rete itself links — and by
+        ///   Jena and GraphDB's RDF-star modes. Choose it for a consumer on
+        ///   that stack, or to diff a dump against the dictionary term for
+        ///   term.
+        ///
+        /// Beware what the *other* surface does in each format: an RDF 1.2
+        /// parser **rejects** `<<s p o>>` in N-Quads, but in Turtle/TriG reads
+        /// it as a *reifier* — one statement silently becomes two, with a blank
+        /// node where the triple term was. An RDF-star parser rejects
+        /// `<<( s p o )>>` everywhere. Pick the one your consumer speaks.
+        ///
+        /// Files with no quoted triples are unaffected: the header says so in
+        /// one bit and the dump is byte-identical either way.
+        ///
+        /// RDF 1.2 places a triple term in **object position only**. A graph
+        /// with a quoted triple in subject position has no RDF 1.2 spelling, so
+        /// `rdf12` refuses it by name rather than writing a dump no parser
+        /// accepts; `rdf-star` writes it. `--format hdt` and `--format jsonld`
+        /// have no term kind for a quoted triple at all and refuse outright.
+        #[arg(
+            long = "quoted-triple-syntax",
+            value_parser = ["rdf12", "rdf-star"],
+            default_value = "rdf12"
+        )]
+        quoted_triple_syntax: String,
     },
     /// Rebuild a `.rete`'s pyramid in place, reading triples straight from the
     /// file (no `export | build` N-Quads round-trip). Use to add a schema
@@ -1302,6 +1339,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             compress_level,
             in_memory,
             memory_budget_mb,
+            quoted_triple_syntax,
         } => commands::export::export(
             &file,
             &format,
@@ -1320,6 +1358,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 compress_level,
                 in_memory,
                 memory_budget_mb,
+                quoted_triple_syntax: &quoted_triple_syntax,
             },
         ),
         Command::Repyramid {

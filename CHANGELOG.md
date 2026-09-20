@@ -5,7 +5,64 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dump with a quoted triple in it could not be loaded by anything current.**
+  rete stores a quoted triple as the RDF-star token `<<s p o>>` and the text
+  writers emitted it verbatim. Oxigraph 0.5.x — `oxrdf` 0.3 / `oxttl` 0.2, the
+  RDF 1.2 generation, and the pinned referee the scholar export driver requires
+  before it publishes anything — **rejects** that in N-Quads ("The object of a
+  triple must be an IRI, a blank node or a literal"), and a load is atomic, so
+  one such line costs the whole file. In Turtle and TriG it is worse and quieter:
+  an RDF 1.2 parser reads `<< s p o >>` as a **reifier**, expanding one statement
+  into two with a blank node where the triple term was, and the load succeeds.
+  A rete dump containing quoted triples was therefore unpublishable, recorded as
+  a latent limitation in #257 because none of the 11 swept datasets had one.
+
+  `rete export --format nq|ttl|trig` now writes the ratified **RDF 1.2 triple
+  term** `<<( s p o )>>`, nested terms included. This is a **writer** change:
+  the stored token, the `.rete` format, and the dictionary are untouched, so no
+  file needs rebuilding.
+
+- **`--format hdt` and `--format jsonld` wrote a quoted triple as though it were
+  an IRI.** HDT interned the whole `<<…>>` token into its dictionary with the
+  outer brackets stripped by the same rule that strips a real IRI's, so a
+  consumer read back an "IRI" containing spaces and angle brackets; JSON-LD
+  wrote it as an `@id`. Both produced a file that loads cleanly and means
+  something else. Neither format has a term kind for a triple term, so both now
+  **refuse**, from the header's `FLAG_HAS_QUOTED_TRIPLES` and before any work,
+  naming `--format trig`.
+
 ### Added
+
+- **`rete export --quoted-triple-syntax rdf12|rdf-star`.** Two supported output
+  surfaces for a quoted triple, not a format and a deprecation:
+
+  - `rdf12` (**the default**) — `<<( s p o )>>`, the ratified RDF 1.2 triple
+    term. Read by `oxttl` 0.2 and everything built on it, including the
+    `oxigraph` CLI, plus Jena 5.x and GraphDB 11.
+  - `rdf-star` — `<<s p o>>`, the RDF-star community-group surface, which is
+    also rete's storage token. Read by the `oxrdf` 0.2 / `oxttl` 0.1 generation
+    — the versions rete itself links — and by RDF-star mode in older stacks.
+
+  RDF 1.2 is the default because the alternative is a dump no current tool
+  accepts; nothing of value was being preserved by emitting it. rete's N-Quads
+  reader takes both surfaces and canonicalises them to one stored token, so
+  `rete → nq → rete` is the identity either way.
+
+  **A file with no quoted triples is byte-for-byte unchanged.** The header
+  records in one bit whether a file holds any, and when it does not the surface
+  check is skipped entirely — verified by sha256 across `nq`, `ttl` and `trig`
+  on real files of 2 MB, 134 MB and 801 MB, under both values of the flag.
+
+  Two edges, both enforced rather than documented. RDF 1.2 places a triple term
+  in **object position only** (`ttSubject ::= iri | BlankNode`), so a
+  subject-position quoted triple — legal RDF-star, legal rete — is refused by
+  name, pointing at `--quoted-triple-syntax rdf-star`, instead of being written
+  as something no parser accepts. And rete's own Turtle/TriG *reader* is
+  `oxttl` 0.1, which takes the RDF-star surface only, so a default TriG dump
+  carrying triple terms is readable by third-party parsers and not by
+  `rete build`; the export says so on stderr when it writes one.
 
 - **`rete export --format hdt`.** HDT is a compact binary RDF serialization whose
   point is that it stays **queryable without being decompressed**: a reader
