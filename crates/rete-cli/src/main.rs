@@ -455,8 +455,8 @@ enum Command {
     Export {
         /// Path to the `.rete` file.
         file: String,
-        /// Output format: nq | ttl | trig | jsonld.
-        #[arg(long, value_parser = ["nq", "ttl", "trig", "jsonld"], default_value = "nq")]
+        /// Output format: nq | ttl | trig | jsonld | hdt.
+        #[arg(long, value_parser = ["nq", "ttl", "trig", "jsonld", "hdt"], default_value = "nq")]
         format: String,
         /// Export ONE graph: a named-graph IRI, or the empty string for the
         /// default graph. Omit for the default graph plus every named graph.

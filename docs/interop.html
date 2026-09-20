@@ -662,6 +662,38 @@ rete export data.rete --format jsonld                     &gt; default-graph.jso
 <p><code>ttl</code> streams like <code>nq</code> and <code>trig</code>. <code>jsonld</code> does not — expanded JSON-LD is a
 single JSON array, so it is built in memory and is not the format for a file
 that does not fit in RAM.</p>
+<h3 id="hdt-queryable-without-decompressing">HDT: queryable without decompressing</h3>
+<pre><code class="language-sh">rete export data.rete --format hdt &gt; data.hdt
+</code></pre>
+<p>Everything else on this page is text that a store has to parse before it can
+answer anything. <a href="https://www.rdfhdt.org/">HDT</a> is the exception: a reader
+memory-maps the file and answers triple patterns against the mapped bytes.
+Opening the 1.39 GB reference file costs 50.7 MB of RSS and 0.31 s regardless of
+its size, and <code>hdtSearch</code>, <code>rdflib-hdt</code> and the Rust <code>hdt</code> crate all read it.</p>
+<p>It is worth being equally plain about what it costs:</p>
+<table><thead><tr><th></th><th></th></tr></thead><tbody>
+<tr><td>graphs</td><td><strong>triples only</strong> — one graph, chosen by the same ladder Turtle uses</td></tr>
+<tr><td>streaming</td><td><strong>no</strong> — the graph is built in memory, so there is a size ceiling</td></tr>
+<tr><td>ceiling</td><td>whichever binds first: the memory estimate, or 2^32 object ids</td></tr>
+<tr><td>compression</td><td>refused; it would remove the in-place property</td></tr>
+</tbody></table>
+<p>Both limits are <strong>enforced before any work starts</strong>, from counts in the file
+header, and the refusal names the real limit, this file's numbers and the way
+out. The object-id cap exists because the reference implementation truncates
+object ids to 32 bits when it builds its index — a file above it would load and
+then answer queries wrongly, so rete does not produce one.</p>
+<p><strong>It is also not the smallest, and that is worth being blunt about.</strong> On a
+1.5M-triple graph HDT is 14,217,647 bytes against <code>trig.zst</code>'s 4,296,486 — 3.3x
+larger, and larger than the source <code>.rete</code> as well. On 88M triples it is
+1,378,298,174 against 462,563,780, the same 3x. <strong>HDT is not the recommended
+archival or transfer format</strong>; <code>--format trig --compress zstd</code> wins on size and
+has no ceiling.</p>
+<p>What HDT buys is the other axis. <code>trig.zst</code> must be decompressed and parsed in
+full before it answers anything; HDT answers a triple pattern against the mapped
+file in ~50 MB of RSS. Choose it when something will <em>query</em> the file, not when
+it will be stored or moved.</p>
+<p>Above the ceiling, <code>--format trig --compress zstd</code> is the compact lossless
+option and has no such limit.</p>
 <h3 id="prefix-compression">Prefix compression</h3>
 <p><code>ttl</code> and <code>trig</code> abbreviate IRIs to QNames, which is where most of their size
 advantage over N-Quads comes from: the namespace is the repeated part of an IRI,

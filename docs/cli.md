@@ -297,7 +297,7 @@ section directory rather than read out of the card — see
 ### `rete graphs <file>`
 List the named-graph IRIs in a dataset (the default graph is unnamed).
 
-### `rete export <file> [--format nq|ttl|trig|jsonld] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--compress none|zstd|gzip] [--compress-level N] [--in-memory]`
+### `rete export <file> [--format nq|ttl|trig|jsonld|hdt] [--graph G] [--subject S] [--predicate P] [--object O] [--sanitize-iris] [--no-prefixes] [--compress none|zstd|gzip] [--compress-level N] [--in-memory]`
 Serialize the dataset, or a slice of it.
 
 Two formats keep every graph and are lossless round-trips:
@@ -311,6 +311,12 @@ Two carry no graph term and therefore serialize a **single graph**:
 
 - `ttl` — Turtle.
 - `jsonld` — expanded JSON-LD.
+
+And one is binary:
+
+- `hdt` — [HDT](https://www.rdfhdt.org/), a compact format that stays
+  **queryable without being decompressed**. See below; it is triples-only and it
+  has a size ceiling the text formats do not.
 
 `nq`, `ttl` and `trig` stream: peak memory follows `--memory-budget-mb` and the
 output is byte-identical at every budget. `jsonld` builds the whole document in
@@ -337,6 +343,66 @@ reports its choice on stderr:
 
 Graphs are never silently merged, and a non-empty selection is never silently
 dropped.
+
+**HDT (`--format hdt`).** A binary serialization whose point is that a reader
+memory-maps it and answers triple patterns against the mapped bytes. Opening the
+1.39 GB reference HDT costs 50.7 MB of RSS and 0.31 s, whatever the file's size —
+that is what a compressed text dump cannot do.
+
+```sh
+rete export data.rete --format hdt > data.hdt
+```
+
+Three limitations, all enforced rather than merely documented:
+
+- **Triples only.** HDT has no graph term, so it takes one graph by the same
+  ladder Turtle uses. The quad extension (HDTQ) is niche and poorly supported
+  and is not implemented.
+- **It cannot stream, and it has a size ceiling.** rete stores IRIs as
+  `<http://…>` and HDT stores them bare, which changes the dictionary's sort
+  order, so every term id has to be remapped and the triples re-sorted in the new
+  order. That needs the graph in memory. `rete export` estimates the cost from
+  the file header and **refuses before doing any work** if it exceeds
+  `--memory-budget-mb`, naming both numbers. Measured, the estimate is about 512
+  bytes per distinct term plus 16 per triple; an 88M-triple, 39.7M-term graph
+  needs roughly 14 GB.
+- **A second, independent cap: 2^32 object ids.** The reference implementation
+  truncates object dictionary ids to 32 bits while building its query index, so a
+  larger file would be written successfully and then answer queries *incorrectly*
+  on whoever's machine read it. Rather than document that trap, `rete export`
+  refuses to produce such a file at all.
+
+Which limit binds depends on the graph's shape: a sparse graph with a huge object
+vocabulary hits the id cap, a dense one hits memory.
+
+**HDT is not the format to archive or ship in, and the numbers say so.**
+Measured on a 1.5M-triple graph: HDT 14,217,647 bytes against `trig.zst`'s
+4,296,486 — HDT is **3.3x larger**, and larger than the source `.rete`
+(11,810,101) too. On the 88M-triple DBLP graph the ratio is the same: HDT
+1,378,298,174 against `trig.zst`'s 462,563,780, **3.0x larger**.
+
+So pick by what happens to the file next:
+
+| you want to… | use |
+| --- | --- |
+| store or ship it | `--format trig --compress zstd` — smallest, lossless, no ceiling |
+| feed a line-oriented pipeline | `--format nq` |
+| **query it in place** | `--format hdt` |
+
+HDT earns its place on the last row only, and that advantage is real and
+measured: a reader memory-maps it and answers patterns in ~50 MB of RSS without
+decompressing anything, where `trig.zst` has to be decompressed and parsed in
+full before it can answer at all.
+
+Above either limit, use `--format trig --compress zstd` — lossless, compact, and
+with no ceiling.
+
+`--compress` is rejected with `--format hdt`: wrapping an in-place-queryable
+format in a codec removes the only property it has over a compressed text dump.
+
+The first object-bound query a reader runs will build and cache a `.index.v1-1`
+next to the file. That is normal, and safe for any file rete produces, because
+the object-id cap is enforced at export time.
 
 **Prefix compression (`ttl` and `trig`).** IRIs are abbreviated to QNames —
 `rdfs:label` rather than `<http://www.w3.org/2000/01/rdf-schema#label>` — which
