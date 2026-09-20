@@ -311,6 +311,13 @@ pub struct Signals {
     /// card document with no file behind it), never "the default".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permutations: Option<PermutationsSignal>,
+    /// Whether the file holds any **quoted triple**, and which export surfaces
+    /// a consumer can ask for. Like the two signals above, measured from the
+    /// file at read time and stripped before the card's bytes are written;
+    /// `None` means unknown (a card document with no file behind it), never
+    /// "no quoted triples". See [`QuotedTriplesSignal`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_triples: Option<QuotedTriplesSignal>,
 }
 
 impl Signals {
@@ -434,6 +441,95 @@ impl PermutationsSignal {
     }
 }
 
+/// The `--quoted-triple-syntax` value that writes the RDF 1.2 triple term
+/// `<<( s p o )>>`, and `rete export`'s **default**.
+///
+/// Named here, not only in the CLI's flag table, because the dataset card
+/// states which surfaces a consumer can ask for — and a card that says `rdf12`
+/// while the flag has been renamed would be worse than one that says nothing.
+pub const QUOTED_TRIPLE_SURFACE_RDF12: &str = "rdf12";
+
+/// The `--quoted-triple-syntax` value that writes the RDF-star surface
+/// `<<s p o>>`, which is also the token rete stores.
+pub const QUOTED_TRIPLE_SURFACE_RDF_STAR: &str = "rdf-star";
+
+/// Whether the file contains **quoted triples** — statements standing inside
+/// other statements — and, if it does, what a consumer gets when they export it.
+///
+/// This is the question "will I meet triple terms in this dataset, and in which
+/// spelling?", which a consumer needs answered *before* they download a 50 GB
+/// file and run `rete export` on it. The two surfaces are not interchangeable
+/// downstream: an RDF 1.2 parser rejects `<<s p o>>` in N-Quads and silently
+/// reads it as a *reifier* in Turtle/TriG, and an RDF-star parser rejects
+/// `<<( s p o )>>` everywhere. Which one a dump carries decides whether it loads
+/// at all, so it belongs in the card rather than in the reader's memory of a CLI
+/// flag.
+///
+/// **Measured at read time from the header, never stored**, exactly like
+/// [`TextIndexSignal`] and [`PermutationsSignal`], and for the sharpest version
+/// of the same reason: header flag bit 2 (`FLAG_HAS_QUOTED_TRIPLES`) has been
+/// written by every build since quoted triples were supported, so this is an
+/// honest answer for **every file that already exists** — the 44 published
+/// datasets included — with no re-card and no rebuild. A stored copy would be
+/// `null` on all of them, which is worse than nothing: it would assert
+/// "unknown" about files whose own header knows.
+///
+/// `None` therefore means **unknown** — a card read out of a saved JSON
+/// document, with no file to measure — and never "no quoted triples".
+///
+/// There is deliberately **no count**. The header carries presence, not
+/// cardinality, and counting would mean decoding the dictionary — outside the
+/// CARD tier's budget (header + metadata, never the dictionary), and available
+/// only to files built after this existed, which is the failure mode above.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuotedTriplesSignal {
+    /// Does the file hold at least one quoted triple as a dictionary term?
+    pub present: bool,
+    /// The surfaces `rete export` can write them in, most interoperable first.
+    /// Empty when `present` is false: the question does not arise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub export_surfaces: Vec<String>,
+    /// Which of `export_surfaces` `rete export` writes with no flag. `None`
+    /// when `present` is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_default: Option<String>,
+}
+
+impl QuotedTriplesSignal {
+    /// Read it straight off the parsed header — flag bit 2, in the 1 KiB every
+    /// card read has already fetched. No range read of any kind.
+    pub fn probe(header: &Header) -> Self {
+        if !header.has_quoted_triples() {
+            return QuotedTriplesSignal {
+                present: false,
+                export_surfaces: Vec::new(),
+                export_default: None,
+            };
+        }
+        QuotedTriplesSignal {
+            present: true,
+            export_surfaces: vec![
+                QUOTED_TRIPLE_SURFACE_RDF12.to_string(),
+                QUOTED_TRIPLE_SURFACE_RDF_STAR.to_string(),
+            ],
+            export_default: Some(QUOTED_TRIPLE_SURFACE_RDF12.to_string()),
+        }
+    }
+
+    /// One line for the human catalog view, or `None` when there is nothing to
+    /// say — most datasets have no quoted triples, and a card should not grow a
+    /// line per affordance they do not use.
+    pub fn describe(&self) -> Option<String> {
+        if !self.present {
+            return None;
+        }
+        Some(format!(
+            "present — `rete export` writes RDF 1.2 triple terms `<<( s p o )>>` \
+             by default; `--quoted-triple-syntax {QUOTED_TRIPLE_SURFACE_RDF_STAR}` \
+             writes `<<s p o>>`"
+        ))
+    }
+}
 impl TextIndexSignal {
     /// Measure the signal from a file's header, through the same
     /// [`crate::RangeReader`] the card was read with. Costs nothing beyond
@@ -672,12 +768,16 @@ impl DatasetCard {
     /// the intent. (`CardInput` has no `signals` field and rejects unknown keys,
     /// so a hand-written card file cannot set it either.)
     pub fn to_json_bytes(&self) -> Vec<u8> {
-        if self.signals.text_index.is_none() && self.signals.permutations.is_none() {
+        if self.signals.text_index.is_none()
+            && self.signals.permutations.is_none()
+            && self.signals.quoted_triples.is_none()
+        {
             return serde_json::to_vec(self).expect("DatasetCard serializes");
         }
         let mut stored = self.clone();
         stored.signals.text_index = None;
         stored.signals.permutations = None;
+        stored.signals.quoted_triples = None;
         serde_json::to_vec(&stored).expect("DatasetCard serializes")
     }
 
@@ -700,6 +800,17 @@ impl DatasetCard {
         measured: PermutationsSignal,
     ) -> Option<PermutationsSignal> {
         self.signals.permutations.replace(measured)
+    }
+
+    /// Attach the read-time [`QuotedTriplesSignal`]. Same contract as
+    /// [`observe_permutations`](Self::observe_permutations): the writers strip
+    /// it and `CardInput` cannot author it, so a `Some(_)` return is a card
+    /// whose bytes claimed something about the file's own header.
+    pub fn observe_quoted_triples(
+        &mut self,
+        measured: QuotedTriplesSignal,
+    ) -> Option<QuotedTriplesSignal> {
+        self.signals.quoted_triples.replace(measured)
     }
 
     /// Parse a card from the metadata-section bytes.
@@ -1076,9 +1187,10 @@ pub fn derive_card_from(
         spatial_bbox,
         // Measured by the READER from the file's header/section directory,
         // never derived from the triples and never written — see
-        // `TextIndexSignal` and `PermutationsSignal`.
+        // `TextIndexSignal`, `PermutationsSignal` and `QuotedTriplesSignal`.
         text_index: None,
         permutations: None,
+        quoted_triples: None,
     };
 
     let mut card = DatasetCard {
@@ -1530,6 +1642,137 @@ mod tests {
         assert!(!absent.contains("text_index"), "{absent}");
     }
 
+    /// The whole point of deriving this from the header rather than storing it:
+    /// it is an honest answer for a file built long before the signal existed.
+    /// `FLAG_HAS_QUOTED_TRIPLES` has been written by every build since quoted
+    /// triples were supported, so the 44 published datasets answer it today,
+    /// with no re-card and no rebuild — and a file with none says `false`, not
+    /// "unknown".
+    #[test]
+    fn the_quoted_triple_signal_is_derived_from_the_header() {
+        let plain = vec![
+            q("<http://ex/a>", "<http://ex/p>", "<http://ex/b>"),
+            q("<http://ex/b>", "<http://ex/p>", "<http://ex/c>"),
+        ];
+        let quoted = vec![
+            q("<http://ex/a>", "<http://ex/p>", "<http://ex/b>"),
+            q(
+                "<http://ex/claim>",
+                "<http://ex/states>",
+                "<<<http://ex/a> <http://ex/p> <http://ex/b>>>",
+            ),
+        ];
+        let (no, _) = crate::ingest::assemble_dataset(plain, &[]);
+        let (yes, _) = crate::ingest::assemble_dataset(quoted, &[]);
+
+        let hn = crate::Header::from_bytes(&no).unwrap();
+        let hy = crate::Header::from_bytes(&yes).unwrap();
+        assert!(!hn.has_quoted_triples());
+        assert!(hy.has_quoted_triples());
+
+        let sn = QuotedTriplesSignal::probe(&hn);
+        let sy = QuotedTriplesSignal::probe(&hy);
+        assert!(!sn.present);
+        assert!(sy.present);
+
+        // A file with none says nothing in the human view — most datasets have
+        // none and a line per unused affordance is noise.
+        assert_eq!(sn.describe(), None);
+        // One that has them says which surfaces are on offer, and which is the
+        // default, so the card answers "what will I get if I export this?"
+        // without the reader consulting the CLI docs.
+        let line = sy.describe().expect("a file with quoted triples says so");
+        assert!(line.contains("<<( s p o )>>"), "{line}");
+        assert!(line.contains(QUOTED_TRIPLE_SURFACE_RDF_STAR), "{line}");
+        assert_eq!(
+            sy.export_surfaces,
+            vec![QUOTED_TRIPLE_SURFACE_RDF12, QUOTED_TRIPLE_SURFACE_RDF_STAR]
+        );
+        assert_eq!(
+            sy.export_default.as_deref(),
+            Some(QUOTED_TRIPLE_SURFACE_RDF12)
+        );
+        // Nothing to offer when there is nothing to export.
+        assert!(sn.export_surfaces.is_empty());
+        assert_eq!(sn.export_default, None);
+    }
+
+    /// Measured at read time, never written — the same contract as
+    /// `text_index` and `permutations`, and for the sharper reason: a stored
+    /// copy would be a claim about the file's own header, which the header
+    /// answers for free.
+    #[test]
+    fn the_quoted_triple_signal_is_stripped_from_the_stored_card() {
+        let measured = QuotedTriplesSignal {
+            present: true,
+            export_surfaces: vec![
+                QUOTED_TRIPLE_SURFACE_RDF12.to_string(),
+                QUOTED_TRIPLE_SURFACE_RDF_STAR.to_string(),
+            ],
+            export_default: Some(QUOTED_TRIPLE_SURFACE_RDF12.to_string()),
+        };
+        let mut card = DatasetCard {
+            title: Some("Annotated".into()),
+            triple_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(card.observe_quoted_triples(measured.clone()), None);
+        assert_eq!(card.signals.quoted_triples, Some(measured.clone()));
+
+        let bytes = card.to_json_bytes();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            !text.contains("quoted_triples"),
+            "the signal must not reach the metadata section: {text}"
+        );
+        let back = DatasetCard::from_json_bytes(&bytes).unwrap();
+        assert_eq!(back.title, card.title);
+        assert_eq!(back.signals.quoted_triples, None);
+        // Stripping is not mutation.
+        assert_eq!(card.signals.quoted_triples, Some(measured));
+
+        // And a hand-written card file cannot author it: `CardInput` has no
+        // `signals` field and rejects unknown keys.
+        let authored = r#"{"title":"x","signals":{"quoted_triples":{"present":true}}}"#;
+        assert!(
+            serde_json::from_str::<CardInput>(authored).is_err(),
+            "a hand-written card must not be able to assert a quoted-triple set"
+        );
+    }
+
+    /// It survives the card's own JSON envelope — what `rete card --json`, the
+    /// wasm reader and `card-audit`'s document input all speak — even though it
+    /// never reaches the file. A measured negative is `{"present":false}`,
+    /// which is NOT the same as the field being absent.
+    #[test]
+    fn the_quoted_triple_signal_round_trips_through_a_card_document() {
+        let mut card = DatasetCard {
+            title: Some("Annotated".into()),
+            ..Default::default()
+        };
+        card.observe_quoted_triples(QuotedTriplesSignal {
+            present: true,
+            export_surfaces: vec![QUOTED_TRIPLE_SURFACE_RDF12.to_string()],
+            export_default: Some(QUOTED_TRIPLE_SURFACE_RDF12.to_string()),
+        });
+        let doc = serde_json::to_vec(&card).unwrap();
+        let back: DatasetCard = serde_json::from_slice(&doc).unwrap();
+        assert_eq!(back.signals.quoted_triples, card.signals.quoted_triples);
+
+        let mut none = DatasetCard::default();
+        none.observe_quoted_triples(QuotedTriplesSignal {
+            present: false,
+            export_surfaces: Vec::new(),
+            export_default: None,
+        });
+        let text = serde_json::to_string(&none).unwrap();
+        assert!(
+            text.contains(r#""quoted_triples":{"present":false}"#),
+            "{text}"
+        );
+        let absent = serde_json::to_string(&DatasetCard::default()).unwrap();
+        assert!(!absent.contains("quoted_triples"), "{absent}");
+    }
     #[test]
     fn split_namespace_handles_hash_slash_and_neither() {
         assert_eq!(

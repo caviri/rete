@@ -105,6 +105,7 @@ newlines.
 | `signals` | derived | Detected **affordances**: `label_predicate`, `base_iri`, `default_lang`, ranked `time_predicates` / `numeric_predicates`, present `link_predicates`, `geo_wkt` / `geo_latlong`, `temporal_extent`, `spatial_bbox` (CRS84 lon/lat). |
 | `signals.text_index` | **measured** | Whether the file carries a **full-text (TEXT_INDEX) section** — `{present, bytes, token_table_bytes}`. Derived from the file's *sections* rather than its triples, and never written into the file. See [The full-text signal](#the-full-text-signal-measured-not-stored). |
 | `signals.permutations` | **measured** | Which **index permutations** the file stores — `{count, names, merge_join}`. Also derived, from the header's permutation mask, and also never written. See [The permutation signal](#the-permutation-signal-measured-not-stored). |
+| `signals.quoted_triples` | **measured** | Whether the dataset holds **quoted triples**, and which surfaces an export can write them in — `{present, export_surfaces, export_default}`. Derived from header flag bit 2, and also never written. See [The quoted-triple signal](#the-quoted-triple-signal-measured-not-stored). |
 | `queries` | derived | The auto-generated, **tiered starter-query library** (see below). |
 | `truncated` | derived | `true` iff any capped list was actually cut (the profile is partial). |
 | `top_n` | derived | The cap the profile lists were derived under — the number `truncated` was hinting at without stating. |
@@ -219,6 +220,61 @@ and a future build may keep a different three.
 
 Beyond the card, `rete info` and `rete stats` report it directly, so a file with
 no card still answers the question.
+
+### The quoted-triple signal: measured, not stored
+
+A **quoted triple** is a statement standing inside another statement — the
+natural home for provenance and annotation. Whether a dataset has any is not a
+detail a consumer can leave until after the download, because the two surfaces a
+dump can carry them in are **not interchangeable downstream**:
+
+| surface | what a *current* (RDF 1.2) parser does | what an RDF-star-era parser does |
+|---|---|---|
+| `<<( s p o )>>` (RDF 1.2 triple term) | reads it | rejects it |
+| `<<s p o>>` (RDF-star) | **rejects** it in N-Quads; in Turtle/TriG reads it as a **reifier** — one statement becomes two, and the load *succeeds* | reads it |
+
+So "does this graph have triple terms, and what will I get if I export it" is a
+question about whether the dump will load at all. The card answers it:
+
+```json
+"signals": {
+  "quoted_triples": {
+    "present": true,
+    "export_surfaces": ["rdf12", "rdf-star"],
+    "export_default": "rdf12"
+  }
+}
+"signals": { "quoted_triples": { "present": false } }
+```
+
+| value | means |
+|---|---|
+| `{"present": true, …}` | measured — the file holds quoted triples, and `rete export --quoted-triple-syntax` takes either listed value |
+| `{"present": false}` | measured — it holds none, so the question does not arise (no surfaces listed) |
+| **field absent** | **unknown** — nobody measured (a card read out of a saved JSON document). Never read this as "no". |
+
+In the human catalog view the line appears **only when there is something to
+say** — most datasets have no quoted triples, and a line per affordance they do
+not use is noise. The JSON and the JSON-LD carry the boolean either way, because
+a consumer branching on it needs the negative stated rather than inferred from a
+missing key. In the JSON-LD projection it is `rete:quotedTriples`, with
+`rete:quotedTripleExportSurfaces` and `rete:quotedTripleExportDefault` alongside
+when there is a choice to make.
+
+**Measured, never stored**, for the same reasons as the two signals above — and
+one that matters more here than anywhere else: header flag bit 2
+(`FLAG_HAS_QUOTED_TRIPLES`, [SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)) has been
+written by every build since quoted triples were supported, so this is an honest
+answer for **every file that already exists**. The 44 published scholar datasets
+report it today, with no re-card and no rebuild. A stored field would have read
+`null` on all of them — asserting "unknown" about files whose own header knows,
+which is worse than saying nothing.
+
+**There is deliberately no count.** The header carries presence, not
+cardinality. Counting would mean decoding the dictionary, which is outside the
+CARD tier's budget (header + metadata, never the dictionary) — and a count could
+only ever be written by builds newer than this signal, which is exactly the
+`null`-on-every-published-file failure above.
 
 ### Where to get `theme` IRIs
 

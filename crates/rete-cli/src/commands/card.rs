@@ -20,7 +20,7 @@ use rete_core::Header;
 // change if the core module is ever renamed.
 pub(crate) use rete_core::card::{
     curated_counts_card, derive_card, derive_card_encoded, CardInput, Coherence, DatasetCard,
-    ExampleQuery, PermutationsSignal, TextIndexSignal, Tier, CARD_TOP_N,
+    ExampleQuery, PermutationsSignal, QuotedTriplesSignal, TextIndexSignal, Tier, CARD_TOP_N,
 };
 
 /// `DatasetCard::from_json_bytes` in `anyhow` clothes. `rete-core`'s card
@@ -192,6 +192,10 @@ pub(crate) struct CardRead {
     /// CARD tier already holds, so it costs nothing and answers for a cardless
     /// file too.
     pub permutations: PermutationsSignal,
+    /// Whether the file holds quoted triples, and what an export of it will
+    /// spell them as. Header flag bit 2, so — like `permutations` — it is an
+    /// honest answer for every file already published, with no re-card.
+    pub quoted_triples: QuotedTriplesSignal,
 }
 
 /// Read the header, the card, **and** the build-info record in the CARD tier's
@@ -247,8 +251,10 @@ pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
         .and_then(|c| c.observe_text_index(text_index))
         .filter(|stored| *stored != text_index);
     let permutations = PermutationsSignal::probe(&header);
+    let quoted_triples = QuotedTriplesSignal::probe(&header);
     if let Some(c) = card.as_mut() {
         c.observe_permutations(permutations.clone());
+        c.observe_quoted_triples(quoted_triples.clone());
     }
     Ok(CardRead {
         header,
@@ -257,6 +263,7 @@ pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
         text_index,
         stored_text_index,
         permutations,
+        quoted_triples,
     })
 }
 
@@ -434,6 +441,13 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
         if let Some(p) = &s.permutations {
             let _ = writeln!(out, "      index      : {}", p.describe());
         }
+        // Only when there are any. Most datasets have none, and a line saying
+        // so on every card would be noise that buys nothing — the JSON and the
+        // JSON-LD carry the explicit boolean for a consumer that needs to
+        // branch on it.
+        if let Some(line) = s.quoted_triples.as_ref().and_then(|q| q.describe()) {
+            let _ = writeln!(out, "      quoted trip: {line}");
+        }
     }
     if !card.coherence.is_empty() {
         let c = &card.coherence;
@@ -573,9 +587,13 @@ pub(crate) fn card_cmd(
         // A cardless file can still answer the one question the header alone
         // decides — and staying silent about it is what #189 was about.
         None => println!(
-            "(no dataset card — {}; {})",
+            "(no dataset card — {}; {}{})",
             read.text_index.describe(),
-            read.permutations.describe()
+            read.permutations.describe(),
+            read.quoted_triples
+                .describe()
+                .map(|d| format!("; quoted triples {d}"))
+                .unwrap_or_default()
         ),
         Some(card) => print_card(
             card,

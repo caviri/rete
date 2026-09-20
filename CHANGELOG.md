@@ -35,6 +35,29 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The dataset card says whether a file holds quoted triples, and what an
+  export of it will write.** `signals.quoted_triples` —
+  `{present, export_surfaces, export_default}` — so a consumer can answer "will
+  I meet triple terms in this dataset, and in which spelling?" *before*
+  downloading it. The two surfaces are not interchangeable downstream, so that
+  question decides whether a dump loads at all.
+
+  **Measured from the header at read time, never stored**, like
+  `signals.text_index` and `signals.permutations`, and here that is the whole
+  design: `FLAG_HAS_QUOTED_TRIPLES` has been written by every build since quoted
+  triples were supported, so **every file that already exists answers it** — the
+  44 published scholar datasets included — with no re-card and no rebuild. A
+  stored field would have read `null` on all of them, asserting "unknown" about
+  a file whose own header knows.
+
+  The human card prints a line only when there is something to say; the JSON and
+  the JSON-LD (`rete:quotedTriples`, plus
+  `rete:quotedTripleExportSurfaces` / `rete:quotedTripleExportDefault`) carry the
+  explicit boolean either way, because a consumer branching on it needs the
+  negative stated rather than inferred from a missing key. No count: the header
+  carries presence, not cardinality, and counting means decoding the dictionary —
+  outside the CARD tier, and available only to files built after this existed.
+
 - **`rete export --quoted-triple-syntax rdf12|rdf-star`.** Two supported output
   surfaces for a quoted triple, not a format and a deprecation:
 

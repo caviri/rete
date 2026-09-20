@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "gitCommit": "29fcc00bf68985ab116e50e027e04cb4de1fe932",
+  "gitCommit": "183416a65c8a5bd6d482c409473f6c00a1c21faa",
   "buildStamp": "0.3.2",
   "toolchain": {
     "rust": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
@@ -12,23 +12,23 @@
   "artifacts": [
     {
       "path": "web/pkg/rete_wasm_bg.wasm",
-      "bytes": 3474581,
-      "sha256": "7caa7e40d03f6c4d6613c36700017b6bde74b0d9761f1cbf565cfa28c59ddefe"
+      "bytes": 3471356,
+      "sha256": "deb4d9c8badb159da4b0b11fd575d58706365d467a5cf0626dbc2f2f789ef7db"
     },
     {
       "path": "web/pkg-nomodules/rete_wasm_bg.wasm",
-      "bytes": 3474581,
-      "sha256": "7caa7e40d03f6c4d6613c36700017b6bde74b0d9761f1cbf565cfa28c59ddefe"
+      "bytes": 3471356,
+      "sha256": "deb4d9c8badb159da4b0b11fd575d58706365d467a5cf0626dbc2f2f789ef7db"
     },
     {
       "path": "web/pkg-nomodules-async/rete_wasm_bg.wasm",
-      "bytes": 11192383,
-      "sha256": "46a25aa1235e3449f84e527b0085d599d04c66e44eb321cad60bbf7a28c194f9"
+      "bytes": 11232293,
+      "sha256": "f1633d535399e41ddbd1d0fbafd5c361de321168f165868f13d156397802a98c"
     },
     {
       "path": "docs/rete_wasm_async.wasm",
-      "bytes": 11192383,
-      "sha256": "46a25aa1235e3449f84e527b0085d599d04c66e44eb321cad60bbf7a28c194f9"
+      "bytes": 11232293,
+      "sha256": "f1633d535399e41ddbd1d0fbafd5c361de321168f165868f13d156397802a98c"
     }
   ]
 }

@@ -699,6 +699,7 @@ newlines.</p>
 <tr><td><code>signals</code></td><td>derived</td><td>Detected <strong>affordances</strong>: <code>label_predicate</code>, <code>base_iri</code>, <code>default_lang</code>, ranked <code>time_predicates</code> / <code>numeric_predicates</code>, present <code>link_predicates</code>, <code>geo_wkt</code> / <code>geo_latlong</code>, <code>temporal_extent</code>, <code>spatial_bbox</code> (CRS84 lon/lat).</td></tr>
 <tr><td><code>signals.text_index</code></td><td><strong>measured</strong></td><td>Whether the file carries a <strong>full-text (TEXT_INDEX) section</strong> — <code>{present, bytes, token_table_bytes}</code>. Derived from the file's <em>sections</em> rather than its triples, and never written into the file. See <a href="#the-full-text-signal-measured-not-stored">The full-text signal</a>.</td></tr>
 <tr><td><code>signals.permutations</code></td><td><strong>measured</strong></td><td>Which <strong>index permutations</strong> the file stores — <code>{count, names, merge_join}</code>. Also derived, from the header's permutation mask, and also never written. See <a href="#the-permutation-signal-measured-not-stored">The permutation signal</a>.</td></tr>
+<tr><td><code>signals.quoted_triples</code></td><td><strong>measured</strong></td><td>Whether the dataset holds <strong>quoted triples</strong>, and which surfaces an export can write them in — <code>{present, export_surfaces, export_default}</code>. Derived from header flag bit 2, and also never written. See <a href="#the-quoted-triple-signal-measured-not-stored">The quoted-triple signal</a>.</td></tr>
 <tr><td><code>queries</code></td><td>derived</td><td>The auto-generated, <strong>tiered starter-query library</strong> (see below).</td></tr>
 <tr><td><code>truncated</code></td><td>derived</td><td><code>true</code> iff any capped list was actually cut (the profile is partial).</td></tr>
 <tr><td><code>top_n</code></td><td>derived</td><td>The cap the profile lists were derived under — the number <code>truncated</code> was hinting at without stating.</td></tr>
@@ -794,6 +795,51 @@ measurement costs <strong>no range read at all</strong>: the header is already i
 and a future build may keep a different three.</p>
 <p>Beyond the card, <code>rete info</code> and <code>rete stats</code> report it directly, so a file with
 no card still answers the question.</p>
+<h3 id="the-quoted-triple-signal-measured-not-stored">The quoted-triple signal: measured, not stored</h3>
+<p>A <strong>quoted triple</strong> is a statement standing inside another statement — the
+natural home for provenance and annotation. Whether a dataset has any is not a
+detail a consumer can leave until after the download, because the two surfaces a
+dump can carry them in are <strong>not interchangeable downstream</strong>:</p>
+<table><thead><tr><th>surface</th><th>what a <em>current</em> (RDF 1.2) parser does</th><th>what an RDF-star-era parser does</th></tr></thead><tbody>
+<tr><td><code>&lt;&lt;( s p o )&gt;&gt;</code> (RDF 1.2 triple term)</td><td>reads it</td><td>rejects it</td></tr>
+<tr><td><code>&lt;&lt;s p o&gt;&gt;</code> (RDF-star)</td><td><strong>rejects</strong> it in N-Quads; in Turtle/TriG reads it as a <strong>reifier</strong> — one statement becomes two, and the load <em>succeeds</em></td><td>reads it</td></tr>
+</tbody></table>
+<p>So "does this graph have triple terms, and what will I get if I export it" is a
+question about whether the dump will load at all. The card answers it:</p>
+<pre><code class="language-json">"signals": {
+  "quoted_triples": {
+    "present": true,
+    "export_surfaces": ["rdf12", "rdf-star"],
+    "export_default": "rdf12"
+  }
+}
+"signals": { "quoted_triples": { "present": false } }
+</code></pre>
+<table><thead><tr><th>value</th><th>means</th></tr></thead><tbody>
+<tr><td><code>{"present": true, …}</code></td><td>measured — the file holds quoted triples, and <code>rete export --quoted-triple-syntax</code> takes either listed value</td></tr>
+<tr><td><code>{"present": false}</code></td><td>measured — it holds none, so the question does not arise (no surfaces listed)</td></tr>
+<tr><td><strong>field absent</strong></td><td><strong>unknown</strong> — nobody measured (a card read out of a saved JSON document). Never read this as "no".</td></tr>
+</tbody></table>
+<p>In the human catalog view the line appears <strong>only when there is something to
+say</strong> — most datasets have no quoted triples, and a line per affordance they do
+not use is noise. The JSON and the JSON-LD carry the boolean either way, because
+a consumer branching on it needs the negative stated rather than inferred from a
+missing key. In the JSON-LD projection it is <code>rete:quotedTriples</code>, with
+<code>rete:quotedTripleExportSurfaces</code> and <code>rete:quotedTripleExportDefault</code> alongside
+when there is a choice to make.</p>
+<p><strong>Measured, never stored</strong>, for the same reasons as the two signals above — and
+one that matters more here than anywhere else: header flag bit 2
+(<code>FLAG_HAS_QUOTED_TRIPLES</code>, <a href="SPEC.html#41-header-1024-bytes-little-endian">SPEC §4.1</a>) has been
+written by every build since quoted triples were supported, so this is an honest
+answer for <strong>every file that already exists</strong>. The 44 published scholar datasets
+report it today, with no re-card and no rebuild. A stored field would have read
+<code>null</code> on all of them — asserting "unknown" about files whose own header knows,
+which is worse than saying nothing.</p>
+<p><strong>There is deliberately no count.</strong> The header carries presence, not
+cardinality. Counting would mean decoding the dictionary, which is outside the
+CARD tier's budget (header + metadata, never the dictionary) — and a count could
+only ever be written by builds newer than this signal, which is exactly the
+<code>null</code>-on-every-published-file failure above.</p>
 <h3 id="where-to-get-theme-iris">Where to get <code>theme</code> IRIs</h3>
 <p><code>theme</code> rejects free text, which is only helpful if you know where an IRI
 comes from. Pick a <strong>published concept scheme</strong> and copy the concept's IRI —
