@@ -243,8 +243,9 @@ expect_pass "a clean dump is accepted"              "$TMP/clean.nq.gz"
 # claiming to test the image: inside the dev container there is no docker, so a
 # pass here can only have come from the binary in the image.
 if [ "$have_local" = "1" ]; then
+  via="${OUT##*via }"; via="${via%)}"
   if [ "${OUT#*via /}" != "$OUT" ] && [ "${OUT#*docker }" = "$OUT" ]; then
-    pass "…by the local binary, not a container [${OUT##*via }]"
+    pass "…by the local binary, not a container [$via]"
   else
     fail "…by the local binary, not a container" "$OUT"
   fi

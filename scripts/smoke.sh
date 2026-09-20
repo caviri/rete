@@ -76,18 +76,18 @@ ex:PersonShape a sh:NodeShape ;
 EOF
 
 echo "== build =="
-check "build .nt"  "5 triples"          -- $B build "$T/g.nt" -o "$T/g.rete"
-check "build .nq"  "quads"              -- $B build "$T/d.nq" -o "$T/d.rete"
+check "build .nt"  "5 triples"          -- "$B" build "$T/g.nt" -o "$T/g.rete"
+check "build .nq"  "quads"              -- "$B" build "$T/d.nq" -o "$T/d.rete"
 # Multiple inputs merge under one dictionary; `-` reads stdin (--format for it).
 printf '<http://ex/Z> <http://ex/p> <http://ex/W> .\n' > "$T/extra.nt"
-check "build merge" "triples"           -- $B build "$T/g.nt" "$T/extra.nt" -o "$T/merge.rete"
+check "build merge" "triples"           -- "$B" build "$T/g.nt" "$T/extra.nt" -o "$T/merge.rete"
 check "build stdin" "triples"           -- bash -c "cat '$T/g.nt' | $B build - --format nt -o '$T/stdin.rete'"
-check "merge has both" "Z"              -- $B query "$T/merge.rete" --subject "<http://ex/Z>"
+check "merge has both" "Z"              -- "$B" query "$T/merge.rete" --subject "<http://ex/Z>"
 
 echo "== validate =="
-check "validate ok"    "valid: 5"       -- $B validate "$T/g.nt"
+check "validate ok"    "valid: 5"       -- "$B" validate "$T/g.nt"
 check "validate bad"   "rror|parse"     -- bash -c "printf 'garbage <<<\n' > '$T/bad.nt'; $B validate '$T/bad.nt'; true"
-check "shacl ok"       '"conforms": true' -- $B shacl "$T/g.rete" --shapes "$T/person-ok.ttl" --format json
+check "shacl ok"       '"conforms": true' -- "$B" shacl "$T/g.rete" --shapes "$T/person-ok.ttl" --format json
 check "shacl bad"      "MinCountConstraintComponent" -- bash -c "$B shacl '$T/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
 
 echo "== release support =="
@@ -107,33 +107,33 @@ for artifact in rete.bash _rete rete.fish rete.ps1 rete.1; do
 done
 
 echo "== inspect =="
-check "info"       "magic|version|pyramid"        -- $B info "$T/g.rete"
-check "stats"      "triples|terms|predicate"      -- $B stats "$T/g.rete"
-check "verify ok"  "OK|matches"     -- $B verify "$T/g.rete"
-check "graphs"     "g1|g2"                          -- $B graphs "$T/d.rete"
+check "info"       "magic|version|pyramid"        -- "$B" info "$T/g.rete"
+check "stats"      "triples|terms|predicate"      -- "$B" stats "$T/g.rete"
+check "verify ok"  "OK|matches"     -- "$B" verify "$T/g.rete"
+check "graphs"     "g1|g2"                          -- "$B" graphs "$T/d.rete"
 
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
 check "card build"  "dataset card"                  -- bash -c "$B build '$T/g.nt' -o '$T/gc2.rete' --card 2>&1"
-check "card view"   "Dataset Card|class links|signals|starter queries" -- $B card "$T/gc.rete"
-check "card json"   '"format_version"'              -- $B card "$T/gc.rete" --json
-check "card json queries" '"queries"'               -- $B card "$T/gc.rete" --json
-check "card json tier"    '"tier"|"sparql"'         -- $B card "$T/gc.rete" --json
-check "card queries" "ov-triples|starter"           -- $B card "$T/gc.rete"
+check "card view"   "Dataset Card|class links|signals|starter queries" -- "$B" card "$T/gc.rete"
+check "card json"   '"format_version"'              -- "$B" card "$T/gc.rete" --json
+check "card json queries" '"queries"'               -- "$B" card "$T/gc.rete" --json
+check "card json tier"    '"tier"|"sparql"'         -- "$B" card "$T/gc.rete" --json
+check "card queries" "ov-triples|starter"           -- "$B" card "$T/gc.rete"
 # The audit, static and measured. `--measure` runs the shipped queries through
 # the same measurement the build used, so the figures it prints must agree with
 # the ones already inside the file ("= build record").
-check "card-audit"  "ov-triples"                    -- $B card-audit "$T/gc.rete"
-check "card-audit measure" "= build record"         -- $B card-audit "$T/gc.rete" --measure
-check "card-audit transport" "measured over: local file" -- $B card-audit "$T/gc.rete" --measure
-check "card-audit only"    "1 query run"            -- $B card-audit "$T/gc.rete" --measure --only ov-triples
+check "card-audit"  "ov-triples"                    -- "$B" card-audit "$T/gc.rete"
+check "card-audit measure" "= build record"         -- "$B" card-audit "$T/gc.rete" --measure
+check "card-audit transport" "measured over: local file" -- "$B" card-audit "$T/gc.rete" --measure
+check "card-audit only"    "1 query run"            -- "$B" card-audit "$T/gc.rete" --measure --only ov-triples
 # Writing the costs back keeps the file's identity: same content hash, still
 # verifies, and the costs read back from the CARD tier.
 cp "$T/gc.rete" "$T/gcw.rete"
 $B build "$T/g.nt" -o "$T/gcw.rete" --card --no-card-costs >/dev/null 2>&1
 check "card-audit write" "content hash unchanged" -- bash -c "$B card-audit '$T/gcw.rete' --measure --write-costs --allow-empty 2>&1"
-check "card-audit write verify" "OK|matches"      -- $B verify "$T/gcw.rete"
-check "card-audit write costs"  "query costs"     -- $B card "$T/gcw.rete"
+check "card-audit write verify" "OK|matches"      -- "$B" verify "$T/gcw.rete"
+check "card-audit write costs"  "query costs"     -- "$B" card "$T/gcw.rete"
 
 echo "== schema pyramid (semantic zoom) =="
 # A tiny subClassOf hierarchy: Astronomer ⊑ Scientist ⊑ Person, with instances.
@@ -147,45 +147,45 @@ cat > "$T/onto.nt" <<'ONTO'
 <http://ex/b> <http://ex/knows> <http://ex/c> .
 ONTO
 $B build "$T/onto.nt" -o "$T/onto.rete" >/dev/null 2>&1
-check "schema pyramid"  "schema pyramid|level"      -- $B summary "$T/onto.rete"
-check "level 0 abstract" "Person"                   -- $B summary "$T/onto.rete" --level 0
-check "level leaf"      "Astronomer"                -- $B summary "$T/onto.rete" --level 2
+check "schema pyramid"  "schema pyramid|level"      -- "$B" summary "$T/onto.rete"
+check "level 0 abstract" "Person"                   -- "$B" summary "$T/onto.rete" --level 0
+check "level leaf"      "Astronomer"                -- "$B" summary "$T/onto.rete" --level 2
 check "level out of range" "out of range|level"     -- bash -c "$B summary '$T/onto.rete' --level 99; true"
 
-check "export"     "Alice"                          -- $B export "$T/g.rete"
-check "export in-memory" "Alice"                    -- $B export "$T/g.rete" --in-memory
-check "export ttl" "<http://ex/Alice>"              -- $B export "$T/g.rete" --format ttl
-check "export jsonld" '"@id": "http://ex/Alice"'    -- $B export "$T/g.rete" --format jsonld
+check "export"     "Alice"                          -- "$B" export "$T/g.rete"
+check "export in-memory" "Alice"                    -- "$B" export "$T/g.rete" --in-memory
+check "export ttl" "<http://ex/Alice>"              -- "$B" export "$T/g.rete" --format ttl
+check "export jsonld" '"@id": "http://ex/Alice"'    -- "$B" export "$T/g.rete" --format jsonld
 
 echo "== query =="
-check "query pred" "Bob|Alice"   -- $B query "$T/g.rete" --predicate "<http://ex/knows>"
-check "why"        "index: POS|dictionary" -- $B why "$T/g.rete" --predicate "<http://ex/knows>"
-check "why json"   '"index_permutation": "POS"' -- $B why "$T/g.rete" --predicate "<http://ex/knows>" --json
-check "bgp"        "Alice|Bob"   -- $B bgp "$T/g.rete" "?x <http://ex/knows> ?y"
-check "sparql"     "Bob"         -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
-check "sparql json" '"bindings"' -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y }" --json
-check "ask"        "true|boolean" -- $B sparql "$T/g.rete" "PREFIX e: <http://ex/> ASK { ?x e:knows ?y }"
-check "cost"       "lazy query open|summary overview" -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
-check "cost json"  '"current_engine_access": "lazy-tiles"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
-check "cost lazy open" '"lazy_query_open"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
-check "cost summary answer" '"kind": "predicate_count"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
-check "cost explain" '"planned_access": "summary-only"' -- $B cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json --explain
-check "progressive count" '"reads_index": false' -- $B progressive "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
-check "progressive total" '"query_shape": "triple_count"' -- $B progressive "$T/g.rete" "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }" --json
-check "progressive predicate totals" '"query_shape": "predicate_totals"' -- $B progressive "$T/g.rete" "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p" --json
-check "progressive predicate list" '"query_shape": "predicate_list"' -- $B progressive "$T/g.rete" "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" --json
-check "progressive predicate distinct count" '"query_shape": "predicate_distinct_count"' -- $B progressive "$T/g.rete" "SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }" --json
-check "progressive any ask" '"query_shape": "triple_exists"' -- $B progressive "$T/g.rete" "ASK { ?s ?p ?o }" --json
+check "query pred" "Bob|Alice"   -- "$B" query "$T/g.rete" --predicate "<http://ex/knows>"
+check "why"        "index: POS|dictionary" -- "$B" why "$T/g.rete" --predicate "<http://ex/knows>"
+check "why json"   '"index_permutation": "POS"' -- "$B" why "$T/g.rete" --predicate "<http://ex/knows>" --json
+check "bgp"        "Alice|Bob"   -- "$B" bgp "$T/g.rete" "?x <http://ex/knows> ?y"
+check "sparql"     "Bob"         -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "sparql json" '"bindings"' -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y }" --json
+check "ask"        "true|boolean" -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> ASK { ?x e:knows ?y }"
+check "cost"       "lazy query open|summary overview" -- "$B" cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "cost json"  '"current_engine_access": "lazy-tiles"' -- "$B" cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
+check "cost lazy open" '"lazy_query_open"' -- "$B" cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
+check "cost summary answer" '"kind": "predicate_count"' -- "$B" cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
+check "cost explain" '"planned_access": "summary-only"' -- "$B" cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json --explain
+check "progressive count" '"reads_index": false' -- "$B" progressive "$T/g.rete" "PREFIX e: <http://ex/> SELECT (COUNT(*) AS ?n) WHERE { ?s e:knows ?o }" --json
+check "progressive total" '"query_shape": "triple_count"' -- "$B" progressive "$T/g.rete" "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }" --json
+check "progressive predicate totals" '"query_shape": "predicate_totals"' -- "$B" progressive "$T/g.rete" "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p" --json
+check "progressive predicate list" '"query_shape": "predicate_list"' -- "$B" progressive "$T/g.rete" "SELECT DISTINCT ?p WHERE { ?s ?p ?o }" --json
+check "progressive predicate distinct count" '"query_shape": "predicate_distinct_count"' -- "$B" progressive "$T/g.rete" "SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { ?s ?p ?o }" --json
+check "progressive any ask" '"query_shape": "triple_exists"' -- "$B" progressive "$T/g.rete" "ASK { ?s ?p ?o }" --json
 
 echo "== cypher (translated to SPARQL) =="
 # Build the example dependency graph and run Cypher-subset queries against it.
 $B build "$ROOT/examples/deps.nt" -o "$T/deps.rete" >/dev/null
 # Labeled node match: the one Application node.
-check "cypher label" "http://ex/app" -- $B cypher "$T/deps.rete" "MATCH (a:Application) RETURN a"
+check "cypher label" "http://ex/app" -- "$B" cypher "$T/deps.rete" "MATCH (a:Application) RETURN a"
 # Variable-length path → SPARQL `dependsOn+`: what reaches the vulnerable log4x?
-check "cypher varlen" "http://ex/web" -- $B cypher "$T/deps.rete" "MATCH (a)-[:dependsOn*]->(b) WHERE b = <http://ex/log4x> RETURN a"
+check "cypher varlen" "http://ex/web" -- "$B" cypher "$T/deps.rete" "MATCH (a)-[:dependsOn*]->(b) WHERE b = <http://ex/log4x> RETURN a"
 # JSON output path.
-check "cypher json" '"bindings"' -- $B cypher "$T/deps.rete" "MATCH (a:Application) RETURN a" --json
+check "cypher json" '"bindings"' -- "$B" cypher "$T/deps.rete" "MATCH (a:Application) RETURN a" --json
 # A query outside the subset must fail cleanly (no panic).
 check "cypher reject" "not supported|Cypher error" -- bash -c "$B cypher '$T/deps.rete' 'CREATE (a) RETURN a'; true"
 
@@ -210,8 +210,8 @@ $B build "$T/sb.nt" -o "$T/sb.rete" >/dev/null
 $B build "$T/sc.nt" -o "$T/sc.rete" >/dev/null
 FEDQ='SELECT ?x WHERE { ?x <http://ex/cites> <http://ex/T> }'
 # Merged result has all three distinct citing nodes (shared row deduped to one).
-check "federate merge alice" "Alice" -- $B federate "$T/sa.rete" "$T/sb.rete" --query "$FEDQ"
-check "federate merge bob"   "Bob"   -- $B federate "$T/sa.rete" "$T/sb.rete" --query "$FEDQ"
+check "federate merge alice" "Alice" -- "$B" federate "$T/sa.rete" "$T/sb.rete" --query "$FEDQ"
+check "federate merge bob"   "Bob"   -- "$B" federate "$T/sa.rete" "$T/sb.rete" --query "$FEDQ"
 # Dedup + count: exactly 3 merged solutions (Alice, Bob, Shared).
 check "federate dedup" "3 merged result" -- bash -c "$B federate '$T/sa.rete' '$T/sb.rete' --query '$FEDQ' 2>&1"
 # Routing prunes the predicate-disjoint shard sc (uses ex/label, not ex/cites).
@@ -219,13 +219,13 @@ check "federate routing" "1 pruned" -- bash -c "$B federate '$T/sa.rete' '$T/sc.
 # --no-route disables pruning: sc is queried (contributing 0 rows), 0 pruned.
 check "federate no-route" "0 pruned" -- bash -c "$B federate '$T/sa.rete' '$T/sc.rete' --query '$FEDQ' --no-route 2>&1"
 # ASK federation is a logical OR across shards.
-check "federate ask" "true|boolean" -- $B federate "$T/sa.rete" "$T/sb.rete" --query "ASK { ?x <http://ex/cites> <http://ex/T> }"
+check "federate ask" "true|boolean" -- "$B" federate "$T/sa.rete" "$T/sb.rete" --query "ASK { ?x <http://ex/cites> <http://ex/T> }"
 
 echo "== reach (multi-source transitive reachability) =="
 # Reverse reach = impact analysis: who (transitively) depends on log4x?
-check "reach reverse" "reached-by 4 node" -- $B reach "$T/deps.rete" --predicate "<http://ex/dependsOn>" --seed "<http://ex/log4x>" --reverse --count
+check "reach reverse" "reached-by 4 node" -- "$B" reach "$T/deps.rete" --predicate "<http://ex/dependsOn>" --seed "<http://ex/log4x>" --reverse --count
 # Forward reach in parallel must agree (app reaches its whole dependency closure).
-check "reach parallel" "reaches [0-9]+ node" -- $B reach "$T/deps.rete" --predicate "<http://ex/dependsOn>" --seed "<http://ex/app>" --parallel --count
+check "reach parallel" "reaches [0-9]+ node" -- "$B" reach "$T/deps.rete" --predicate "<http://ex/dependsOn>" --seed "<http://ex/app>" --parallel --count
 
 echo "== reason (OWL RL / RDFS prototype) =="
 # A coherent graph: subClassOf chain + transitive property, no contradictions.
@@ -238,8 +238,8 @@ cat > "$T/coherent.nt" <<EOF
 EOF
 $B build "$T/coherent.nt" -o "$T/coherent.rete" >/dev/null
 # Coherent → exit 0, reports no inconsistency, still materializes entailments.
-check "reason coherent" "coherent|no inconsistencies" -- $B reason "$T/coherent.rete"
-check "reason infers"   "inferred [0-9]+ new"          -- $B reason "$T/coherent.rete"
+check "reason coherent" "coherent|no inconsistencies" -- "$B" reason "$T/coherent.rete"
+check "reason infers"   "inferred [0-9]+ new"          -- "$B" reason "$T/coherent.rete"
 # The example causal graph carries a disjoint-class violation → exit non-zero,
 # message names the disjointness. `reason` exits non-zero on incoherence, so
 # wrap in `; true` to keep the smoke script going.
@@ -251,42 +251,42 @@ check "reason causal transitive" "ex/Smoking>.*ex/causes>.*ex/Death" -- bash -c 
 # Build-time stamp: --reason embeds the verdict in the card (no abort on
 # incoherence); --verify-card re-checks it; --check is the terse CI gate.
 $B build "$ROOT/examples/causal.nt" -o "$T/causal-stamped.rete" --reason >/dev/null
-check "reason stamp card"  "coherence"        -- $B card "$T/causal-stamped.rete"
-check "reason verify-card" "verified"         -- $B reason "$T/causal-stamped.rete" --verify-card
+check "reason stamp card"  "coherence"        -- "$B" card "$T/causal-stamped.rete"
+check "reason verify-card" "verified"         -- "$B" reason "$T/causal-stamped.rete" --verify-card
 check "reason check gate"  "incoherent"       -- bash -c "$B reason '$T/causal-stamped.rete' --check ; true"
 
 echo "== coarse graphs =="
-check "summary"    "round|superedge|knows|community" -- $B summary "$T/g.rete"
-check "predicates" "knows"                            -- $B predicates "$T/g.rete"
-check "schema"     "Person"                           -- $B schema "$T/g.rete"
+check "summary"    "round|superedge|knows|community" -- "$B" summary "$T/g.rete"
+check "predicates" "knows"                            -- "$B" predicates "$T/g.rete"
+check "schema"     "Person"                           -- "$B" schema "$T/g.rete"
 
 echo "== communities (per-community membership + literal text) =="
 # The papers example has 3 thematic clusters → Louvain finds multiple
 # communities, each carrying literal text (the LDA corpus).
 $B build "$ROOT/examples/papers.nt" -o "$T/papers.rete" >/dev/null
-check "communities human" "community [0-9]+: [0-9]+ members" -- $B communities "$T/papers.rete"
-check "communities json"  '"text"'                          -- $B communities "$T/papers.rete" --json
+check "communities human" "community [0-9]+: [0-9]+ members" -- "$B" communities "$T/papers.rete"
+check "communities json"  '"text"'                          -- "$B" communities "$T/papers.rete" --json
 # JSON is well-formed and has the documented shape (community/size/members/text).
 check "communities shape" "shape ok" -- bash -c "$B communities '$T/papers.rete' --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"schemaVersion\"]==1; rows=d[\"communities\"]; assert isinstance(rows,list) and len(rows)>=2; r=rows[0]; assert {\"community\",\"size\",\"members\",\"text\"}<=set(r); assert isinstance(r[\"members\"],list) and isinstance(r[\"text\"],list); print(\"shape ok\")'"
 # Structural topic profile (no ML): each community gets top words/classes/predicates.
-check "communities profile" "topic words" -- $B communities "$T/papers.rete" --profile
-check "communities profile json" '"profile"' -- $B communities "$T/papers.rete" --json --profile
+check "communities profile" "topic words" -- "$B" communities "$T/papers.rete" --profile
+check "communities profile json" '"profile"' -- "$B" communities "$T/papers.rete" --json --profile
 # Multi-criteria: partition by a single relation gives a criterion-specific split.
 $B build "$ROOT/examples/researchers.nt" -o "$T/res.rete" >/dev/null
-check "communities by predicate" "community [0-9]+:" -- $B communities "$T/res.rete" --predicate "<http://ex/coauthor>"
+check "communities by predicate" "community [0-9]+:" -- "$B" communities "$T/res.rete" --predicate "<http://ex/coauthor>"
 
 echo "== HTTP range path =="
 $B build "$T/g.nt" -o "$T/web.rete" >/dev/null
 ( cd "$T" && python3 "$ROOT/scripts/range_server.py" 8099 . >/dev/null 2>&1 & echo $! > "$T/srv.pid" )
 sleep 1
-check "card-url"    "Dataset Card|index NOT fetched" -- $B card-url "http://127.0.0.1:8099/gc.rete"
-check "card-url json" '"format_version"|index NOT fetched' -- $B card-url "http://127.0.0.1:8099/gc.rete" --json
-check "summary-url" "knows|round" -- $B summary-url "http://127.0.0.1:8099/web.rete"
-check "query-url"   "Bob|Alice|result" -- $B query-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>"
-check "sparql-url"  "Bob|solution" -- $B sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
-check "cost-url"    "full query open|range request" -- $B cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "card-url"    "Dataset Card|index NOT fetched" -- "$B" card-url "http://127.0.0.1:8099/gc.rete"
+check "card-url json" '"format_version"|index NOT fetched' -- "$B" card-url "http://127.0.0.1:8099/gc.rete" --json
+check "summary-url" "knows|round" -- "$B" summary-url "http://127.0.0.1:8099/web.rete"
+check "query-url"   "Bob|Alice|result" -- "$B" query-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>"
+check "sparql-url"  "Bob|solution" -- "$B" sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
+check "cost-url"    "full query open|range request" -- "$B" cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "shacl-url"   "MinCountConstraintComponent" -- bash -c "$B shacl-url 'http://127.0.0.1:8099/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
-check "why-url"     "index_permutation|POS|tile" -- $B why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json
+check "why-url"     "index_permutation|POS|tile" -- "$B" why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json
 kill "$(cat "$T/srv.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="
@@ -301,10 +301,10 @@ check "verify trunc"   "FAILED|mismatch|Error|malformed" -- bash -c "head -c 80 
 check "missing file"   "rror|not found|No such"  -- bash -c "$B info '$T/nope.rete'; true"
 
 echo "== exit-code contract =="
-check_code "runtime malformed RDF" 1 "Error|parse|line" -- $B validate "$T/bad.nt"
-check_code "Clap usage"            2 "Usage:"           -- $B build
-check_code "SHACL non-conformance" 3 "conforms.*false|validation failed" -- $B shacl "$T/g.rete" --shapes "$T/person-bad.ttl" --format json
-check_code "reasoning incoherence" 3 "incoherent|disjoint" -- $B reason "$T/causal.rete" --check
+check_code "runtime malformed RDF" 1 "Error|parse|line" -- "$B" validate "$T/bad.nt"
+check_code "Clap usage"            2 "Usage:"           -- "$B" build
+check_code "SHACL non-conformance" 3 "conforms.*false|validation failed" -- "$B" shacl "$T/g.rete" --shapes "$T/person-bad.ttl" --format json
+check_code "reasoning incoherence" 3 "incoherent|disjoint" -- "$B" reason "$T/causal.rete" --check
 
 echo
 if [ "$fails" -eq 0 ]; then echo "SMOKE OK — all CLI commands behaved"; else echo "SMOKE FAILED: $fails check(s)"; fi

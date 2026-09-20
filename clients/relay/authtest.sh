@@ -3,7 +3,7 @@ set -u
 pip install -q -r requirements.txt >/dev/null 2>&1
 apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq curl >/dev/null 2>&1
 uvicorn app:app --host 127.0.0.1 --port 7860 >/tmp/u.log 2>&1 &
-for i in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:7860/health && break; sleep 1; done
+for _ in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:7860/health && break; sleep 1; done
 B=http://127.0.0.1:7860
 code(){ curl -s -o /dev/null -w "%{http_code}" "$@"; }
 echo "no token        / : $(code $B/)"

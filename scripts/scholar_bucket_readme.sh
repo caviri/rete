@@ -143,6 +143,9 @@ printf '%s\n' "$objects" | while IFS=$'\t' read -r path size; do
   q=$(awk -F'\t' -v n="$name" '$1=="done" && $2==n {print $5}' "$STATE" | tail -1)
   ru=$(awk -F'\t' -v n="$name" '$1=="done" && $2==n {print $6}' "$STATE" | tail -1)
   rb=$(awk -F'\t' -v n="$name" '$1=="done" && $2==n {print $3}' "$STATE" | tail -1)
+  # The backticks are Markdown code spans in a printf FORMAT, not a
+  # command substitution; single quotes are what keeps them literal.
+  # shellcheck disable=SC2016
   printf '| %s | `%s` | %s | %s | %s | %s |\n' \
     "$ds" "$rel" "$size" "${q:-—}" "${ru:+[\`.rete\`]($ru)}" "${rb:-—}"
 done
@@ -158,8 +161,12 @@ FTR
 # this has no way to tell "not exported yet" from "does not exist", and the
 # whole point of the page is that it answers questions without this repository.
 missing="$(awk -F'\t' 'NF>=3 && $1 !~ /^#/ {print $2 "\t" $3}' "$MANIFEST" \
-  | while IFS=$'\t' read -r n u; do
-      printf '%s\n' "$objects" | grep -q "/$n\.nq\.gz	" || printf '| `%s` | %s |\n' "$n" "$u"
+  | while IFS=$'\t' read -r mname murl; do
+      # NOT `n`: that is the object count set at the top of this file and
+      # read again at the bottom. This runs in a subshell, so shadowing it
+      # here would be invisible at both ends.
+      # shellcheck disable=SC2016
+      printf '%s\n' "$objects" | grep -q "/$mname\.nq\.gz	" || printf '| `%s` | %s |\n' "$mname" "$murl"
     done)"
 if [ -n "$missing" ]; then
   echo

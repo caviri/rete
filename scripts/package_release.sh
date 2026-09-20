@@ -3,7 +3,7 @@
 # on a runner matching TARGET, so the generated binary can be smoke-tested.
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 TAG=${1:?usage: package_release.sh vVERSION TARGET}
@@ -40,7 +40,7 @@ test "$("$BINARY" --version)" = "rete $VERSION" || {
 
 DIST_DIR=${DIST_DIR:-dist}
 mkdir -p "$DIST_DIR"
-DIST_ABS=$(CDPATH= cd -- "$DIST_DIR" && pwd)
+DIST_ABS=$(CDPATH='' cd -- "$DIST_DIR" && pwd)
 NAME="rete-$VERSION-$TARGET"
 STAGE="$DIST_ABS/$NAME"
 case "$STAGE" in

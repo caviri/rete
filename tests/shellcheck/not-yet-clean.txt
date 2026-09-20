@@ -1,0 +1,46 @@
+# Shell scripts the shellcheck gate does NOT cover yet.
+#
+# tests/shellcheck/run.sh checks every `*.sh` git tracks EXCEPT the paths below,
+# so a new script is covered the moment it is added. This file is the debt
+# register, and it only ever shrinks: the runner FAILS if a path here no longer
+# exists, and FAILS if a path here has become clean. Delete the line when you
+# fix one.
+#
+# WHY THESE ARE OUT
+#
+# Every one is a dataset harvest or a one-off build pipeline: it runs against a
+# corpus that is not in this repository and cannot be reproduced here, so a
+# change to it cannot be tested — only read. The findings are almost entirely
+# SC2012 (`ls` where `find` is safer) and SC2164 (`cd` without `|| exit`) in
+# code whose behaviour on a real 900k-file tree nobody can re-verify today, and
+# a silently altered harvest script is worse than an unchecked one.
+#
+# That is a reason to postpone them, not to keep them out. Whoever next touches
+# one of these for its own sake should fix its findings in the same change and
+# delete the line here.
+#
+# 23 files. Run `bash tests/shellcheck/run.sh --report` to see what each owes.
+
+experiments/graph-map/run_all_shots.sh
+scripts/bioexplora_images.sh
+scripts/bioexplora_sketchfab.sh
+scripts/build_biblissima_shards.sh
+scripts/build_bioexplora.sh
+scripts/build_databnf_editions.sh
+scripts/build_databnf_shards.sh
+scripts/build_wikidata_xxl.sh
+scripts/bvpb_finish_ocr.sh
+scripts/crossref/build_in_container.sh
+scripts/crossref/build_single_rete.sh
+scripts/crossref/resume_in_container.sh
+scripts/ecal/run_covers.sh
+scripts/fetch_dbpedia_themes.sh
+scripts/fetch_mmm_full.sh
+scripts/fetch_wikidata_themes.sh
+scripts/glb_to_spin.sh
+scripts/ocr.sh
+scripts/ocr_r2.sh
+scripts/orcid/build_single_rete.sh
+scripts/preview/run.sh
+scripts/rag_upload_all.sh
+scripts/recard/recard.sh

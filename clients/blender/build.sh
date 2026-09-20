@@ -71,6 +71,7 @@ PY
 fi
 
 echo "Bundled wheels:"
+# shellcheck disable=SC2012  # printed for a human, never parsed
 ls -1 "$WHEELS" | sed 's/^/  /'
 
 # Keep the manifest honest: list exactly the wheels that are present.
@@ -99,5 +100,6 @@ fi
 rm -rf "$STAGE"
 
 echo
+# shellcheck disable=SC2012  # printed for a human, never parsed
 ls -lh "$DIST" | sed 's/^/  /'
 echo "Install: Blender ▸ Edit ▸ Preferences ▸ Add-ons ▸ ⌄ ▸ Install from Disk…"

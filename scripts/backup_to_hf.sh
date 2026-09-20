@@ -103,6 +103,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   exit 3
 fi
 echo "$$" > "$LOCK/pid"
+# shellcheck disable=SC2317  # reached through the trap below, never by a call
 cleanup() { rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null; rm -f "$STAGE"/*; }
 trap cleanup EXIT INT TERM
 

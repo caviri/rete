@@ -381,6 +381,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   exit 3
 fi
 echo "$$" > "$LOCK/pid"
+# shellcheck disable=SC2317  # reached through the trap below, never by a call
 cleanup() {
   rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null
   # --parse-report works in a throwaway dir rather than the checkout's, so it
@@ -725,7 +726,12 @@ in_docker() {
 # /usr/bin/time -v when the image has it (GNU time exits with the child's
 # status, so PIPESTATUS still reads rete's), and read the cgroup's peak memory
 # on the way out -- cgroup v2 first, v1 second -- as the fallback measurement.
+# Single quotes throughout: `$TF` and `$T` belong to the shell INSIDE the
+# container, which `in_docker` starts. Expanding them here would resolve them
+# against this shell, where they mean nothing.
+# shellcheck disable=SC2016
 TIME_PROLOGUE='if [ -x /usr/bin/time ]; then T="/usr/bin/time -v -o $TF"; else T=""; echo "no /usr/bin/time in image, rss from cgroup peak" > "$TF"; fi'
+# shellcheck disable=SC2016
 CG_EPILOGUE='p=$(cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes 2>/dev/null || echo); echo "CG_PEAK=$p"'
 
 # ---------------------------------------------------------------------------
@@ -758,7 +764,9 @@ for r in "${rows[@]}"; do
   fi
   sized+=("$len	$ds	$name	$url")
 done
-IFS=$'\n' sized=($(printf '%s\n' "${sized[@]}" | LC_ALL=C sort -rn)); unset IFS
+# `mapfile`, not `arr=($(...))`: the rows are tab-separated and carry URLs, and
+# a word split would also GLOB-expand anything with a `*` or `?` in it.
+mapfile -t sized < <(printf '%s\n' "${sized[@]}" | LC_ALL=C sort -rn)
 
 ok=0; audited=0; failed=0; skipped=0; unrepairable=0; tot_in=0; tot_out=0
 for r in "${sized[@]}"; do
@@ -1006,7 +1014,7 @@ for r in "${sized[@]}"; do
   if [ "$NO_UPLOAD" = "1" ]; then
     say "HOLD     $name: --no-upload, $out kept, NOT published to $key"
     printf '%s\t%s\t%s\t%s\n' "$name" "$key" "$osize" "$(now)" >> "$WORK/not-uploaded.txt"
-    record done "$name" "$len" "$osize" "$lines" "$url"
+    record "done" "$name" "$len" "$osize" "$lines" "$url"
     ok=$((ok+1)); tot_in=$((tot_in+len)); tot_out=$((tot_out+osize))
     rm -f "$exitf"
     say "FREE     $(gb "$(free_bytes)") GiB after $name"
@@ -1021,7 +1029,7 @@ for r in "${sized[@]}"; do
     failed=$((failed+1)); discard; continue
   fi
   say "VERIFY   $name: $landed bytes confirmed at $key (cp exit=$urc)"
-  record done "$name" "$len" "$osize" "$lines" "$url"
+  record "done" "$name" "$len" "$osize" "$lines" "$url"
   ok=$((ok+1)); tot_in=$((tot_in+len)); tot_out=$((tot_out+osize))
 
   # -- 5. reclaim, only now that the bucket is confirmed --------------------

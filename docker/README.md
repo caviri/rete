@@ -9,7 +9,7 @@ emulation.
 
 | Image | What it is | Size | Built from |
 | --- | --- | --- | --- |
-| `ghcr.io/caviri/rete-dev` | The full toolchain: Rust 1.92 + the pinned asyncify nightly, wasm-pack, the cargo release tools, node, python3 + uv, binaryen, chromium. Everything the repo builds datasets and playground artifacts with. | ~5 GB | `.devcontainer/Dockerfile` |
+| `ghcr.io/caviri/rete-dev` | The full toolchain: Rust 1.92 + the pinned asyncify nightly, wasm-pack, the cargo release tools, node, python3 + uv, binaryen, chromium, plus the scholar export driver's own tools — `pigz`, `time`, and a pinned `oxigraph` binary lifted out of `oxigraph/oxigraph` so the independent N-Quads parse check can run *inside* the container. Everything the repo builds datasets and playground artifacts with. | ~5 GB | `.devcontainer/Dockerfile` |
 | `ghcr.io/caviri/rete-relay` | The gateway: HTTP Range + CORS over a data directory, the `/api` SPARQL plane, and the `/mcp` MCP server. The same image the live Hugging Face Space runs. | ~400 MB | `clients/relay/Dockerfile` |
 | `ghcr.io/caviri/rete-cli` | Just the `rete` binary on distroless. | ~30 MB | `docker/Dockerfile.cli` |
 
