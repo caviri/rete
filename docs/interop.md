@@ -144,14 +144,17 @@ Two things the surface cannot paper over:
 - `--format jsonld` and `--format hdt` have no term kind for one at all and
   refuse a file that contains any.
 
-One limit, stated plainly: the RDF 1.2 Turtle/TriG **reader** is native-only.
-`oxttl` 0.2 brings `oxrdf` 0.3, whose `rand`/`getrandom` 0.3 dependency has no
-backend on `wasm32-unknown-unknown` that does not also break the non-browser
-wasm hosts rete supports (Chicory on the JVM, WASI). So the in-browser builder
-reads RDF-star Turtle/TriG and **both** N-Triples/N-Quads surfaces, but not
-RDF 1.2 Turtle/TriG; the browser artifacts are otherwise unchanged by this
-feature (+7.6 KB, 0.22%). It is the `rdf12-turtle` Cargo feature, on by default
-for every native build.
+The RDF 1.2 Turtle/TriG **reader** is the `rdf12-turtle` Cargo feature: on by
+default for every native build, and on in the browser engine too. In the
+playground's builder it is the **Quoted triples: RDF 1.2** choice (RDF-star stays
+the default); from JavaScript it is
+`build_with_card_syntax(text, format, cardJson, "rdf12")`. `oxttl` 0.2 brings
+`oxrdf` 0.3, which labels anonymous blank nodes with random ids drawn through
+getrandom 0.3; the browser engine takes those from `crypto.getRandomValues`, the
+same source its SPARQL `RAND`/`UUID` already used. It costs the browser engine
+195,624 bytes (+5.6%) and the Asyncify build 594,215 (+5.3%).
+`scripts/check_getrandom03.sh` fails the build if anything but that blank-node
+path comes to depend on getrandom 0.3 in a wasm build.
 
 `tests/interop/oxigraph.sh` runs both surfaces against the real store, including
 the negative case — the rejection above is asserted, not remembered — and

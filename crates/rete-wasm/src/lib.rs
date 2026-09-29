@@ -115,7 +115,54 @@ pub fn build(text: &str, format: &str) -> Result<Vec<u8>, JsValue> {
 /// Pass an empty string for no card — byte-identical to [`build`].
 #[wasm_bindgen]
 pub fn build_with_card(text: &str, format: &str, card_json: &str) -> Result<Vec<u8>, JsValue> {
-    let quads = rete_core::ingest::parse_statements(text, format).map_err(err)?;
+    build_card_surface(
+        text,
+        format,
+        card_json,
+        rete_core::ingest::QuotedTripleSurface::default(),
+    )
+}
+
+/// [`build_with_card`], reading Turtle/TriG `<< … >>` in the named surface —
+/// the browser half of `rete build --quoted-triple-syntax`, same two values:
+///
+/// - `"rdf-star"` (or `""`): `<< s p o >>` is a quoted triple. Byte-identical
+///   to [`build_with_card`].
+/// - `"rdf12"`: the **RDF 1.2** reader. `<<( s p o )>>` is a triple term,
+///   `<< s p o >>` a reifier (a blank node `rdf:reifies` the triple term),
+///   `{| … |}` an annotation, `"…"@lang--dir` a directional literal.
+///
+/// The same Turtle file is two different graphs under the two values, and
+/// nothing in the bytes says which was meant, so the caller chooses. N-Triples
+/// and N-Quads ignore the choice (their reader takes both spellings). Anything
+/// else is refused by name.
+#[wasm_bindgen]
+pub fn build_with_card_syntax(
+    text: &str,
+    format: &str,
+    card_json: &str,
+    quoted_triple_syntax: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let surface = if quoted_triple_syntax.is_empty() {
+        rete_core::ingest::QuotedTripleSurface::default()
+    } else {
+        rete_core::ingest::QuotedTripleSurface::parse(quoted_triple_syntax).ok_or_else(|| {
+            js_error(format!(
+                "unknown quoted-triple syntax {quoted_triple_syntax:?} (expected \"rdf-star\" or \"rdf12\")"
+            ))
+        })?
+    };
+    build_card_surface(text, format, card_json, surface)
+}
+
+fn build_card_surface(
+    text: &str,
+    format: &str,
+    card_json: &str,
+    surface: rete_core::ingest::QuotedTripleSurface,
+) -> Result<Vec<u8>, JsValue> {
+    let quads = rete_core::ingest::parse_statements_audited_surface(text, format, None, surface)
+        .map_err(err)?;
     if quads.is_empty() {
         return Err(js_error(
             "no statements parsed (empty input or only comments)",

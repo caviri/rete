@@ -56,9 +56,15 @@ sha2 = "0.10"
 # Randomness for the SPARQL RAND/UUID/STRUUID/BNODE built-ins. On
 # wasm32-unknown-unknown getrandom has no default backend: a *browser* consumer
 # turns on the `wasm-js` feature below (crypto.getRandomValues); a non-browser
-# wasm host (Chicory/WASI/Wasmtime) must supply its own via getrandom's `custom`
+# wasm host (Chicory on the JVM) must supply its own via getrandom's `custom`
 # backend. Native targets use the OS backend and need neither.
 getrandom = "0.2"
+# getrandom 0.3, named here ONLY so the `wasm-js` feature below can turn on its
+# browser backend. It is not used by rete-core's own code: its one consumer is
+# `oxrdf` 0.3 (via `rand` 0.9), which draws random blank-node ids from it for
+# the RDF 1.2 Turtle/TriG reader. The `wasm32` guard in
+# scripts/check_getrandom03.sh fails if anything else comes to depend on it.
+getrandom03 = { package = "getrandom", version = "0.3", optional = true }
 zstd = { workspace = true, optional = true }
 # Data-parallel query evaluator (prototype). Behind the `parallel` feature so it
 # is never pulled into wasm (the wasm crate builds with --no-default-features).
@@ -81,14 +87,18 @@ compression = ["dep:zstd"]
 # — so it is a feature, not a fact.
 #
 # ON by default, which means every NATIVE build has it: the CLI, the Python /
-# R / Tauri clients, the fuzzer. It is OFF for wasm, and NOT as a size decision.
-# `oxrdf` 0.3 depends on `rand` 0.9 -> `getrandom` 0.3, which has no backend at
-# all on `wasm32-unknown-unknown`; supplying one means
-# `RUSTFLAGS=--cfg getrandom_backend="wasm_js"`, which links wasm-bindgen JS
-# glue into the module and breaks precisely the non-browser wasm hosts this
-# crate goes out of its way to support (Chicory on the JVM, WASI — see the
-# `wasm-js` feature below). The browser engine therefore keeps `oxttl` 0.1 and
-# the browser artifacts are byte-for-byte what they were.
+# R / Tauri clients, the fuzzer. A wasm build (`default-features = false`) turns
+# it on explicitly, and must then give getrandom 0.3 a backend, because
+# `oxrdf` 0.3 depends on `rand` 0.9 -> `getrandom` 0.3, which has none by
+# default on `wasm32-unknown-unknown`:
+#
+# - the browser engine (`rete-wasm`) also enables `wasm-js` below, which
+#   selects getrandom 0.3's `wasm_js` backend by feature alone (0.3.4: no
+#   RUSTFLAGS needed) — crypto.getRandomValues, the same API getrandom 0.2
+#   already uses in that module;
+# - the Chicory engine (`clients/java/ffi`) selects the `custom` backend with
+#   `--cfg getrandom_backend="custom"` scoped to its wasm build, and defines
+#   `__getrandom_v03_custom`.
 #
 # Turning it off costs only the RDF 1.2 *Turtle/TriG* reader. N-Triples and
 # N-Quads still take `<<( s p o )>>` everywhere, because that reader is rete's
@@ -98,11 +108,13 @@ rdf12-turtle = ["dep:oxttl12", "dep:oxrdf12"]
 # Prototype data-parallel query evaluator. NOT default; wasm must never enable it
 # (wasm has no threads). Enables the `parallel` module + `rayon`.
 parallel = ["dep:rayon"]
-# getrandom's browser backend (crypto.getRandomValues, via js-sys/wasm-bindgen).
-# Enable ONLY for a wasm build that runs in a browser — it makes the module
-# import wasm-bindgen JS glue, which a non-browser wasm host (Chicory on the JVM,
-# WASI) cannot link. Those hosts leave this off and register a `custom` backend.
-wasm-js = ["getrandom/js"]
+# getrandom's browser backend (crypto.getRandomValues, via js-sys/wasm-bindgen),
+# for BOTH getrandom lines: 0.2 (SPARQL RAND/UUID/BNODE) and 0.3 (oxrdf 0.3's
+# blank-node ids, reached only with `rdf12-turtle`). Enable ONLY for a wasm
+# build that runs in a browser — it makes the module import wasm-bindgen JS
+# glue, which a non-browser wasm host (Chicory on the JVM) cannot link. That
+# host leaves this off and registers `custom` backends instead.
+wasm-js = ["getrandom/js", "getrandom03/wasm_js"]
 
 # The parallel benchmark only compiles with the `parallel` feature (it uses
 # rayon + the feature-gated `parallel` module). Without the gate, a default

@@ -167,6 +167,15 @@ so in-browser builds write uncompressed sections (codec `NONE`) — every reader
 accepts them, but `rete build` produces a smaller file from the same input.
 This powers the playground's **Build** tab.
 
+`build` also takes `"trig"`. Turtle and TriG read `<< s p o >>` as an
+**RDF-star** quoted triple. For **RDF 1.2** input (`<<( s p o )>>` triple terms,
+`<< s p o >>` reifiers, `{| … |}` annotations, `"…"@lang--dir` literals) call
+`build_with_card_syntax(text, format, cardJson, "rdf12")`, the browser half of
+`rete build --quoted-triple-syntax`. The same Turtle file is a different graph
+under each surface, and nothing in the bytes says which was meant, so the
+caller chooses; under `"rdf-star"` the function is byte-identical to
+`build_with_card`. N-Triples and N-Quads read both spellings either way.
+
 `sparql_url` runs full SPARQL against a **remote `.rete` URL without
 downloading it**: it reads the header, the dictionary chunk directories and
 index tile directories, then faults in only the dictionary chunks and index

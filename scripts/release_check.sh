@@ -9,6 +9,8 @@ cd "$(dirname "$0")/.."
 quality() {
   # Cheapest gate first: every client must sit on the engine's minor line.
   python3 scripts/sync_versions.py --check
+  # getrandom 0.3 in the browser engine may serve only oxrdf's blank-node ids.
+  sh scripts/check_getrandom03.sh wasm
   cargo fmt --all -- --check
   # rete-bench is IN the lint on purpose. Excluding it (as the test and doc
   # lines below still do, to keep the slow benchmarks out) meant its code was

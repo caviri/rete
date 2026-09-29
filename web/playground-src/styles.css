@@ -3460,6 +3460,7 @@ td.lit { color: var(--ink); }
 }
 .builder-fmt { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .builder-fmt select { padding: 4px 6px; }
+.builder-fmt + .builder-fmt { margin-left: 0; }
 .builder-step .microcopy { margin: 0 0 8px; }
 /* The plain (non-CM6) textareas in the builder are compact; CM6-enhanced ones
    (#buildText / #buildOntology) get their height from .editor. */

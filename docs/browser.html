@@ -750,6 +750,14 @@ as a file. One caveat: the wasm engine ships only the pure-Rust zstd <em>decoder
 so in-browser builds write uncompressed sections (codec <code>NONE</code>) — every reader
 accepts them, but <code>rete build</code> produces a smaller file from the same input.
 This powers the playground's <strong>Build</strong> tab.</p>
+<p><code>build</code> also takes <code>"trig"</code>. Turtle and TriG read <code>&lt;&lt; s p o &gt;&gt;</code> as an
+<strong>RDF-star</strong> quoted triple. For <strong>RDF 1.2</strong> input (<code>&lt;&lt;( s p o )&gt;&gt;</code> triple terms,
+<code>&lt;&lt; s p o &gt;&gt;</code> reifiers, <code>{| … |}</code> annotations, <code>"…"@lang--dir</code> literals) call
+<code>build_with_card_syntax(text, format, cardJson, "rdf12")</code>, the browser half of
+<code>rete build --quoted-triple-syntax</code>. The same Turtle file is a different graph
+under each surface, and nothing in the bytes says which was meant, so the
+caller chooses; under <code>"rdf-star"</code> the function is byte-identical to
+<code>build_with_card</code>. N-Triples and N-Quads read both spellings either way.</p>
 <p><code>sparql_url</code> runs full SPARQL against a <strong>remote <code>.rete</code> URL without
 downloading it</strong>: it reads the header, the dictionary chunk directories and
 index tile directories, then faults in only the dictionary chunks and index

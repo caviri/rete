@@ -9937,6 +9937,14 @@ self.onmessage = function (e) {
   const VALIDATE_CAP = 3_000_000; // ~3 MB of text — above this, validate on build only
   let validateTimer = null;
   function firstLine(s) { return String(s).split("\n")[0].replace(/^Error:\s*/, "").slice(0, 140); }
+  // The engine appends a CLI-worded hint (`--quoted-triple-syntax rdf12`) on a
+  // second line when an RDF-star parse fails on `<<(`, and firstLine drops it.
+  // Say the same thing in this page's own terms.
+  function rdf12Advice(e) {
+    return /--quoted-triple-syntax rdf12/.test(String(e))
+      ? " — this looks like RDF 1.2 (it contains <<( … )>>): set Quoted triples to RDF 1.2."
+      : "";
+  }
   function setValidMsg(id, text, ok) {
     const el = $(id); if (!el) return;
     el.textContent = text || "";
@@ -9951,7 +9959,7 @@ self.onmessage = function (e) {
       const info = JSON.parse(W().info(buildFromSources(data, onto, fmt)));
       setValidMsg(statusId, `✓ valid${merged ? " (merged)" : ""} · ${info.quads} triples`, true);
     } catch (e) {
-      setValidMsg(statusId, "✗ " + firstLine(e), false);
+      setValidMsg(statusId, "✗ " + firstLine(e) + rdf12Advice(e), false);
     }
   }
   function runBuildValidation() {
@@ -9967,7 +9975,7 @@ self.onmessage = function (e) {
   function scheduleBuildValidation() { clearTimeout(validateTimer); validateTimer = setTimeout(runBuildValidation, 450); }
 
   // --- format conversion: JSON-LD / RDF/XML → N-Quads / N-Triples -------------
-  // The wasm engine parses only nt/nq/ttl, so JSON-LD and RDF/XML are converted
+  // The wasm engine parses nt/nq/ttl/trig, so JSON-LD and RDF/XML are converted
   // in the browser (RDFConvert, rdfconv.js) before building. `toEngineText`
   // returns the converted text + the actual build format to hand to W().build.
   function RC() { return window.RDFConvert; }
@@ -9977,7 +9985,7 @@ self.onmessage = function (e) {
     return { text: text, fmt: fmt };
   }
   // Build the merged graph (data + optional ontology) in the chosen source
-  // format. nt/nq/ttl sources are concatenated as text; jsonld/rdfxml sources
+  // format. nt/nq/ttl/trig sources are concatenated as text; jsonld/rdfxml sources
   // are each converted, then the resulting line-based forms are concatenated.
   function buildFromSources(data, onto, fmt, cardJson) {
     const parts = [];
@@ -9987,7 +9995,10 @@ self.onmessage = function (e) {
     // `build_with_card` with an empty card is byte-identical to `build`, so the
     // live syntax-validation path can share this function without paying for a
     // card it does not care about.
-    return W().build_with_card(parts.join("\n"), buildFmt, cardJson || "");
+    // Turtle/TriG `<< … >>` is read in the surface the "Quoted triples" select
+    // names — RDF-star by default, byte-identical to `build_with_card`.
+    const qts = ($("buildQtSyntax") || {}).value || "rdf-star";
+    return W().build_with_card_syntax(parts.join("\n"), buildFmt, cardJson || "", qts);
   }
 
   // --- import a card / manifest JSON file into step 3 (and step 4) -----------
@@ -10192,7 +10203,7 @@ self.onmessage = function (e) {
       info = JSON.parse(W().info(bytes));
     } catch (e) {
       state.built = null; setBuiltButtons(false); $("buildMeta").textContent = "";
-      return showError("buildOut", "Build failed: " + firstLine(e));
+      return showError("buildOut", "Build failed: " + firstLine(e) + rdf12Advice(e));
     }
     const dt = performance.now() - t0;
 
@@ -10363,7 +10374,7 @@ self.onmessage = function (e) {
       const text = await file.text();
       setEd("buildText", text);
       const ext = (file.name.match(/\.(\w+)$/) || [])[1] || "";
-      const fmt = { nq: "nq", nquads: "nq", ttl: "ttl", turtle: "ttl",
+      const fmt = { nq: "nq", nquads: "nq", ttl: "ttl", turtle: "ttl", trig: "trig",
         jsonld: "jsonld", json: "jsonld", rdf: "rdfxml", owl: "rdfxml", xml: "rdfxml" }[ext.toLowerCase()] || "nt";
       $("buildFormat").value = fmt;
       // Seed an empty card from the file name on first open.
@@ -10383,7 +10394,7 @@ self.onmessage = function (e) {
       // The Format select is shared by both editors. If the data editor is still
       // empty, adopt the ontology file's format so an ontology-only build works.
       const ext = (file.name.match(/\.(\w+)$/) || [])[1] || "";
-      const fmt = { nq: "nq", nquads: "nq", ttl: "ttl", turtle: "ttl",
+      const fmt = { nq: "nq", nquads: "nq", ttl: "ttl", turtle: "ttl", trig: "trig",
         jsonld: "jsonld", json: "jsonld", rdf: "rdfxml", owl: "rdfxml", xml: "rdfxml" }[ext.toLowerCase()];
       if (fmt && !($("buildText").value || "").trim()) $("buildFormat").value = fmt;
       runBuildValidation();
@@ -11790,6 +11801,7 @@ self.onmessage = function (e) {
     $("buildFile").onchange = (e) => loadBuildFile(e.target.files[0]);
     $("buildOntoFile").onchange = (e) => loadOntoFile(e.target.files[0]);
     $("buildFormat").onchange = scheduleBuildValidation;
+    if ($("buildQtSyntax")) $("buildQtSyntax").onchange = scheduleBuildValidation;
     $("addSparqlEx").onclick = () => addBuildExample("sparql");
     $("addShaclEx").onclick = () => addBuildExample("shacl");
     // Step 3's two documents: the four shared fields sync both ways with the
