@@ -1230,6 +1230,44 @@ export function build_with_card(text, format, card_json) {
 }
 
 /**
+ * [`build_with_card`], reading Turtle/TriG `<< … >>` in the named surface —
+ * the browser half of `rete build --quoted-triple-syntax`, same two values:
+ *
+ * - `"rdf-star"` (or `""`): `<< s p o >>` is a quoted triple. Byte-identical
+ *   to [`build_with_card`].
+ * - `"rdf12"`: the **RDF 1.2** reader. `<<( s p o )>>` is a triple term,
+ *   `<< s p o >>` a reifier (a blank node `rdf:reifies` the triple term),
+ *   `{| … |}` an annotation, `"…"@lang--dir` a directional literal.
+ *
+ * The same Turtle file is two different graphs under the two values, and
+ * nothing in the bytes says which was meant, so the caller chooses. N-Triples
+ * and N-Quads ignore the choice (their reader takes both spellings). Anything
+ * else is refused by name.
+ * @param {string} text
+ * @param {string} format
+ * @param {string} card_json
+ * @param {string} quoted_triple_syntax
+ * @returns {Uint8Array}
+ */
+export function build_with_card_syntax(text, format, card_json, quoted_triple_syntax) {
+    const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(card_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(quoted_triple_syntax, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.build_with_card_syntax(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v5 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v5;
+}
+
+/**
  * [`build_with_card`], but the card also carries the **auto-derived profile**
  * — the half a browser build used to have to do without (#152).
  *
@@ -2580,6 +2618,9 @@ function __wbg_get_imports() {
         __wbg_error_78ff5b3a29b770e0: function(arg0) {
             console.error(arg0);
         },
+        __wbg_getRandomValues_3f44b700395062e5: function() { return handleError(function (arg0, arg1) {
+            globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
+        }, arguments); },
         __wbg_getRandomValues_c44a50d8cfdaebeb: function() { return handleError(function (arg0, arg1) {
             arg0.getRandomValues(arg1);
         }, arguments); },
