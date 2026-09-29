@@ -9,11 +9,13 @@ on:
     paths:
       - "clients/java/**"
       - "crates/rete-core/**"
+      - "scripts/check_getrandom03.sh"
       - ".github/workflows/java-test.yml"
   pull_request:
     paths:
       - "clients/java/**"
       - "crates/rete-core/**"
+      - "scripts/check_getrandom03.sh"
       - ".github/workflows/java-test.yml"
   workflow_dispatch:
 
@@ -42,7 +44,16 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      # getrandom 0.3 is fed from a non-cryptographic xorshift in this engine,
+      # which is sound only while oxrdf's blank-node labelling is its sole
+      # consumer. This fails, naming the newcomer, the day that stops being true.
+      - name: Only oxrdf's blank-node ids may reach getrandom 0.3
+        run: sh scripts/check_getrandom03.sh ffi
       - name: Build the wasm engine (C-ABI, no wasm-bindgen)
+        # Target-scoped: selects getrandom 0.3's `custom` backend (ffi/src/lib.rs)
+        # for the wasm build only; ffi/build.rs refuses a wasm build without it.
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: --cfg getrandom_backend="custom"
         run: >
           cargo build --release --target wasm32-unknown-unknown
           --manifest-path clients/java/ffi/Cargo.toml

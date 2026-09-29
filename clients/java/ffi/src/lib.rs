@@ -41,10 +41,8 @@ const STATUS_ERR: u32 = 1;
 /// host that provides it. This is never used for anything security-relevant in
 /// the read/query path.
 fn insecure_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
-    use core::sync::atomic::{AtomicU64, Ordering};
-    static STATE: AtomicU64 = AtomicU64::new(0x9E37_79B9_7F4A_7C15);
     // Advance the shared state once per call so successive calls differ.
-    let mut x = STATE.fetch_add(0x2545_F491_4F6C_DD1D, Ordering::Relaxed) | 1;
+    let mut x = ENTROPY_STATE.fetch_add(0x2545_F491_4F6C_DD1D, Ordering::Relaxed) | 1;
     for chunk in buf.chunks_mut(8) {
         x ^= x >> 12;
         x ^= x << 25;
@@ -57,6 +55,57 @@ fn insecure_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
     Ok(())
 }
 getrandom::register_custom_getrandom!(insecure_getrandom);
+
+use core::sync::atomic::{AtomicU64, Ordering};
+
+/// The xorshift's shared state. A module-level static, so it starts at the
+/// same constant in EVERY instance of this module: a fresh Chicory `Instance`
+/// has fresh linear memory. See [`rete_seed_entropy`].
+static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9E37_79B9_7F4A_7C15);
+
+/// The same source for **getrandom 0.3**, whose only consumer in this module is
+/// `oxrdf` 0.3 labelling anonymous blank nodes for the RDF 1.2 Turtle/TriG
+/// reader (`rdf12-turtle`); `scripts/check_getrandom03.sh ffi` fails the build
+/// if anything else comes to depend on it. getrandom 0.3 has no registration
+/// macro: the `custom` backend is selected by
+/// `--cfg getrandom_backend="custom"` (scoped to this crate's wasm build by
+/// `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS`, see build.rs) and calls this
+/// symbol, per getrandom 0.3.4's `backends/custom.rs`.
+///
+/// # Safety
+/// getrandom guarantees `dest` is valid for writes of `len` bytes. The buffer
+/// may be uninitialized, so it is zeroed before a `&mut [u8]` is made of it.
+#[no_mangle]
+unsafe extern "Rust" fn __getrandom_v03_custom(
+    dest: *mut u8,
+    len: usize,
+) -> Result<(), getrandom03::Error> {
+    core::ptr::write_bytes(dest, 0, len);
+    let buf = std::slice::from_raw_parts_mut(dest, len);
+    insecure_getrandom(buf).map_err(|_| getrandom03::Error::UNSUPPORTED)
+}
+
+/// Mix host-supplied entropy into the xorshift state. The Java client calls
+/// this once per instance, before anything else, with 128 bits from
+/// `SecureRandom`.
+///
+/// Without it every instance of this module starts from the same state, so
+/// `rand`'s thread RNG, seeded lazily from getrandom on first use, draws the
+/// same sequence in each: two documents built in two instances (an RDF4J
+/// `Sail` opens one per connection) get **identical** anonymous blank-node
+/// labels, and a later merge or federation of the two files conflates them.
+/// With it, labels differ across instances as they do across native processes.
+/// It does not make the source cryptographic, and nothing here needs it to be.
+#[no_mangle]
+pub extern "C" fn rete_seed_entropy(lo: u64, hi: u64) {
+    // splitmix64 finalizer over both halves, so a low-entropy seed still moves
+    // every bit of the state.
+    let mut z = lo ^ hi.rotate_left(32) ^ 0x9E37_79B9_7F4A_7C15;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    ENTROPY_STATE.store(z, Ordering::Relaxed);
+}
 
 /// Reserve `len` bytes of module-owned memory and return a pointer to it. The
 /// host fills this with input bytes before calling an entry point, and frees it
@@ -231,10 +280,63 @@ pub unsafe extern "C" fn rete_build(
         Ok(f) => f,
         Err(e) => return pack(STATUS_ERR, format!("format is not utf-8: {e}").as_bytes()),
     };
-    let quads = match rete_core::ingest::parse_statements(text, format) {
-        Ok(q) => q,
-        Err(e) => return pack(STATUS_ERR, e.to_string().as_bytes()),
+    build_surface(text, format, rete_core::ingest::QuotedTripleSurface::default())
+}
+
+/// [`rete_build`], reading Turtle/TriG `<< … >>` in the named surface: the
+/// `rete build --quoted-triple-syntax` values `"rdf-star"` (the default, as
+/// [`rete_build`]) or `"rdf12"` (the RDF 1.2 reader: `<<( s p o )>>` triple
+/// terms, `<< s p o >>` reifiers, `{| … |}` annotations). An empty syntax is
+/// the default; anything else is an error. `format` also takes `"trig"`.
+///
+/// # Safety
+/// The six pointer/length pairs must describe readable module memory.
+#[no_mangle]
+pub unsafe extern "C" fn rete_build_syntax(
+    text_ptr: *const u8,
+    text_len: u32,
+    fmt_ptr: *const u8,
+    fmt_len: u32,
+    syntax_ptr: *const u8,
+    syntax_len: u32,
+) -> *mut u8 {
+    let (text, format, syntax) = match (
+        std::str::from_utf8(borrow(text_ptr, text_len)),
+        std::str::from_utf8(borrow(fmt_ptr, fmt_len)),
+        std::str::from_utf8(borrow(syntax_ptr, syntax_len)),
+    ) {
+        (Ok(t), Ok(f), Ok(s)) => (t, f, s),
+        _ => return pack(STATUS_ERR, b"input text, format or syntax is not utf-8"),
     };
+    let surface = if syntax.is_empty() {
+        rete_core::ingest::QuotedTripleSurface::default()
+    } else {
+        match rete_core::ingest::QuotedTripleSurface::parse(syntax) {
+            Some(s) => s,
+            None => {
+                return pack(
+                    STATUS_ERR,
+                    format!(
+                        "unknown quoted-triple syntax {syntax:?} (expected \"rdf-star\" or \"rdf12\")"
+                    )
+                    .as_bytes(),
+                )
+            }
+        }
+    };
+    build_surface(text, format, surface)
+}
+
+fn build_surface(
+    text: &str,
+    format: &str,
+    surface: rete_core::ingest::QuotedTripleSurface,
+) -> *mut u8 {
+    let quads =
+        match rete_core::ingest::parse_statements_audited_surface(text, format, None, surface) {
+            Ok(q) => q,
+            Err(e) => return pack(STATUS_ERR, e.to_string().as_bytes()),
+        };
     if quads.is_empty() {
         return pack(
             STATUS_ERR,
