@@ -580,22 +580,32 @@ __PLAYGROUND_CSS__
                   <option value="nt">N-Triples</option>
                   <option value="nq">N-Quads</option>
                   <option value="ttl">Turtle</option>
+                  <option value="trig">TriG</option>
                   <option value="jsonld">JSON-LD</option>
                   <option value="rdfxml">RDF/XML (.owl)</option>
                 </select>
               </label>
+              <label class="builder-fmt" title="How Turtle/TriG reads &lt;&lt; &hellip; &gt;&gt;. RDF-star: a quoted triple. RDF 1.2: &lt;&lt;( s p o )&gt;&gt; is a triple term and &lt;&lt; s p o &gt;&gt; a reifier. The same file is a different graph under each, so you choose. N-Triples/N-Quads read both spellings either way.">
+                <span>Quoted triples</span>
+                <select id="buildQtSyntax">
+                  <option value="rdf-star">RDF-star</option>
+                  <option value="rdf12">RDF 1.2</option>
+                </select>
+              </label>
             </header>
             <p class="microcopy">Paste your graph, or upload a file. <strong>Compatible formats:</strong> N-Triples
-              (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>), JSON-LD
+              (<code>.nt</code>), N-Quads (<code>.nq</code>), Turtle (<code>.ttl</code>), TriG (<code>.trig</code>), JSON-LD
               (<code>.jsonld</code> / <code>.json</code>) and RDF/XML (<code>.rdf</code> / <code>.owl</code>). Uploading sets
-              the Format from the file's extension; JSON-LD and RDF/XML are converted in your browser before building.</p>
+              the Format from the file's extension; JSON-LD and RDF/XML are converted in your browser before building.
+              Turtle and TriG written for <strong>RDF 1.2</strong> (<code>&lt;&lt;( s p o )&gt;&gt;</code> triple terms, reifiers,
+              <code>{| &hellip; |}</code> annotations) need <em>Quoted triples: RDF 1.2</em>.</p>
             <textarea id="buildText" spellcheck="false"></textarea>
             <div class="builder-row">
               <label class="file-button" title="Upload an .nt / .nq / .ttl / .jsonld / .rdf / .owl file (the format is set from its extension)">
                 Upload file
-                <input id="buildFile" type="file" accept=".nt,.nq,.nquads,.ttl,.turtle,.jsonld,.json,.rdf,.owl,.xml,text/plain,application/ld+json,application/rdf+xml" hidden />
+                <input id="buildFile" type="file" accept=".nt,.nq,.nquads,.ttl,.turtle,.trig,.jsonld,.json,.rdf,.owl,.xml,text/plain,application/ld+json,application/rdf+xml" hidden />
               </label>
-              <span class="builder-accept">.nt · .nq · .ttl · .jsonld · .rdf · .owl</span>
+              <span class="builder-accept">.nt · .nq · .ttl · .trig · .jsonld · .rdf · .owl</span>
               <span id="buildDataValid" class="build-valid"></span>
               <span id="buildDataMeta" class="run-meta"></span>
             </div>
@@ -614,7 +624,7 @@ __PLAYGROUND_CSS__
             <div class="builder-row">
               <label class="file-button" title="Upload an ontology file (.ttl / .nt / .nq / .jsonld / .rdf / .owl)">
                 Upload ontology file
-                <input id="buildOntoFile" type="file" accept=".nt,.nq,.nquads,.ttl,.turtle,.jsonld,.json,.rdf,.owl,.xml,text/plain,application/ld+json,application/rdf+xml" hidden />
+                <input id="buildOntoFile" type="file" accept=".nt,.nq,.nquads,.ttl,.turtle,.trig,.jsonld,.json,.rdf,.owl,.xml,text/plain,application/ld+json,application/rdf+xml" hidden />
               </label>
               <span id="buildOntoValid" class="build-valid"></span>
             </div>

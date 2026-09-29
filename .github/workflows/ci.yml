@@ -86,6 +86,9 @@ jobs:
               # Run by release_check.sh's `quality` stage — a broken smoke test
               # fails that job, so it belongs on the same trigger as the job.
               - 'scripts/smoke.sh'
+              # Also run by `quality`: which crates may reach getrandom 0.3 in
+              # the wasm build.
+              - 'scripts/check_getrandom03.sh'
               # crates/rete-cli/tests/export_report_roundtrip.rs EXECUTES this
               # script: it feeds the real exporter's stderr to the script's own
               # awk parser. Editing the script can therefore fail `cargo test`,

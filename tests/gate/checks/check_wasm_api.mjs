@@ -22,6 +22,7 @@ const stableExports = [
   "build",
   "build_with_card",
   "build_with_derived_card",
+  "build_with_card_syntax",
   "validate_card",
   "card",
   "card_and_build",
