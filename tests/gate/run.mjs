@@ -24,6 +24,11 @@ const DEPLOYED = args.includes("--deployed");
 const CATALOG_SCOPE = (args.find((a) => a.startsWith("--catalog=")) || "").slice(10);
 const CATALOG_DATASET = (args.find((a) => a.startsWith("--catalog-dataset=")) || "").slice(18);
 const results = [];
+// Checks this run did NOT execute, and why. They are printed in the summary
+// because `--local` used to drop the live-R2 checks without a word: pull
+// requests read "GATE GREEN" while check_davidrumsey_spatial sat red on main
+// for six weeks (7419aeb2 until #265). A skipped check must read as skipped.
+const skipped = [];
 const t0 = Date.now();
 
 function record(tier, name, ok, note = "") {
@@ -397,7 +402,11 @@ const G2 = [
 async function g2(port) {
   for (const [name, label, timeout, requiresLiveR2] of G2) {
     if (only && !name.includes(only)) continue;
-    if (LOCAL_ONLY && requiresLiveR2) continue;
+    if (LOCAL_ONLY && requiresLiveR2) {
+      skipped.push({ tier: "G2", name, reason: "needs live R2; not run under --local" });
+      console.log(`  - SKIP [G2] ${name} — needs live R2; not run under --local`);
+      continue;
+    }
     const r = await runChild("node", [`${ROOT}/tests/gate/checks/${name}.mjs`], { PGPORT: String(port) }, timeout);
     const j = lastJson(r.out);
     const ok = r.code === 0 && j && j.verdict === "PASS";
@@ -464,6 +473,28 @@ try {
 } finally { servers.forEach((s) => { try { s.kill(); } catch (e) { /* ignore */ } }); }
 
 const fails = results.filter((r) => !r.ok);
-console.log(`\n${"─".repeat(60)}\nGATE ${fails.length ? "RED" : "GREEN"} — ${results.length - fails.length}/${results.length} passed · ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+const skipNote = skipped.length ? ` · ${skipped.length} SKIPPED` : "";
+console.log(`\n${"─".repeat(60)}\nGATE ${fails.length ? "RED" : "GREEN"} — ${results.length - fails.length}/${results.length} passed${skipNote} · ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 if (fails.length) { console.log("Failing:"); fails.forEach((f) => console.log(`  ✗ [${f.tier}] ${f.name}${f.note ? " — " + f.note : ""}`)); }
+if (skipped.length) {
+  console.log("Skipped — NOT verified by this run (the full `node run.mjs` runs them):");
+  skipped.forEach((k) => console.log(`  – [${k.tier}] ${k.name} — ${k.reason}`));
+}
+// The same verdict for the CI job page, where a skipped list in the middle of
+// a long log is as good as silent.
+if (process.env.GITHUB_STEP_SUMMARY) {
+  const md = [
+    `### Browser gate ${fails.length ? "RED" : "GREEN"}: ${results.length - fails.length}/${results.length} passed${skipped.length ? `, ${skipped.length} skipped` : ""}`,
+    "",
+    `Mode: ${LOCAL_ONLY ? "`--local` (no live R2 reads)" : "full (live R2)"}`,
+    "",
+  ];
+  if (fails.length) md.push("Failing:", "", ...fails.map((f) => `- [${f.tier}] ${f.name}`), "");
+  if (skipped.length) {
+    md.push("Skipped (not verified by this run):", "", "| check | why |", "|---|---|");
+    skipped.forEach((k) => md.push(`| \`${k.name}\` | ${k.reason} |`));
+    md.push("");
+  }
+  try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join("\n") + "\n"); } catch (e) { /* best effort */ }
+}
 process.exit(fails.length ? 1 : 0);
