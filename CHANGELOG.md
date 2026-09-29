@@ -165,13 +165,23 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
   Implemented by depending on **both** `oxttl` 0.1 and 0.2 and dispatching on
   the flag — Cargo already carried `oxrdf` 0.2 and 0.3 side by side. The RDF 1.2
-  reader is the `rdf12-turtle` feature, on by default for every native build and
-  **off for wasm**: `oxttl` 0.2 brings `oxrdf` 0.3 → `rand` 0.9 → `getrandom`
-  0.3, which has no `wasm32-unknown-unknown` backend that does not also break
-  the non-browser wasm hosts rete supports (Chicory on the JVM, WASI). The
-  browser builder therefore reads RDF-star Turtle/TriG and both
-  N-Triples/N-Quads surfaces; the engine grew 7,583 bytes (+0.22%) and the
-  Asyncify artifact shrank by 1,865.
+  reader is the `rdf12-turtle` feature, on by default for every native build.
+
+- **The browser engine reads RDF 1.2 Turtle/TriG as well.** The playground's
+  builder has a **Quoted triples** choice (RDF-star, the default, or RDF 1.2)
+  and a TriG format, and JavaScript callers have
+  `build_with_card_syntax(text, format, cardJson, quotedTripleSyntax)`, which
+  under `"rdf-star"` is byte-identical to `build_with_card`. The reader first
+  shipped native-only, on the belief that its `oxrdf` 0.3 → `rand` 0.9 →
+  `getrandom` 0.3 chain could only get a `wasm32-unknown-unknown` backend by
+  breaking non-browser hosts. That is true for the Chicory engine, a separate
+  crate, but not for the browser module, which already imported
+  `crypto.getRandomValues` for getrandom 0.2; getrandom 0.3.4 now takes the
+  same source through rete-core's `wasm-js` feature. The engine grows 195,624
+  bytes (+5.6%) and the Asyncify artifact 594,215 (+5.3%).
+  `scripts/check_getrandom03.sh` (part of the quality gate) fails if any crate
+  other than `oxrdf`'s blank-node labelling comes to depend on getrandom 0.3 in
+  a wasm build.
 
 - **`rete export --format hdt`.** HDT is a compact binary RDF serialization whose
   point is that it stays **queryable without being decompressed**: a reader
