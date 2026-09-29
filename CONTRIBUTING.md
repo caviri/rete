@@ -10,7 +10,7 @@ section). The common loop:
 
 ```sh
 cargo fmt --all                 # required: CI fails on any diff
-cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --exclude rete-bench   # round-trip, robustness, range, SPARQL
 bash scripts/smoke.sh           # end-to-end over every CLI subcommand
 ```

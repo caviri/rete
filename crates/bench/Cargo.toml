@@ -18,8 +18,10 @@ rete-core = { version = "=0.3.2", path = "../rete-core", features = ["parallel"]
 # `sparql-12` feature is on, and the `rdf-12` variant `Term::Triple` has just
 # appeared under it. Oxigraph's `rdf-12` is the switch that turns that on
 # coherently across `oxrdfio` and `spareval`/`spargebra` at once. Without it
-# `cargo build -p rete-bench` breaks — which is a build only CI runs, and is
-# why this was found there rather than here.
+# `cargo build -p rete-bench` breaks. That build is part of
+# `scripts/release_check.sh quality`, which runs locally
+# (`docker compose run --rm check`) and in the CI `quality` job alike; the
+# break reached CI only because the full local gate was not run before pushing.
 oxigraph = { version = "0.5", default-features = false, features = ["rdf-12"] }
 anyhow = "1"
 serde_json = { workspace = true }

@@ -291,12 +291,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      # rete-bench is included: it and its Oxigraph 0.5 dependency check clean
+      # on 1.87 (verified 2026-09-29), so there is no reason to leave it out.
       - name: Check the declared Rust 1.87 minimum
         run: |
           docker run --rm --user root \
             -e RUSTUP_TOOLCHAIN=1.87.0 -e CARGO_TARGET_DIR=/work/target-msrv \
             -v "$PWD:/work" -w /work rust:1.87.0-bookworm \
-            sh -c 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libzstd-dev && cargo check --locked --workspace --exclude rete-bench'
+            sh -c 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libzstd-dev && cargo check --locked --workspace'
 
   security:
     name: security
