@@ -28,12 +28,21 @@ crate-type = ["cdylib"]
 # and the pure-Rust ruzstd decoder in rete-core reads compressed files fine.
 # Crucially NOT `wasm-js` — a JVM host has no crypto.getRandomValues; enabling it
 # would import wasm-bindgen glue Chicory cannot link.
-rete-core = { path = "../../../crates/rete-core", default-features = false }
+# `rdf12-turtle`: the RDF 1.2 Turtle/TriG reader (`rete_build_syntax`), as in
+# every other rete engine. Its getrandom 0.3 dependency takes the `custom`
+# backend below.
+rete-core = { path = "../../../crates/rete-core", default-features = false, features = ["rdf12-turtle"] }
 # getrandom has no default backend on wasm32-unknown-unknown. The browser build
 # uses `js`; here we register a `custom` backend (see src/lib.rs) so the module
 # stays import-free. rete-core pulls getrandom transitively for the SPARQL
 # RAND/UUID/BNODE built-ins; enabling `custom` here turns on that backend graph-wide.
 getrandom = { version = "0.2", features = ["custom"] }
+# getrandom 0.3, reached through rete-core's `rdf12-turtle` (oxrdf 0.3 -> rand 0.9)
+# for anonymous blank-node ids ONLY; scripts/check_getrandom03.sh ffi enforces
+# that. 0.3 has no `custom` feature: the backend is chosen by
+# `--cfg getrandom_backend="custom"`, which build.rs requires for the wasm
+# target, and src/lib.rs defines `__getrandom_v03_custom`.
+getrandom03 = { package = "getrandom", version = "0.3" }
 
 [profile.release]
 # panic=abort so a Rust panic traps as a clean wasm `unreachable` (Chicory

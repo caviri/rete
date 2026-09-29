@@ -20,6 +20,14 @@ RUN rustup target add wasm32-unknown-unknown
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY clients/java/ffi ./clients/java/ffi
+COPY scripts/check_getrandom03.sh ./scripts/check_getrandom03.sh
+# getrandom 0.3 (rete-core's RDF 1.2 Turtle/TriG reader, via oxrdf 0.3) takes its
+# `custom` backend, defined in ffi/src/lib.rs. Target-scoped, so it can never
+# reach a native build; ffi/build.rs refuses a wasm build without it.
+ENV CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='--cfg getrandom_backend="custom"'
+# That backend is a non-cryptographic xorshift. Fail if anything but oxrdf's
+# blank-node labelling depends on getrandom 0.3 here (see the script's header).
+RUN sh scripts/check_getrandom03.sh ffi
 RUN cargo build --release --target wasm32-unknown-unknown \
         --manifest-path clients/java/ffi/Cargo.toml
 

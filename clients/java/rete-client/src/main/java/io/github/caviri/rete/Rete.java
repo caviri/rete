@@ -27,6 +27,7 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -153,6 +154,9 @@ public final class Rete implements AutoCloseable {
 
     private static final Logger LOG = System.getLogger(Rete.class.getName());
 
+    /** Per-instance seeds for the engine's blank-node / RAND source; see the constructor. */
+    private static final SecureRandom ENTROPY = new SecureRandom();
+
     /**
      * The parsed engine module. Immutable and reusable: {@code Instance.Builder}
      * copies every mutable section out of it, so one parse serves every instance
@@ -176,6 +180,7 @@ public final class Rete implements AutoCloseable {
     private final ExportFunction free;
     private final ExportFunction versionFn;
     private final ExportFunction buildFn;
+    private final ExportFunction buildSyntaxFn;
     private final ExportFunction infoFn;
     private final ExportFunction queryFn;
     private final ExportFunction scanFn;
@@ -222,6 +227,7 @@ public final class Rete implements AutoCloseable {
         this.free = instance.export("rete_free");
         this.versionFn = instance.export("rete_version");
         this.buildFn = instance.export("rete_build");
+        this.buildSyntaxFn = instance.export("rete_build_syntax");
         this.infoFn = instance.export("rete_info");
         this.queryFn = instance.export("rete_query");
         this.scanFn = instance.export("rete_scan");
@@ -239,6 +245,13 @@ public final class Rete implements AutoCloseable {
         this.handleScanNextFn = instance.export("rete_handle_scan_next");
         this.handleScanCloseFn = instance.export("rete_handle_scan_close");
         this.openCursorsFn = instance.export("rete_open_cursors");
+        // Seed the engine's entropy source before anything can draw from it.
+        // Every instance starts with fresh linear memory, so without this the
+        // module's xorshift, and the rand thread RNG seeded from it, start from
+        // the same state in every instance: two documents built in two
+        // instances (one per RDF4J connection) got IDENTICAL anonymous
+        // blank-node labels. See rete_seed_entropy in ffi/src/lib.rs.
+        instance.export("rete_seed_entropy").apply(ENTROPY.nextLong(), ENTROPY.nextLong());
     }
 
     /**
@@ -430,6 +443,51 @@ public final class Rete implements AutoCloseable {
         } finally {
             free.apply(textPtr, textBytes.length);
             free.apply(fmtPtr, fmtBytes.length);
+        }
+    }
+
+    /**
+     * {@link #build(String, String)}, choosing how Turtle/TriG reads
+     * {@code << … >>}: the {@code rete build --quoted-triple-syntax} values.
+     *
+     * <ul>
+     *   <li>{@code "rdf-star"} (or {@code ""}): {@code << s p o >>} is a quoted
+     *       triple. The same bytes as {@link #build(String, String)}.</li>
+     *   <li>{@code "rdf12"}: the RDF 1.2 reader. {@code <<( s p o )>>} is a
+     *       triple term, {@code << s p o >>} a reifier (a blank node that
+     *       {@code rdf:reifies} the triple term), {@code {| … |}} an
+     *       annotation, {@code "…"@lang--dir} a directional literal.</li>
+     * </ul>
+     *
+     * <p>The same Turtle file is a different graph under each, and nothing in
+     * the bytes says which was meant, so the caller chooses. N-Triples and
+     * N-Quads read both spellings either way.
+     *
+     * @param rdf    the RDF source text
+     * @param format {@code "nt"}, {@code "nq"}, {@code "ttl"} or {@code "trig"}
+     * @param quotedTripleSyntax {@code "rdf-star"}, {@code "rdf12"} or {@code ""}
+     * @return the raw {@code .rete} file bytes
+     * @throws ReteException if the RDF cannot be parsed, is empty, or the
+     *     syntax is not one of the values above
+     */
+    public byte[] build(String rdf, String format, String quotedTripleSyntax) {
+        byte[] textBytes = rdf.getBytes(StandardCharsets.UTF_8);
+        byte[] fmtBytes = format.getBytes(StandardCharsets.UTF_8);
+        byte[] synBytes = quotedTripleSyntax.getBytes(StandardCharsets.UTF_8);
+        int textPtr = writeInput(textBytes);
+        int fmtPtr = writeInput(fmtBytes);
+        int synPtr = writeInput(synBytes);
+        try {
+            long resultPtr =
+                    buildSyntaxFn.apply(
+                            textPtr, textBytes.length,
+                            fmtPtr, fmtBytes.length,
+                            synPtr, synBytes.length)[0];
+            return readResult(resultPtr);
+        } finally {
+            free.apply(textPtr, textBytes.length);
+            free.apply(fmtPtr, fmtBytes.length);
+            free.apply(synPtr, synBytes.length);
         }
     }
 
