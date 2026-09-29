@@ -39,13 +39,13 @@ inverse_tree() { # inverse_tree <cargo tree args...>
 
 check() { # check <label> <expected crate names> <cargo tree args...>
   label=$1
-  expected=$(printf '%s\n' $2 | sort -u | tr '\n' ' ' | sed 's/ $//')
+  expected=$(echo "$2" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')
   shift 2
   actual=$(inverse_tree "$@")
   if [ "$actual" != "$expected" ]; then
     tmp=$(mktemp -d)
-    printf '%s\n' $expected > "$tmp/expected"
-    printf '%s\n' $actual > "$tmp/actual"
+    echo "$expected" | tr ' ' '\n' > "$tmp/expected"
+    echo "$actual" | tr ' ' '\n' > "$tmp/actual"
     echo "check_getrandom03 FAILED ($label): the set of crates that depend on getrandom 0.3" >&2
     echo "in the wasm32 build changed." >&2
     echo "  expected: $expected" >&2
