@@ -44,7 +44,7 @@ Useful checks from the repository root:
 
 ```sh
 docker compose run --rm dev cargo fmt --all -- --check
-docker compose run --rm dev cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
+docker compose run --rm dev cargo clippy --workspace --all-targets -- -D warnings
 docker compose run --rm dev cargo test --workspace --exclude rete-bench
 docker compose run --rm dev cargo test -p rete-core --no-default-features
 docker compose run --rm dev cargo build -p rete-core --all-features

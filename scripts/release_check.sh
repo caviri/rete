@@ -10,7 +10,12 @@ quality() {
   # Cheapest gate first: every client must sit on the engine's minor line.
   python3 scripts/sync_versions.py --check
   cargo fmt --all -- --check
-  cargo clippy --workspace --exclude rete-bench --all-targets -- -D warnings
+  # rete-bench is IN the lint on purpose. Excluding it (as the test and doc
+  # lines below still do, to keep the slow benchmarks out) meant its code was
+  # never linted anywhere, and that no command compiled the other crates with
+  # rete-bench's features unified into the workspace graph. Clippy compiles
+  # every target, so it is a type-check too; it adds about a second warm.
+  cargo clippy --workspace --all-targets -- -D warnings
   cargo test --workspace --exclude rete-bench
   cargo test -p rete-core --no-default-features
   cargo build -p rete-core --all-features
