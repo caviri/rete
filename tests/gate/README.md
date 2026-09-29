@@ -10,7 +10,7 @@ bash tests/gate/gate.sh              # full gate (~4 min)
 bash tests/gate/gate.sh fast         # static + node engine harness (~15 s)
 bash tests/gate/gate.sh --only=worldcup   # one browser check while iterating
 bash tests/gate/gate.sh --deployed   # + probe the live GitHub Pages site
-bash tests/gate/gate.sh --local      # no live R2 reads (the pull-request CI mode)
+bash tests/gate/gate.sh --local      # no live R2 reads; prints what it skipped
 ```
 
 The optional Compose services add broader, slower coverage:
@@ -174,9 +174,22 @@ which number went stale and what it is now.
 
 Live-R2 checks retry any no-rows outcome (`_util.runWithRetry`) so a transient CDN
 blip doesn't red the gate; a real regression fails every retry and still goes red.
-Pull requests use `--local`, which still runs G0, the local ranged G1 fixture, and
-all embedded/local G2 checks. Pushes to `main` and `release-*` run the complete
-live-R2 matrix.
+`--local` still runs G0, the local ranged G1 fixture, and all embedded/local G2
+checks, and it **lists every check it skipped** (marked `SKIP` in the G2 block, and
+counted in the `GATE … SKIPPED` summary line). In CI:
+
+- a pull request that touches an input of a live-R2 check runs the **full** gate.
+  The inputs are the `browser_live` path filter in `.github/workflows/ci.yml`:
+  the playground sources and catalog (examples are opened by index, `ex=N`), the
+  served browser artifacts (which is how an engine change reaches these checks),
+  `web/datasets.lock.json`, this directory, and the workflow itself;
+- any other pull request runs `--local`, and the job summary shows the skipped
+  table;
+- pushes to `main` and `release-*`, `workflow_dispatch`, and a **nightly**
+  scheduled run on `main` run the complete live-R2 matrix. The nightly exists
+  because a path filter can miss an input and the published datasets can change
+  with no commit at all. Before it, a red live check could sit on `main` for six
+  weeks (7419aeb2 until #265).
 
 ## After an engine (crates/) change — checklist
 

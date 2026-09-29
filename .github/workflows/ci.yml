@@ -5,12 +5,21 @@ on:
     branches: [main, "release-*"]
   pull_request:
   workflow_dispatch:
+  # Nightly: the live-R2 browser gate against main, and nothing else (see the
+  # `browser` job). The path filter below decides which PRs pay for live R2,
+  # and a filter can miss an input; the published datasets can also change
+  # under a green main with no commit at all. A nightly run bounds either kind
+  # of rot to a day. The last one went six weeks.
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # The nightly gets its own group: sharing main's would let a push cancel it,
+  # or let it cancel the push's run.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 env:
@@ -35,9 +44,14 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       scholar: ${{ steps.filter.outputs.scholar }}
       shell: ${{ steps.filter.outputs.shell }}
+      browser_live: ${{ steps.filter.outputs.browser_live }}
     steps:
       - uses: actions/checkout@v6
+      # Not on the nightly: it runs a fixed job set (image, wasm, browser) and
+      # there is no change to diff. Every output is then empty, which the job
+      # conditions below read as "not changed".
       - uses: dorny/paths-filter@v3
+        if: github.event_name != 'schedule'
         id: filter
         with:
           filters: |
@@ -127,12 +141,44 @@ jobs:
               - '**/*.sh'
               - 'tests/shellcheck/**'
               - '.github/workflows/ci.yml'
+            browser_live:
+              # Which PRs run the FULL browser gate, live-R2 checks included,
+              # instead of `--local`. Every `requiresLiveR2` check in
+              # tests/gate/run.mjs opens the built docs/playground.html at a
+              # catalog dataset and often a catalog example by INDEX (`ex=7`),
+              # then range-reads the published file on R2 through the async or
+              # sync engine. So its inputs are exactly:
+              #   - the playground sources and the catalog. An inserted example
+              #     shifts every `ex=` index after it; that is how 7419aeb2
+              #     turned check_davidrumsey_spatial red on main for six weeks,
+              #     from a PR whose `--local` gate could not see it.
+              - 'web/playground-src/**'
+              - 'web/playground.template.html'
+              - 'web/coi-serviceworker.js'
+              - 'scripts/build_playground.py'
+              - 'scripts/stage_playground_datasets.py'
+              #   - the served bytes. The engine reaches the browser ONLY through
+              #     these committed artifacts, which the `wasm` job's parity
+              #     check forces into the same PR as any crates/ change. So an
+              #     engine change is covered here without listing crates/**,
+              #     and a Rust change that cannot reach the browser stays local.
+              - 'docs/playground.html'
+              - 'docs/rete_wasm_async.js'
+              - 'docs/rete_wasm_async.wasm'
+              - 'docs/coi-serviceworker.js'
+              #   - the published-dataset contract: a lock change says the bytes
+              #     on R2 that these checks read have changed.
+              - 'web/datasets.lock.json'
+              #   - the checks themselves, and the job that runs them.
+              - 'tests/gate/**'
+              - '.github/workflows/ci.yml'
 
   image:
     name: pinned development image
     needs: changes
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
       needs.changes.outputs.rust == 'true' ||
       needs.changes.outputs.wasm == 'true' ||
       needs.changes.outputs.docs == 'true' ||
@@ -323,7 +369,10 @@ jobs:
   wasm:
     name: wasm
     needs: [changes, image]
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.wasm == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      needs.changes.outputs.wasm == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -412,7 +461,7 @@ jobs:
 
   browser:
     name: browser
-    needs: [image, wasm]
+    needs: [changes, image, wasm]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -427,14 +476,29 @@ jobs:
           name: wasm-build-${{ github.sha }}
           path: .
       - run: docker load --input /tmp/rete-dev.tar
-      - name: Run local fixtures on PRs and the live R2 matrix on pushes
+      # Full (live R2) gate on pushes, the nightly, workflow_dispatch, and any
+      # PR that touches an input of a live-R2 check (the `browser_live` filter).
+      # Other PRs run `--local`, which now LISTS what it skipped, in the log and
+      # in the job summary.
+      - name: Run the browser gate (full, or --local for PRs that cannot affect live R2)
+        env:
+          BROWSER_LIVE: ${{ needs.changes.outputs.browser_live }}
         run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$BROWSER_LIVE" != true ]; then
+            GATE_ARGS=--local
+            echo "PR touches no live-R2 input: running the gate with --local."
+          else
+            GATE_ARGS=
+            echo "Running the FULL gate, live R2 included ($GITHUB_EVENT_NAME, browser_live=${BROWSER_LIVE:-n/a})."
+          fi
           docker run --rm --user root --network host \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
-            -e CARGO_TARGET_DIR=/work/target -e GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            -e CARGO_TARGET_DIR=/work/target -e GATE_ARGS="$GATE_ARGS" \
             -e PLAYWRIGHT_BROWSERS_PATH=/work/tests/gate/.playwright \
+            -e GITHUB_STEP_SUMMARY=/gh-summary/step-summary.md \
+            -v "$GITHUB_STEP_SUMMARY:/gh-summary/step-summary.md" \
             -v "$PWD:/work" -w /work/tests/gate "${{ needs.image.outputs.tag }}" \
-            sh -lc 'git config --global --add safe.directory /work; npm ci --no-audit --no-fund; npx playwright install chromium; bash /work/tests/gate/fixtures.sh; if [ "$GITHUB_EVENT_NAME" = pull_request ]; then node run.mjs --local; else node run.mjs; fi'
+            sh -lc 'git config --global --add safe.directory /work; npm ci --no-audit --no-fund; npx playwright install chromium; bash /work/tests/gate/fixtures.sh; node run.mjs $GATE_ARGS'
 
   package:
     name: package
