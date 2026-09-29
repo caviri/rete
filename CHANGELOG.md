@@ -7,6 +7,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Java: blank nodes built in two engine instances got the same labels.** The
+  Chicory engine's randomness is a module-level xorshift, and every `Rete`
+  instance (an RDF4J `Sail` opens one per connection) starts with fresh linear
+  memory, so every instance drew the same sequence. An anonymous blank node in
+  the first Turtle document built in one instance was labelled exactly like the
+  one in another instance, and merging or federating those files conflated
+  them. `Rete` now seeds each instance from `SecureRandom` through a new
+  `rete_seed_entropy` export. Found by the RDF 1.2 blank-node test, which failed
+  on exactly this before the seed was added. The RDF-star Turtle reader draws
+  its labels from the same xorshift (through getrandom 0.2), so it was exposed
+  the same way.
+
 - **A dump with a quoted triple in it could not be loaded by anything current.**
   rete stores a quoted triple as the RDF-star token `<<s p o>>` and the text
   writers emitted it verbatim. Oxigraph 0.5.x — `oxrdf` 0.3 / `oxttl` 0.2, the
@@ -182,6 +194,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `scripts/check_getrandom03.sh` (part of the quality gate) fails if any crate
   other than `oxrdf`'s blank-node labelling comes to depend on getrandom 0.3 in
   a wasm build.
+
+- **So does the Java client.** `Rete.build(rdf, format, quotedTripleSyntax)`
+  takes `"rdf12"` (and `format` takes `"trig"`), backed by the engine's new
+  `rete_build_syntax` export. The Chicory engine has no JavaScript and no OS
+  entropy, so getrandom 0.3 gets the `custom` backend there, fed by the same
+  xorshift that already served getrandom 0.2, selected with a target-scoped
+  `--cfg getrandom_backend="custom"`. `ffi/build.rs` refuses a wasm build that
+  forgets the flag, and the guard above runs in its `ffi` mode before every
+  Java build. `rete_ffi.wasm` grows 104,005 bytes (+6.2%).
 
 - **`rete export --format hdt`.** HDT is a compact binary RDF serialization whose
   point is that it stays **queryable without being decompressed**: a reader

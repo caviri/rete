@@ -64,6 +64,27 @@ The `query` result is the same JSON envelope the browser client returns:
 | `ASK`                | `{"kind":"ask","boolean":true|false}`                           |
 | `CONSTRUCT`/`DESCRIBE` | `{"kind":"construct","triples":[[s,p,o],...]}`                |
 
+### RDF 1.2 Turtle/TriG
+
+`build(rdf, format, quotedTripleSyntax)` reads Turtle/TriG `<< … >>` in the
+surface you name, the values of `rete build --quoted-triple-syntax`:
+`"rdf-star"` (the default, same bytes as `build(rdf, format)`) or `"rdf12"`
+(`<<( s p o )>>` triple terms, `<< s p o >>` reifiers, `{| … |}` annotations,
+`"…"@lang--dir` literals). The same file is a different graph under each, so
+you choose. `format` also takes `"trig"`.
+
+```java
+byte[] file = rete.build(
+    "@prefix ex: <http://example.org/> .\n"
+        + "<< ex:bob ex:knows ex:dave >> ex:source ex:wiki .", "ttl", "rdf12");
+```
+
+Anonymous blank nodes (`[]`, reifiers, annotations) get random labels. The
+engine has no OS entropy, so it draws them from a non-cryptographic generator
+that `Rete` seeds from `SecureRandom` each time it creates an engine instance.
+Labels therefore differ between instances, and files built in two connections
+can be merged or federated without their blank nodes colliding.
+
 Engine errors (bad file, SPARQL parse/eval failure, invalid RDF) are raised as
 `ReteException`, carrying the engine's own message.
 
@@ -343,6 +364,12 @@ The build is two stages:
 1. **`rust:1.92` → wasm.** Compiles the `ffi/` crate for
    `wasm32-unknown-unknown` into `rete_ffi.wasm` — whose only import is the
    host range-read function used on the remote path (no wasm-bindgen glue).
+   It sets `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='--cfg
+   getrandom_backend="custom"'`, which the RDF 1.2 reader's getrandom 0.3
+   needs (`ffi/build.rs` refuses a wasm build without it), and first runs
+   `scripts/check_getrandom03.sh ffi`, which fails if anything but blank-node
+   labelling comes to depend on that non-cryptographic source. Building the
+   crate by hand takes the same variable.
 2. **`maven` + Temurin 21.** Drops that wasm into `rete-client`'s resources
    (where `Rete.load()` reads it) and runs `mvn verify` across the reactor.
 
@@ -390,7 +417,10 @@ the wasm module (`ffi/src/lib.rs`):
 
 - `rete_alloc(len) -> ptr` / `rete_free(ptr, len)` — host-driven allocation in
   the module's linear memory.
-- `rete_version()`, `rete_build(text,fmt)`, `rete_info(bytes)`,
+- `rete_seed_entropy(lo, hi)` — mixes 128 host bits into the engine's entropy
+  source; `Rete` calls it once per instance, before anything else.
+- `rete_version()`, `rete_build(text,fmt)`, `rete_build_syntax(text,fmt,syntax)`,
+  `rete_info(bytes)`,
   `rete_query(bytes,query)` — each returns a pointer to a result buffer laid out
   as `[status: u32 LE][len: u32 LE][payload: len bytes]`. `status == 0` is
   success (`payload` is JSON, or raw `.rete` bytes for `build`); `status == 1`
