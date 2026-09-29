@@ -755,11 +755,9 @@ an exported quoted triple comes back as <code>&lt;&lt;( s p o )&gt;&gt;</code>, 
 <code>LANG</code> returns the language subtag — and a leading SPARQL 1.2 <code>VERSION "1.2"</code>
 declaration is accepted; <code>--quoted-triple-syntax rdf12</code> is also what lets the
 Turtle reader <em>parse</em> the <code>@lang--dir</code> form. Not yet: the new SPARQL 1.2
-direction <em>functions</em> (<code>LANGDIR</code>…), and the RDF 1.2 Turtle/TriG reader is
-<strong>native-only</strong> — the in-browser builder reads RDF-star Turtle/TriG and both
-N-Triples/N-Quads surfaces, because <code>oxttl</code> 0.2's <code>getrandom</code> 0.3 dependency has
-no <code>wasm32-unknown-unknown</code> backend compatible with the non-browser wasm hosts
-rete supports.</p>
+direction <em>functions</em> (<code>LANGDIR</code>…). The RDF 1.2 Turtle/TriG reader runs in the
+browser too: the in-browser builder's <strong>Quoted triples: RDF 1.2</strong> choice reads
+it, beside RDF-star Turtle/TriG and both N-Triples/N-Quads surfaces.</p>
 <p><strong>Current limits (not RDF-incompatible, just unimplemented):</strong> OWL/XML and
 Functional Syntax need an external convert-to-RDF step (above); and there is no
 in-place SPARQL Update — the file is immutable by design, though
