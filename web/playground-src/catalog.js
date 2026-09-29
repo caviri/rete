@@ -1,3 +1,4 @@
+// throwaway: proves a catalog.js change runs the FULL gate (do not merge)
 // Shared IRI -> human-label hints for the Wikidata datasets. The editor's
 // "Labels" decode toggle reads CATALOG.labelHints[dataset]; wikidata and
 // wikidata-100mb use the same Wikidata vocabulary, so they share this map.
