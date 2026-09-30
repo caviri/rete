@@ -93,6 +93,17 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **R: RDF 1.2 Turtle/TriG, and the card's quoted-triple signal.**
+  `rete_build()` takes `quoted_triple_syntax = c("rdf-star", "rdf12")` — the
+  values and default of `rete build --quoted-triple-syntax` — and documents
+  `"trig"`; `rete_card()` carries `signals$quoted_triples`, measured from the
+  header on read exactly as `rete card` does. New tests cover RDF 1.2 Turtle and
+  TriG, the unchanged default, the card signal, and blank nodes of separate
+  parses staying distinct when merged. The R client has no RDF text export, so
+  there is no writer half. `clients/r/src/rust/Cargo.lock` is refreshed for the
+  `oxiri` / `oxttl` 0.2 / `oxrdf` 0.3 dependencies the engine gained (every
+  build was rewriting it).
+
 - **A dataset whose statements quote other statements now ships starter queries
   for them.** Five `qt-*` queries, dimension `statements`, instantiated with the
   dataset's own annotation vocabulary: which statements it says something about

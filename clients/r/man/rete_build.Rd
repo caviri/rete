@@ -10,12 +10,14 @@ rete_build(
   card = NULL,
   pyramid = c("louvain", "types", "none"),
   text_index = FALSE,
-  derive_card = FALSE
+  derive_card = FALSE,
+  quoted_triple_syntax = c("rdf-star", "rdf12")
 )
 }
 \arguments{
 \item{text}{RDF text: N-Triples (\code{"nt"}), N-Quads (\code{"nq"} — named graphs
-become a dataset), Turtle (\code{"ttl"}), or RDF/XML (\code{"rdfxml"}).}
+become a dataset), Turtle (\code{"ttl"}), TriG (\code{"trig"}), or RDF/XML
+(\code{"rdfxml"}).}
 
 \item{format}{The RDF serialization of \code{text}.}
 
@@ -38,6 +40,15 @@ keeps producing the bytes it always produced; derivation walks the graph
 twice more, which is a cost to opt into. Turning it on also holds the
 curated half to the CLI's write-time rules (reserved top level, \code{theme}
 must be a controlled-vocabulary IRI, the \code{extra} bag is bounded).}
+
+\item{quoted_triple_syntax}{What Turtle/TriG \verb{<< s p o >>} means, with the
+values and default of \verb{rete build --quoted-triple-syntax}: \code{"rdf-star"}
+(the default) reads a quoted triple, as every earlier release did;
+\code{"rdf12"} reads RDF 1.2 — \verb{<<( s p o )>>} is a triple term, \verb{<< s p o >>}
+a reifier, \verb{\{| … |\}} an annotation. The same bytes are two different
+graphs under the two, so it is chosen, not detected. N-Triples, N-Quads
+and RDF/XML ignore it. RDF 1.2 Turtle read as \code{"rdf-star"} is an error
+that names \code{"rdf12"}.}
 }
 \value{
 A raw vector holding the file image — pass it to \code{\link[=rete_open]{rete_open()}} or

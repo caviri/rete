@@ -700,7 +700,7 @@ rete_query(g, ex$sparql[[1]])
 &lt;urn:x:alice&gt; &lt;http://xmlns.com/foaf/0.1/name&gt; "Alice" .
 '
 img &lt;- rete_build(nt,
-  format = "nt",                       # nt | nq | ttl | rdfxml
+  format = "nt",                       # nt | nq | ttl | trig | rdfxml
   card = list(
     title = "Tiny demo",
     description = "Two triples about Alice",
@@ -719,6 +719,21 @@ languages, hubs, signals and the tiered starter-query library — from the same
 code <code>rete build --card</code> runs, so the same graph yields a byte-identical card.
 It is opt-in: derivation walks the graph twice more, and the default keeps
 writing exactly the bytes it always did.</p>
+<h3 id="rdf-12-turtle-and-trig">RDF 1.2 Turtle and TriG</h3>
+<p>In Turtle and TriG, <code>&lt;&lt; s p o &gt;&gt;</code> is a quoted triple under RDF-star and a
+<em>reifier</em> under RDF 1.2 — the same bytes, two graphs — so <code>rete_build()</code> takes
+<code>quoted_triple_syntax</code>, with the values and default of
+<code>rete build --quoted-triple-syntax</code>:</p>
+<pre><code class="language-r">ttl &lt;- '@prefix ex: &lt;http://example.org/&gt; .
+ex:alice ex:says &lt;&lt;( ex:bob ex:knows ex:carol )&gt;&gt; .'
+g &lt;- rete_open(rete_build(ttl, "ttl", quoted_triple_syntax = "rdf12"))
+</code></pre>
+<p><code>"rdf-star"</code> (the default) reads what every earlier release read; <code>"rdf12"</code>
+reads <code>&lt;&lt;( s p o )&gt;&gt;</code> triple terms, <code>&lt;&lt; … &gt;&gt;</code> reifiers and <code>{| … |}</code>
+annotations. N-Triples, N-Quads and RDF/XML ignore it. <code>rete_card(g)$signals$quoted_triples</code>
+says whether a file holds quoted triples and which surfaces <code>rete export</code> can
+write them in, measured from the header on read, so every existing file
+answers it. (The R client has no RDF text export; use <code>rete export</code>.)</p>
 <p>In-memory assembly suits tests and small graphs; for large datasets use the
 <a href="cli.html"><code>rete build</code> CLI</a>, which streams and compresses.</p>
 <h2 id="the-same-file-everywhere">The same file everywhere</h2>

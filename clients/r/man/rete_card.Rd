@@ -11,7 +11,10 @@ rete_card(graph)
 }
 \value{
 The card as a list, or \code{NULL} when the file carries none. On lazy
-opens only the metadata section's byte range is fetched.
+opens only the metadata section's byte range is fetched. Its
+\code{signals$quoted_triples} — \code{present}, and when present \code{export_surfaces}
+and \code{export_default} — is measured from the file's header on read, exactly
+as \verb{rete card} does, so files built before the signal existed carry it too.
 }
 \description{
 The embedded Dataset Card

@@ -379,6 +379,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxrdf"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4be15186205eb60ddbdc2fb47cb25df472c7f399bbe119b68c0972b6b6dd46ea"
+dependencies = [
+ "oxilangtag",
+ "oxiri",
+ "rand",
+ "thiserror",
+]
+
+[[package]]
 name = "oxrdfxml"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -386,7 +398,7 @@ checksum = "d8d4bf9c5331127f01efbd1245d90fd75b7c546a97cb3e95461121ce1ad5b1c8"
 dependencies = [
  "oxilangtag",
  "oxiri",
- "oxrdf",
+ "oxrdf 0.2.4",
  "quick-xml",
  "thiserror",
 ]
@@ -400,7 +412,20 @@ dependencies = [
  "memchr",
  "oxilangtag",
  "oxiri",
- "oxrdf",
+ "oxrdf 0.2.4",
+ "thiserror",
+]
+
+[[package]]
+name = "oxttl"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1d0fe19fa62a6a102f85b052bbd86e3cdc3360cd6a338d01bab1a6743bf1d8e"
+dependencies = [
+ "memchr",
+ "oxilangtag",
+ "oxiri",
+ "oxrdf 0.3.4",
  "thiserror",
 ]
 
@@ -553,9 +578,12 @@ dependencies = [
  "blake3",
  "getrandom 0.2.17",
  "md-5",
- "oxrdf",
+ "oxiri",
+ "oxrdf 0.2.4",
+ "oxrdf 0.3.4",
  "oxrdfxml",
- "oxttl",
+ "oxttl 0.1.8",
+ "oxttl 0.2.4",
  "regex-lite",
  "ruzstd",
  "serde",
@@ -710,7 +738,7 @@ checksum = "8907e262be4b4b363218f4688f5654d423a958aa4b8d7c7a7f898be591fa474e"
 dependencies = [
  "oxilangtag",
  "oxiri",
- "oxrdf",
+ "oxrdf 0.2.4",
  "peg",
  "rand",
  "thiserror",

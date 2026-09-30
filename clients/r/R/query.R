@@ -200,7 +200,10 @@ rete_schema <- function(graph) {
 #'
 #' @param graph A `rete_graph`.
 #' @return The card as a list, or `NULL` when the file carries none. On lazy
-#'   opens only the metadata section's byte range is fetched.
+#'   opens only the metadata section's byte range is fetched. Its
+#'   `signals$quoted_triples` — `present`, and when present `export_surfaces`
+#'   and `export_default` — is measured from the file's header on read, exactly
+#'   as `rete card` does, so files built before the signal existed carry it too.
 #' @export
 rete_card <- function(graph) {
   stopifnot(inherits(graph, "rete_graph"))
@@ -208,7 +211,13 @@ rete_card <- function(graph) {
   if (!nzchar(raw)) {
     return(NULL)
   }
-  jsonlite::fromJSON(raw, simplifyVector = FALSE)
+  card <- jsonlite::fromJSON(raw, simplifyVector = FALSE)
+  if (!is.list(card$signals)) card$signals <- list()
+  card$signals$quoted_triples <- jsonlite::fromJSON(
+    graph$ptr$quoted_triples_signal(),
+    simplifyVector = FALSE
+  )
+  card
 }
 
 #' Example SPARQL queries embedded in the file

@@ -115,7 +115,7 @@ nt <- '
 <urn:x:alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
 '
 img <- rete_build(nt,
-  format = "nt",                       # nt | nq | ttl | rdfxml
+  format = "nt",                       # nt | nq | ttl | trig | rdfxml
   card = list(
     title = "Tiny demo",
     description = "Two triples about Alice",
@@ -135,6 +135,26 @@ languages, hubs, signals and the tiered starter-query library — from the same
 code `rete build --card` runs, so the same graph yields a byte-identical card.
 It is opt-in: derivation walks the graph twice more, and the default keeps
 writing exactly the bytes it always did.
+
+### RDF 1.2 Turtle and TriG
+
+In Turtle and TriG, `<< s p o >>` is a quoted triple under RDF-star and a
+*reifier* under RDF 1.2 — the same bytes, two graphs — so `rete_build()` takes
+`quoted_triple_syntax`, with the values and default of
+`rete build --quoted-triple-syntax`:
+
+```r
+ttl <- '@prefix ex: <http://example.org/> .
+ex:alice ex:says <<( ex:bob ex:knows ex:carol )>> .'
+g <- rete_open(rete_build(ttl, "ttl", quoted_triple_syntax = "rdf12"))
+```
+
+`"rdf-star"` (the default) reads what every earlier release read; `"rdf12"`
+reads `<<( s p o )>>` triple terms, `<< … >>` reifiers and `{| … |}`
+annotations. N-Triples, N-Quads and RDF/XML ignore it. `rete_card(g)$signals$quoted_triples`
+says whether a file holds quoted triples and which surfaces `rete export` can
+write them in, measured from the header on read, so every existing file
+answers it. (The R client has no RDF text export; use `rete export`.)
 
 In-memory assembly suits tests and small graphs; for large datasets use the
 [`rete build` CLI](cli.md), which streams and compresses.
