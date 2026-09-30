@@ -55,8 +55,10 @@ Recommended workflow:
    carries an ontology.
 6. find_entities — resolve a name to IRIs before asking about a specific thing.
 7. validate_shacl — data-quality checks with SHACL Core shapes.
-8. build_rete — turn RDF text (Turtle / N-Triples) into a new .rete file in a
-   granted folder; it is queryable immediately by its file name.
+8. build_rete — turn RDF text (Turtle / TriG / N-Triples / N-Quads) into a new
+   .rete file in a granted folder; it is queryable immediately by its file name.
+   For RDF 1.2 Turtle/TriG (<<( s p o )>>, reifiers, {| … |}) pass
+   quoted_triple_syntax="rdf12"; the default reads << s p o >> as RDF-star.
 
 Every result carries \`stats\`: the bytes and requests actually read. Report
 them when the user asks how much data was touched — a good query over a huge
@@ -78,7 +80,12 @@ const guard = (fn) => async (args) => {
   } catch (error) {
     if (error instanceof UsageError) return fail(error);
     const message = error?.message ?? String(error);
-    return fail(new Error(message.includes("\n") ? message.split("\n")[0] : message));
+    // First line only — but keep the engine's `hint:` line, which is where it
+    // says what to change (e.g. that RDF 1.2 Turtle needs
+    // quoted_triple_syntax "rdf12").
+    const [first, ...rest] = message.split("\n");
+    const hint = rest.find((line) => line.trimStart().startsWith("hint:"));
+    return fail(new Error(hint ? `${first}\n${hint.trim()}` : first));
   }
 };
 
@@ -446,19 +453,30 @@ server.registerTool(
   {
     title: "Build a .rete graph",
     description:
-      "Turn RDF text (Turtle, N-Triples or N-Quads) into a new .rete knowledge-graph file in " +
-      "one of the granted folders — entirely on this machine, no network. The result is " +
-      "queryable immediately: pass the returned file name as `dataset` to any other tool.",
+      "Turn RDF text (Turtle, TriG, N-Triples or N-Quads) into a new .rete knowledge-graph " +
+      "file in one of the granted folders — entirely on this machine, no network. The result " +
+      "is queryable immediately: pass the returned file name as `dataset` to any other tool.",
     inputSchema: {
       rdf: z.string().describe("the RDF source text"),
       output_path: z
         .string()
         .describe("where to write it; a bare name lands in the first granted folder"),
-      format: z.enum(["ttl", "nt", "nq"]).optional().describe("RDF syntax of `rdf` (default ttl)"),
+      format: z
+        .enum(["ttl", "trig", "nt", "nq"])
+        .optional()
+        .describe("RDF syntax of `rdf` (default ttl)"),
+      quoted_triple_syntax: z
+        .enum(["rdf-star", "rdf12"])
+        .optional()
+        .describe(
+          "what Turtle/TriG `<< s p o >>` means: rdf-star (default) = a quoted triple; " +
+            "rdf12 = RDF 1.2, where `<<( s p o )>>` is a triple term, `<< … >>` a reifier " +
+            "and `{| … |}` an annotation. Ignored for nt/nq",
+        ),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  guard(async ({ rdf, output_path, format = "ttl" }) => {
+  guard(async ({ rdf, output_path, format = "ttl", quoted_triple_syntax = "rdf-star" }) => {
     if (dirs.length === 0) {
       throw new UsageError(
         "no folder granted — add one in the extension's settings (Graph folders) before building",
@@ -471,9 +489,10 @@ server.registerTool(
         `${target} is outside the folders this extension may write to (${dirs.join(", ")})`,
       );
     }
-    const bytes = await build(rdf, format);
+    const bytes = await build(rdf, format, { quotedTripleSyntax: quoted_triple_syntax });
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, bytes);
+    store.changed(target);
     const { graph } = await store.graph(target);
     return json({
       path: target,
