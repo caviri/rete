@@ -56,6 +56,26 @@ export interface DumpOptions {
   batch?: number;
 }
 
+/**
+ * How a quoted triple is spelled — `rete build/export --quoted-triple-syntax`.
+ * `"rdf12"`: the RDF 1.2 triple term `<<( s p o )>>` (and, when reading
+ * Turtle/TriG, `<< … >>` is a reifier). `"rdf-star"`: `<<s p o>>`, a quoted
+ * triple — rete's stored token.
+ */
+export type QuotedTripleSyntax = "rdf12" | "rdf-star";
+
+export interface NQuadsOptions extends DumpOptions {
+  /** Default `"rdf12"`, like `rete export`. */
+  quotedTripleSyntax?: QuotedTripleSyntax;
+}
+
+/** `signals.quoted_triples` of a card, measured from the file header on read. */
+export interface QuotedTriplesSignal {
+  present: boolean;
+  export_surfaces?: QuotedTripleSyntax[];
+  export_default?: QuotedTripleSyntax;
+}
+
 /** A sink for {@link Graph.writeNQuads}: Node stream, web stream, or callback. */
 export type NQuadsSink =
   | { write(chunk: string): unknown; once?(event: string, cb: () => void): unknown }
@@ -78,7 +98,11 @@ export class Graph {
     relations: [s: string, p: string, o: string, count: number][];
   };
   info(): { quads: number; terms: number; pyramidLevels: number; namedGraphs: number };
-  /** The embedded Dataset Card, or null when the file carries none. */
+  /**
+   * The embedded Dataset Card, or null when the file carries none. Its
+   * `signals.quoted_triples` ({@link QuotedTriplesSignal}) is measured from the
+   * header on read, so files built before the signal existed carry it too.
+   */
   card(): Record<string, unknown> | null;
   /** Example SPARQL queries from the card; `sparql` plus optional rich fields. */
   examples(): { sparql: string; title?: string; question?: string }[];
@@ -96,11 +120,11 @@ export class Graph {
   dump(opts?: DumpOptions & { raw?: false }): AsyncGenerator<Quad>;
   dump(opts: DumpOptions & { raw: true }): AsyncGenerator<RawQuad>;
   /** The graph as N-Quads text, in whole-line chunks — constant memory. */
-  nquads(opts?: DumpOptions): AsyncGenerator<string>;
+  nquads(opts?: NQuadsOptions): AsyncGenerator<string>;
   /** Stream the graph as N-Quads into a sink; returns the length written. */
-  writeNQuads(sink: NQuadsSink, opts?: DumpOptions): Promise<number>;
+  writeNQuads(sink: NQuadsSink, opts?: NQuadsOptions): Promise<number>;
   /** The whole graph as ONE N-Quads string (materializes it — see nquads). */
-  toNQuads(opts?: DumpOptions): Promise<string>;
+  toNQuads(opts?: NQuadsOptions): Promise<string>;
   graphNames(): string[];
   /** Remote graphs only: cumulative fetch counters; null for bytes graphs. */
   stats(): { fileLength: number; bytes: number; requests: number } | null;
@@ -123,8 +147,16 @@ export function open(
 /** The raw wasm engine — escape hatch for exports this wrapper doesn't wrap. */
 export const wasm: Record<string, (...args: never[]) => unknown>;
 
-/** Build a complete `.rete` file image from RDF text ("nt", "nq", "ttl"). */
-export function build(text: string, format?: "nt" | "nq" | "ttl"): Promise<Uint8Array>;
+/**
+ * Build a complete `.rete` file image from RDF text. `quotedTripleSyntax`
+ * (default `"rdf-star"`, like `rete build`) decides what Turtle/TriG `<< … >>`
+ * means; N-Triples and N-Quads ignore it.
+ */
+export function build(
+  text: string,
+  format?: "nt" | "nq" | "ttl" | "trig",
+  opts?: { quotedTripleSyntax?: QuotedTripleSyntax },
+): Promise<Uint8Array>;
 
 /** Initialize the wasm engine explicitly (open()/build() do it lazily). */
 export function init(source?: BufferSource | WebAssembly.Module | URL | string | null): Promise<void>;

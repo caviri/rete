@@ -7,6 +7,33 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **JavaScript: `nquads()` / `writeNQuads()` / `toNQuads()` wrote quoted
+  triples in a spelling no current parser loads.** The engine cursor emitted
+  the stored RDF-star token `<<s p o>>` verbatim — the output #262 fixed in
+  `rete export` — so Oxigraph 0.5 refused the whole dump. The writers now take
+  `{ quotedTripleSyntax: "rdf12" | "rdf-star" }` with the CLI's default,
+  `rdf12`: `<<( s p o )>>`, nested terms too, and a subject-position quoted
+  triple refused by name. The respelling runs in the engine
+  (`QuadCursor.set_quoted_triple_syntax`, off by default, so the raw wasm
+  surface is unchanged) and only when the header records quoted triples, so any
+  other dump is byte-for-byte the same.
+
+- **JavaScript on Node 18: any Turtle build with a blank node panicked.** The
+  engine draws blank-node labels from `globalThis.crypto.getRandomValues`,
+  which Node 18 — inside the package's `engines` range — only exposes behind a
+  flag, so `build(ttl)` died with "could not initialize thread_rng" under both
+  quoted-triple readers. `init()` now installs Node's own `webcrypto` where the
+  global is missing; `js-test.yml` runs the RDF 1.2 suite on Node 18 as well.
+
+  The same change exposes the input half and the card signal:
+  `build(text, format, { quotedTripleSyntax })` (default `rdf-star`, as
+  `rete build`; `"trig"` documented) through the existing
+  `build_with_card_syntax`, and `card().signals.quoted_triples`, measured from
+  the header by the new `quoted_triples_signal()` on the wasm `Graph` /
+  `RemoteGraph`. Tests cover RDF 1.2 Turtle/TriG, the Turtle → N-Quads →
+  `.rete` round trip, the dump loading in Oxigraph, remote graphs, and blank
+  nodes of separate parses staying distinct when merged.
+
 - **Python: `Graph.to_nquads()` wrote quoted triples in a spelling no current
   parser loads.** It concatenated the stored RDF-star token `<<s p o>>`, the
   exact output #262 fixed in `rete export`: pyoxigraph/Oxigraph 0.5 refuses the

@@ -6,7 +6,7 @@
 import initWasm, {
   Graph as WasmGraph,
   RemoteGraph as WasmRemoteGraph,
-  build as wasmBuild,
+  build_with_card_syntax as wasmBuildSyntax,
   heap_bytes as wasmHeapBytes,
 } from "../vendor/pkg/rete_wasm.js";
 
@@ -165,10 +165,20 @@ export function __setWasmSource(bytes) {
 /** Initialize the WebAssembly engine (open()/build() call this for you). */
 export function init(source = null) {
   ready ??= (async () => {
+    const node = typeof process !== "undefined" && !!process.versions?.node;
+    // The engine draws blank-node labels (and SPARQL RAND/UUID) from
+    // `globalThis.crypto.getRandomValues`. Node 19+ has it; Node 18 — still in
+    // `engines` — only behind a flag, and without it any Turtle build with a
+    // blank node panicked ("could not initialize thread_rng"). Node's own
+    // WebCrypto is the same source, so install it where it is missing.
+    if (node && typeof globalThis.crypto?.getRandomValues !== "function") {
+      const { webcrypto } = await import("node:crypto");
+      Object.defineProperty(globalThis, "crypto", { value: webcrypto, configurable: true });
+    }
     const src = source ?? embeddedWasm;
     if (src) {
       await initWasm({ module_or_path: src });
-    } else if (typeof process !== "undefined" && process.versions?.node) {
+    } else if (node) {
       const { readFile } = await import("node:fs/promises");
       const bytes = await readFile(new URL("./rete_wasm_bg.wasm", import.meta.url));
       await initWasm({ module_or_path: bytes });
@@ -256,7 +266,14 @@ export class Graph {
    */
   card() {
     const s = this.#g.card();
-    return s ? JSON.parse(s) : null;
+    if (!s) return null;
+    const card = JSON.parse(s);
+    // `signals.quoted_triples` is measured from the header at read time, as
+    // `rete card` does — never stored — so files built before it existed
+    // answer it too.
+    if (!card.signals || typeof card.signals !== "object") card.signals = {};
+    card.signals.quoted_triples = JSON.parse(this.#g.quoted_triples_signal());
+    return card;
   }
 
   /**
@@ -352,10 +369,26 @@ export class Graph {
    * emits the lines directly: one string per batch crosses the wasm boundary
    * instead of four per quad, and nothing is re-serialized in JavaScript.
    * Takes the same `graph` / `batch` options as {@link dump}.
+   *
+   * `quotedTripleSyntax` is how a quoted triple is spelled, with the values and
+   * default of `rete export --quoted-triple-syntax`: `"rdf12"` (default) writes
+   * the RDF 1.2 triple term `<<( s p o )>>`, which current parsers (Oxigraph
+   * 0.5, Jena 5) load; `"rdf-star"` writes rete's stored `<<s p o>>`. RDF 1.2
+   * has no triple term in subject position, so such a statement makes the
+   * stream throw under `"rdf12"` (chunks already yielded stay yielded). A graph
+   * with no quoted triples is written byte-for-byte the same either way.
    */
-  async *nquads({ graph, subject, predicate, object, batch = DUMP_BATCH } = {}) {
+  async *nquads({
+    graph,
+    subject,
+    predicate,
+    object,
+    batch = DUMP_BATCH,
+    quotedTripleSyntax = "rdf12",
+  } = {}) {
     const cursor = this.#cursor({ graph, subject, predicate, object });
     try {
+      cursor.set_quoted_triple_syntax(quotedTripleSyntax);
       for (;;) {
         const chunk = cursor.next_nquads(batch);
         if (chunk.length === 0) return;
@@ -513,13 +546,20 @@ export async function open(source, { headers } = {}) {
 }
 
 /**
- * Build a complete `.rete` file image from RDF text (`"nt"`, `"nq"`, `"ttl"`)
- * — ready for open(), saving, or uploading. In-wasm builds are uncompressed;
- * use the `rete build` CLI for big datasets.
+ * Build a complete `.rete` file image from RDF text (`"nt"`, `"nq"`, `"ttl"`,
+ * `"trig"`) — ready for open(), saving, or uploading. In-wasm builds are
+ * uncompressed; use the `rete build` CLI for big datasets.
+ *
+ * `quotedTripleSyntax` decides what Turtle/TriG `<< s p o >>` means, with the
+ * values and default of `rete build --quoted-triple-syntax`: `"rdf-star"`
+ * (default) reads a quoted triple, as every earlier release did; `"rdf12"`
+ * reads RDF 1.2 (`<<( s p o )>>` triple terms, `<< … >>` reifiers, `{| … |}`
+ * annotations). N-Triples and N-Quads ignore it.
  */
-export async function build(text, format = "nt") {
+export async function build(text, format = "nt", { quotedTripleSyntax = "rdf-star" } = {}) {
   await init();
-  return wasmBuild(text, format);
+  // An empty card is byte-identical to the plain build.
+  return wasmBuildSyntax(text, format, "", quotedTripleSyntax);
 }
 
 /**

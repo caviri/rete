@@ -109,6 +109,32 @@ resolves every term and visits every tile, so it ends up fetching essentially
 the whole file (and the tiles stay cached). It is how you *export* a remote
 graph, not how you peek at one — for that, run a `LIMIT` query.
 
+## RDF 1.2 and quoted triples
+
+The CLI's `--quoted-triple-syntax` vocabulary and defaults, in both directions:
+
+```js
+// Reading: what Turtle/TriG `<< s p o >>` means. "rdf-star" (default) = a quoted
+// triple, as before; "rdf12" = RDF 1.2 (`<<( s p o )>>` triple terms, `<< … >>`
+// reifiers, `{| … |}` annotations). N-Triples/N-Quads ignore it.
+await build(ttlText, "ttl", { quotedTripleSyntax: "rdf12" });
+await build(trigText, "trig", { quotedTripleSyntax: "rdf12" });
+
+// Writing: the N-Quads writers spell a quoted triple as the RDF 1.2 triple term
+// `<<( s p o )>>` by default — what Oxigraph 0.5 and Jena 5 load. "rdf-star"
+// writes rete's stored `<<s p o>>`. RDF 1.2 has no subject-position triple term,
+// so such a statement makes the stream throw under "rdf12".
+await graph.toNQuads();                                 // rdf12
+await graph.toNQuads({ quotedTripleSyntax: "rdf-star" });
+
+// The card says whether a file holds any — from its header, so old files answer:
+graph.card().signals.quoted_triples;
+// { present: true, export_surfaces: ["rdf12", "rdf-star"], export_default: "rdf12" }
+```
+
+`dump()` still yields the stored tokens. A graph with no quoted triples is
+written byte-for-byte the same under either value.
+
 ## Local files, read lazily (Node)
 
 A `file://` URL is read exactly like a remote one — only the byte ranges a
