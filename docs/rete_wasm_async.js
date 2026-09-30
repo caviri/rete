@@ -351,6 +351,23 @@ let wasm_bindgen = (function(exports) {
             }
         }
         /**
+         * The card's `signals.quoted_triples` for this file, from its header: does
+         * it hold quoted triples, and in which surfaces can an export write them.
+         * @returns {string}
+         */
+        quoted_triples_signal() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.graph_quoted_triples_signal(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
          * See [`reach`].
          * @param {string} predicate
          * @param {string} seeds
@@ -687,6 +704,30 @@ let wasm_bindgen = (function(exports) {
                 wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
             }
         }
+        /**
+         * How [`next_nquads`](Self::next_nquads) spells a quoted triple — the
+         * values of `rete export --quoted-triple-syntax`:
+         *
+         * - `"rdf-star"` (or `""`; the cursor's initial state): `<<s p o>>`, the
+         *   stored token, verbatim — what this cursor always wrote.
+         * - `"rdf12"`: the RDF 1.2 triple term `<<( s p o )>>`, nested terms too,
+         *   which current RDF 1.2 parsers (Oxigraph 0.5, Jena 5) load. RDF 1.2
+         *   admits a triple term in object position only, so a quoted triple in a
+         *   statement's subject/predicate (or in another's subject) makes the next
+         *   call fail by name instead of writing a line nothing parses.
+         *
+         * Anything else is refused. A file whose header records no quoted triple
+         * is written byte-for-byte the same under both.
+         * @param {string} syntax
+         */
+        set_quoted_triple_syntax(syntax) {
+            const ptr0 = passStringToWasm0(syntax, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.quadcursor_set_quoted_triple_syntax(this.__wbg_ptr, ptr0, len0);
+            if (ret[1]) {
+                throw takeObject(ret[0]);
+            }
+        }
     }
     if (Symbol.dispose) QuadCursor.prototype[Symbol.dispose] = QuadCursor.prototype.free;
     exports.QuadCursor = QuadCursor;
@@ -977,6 +1018,23 @@ let wasm_bindgen = (function(exports) {
                 return getStringFromWasm0(ptr3, len3);
             } finally {
                 wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+            }
+        }
+        /**
+         * See [`Graph::quoted_triples_signal`] — from the header the open already
+         * holds, so no range read at all.
+         * @returns {string}
+         */
+        quoted_triples_signal() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.remotegraph_quoted_triples_signal(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
             }
         }
         /**
