@@ -7,6 +7,25 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Python: `Graph.to_nquads()` wrote quoted triples in a spelling no current
+  parser loads.** It concatenated the stored RDF-star token `<<s p o>>`, the
+  exact output #262 fixed in `rete export`: pyoxigraph/Oxigraph 0.5 refuses the
+  whole file. It now takes `quoted_triple_syntax="rdf12"|"rdf-star"` with the
+  CLI's default, `rdf12`, writing `<<( s p o )>>` (nested terms too) and
+  refusing a subject-position quoted triple by name. A graph with no quoted
+  triples is written byte-for-byte as before. The test loads the dump in
+  pyoxigraph 0.5.11, now installed by `python-test.yml`.
+
+  The same release of the client exposes the input half: `rete.build()`,
+  `Builder.add()` and `Builder.add_file()` take
+  `quoted_triple_syntax="rdf-star"|"rdf12"` (default `rdf-star`, as
+  `rete build`), `"trig"` is documented and `.trig` inferred, and
+  `Graph.card()` carries `signals.quoted_triples`, measured from the header on
+  read exactly as `rete card` does. New tests cover the RDF 1.2 Turtle → N-Quads
+  → `.rete` round trip and that the blank nodes of separate parses stay
+  distinct when merged. `clients/python/Cargo.lock` is refreshed for the
+  `oxiri` / `oxttl` 0.2 / `oxrdf` 0.3 dependencies the engine gained.
+
 - **Java: blank nodes built in two engine instances got the same labels.** The
   Chicory engine's randomness is a module-level xorshift, and every `Rete`
   instance (an RDF4J `Sail` opens one per connection) starts with fresh linear

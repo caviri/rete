@@ -54,7 +54,7 @@ More:
 
 ```python
 g = rete.open("data/example.rete")            # local file, opened lazily too
-g = rete.open(rete.build(nt_text))            # build a graph in memory ("nt"/"nq"/"ttl")
+g = rete.open(rete.build(nt_text))            # build a graph in memory ("nt"/"nq"/"ttl"/"trig"/"rdfxml")
 g = rete.open(rete.build(rdflib_graph))       # or straight from an rdflib Graph/Dataset
 g = rete.open(url, headers={"Authorization": "Bearer ..."})   # authed hosts
 
@@ -99,6 +99,33 @@ makes a *peek* at a remote graph much cheaper (5 quads for 1.1 MB of range
 reads at `batch_size=1`, versus 44 MB at the default 10 000), a large one
 speeds up a full walk. Scope with `graph=`: `rete.DEFAULT_GRAPH` for the
 unnamed default graph alone, or an IRI for one named graph.
+
+### RDF 1.2 and quoted triples
+
+The same `--quoted-triple-syntax` vocabulary and defaults as the CLI, in both
+directions:
+
+```python
+# Reading: what Turtle/TriG `<< s p o >>` means. "rdf-star" (default) = a quoted
+# triple, as before; "rdf12" = RDF 1.2 (`<<( s p o )>>` triple terms, `<< … >>`
+# reifiers, `{| … |}` annotations). N-Triples/N-Quads/RDF-XML ignore it.
+g = rete.open(rete.build(ttl_text, "ttl", quoted_triple_syntax="rdf12"))
+rete.Builder().add_file("data.trig", quoted_triple_syntax="rdf12")
+
+# Writing: to_nquads spells a quoted triple as the RDF 1.2 triple term
+# `<<( s p o )>>` by default, which pyoxigraph / Oxigraph 0.5 and Jena 5 read;
+# "rdf-star" writes rete's stored `<<s p o>>`. RDF 1.2 has no subject-position
+# triple term, so such a statement raises ValueError under "rdf12".
+g.to_nquads("out.nq")                                    # rdf12
+g.to_nquads("out.nq", quoted_triple_syntax="rdf-star")
+
+# The card says whether a file holds any, from its header (so old files answer):
+g.card()["signals"]["quoted_triples"]
+# {"present": True, "export_surfaces": ["rdf12", "rdf-star"], "export_default": "rdf12"}
+```
+
+The Pyodide wheel has no RDF 1.2 Turtle/TriG reader and refuses
+`quoted_triple_syntax="rdf12"` for those formats by name.
 
 ### Prepare a `.rete` step by step
 

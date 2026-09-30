@@ -706,7 +706,7 @@ public SPARQL endpoint (Wikidata, DBpedia, …) in one query. See
 <h2 id="build-rete-files-from-python">Build <code>.rete</code> files from Python</h2>
 <p><code>rete.build()</code> produces a complete file image, ready to <code>open()</code>, save, or
 upload:</p>
-<pre><code class="language-python">data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl")
+<pre><code class="language-python">data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl", "trig", "rdfxml")
 pathlib.Path("out.rete").write_bytes(data)
 </code></pre>
 <p>It also accepts a <strong>graph object from another RDF library</strong> — anything with a
@@ -738,6 +738,26 @@ predicates, classes, vocabularies, datatypes, languages, hubs, signals and the
 tiered starter-query library — from the same code <code>rete build --card</code> runs, so
 the same graph yields a byte-identical card. It is opt-in: derivation walks the
 graph twice more, and the default keeps writing exactly the bytes it always did.</p>
+<h3 id="rdf-12-and-quoted-triples">RDF 1.2 and quoted triples</h3>
+<p>The same <code>--quoted-triple-syntax</code> vocabulary and defaults as the CLI (see
+<a href="interop.html">Interop</a>), in both directions.</p>
+<p><strong>Reading.</strong> In Turtle and TriG, <code>&lt;&lt; s p o &gt;&gt;</code> is a quoted triple under
+RDF-star and a <em>reifier</em> under RDF 1.2 — the same bytes, two graphs — so the
+build calls take <code>quoted_triple_syntax</code>: <code>"rdf-star"</code> (the default, what every
+earlier release read) or <code>"rdf12"</code> (<code>&lt;&lt;( s p o )&gt;&gt;</code> triple terms, <code>&lt;&lt; … &gt;&gt;</code>
+reifiers, <code>{| … |}</code> annotations, <code>"…"@lang--dir</code> literals). N-Triples, N-Quads
+and RDF/XML ignore it. <code>"trig"</code> is a format too, and <code>.trig</code> a known suffix.</p>
+<pre><code class="language-python">g = rete.open(rete.build(ttl_text, "ttl", quoted_triple_syntax="rdf12"))
+rete.Builder().add_file("dump.trig", quoted_triple_syntax="rdf12").run()
+</code></pre>
+<p><strong>Writing.</strong> <code>Graph.to_nquads()</code> spells a quoted triple as the RDF 1.2 triple
+term <code>&lt;&lt;( s p o )&gt;&gt;</code> by default, which Oxigraph/pyoxigraph 0.5 and Jena 5 load;
+<code>quoted_triple_syntax="rdf-star"</code> writes rete's stored <code>&lt;&lt;s p o&gt;&gt;</code>. RDF 1.2 has
+no triple term in subject position, so such a statement raises <code>ValueError</code>
+under <code>"rdf12"</code>. A graph with no quoted triples is written identically either
+way. (<code>iter_quads()</code> yields the stored tokens.)</p>
+<p><strong>The card</strong> carries <code>signals.quoted_triples</code> — <code>{"present": …, "export_surfaces": […], "export_default": "rdf12"}</code> — measured from the file's
+header on read, so files built before the signal existed answer it too.</p>
 <p>The full walkthrough (every card field, pyramid trade-offs, verification) is
 in <a href="python-build-tutorial.html">Python: build a .rete</a>. In-memory builds suit
 tests and small-to-medium graphs (say, up to a few million triples). For big
