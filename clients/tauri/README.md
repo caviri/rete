@@ -41,6 +41,30 @@ cargo tauri dev                               # or: cargo tauri build
 
 `dist/` and the generated `icons/*` are build outputs and are not committed.
 
+## Check it on Linux (Docker)
+
+Releases are macOS-only, and no CI job builds this crate on a pull request, so
+a change to `rete-core` can break it silently. This compiles, lints and runs
+the unit tests from any machine:
+
+```sh
+docker build -t rete-tauri-check -f clients/tauri/Dockerfile.check clients/tauri
+docker run --rm -v "$PWD":/work -v rete-tauri-target:/target \
+    rete-tauri-check bash /work/clients/tauri/scripts/check-linux.sh
+```
+
+The script stages `dist/` and, if they are missing, writes placeholder icons —
+both gitignored build outputs `tauri_build` needs to exist.
+
+## Quoted triples in the Turtle view
+
+A CONSTRUCT shown as Turtle writes each quoted triple as the **RDF 1.2 triple
+term** `<<( s p o )>>`, as `rete export` does by default. The stored RDF-star
+spelling `<< s p o >>` would read back as a *reifier* in any RDF 1.2 Turtle
+parser, i.e. a different graph. RDF 1.2 has no triple term in subject position,
+so a result with one there is reported instead of being written; the table view
+still shows it.
+
 ## Releases
 
 `.github/workflows/desktop-release.yml` builds on macOS runners and attaches the
