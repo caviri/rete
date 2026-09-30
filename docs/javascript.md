@@ -70,8 +70,22 @@ g.textSearch("volcano");        // full-text (files built with --text-index)
 g.schema();                     // { classes: [[iri, n]], relations: [[s,p,o,n]] }
 g.graphNames(); g.info(); g.quads;
 g.contentHash();                // remote graphs: blake3-16 cache key
-await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array)
+await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array); also "nq", "ttl", "trig"
 ```
+
+### RDF 1.2 and quoted triples
+
+The CLI's `--quoted-triple-syntax` vocabulary and defaults, in both directions.
+`build(text, "ttl" | "trig", { quotedTripleSyntax })` reads Turtle/TriG
+`<< s p o >>` as a quoted triple under `"rdf-star"` (the default, as before) or
+as RDF 1.2 under `"rdf12"` (`<<( s p o )>>` triple terms, `<< … >>` reifiers,
+`{| … |}` annotations). `nquads()` / `writeNQuads()` / `toNQuads()` take
+`{ quotedTripleSyntax }` too, defaulting to `"rdf12"`: a quoted triple is
+written as the RDF 1.2 triple term `<<( s p o )>>`, which Oxigraph 0.5 and
+Jena 5 load, and a subject-position one (no RDF 1.2 spelling) makes the stream
+throw; `"rdf-star"` writes rete's stored `<<s p o>>`. `card().signals.quoted_triples`
+says whether a file holds any, measured from its header on read, so files built
+before the signal existed answer it too. See [Interop](interop.md).
 
 ## Comunica (and the RDF/JS ecosystem) {#comunica-and-the-rdfjs-ecosystem}
 
@@ -104,7 +118,8 @@ which-level-when table live on the dedicated page:
 | TypeScript types | ✅ | bundled `index.d.ts` |
 | RDF/JS Source (Comunica, LDflex, GraphQL-LD) | ✅ 0.2.0 | `ReteSource` — see [Comunica](#comunica-and-the-rdfjs-ecosystem) |
 | `SERVICE` federation | ✅* | via the engine; same worker/Node constraint |
-| Dataset Card / embedded examples | ⏳ | needs a wasm export — planned parity with Python |
+| Dataset Card / embedded examples | ✅ | `card()` (with `signals.quoted_triples`), `examples()` |
+| RDF 1.2 Turtle/TriG in, triple terms out | ✅ | `quotedTripleSyntax` on `build()` and the N-Quads writers |
 | Custom headers / custom readers | ⏳ | planned |
 | Builder (card, pyramid options) | ⏳ | use `build()` or the Python/CLI builders |
 

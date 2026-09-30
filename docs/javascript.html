@@ -662,8 +662,20 @@ g.textSearch("volcano");        // full-text (files built with --text-index)
 g.schema();                     // { classes: [[iri, n]], relations: [[s,p,o,n]] }
 g.graphNames(); g.info(); g.quads;
 g.contentHash();                // remote graphs: blake3-16 cache key
-await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array)
+await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array); also "nq", "ttl", "trig"
 </code></pre>
+<h3 id="rdf-12-and-quoted-triples">RDF 1.2 and quoted triples</h3>
+<p>The CLI's <code>--quoted-triple-syntax</code> vocabulary and defaults, in both directions.
+<code>build(text, "ttl" | "trig", { quotedTripleSyntax })</code> reads Turtle/TriG
+<code>&lt;&lt; s p o &gt;&gt;</code> as a quoted triple under <code>"rdf-star"</code> (the default, as before) or
+as RDF 1.2 under <code>"rdf12"</code> (<code>&lt;&lt;( s p o )&gt;&gt;</code> triple terms, <code>&lt;&lt; … &gt;&gt;</code> reifiers,
+<code>{| … |}</code> annotations). <code>nquads()</code> / <code>writeNQuads()</code> / <code>toNQuads()</code> take
+<code>{ quotedTripleSyntax }</code> too, defaulting to <code>"rdf12"</code>: a quoted triple is
+written as the RDF 1.2 triple term <code>&lt;&lt;( s p o )&gt;&gt;</code>, which Oxigraph 0.5 and
+Jena 5 load, and a subject-position one (no RDF 1.2 spelling) makes the stream
+throw; <code>"rdf-star"</code> writes rete's stored <code>&lt;&lt;s p o&gt;&gt;</code>. <code>card().signals.quoted_triples</code>
+says whether a file holds any, measured from its header on read, so files built
+before the signal existed answer it too. See <a href="interop.html">Interop</a>.</p>
 <h2 id="comunica-and-the-rdfjs-ecosystem">Comunica (and the RDF/JS ecosystem)</h2>
 <p>From <strong>0.2.0</strong> the package ships <code>ReteSource</code>, an RDF/JS Source that plugs
 <code>.rete</code> files into <a href="https://comunica.dev">Comunica</a>, LDflex, GraphQL-LD,
@@ -688,7 +700,8 @@ which-level-when table live on the dedicated page:
 <tr><td>TypeScript types</td><td>✅</td><td>bundled <code>index.d.ts</code></td></tr>
 <tr><td>RDF/JS Source (Comunica, LDflex, GraphQL-LD)</td><td>✅ 0.2.0</td><td><code>ReteSource</code> — see <a href="#comunica-and-the-rdfjs-ecosystem">Comunica</a></td></tr>
 <tr><td><code>SERVICE</code> federation</td><td>✅*</td><td>via the engine; same worker/Node constraint</td></tr>
-<tr><td>Dataset Card / embedded examples</td><td>⏳</td><td>needs a wasm export — planned parity with Python</td></tr>
+<tr><td>Dataset Card / embedded examples</td><td>✅</td><td><code>card()</code> (with <code>signals.quoted_triples</code>), <code>examples()</code></td></tr>
+<tr><td>RDF 1.2 Turtle/TriG in, triple terms out</td><td>✅</td><td><code>quotedTripleSyntax</code> on <code>build()</code> and the N-Quads writers</td></tr>
 <tr><td>Custom headers / custom readers</td><td>⏳</td><td>planned</td></tr>
 <tr><td>Builder (card, pyramid options)</td><td>⏳</td><td>use <code>build()</code> or the Python/CLI builders</td></tr>
 </tbody></table>

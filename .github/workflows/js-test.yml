@@ -49,6 +49,15 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm test
+      # `engines` says Node >= 18, where `globalThis.crypto` (the engine's
+      # blank-node entropy) is still behind a flag; init() polyfills it. Run the
+      # suites that draw from it on the floor version too.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 18
+      - name: Node 18 (the engines floor)
+        working-directory: clients/js
+        run: node --test test/basic.test.mjs test/rdf12.test.mjs
       - name: Stage-publish (dry run) — validate the tarball without publishing
         working-directory: clients/js
         run: npm publish --dry-run

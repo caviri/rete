@@ -722,6 +722,12 @@ impl Graph {
         .map_err(err)
     }
 
+    /// The card's `signals.quoted_triples` for this file, from its header: does
+    /// it hold quoted triples, and in which surfaces can an export write them.
+    pub fn quoted_triples_signal(&self) -> String {
+        quoted_triples_signal_json(self.rete.header())
+    }
+
     /// See [`card`] — the Dataset Card of the resident file.
     pub fn card(&self) -> Option<String> {
         self.rete
@@ -854,6 +860,11 @@ pub struct QuadCursor {
     /// yet. A batch ends on a group boundary, so this drains before the next.
     buffered: std::vec::IntoIter<TermTriple>,
     rete: Rc<Rete>,
+    /// `next_nquads` respells quoted triples into the RDF 1.2 triple-term
+    /// surface `<<( s p o )>>`. Off until [`QuadCursor::set_quoted_triple_syntax`]
+    /// asks for `"rdf12"`, and off whatever is asked when the header says the
+    /// file holds no quoted triple — so such a dump is byte-for-byte unchanged.
+    rdf12: bool,
 }
 
 /// Quads per `next_batch` / `next_nquads` call, and the JS wrapper's default.
@@ -903,6 +914,7 @@ impl QuadCursor {
             slot_done: false,
             buffered: Vec::new().into_iter(),
             rete,
+            rdf12: false,
         }
     }
 
@@ -974,6 +986,43 @@ impl QuadCursor {
     }
 }
 
+/// One statement's object token in the RDF 1.2 surface, or the reason it has
+/// none — the same rule as `rete export --quoted-triple-syntax rdf12`
+/// (`ttSubject ::= iri | BlankNode`: a triple term stands in object position
+/// only), with the same hint.
+fn rdf12_object<'a>(s: &str, p: &str, o: &'a str) -> Result<std::borrow::Cow<'a, str>, String> {
+    use rete_core::terms::is_quoted_triple;
+    if is_quoted_triple(s) || is_quoted_triple(p) {
+        let slot = if is_quoted_triple(s) {
+            "subject"
+        } else {
+            "predicate"
+        };
+        return Err(format!(
+            "this graph has a quoted triple in the {slot} position of a statement, and RDF 1.2 \
+             has no syntax for one there: a triple term may stand in OBJECT position only.\n\
+             statement: {s} {p} {o} .\n\
+             hint: quotedTripleSyntax \"rdf-star\" writes the RDF-star surface <<s p o>>, which \
+             rete re-ingests losslessly"
+        ));
+    }
+    rete_core::terms::rdf12_triple_term(o).ok_or_else(|| {
+        format!(
+            "this graph has a quoted triple nested in the SUBJECT of another quoted triple, and \
+             RDF 1.2 has no syntax for one there.\n\
+             statement: {s} {p} {o} .\n\
+             hint: quotedTripleSyntax \"rdf-star\" writes the RDF-star surface <<s p o>>"
+        )
+    })
+}
+
+/// The card's `signals.quoted_triples`, measured from the header exactly as
+/// `rete card` does: `{"present":bool,"export_surfaces":[…],"export_default":…}`.
+fn quoted_triples_signal_json(header: &Header) -> String {
+    serde_json::to_string(&rete_core::card::QuotedTriplesSignal::probe(header))
+        .expect("the signal serializes")
+}
+
 #[wasm_bindgen]
 impl QuadCursor {
     /// Up to `max` quads as a **flat** `string[]` of `[s, p, o, g, s, p, o, g, …]`
@@ -1007,20 +1056,67 @@ impl QuadCursor {
         let max = max.unwrap_or(DUMP_BATCH).max(1);
         // ~120 B/quad is a typical N-Quads line; the Vec grows if it is wrong.
         let mut out = String::with_capacity(max.min(DUMP_BATCH) * 120);
+        let rdf12 = self.rdf12;
+        let mut refused: Option<String> = None;
         self.pull(max, |s, p, o, g| {
+            if refused.is_some() {
+                return;
+            }
+            let o = if rdf12 {
+                match rdf12_object(s, p, o) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        refused = Some(e);
+                        return;
+                    }
+                }
+            } else {
+                std::borrow::Cow::Borrowed(o)
+            };
             out.push_str(s);
             out.push(' ');
             out.push_str(p);
             out.push(' ');
-            out.push_str(o);
+            out.push_str(&o);
             if let Some(g) = g {
                 out.push(' ');
                 out.push_str(g);
             }
             out.push_str(" .\n");
         });
+        if let Some(e) = refused {
+            return Err(js_error(e));
+        }
         self.guard()?;
         Ok(out)
+    }
+
+    /// How [`next_nquads`](Self::next_nquads) spells a quoted triple — the
+    /// values of `rete export --quoted-triple-syntax`:
+    ///
+    /// - `"rdf-star"` (or `""`; the cursor's initial state): `<<s p o>>`, the
+    ///   stored token, verbatim — what this cursor always wrote.
+    /// - `"rdf12"`: the RDF 1.2 triple term `<<( s p o )>>`, nested terms too,
+    ///   which current RDF 1.2 parsers (Oxigraph 0.5, Jena 5) load. RDF 1.2
+    ///   admits a triple term in object position only, so a quoted triple in a
+    ///   statement's subject/predicate (or in another's subject) makes the next
+    ///   call fail by name instead of writing a line nothing parses.
+    ///
+    /// Anything else is refused. A file whose header records no quoted triple
+    /// is written byte-for-byte the same under both.
+    pub fn set_quoted_triple_syntax(&mut self, syntax: &str) -> Result<(), JsValue> {
+        let surface = if syntax.is_empty() {
+            rete_core::ingest::QuotedTripleSurface::RdfStar
+        } else {
+            rete_core::ingest::QuotedTripleSurface::parse(syntax).ok_or_else(|| {
+                js_error(format!(
+                    "unknown quoted-triple syntax {syntax:?} (expected \"rdf12\" or \"rdf-star\")"
+                ))
+            })?
+        };
+        self.rdf12 = surface == rete_core::ingest::QuotedTripleSurface::Rdf12
+            && self.rete.header().has_quoted_triples();
+        Ok(())
     }
 
     /// Whether every selected graph has been streamed to its end.
@@ -1222,6 +1318,12 @@ impl RemoteGraph {
     pub fn text_search_one(&self, phrase: &str, limit: usize) -> Result<String, JsValue> {
         let words: Vec<String> = phrase.split_whitespace().map(str::to_owned).collect();
         text_search_json(&self.rete, &words, None, limit)
+    }
+
+    /// See [`Graph::quoted_triples_signal`] — from the header the open already
+    /// holds, so no range read at all.
+    pub fn quoted_triples_signal(&self) -> String {
+        quoted_triples_signal_json(self.rete.header())
     }
 
     /// See [`card_url`] — the Dataset Card, over the resident handle's reader
