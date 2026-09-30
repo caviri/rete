@@ -255,8 +255,11 @@ def test_builder_card_is_curated_only_by_default(nt_text):
         .graph()
         .card()
     )
-    for derived in ("predicates", "classes", "vocabularies", "queries", "signals", "top_n"):
+    for derived in ("predicates", "classes", "vocabularies", "queries", "top_n"):
         assert derived not in card, f"a default build derived {derived}"
+    # `signals` holds only what `card()` measures from the header at read time
+    # (never stored — see test_rdf12.py); no derived signal was written.
+    assert set(card["signals"]) == {"quoted_triples"}, card["signals"]
     # Pass-through, not canonicalization: the default path writes what it is
     # given (canonicalizing here would itself be a behaviour change).
     assert card["keywords"] == ["zeta", "alpha"]

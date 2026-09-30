@@ -227,6 +227,36 @@ class _EncodingWriter:
         return self._raw.write(text.encode("utf-8"))
 
 
+def _rdf12_object(s: str, p: str, o: str) -> str:
+    """The object token of one statement in the RDF 1.2 surface, or raise.
+
+    Mirrors ``rete export --quoted-triple-syntax rdf12``: a triple term may
+    stand in object position only (``ttSubject ::= iri | BlankNode``), so a
+    quoted triple in the subject/predicate slot — or nested in the subject of
+    another quoted triple — has no RDF 1.2 spelling and is refused by name
+    rather than written as something no parser accepts.
+    """
+    if s.startswith("<<") or p.startswith("<<"):
+        slot = "subject" if s.startswith("<<") else "predicate"
+        raise ValueError(
+            f"this graph has a quoted triple in the {slot} position of a statement, "
+            "and RDF 1.2 has no syntax for one there: a triple term may stand in "
+            f"OBJECT position only.\nstatement: {s} {p} {o} .\n"
+            "hint: quoted_triple_syntax='rdf-star' writes the RDF-star surface "
+            "<<s p o>>, which rete re-ingests losslessly"
+        )
+    if not o.startswith("<<"):
+        return o
+    out = _rete.rdf12_triple_term(o)
+    if out is None:
+        raise ValueError(
+            "this graph has a quoted triple nested in the SUBJECT of another quoted "
+            f"triple, and RDF 1.2 has no syntax for one there.\nstatement: {s} {p} {o} .\n"
+            "hint: quoted_triple_syntax='rdf-star' writes the RDF-star surface <<s p o>>"
+        )
+    return out
+
+
 def _open_text_sink(dest: Any) -> Tuple[Any, Any]:
     """``(writer, close)`` for a path or an already-open text/binary stream.
 
@@ -320,6 +350,9 @@ class Graph:
         ``s``/``p``/``o`` are canonical N-Triples tokens (``<iri>``,
         ``"lit"@en``, ``"lit"^^<dt>``, ``_:b0``) — the lossless surface form,
         ready to concatenate into N-Triples/N-Quads or hand to another parser.
+        A quoted triple comes back as rete's stored RDF-star token
+        ``<<s p o>>``; current RDF 1.2 parsers reject that spelling, so write
+        files with :meth:`to_nquads`, which respells it ``<<( s p o )>>``.
         Use :meth:`Term.parse` for structure. ``g`` is ``None`` for the default
         graph, else the named graph's ``<iri>`` token.
 
@@ -379,6 +412,7 @@ class Graph:
         predicate: Optional[str] = None,
         object: Optional[str] = None,  # noqa: A002 - the RDF term's name
         batch_size: int = _BATCH,
+        quoted_triple_syntax: str = "rdf12",
     ) -> int:
         """Serialize the graph as N-Quads to ``dest``; return the quad count.
 
@@ -392,7 +426,33 @@ class Graph:
             g.to_nquads("out.nq")
             store = pyoxigraph.Store()
             store.bulk_load(path="out.nq", format=pyoxigraph.RdfFormat.N_QUADS)
+
+        ``quoted_triple_syntax`` is how an RDF-star quoted triple is written,
+        with the values and default of ``rete export --quoted-triple-syntax``:
+
+        * ``"rdf12"`` (default) — the RDF 1.2 triple term ``<<( s p o )>>``,
+          which current parsers (Oxigraph/pyoxigraph 0.5, Jena 5) read. RDF 1.2
+          allows a triple term in **object position only**, so a quoted triple
+          in a statement's subject (or nested in another's subject) raises
+          :class:`ValueError`, naming ``"rdf-star"``; lines already written
+          stay written, as with the CLI.
+        * ``"rdf-star"`` — ``<<s p o>>``, rete's stored token, read by
+          RDF-star-mode tools and by rete itself.
+
+        A graph with no quoted triples is written byte-for-byte the same
+        either way.
         """
+        if quoted_triple_syntax not in ("rdf12", "rdf-star"):
+            raise ValueError(
+                f"unknown quoted_triple_syntax {quoted_triple_syntax!r} "
+                "(expected 'rdf12' or 'rdf-star')"
+            )
+        # The header's one-bit answer: with no quoted triple in the file the
+        # per-quad check is skipped entirely.
+        respell = (
+            quoted_triple_syntax == "rdf12"
+            and json.loads(self._g.quoted_triples_signal())["present"]
+        )
         stream, close = _open_text_sink(dest)
         count = 0
         try:
@@ -407,6 +467,8 @@ class Graph:
                 object=object,
                 batch_size=batch_size,
             ):
+                if respell:
+                    o = _rdf12_object(s, p, o)
                 lines.append(f"{s} {p} {o} .\n" if g is None else f"{s} {p} {o} {g} .\n")
                 count += 1
                 if len(lines) >= _NQ_WRITE_LINES:
@@ -510,7 +572,18 @@ class Graph:
         """The embedded Dataset Card as a dict, or ``None`` if the file has
         none. On lazy opens only the metadata section's byte range is fetched."""
         raw = self._g.card()
-        return json.loads(raw) if raw else None
+        if not raw:
+            return None
+        card = json.loads(raw)
+        # Measured from the header at read time, as `rete card` does — never
+        # stored — so every existing file answers it: `{"present": bool,
+        # "export_surfaces": [...], "export_default": "rdf12"}` (the last two
+        # only when present).
+        signals = card.get("signals")
+        if not isinstance(signals, dict):
+            signals = card["signals"] = {}
+        signals["quoted_triples"] = json.loads(self._g.quoted_triples_signal())
+        return card
 
     def examples(self) -> List[Dict[str, Any]]:
         """The example SPARQL queries embedded in the file's Dataset Card.
@@ -654,12 +727,23 @@ def _as_text_source(source: Any, format: str) -> Tuple[str, str]:
     return source, format
 
 
-def build(source: Any, format: str = "nt") -> bytes:
+def build(source: Any, format: str = "nt", *, quoted_triple_syntax: str = "rdf-star") -> bytes:
     """Build a complete ``.rete`` file image, ready for :func:`open`.
 
     ``source`` is either RDF **text** (``format`` = ``"nt"``, ``"nq"`` —
-    named graphs become a dataset — ``"ttl"``, or ``"rdfxml"``), or a graph
-    object from another RDF library (see :func:`_as_text_source`).
+    named graphs become a dataset — ``"ttl"``, ``"trig"``, or ``"rdfxml"``),
+    or a graph object from another RDF library (see :func:`_as_text_source`).
+
+    ``quoted_triple_syntax`` decides what Turtle/TriG ``<< s p o >>`` means,
+    with the values and default of ``rete build --quoted-triple-syntax``:
+    ``"rdf-star"`` (default) reads it as a quoted triple, exactly as every
+    earlier release did; ``"rdf12"`` reads RDF 1.2 — ``<<( s p o )>>`` is a
+    triple term, ``<< s p o >>`` a reifier, ``{| … |}`` an annotation. The
+    same bytes are two different graphs under the two, so it is chosen, not
+    detected. N-Triples, N-Quads and RDF/XML ignore it (their reader takes
+    both spellings). Reading RDF 1.2 Turtle as ``"rdf-star"`` is an error that
+    names ``"rdf12"``. (The Pyodide wheel has no RDF 1.2 Turtle reader and
+    refuses ``"rdf12"`` for Turtle/TriG by name.)
 
     This is the one-shot path with defaults. For step-by-step configuration —
     a Dataset Card, pyramid options, the full-text index — use :class:`Builder`.
@@ -667,7 +751,7 @@ def build(source: Any, format: str = "nt") -> bytes:
     compresses harder, and never holds the whole graph in memory.
     """
     text, fmt = _as_text_source(source, format)
-    return _rete.build(text, fmt)
+    return _rete.build(text, fmt, quoted_triple_syntax)
 
 
 _FORMAT_BY_SUFFIX = {
@@ -676,6 +760,7 @@ _FORMAT_BY_SUFFIX = {
     ".nquads": "nq",
     ".ttl": "ttl",
     ".turtle": "ttl",
+    ".trig": "trig",
     ".rdf": "rdfxml",
     ".owl": "rdfxml",
     ".xml": "rdfxml",
@@ -709,7 +794,7 @@ class Builder:
     """
 
     def __init__(self) -> None:
-        self._sources: List[Tuple[str, str]] = []
+        self._sources: List[Tuple[str, str, str]] = []
         self._card: Optional[Dict[str, Any]] = None
         self._pyramid: bool = True
         self._pyramid_algo: str = "louvain"
@@ -727,25 +812,36 @@ class Builder:
 
     # -- sources ------------------------------------------------------------
 
-    def add(self, source: Any, format: str = "nt") -> "Builder":
-        """Queue RDF text (``"nt"``/``"nq"``/``"ttl"``/``"rdfxml"``) or a graph
-        object from another RDF library. May be called many times; all sources
-        merge into one graph (named graphs from N-Quads sources survive)."""
-        self._sources.append(_as_text_source(source, format))
+    def add(
+        self, source: Any, format: str = "nt", *, quoted_triple_syntax: str = "rdf-star"
+    ) -> "Builder":
+        """Queue RDF text (``"nt"``/``"nq"``/``"ttl"``/``"trig"``/``"rdfxml"``)
+        or a graph object from another RDF library. May be called many times;
+        all sources merge into one graph (named graphs from N-Quads/TriG
+        sources survive). ``quoted_triple_syntax`` is per source, as in
+        :func:`build`."""
+        self._sources.append((*_as_text_source(source, format), quoted_triple_syntax))
         self._invalidate()
         return self
 
-    def add_file(self, path: Union[str, "os.PathLike[str]"], format: Optional[str] = None) -> "Builder":
+    def add_file(
+        self,
+        path: Union[str, "os.PathLike[str]"],
+        format: Optional[str] = None,
+        *,
+        quoted_triple_syntax: str = "rdf-star",
+    ) -> "Builder":
         """Queue an RDF file; the format is inferred from the suffix
-        (``.nt``, ``.nq``, ``.ttl``, ``.rdf``/``.owl``/``.xml``) unless given."""
+        (``.nt``, ``.nq``, ``.ttl``, ``.trig``, ``.rdf``/``.owl``/``.xml``)
+        unless given. ``quoted_triple_syntax`` as in :func:`build`."""
         fspath = os.fspath(path)
         fmt = format or _FORMAT_BY_SUFFIX.get(os.path.splitext(fspath)[1].lower())
         if fmt is None:
             raise ValueError(
-                f"cannot infer RDF format from {fspath!r}; pass format='nt'|'nq'|'ttl'|'rdfxml'"
+                f"cannot infer RDF format from {fspath!r}; pass format='nt'|'nq'|'ttl'|'trig'|'rdfxml'"
             )
         with io.open(fspath, "r", encoding="utf-8") as fh:
-            self._sources.append((fh.read(), fmt))
+            self._sources.append((fh.read(), fmt, quoted_triple_syntax))
         self._invalidate()
         return self
 

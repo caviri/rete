@@ -353,6 +353,16 @@ impl Graph {
             .map(|b| String::from_utf8_lossy(b).into_owned()))
     }
 
+    /// The card's `signals.quoted_triples` as JSON —
+    /// `{"present": bool, "export_surfaces": [...], "export_default": "..."}` —
+    /// read off the header's `FLAG_HAS_QUOTED_TRIPLES`, exactly as `rete card`
+    /// measures it. Never stored in the file, so it answers for files built
+    /// before the signal existed.
+    fn quoted_triples_signal(&self) -> String {
+        let signal = rete_core::card::QuotedTriplesSignal::probe(self.rete.header());
+        serde_json::to_string(&signal).expect("the signal serializes")
+    }
+
     #[getter]
     fn quads(&self) -> u64 {
         self.rete.header().quad_count
@@ -425,14 +435,55 @@ fn open_reader(py: Python<'_>, obj: PyObject) -> PyResult<Graph> {
     py.allow_threads(|| open_lazy(AnyReader::Py(reader)))
 }
 
-/// Build a complete `.rete` file image from RDF text. `format` is `"nt"`,
-/// `"nq"` (named graphs become a dataset), or `"ttl"`.
+/// The `quoted_triple_syntax` argument: `"rdf-star"` (or `""`, the default) or
+/// `"rdf12"` — the vocabulary of `rete build --quoted-triple-syntax`. Anything
+/// else is refused by name rather than read as the default.
+fn quoted_triple_surface(syntax: &str) -> PyResult<rete_core::ingest::QuotedTripleSurface> {
+    if syntax.is_empty() {
+        return Ok(rete_core::ingest::QuotedTripleSurface::default());
+    }
+    rete_core::ingest::QuotedTripleSurface::parse(syntax).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "unknown quoted_triple_syntax {syntax:?} (expected \"rdf-star\" or \"rdf12\")"
+        ))
+    })
+}
+
+/// Parse one source in the given quoted-triple surface. The surface reaches
+/// only Turtle and TriG; N-Triples, N-Quads and RDF/XML ignore it.
+fn parse_source(
+    text: &str,
+    format: &str,
+    syntax: &str,
+) -> PyResult<Vec<rete_core::ingest::RawQuad>> {
+    let surface = quoted_triple_surface(syntax)?;
+    rete_core::ingest::parse_statements_audited_surface(text, format, None, surface)
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// A quoted-triple token rewritten into the RDF 1.2 triple-term surface
+/// `<<( s p o )>>` (nested object terms too), the token unchanged when it is
+/// not a quoted triple, or `None` when RDF 1.2 has no spelling for it (a
+/// quoted triple in the subject slot of another). The same rewrite
+/// `rete export --quoted-triple-syntax rdf12` applies.
 #[pyfunction]
-#[pyo3(signature = (text, format="nt"))]
-fn build(py: Python<'_>, text: String, format: &str) -> PyResult<Py<PyBytes>> {
+fn rdf12_triple_term(token: &str) -> Option<String> {
+    rete_core::terms::rdf12_triple_term(token).map(|t| t.into_owned())
+}
+
+/// Build a complete `.rete` file image from RDF text. `format` is `"nt"`,
+/// `"nq"` (named graphs become a dataset), `"ttl"`, `"trig"` or `"rdfxml"`;
+/// `quoted_triple_syntax` is how Turtle/TriG `<< … >>` is read.
+#[pyfunction]
+#[pyo3(signature = (text, format="nt", quoted_triple_syntax="rdf-star"))]
+fn build(
+    py: Python<'_>,
+    text: String,
+    format: &str,
+    quoted_triple_syntax: &str,
+) -> PyResult<Py<PyBytes>> {
     let bytes = py.allow_threads(|| -> PyResult<Vec<u8>> {
-        let quads = rete_core::ingest::parse_statements(&text, format)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let quads = parse_source(&text, format, quoted_triple_syntax)?;
         if quads.is_empty() {
             return Err(PyValueError::new_err(
                 "no statements parsed (empty input or only comments)",
@@ -509,8 +560,8 @@ fn curated_for_derivation(
     Ok((curated, examples))
 }
 
-/// Full-option build behind `rete_graph.Builder`: multiple parsed sources,
-/// an optional Dataset Card, pyramid on/off + algorithm, opt-in text index,
+/// Full-option build behind `rete_graph.Builder`: multiple parsed sources
+/// (`(text, format, quoted_triple_syntax)` each), an optional Dataset Card, pyramid on/off + algorithm, opt-in text index,
 /// a forced type predicate, and opt-in card derivation. Returns
 /// `(file_bytes, stats_json)`.
 ///
@@ -526,7 +577,7 @@ fn curated_for_derivation(
 #[pyo3(signature = (sources, card=None, pyramid=true, pyramid_algo="louvain", text_index=false, type_predicate=None, derive_card=false))]
 fn build_dataset(
     py: Python<'_>,
-    sources: Vec<(String, String)>,
+    sources: Vec<(String, String, String)>,
     card: Option<String>,
     pyramid: bool,
     pyramid_algo: &str,
@@ -563,11 +614,8 @@ fn build_dataset(
     };
     let (bytes, stats) = py.allow_threads(|| -> PyResult<_> {
         let mut quads = Vec::new();
-        for (text, format) in &sources {
-            quads.extend(
-                rete_core::ingest::parse_statements(text, format)
-                    .map_err(|e| PyValueError::new_err(e.to_string()))?,
-            );
+        for (text, format, syntax) in &sources {
+            quads.extend(parse_source(text, format, syntax)?);
         }
         if quads.is_empty() {
             return Err(PyValueError::new_err(
@@ -628,6 +676,7 @@ fn _rete(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open_reader, m)?)?;
     m.add_function(wrap_pyfunction!(build, m)?)?;
     m.add_function(wrap_pyfunction!(build_dataset, m)?)?;
+    m.add_function(wrap_pyfunction!(rdf12_triple_term, m)?)?;
     // Single source of truth for the dump batch size, so the pure-Python
     // wrapper's default cannot drift from the binding's.
     m.add("DUMP_BATCH", DUMP_BATCH)?;

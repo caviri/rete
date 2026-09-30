@@ -55,6 +55,6 @@ jobs:
         # the only place the real R2 Range/CORS contract gets exercised.
         run: |
           uv venv .venv
-          uv pip install --python .venv/bin/python dist/*.whl pytest pandas rdflib
+          uv pip install --python .venv/bin/python dist/*.whl pytest pandas rdflib pyoxigraph==0.5.11
           RETE_REMOTE_URL=https://data.graphplaza.com/boe/boe.rete \
             .venv/bin/python -m pytest clients/python/tests -q

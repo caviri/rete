@@ -126,7 +126,7 @@ public SPARQL endpoint (Wikidata, DBpedia, …) in one query. See
 upload:
 
 ```python
-data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl")
+data = rete.build(nt_text)                   # N-Triples text ("nt", "nq", "ttl", "trig", "rdfxml")
 pathlib.Path("out.rete").write_bytes(data)
 ```
 
@@ -165,6 +165,34 @@ predicates, classes, vocabularies, datatypes, languages, hubs, signals and the
 tiered starter-query library — from the same code `rete build --card` runs, so
 the same graph yields a byte-identical card. It is opt-in: derivation walks the
 graph twice more, and the default keeps writing exactly the bytes it always did.
+
+### RDF 1.2 and quoted triples
+
+The same `--quoted-triple-syntax` vocabulary and defaults as the CLI (see
+[Interop](interop.md)), in both directions.
+
+**Reading.** In Turtle and TriG, `<< s p o >>` is a quoted triple under
+RDF-star and a *reifier* under RDF 1.2 — the same bytes, two graphs — so the
+build calls take `quoted_triple_syntax`: `"rdf-star"` (the default, what every
+earlier release read) or `"rdf12"` (`<<( s p o )>>` triple terms, `<< … >>`
+reifiers, `{| … |}` annotations, `"…"@lang--dir` literals). N-Triples, N-Quads
+and RDF/XML ignore it. `"trig"` is a format too, and `.trig` a known suffix.
+
+```python
+g = rete.open(rete.build(ttl_text, "ttl", quoted_triple_syntax="rdf12"))
+rete.Builder().add_file("dump.trig", quoted_triple_syntax="rdf12").run()
+```
+
+**Writing.** `Graph.to_nquads()` spells a quoted triple as the RDF 1.2 triple
+term `<<( s p o )>>` by default, which Oxigraph/pyoxigraph 0.5 and Jena 5 load;
+`quoted_triple_syntax="rdf-star"` writes rete's stored `<<s p o>>`. RDF 1.2 has
+no triple term in subject position, so such a statement raises `ValueError`
+under `"rdf12"`. A graph with no quoted triples is written identically either
+way. (`iter_quads()` yields the stored tokens.)
+
+**The card** carries `signals.quoted_triples` — `{"present": …,
+"export_surfaces": […], "export_default": "rdf12"}` — measured from the file's
+header on read, so files built before the signal existed answer it too.
 
 The full walkthrough (every card field, pyramid trade-offs, verification) is
 in [Python: build a .rete](python-build-tutorial.md). In-memory builds suit
