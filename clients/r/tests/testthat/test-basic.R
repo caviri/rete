@@ -81,7 +81,9 @@ test_that("derive_card is opt-in, and derives what the CLI derives", {
   plain <- rete_card(build_graph(card = list(title = "Curated only")))
   expect_null(plain$predicates)
   expect_null(plain$queries)
-  expect_null(plain$signals)
+  # `signals` holds only what rete_card() measures from the header at read
+  # time (never stored — see test-rdf12.R); no derived signal was written.
+  expect_equal(names(plain$signals), "quoted_triples")
 
   # Opt in: the whole auto-derived profile, from the code `rete build --card`
   # runs — plus the CLI's write-time validation of the curated half.

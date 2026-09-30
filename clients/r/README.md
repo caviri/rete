@@ -52,6 +52,12 @@ rete_query(rete_open(img), "SELECT ?o WHERE { <urn:a> <urn:knows> ?o }")
 writeBin(img, "demo.rete")
 ```
 
+RDF 1.2 Turtle/TriG (`<<( s p o )>>` triple terms, `<< … >>` reifiers,
+`{| … |}` annotations) is read with
+`rete_build(ttl, "ttl", quoted_triple_syntax = "rdf12")`; the default,
+`"rdf-star"`, reads `<< s p o >>` as a quoted triple, as before.
+`rete_card(g)$signals$quoted_triples` says whether a file holds quoted triples.
+
 ## Documentation
 
 - [R API guide](https://caviri.github.io/rete/r.html) — the full tour

@@ -189,6 +189,14 @@ impl RGraph {
             .unwrap_or_default()
     }
 
+    /// The card's `signals.quoted_triples` as JSON, read off the header's
+    /// `FLAG_HAS_QUOTED_TRIPLES` exactly as `rete card` measures it (never stored,
+    /// so files built before the signal existed answer it too).
+    fn quoted_triples_signal(&self) -> String {
+        let signal = rete_core::card::QuotedTriplesSignal::probe(self.rete.header());
+        serde_json::to_string(&signal).unwrap_or_else(|e| fail(e))
+    }
+
     /// Cumulative physical fetch counters as JSON.
     fn stats(&self) -> String {
         let (bytes, requests) = match &self.reader {
@@ -266,8 +274,9 @@ fn curated_for_derivation(
 
 /// Build a complete `.rete` file image from RDF text. `card_json` may be ""
 /// (no card); `pyramid_algo` is "louvain", "types", or "none";
-/// `derive_card` opts into the auto-derived card profile. Internal —
-/// users call the documented `rete_build()`.
+/// `derive_card` opts into the auto-derived card profile;
+/// `quoted_triple_syntax` ("rdf-star" or "rdf12") is how Turtle/TriG
+/// `<< … >>` is read. Internal — users call the documented `rete_build()`.
 /// @noRd
 #[extendr]
 fn build_dataset(
@@ -277,7 +286,14 @@ fn build_dataset(
     pyramid_algo: &str,
     text_index: bool,
     derive_card: bool,
+    quoted_triple_syntax: &str,
 ) -> Vec<u8> {
+    let surface = match rete_core::ingest::QuotedTripleSurface::parse(quoted_triple_syntax) {
+        Some(surface) => surface,
+        None => fail(format!(
+            "unknown quoted_triple_syntax {quoted_triple_syntax:?} (expected \"rdf-star\" or \"rdf12\")"
+        )),
+    };
     let (with_pyramid, algo) = match pyramid_algo {
         "none" => (false, rete_core::PyramidAlgo::Louvain),
         other => match rete_core::PyramidAlgo::from_cli(other) {
@@ -303,7 +319,9 @@ fn build_dataset(
     } else {
         None
     };
-    let quads = match rete_core::ingest::parse_statements(text, format) {
+    let quads = match rete_core::ingest::parse_statements_audited_surface(
+        text, format, None, surface,
+    ) {
         Ok(quads) => quads,
         Err(e) => fail(e),
     };

@@ -16,10 +16,11 @@ NULL
 
 #' Build a complete `.rete` file image from RDF text. `card_json` may be ""
 #' (no card); `pyramid_algo` is "louvain", "types", or "none";
-#' `derive_card` opts into the auto-derived card profile. Internal —
-#' users call the documented `rete_build()`.
+#' `derive_card` opts into the auto-derived card profile;
+#' `quoted_triple_syntax` ("rdf-star" or "rdf12") is how Turtle/TriG
+#' `<< … >>` is read. Internal — users call the documented `rete_build()`.
 #' @noRd
-build_dataset <- function(text, format, card_json, pyramid_algo, text_index, derive_card) .Call(wrap__build_dataset, text, format, card_json, pyramid_algo, text_index, derive_card)
+build_dataset <- function(text, format, card_json, pyramid_algo, text_index, derive_card, quoted_triple_syntax) .Call(wrap__build_dataset, text, format, card_json, pyramid_algo, text_index, derive_card, quoted_triple_syntax)
 
 #' Version of the Rust engine compiled into this package. The package's own
 #' version tracks the binding and shares only the engine's major.minor, so this
@@ -48,6 +49,8 @@ RGraph$text_search <- function(words, contains, limit) .Call(wrap__RGraph__text_
 RGraph$schema <- function() .Call(wrap__RGraph__schema, self)
 
 RGraph$card <- function() .Call(wrap__RGraph__card, self)
+
+RGraph$quoted_triples_signal <- function() .Call(wrap__RGraph__quoted_triples_signal, self)
 
 RGraph$stats <- function() .Call(wrap__RGraph__stats, self)
 
