@@ -48,10 +48,14 @@ No `node_modules` in the archive, no native modules, nothing to install.
 | `find_entities` | Label-prefix + full-text search → entity IRIs |
 | `describe_entity` | Every statement about one IRI, both directions |
 | `validate_shacl` | SHACL Core report; only the shapes' targets are read |
-| `build_rete` | RDF text → a new `.rete` in a granted folder, offline |
+| `build_rete` | RDF text (Turtle, TriG, N-Triples, N-Quads) → a new `.rete` in a granted folder, offline; `quoted_triple_syntax: "rdf12"` reads RDF 1.2 Turtle/TriG (default `rdf-star`, as `rete build`) |
 
 Every `dataset` argument accepts a local file name or path, a catalogue key, or
 an `https://` URL to any published `.rete`. Local files win a name clash.
+
+`dataset_card` includes `signals.quoted_triples` — whether the graph holds quoted
+triples and the surfaces `rete export` can write them in — measured from the
+file's header, so it answers for every published file.
 
 ## Install
 

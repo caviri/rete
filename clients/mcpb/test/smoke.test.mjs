@@ -195,3 +195,103 @@ test("suggests near matches for an unknown name", async (t) => {
   assert.ok(result.isError);
   assert.match(result.content[0].text, /Did you mean: people/);
 });
+
+// --- RDF 1.2 ----------------------------------------------------------------
+
+const TTL12 = `@prefix ex: <https://example.org/> .
+ex:ada ex:says <<( ex:charles ex:knows ex:ada )>> .
+ex:ada ex:knows ex:charles {| ex:since "1833" |} .
+`;
+
+test("builds RDF 1.2 Turtle and TriG when asked, and says how by default", async (t) => {
+  const client = await connect(t, await fixture());
+
+  // The default reader is RDF-star, exactly as `rete build`; RDF 1.2 input
+  // through it is refused naming the flag.
+  const refused = await client.callTool({
+    name: "build_rete",
+    arguments: { rdf: TTL12, output_path: "star", format: "ttl" },
+  });
+  assert.ok(refused.isError);
+  assert.match(refused.content[0].text, /rdf12/);
+
+  const built = payload(
+    await client.callTool({
+      name: "build_rete",
+      arguments: { rdf: TTL12, output_path: "rdf12", format: "ttl", quoted_triple_syntax: "rdf12" },
+    }),
+  );
+  // A triple term; the annotated triple + its reifier + the annotation.
+  assert.equal(built.info.quads, 4);
+
+  const trig = payload(
+    await client.callTool({
+      name: "build_rete",
+      arguments: {
+        rdf: `@prefix ex: <https://example.org/> .\nex:g { ${TTL12.split("\n").slice(1).join("\n")} }\n`,
+        output_path: "rdf12-trig",
+        format: "trig",
+        quoted_triple_syntax: "rdf12",
+      },
+    }),
+  );
+  assert.equal(trig.info.quads, 4);
+  assert.equal(trig.info.namedGraphs, 1);
+});
+
+test("the dataset card says whether a graph holds quoted triples", async (t) => {
+  const { wasm } = await import("rete-graph");
+  const dir = await fixture();
+  const nt = "<https://ex/c> <https://ex/states> << <https://ex/a> <https://ex/p> <https://ex/b> >> .\n";
+  await writeFile(join(dir, "quoted.rete"), wasm.build_with_card(nt, "nt", '{"title":"Quoted"}'));
+  const client = await connect(t, dir);
+  const { card } = payload(
+    await client.callTool({ name: "dataset_card", arguments: { dataset: "quoted" } }),
+  );
+  assert.deepEqual(card.signals.quoted_triples, {
+    present: true,
+    export_surfaces: ["rdf12", "rdf-star"],
+    export_default: "rdf12",
+  });
+});
+
+test("blank nodes of two builds stay distinct", async (t) => {
+  const client = await connect(t, await fixture());
+  const labels = [];
+  for (const [name, syntax] of [["b1", "rdf12"], ["b2", "rdf-star"]]) {
+    payload(
+      await client.callTool({
+        name: "build_rete",
+        arguments: { rdf: '[] <https://ex/p> "x" .', output_path: name, quoted_triple_syntax: syntax },
+      }),
+    );
+    const rows = payload(
+      await client.callTool({
+        name: "sparql_query",
+        arguments: { dataset: name, query: 'SELECT ?s WHERE { ?s <https://ex/p> "x" }' },
+      }),
+    );
+    labels.push(...rows.rows.map((r) => r.s));
+  }
+  assert.equal(labels.length, 2, String(labels));
+  assert.ok(labels.every((l) => /^_:\S+$/.test(l)), String(labels));
+  assert.notEqual(labels[0], labels[1], `blank nodes collided: ${labels}`);
+});
+
+test("rebuilding a file under the same name serves the new bytes", async (t) => {
+  const client = await connect(t, await fixture());
+  const count = async () =>
+    payload(
+      await client.callTool({
+        name: "sparql_query",
+        arguments: { dataset: "again", query: "SELECT ?s WHERE { ?s ?p ?o }" },
+      }),
+    ).count;
+  const rebuild = async (rdf) =>
+    payload(await client.callTool({ name: "build_rete", arguments: { rdf, output_path: "again", format: "nt" } }));
+
+  await rebuild("<https://ex/a> <https://ex/p> <https://ex/b> .");
+  assert.equal(await count(), 1);
+  await rebuild("<https://ex/a> <https://ex/p> <https://ex/b> .\n<https://ex/c> <https://ex/p> <https://ex/d> .");
+  assert.equal(await count(), 2, "a stale graph answered for the rebuilt file");
+});

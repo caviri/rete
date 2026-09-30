@@ -164,6 +164,17 @@ export class GraphStore {
     );
   }
 
+  /**
+   * A `.rete` under a granted folder was just (re)written — by `build_rete`.
+   * Rescan on the next lookup, so the name that tool hands back resolves at
+   * once rather than after the scan TTL, and drop any graph opened from the
+   * file's previous bytes.
+   */
+  changed(path) {
+    this.#scan.at = 0;
+    this.#cache.delete(new Source({ kind: "local", key: "", path: resolve(path) }).openTarget);
+  }
+
   /** The open (and cached) graph for a dataset argument, plus its Source. */
   async graph(dataset) {
     const source = await this.resolve(dataset);

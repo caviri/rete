@@ -7,6 +7,23 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Claude Desktop extension: a second `build_rete` could not be queried by the
+  name it returned.** The tool answers "queryable now — pass `dataset`", but the
+  local-file listing it resolves names against was cached for 5 s, so a graph
+  built within that window after the previous lookup was `unknown dataset`; a
+  rebuilt file under an existing name could also keep serving the previously
+  opened bytes. `build_rete` now invalidates the listing and evicts that path.
+  And a failed tool call kept only the first line of the engine's error, which
+  dropped the `hint:` line — the one saying RDF 1.2 Turtle needs
+  `quoted_triple_syntax "rdf12"`; the hint is kept now.
+
+  `build_rete` gains `format: "trig"` and
+  `quoted_triple_syntax: "rdf-star" | "rdf12"` (default `rdf-star`, as
+  `rete build`), through the JS client's `build()`; `dataset_card` carries
+  `signals.quoted_triples` from it. Smoke tests cover RDF 1.2 Turtle and TriG
+  builds, the refusal naming the flag, the card signal, and two builds' blank
+  nodes staying distinct.
+
 - **JavaScript: `nquads()` / `writeNQuads()` / `toNQuads()` wrote quoted
   triples in a spelling no current parser loads.** The engine cursor emitted
   the stored RDF-star token `<<s p o>>` verbatim — the output #262 fixed in
