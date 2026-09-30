@@ -138,15 +138,7 @@ fn run_query(
     // expanded triples.
     if let QueryOutput::Construct(triples) = &out {
         if format == "ttl" || format == "turtle" {
-            let mut text = String::new();
-            for (s, p, o) in triples {
-                text.push_str(s);
-                text.push(' ');
-                text.push_str(p);
-                text.push(' ');
-                text.push_str(o);
-                text.push_str(" .\n");
-            }
+            let text = construct_turtle(triples)?;
             let mut json = String::from(r#"{"kind":"construct","format":"ttl","text":"#);
             rete_core::push_json_string(&mut json, &text);
             json.push_str(&format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}}}"#));
@@ -158,6 +150,44 @@ fn run_query(
         &out,
         &format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#),
     ))
+}
+
+/// CONSTRUCT triples as Turtle text — one expanded N-Triples line each, which is
+/// valid Turtle — with every quoted triple written as the **RDF 1.2 triple
+/// term** `<<( s p o )>>`, as `rete export` does by default.
+///
+/// The stored token is the RDF-star `<<s p o>>`, and in Turtle that spelling
+/// means something else to an RDF 1.2 parser: a *reifier*, so pasting the
+/// verbatim text into one yields a different graph (one statement becomes two,
+/// with a blank node where the triple term was). RDF 1.2 allows a triple term in
+/// object position only, so a quoted triple in a subject/predicate slot (or in
+/// another's subject) has no Turtle 1.2 spelling and is refused by name rather
+/// than written as a reifier.
+fn construct_turtle(triples: &[(String, String, String)]) -> Result<String, String> {
+    use rete_core::terms::{is_quoted_triple, rdf12_triple_term};
+    let mut text = String::new();
+    for (s, p, o) in triples {
+        if is_quoted_triple(s) || is_quoted_triple(p) {
+            return Err(format!(
+                "this result has a quoted triple in the subject or predicate of a statement, \
+                 which RDF 1.2 Turtle cannot write (a triple term stands in object position \
+                 only): {s} {p} {o} . — read it from the table view instead"
+            ));
+        }
+        let o = rdf12_triple_term(o).ok_or_else(|| {
+            format!(
+                "this result has a quoted triple nested in the subject of another, which RDF \
+                 1.2 Turtle cannot write: {s} {p} {o} . — read it from the table view instead"
+            )
+        })?;
+        text.push_str(s);
+        text.push(' ');
+        text.push_str(p);
+        text.push(' ');
+        text.push_str(&o);
+        text.push_str(" .\n");
+    }
+    Ok(text)
 }
 
 /// Label prefix search, served from the pyramid's label index. Empty when the
@@ -255,4 +285,55 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Rete File Explorer");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::construct_turtle;
+
+    fn t(s: &str, p: &str, o: &str) -> (String, String, String) {
+        (s.into(), p.into(), o.into())
+    }
+
+    #[test]
+    fn plain_triples_are_written_as_they_are() {
+        let out = construct_turtle(&[t("<http://ex/a>", "<http://ex/p>", "\"x\"@en")]).unwrap();
+        assert_eq!(out, "<http://ex/a> <http://ex/p> \"x\"@en .\n");
+    }
+
+    #[test]
+    fn a_quoted_object_becomes_an_rdf12_triple_term() {
+        let nested =
+            "<<<http://ex/c> <http://ex/s> <<<http://ex/a> <http://ex/p> <http://ex/b>>>>>";
+        let out = construct_turtle(&[t("<http://ex/m>", "<http://ex/about>", nested)]).unwrap();
+        assert_eq!(
+            out,
+            "<http://ex/m> <http://ex/about> <<( <http://ex/c> <http://ex/s> \
+             <<( <http://ex/a> <http://ex/p> <http://ex/b> )>> )>> .\n"
+        );
+    }
+
+    #[test]
+    fn a_quoted_subject_is_refused_rather_than_written_as_a_reifier() {
+        let quoted = "<<<http://ex/a> <http://ex/p> <http://ex/b>>>";
+        let e = construct_turtle(&[t(quoted, "<http://ex/src>", "<http://ex/wiki>")]).unwrap_err();
+        assert!(e.contains("object position only"), "{e}");
+    }
+
+    #[test]
+    fn the_output_parses_as_rdf12_turtle_and_is_the_same_graph() {
+        // Round trip through rete's own RDF 1.2 Turtle reader: the triple term
+        // comes back as the one stored token it started as.
+        let token = "<<<http://ex/a> <http://ex/p> <http://ex/b>>>";
+        let out = construct_turtle(&[t("<http://ex/c>", "<http://ex/states>", token)]).unwrap();
+        let quads = rete_core::ingest::parse_statements_audited_surface(
+            &out,
+            "ttl",
+            None,
+            rete_core::ingest::QuotedTripleSurface::Rdf12,
+        )
+        .unwrap();
+        assert_eq!(quads.len(), 1, "a triple term, not a reifier: {quads:?}");
+        assert_eq!(quads[0].2, token);
+    }
 }

@@ -1,0 +1,12 @@
+# Linux compile + unit-test image for the desktop client. Not a release build:
+# releases are macOS-only (desktop-release.yml); this exists so a change to the
+# engine or to src-tauri can be compiled and tested from any machine.
+#
+#   docker build -t rete-tauri-check -f clients/tauri/Dockerfile.check clients/tauri
+#   docker run --rm -v "$PWD":/work -v rete-tauri-target:/target \
+#       rete-tauri-check bash /work/clients/tauri/scripts/check-linux.sh
+FROM rust:1.92-bookworm
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+      libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libssl-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*

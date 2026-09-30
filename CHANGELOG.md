@@ -51,6 +51,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `.rete` round trip, the dump loading in Oxigraph, remote graphs, and blank
   nodes of separate parses staying distinct when merged.
 
+- **Desktop explorer: a CONSTRUCT shown as Turtle wrote quoted triples as
+  reifiers.** `run_query` copied the stored RDF-star token `<< s p o >>` into
+  its Turtle text, which an RDF 1.2 Turtle parser reads as a reifier — one
+  statement pasted elsewhere became two, with a blank node where the triple
+  term was (the Turtle half of what #262 fixed in `rete export`). It now writes
+  `<<( s p o )>>` (nested terms too) and reports a subject-position quoted
+  triple, which RDF 1.2 cannot spell, instead of writing it. The crate gains its
+  first unit tests, including a round trip through rete's RDF 1.2 Turtle
+  reader, and `clients/tauri/Dockerfile.check` + `scripts/check-linux.sh`
+  compile, lint and test it on Linux — nothing built it outside the macOS
+  release workflow. `Cargo.lock` was still resolving `rete-core` 0.3.0 and
+  lacked `oxiri` / `oxttl` 0.2 / `oxrdf` 0.3; it is refreshed.
+
 - **Python: `Graph.to_nquads()` wrote quoted triples in a spelling no current
   parser loads.** It concatenated the stored RDF-star token `<<s p o>>`, the
   exact output #262 fixed in `rete export`: pyoxigraph/Oxigraph 0.5 refuses the
