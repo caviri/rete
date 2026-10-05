@@ -53,6 +53,8 @@ Recommended workflow:
 5. sparql_query — SELECT / ASK / CONSTRUCT / DESCRIBE. Always keep a LIMIT
    while exploring. reason=true turns on OWL 2 QL entailment where the graph
    carries an ontology.
+   CONTAINS / STRSTARTS / REGEX need strings: wrap an IRI or a number in STR(),
+   e.g. CONTAINS(STR(?s), "x"); otherwise the FILTER is silently false (see warnings).
 6. find_entities — resolve a name to IRIs before asking about a specific thing.
 7. validate_shacl — data-quality checks with SHACL Core shapes.
 8. build_rete — turn RDF text (Turtle / TriG / N-Triples / N-Quads) into a new
@@ -102,6 +104,54 @@ const rowToJson = (row) =>
 const lastStats = new WeakMap();
 
 /** Physical reads for this call, and the fraction of the file they are. */
+// --- query diagnostics -------------------------------------------------------
+// A FILTER that hits a SPARQL type error (CONTAINS on an IRI, STRSTARTS on a
+// number, a language-tag mismatch, …) is false by the spec — the query returns
+// fewer rows, or none, and no error. An agent reads "0 rows" as "CONTAINS is
+// unsupported". The engine counts those errors; say them in plain words.
+
+const ARG_KIND = {
+  iri: "an IRI",
+  "blank-node": "a blank node",
+  "quoted-triple": "a quoted triple",
+  numeric: "a number",
+  "typed-literal": "a non-string typed literal",
+  "language-mismatch": "a literal whose language tag differs from argument 1",
+  unbound: "an unbound variable",
+  "invalid-regex": "an invalid regex pattern",
+  "not-a-datetime": "a value that is not an xsd:dateTime",
+};
+
+/** One line an agent will read: the result size, then each warning. */
+function warningLine(size, warnings) {
+  const errors = warnings.filter((w) => w.severity === "type-error");
+  const hints = warnings.filter((w) => w.severity !== "type-error");
+  const parts = [size];
+  if (errors.length) {
+    const what = errors
+      .map((w) => {
+        const kind = ARG_KIND[w.argKind] ?? w.argKind;
+        const times = w.count === 1 ? "1 row" : `${w.count} rows`;
+        return `${w.function} received ${kind} as argument ${w.argument} (${times}) — ${w.hint}`;
+      })
+      .join("; ");
+    parts.push(
+      `${errors.length} FILTER type error${errors.length === 1 ? "" : "s"}: ${what}. ` +
+        "(SPARQL makes a FILTER false on a type error, without any error.)",
+    );
+  }
+  for (const h of hints) parts.push(`Hint: ${h.message.replace(/^No results\. /, "")}`);
+  return parts.join(" ");
+}
+
+/** The tool result: JSON first (as before), then the plain line when there is one. */
+function withWarnings(value, size, warnings) {
+  if (!warnings.length) return json(value);
+  const out = json({ ...value, warnings });
+  out.content.push({ type: "text", text: warningLine(size, warnings) });
+  return out;
+}
+
 const statsOf = (graph, source) => {
   const s = graph.stats();
   if (!s) return null;
@@ -306,7 +356,9 @@ server.registerTool(
     description:
       "Run SPARQL 1.1 (SELECT / ASK / CONSTRUCT / DESCRIBE) against a graph. Keep a LIMIT while " +
       "exploring. reason=true enables OWL 2 QL entailment (subclass/subproperty/domain/range) " +
-      "where the graph carries an ontology. Only the byte ranges the query touches are read.",
+      "where the graph carries an ontology. Only the byte ranges the query touches are read. " +
+      "CONTAINS / STRSTARTS / REGEX need string arguments: use STR(?iri) or STR(?number). " +
+      "FILTER type errors (silently false in SPARQL) come back as `warnings`.",
     inputSchema: {
       dataset,
       query: z.string().describe("the SPARQL query"),
@@ -319,33 +371,46 @@ server.registerTool(
     const started = Date.now();
     const result = graph.query(query, { reason });
     const ms = Date.now() - started;
+    const warnings = graph.lastWarnings?.() ?? [];
 
     if (typeof result === "boolean") {
-      return json({ dataset: source.key, form: "ASK", boolean: result, ms, stats: statsOf(graph, source) });
+      return withWarnings(
+        { dataset: source.key, form: "ASK", boolean: result, ms, stats: statsOf(graph, source) },
+        `ASK = ${result}.`,
+        warnings,
+      );
     }
     if (Array.isArray(result) && Array.isArray(result[0])) {
       const triples = result.slice(0, MAX_ROWS).map((t) => t.map((term) => term.value));
-      return json({
-        dataset: source.key,
-        form: "CONSTRUCT/DESCRIBE",
-        count: result.length,
-        truncated: Math.max(0, result.length - triples.length),
-        triples,
-        ms,
-        stats: statsOf(graph, source),
-      });
+      return withWarnings(
+        {
+          dataset: source.key,
+          form: "CONSTRUCT/DESCRIBE",
+          count: result.length,
+          truncated: Math.max(0, result.length - triples.length),
+          triples,
+          ms,
+          stats: statsOf(graph, source),
+        },
+        `${result.length} triple${result.length === 1 ? "" : "s"}.`,
+        warnings,
+      );
     }
     const rows = result.slice(0, MAX_ROWS).map(rowToJson);
-    return json({
-      dataset: source.key,
-      form: "SELECT",
-      count: result.length,
-      truncated: Math.max(0, result.length - rows.length),
-      rows,
-      ms,
-      reason,
-      stats: statsOf(graph, source),
-    });
+    return withWarnings(
+      {
+        dataset: source.key,
+        form: "SELECT",
+        count: result.length,
+        truncated: Math.max(0, result.length - rows.length),
+        rows,
+        ms,
+        reason,
+        stats: statsOf(graph, source),
+      },
+      `${result.length} row${result.length === 1 ? "" : "s"}.`,
+      warnings,
+    );
   }),
 );
 

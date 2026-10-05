@@ -102,6 +102,43 @@ test("queries a local graph lazily, by file name", async (t) => {
 
 });
 
+test("a FILTER type error reaches the agent as a warning, not just 0 rows", async (t) => {
+  const client = await connect(t, await fixture());
+  const ask = (query) =>
+    client.callTool({ name: "sparql_query", arguments: { dataset: "people", query } });
+  const RDFS = "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> ";
+
+  // CONTAINS on an IRI: still 0 rows (spec-correct), plus the reason.
+  const bad = await ask(`${RDFS}SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "ada")) }`);
+  const body = payload(bad);
+  assert.equal(body.count, 0);
+  assert.equal(body.warnings.length, 1);
+  assert.equal(body.warnings[0].function, "CONTAINS");
+  assert.equal(body.warnings[0].argKind, "iri");
+  assert.equal(body.warnings[0].argument, 1);
+  // ...and in plain words, in the tool text the model reads.
+  const line = bad.content[1]?.text ?? "";
+  assert.match(line, /^0 rows\. 1 FILTER type error/);
+  assert.match(line, /CONTAINS received an IRI as argument 1/);
+  assert.match(line, /STR\(\)/);
+
+  // The fix the warning names returns the row, with no warning.
+  const good = await ask(`${RDFS}SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(STR(?s), "ada")) }`);
+  assert.equal(payload(good).count, 1);
+  assert.equal(payload(good).warnings, undefined);
+  assert.equal(good.content.length, 1);
+
+  // A case miss gets a marked hint, not an error.
+  const cased = await ask(`${RDFS}SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?l, "ada")) }`);
+  assert.equal(payload(cased).warnings[0].severity, "hint");
+  assert.match(cased.content[1].text, /^0 rows\. Hint: .*case-sensitive/);
+
+  // ASK goes through the same channel.
+  const asked = await ask(`${RDFS}ASK { ?s rdfs:label ?l FILTER(STRSTARTS(?s, "https")) }`);
+  assert.equal(payload(asked).boolean, false);
+  assert.match(asked.content[1].text, /^ASK = false\. 1 FILTER type error: STRSTARTS/);
+});
+
 test("refuses a path outside the granted folders", async (t) => {
   const client = await connect(t, await fixture());
   const result = await client.callTool({
