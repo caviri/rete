@@ -32,6 +32,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   optional `warnings` member, so an envelope with no warnings is byte-identical
   to before. Typed as `QueryWarning` in `index.d.ts`.
 
+- **Claude Desktop extension: `sparql_query` says why a FILTER came back
+  empty.** The JSON result carries `warnings`, and a second text block states
+  them in plain words for the model, e.g. `0 rows. 1 FILTER type error:
+  CONTAINS received an IRI as argument 1 (1 row) — wrap it in STR() to match
+  the IRI's text.` The server's agent guidance gains one note: CONTAINS /
+  STRSTARTS / REGEX need strings, so wrap an IRI or a number in STR().
+
 ### Fixed
 
 - **Claude Desktop extension: a second `build_rete` could not be queried by the

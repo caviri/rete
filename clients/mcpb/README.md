@@ -44,7 +44,7 @@ No `node_modules` in the archive, no native modules, nothing to install.
 | `dataset_card` | The file's embedded self-description (2 small reads, any size) |
 | `dataset_schema` | Classes and relations with counts, from the baked pyramid |
 | `example_queries` | Runnable SPARQL the dataset ships with |
-| `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL |
+| `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL. A FILTER type error (CONTAINS on an IRI, …) comes back as `warnings` plus a plain-language line |
 | `find_entities` | Label-prefix + full-text search → entity IRIs |
 | `describe_entity` | Every statement about one IRI, both directions |
 | `validate_shacl` | SHACL Core report; only the shapes' targets are read |
