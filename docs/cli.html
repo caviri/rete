@@ -1220,6 +1220,21 @@ includes ontology-entailed solutions (<code>rdfs:subClassOf</code> / <code>subPr
 data with no materialization — off by default, so a plain query is unchanged. Same
 flag on <code>rete sparql-url</code> reasons over a remote file, fetching only what the
 rewritten query touches. See <a href="reasoning.html#reasoning-by-query-rewriting-owl-2-ql">Reasoning by query rewriting</a>.</p>
+<p><strong>Warnings on stderr.</strong> When a function raises a SPARQL type error, a FILTER
+treats it as false and a BIND leaves the variable unbound, so the query can
+come back empty with no error. Examples: <code>CONTAINS(?s, "x")</code> on an IRI,
+<code>STRSTARTS(?year, "15")</code> on an <code>xsd:integer</code>, and a language-tag mismatch.
+<code>rete sparql</code> (and <code>rete sparql-url</code>) keep those results exactly as they are
+and print one <code>warning:</code> line per kind of error to <strong>stderr</strong>. Each line gives
+the function, the argument, a sample value and a fix such as "wrap it in
+STR()". stdout stays the result. With <code>--json</code>, the result object also gets a
+<code>warnings</code> array. An empty result can also get a <code>hint:</code> line saying that
+string matching is case-sensitive. See
+<a href="sparql.html#warnings">Type errors and query warnings</a>.</p>
+<pre><code class="language-text">$ rete sparql maps.rete 'SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }'
+0 solution(s)
+warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which FILTER treats as false (BIND leaves the variable unbound); e.g. &lt;http://ex.org/map/geneva-1572&gt;. Hint: wrap it in STR() to match the IRI's text.
+</code></pre>
 <p>There is <strong>no union-default-graph flag</strong> here: the opt-in ⛁ All graphs mode —
 a pattern outside <code>GRAPH</code> matching the merge of the default graph and every
 named graph, for files whose data lives entirely in named graphs — exists

@@ -741,6 +741,24 @@ data with no materialization — off by default, so a plain query is unchanged. 
 flag on `rete sparql-url` reasons over a remote file, fetching only what the
 rewritten query touches. See [Reasoning by query rewriting](reasoning.md#reasoning-by-query-rewriting-owl-2-ql).
 
+**Warnings on stderr.** When a function raises a SPARQL type error, a FILTER
+treats it as false and a BIND leaves the variable unbound, so the query can
+come back empty with no error. Examples: `CONTAINS(?s, "x")` on an IRI,
+`STRSTARTS(?year, "15")` on an `xsd:integer`, and a language-tag mismatch.
+`rete sparql` (and `rete sparql-url`) keep those results exactly as they are
+and print one `warning:` line per kind of error to **stderr**. Each line gives
+the function, the argument, a sample value and a fix such as "wrap it in
+STR()". stdout stays the result. With `--json`, the result object also gets a
+`warnings` array. An empty result can also get a `hint:` line saying that
+string matching is case-sensitive. See
+[Type errors and query warnings](sparql.md#warnings).
+
+```text
+$ rete sparql maps.rete 'SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }'
+0 solution(s)
+warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which FILTER treats as false (BIND leaves the variable unbound); e.g. <http://ex.org/map/geneva-1572>. Hint: wrap it in STR() to match the IRI's text.
+```
+
 There is **no union-default-graph flag** here: the opt-in ⛁ All graphs mode —
 a pattern outside `GRAPH` matching the merge of the default graph and every
 named graph, for files whose data lives entirely in named graphs — exists
