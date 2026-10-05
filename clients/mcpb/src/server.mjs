@@ -140,7 +140,7 @@ function warningLine(size, warnings) {
         "(SPARQL makes a FILTER false on a type error, without any error.)",
     );
   }
-  for (const h of hints) parts.push(`Hint: ${h.message}`);
+  for (const h of hints) parts.push(`Hint: ${h.message.replace(/^No results\. /, "")}`);
   return parts.join(" ");
 }
 
