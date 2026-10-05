@@ -60,7 +60,7 @@ pub struct QueryWarning {
     /// How many evaluations raised this error (an evaluation is one row reaching
     /// the expression; LIMIT / ASK stop early, so this is not a data count).
     pub count: u64,
-    /// The first offending value, truncated to [`SAMPLE_CHARS`] characters.
+    /// The first offending value, truncated to 80 characters (plus `…`).
     pub sample: Option<String>,
     /// A short, actionable suggestion.
     pub hint: String,
@@ -69,7 +69,7 @@ pub struct QueryWarning {
 }
 
 /// Samples are cut to this many characters (plus `…`).
-pub const SAMPLE_CHARS: usize = 80;
+const SAMPLE_CHARS: usize = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArgKind {
