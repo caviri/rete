@@ -163,6 +163,15 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
     let sl = |x: String, lang: Option<&str>| -> Option<Rc<str>> {
         Some(Rc::from(make_literal(&x, lang, None)))
     };
+    // The xsd:dateTime parts of argument 1, reporting a value that is not one.
+    let dtm = || {
+        let a = a0()?;
+        let r = parse_datetime(&lex(&a));
+        if r.is_none() {
+            diag::bad_datetime(f, &a);
+        }
+        r
+    };
     match f {
         Builtin::Str => s(lex(&a0()?)),
         // RDF-star accessors return the component TERM (an IRI/literal/quoted
@@ -192,17 +201,17 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // the UCASE/LCASE/SUBSTR result.
         Builtin::StrLen => {
             let a = a0()?;
-            string_arg(&a)?;
+            string_arg_of(f, 0, &a)?;
             num(lex(&a).chars().count() as f64)
         }
         Builtin::UCase => {
             let a = a0()?;
-            let lang = string_arg(&a)?;
+            let lang = string_arg_of(f, 0, &a)?;
             sl(lex(&a).to_uppercase(), lang.as_deref())
         }
         Builtin::LCase => {
             let a = a0()?;
-            let lang = string_arg(&a)?;
+            let lang = string_arg_of(f, 0, &a)?;
             sl(lex(&a).to_lowercase(), lang.as_deref())
         }
         Builtin::Abs => num(as_number(&a0()?)?.abs()),
@@ -218,9 +227,9 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
             // non-empty tag, and is a simple literal otherwise.
             let mut out = String::new();
             let mut lang: Option<Option<String>> = None;
-            for a in args {
+            for (i, a) in args.iter().enumerate() {
                 let v = a.value(ctx, b)?;
-                let this = string_arg(&v)?;
+                let this = string_arg_of(f, i, &v)?;
                 out.push_str(&lex(&v));
                 lang = Some(match lang {
                     None => this,
@@ -232,7 +241,7 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         }
         Builtin::SubStr => {
             let a = a0()?;
-            let lang = string_arg(&a)?;
+            let lang = string_arg_of(f, 0, &a)?;
             let chars: Vec<char> = lex(&a).chars().collect();
             let start = as_number(&args.get(1)?.value(ctx, b)?)?.max(1.0) as usize - 1;
             let it = chars.iter().skip(start);
@@ -250,7 +259,11 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // arg1's language tag; a *not-found* needle yields a simple literal "".
         Builtin::StrBefore => {
             let a = a0()?;
-            let lang = before_after_lang(&a, &args.get(1)?.value(ctx, b)?)?;
+            let c = args.get(1)?.value(ctx, b)?;
+            let Some(lang) = before_after_lang(&a, &c) else {
+                binary_type_error(f, args, Some(&a), Some(&c));
+                return None;
+            };
             let (t, needle) = (lex(&a), lex(&args.get(1)?.value(ctx, b)?));
             match (needle.is_empty(), t.find(&needle)) {
                 (true, _) => sl(String::new(), lang.as_deref()),
@@ -260,7 +273,11 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         }
         Builtin::StrAfter => {
             let a = a0()?;
-            let lang = before_after_lang(&a, &args.get(1)?.value(ctx, b)?)?;
+            let c = args.get(1)?.value(ctx, b)?;
+            let Some(lang) = before_after_lang(&a, &c) else {
+                binary_type_error(f, args, Some(&a), Some(&c));
+                return None;
+            };
             let (t, needle) = (lex(&a), lex(&args.get(1)?.value(ctx, b)?));
             match (needle.is_empty(), t.find(&needle)) {
                 (true, _) => sl(t, lang.as_deref()),
@@ -291,12 +308,12 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         }
         Builtin::EncodeForUri => {
             let a = a0()?;
-            string_arg(&a)?;
+            string_arg_of(f, 0, &a)?;
             s(encode_for_uri(&lex(&a)))
         }
         Builtin::Replace => {
             let a = a0()?;
-            let lang = string_arg(&a)?; // arg1 must be a string literal
+            let lang = string_arg_of(f, 0, &a)?; // arg1 must be a string literal
             let text = lex(&a);
             let pat = lex(&args.get(1)?.value(ctx, b)?);
             let rep = lex(&args.get(2)?.value(ctx, b)?);
@@ -304,26 +321,29 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
                 Some(e) => lex(&e.value(ctx, b)?),
                 None => String::new(),
             };
-            let out = ctx.resolver.regex_replace(&pat, &flags, &text, &rep)?;
+            let Some(out) = ctx.resolver.regex_replace(&pat, &flags, &text, &rep) else {
+                diag::invalid_regex(f, &pat, &flags);
+                return None;
+            };
             sl(out, lang.as_deref())
         }
         Builtin::Md5 | Builtin::Sha1 | Builtin::Sha256 | Builtin::Sha384 | Builtin::Sha512 => {
             let a = a0()?;
-            string_arg(&a)?;
+            string_arg_of(f, 0, &a)?;
             s(hash_hex(f, &lex(&a)))
         }
         // Date/time accessors over an xsd:dateTime lexical form.
-        Builtin::Year => num(parse_datetime(&lex(&a0()?))?.0 as f64),
-        Builtin::Month => num(parse_datetime(&lex(&a0()?))?.1 as f64),
-        Builtin::Day => num(parse_datetime(&lex(&a0()?))?.2 as f64),
-        Builtin::Hours => num(parse_datetime(&lex(&a0()?))?.3 as f64),
-        Builtin::Minutes => num(parse_datetime(&lex(&a0()?))?.4 as f64),
-        Builtin::Seconds => num(parse_datetime(&lex(&a0()?))?.5),
+        Builtin::Year => num(dtm()?.0 as f64),
+        Builtin::Month => num(dtm()?.1 as f64),
+        Builtin::Day => num(dtm()?.2 as f64),
+        Builtin::Hours => num(dtm()?.3 as f64),
+        Builtin::Minutes => num(dtm()?.4 as f64),
+        Builtin::Seconds => num(dtm()?.5),
         // TZ → the timezone as a simple literal ("Z", "-08:00", or "").
-        Builtin::Tz => s(parse_datetime(&lex(&a0()?))?.6),
+        Builtin::Tz => s(dtm()?.6),
         // TIMEZONE → an xsd:dayTimeDuration; a value with no timezone errors.
         Builtin::Timezone => {
-            let dur = tz_to_duration(&parse_datetime(&lex(&a0()?))?.6)?;
+            let dur = tz_to_duration(&dtm()?.6)?;
             Some(Rc::from(make_literal(
                 &dur,
                 None,
@@ -850,9 +870,23 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
     // CONTAINS/STRSTARTS/STRENDS take two string-literal args that must also be
     // argument-compatible (SPARQL 1.1 §17.4.3). A non-string OR an incompatible
     // pair is a type error → false in a FILTER (like CONCAT, which type-checks).
-    let two = |g: fn(&str, &str) -> bool| match (val(0), val(1)) {
-        (Some(a), Some(c)) if args_compatible(&a, &c) => g(&lexical(&a), &lexical(&c)),
-        _ => false,
+    // The error is also reported to the diagnostics sink (cold path only); a
+    // plain no-match on valid strings feeds the case-sensitivity hint once.
+    let two = |g: fn(&str, &str) -> bool, bit: u8| {
+        let (a, c) = (val(0), val(1));
+        match (&a, &c) {
+            (Some(a), Some(c)) if args_compatible(a, c) => {
+                let r = g(&lexical(a), &lexical(c));
+                if !r {
+                    no_match(ctx, f, bit, args);
+                }
+                r
+            }
+            _ => {
+                binary_type_error(f, args, a.as_deref(), c.as_deref());
+                false
+            }
+        }
     };
     match f {
         Builtin::IsIri => val(0).is_some_and(|t| t.starts_with('<')),
@@ -861,23 +895,42 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
         Builtin::IsNumeric => val(0).and_then(|t| as_number(&t)).is_some(),
         // RDF-star: is the argument a quoted triple (`<<s p o>>`)?
         Builtin::IsTriple => val(0).is_some_and(|t| crate::terms::is_quoted_triple(&t)),
-        Builtin::Contains => two(|a, c| a.contains(c)),
-        Builtin::StrStarts => two(|a, c| a.starts_with(c)),
-        Builtin::StrEnds => two(|a, c| a.ends_with(c)),
+        Builtin::Contains => two(|a, c| a.contains(c), diag::MISS_CONTAINS),
+        Builtin::StrStarts => two(|a, c| a.starts_with(c), diag::MISS_STRSTARTS),
+        Builtin::StrEnds => two(|a, c| a.ends_with(c), diag::MISS_STRENDS),
         // REGEX(text, pattern [, flags]) — SPARQL flags i/m/s/x map to inline
-        // regex flags. An invalid pattern yields no match rather than erroring.
+        // regex flags. An invalid pattern yields no match (and a diagnostic).
         // The matcher is compiled once per query (memoized); literal patterns
         // skip the regex engine entirely.
-        Builtin::Regex => match (val(0), val(1)) {
-            // The text argument must be a string literal — a non-string is a type
-            // error → no match (drops the row), matching SPARQL and CONTAINS above.
-            (Some(text), Some(pat)) if string_arg(&text).is_some() => {
-                let flags = val(2).map(|t| lexical(&t)).unwrap_or_default();
-                ctx.resolver
-                    .regex_match(&lexical(&pat), &flags, &lexical(&text))
+        Builtin::Regex => {
+            let (text, pat) = (val(0), val(1));
+            match (&text, &pat) {
+                // The text argument must be a string literal — a non-string is a
+                // type error → no match (drops the row), matching SPARQL and
+                // CONTAINS above.
+                (Some(text), Some(pat)) if string_arg(text).is_some() => {
+                    let flags = val(2).map(|t| lexical(&t)).unwrap_or_default();
+                    let pat = lexical(pat);
+                    match ctx.resolver.regex_try(&pat, &flags, &lexical(text)) {
+                        Some(true) => true,
+                        Some(false) => {
+                            if !flags.contains('i') {
+                                no_match(ctx, f, diag::MISS_REGEX, args);
+                            }
+                            false
+                        }
+                        None => {
+                            diag::invalid_regex(f, &pat, &flags);
+                            false
+                        }
+                    }
+                }
+                _ => {
+                    regex_type_error(f, args, text.as_deref(), pat.as_deref());
+                    false
+                }
             }
-            _ => false,
-        },
+        }
         // LANGMATCHES(tag, range): basic-filtering language-range match
         // (case-insensitive; "*" matches any non-empty tag).
         Builtin::LangMatches => match (val(0), val(1)) {
@@ -903,6 +956,77 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
         }
         _ => false,
     }
+}
+
+/// A string predicate returned `false` on valid string arguments: report it to
+/// the diagnostics sink once per function per query (a bit test per row after
+/// that), for the case-sensitivity hint.
+#[inline]
+fn no_match(ctx: &Ctx, f: Builtin, bit: u8, args: &[FExpr]) {
+    let seen = ctx.miss_mask.get();
+    if seen & bit == 0 {
+        ctx.miss_mask.set(seen | bit);
+        if let Some(needle) = args.get(1) {
+            diag::note_no_match(f, needle);
+        }
+    }
+}
+
+/// An argument evaluated to nothing: report it when it is a bare variable
+/// (unbound in this row). A nested expression that failed is not reported
+/// here — the nested function reports its own error.
+fn missing_arg(f: Builtin, i: usize, args: &[FExpr]) {
+    if let Some(FExpr::Var(v)) = args.get(i) {
+        diag::unbound(f, i + 1, v);
+    }
+}
+
+/// Why CONTAINS / STRSTARTS / STRENDS raised a type error.
+#[cold]
+#[inline(never)]
+fn binary_type_error(f: Builtin, args: &[FExpr], a: Option<&str>, c: Option<&str>) {
+    let mut both_strings = true;
+    for (i, v) in [a, c].into_iter().enumerate() {
+        match v {
+            None => {
+                both_strings = false;
+                missing_arg(f, i, args);
+            }
+            Some(t) if string_arg(t).is_none() => {
+                both_strings = false;
+                diag::bad_arg(f, i + 1, t);
+            }
+            Some(_) => {}
+        }
+    }
+    if let (true, Some(a), Some(c)) = (both_strings, a, c) {
+        diag::lang_mismatch(f, a, c);
+    }
+}
+
+/// Why REGEX raised a type error (non-string text, or a missing argument).
+#[cold]
+#[inline(never)]
+fn regex_type_error(f: Builtin, args: &[FExpr], text: Option<&str>, pat: Option<&str>) {
+    match text {
+        None => missing_arg(f, 0, args),
+        Some(t) if string_arg(t).is_none() => diag::bad_arg(f, 1, t),
+        Some(_) => {}
+    }
+    if pat.is_none() {
+        missing_arg(f, 1, args);
+    }
+}
+
+/// [`string_arg`] for argument `pos` (0-based) of the value function `f`,
+/// reporting a non-string to the diagnostics sink.
+#[inline]
+fn string_arg_of(f: Builtin, pos: usize, token: &str) -> Option<Option<String>> {
+    let r = string_arg(token);
+    if r.is_none() {
+        diag::bad_arg(f, pos + 1, token);
+    }
+    r
 }
 
 /// RFC 4647 basic-filtering match of a language `tag` against a `range`.

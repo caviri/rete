@@ -3,11 +3,11 @@
 //! query (`sparql`), and the read-only Cypher subset (`cypher`). The HTTP/range
 //! variants live in `commands::url`; the result rendering lives in `main.rs`.
 
-use rete_core::{eval_bgp, eval_query, ByteRange, PatternTerm, TriplePattern, TripleProvenance};
+use rete_core::{eval_bgp, ByteRange, PatternTerm, TriplePattern, TripleProvenance};
 use serde_json::json;
 
 use crate::commands::range_source::open_local;
-use crate::commands::render::print_query_output;
+use crate::commands::render::{print_query_output, print_query_output_warned};
 use crate::cypher;
 
 /// Query a triple pattern: unspecified positions are variables, terms match as
@@ -184,13 +184,13 @@ pub(crate) fn sparql(file: &str, query: &str, json: bool, entail: bool) -> anyho
     let mut rete = open_local(file)?;
     // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
-    let eval = if entail {
-        rete_core::eval_query_reasoned
-    } else {
-        eval_query
+    let opts = rete_core::QueryOpts {
+        reason: entail,
+        ..Default::default()
     };
-    let result = eval(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
-    print_query_output(&result, json);
+    let (result, warnings) = rete_core::eval_query_with_warnings(&rete, query, opts)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    print_query_output_warned(&result, &warnings, json);
     Ok(())
 }
 
