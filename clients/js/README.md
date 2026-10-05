@@ -61,7 +61,8 @@ worker. The host serving the file must send CORS headers and honor `Range`.
 `query()` returns `{var: Term}` rows for SELECT, a boolean for ASK, and
 `[s, p, o]` Term triples for CONSTRUCT/DESCRIBE. A `Term` carries `.kind` /
 `.value` / `.datatype` / `.lang`, plus `.toJS()` (number/boolean/BigInt for
-common XSD types) and `.n3`. Also: `queryRaw`, `query(q, {reason: true})`
+common XSD types) and `.n3`. Also: `queryRaw`, `lastWarnings()` (why a FILTER silently dropped rows:
+CONTAINS on an IRI, STRSTARTS on a number, … — see the docs), `query(q, {reason: true})`
 (OWL 2 QL entailment), `prefixSearch`, `textSearch`, `schema`, `graphNames`,
 `info`, `card()` / `examples()` (the file's embedded Dataset Card and its
 example queries), `shacl(shapes)` (SHACL Core validation), `dump()` /

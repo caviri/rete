@@ -195,6 +195,7 @@ export function init(source = null) {
 export class Graph {
   #g;
   #remote;
+  #warnings = [];
 
   constructor(inner, source, remote) {
     this.#g = inner;
@@ -202,10 +203,29 @@ export class Graph {
     this.#remote = remote;
   }
 
-  /** The engine's raw JSON result envelope. */
+  /**
+   * The engine's raw JSON result envelope. Carries a `warnings` array when the
+   * query raised type errors (see {@link Graph#lastWarnings}).
+   */
   queryRaw(query, { reason = false } = {}) {
+    this.#warnings = [];
     const s = reason ? this.#g.query_reasoned(query, "json") : this.#g.query(query, "json");
-    return JSON.parse(s);
+    const env = JSON.parse(s);
+    this.#warnings = env.warnings ?? [];
+    return env;
+  }
+
+  /**
+   * Diagnostics from the most recent `query()` / `queryRaw()` on this graph:
+   * the SPARQL type errors a FILTER silently turned into `false` (CONTAINS on
+   * an IRI, STRSTARTS on a number, a language-tag mismatch, an invalid regex,
+   * …), each `{severity, function, argument, argKind, count, sample, hint,
+   * message}`, plus an optional case-sensitivity hint (`severity: "hint"`) for
+   * an empty result. Empty when there is nothing to report. Results themselves
+   * are never changed.
+   */
+  lastWarnings() {
+    return this.#warnings.map((w) => ({ ...w }));
   }
 
   /**

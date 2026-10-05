@@ -25,6 +25,13 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   doesn't implement now names the IRI in its error. See
   [SPARQL: type errors and query warnings](docs/sparql.md#warnings).
 
+- **JavaScript / browser engine: the same warnings.** `graph.lastWarnings()`
+  returns the warnings from the most recent `query()` / `queryRaw()` on that
+  graph (`[]` when there are none), for every result form including ASK. The
+  rows themselves are unchanged. The engine's JSON envelope carries them as an
+  optional `warnings` member, so an envelope with no warnings is byte-identical
+  to before. Typed as `QueryWarning` in `index.d.ts`.
+
 ### Fixed
 
 - **Claude Desktop extension: a second `build_rete` could not be queried by the

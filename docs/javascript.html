@@ -664,6 +664,24 @@ g.graphNames(); g.info(); g.quads;
 g.contentHash();                // remote graphs: blake3-16 cache key
 await build(ntText, "nt");      // RDF text → .rete bytes (Uint8Array); also "nq", "ttl", "trig"
 </code></pre>
+<h3 id="why-did-a-filter-return-nothing-lastwarnings">Why did a FILTER return nothing? <code>lastWarnings()</code></h3>
+<p><code>CONTAINS(?s, "x")</code> on an IRI, <code>STRSTARTS(?year, "15")</code> on an <code>xsd:integer</code>,
+and <code>CONTAINS(?label, "x"@fr)</code> against an <code>@en</code> label are SPARQL <strong>type
+errors</strong>. The spec says a FILTER treats an error as false, so such a query
+returns no rows and no error. The rows are left exactly as they are, but the
+graph remembers why (<a href="sparql.html#warnings">the rule</a>):</p>
+<pre><code class="language-js">const rows = g.query(`SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }`);
+rows.length;                    // 0, as SPARQL requires
+g.lastWarnings();
+// [{ severity: "type-error", function: "CONTAINS", argument: 1, argKind: "iri",
+//    count: 1, sample: "&lt;http://ex.org/map/geneva-1572&gt;",
+//    hint: "wrap it in STR() to match the IRI's text", message: "CONTAINS received an IRI …" }]
+</code></pre>
+<p><code>lastWarnings()</code> describes the most recent <code>query()</code> / <code>queryRaw()</code> on that
+graph, and is <code>[]</code> when there is nothing to report. It works for every result
+form, including ASK's boolean, and the row array is the same as before. The
+raw envelope carries the same list as <code>warnings</code> when it is non-empty. An
+empty result can also come with a case-sensitivity hint (<code>severity: "hint"</code>).</p>
 <h3 id="rdf-12-and-quoted-triples">RDF 1.2 and quoted triples</h3>
 <p>The CLI's <code>--quoted-triple-syntax</code> vocabulary and defaults, in both directions.
 <code>build(text, "ttl" | "trig", { quotedTripleSyntax })</code> reads Turtle/TriG

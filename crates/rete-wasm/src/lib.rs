@@ -4,7 +4,7 @@
 
 use rete_core::{
     batch_reach_serial, build_adjacency, build_dendrogram, choose_round_for_budget, eval_query,
-    eval_query_with, eval_select_communities, eval_sparql, project_graph, schema_classes,
+    eval_query_with_warnings, eval_select_communities, eval_sparql, project_graph, schema_classes,
     schema_summary, summary_query_shape, tile_by_community, validate_shacl, BlockCacheReader,
     ByteRange, CountingReader, DataGraph, Header, OffsetReader, QueryOpts, QueryOutput,
     RangeReader, Rete, ReteGraph, ShaclShapes, SliceReader, SummaryQueryShape, SummaryView,
@@ -1697,7 +1697,7 @@ fn query_json_with(
     reason: bool,
     union_default: bool,
 ) -> Result<String, JsValue> {
-    let out = eval_query_with(
+    let (out, warnings) = eval_query_with_warnings(
         rete,
         query,
         QueryOpts {
@@ -1706,7 +1706,16 @@ fn query_json_with(
         },
     )
     .map_err(err)?;
-    Ok(write_query_json(&out, format, extra))
+    // The expression type errors FILTER absorbed (CONTAINS on an IRI, …): an
+    // optional `warnings` member, present only when there is one, so an
+    // envelope without diagnostics is byte-identical to before.
+    if warnings.is_empty() {
+        return Ok(write_query_json(&out, format, extra));
+    }
+    let mut extra = extra.to_string();
+    extra.push_str(r#","warnings":"#);
+    extra.push_str(&rete_core::warnings_json(&warnings));
+    Ok(write_query_json(&out, format, &extra))
 }
 
 /// Serialize an already-evaluated [`QueryOutput`] into the playground JSON
