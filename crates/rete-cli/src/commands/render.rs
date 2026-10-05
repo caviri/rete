@@ -132,6 +132,39 @@ fn unescape_nt(s: &str) -> String {
     rete_core::terms::unescape_literal(s)
 }
 
+/// [`print_query_output`] plus the query's diagnostics
+/// ([`rete_core::eval_query_with_warnings`]): each warning is one line on
+/// **stderr** (stdout stays the result, so pipes are unaffected), and with
+/// `json` the result object also gains a `warnings` array — present only when
+/// there is something to report.
+pub(crate) fn print_query_output_warned(
+    result: &QueryOutput,
+    warnings: &[rete_core::QueryWarning],
+    json: bool,
+) {
+    if json && !warnings.is_empty() {
+        let mut body = query_output_json(result);
+        if let Some(obj) = body.as_object_mut() {
+            let arr = serde_json::from_str(&rete_core::warnings_json(warnings))
+                .unwrap_or(serde_json::Value::Null);
+            obj.insert("warnings".to_string(), arr);
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
+    } else {
+        print_query_output(result, json);
+    }
+    for w in warnings {
+        let label = match w.severity {
+            rete_core::WarningSeverity::Hint => "hint",
+            _ => "warning",
+        };
+        eprintln!("{label}: {}", w.message);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

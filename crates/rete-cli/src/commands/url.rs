@@ -9,13 +9,12 @@
 //! `commands::query` / `commands::inspect`.
 
 use rete_core::{
-    auto_block, eval_query, BlockCacheReader, CountingReader, RangeReader, Rete, SearchView,
-    SummaryView,
+    auto_block, BlockCacheReader, CountingReader, RangeReader, Rete, SearchView, SummaryView,
 };
 
 use crate::commands::card;
 use crate::commands::range_source::RangedSourceReader;
-use crate::commands::render::print_query_output;
+use crate::commands::render::print_query_output_warned;
 
 /// Fetch just the embedded Dataset Card (and, when present, the adjacent
 /// build-info record) over HTTP — the index-free CARD tier. Reads only the 1 KiB
@@ -281,12 +280,12 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool, entail: bool) -> an
     };
     // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
-    let eval = if entail {
-        rete_core::eval_query_reasoned
-    } else {
-        eval_query
+    let opts = rete_core::QueryOpts {
+        reason: entail,
+        ..Default::default()
     };
-    let result = eval(&rete, query).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (result, warnings) = rete_core::eval_query_with_warnings(&rete, query, opts)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     // Lazy tile fetches surface failures out-of-band: a partial answer must
     // become an error, never quietly fewer rows.
     if rete.index_incomplete() {
@@ -295,7 +294,7 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool, entail: bool) -> an
              results would be incomplete — retry"
         );
     }
-    print_query_output(&result, json);
+    print_query_output_warned(&result, &warnings, json);
     eprintln!(
         "(fetched {} bytes in {} range request(s); file is {} bytes)",
         reader.bytes_read(),

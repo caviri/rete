@@ -5,6 +5,26 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **SPARQL: warnings for FILTER type errors that used to be silent.**
+  `CONTAINS(?iri, "x")`, `STRSTARTS(?year, "15")` on an `xsd:integer`,
+  `REGEX` on an IRI, and `CONTAINS(?l, "x"@fr)` against an `@en` label are
+  SPARQL type errors. FILTER treats them as false, so the query returned no
+  rows and gave no reason, and an agent took that to mean "CONTAINS is
+  unsupported". Results are unchanged, since the spec requires this and
+  Oxigraph and Jena behave the same way. Each such error is now counted per
+  function, argument and kind (IRI, number, typed literal, language mismatch,
+  unbound, invalid regex, not a dateTime) and reported with one sample and a
+  hint ("wrap it in STR()"). An empty result whose constant needle never
+  matched on case also gets a hint that string matching is case-sensitive,
+  clearly marked as a hint.
+  `rete sparql` / `rete sparql-url` print the warnings to stderr, and `--json`
+  gains a `warnings` array. In Rust, use `rete_core::eval_query_with_warnings`.
+  Queries without errors do no extra work. An extension-function IRI that rete
+  doesn't implement now names the IRI in its error. See
+  [SPARQL: type errors and query warnings](docs/sparql.md#warnings).
+
 ### Fixed
 
 - **Claude Desktop extension: a second `build_rete` could not be queried by the

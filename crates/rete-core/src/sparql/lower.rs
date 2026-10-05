@@ -778,7 +778,7 @@ fn convert_expr(e: &Expression) -> Result<FExpr, SparqlError> {
                     "https://w3id.org/rete/geo3/function/contains3D" => Builtin::Geo3Contains,
                     "https://w3id.org/rete/geo3/function/within3D" => Builtin::Geo3Within,
                     "https://w3id.org/rete/geo3/function/adjacent3D" => Builtin::Geo3Adjacent,
-                    _ => return Err(SparqlError::Unsupported("built-in function")),
+                    _ => return Err(SparqlError::UnsupportedFunction(nn.as_str().to_string())),
                 },
                 _ => return Err(SparqlError::Unsupported("built-in function")),
             };
@@ -1228,7 +1228,7 @@ mod tests {
         }
         assert!(matches!(
             parse_select("SELECT (<http://ex/unsupported>(1) AS ?x) WHERE {}"),
-            Err(SparqlError::Unsupported(_))
+            Err(SparqlError::UnsupportedFunction(iri)) if iri == "http://ex/unsupported"
         ));
     }
 

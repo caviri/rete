@@ -920,10 +920,73 @@ matches; with it on you get the entailed answers for the supported cases — it 
 only ever be <em>incomplete</em> for that one chaining shape. The whole-graph RL reasoner
 (<code>rete reason</code> / the Coherence tab) is a separate, materializing tool for
 coherence checking.</p>
+<h2 id="warnings">Type errors and query warnings</h2>
+<p>The string functions (<code>CONTAINS</code>, <code>STRSTARTS</code>, <code>STRENDS</code>, <code>STRBEFORE</code>,
+<code>STRAFTER</code>, <code>REGEX</code>, <code>REPLACE</code>, <code>STRLEN</code>, <code>UCASE</code>, <code>LCASE</code>, <code>SUBSTR</code>, <code>CONCAT</code>,
+<code>ENCODE_FOR_URI</code>, the hashes) take <strong>string literals</strong>. Given an IRI, a blank
+node, a number or another typed literal, they raise a SPARQL <strong>type error</strong>, and
+the spec says an error inside <code>FILTER</code> counts as <em>false</em>: the row is dropped,
+with no error. In <code>BIND</code> or a projected expression the variable is left
+unbound instead. rete follows the spec here, as Oxigraph and Jena do, so these
+queries return no rows:</p>
+<table><thead><tr><th>Query</th><th>Rows</th><th>Why</th></tr></thead><tbody>
+<tr><td><code>FILTER(CONTAINS(?s, "geneva"))</code>, <code>?s</code> an IRI</td><td>0</td><td>an IRI is not a string: use <code>CONTAINS(STR(?s), "geneva")</code></td></tr>
+<tr><td><code>FILTER(STRSTARTS(?year, "15"))</code>, <code>?year</code> an <code>xsd:integer</code></td><td>0</td><td>a number is not a string: use <code>STRSTARTS(STR(?year), "15")</code></td></tr>
+<tr><td><code>FILTER(REGEX(?s, "geneva"))</code>, <code>?s</code> an IRI</td><td>0</td><td>same: <code>REGEX(STR(?s), "geneva")</code></td></tr>
+<tr><td><code>FILTER(CONTAINS(?label, "Geneva"@fr))</code>, <code>?label</code> is <code>@en</code></td><td>0</td><td>the arguments are <em>incompatible</em> (§17.4.3): a tagged needle must carry the haystack's tag. Use <code>STR()</code> on both</td></tr>
+<tr><td><code>FILTER(CONTAINS(?label, "geneva"))</code>, label <code>"Geneva …"</code></td><td>0</td><td>not an error: matching is case-sensitive. Use <code>LCASE(?label)</code> or <code>REGEX(?label, "geneva", "i")</code></td></tr>
+</tbody></table>
+<p>Results are never changed to be helpful. What rete adds is a <strong>side channel</strong>:
+every such error is counted, and the query reports <strong>warnings</strong> next to its
+results. <code>rete sparql</code> and <code>rete sparql-url</code> print them to <strong>stderr</strong>, so stdout
+stays the result:</p>
+<pre><code class="language-text">$ rete sparql maps.rete 'SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }'
+0 solution(s)
+warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which FILTER treats as false (BIND leaves the variable unbound); e.g. &lt;http://ex.org/map/geneva-1572&gt;. Hint: wrap it in STR() to match the IRI's text.
+</code></pre>
+<p>With <code>--json</code>, the result object also gets a <code>warnings</code> array. The array is left
+out when there is nothing to report. Each entry has these fields:</p>
+<table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>severity</code></td><td><code>type-error</code> (an error was raised and absorbed) or <code>hint</code> (a suggestion; nothing went wrong)</td></tr>
+<tr><td><code>function</code></td><td>the SPARQL function, e.g. <code>CONTAINS</code></td></tr>
+<tr><td><code>argument</code></td><td>1-based argument position</td></tr>
+<tr><td><code>argKind</code></td><td><code>iri</code>, <code>blank-node</code>, <code>quoted-triple</code>, <code>numeric</code>, <code>typed-literal</code>, <code>language-mismatch</code>, <code>unbound</code>, <code>invalid-regex</code>, <code>not-a-datetime</code>, or <code>case-sensitive</code> for the hint</td></tr>
+<tr><td><code>count</code></td><td>how many evaluations raised it. A row is evaluated only when it reaches the expression, and LIMIT / ASK stop early, so this is not a count of the data</td></tr>
+<tr><td><code>sample</code></td><td>the first offending value, cut to 80 characters</td></tr>
+<tr><td><code>hint</code></td><td>what to change, e.g. <code>wrap it in STR() to match the IRI's text</code></td></tr>
+<tr><td><code>message</code></td><td>all of the above as one sentence</td></tr>
+</tbody></table>
+<p>Notes:</p>
+<ul>
+<li><strong><code>unbound</code></strong> is reported only for a bare variable passed to <code>CONTAINS</code>,
+<code>STRSTARTS</code>, <code>STRENDS</code> or <code>REGEX</code> in a filter. Such a variable usually comes
+from an <code>OPTIONAL</code> that did not match, or is misspelled. An error inside a
+nested call (<code>CONTAINS(LCASE(?s), …)</code>) is reported once, by the inner
+function (<code>LCASE</code>).</li>
+<li><strong><code>invalid-regex</code></strong>: rete's regex engine uses Rust syntax, which has no
+look-around and no back-references. An invalid pattern matches nothing and
+is reported along with the parser's message.</li>
+<li><strong>The case-sensitivity hint</strong> is given only when all of these hold: the
+result is empty, no type error was raised, <code>CONTAINS</code> / <code>STRSTARTS</code> /
+<code>STRENDS</code> / <code>REGEX</code> without the <code>i</code> flag actually ran on string values and
+returned no match, and the needle is a constant with upper/lower-case
+letters. It says the matching <em>might</em> be the reason; rete doesn't claim it is.</li>
+<li>Cost: errors are recorded only where they happen, at most one entry (a
+count and one sample) per function, argument and kind. A query that raises
+no errors does no extra work beyond resetting the counter once per query.</li>
+<li>From Rust: <code>rete_core::eval_query_with_warnings(&amp;rete, query, opts)</code> returns
+<code>(QueryOutput, Vec&lt;QueryWarning&gt;)</code>. <code>eval_query</code> is unchanged.</li>
+</ul>
+<p>A function rete doesn't know is never silently false. An unknown name
+(<code>NOSUCHFN(?x)</code>) is a parse error, and an extension-function IRI that rete
+doesn't implement (e.g. <code>&lt;http://ex.org/fn#match&gt;(?o)</code>) fails with
+<code>unsupported query feature: function &lt;http://ex.org/fn#match&gt; is not implemented</code>.</p>
 <h2 id="not-supported">Not supported</h2>
 <p>These are <strong>rejected with a clear error</strong> — never silently mis-evaluated:</p>
 <ul>
 <li><strong><code>SERVICE ?var</code></strong> — federation to a variable-bound endpoint.</li>
+<li><strong>Extension functions</strong> other than the XSD casts, GeoSPARQL <code>geof:</code> and
+<code>geo3:</code> ones — the error names the function IRI.</li>
 <li>Complex <code>ORDER BY</code> <strong>key expressions</strong> beyond a bare variable/constant are not
 yet evaluated for ordering.</li>
 </ul>

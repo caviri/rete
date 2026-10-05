@@ -370,11 +370,84 @@ only ever be *incomplete* for that one chaining shape. The whole-graph RL reason
 (`rete reason` / the Coherence tab) is a separate, materializing tool for
 coherence checking.
 
+## Type errors and query warnings {#warnings}
+
+The string functions (`CONTAINS`, `STRSTARTS`, `STRENDS`, `STRBEFORE`,
+`STRAFTER`, `REGEX`, `REPLACE`, `STRLEN`, `UCASE`, `LCASE`, `SUBSTR`, `CONCAT`,
+`ENCODE_FOR_URI`, the hashes) take **string literals**. Given an IRI, a blank
+node, a number or another typed literal, they raise a SPARQL **type error**, and
+the spec says an error inside `FILTER` counts as *false*: the row is dropped,
+with no error. In `BIND` or a projected expression the variable is left
+unbound instead. rete follows the spec here, as Oxigraph and Jena do, so these
+queries return no rows:
+
+| Query | Rows | Why |
+|---|---|---|
+| `FILTER(CONTAINS(?s, "geneva"))`, `?s` an IRI | 0 | an IRI is not a string: use `CONTAINS(STR(?s), "geneva")` |
+| `FILTER(STRSTARTS(?year, "15"))`, `?year` an `xsd:integer` | 0 | a number is not a string: use `STRSTARTS(STR(?year), "15")` |
+| `FILTER(REGEX(?s, "geneva"))`, `?s` an IRI | 0 | same: `REGEX(STR(?s), "geneva")` |
+| `FILTER(CONTAINS(?label, "Geneva"@fr))`, `?label` is `@en` | 0 | the arguments are *incompatible* (§17.4.3): a tagged needle must carry the haystack's tag. Use `STR()` on both |
+| `FILTER(CONTAINS(?label, "geneva"))`, label `"Geneva …"` | 0 | not an error: matching is case-sensitive. Use `LCASE(?label)` or `REGEX(?label, "geneva", "i")` |
+
+Results are never changed to be helpful. What rete adds is a **side channel**:
+every such error is counted, and the query reports **warnings** next to its
+results. `rete sparql` and `rete sparql-url` print them to **stderr**, so stdout
+stays the result:
+
+```text
+$ rete sparql maps.rete 'SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }'
+0 solution(s)
+warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which FILTER treats as false (BIND leaves the variable unbound); e.g. <http://ex.org/map/geneva-1572>. Hint: wrap it in STR() to match the IRI's text.
+```
+
+With `--json`, the result object also gets a `warnings` array. The array is left
+out when there is nothing to report. Each entry has these fields:
+
+| Field | Meaning |
+|---|---|
+| `severity` | `type-error` (an error was raised and absorbed) or `hint` (a suggestion; nothing went wrong) |
+| `function` | the SPARQL function, e.g. `CONTAINS` |
+| `argument` | 1-based argument position |
+| `argKind` | `iri`, `blank-node`, `quoted-triple`, `numeric`, `typed-literal`, `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`, or `case-sensitive` for the hint |
+| `count` | how many evaluations raised it. A row is evaluated only when it reaches the expression, and LIMIT / ASK stop early, so this is not a count of the data |
+| `sample` | the first offending value, cut to 80 characters |
+| `hint` | what to change, e.g. `wrap it in STR() to match the IRI's text` |
+| `message` | all of the above as one sentence |
+
+Notes:
+
+- **`unbound`** is reported only for a bare variable passed to `CONTAINS`,
+  `STRSTARTS`, `STRENDS` or `REGEX` in a filter. Such a variable usually comes
+  from an `OPTIONAL` that did not match, or is misspelled. An error inside a
+  nested call (`CONTAINS(LCASE(?s), …)`) is reported once, by the inner
+  function (`LCASE`).
+- **`invalid-regex`**: rete's regex engine uses Rust syntax, which has no
+  look-around and no back-references. An invalid pattern matches nothing and
+  is reported along with the parser's message.
+- **The case-sensitivity hint** is given only when all of these hold: the
+  result is empty, no type error was raised, `CONTAINS` / `STRSTARTS` /
+  `STRENDS` / `REGEX` without the `i` flag actually ran on string values and
+  returned no match, and the needle is a constant with upper/lower-case
+  letters. It says the matching *might* be the reason; rete doesn't claim it is.
+- Cost: errors are recorded only where they happen, at most one entry (a
+  count and one sample) per function, argument and kind. A query that raises
+  no errors does no extra work beyond resetting the counter once per query.
+- From Rust: `rete_core::eval_query_with_warnings(&rete, query, opts)` returns
+  `(QueryOutput, Vec<QueryWarning>)`. `eval_query` is unchanged.
+
+A function rete doesn't know is never silently false. An unknown name
+(`NOSUCHFN(?x)`) is a parse error, and an extension-function IRI that rete
+doesn't implement (e.g. `<http://ex.org/fn#match>(?o)`) fails with
+`unsupported query feature: function <http://ex.org/fn#match> is not
+implemented`.
+
 ## Not supported
 
 These are **rejected with a clear error** — never silently mis-evaluated:
 
 - **`SERVICE ?var`** — federation to a variable-bound endpoint.
+- **Extension functions** other than the XSD casts, GeoSPARQL `geof:` and
+  `geo3:` ones — the error names the function IRI.
 - Complex `ORDER BY` **key expressions** beyond a bare variable/constant are not
   yet evaluated for ordering.
 

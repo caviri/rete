@@ -172,12 +172,45 @@ impl<'a> Resolver<'a> {
     /// Does `text` match the SPARQL REGEX `pattern` under `flags`? The matcher
     /// is compiled once per query (memoized); an invalid pattern yields no
     /// match rather than erroring.
+    #[cfg(test)]
     pub(crate) fn regex_match(&self, pattern: &str, flags: &str, text: &str) -> bool {
+        self.regex_try(pattern, flags, text).unwrap_or(false)
+    }
+
+    /// [`Self::regex_match`] that tells an invalid pattern (`None`) apart from
+    /// no match (`Some(false)`), so the caller can report it.
+    pub(crate) fn regex_try(&self, pattern: &str, flags: &str, text: &str) -> Option<bool> {
         let mut map = self.regexes.borrow_mut();
         let m = map
             .entry((flags.to_string(), pattern.to_string()))
             .or_insert_with(|| Matcher::compile(pattern, flags));
-        m.is_match(text)
+        match m {
+            Matcher::Never => None,
+            m => Some(m.is_match(text)),
+        }
+    }
+
+    /// Why `pattern` does not compile (for the diagnostic); `""` if it does.
+    pub(crate) fn regex_error(pattern: &str, flags: &str) -> String {
+        let on: String = ['i', 'm', 's', 'x']
+            .iter()
+            .filter(|c| flags.contains(**c))
+            .collect();
+        let inline = if on.is_empty() {
+            String::new()
+        } else {
+            format!("(?{on})")
+        };
+        match regex_lite::Regex::new(&format!("{inline}{pattern}")) {
+            Ok(_) => String::new(),
+            Err(e) => e
+                .to_string()
+                .lines()
+                .last()
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+        }
     }
 
     /// SPARQL `REPLACE(text, pattern, replacement [, flags])`: every match of
@@ -326,6 +359,10 @@ pub(crate) struct Ctx<'a> {
     /// `GRAPH ?g` walk over a lazy remote file switches from incremental to
     /// bulk section reads — results are identical either way.
     pub(crate) exhaustive: std::cell::Cell<bool>,
+    /// Which string predicates (`diag::MISS_*` bits) already reported a
+    /// no-match on valid string arguments to the diagnostics sink, so the
+    /// case-sensitivity probe costs one bit test per row after the first.
+    pub(crate) miss_mask: std::cell::Cell<u8>,
 }
 
 impl<'a> Ctx<'a> {
@@ -336,6 +373,7 @@ impl<'a> Ctx<'a> {
             resolver: Resolver::new(rete.dictionary()),
             limit_hint: std::cell::Cell::new(None),
             exhaustive: std::cell::Cell::new(false),
+            miss_mask: std::cell::Cell::new(0),
         }
     }
 }

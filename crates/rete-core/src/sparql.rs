@@ -15,12 +15,14 @@ use crate::bgp::{Binding, PatternTerm, TriplePattern};
 use crate::file::Rete;
 
 mod aggregate;
+mod diag;
 mod eval;
 mod expr;
 mod lower;
 mod path;
 mod ql;
 
+pub use diag::{warnings_json, QueryWarning, WarningSeverity};
 use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
 use lower::{lower_pattern, lower_select, parse_query};
 pub use lower::{parse_select, query_predicates};
@@ -35,6 +37,10 @@ pub enum SparqlError {
     Parse(String),
     #[error("unsupported query feature: {0}")]
     Unsupported(&'static str),
+    /// A function call whose IRI is neither a SPARQL built-in nor one of the
+    /// extension functions rete implements (XSD casts, GeoSPARQL `geof:`, `geo3:`).
+    #[error("unsupported query feature: function <{0}> is not implemented")]
+    UnsupportedFunction(String),
     /// A (non-SILENT) `SERVICE` block failed: the endpoint errored, returned
     /// unparseable results, or no [`ServiceClient`](crate::ServiceClient) is
     /// attached to the file handle. Partial results are never returned.
@@ -832,6 +838,10 @@ pub fn eval_query_with(
     query: &str,
     opts: QueryOpts,
 ) -> Result<QueryOutput, SparqlError> {
+    // A fresh diagnostics scope: the expression type errors this query raises
+    // are counted on the side (see `diag`); `eval_query_with_warnings` reads
+    // them, plain callers just never look.
+    diag::begin();
     let out = eval_query_inner(rete, query, opts);
     // A failed non-SILENT SERVICE call is recorded out-of-band (the row
     // pipeline is infallible, like lazy tile fetches) — surface it here so a
@@ -840,6 +850,32 @@ pub fn eval_query_with(
         Some(e) => Err(SparqlError::Service(e)),
         None => out,
     }
+}
+
+/// [`eval_query_with`], plus the diagnostics the evaluation produced.
+///
+/// SPARQL turns an expression **type error** into `false` inside FILTER (and
+/// into an unbound value in BIND / projection / ORDER BY): `CONTAINS(?iri, "x")`
+/// or `STRSTARTS(?year, "15")` on an `xsd:integer` silently drop every row. The
+/// result here is exactly what [`eval_query_with`] returns — nothing is coerced
+/// — but each class of such error comes back as a [`QueryWarning`]: the
+/// function, the argument position, what the argument was (IRI, number,
+/// language-incompatible literal, unbound, invalid regex, …), a count, one
+/// sample value and a hint (`wrap it in STR()`). When the result is empty and no
+/// error explains it, a case-sensitivity [`WarningSeverity::Hint`] may be added
+/// for a constant CONTAINS / STRSTARTS / STRENDS / REGEX (no `i` flag) needle.
+///
+/// Errors are recorded only where they happen, so a query that raises none
+/// pays nothing beyond a per-query reset; work per error is bounded (a count
+/// and one sample per `(function, position, kind)`).
+pub fn eval_query_with_warnings(
+    rete: &Rete,
+    query: &str,
+    opts: QueryOpts,
+) -> Result<(QueryOutput, Vec<QueryWarning>), SparqlError> {
+    let out = eval_query_with(rete, query, opts)?;
+    let warnings = diag::finish(&out);
+    Ok((out, warnings))
 }
 
 /// Apply OWL 2 QL plan rewriting when reasoning is on (no-op otherwise). Reads a
