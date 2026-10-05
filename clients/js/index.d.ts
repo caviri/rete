@@ -29,6 +29,33 @@ export interface QueryOptions {
   reason?: boolean;
 }
 
+/**
+ * A diagnostic from the last query: a class of SPARQL type errors that FILTER
+ * silently treated as false (or BIND left unbound), or a hint for an empty result.
+ */
+export interface QueryWarning {
+  /** `"type-error"`: an error was raised and absorbed. `"hint"`: a suggestion only. */
+  severity: "type-error" | "hint";
+  /** The SPARQL function, e.g. `"CONTAINS"`. */
+  function: string;
+  /** 1-based argument position. */
+  argument: number;
+  /**
+   * `iri`, `blank-node`, `quoted-triple`, `numeric`, `typed-literal`,
+   * `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`, or
+   * `case-sensitive` (the hint).
+   */
+  argKind: string;
+  /** Evaluations that raised it (LIMIT / ASK stop early: not a data count). */
+  count: number;
+  /** The first offending value, truncated to 80 characters. */
+  sample: string | null;
+  /** What to change, e.g. "wrap it in STR() to match the IRI's text". */
+  hint: string;
+  /** The whole warning as one sentence. */
+  message: string;
+}
+
 export interface DumpOptions {
   /**
    * Omit for the default graph followed by every named graph; `null` for the
@@ -88,6 +115,11 @@ export class Graph {
   query(query: string, opts?: QueryOptions): Row[] | boolean | Triple[];
   /** The engine's raw JSON result envelope. */
   queryRaw(query: string, opts?: QueryOptions): unknown;
+  /**
+   * Warnings from the most recent `query()` / `queryRaw()` on this graph; empty
+   * when there is nothing to report. Results are never changed by them.
+   */
+  lastWarnings(): QueryWarning[];
   prefixSearch(prefix: string, limit?: number): { label: string; subject: string }[];
   textSearch(
     words: string | string[],

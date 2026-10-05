@@ -57,7 +57,7 @@ jobs:
           node-version: 18
       - name: Node 18 (the engines floor)
         working-directory: clients/js
-        run: node --test test/basic.test.mjs test/rdf12.test.mjs
+        run: node --test test/basic.test.mjs test/rdf12.test.mjs test/warnings.test.mjs
       - name: Stage-publish (dry run) — validate the tarball without publishing
         working-directory: clients/js
         run: npm publish --dry-run
