@@ -165,6 +165,13 @@ check "bgp"        "Alice|Bob"   -- "$B" bgp "$T/g.rete" "?x <http://ex/knows> ?
 check "sparql"     "Bob"         -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "sparql json" '"bindings"' -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y }" --json
 check "ask"        "true|boolean" -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> ASK { ?x e:knows ?y }"
+# A FILTER type error (CONTAINS on an IRI) is silently false — rows stay
+# spec-correct, and the warning goes to stderr, never into stdout or the rows.
+WQ='PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y FILTER(CONTAINS(?y, "Bob")) }'
+check "sparql type-error warning" "warning: CONTAINS received an IRI as argument 1" -- "$B" sparql "$T/g.rete" "$WQ"
+# shellcheck disable=SC2016  # $0/$1/$2 belong to the inner sh -c, not this shell
+check "warning off stdout" "^0 lines$" -- sh -c 'printf "%s lines" "$("$0" sparql "$1" "$2" 2>/dev/null | grep -c warning)"' "$B" "$T/g.rete" "$WQ"
+check "sparql json warnings" '"argKind": "iri"' -- "$B" sparql "$T/g.rete" "$WQ" --json
 check "cost"       "lazy query open|summary overview" -- "$B" cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "cost json"  '"current_engine_access": "lazy-tiles"' -- "$B" cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
 check "cost lazy open" '"lazy_query_open"' -- "$B" cost "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" --json
