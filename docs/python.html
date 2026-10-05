@@ -682,6 +682,21 @@ g.query("CONSTRUCT { ... } WHERE { ... }")   # -&gt; list of (s, p, o) Term trip
 <p><code>g.query_raw(q)</code> returns the engine's JSON envelope unparsed (the same shape
 the playground uses), and <code>g.query_df(q)</code> returns a pandas DataFrame
 (<code>pip install rete-graph[pandas]</code>).</p>
+<h3 id="why-did-a-filter-return-nothing-glast_warnings">Why did a FILTER return nothing? <code>g.last_warnings()</code></h3>
+<p><code>CONTAINS(?s, "x")</code> on an IRI, <code>STRSTARTS(?year, "15")</code> on an integer and
+<code>CONTAINS(?label, "x"@fr)</code> against an <code>@en</code> label are SPARQL type errors. A
+FILTER treats a type error as false, so the query returns no rows and no
+error. The rows stay exactly as SPARQL defines them, and
+<code>g.last_warnings()</code> says why (<a href="sparql.html#warnings">the rule</a>):</p>
+<pre><code class="language-python">g.query('SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }')  # []
+g.last_warnings()
+# [{'severity': 'type-error', 'function': 'CONTAINS', 'argument': 1, 'argKind': 'iri',
+#   'count': 1, 'sample': '&lt;http://ex.org/map/geneva-1572&gt;',
+#   'hint': "wrap it in STR() to match the IRI's text", 'message': 'CONTAINS received an IRI …'}]
+</code></pre>
+<p>It describes the most recent <code>query()</code> / <code>query_raw()</code> / <code>query_df()</code> on that
+graph, and is <code>[]</code> when there is nothing to report. <code>query_raw()</code> also carries
+the list as <code>warnings</code> when it is non-empty.</p>
 <h3 id="run-the-files-own-example-queries">Run the file's own example queries</h3>
 <p>A <code>.rete</code> can carry <strong>example SPARQL queries inside the file</strong> (in its
 <a href="dataset-cards.html">Dataset Card</a>); CLI-built datasets ship a whole tiered

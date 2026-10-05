@@ -279,6 +279,7 @@ class Graph:
     def __init__(self, inner: "_rete.Graph", source: str):
         self._g = inner
         self.source = source
+        self._warnings: List[Dict[str, Any]] = []
 
     # -- querying ---------------------------------------------------------
 
@@ -304,8 +305,29 @@ class Graph:
         raise ValueError(f"unexpected result kind: {kind!r}")
 
     def query_raw(self, query: str, *, reason: bool = False) -> Dict[str, Any]:
-        """The engine's raw JSON result envelope, as a dict."""
-        return json.loads(self._g.query(query, reason=reason))
+        """The engine's raw JSON result envelope, as a dict.
+
+        Carries a ``warnings`` list when the query raised type errors (see
+        :meth:`last_warnings`).
+        """
+        self._warnings = []
+        env = json.loads(self._g.query(query, reason=reason))
+        self._warnings = env.get("warnings", [])
+        return env
+
+    def last_warnings(self) -> List[Dict[str, Any]]:
+        """Diagnostics from the most recent :meth:`query` / :meth:`query_raw`.
+
+        A FILTER that hits a SPARQL type error is false, silently:
+        ``CONTAINS(?iri, "x")``, ``STRSTARTS(?year, "15")`` on an integer, a
+        language-tag mismatch, an invalid regex. Results stay exactly as SPARQL
+        defines them; each such error comes back here as a dict with
+        ``severity``, ``function``, ``argument``, ``argKind``, ``count``,
+        ``sample``, ``hint`` and ``message`` (plus an optional case-sensitivity
+        hint, ``severity == "hint"``, for an empty result). Empty when there is
+        nothing to report.
+        """
+        return [dict(w) for w in self._warnings]
 
     def query_df(self, query: str, *, reason: bool = False):
         """SELECT results as a pandas DataFrame (needs the ``pandas`` extra).

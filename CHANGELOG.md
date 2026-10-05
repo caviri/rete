@@ -25,6 +25,11 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   doesn't implement now names the IRI in its error. See
   [SPARQL: type errors and query warnings](docs/sparql.md#warnings).
 
+- **Python: the same warnings.** `Graph.last_warnings()` returns the warnings
+  from the most recent `query()` / `query_raw()` / `query_df()` (`[]` when
+  there are none), and `query_raw()` carries them as an optional `warnings`
+  key. Results are unchanged.
+
 - **JavaScript / browser engine: the same warnings.** `graph.lastWarnings()`
   returns the warnings from the most recent `query()` / `queryRaw()` on that
   graph (`[]` when there are none), for every result form including ASK. The

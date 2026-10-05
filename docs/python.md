@@ -90,6 +90,26 @@ Every value is a `Term` with `.kind` (`"iri"` / `"literal"` / `"bnode"` /
 the playground uses), and `g.query_df(q)` returns a pandas DataFrame
 (`pip install rete-graph[pandas]`).
 
+### Why did a FILTER return nothing? `g.last_warnings()`
+
+`CONTAINS(?s, "x")` on an IRI, `STRSTARTS(?year, "15")` on an integer and
+`CONTAINS(?label, "x"@fr)` against an `@en` label are SPARQL type errors. A
+FILTER treats a type error as false, so the query returns no rows and no
+error. The rows stay exactly as SPARQL defines them, and
+`g.last_warnings()` says why ([the rule](sparql.md#warnings)):
+
+```python
+g.query('SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }')  # []
+g.last_warnings()
+# [{'severity': 'type-error', 'function': 'CONTAINS', 'argument': 1, 'argKind': 'iri',
+#   'count': 1, 'sample': '<http://ex.org/map/geneva-1572>',
+#   'hint': "wrap it in STR() to match the IRI's text", 'message': 'CONTAINS received an IRI …'}]
+```
+
+It describes the most recent `query()` / `query_raw()` / `query_df()` on that
+graph, and is `[]` when there is nothing to report. `query_raw()` also carries
+the list as `warnings` when it is non-empty.
+
 ### Run the file's own example queries
 
 A `.rete` can carry **example SPARQL queries inside the file** (in its
