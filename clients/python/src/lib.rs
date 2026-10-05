@@ -17,9 +17,9 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use rete_core::{
-    eval_query, eval_query_reasoned, results_envelope_json, schema_classes, schema_summary,
-    validate_shacl, BlockCacheReader, CountingReader, DataGraph, RangeReader, Rete, ReteGraph,
-    ShaclShapes, DEFAULT_BLOCK,
+    eval_query_with_warnings, results_envelope_json, schema_classes, schema_summary,
+    validate_shacl, warnings_json, BlockCacheReader, CountingReader, DataGraph, QueryOpts,
+    RangeReader, Rete, ReteGraph, ShaclShapes, DEFAULT_BLOCK,
 };
 #[cfg(not(target_os = "emscripten"))]
 use rete_core::{parse_sparql_json_results, Binding, ServiceClient};
@@ -190,20 +190,26 @@ impl Graph {
     #[pyo3(signature = (query, *, reason=false))]
     fn query(&self, py: Python<'_>, query: &str, reason: bool) -> PyResult<String> {
         self.fresh_verdict();
-        let out = py
+        // Evaluation stays on this thread (allow_threads only releases the GIL),
+        // which is what the engine's thread-local diagnostics need.
+        let (out, warnings) = py
             .allow_threads(|| {
-                if reason {
-                    eval_query_reasoned(&self.rete, query)
-                } else {
-                    eval_query(&self.rete, query)
-                }
+                let opts = QueryOpts {
+                    reason,
+                    ..QueryOpts::default()
+                };
+                eval_query_with_warnings(&self.rete, query, opts)
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         self.incomplete_guard()?;
-        Ok(results_envelope_json(
-            &out,
-            &format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#),
-        ))
+        let mut extra = format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#);
+        // FILTER type errors (CONTAINS on an IRI, …): an optional member, only
+        // when there is something to report.
+        if !warnings.is_empty() {
+            extra.push_str(r#","warnings":"#);
+            extra.push_str(&warnings_json(&warnings));
+        }
+        Ok(results_envelope_json(&out, &extra))
     }
 
     /// One bounded slice of a lazy triple dump — the primitive the pure-Python
