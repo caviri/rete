@@ -625,7 +625,9 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
   --rete target/release/rete --suite &lt;rdf-tests&gt;/sparql/sparql11
 </code></pre>
 <h2 id="scorecard">Scorecard</h2>
-<p><strong>309 query-evaluation tests</strong>, byte-for-byte against the W3C expected results.
+<p><strong>312 query-evaluation tests</strong>, byte-for-byte against the W3C expected results.
+Measured 2026-10-06 on <code>main</code> (<code>4c58a2dd</code>) against <code>w3c/rdf-tests</code> <code>5e5da96</code>
+(2026-10-02).
 "n/s" = errored / not supported.</p>
 <table><thead><tr><th>Category</th><th style="text-align: right">pass</th><th style="text-align: right">n/s</th><th>notes</th></tr></thead><tbody>
 <tr><td>negation</td><td style="text-align: right">12 / 12</td><td style="text-align: right">0</td><td>✅ full</td></tr>
@@ -633,25 +635,28 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <tr><td>cast</td><td style="text-align: right">6 / 6</td><td style="text-align: right">0</td><td>✅ full — xsd:integer/decimal/float/double/boolean/string</td></tr>
 <tr><td>bind</td><td style="text-align: right">10 / 10</td><td style="text-align: right">0</td><td>✅ full — in-pattern BIND visible to later FILTER/join</td></tr>
 <tr><td>grouping</td><td style="text-align: right">4 / 4</td><td style="text-align: right">0</td><td>✅ full</td></tr>
-<tr><td>bindings (VALUES)</td><td style="text-align: right">10 / 11</td><td style="text-align: right">1</td><td></td></tr>
-<tr><td>aggregates</td><td style="text-align: right">39 / 42</td><td style="text-align: right">3</td><td>GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT</td></tr>
-<tr><td>property-path</td><td style="text-align: right">30 / 33</td><td style="text-align: right">2</td><td>incl. negated property sets + zero-length on empty data</td></tr>
+<tr><td>bindings (VALUES)</td><td style="text-align: right">10 / 12</td><td style="text-align: right">2</td><td></td></tr>
+<tr><td>aggregates</td><td style="text-align: right">40 / 42</td><td style="text-align: right">2</td><td>GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT</td></tr>
+<tr><td>property-path</td><td style="text-align: right">29 / 33</td><td style="text-align: right">2</td><td>incl. negated property sets + zero-length on empty data</td></tr>
 <tr><td>construct</td><td style="text-align: right">3 / 5</td><td style="text-align: right">1</td><td>graph-isomorphism check</td></tr>
 <tr><td>exists</td><td style="text-align: right">4 / 6</td><td style="text-align: right">1</td><td></td></tr>
 <tr><td>project-expression</td><td style="text-align: right">7 / 7</td><td style="text-align: right">0</td><td>✅ full</td></tr>
 <tr><td>functions</td><td style="text-align: right">73 / 75</td><td style="text-align: right">1</td><td>nearly full — only NOW() + IRI() base resolution</td></tr>
 <tr><td>entailment</td><td style="text-align: right">28 / 70</td><td style="text-align: right">4</td><td>needs <code>build --materialize</code></td></tr>
-<tr><td>subquery</td><td style="text-align: right">2 / 14</td><td style="text-align: right">12</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
-<tr><td>service</td><td style="text-align: right">0 / 7</td><td style="text-align: right">7</td><td><code>SERVICE</code> <strong>is</strong> implemented — these tests need a live endpoint, so they're excluded from the offline run</td></tr>
+<tr><td>subquery</td><td style="text-align: right">7 / 16</td><td style="text-align: right">7</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
+<tr><td>service</td><td style="text-align: right">1 / 7</td><td style="text-align: right">6</td><td><code>SERVICE</code> <strong>is</strong> implemented — most of these tests need a live endpoint, which the offline run does not have</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
-<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>236 / 309 (76.4%)</strong></td><td style="text-align: right">29</td><td></td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>238 / 312 (76.3%)</strong></td><td style="text-align: right">29</td><td></td></tr>
 </tbody></table>
 <blockquote>
 <p>This total is <strong>measured in CI</strong>, not written by hand. The conformance job runs
 the harness against the W3C suite on every Rust change and fails if the passing
 count drops below <code>tests/conformance-baseline.json</code>. It was not always so: the
 figure here read 232 / 75.1% while the engine actually scored 236 / 76.4%, and
-nothing would have caught it moving the other way.</p>
+nothing would have caught it moving the other way. It then drifted again, to a
+stale 236 / 309, because only the baseline file is checked, not this page.
+The suite itself also moves: CI clones <code>w3c/rdf-tests</code> at HEAD on every run,
+so the denominator follows upstream (309 tests in June, 312 by October).</p>
 </blockquote>
 <h2 id="coverage-notes">Coverage notes</h2>
 <p><strong>Strong areas.</strong> Negation (<code>MINUS</code> / <code>NOT EXISTS</code>), JSON results, XSD casts
