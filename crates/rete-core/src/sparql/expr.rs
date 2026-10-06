@@ -5,6 +5,17 @@
 //! per query rather than once per row. EXISTS sub-patterns evaluate against the
 //! active graph through the parent's `eval_plan_in` and memoize in the parent's
 //! `ExistsCache`.
+//!
+//! **Errors are values here, not `false`.** SPARQL 1.1 §17.2/§17.3: an
+//! expression yields an RDF term *or an error*, and the error propagates
+//! through every function and operator except `||`, `&&` (three-valued),
+//! `IF` (only its condition), `COALESCE` (skips it) and `BOUND` (never errors).
+//! [`FExpr::value`] carries an error as `None`, and the boolean evaluators carry
+//! it as `None` of an `Option<bool>` ([`FExpr::ebv3`], [`FExpr::boolean3`]).
+//! It is resolved only where the spec says: a FILTER / HAVING / OPTIONAL
+//! condition keeps a row only on `Some(true)` ([`FExpr::boolean`]), a BIND or
+//! projection leaves the variable unbound, ORDER BY sorts it as "no value".
+//! Collapsing it to `false` any earlier made `!CONTAINS(?iri, "x")` true.
 
 use std::rc::Rc;
 
@@ -35,100 +46,93 @@ impl FExpr {
                 Some(Rc::from(fmt_num_typed(v)))
             }
             FExpr::Func(f, args) => func_value(*f, args, ctx, b),
+            // COALESCE: the first argument that evaluates without error.
             FExpr::Coalesce(args) => args.iter().find_map(|e| e.value(ctx, b)),
             // IF propagates an error in the condition (e.g. `IF(1/0, …)` is a
-            // type error, not the else-branch).
-            FExpr::If(c, t, e) => match c.ebv_opt(ctx, b) {
-                Some(true) => t.value(ctx, b),
-                Some(false) => e.value(ctx, b),
-                None => None,
+            // type error, not the else-branch); only the chosen branch runs.
+            FExpr::If(c, t, e) => match c.ebv3(ctx, b)? {
+                true => t.value(ctx, b),
+                false => e.value(ctx, b),
             },
             // A boolean expression in value position (e.g. `(?y = ?z AS ?eq)`)
-            // yields a typed xsd:boolean.
+            // yields a typed xsd:boolean — or an error (unbound), never a
+            // `false` standing in for one.
             FExpr::In(..)
             | FExpr::SameTerm(..)
             | FExpr::Compare(..)
             | FExpr::And(..)
             | FExpr::Or(..)
             | FExpr::Not(..)
-            | FExpr::Bound(..) => Some(Rc::from(bool_literal(self.ebv(ctx, b)))),
+            | FExpr::Bound(..) => self.ebv3(ctx, b).map(|v| Rc::from(bool_literal(v))),
             _ => None,
         }
     }
 
-    /// Three-valued effective boolean value: `None` is an *error* (a missing
-    /// value, or a term with no EBV), distinct from `Some(false)`. Used where the
-    /// distinction matters — the condition of `IF`. Boolean-form sub-expressions
-    /// produce a typed `xsd:boolean` through [`Self::value`], so the EBV reduces
-    /// to inspecting that term.
-    fn ebv_opt(&self, ctx: &Ctx, b: &Row) -> Option<bool> {
-        term_ebv(&self.value(ctx, b)?)
-    }
-
-    /// Effective boolean value **without** access to the active graph, so EXISTS
-    /// (which needs the graph) evaluates to `false` here. Used in value position
-    /// (e.g. the condition of `IF` inside a BIND) and as the shared core of
-    /// [`Self::boolean`] for the index-independent forms.
-    fn ebv(&self, ctx: &Ctx, b: &Row) -> bool {
+    /// Three-valued effective boolean value **without** access to the active
+    /// graph: `Some(true)`, `Some(false)`, or `None` for an *error* (§17.2.2 —
+    /// an unbound argument, a type error inside, or a term that has no EBV).
+    /// EXISTS needs the graph, so it evaluates to `false` here (value
+    /// position); [`Self::boolean3`] is the graph-aware form.
+    pub(super) fn ebv3(&self, ctx: &Ctx, b: &Row) -> Option<bool> {
         match self {
-            FExpr::Bound(v) => ctx.slots.slot(v).is_some_and(|slot| b[slot].is_some()),
-            FExpr::Not(e) => !e.ebv(ctx, b),
-            FExpr::And(l, r) => l.ebv(ctx, b) && r.ebv(ctx, b),
-            FExpr::Or(l, r) => l.ebv(ctx, b) || r.ebv(ctx, b),
-            FExpr::Compare(op, l, r) => match (l.value(ctx, b), r.value(ctx, b)) {
-                (Some(a), Some(c)) => compare(*op, &a, &c),
-                _ => false,
-            },
-            FExpr::In(e, list) => match e.value(ctx, b) {
-                Some(v) => list
-                    .iter()
-                    .any(|x| x.value(ctx, b).is_some_and(|m| compare(Op::Eq, &v, &m))),
-                None => false,
-            },
-            // sameTerm is strict term identity — no numeric/lexical coercion.
-            FExpr::SameTerm(l, r) => match (l.value(ctx, b), r.value(ctx, b)) {
-                (Some(a), Some(c)) => a == c,
-                _ => false,
-            },
-            FExpr::If(c, t, e) => {
-                if c.ebv(ctx, b) {
-                    t.ebv(ctx, b)
-                } else {
-                    e.ebv(ctx, b)
-                }
+            // BOUND never errors.
+            FExpr::Bound(v) => Some(ctx.slots.slot(v).is_some_and(|slot| b[slot].is_some())),
+            // fn:not of an error is an error (§17.3).
+            FExpr::Not(e) => e.ebv3(ctx, b).map(|v| !v),
+            FExpr::And(l, r) => logical_and(l.ebv3(ctx, b), || r.ebv3(ctx, b)),
+            FExpr::Or(l, r) => logical_or(l.ebv3(ctx, b), || r.ebv3(ctx, b)),
+            FExpr::Compare(op, l, r) => {
+                let a = l.value(ctx, b)?;
+                let c = r.value(ctx, b)?;
+                Some(compare(*op, &a, &c))
             }
-            FExpr::Func(f, args) => func_bool(*f, args, ctx, b),
+            FExpr::In(e, list) => in_list(&e.value(ctx, b)?, list, ctx, b),
+            // sameTerm is strict term identity — no numeric/lexical coercion.
+            FExpr::SameTerm(l, r) => {
+                let a = l.value(ctx, b)?;
+                let c = r.value(ctx, b)?;
+                Some(a == c)
+            }
+            FExpr::If(c, t, e) => match c.ebv3(ctx, b)? {
+                true => t.ebv3(ctx, b),
+                false => e.ebv3(ctx, b),
+            },
+            FExpr::Func(f, args) if is_boolean_builtin(*f) => func_bool(*f, args, ctx, b),
+            FExpr::Exists(_) => Some(false),
             // A value-form expression used as a boolean (a bare `true` literal, a
-            // `?var`, arithmetic, COALESCE …) takes the SPARQL effective boolean
-            // value of its computed term — NOT a blanket false, which silently
-            // dropped every row of `FILTER(true)` (Oxigraph differential).
-            _ => self.ebv_opt(ctx, b).unwrap_or(false),
+            // `?var`, arithmetic, COALESCE, a value function such as STR …)
+            // takes the effective boolean value of its computed term; a term
+            // with no EBV, or an error computing it, is an error.
+            _ => term_ebv(&self.value(ctx, b)?),
         }
     }
 
-    /// Evaluate as a boolean (SPARQL effective boolean value, simplified:
-    /// unbound/error → false). `index` is the active graph (so EXISTS evaluates
-    /// in the current GRAPH context).
-    pub(super) fn boolean(
+    /// Three-valued, graph-aware effective boolean value (see [`Self::ebv3`]).
+    /// `index` is the active graph, so EXISTS evaluates in the current GRAPH
+    /// context.
+    pub(super) fn boolean3(
         &self,
         ctx: &Ctx,
         index: &GraphIndex,
         b: &Row,
         cache: &mut ExistsCache,
-    ) -> bool {
+    ) -> Option<bool> {
         match self {
-            FExpr::Not(e) => !e.boolean(ctx, index, b, cache),
-            FExpr::And(l, r) => l.boolean(ctx, index, b, cache) && r.boolean(ctx, index, b, cache),
-            FExpr::Or(l, r) => l.boolean(ctx, index, b, cache) || r.boolean(ctx, index, b, cache),
-            // IF in filter context: the chosen branch may itself contain EXISTS,
-            // so recurse through the graph-aware path rather than `ebv`.
-            FExpr::If(c, t, e) => {
-                if c.boolean(ctx, index, b, cache) {
-                    t.boolean(ctx, index, b, cache)
-                } else {
-                    e.boolean(ctx, index, b, cache)
-                }
+            FExpr::Not(e) => e.boolean3(ctx, index, b, cache).map(|v| !v),
+            FExpr::And(l, r) => {
+                let lv = l.boolean3(ctx, index, b, cache);
+                logical_and(lv, || r.boolean3(ctx, index, b, cache))
             }
+            FExpr::Or(l, r) => {
+                let lv = l.boolean3(ctx, index, b, cache);
+                logical_or(lv, || r.boolean3(ctx, index, b, cache))
+            }
+            // IF in filter context: the chosen branch may itself contain EXISTS,
+            // so recurse through the graph-aware path rather than `ebv3`.
+            FExpr::If(c, t, e) => match c.boolean3(ctx, index, b, cache)? {
+                true => t.boolean3(ctx, index, b, cache),
+                false => e.boolean3(ctx, index, b, cache),
+            },
             FExpr::Exists(plan) => {
                 let key = plan.as_ref() as *const Plan;
                 let entry = cache.entry(key).or_insert_with(|| ExistsEntry {
@@ -136,17 +140,104 @@ impl FExpr {
                     probe: None,
                 });
                 if entry.sols.is_empty() {
-                    return false;
+                    return Some(false);
                 }
                 if entry.probe.is_none() {
                     entry.probe = Some(build_exists_probe(b, &entry.sols));
                 }
-                exists_matches(b, entry)
+                Some(exists_matches(b, entry))
             }
             // Bound / Compare / In / sameTerm / Func — index-independent.
-            _ => self.ebv(ctx, b),
+            _ => self.ebv3(ctx, b),
         }
     }
+
+    /// The FILTER / HAVING / OPTIONAL-condition verdict: keep the row only when
+    /// the expression is `true`. This is the one place an error is resolved —
+    /// "a solution is eliminated when its filter expression is false **or an
+    /// error**" (§17.2) — so `!error` is still an error here, not `true`.
+    #[inline]
+    pub(super) fn boolean(
+        &self,
+        ctx: &Ctx,
+        index: &GraphIndex,
+        b: &Row,
+        cache: &mut ExistsCache,
+    ) -> bool {
+        self.boolean3(ctx, index, b, cache) == Some(true)
+    }
+}
+
+/// SPARQL logical-and over the §17.2 truth table: `F && E = E && F = F`,
+/// `T && T = T`, every other combination with an error is an error. The right
+/// operand is skipped only when the left is `false` (it cannot change the
+/// answer); after a left error it still runs, because `E && F` is `F`.
+#[inline]
+fn logical_and(l: Option<bool>, r: impl FnOnce() -> Option<bool>) -> Option<bool> {
+    match l {
+        Some(false) => Some(false),
+        Some(true) => r(),
+        None => match r() {
+            Some(false) => Some(false),
+            _ => None,
+        },
+    }
+}
+
+/// SPARQL logical-or over the §17.2 truth table: `T || E = E || T = T`,
+/// `F || F = F`, every other combination with an error is an error.
+#[inline]
+fn logical_or(l: Option<bool>, r: impl FnOnce() -> Option<bool>) -> Option<bool> {
+    match l {
+        Some(true) => Some(true),
+        Some(false) => r(),
+        None => match r() {
+            Some(true) => Some(true),
+            _ => None,
+        },
+    }
+}
+
+/// `lhs IN (list)` per §17.4.1.9: `true` as soon as a member compares equal;
+/// otherwise an error if any member failed to evaluate, else `false`. (NOT IN
+/// lowers to `!(… IN …)`, which §17.4.1.10 states is equivalent.)
+fn in_list(lhs: &str, list: &[FExpr], ctx: &Ctx, b: &Row) -> Option<bool> {
+    let mut errored = false;
+    for x in list {
+        match x.value(ctx, b) {
+            Some(m) if compare(Op::Eq, lhs, &m) => return Some(true),
+            Some(_) => {}
+            None => errored = true,
+        }
+    }
+    (!errored).then_some(false)
+}
+
+/// The builtins [`func_bool`] evaluates — the ones whose result *is* a
+/// boolean. Every other builtin used as a condition takes the effective boolean
+/// value of the term it returns.
+fn is_boolean_builtin(f: Builtin) -> bool {
+    matches!(
+        f,
+        Builtin::IsIri
+            | Builtin::IsBlank
+            | Builtin::IsLiteral
+            | Builtin::IsNumeric
+            | Builtin::IsTriple
+            | Builtin::Contains
+            | Builtin::StrStarts
+            | Builtin::StrEnds
+            | Builtin::Regex
+            | Builtin::LangMatches
+            | Builtin::GeoSfContains
+            | Builtin::GeoSfWithin
+            | Builtin::GeoSfIntersects
+            | Builtin::GeoSfDisjoint
+            | Builtin::GeoSfEquals
+            | Builtin::Geo3Contains
+            | Builtin::Geo3Within
+            | Builtin::Geo3Adjacent
+    )
 }
 
 /// Evaluate a value-returning built-in (string/numeric); `None` for predicates.
@@ -629,21 +720,54 @@ fn tz_to_duration(tz: &str) -> Option<String> {
     Some(out)
 }
 
-/// The effective boolean value of a term, or `None` (a type error) for a term
-/// that has no EBV (an IRI, blank node, or non-boolean/numeric/string literal).
+/// The effective boolean value of a term (SPARQL 1.1 §17.2.2), or `None` (a
+/// type error) for a term that has no EBV: an IRI, a blank node, a
+/// language-tagged literal, or a literal of any other datatype. A boolean or
+/// numeric literal whose lexical form is invalid for its datatype (e.g.
+/// `"abc"^^xsd:integer`) has EBV `false`, not an error.
 fn term_ebv(token: &str) -> Option<bool> {
+    if !token.starts_with('"') {
+        return None;
+    }
     match datatype_iri(token).as_deref() {
-        Some("http://www.w3.org/2001/XMLSchema#boolean") => {
-            match crate::terms::lexical(token).as_ref() {
-                "true" | "1" => Some(true),
-                "false" | "0" => Some(false),
-                _ => None,
-            }
+        Some("http://www.w3.org/2001/XMLSchema#boolean") => Some(matches!(
+            crate::terms::lexical(token).as_ref(),
+            "true" | "1"
+        )),
+        Some(dt) if is_numeric_ebv_dt(dt) => {
+            Some(as_number(token).is_some_and(|n| n != 0.0 && !n.is_nan()))
         }
-        Some(dt) if is_numeric_dt(Some(dt)) => as_number(token).map(|n| n != 0.0 && !n.is_nan()),
         Some(XSD_STRING) => Some(!crate::terms::lexical(token).is_empty()),
         _ => None,
     }
+}
+
+/// XSD numeric datatypes, including those derived from `xsd:decimal`, for the
+/// EBV rule ("a numeric type or a typed literal with a datatype derived from a
+/// numeric type", §17.2.2).
+fn is_numeric_ebv_dt(dt: &str) -> bool {
+    dt.strip_prefix("http://www.w3.org/2001/XMLSchema#")
+        .is_some_and(|local| {
+            matches!(
+                local,
+                "integer"
+                    | "decimal"
+                    | "float"
+                    | "double"
+                    | "int"
+                    | "long"
+                    | "short"
+                    | "byte"
+                    | "nonNegativeInteger"
+                    | "nonPositiveInteger"
+                    | "negativeInteger"
+                    | "positiveInteger"
+                    | "unsignedInt"
+                    | "unsignedLong"
+                    | "unsignedShort"
+                    | "unsignedByte"
+            )
+        })
 }
 
 /// 8 random bytes as a `u64` (0 on the unlikely RNG failure — keeps the builtin
@@ -864,14 +988,19 @@ fn hash_hex(f: Builtin, s: &str) -> String {
     }
 }
 
-/// Evaluate a boolean built-in (type checks / string predicates).
-fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
+/// Evaluate a boolean built-in (type checks / string predicates) to `true`,
+/// `false`, or `None` — a SPARQL **error** (an unbound or ill-typed argument,
+/// an invalid regex). The error is the caller's to resolve (§17.2): a FILTER
+/// drops the row, `!` keeps it an error, BIND leaves the variable unbound.
+fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<bool> {
     let val = |i: usize| args.get(i).and_then(|e| e.value(ctx, b));
     // CONTAINS/STRSTARTS/STRENDS take two string-literal args that must also be
     // argument-compatible (SPARQL 1.1 §17.4.3). A non-string OR an incompatible
-    // pair is a type error → false in a FILTER (like CONCAT, which type-checks).
-    // The error is also reported to the diagnostics sink (cold path only); a
-    // plain no-match on valid strings feeds the case-sensitivity hint once.
+    // pair is a type error (like CONCAT, which type-checks). The error is also
+    // reported to the diagnostics sink (cold path only), exactly once, here at
+    // its origin — an enclosing `!` / `&&` / `||` propagates it without
+    // reporting it again. A plain no-match on valid strings feeds the
+    // case-sensitivity hint once.
     let two = |g: fn(&str, &str) -> bool, bit: u8| {
         let (a, c) = (val(0), val(1));
         match (&a, &c) {
@@ -880,81 +1009,78 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> bool {
                 if !r {
                     no_match(ctx, f, bit, args);
                 }
-                r
+                Some(r)
             }
             _ => {
                 binary_type_error(f, args, a.as_deref(), c.as_deref());
-                false
+                None
             }
         }
     };
     match f {
-        Builtin::IsIri => val(0).is_some_and(|t| t.starts_with('<')),
-        Builtin::IsBlank => val(0).is_some_and(|t| t.starts_with("_:")),
-        Builtin::IsLiteral => val(0).is_some_and(|t| t.starts_with('"')),
-        Builtin::IsNumeric => val(0).and_then(|t| as_number(&t)).is_some(),
+        // The type tests never fail on a bound term; an unbound or erroring
+        // argument is an error like any other function's (§17.2).
+        Builtin::IsIri => val(0).map(|t| t.starts_with('<')),
+        Builtin::IsBlank => val(0).map(|t| t.starts_with("_:")),
+        Builtin::IsLiteral => val(0).map(|t| t.starts_with('"')),
+        Builtin::IsNumeric => val(0).map(|t| as_number(&t).is_some()),
         // RDF-star: is the argument a quoted triple (`<<s p o>>`)?
-        Builtin::IsTriple => val(0).is_some_and(|t| crate::terms::is_quoted_triple(&t)),
+        Builtin::IsTriple => val(0).map(|t| crate::terms::is_quoted_triple(&t)),
         Builtin::Contains => two(|a, c| a.contains(c), diag::MISS_CONTAINS),
         Builtin::StrStarts => two(|a, c| a.starts_with(c), diag::MISS_STRSTARTS),
         Builtin::StrEnds => two(|a, c| a.ends_with(c), diag::MISS_STRENDS),
         // REGEX(text, pattern [, flags]) — SPARQL flags i/m/s/x map to inline
-        // regex flags. An invalid pattern yields no match (and a diagnostic).
+        // regex flags. An invalid pattern is an error (and a diagnostic).
         // The matcher is compiled once per query (memoized); literal patterns
         // skip the regex engine entirely.
         Builtin::Regex => {
             let (text, pat) = (val(0), val(1));
             match (&text, &pat) {
                 // The text argument must be a string literal — a non-string is a
-                // type error → no match (drops the row), matching SPARQL and
-                // CONTAINS above.
+                // type error, matching SPARQL and CONTAINS above.
                 (Some(text), Some(pat)) if string_arg(text).is_some() => {
                     let flags = val(2).map(|t| lexical(&t)).unwrap_or_default();
                     let pat = lexical(pat);
                     match ctx.resolver.regex_try(&pat, &flags, &lexical(text)) {
-                        Some(true) => true,
+                        Some(true) => Some(true),
                         Some(false) => {
                             if !flags.contains('i') {
                                 no_match(ctx, f, diag::MISS_REGEX, args);
                             }
-                            false
+                            Some(false)
                         }
                         None => {
                             diag::invalid_regex(f, &pat, &flags);
-                            false
+                            None
                         }
                     }
                 }
                 _ => {
                     regex_type_error(f, args, text.as_deref(), pat.as_deref());
-                    false
+                    None
                 }
             }
         }
         // LANGMATCHES(tag, range): basic-filtering language-range match
         // (case-insensitive; "*" matches any non-empty tag).
-        Builtin::LangMatches => match (val(0), val(1)) {
-            (Some(tag), Some(range)) => lang_matches(&lexical(&tag), &lexical(&range)),
-            _ => false,
-        },
-        // GeoSPARQL topological relations in FILTER context: a type error
-        // (malformed/non-geometry argument) drops the row (→ false).
+        Builtin::LangMatches => {
+            let (tag, range) = (val(0)?, val(1)?);
+            Some(lang_matches(&lexical(&tag), &lexical(&range)))
+        }
+        // GeoSPARQL topological relations: a malformed / non-geometry argument
+        // is a type error.
         Builtin::GeoSfContains
         | Builtin::GeoSfWithin
         | Builtin::GeoSfIntersects
         | Builtin::GeoSfDisjoint
-        | Builtin::GeoSfEquals => match (val(0), val(1)) {
-            (Some(a), Some(c)) => geo_relation(f, &a, &c).unwrap_or(false),
-            _ => false,
-        },
-        // geo3 3D relations in FILTER context (a type error drops the row → false).
+        | Builtin::GeoSfEquals => geo_relation(f, &val(0)?, &val(1)?),
+        // geo3 3D relations (a malformed argument is a type error).
         Builtin::Geo3Contains | Builtin::Geo3Within | Builtin::Geo3Adjacent => {
-            match (val(0), val(1)) {
-                (Some(a), Some(c)) => geo3_relation(f, &a, &c, val(2)).unwrap_or(false),
-                _ => false,
-            }
+            geo3_relation(f, &val(0)?, &val(1)?, val(2))
         }
-        _ => false,
+        // Not a boolean builtin: callers route those through `is_boolean_builtin`
+        // and take the EBV of the value instead.
+        _ => None,
     }
 }
 
@@ -1173,33 +1299,41 @@ mod tests {
             .value(&ctx, &row),
             None
         );
-        assert!(FExpr::Bound("x".into()).ebv(&ctx, &row));
-        assert!(!FExpr::Bound("unset".into()).ebv(&ctx, &row));
-        assert!(FExpr::Not(Box::new(no.clone())).ebv(&ctx, &row));
-        assert!(FExpr::And(Box::new(yes.clone()), Box::new(yes.clone())).ebv(&ctx, &row));
-        assert!(FExpr::Or(Box::new(no.clone()), Box::new(yes.clone())).ebv(&ctx, &row));
+        assert!(FExpr::Bound("x".into()).ebv3(&ctx, &row).unwrap());
+        assert!(!FExpr::Bound("unset".into()).ebv3(&ctx, &row).unwrap());
+        assert!(FExpr::Not(Box::new(no.clone())).ebv3(&ctx, &row).unwrap());
+        assert!(FExpr::And(Box::new(yes.clone()), Box::new(yes.clone()))
+            .ebv3(&ctx, &row)
+            .unwrap());
+        assert!(FExpr::Or(Box::new(no.clone()), Box::new(yes.clone()))
+            .ebv3(&ctx, &row)
+            .unwrap());
         assert!(FExpr::Compare(
             Op::Lt,
             Box::new(FExpr::Const("2".into())),
             Box::new(FExpr::Const("3".into()))
         )
-        .ebv(&ctx, &row));
+        .ebv3(&ctx, &row)
+        .unwrap());
         assert!(FExpr::In(
             Box::new(FExpr::Const("2".into())),
             vec![FExpr::Const("1".into()), FExpr::Const("2".into())]
         )
-        .ebv(&ctx, &row));
+        .ebv3(&ctx, &row)
+        .unwrap());
         assert!(FExpr::SameTerm(
             Box::new(FExpr::Const("\"x\"".into())),
             Box::new(FExpr::Const("\"x\"".into()))
         )
-        .ebv(&ctx, &row));
+        .ebv3(&ctx, &row)
+        .unwrap());
         assert!(FExpr::If(
             Box::new(no),
             Box::new(FExpr::Const("0".into())),
             Box::new(yes)
         )
-        .ebv(&ctx, &row));
+        .ebv3(&ctx, &row)
+        .unwrap());
 
         let unbound = SortKey::of(None);
         let one = SortKey::of(Some(Rc::from("1")));
@@ -1210,6 +1344,134 @@ mod tests {
         assert_eq!(one.cmp(&unbound), std::cmp::Ordering::Greater);
         assert_eq!(one.cmp(&two), std::cmp::Ordering::Less);
         assert_eq!(text.cmp(&two), std::cmp::Ordering::Greater);
+    }
+
+    /// SPARQL 1.1 §17.2 / §17.3 / §17.4.1: an error is a value of its own that
+    /// survives `!`, follows the three-valued `||` / `&&` tables, makes IF's
+    /// condition an error, is skipped by COALESCE, and is resolved only by the
+    /// FILTER verdict (`boolean`) — not collapsed to `false` at the function.
+    #[test]
+    fn errors_propagate_until_the_spec_resolves_them() {
+        let rete = fixture();
+        let mut slots = Slots::new();
+        slots.add("unset");
+        let ctx = Ctx::new(&rete, slots);
+        let row = ctx.slots.empty_row();
+        let c = |s: &str| Box::new(FExpr::Const(s.to_string()));
+        let t = || c(&lit("true", &format!("{XSD}boolean")));
+        let f = || c(&lit("false", &format!("{XSD}boolean")));
+        // CONTAINS on an IRI: a type error.
+        let e = || {
+            Box::new(FExpr::Func(
+                Builtin::Contains,
+                vec![FExpr::Const("<iri>".into()), FExpr::Const("\"i\"".into())],
+            ))
+        };
+        let ebv = |x: FExpr| x.ebv3(&ctx, &row);
+
+        assert_eq!(ebv(*e()), None);
+        // fn:not of an error is an error — `!CONTAINS(?iri, …)` is NOT true.
+        assert_eq!(ebv(FExpr::Not(e())), None);
+        assert_eq!(ebv(FExpr::Not(Box::new(FExpr::Not(e())))), None);
+
+        // The §17.2 truth table, every row that involves an error.
+        assert_eq!(ebv(FExpr::Or(t(), e())), Some(true));
+        assert_eq!(ebv(FExpr::Or(e(), t())), Some(true));
+        assert_eq!(ebv(FExpr::Or(f(), e())), None);
+        assert_eq!(ebv(FExpr::Or(e(), f())), None);
+        assert_eq!(ebv(FExpr::Or(e(), e())), None);
+        assert_eq!(ebv(FExpr::And(t(), e())), None);
+        assert_eq!(ebv(FExpr::And(e(), t())), None);
+        assert_eq!(ebv(FExpr::And(f(), e())), Some(false));
+        assert_eq!(ebv(FExpr::And(e(), f())), Some(false));
+        assert_eq!(ebv(FExpr::And(e(), e())), None);
+        assert_eq!(ebv(FExpr::Not(Box::new(FExpr::And(e(), f())))), Some(true));
+
+        // IF: an error in the condition is an error; only one branch is taken.
+        let pick = |cond: Box<FExpr>| FExpr::If(cond, c("\"y\""), c("\"n\"")).value(&ctx, &row);
+        assert_eq!(pick(e()), None);
+        assert_eq!(pick(Box::new(FExpr::Not(e()))), None);
+        assert_eq!(pick(t()).as_deref(), Some("\"y\""));
+        // …and a boolean builtin is a valid condition (it used to error).
+        let contains = Box::new(FExpr::Func(
+            Builtin::Contains,
+            vec![FExpr::Const("\"abc\"".into()), FExpr::Const("\"b\"".into())],
+        ));
+        assert_eq!(pick(contains).as_deref(), Some("\"y\""));
+
+        // COALESCE skips an error; BOUND never errors.
+        let div0 = FExpr::Arith(ArithOp::Div, c("1"), c("0"));
+        assert_eq!(
+            FExpr::Coalesce(vec![div0.clone(), FExpr::Const("\"x\"".into())])
+                .value(&ctx, &row)
+                .as_deref(),
+            Some("\"x\"")
+        );
+        assert_eq!(FExpr::Coalesce(vec![div0.clone()]).value(&ctx, &row), None);
+        assert_eq!(
+            ebv(FExpr::Not(Box::new(FExpr::Bound("unset".into())))),
+            Some(true)
+        );
+
+        // A type test of an unbound variable is an error like any function's.
+        let unset = || FExpr::Var("unset".into());
+        assert_eq!(
+            ebv(FExpr::Not(Box::new(FExpr::Func(
+                Builtin::IsIri,
+                vec![unset()]
+            )))),
+            None
+        );
+        assert_eq!(
+            ebv(FExpr::Not(Box::new(FExpr::SameTerm(
+                Box::new(unset()),
+                c("\"a\"")
+            )))),
+            None
+        );
+
+        // IN / NOT IN (§17.4.1.9-10): 2 IN (1/0, 2) is true, 2 IN (3, 1/0) an
+        // error, 2 IN () false; NOT IN is !(IN).
+        let two = || c("2");
+        let isin = |list: Vec<FExpr>| FExpr::In(two(), list);
+        assert_eq!(ebv(isin(vec![div0.clone(), *two()])), Some(true));
+        assert_eq!(ebv(isin(vec![*two(), div0.clone()])), Some(true));
+        assert_eq!(ebv(isin(vec![*c("3"), div0.clone()])), None);
+        assert_eq!(ebv(isin(vec![])), Some(false));
+        assert_eq!(
+            ebv(FExpr::Not(Box::new(isin(vec![*c("3"), div0.clone()])))),
+            None
+        );
+        assert_eq!(
+            ebv(FExpr::Not(Box::new(isin(vec![div0.clone(), *two()])))),
+            Some(false)
+        );
+        assert_eq!(ebv(FExpr::In(Box::new(unset()), vec![])), None);
+
+        // In value position an error is an error (unbound), not "false".
+        assert_eq!(FExpr::Not(e()).value(&ctx, &row), None);
+        assert_eq!(
+            FExpr::Or(e(), t()).value(&ctx, &row).as_deref(),
+            Some(&*bool_literal(true))
+        );
+
+        // EBV (§17.2.2): an ill-typed boolean / numeric literal is false, a
+        // derived numeric type counts, a language-tagged literal has no EBV.
+        assert_eq!(term_ebv(&lit("abc", &format!("{XSD}integer"))), Some(false));
+        assert_eq!(
+            term_ebv(&lit("maybe", &format!("{XSD}boolean"))),
+            Some(false)
+        );
+        assert_eq!(term_ebv(&lit("5", &format!("{XSD}int"))), Some(true));
+        assert_eq!(term_ebv("\"x\"@en"), None);
+        // A value function used as a condition takes the EBV of its value.
+        assert_eq!(
+            ebv(FExpr::Func(
+                Builtin::StrLen,
+                vec![FExpr::Const("\"\"".into())]
+            )),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1357,7 +1619,9 @@ mod tests {
         let rete = fixture();
         let ctx = Ctx::new(&rete, Slots::new());
         let row = ctx.slots.empty_row();
-        let boolean = |builtin, args: &[&str]| {
+        // `eval` is the three-valued result (`None` = a SPARQL error);
+        // `boolean` is the FILTER verdict (true only on `Some(true)`).
+        let eval = |builtin, args: &[&str]| {
             func_bool(
                 builtin,
                 &args
@@ -1368,6 +1632,7 @@ mod tests {
                 &row,
             )
         };
+        let boolean = |builtin, args: &[&str]| eval(builtin, args) == Some(true);
         assert!(boolean(Builtin::IsIri, &["<iri>"]));
         assert!(boolean(Builtin::IsBlank, &["_:b"]));
         assert!(boolean(Builtin::IsLiteral, &["\"x\""]));
@@ -1376,12 +1641,12 @@ mod tests {
         assert!(boolean(Builtin::Contains, &["\"abc\"", "\"b\""]));
         assert!(boolean(Builtin::StrStarts, &["\"abc\"", "\"a\""]));
         assert!(boolean(Builtin::StrEnds, &["\"abc\"", "\"c\""]));
-        assert!(!boolean(Builtin::Contains, &["<iri>", "\"i\""]));
+        assert_eq!(eval(Builtin::Contains, &["<iri>", "\"i\""]), None);
         assert!(boolean(Builtin::Regex, &["\"Abc\"", "\"^a\"", "\"i\""]));
-        assert!(!boolean(Builtin::Regex, &["<iri>", "\"i\""]));
+        assert_eq!(eval(Builtin::Regex, &["<iri>", "\"i\""]), None);
         assert!(boolean(Builtin::LangMatches, &["\"en-GB\"", "\"EN\""]));
         assert!(boolean(Builtin::LangMatches, &["\"de\"", "\"*\""]));
-        assert!(!boolean(Builtin::LangMatches, &["\"\"", "\"*\""]));
+        assert_eq!(eval(Builtin::LangMatches, &["\"\"", "\"*\""]), Some(false));
 
         let wkt = |s: &str| lit(s, &format!("{GEO}wktLiteral"));
         let point = wkt("POINT(1 1)");
@@ -1389,7 +1654,7 @@ mod tests {
         let far = wkt("POINT(5 5)");
         assert!(boolean(Builtin::GeoSfEquals, &[&point, &same]));
         assert!(boolean(Builtin::GeoSfDisjoint, &[&point, &far]));
-        assert!(!boolean(Builtin::GeoSfWithin, &["<iri>", &point]));
+        assert_eq!(eval(Builtin::GeoSfWithin, &["<iri>", &point]), None);
         assert!(call(&ctx, Builtin::GeoSfEquals, &[&point, &same]).is_some());
         assert!(call(
             &ctx,
@@ -1416,14 +1681,14 @@ mod tests {
         let p000 = wkt3("POINT Z(0 0 0)");
         let p_far = wkt3("POINT Z(3 4 12)"); // distance 13 from origin
         assert!(boolean(Builtin::Geo3Contains, &[&big, &inner]));
-        assert!(!boolean(Builtin::Geo3Contains, &[&inner, &big]));
+        assert_eq!(eval(Builtin::Geo3Contains, &[&inner, &big]), Some(false));
         assert!(boolean(Builtin::Geo3Within, &[&inner, &big]));
         // adjacency: two boxes 3 apart on Z — not touching, adjacent within gap 3
         let a = box3d("BOX3D(0 0 0, 1 1 1)");
         let b = box3d("BOX3D(0 0 3, 1 1 4)");
-        assert!(!boolean(Builtin::Geo3Adjacent, &[&a, &b]));
+        assert_eq!(eval(Builtin::Geo3Adjacent, &[&a, &b]), Some(false));
         assert!(boolean(Builtin::Geo3Adjacent, &[&a, &b, "3"]));
-        assert!(!boolean(Builtin::Geo3Adjacent, &["<iri>", &b]));
+        assert_eq!(eval(Builtin::Geo3Adjacent, &["<iri>", &b]), None);
         // distance3D → xsd:double "13"
         let d = call(&ctx, Builtin::Geo3Distance, &[&p000, &p_far]).unwrap();
         assert!(d.contains("13"), "distance3D result: {d}");
@@ -1478,7 +1743,9 @@ mod tests {
         let rete = fixture();
         let ctx = Ctx::new(&rete, Slots::new());
         let row = ctx.slots.empty_row();
-        let boolean = |builtin, args: &[&str]| {
+        // `eval` is the three-valued result (`None` = a SPARQL error);
+        // `boolean` is the FILTER verdict (true only on `Some(true)`).
+        let eval = |builtin, args: &[&str]| {
             func_bool(
                 builtin,
                 &args
@@ -1489,6 +1756,7 @@ mod tests {
                 &row,
             )
         };
+        let boolean = |builtin, args: &[&str]| eval(builtin, args) == Some(true);
         // N-Triples token for the value `Theory of "Quantum" Gases` (25 chars).
         let quoted = r#""Theory of \"Quantum\" Gases""#;
         // Text before, inside, and after the embedded quotes.
@@ -1514,7 +1782,10 @@ mod tests {
         assert!(boolean(Builtin::Contains, &[quoted, "\"Quantum\\\"\""]));
         // …while the backslash of the escape is not: `Theory of \` was exactly
         // the truncated value the old scan produced.
-        assert!(!boolean(Builtin::Contains, &[quoted, "\"Theory of \\\\\""]));
+        assert_eq!(
+            eval(Builtin::Contains, &[quoted, "\"Theory of \\\\\""]),
+            Some(false)
+        );
         assert_eq!(
             call(&ctx, Builtin::StrBefore, &[quoted, "\"Gases\""]).as_deref(),
             Some(r#""Theory of \"Quantum\" ""#)
@@ -1569,7 +1840,7 @@ mod tests {
         // embedded quote does not make the suffix look like the value's end.
         let tagged = r#""He said \"Quantum\" loudly"@en"#;
         assert!(boolean(Builtin::Contains, &[tagged, "\"loudly\""]));
-        assert!(!boolean(Builtin::Contains, &[tagged, "\"@en\""]));
+        assert_eq!(eval(Builtin::Contains, &[tagged, "\"@en\""]), Some(false));
         assert!(boolean(Builtin::StrEnds, &[tagged, "\"loudly\"@en"]));
         assert!(boolean(Builtin::LangMatches, &["\"en-GB\"", "\"en\""]));
         assert_eq!(
@@ -1583,7 +1854,7 @@ mod tests {
         );
         let typed = format!(r#""He said \"Quantum\" loudly"^^<{XSD}string>"#);
         assert!(boolean(Builtin::Contains, &[&typed, "\"loudly\""]));
-        assert!(!boolean(Builtin::Contains, &[&typed, "\"^^\""]));
+        assert_eq!(eval(Builtin::Contains, &[&typed, "\"^^\""]), Some(false));
         assert!(boolean(Builtin::Regex, &[&typed, "\"loudly$\""]));
         assert_eq!(
             call(&ctx, Builtin::StrBefore, &[&typed, "\" loudly\""]).as_deref(),
@@ -1591,7 +1862,7 @@ mod tests {
         );
         // A non-string datatype is still a type error for the string predicates.
         let int = lit("42", &format!("{XSD}integer"));
-        assert!(!boolean(Builtin::Contains, &[&int, "\"4\""]));
+        assert_eq!(eval(Builtin::Contains, &[&int, "\"4\""]), None);
     }
 
     /// SPARQL 1.1 §17.4.3 argument compatibility for the binary string functions.
@@ -1605,7 +1876,9 @@ mod tests {
         let rete = fixture();
         let ctx = Ctx::new(&rete, Slots::new());
         let row = ctx.slots.empty_row();
-        let boolean = |builtin, args: &[&str]| {
+        // `eval` is the three-valued result (`None` = a SPARQL error);
+        // `boolean` is the FILTER verdict (true only on `Some(true)`).
+        let eval = |builtin, args: &[&str]| {
             func_bool(
                 builtin,
                 &args
@@ -1616,6 +1889,7 @@ mod tests {
                 &row,
             )
         };
+        let boolean = |builtin, args: &[&str]| eval(builtin, args) == Some(true);
 
         let en = r#""hello world"@en"#; // text, language-tagged
         let xstr = format!(r#""hello world"^^<{XSD}string>"#); // text, xsd:string
@@ -1629,14 +1903,14 @@ mod tests {
         // tagged text / simple pattern → compatible (the CAUTION case), matches.
         assert!(boolean(Builtin::Contains, &[en, "\"world\""]));
         // simple text / tagged pattern → INCOMPATIBLE (asymmetry) → type error.
-        assert!(!boolean(
-            Builtin::Contains,
-            &["\"hello world\"", "\"world\"@en"]
-        ));
+        assert_eq!(
+            None,
+            eval(Builtin::Contains, &["\"hello world\"", "\"world\"@en"])
+        );
         // same language tag → compatible, matches.
         assert!(boolean(Builtin::Contains, &[en, "\"world\"@en"]));
         // different language tags (en vs fr) → INCOMPATIBLE → type error.
-        assert!(!boolean(Builtin::Contains, &[en, "\"world\"@fr"]));
+        assert_eq!(eval(Builtin::Contains, &[en, "\"world\"@fr"]), None);
         // xsd:string text / xsd:string pattern → compatible, matches.
         assert!(boolean(
             Builtin::Contains,
@@ -1648,18 +1922,18 @@ mod tests {
             &[en, &lit("world", &format!("{XSD}string"))]
         ));
         // xsd:string text / tagged pattern → INCOMPATIBLE (text untagged) → type error.
-        assert!(!boolean(Builtin::Contains, &[&xstr, "\"world\"@en"]));
+        assert_eq!(eval(Builtin::Contains, &[&xstr, "\"world\"@en"]), None);
 
         // --- STRSTARTS / STRENDS share the same helper ----------------------
         assert!(boolean(Builtin::StrStarts, &[en, "\"hello\""])); // simple pattern ok
         assert!(boolean(Builtin::StrStarts, &[en, "\"hello\"@en"])); // same tag ok
-        assert!(!boolean(Builtin::StrStarts, &[en, "\"hello\"@fr"])); // diff tag → error
+        assert_eq!(eval(Builtin::StrStarts, &[en, "\"hello\"@fr"]), None); // diff tag → error
         assert!(boolean(Builtin::StrEnds, &[en, "\"world\"@en"])); // same tag ok
-        assert!(!boolean(Builtin::StrEnds, &[en, "\"world\"@de"])); // diff tag → error
-        assert!(!boolean(
-            Builtin::StrEnds,
-            &["\"hello world\"", "\"world\"@en"]
-        )); // simple/tagged → error
+        assert_eq!(eval(Builtin::StrEnds, &[en, "\"world\"@de"]), None); // diff tag → error
+        assert_eq!(
+            None,
+            eval(Builtin::StrEnds, &["\"hello world\"", "\"world\"@en"])
+        ); // simple/tagged → error
 
         // --- STRBEFORE / STRAFTER: incompatible → unbound (None); compatible →
         //     a result that carries arg1's language tag ----------------------

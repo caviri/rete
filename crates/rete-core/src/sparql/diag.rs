@@ -1,11 +1,11 @@
 //! Query diagnostics: a side channel for the expression **type errors** that
-//! SPARQL silently turns into `false` (FILTER) or an unbound value (BIND,
-//! projection, ORDER BY, HAVING).
+//! SPARQL silently resolves: a FILTER or HAVING drops the row (an error stays an
+//! error through `!`), BIND, projection and ORDER BY see an unbound value.
 //!
 //! `FILTER(CONTAINS(?iri, "x"))` is not unsupported — it is a type error,
 //! because CONTAINS takes string literals and an IRI is not one, and the spec
 //! says a FILTER whose expression errors drops the row. That is correct and it
-//! stays: results are never changed here. What changes is that the error is
+//! stays: results are never changed by this module. What changes is that the error is
 //! *counted*, so a query that came back empty can say why.
 //!
 //! Recording happens only on the error path (and, for the case-sensitivity
@@ -24,8 +24,8 @@ use super::{Builtin, FExpr, QueryOutput};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WarningSeverity {
-    /// A SPARQL type error was raised and silently absorbed (FILTER → false,
-    /// BIND → unbound). The results are spec-correct; the query probably is not
+    /// A SPARQL type error was raised and silently absorbed (FILTER drops the
+    /// row, BIND → unbound). The results are spec-correct; the query probably is not
     /// what its author meant.
     TypeError,
     /// No error happened; a guess at why a query came back empty (for example,
@@ -410,7 +410,9 @@ impl Entry {
             ),
         };
         let mut message = format!("{name} received {what} as {arg} in {n}: a SPARQL type error");
-        message.push_str(", which FILTER treats as false (BIND leaves the variable unbound)");
+        message.push_str(
+            ", which makes a FILTER drop the row, even under ! (BIND leaves the variable unbound)",
+        );
         if !matches!(self.kind, ArgKind::Unbound) && !self.sample.is_empty() {
             message.push_str(&format!("; e.g. {}", self.sample));
         }

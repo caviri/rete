@@ -370,16 +370,58 @@ only ever be *incomplete* for that one chaining shape. The whole-graph RL reason
 (`rete reason` / the Coherence tab) is a separate, materializing tool for
 coherence checking.
 
+## Expression errors {#errors}
+
+A SPARQL expression evaluates to an RDF term **or to an error**: a function
+given the wrong kind of argument (`CONTAINS` on an IRI), an unbound variable, a
+division by zero, a term with no boolean value. rete carries that error as a
+value of its own and resolves it only where SPARQL 1.1 says to (§17.2, §17.3,
+§17.4.1, §18.5.1):
+
+| Where the error meets… | Result |
+|---|---|
+| any function or operator (`CONTAINS`, `STR`, `+`, `=`, `isIRI`, `sameTerm`, …) | an error |
+| `!` | an error. `!CONTAINS(?iri, "x")` is **not** true |
+| `\|\|` | `true \|\| error` and `error \|\| true` are `true`; with `false` or another error, an error |
+| `&&` | `false && error` and `error && false` are `false`; with `true` or another error, an error |
+| `IF(cond, a, b)` | an error in `cond` is an error; only the chosen branch is evaluated |
+| `COALESCE(…)` | skipped: the first argument without an error wins (an error if none) |
+| `BOUND(?x)` | never an error |
+| `x IN (…)` | `true` if some member equals `x`; otherwise an error if a member errored, else `false`. `IN ()` is `false`. `NOT IN` is `!(… IN …)` |
+| effective boolean value | `xsd:boolean`, numeric and `xsd:string` literals have one (an ill-typed `"abc"^^xsd:integer` is `false`); an IRI, a blank node, a language-tagged or other-typed literal is an error |
+| `FILTER`, `HAVING`, an `OPTIONAL`'s filter | the row is dropped |
+| `BIND`, a projected `(expr AS ?v)`, a `GROUP BY` key | `?v` is left unbound; the row stays |
+| `ORDER BY` | sorts as "no value", before everything else |
+| `COUNT(expr)` | the error is not counted |
+| `SUM`, `GROUP_CONCAT`, `MIN` | the aggregate is unbound for that group. An unbound variable is an error here too, so `SUM(?x)` over a group where some row lacks `?x` is unbound |
+| `AVG` | unbound if some rows error and others do not; `0` if every row errors, because errors are not counted and the average of zero values is `0` (§18.5.1.4) |
+| `MAX` | the largest value that is not an error: MAX orders like `ORDER BY DESC`, where "no value" comes last (§18.5.1.6, §15.1). MIN orders like `ORDER BY ASC`, where it comes first, hence the row above |
+| `SAMPLE` | returns one of the values that is not an error |
+
+Through v0.3.2 rete turned an error into `false` at the function that raised
+it, so `FILTER(!CONTAINS(?iri, "x"))` kept every row, `BIND(!CONTAINS(?iri,
+"x") AS ?b)` bound `true`, and `SUM` / `AVG` / `MIN` / `MAX` / `GROUP_CONCAT`
+skipped the rows they could not use (`MAX` still does, as the spec says). Those results were wrong, and the
+[CHANGELOG](https://github.com/caviri/rete/blob/main/CHANGELOG.md) lists this as a result-changing fix.
+
+Where rete deliberately differs from Oxigraph 0.5, each time because the spec
+text says otherwise: `COUNT(expr)` removes errors and counts the rest
+(§18.5.1.2; Oxigraph makes the count unbound); `MAX` ignores error elements
+and an all-error `AVG` is `0` (§18.5.1.4-6; Oxigraph makes both unbound); `x IN ()` is `false` and
+`x NOT IN ()` is `true` (the examples in §17.4.1.9-10; Oxigraph raises an
+error); and the effective boolean value of an ill-typed numeric literal is
+`false` (§17.2.2; Oxigraph raises an error).
+
 ## Type errors and query warnings {#warnings}
 
 The string functions (`CONTAINS`, `STRSTARTS`, `STRENDS`, `STRBEFORE`,
 `STRAFTER`, `REGEX`, `REPLACE`, `STRLEN`, `UCASE`, `LCASE`, `SUBSTR`, `CONCAT`,
 `ENCODE_FOR_URI`, the hashes) take **string literals**. Given an IRI, a blank
-node, a number or another typed literal, they raise a SPARQL **type error**, and
-the spec says an error inside `FILTER` counts as *false*: the row is dropped,
-with no error. In `BIND` or a projected expression the variable is left
-unbound instead. rete follows the spec here, as Oxigraph and Jena do, so these
-queries return no rows:
+node, a number or another typed literal, they raise a SPARQL **type error**.
+Inside `FILTER` the row is dropped, with no error, and an enclosing `!` does
+not rescue it (see [Expression errors](#errors)). In `BIND` or a projected
+expression the variable is left unbound instead. rete follows the spec here,
+as Oxigraph and Jena do, so these queries return no rows:
 
 | Query | Rows | Why |
 |---|---|---|
@@ -397,7 +439,7 @@ stays the result:
 ```text
 $ rete sparql maps.rete 'SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }'
 0 solution(s)
-warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which FILTER treats as false (BIND leaves the variable unbound); e.g. <http://ex.org/map/geneva-1572>. Hint: wrap it in STR() to match the IRI's text.
+warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which makes a FILTER drop the row, even under ! (BIND leaves the variable unbound); e.g. <http://ex.org/map/geneva-1572>. Hint: wrap it in STR() to match the IRI's text.
 ```
 
 With `--json`, the result object also gets a `warnings` array. The array is left
@@ -422,8 +464,8 @@ Notes:
   nested call (`CONTAINS(LCASE(?s), …)`) is reported once, by the inner
   function (`LCASE`).
 - **`invalid-regex`**: rete's regex engine uses Rust syntax, which has no
-  look-around and no back-references. An invalid pattern matches nothing and
-  is reported along with the parser's message.
+  look-around and no back-references. An invalid pattern is an error (the row
+  is dropped, even under `!`) and is reported along with the parser's message.
 - **The case-sensitivity hint** is given only when all of these hold: the
   result is empty, no type error was raised, `CONTAINS` / `STRSTARTS` /
   `STRENDS` / `REGEX` without the `i` flag actually ran on string values and

@@ -263,6 +263,83 @@ fn other_error_kinds_unbound_regex_and_nested_value_functions() {
     assert_eq!(one(&w).count, 4);
 }
 
+/// An error that propagates through `!`, `||`, `&&`, IF or a BIND is still
+/// reported exactly once per evaluation — at the function that raised it —
+/// and the row counts follow SPARQL 1.1 §17.2: `!error` is an error, so
+/// `FILTER(!CONTAINS(?iri, …))` drops the row instead of keeping it.
+#[test]
+fn propagated_errors_are_reported_once_and_drop_the_row() {
+    let bytes = graph();
+    let rete = Rete::open(&bytes).unwrap();
+
+    for (q, rows) in [
+        // `!error` is an error: the row is dropped (it used to be kept).
+        (
+            r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(!CONTAINS(?s, "geneva")) }"#,
+            0,
+        ),
+        (
+            r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(!(!CONTAINS(?s, "geneva"))) }"#,
+            0,
+        ),
+        // error || false is an error; !(error || false) too.
+        (
+            r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(!(CONTAINS(?s, "x") || false)) }"#,
+            0,
+        ),
+        // error || true is true; error && false is false, so its negation keeps the row.
+        (
+            r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "x") || true) }"#,
+            1,
+        ),
+        (
+            r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(!(CONTAINS(?s, "x") && false)) }"#,
+            1,
+        ),
+        // IF with an erroring condition is an error.
+        (
+            r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(IF(CONTAINS(?s, "x"), true, true)) }"#,
+            0,
+        ),
+        // BIND keeps the row and leaves the variable unbound.
+        (
+            r#"SELECT ?s ?b WHERE { ?s rdfs:label ?l BIND(!CONTAINS(?s, "x") AS ?b) }"#,
+            1,
+        ),
+    ] {
+        let (n, w) = run(&rete, q);
+        assert_eq!(n, rows, "{q}");
+        let w = one(&w);
+        assert_eq!(
+            (w.function.as_str(), w.argument, w.kind.as_str(), w.count),
+            ("CONTAINS", 1, "iri", 1),
+            "{q}: the error is counted once, where it was raised"
+        );
+        assert!(
+            w.message.contains("drop the row, even under !"),
+            "{}",
+            w.message
+        );
+    }
+
+    // The BIND above leaves ?b unbound rather than binding `true`.
+    let q = format!(r#"{P}SELECT ?b WHERE {{ ?s rdfs:label ?l BIND(!CONTAINS(?s, "x") AS ?b) }}"#);
+    match eval_query(&rete, &q).unwrap() {
+        QueryOutput::Select(_, rows) => assert!(!rows[0].contains_key("b"), "{rows:?}"),
+        _ => panic!("unexpected output"),
+    }
+
+    // `error && x` evaluates x too (E && F is F), so two errors in one row are
+    // two reports, one per function — not the left one twice.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "x") && STRSTARTS(?s, "y")) }"#,
+    );
+    assert_eq!(n, 0);
+    assert_eq!(w.len(), 2, "{w:#?}");
+    assert!(w.iter().all(|w| w.count == 1), "{w:#?}");
+}
+
 #[test]
 fn warnings_serialize_and_unknown_functions_fail_loudly() {
     let bytes = graph();
