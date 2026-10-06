@@ -920,15 +920,51 @@ matches; with it on you get the entailed answers for the supported cases — it 
 only ever be <em>incomplete</em> for that one chaining shape. The whole-graph RL reasoner
 (<code>rete reason</code> / the Coherence tab) is a separate, materializing tool for
 coherence checking.</p>
+<h2 id="errors">Expression errors</h2>
+<p>A SPARQL expression evaluates to an RDF term <strong>or to an error</strong>: a function
+given the wrong kind of argument (<code>CONTAINS</code> on an IRI), an unbound variable, a
+division by zero, a term with no boolean value. rete carries that error as a
+value of its own and resolves it only where SPARQL 1.1 says to (§17.2, §17.3,
+§17.4.1, §18.5.1):</p>
+<table><thead><tr><th>Where the error meets…</th><th>Result</th></tr></thead><tbody>
+<tr><td>any function or operator (<code>CONTAINS</code>, <code>STR</code>, <code>+</code>, <code>=</code>, <code>isIRI</code>, <code>sameTerm</code>, …)</td><td>an error</td></tr>
+<tr><td><code>!</code></td><td>an error. <code>!CONTAINS(?iri, "x")</code> is <strong>not</strong> true</td></tr>
+<tr><td><code>||</code></td><td><code>true || error</code> and <code>error || true</code> are <code>true</code>; with <code>false</code> or another error, an error</td></tr>
+<tr><td><code>&amp;&amp;</code></td><td><code>false &amp;&amp; error</code> and <code>error &amp;&amp; false</code> are <code>false</code>; with <code>true</code> or another error, an error</td></tr>
+<tr><td><code>IF(cond, a, b)</code></td><td>an error in <code>cond</code> is an error; only the chosen branch is evaluated</td></tr>
+<tr><td><code>COALESCE(…)</code></td><td>skipped: the first argument without an error wins (an error if none)</td></tr>
+<tr><td><code>BOUND(?x)</code></td><td>never an error</td></tr>
+<tr><td><code>x IN (…)</code></td><td><code>true</code> if some member equals <code>x</code>; otherwise an error if a member errored, else <code>false</code>. <code>IN ()</code> is <code>false</code>. <code>NOT IN</code> is <code>!(… IN …)</code></td></tr>
+<tr><td>effective boolean value</td><td><code>xsd:boolean</code>, numeric and <code>xsd:string</code> literals have one (an ill-typed <code>"abc"^^xsd:integer</code> is <code>false</code>); an IRI, a blank node, a language-tagged or other-typed literal is an error</td></tr>
+<tr><td><code>FILTER</code>, <code>HAVING</code>, an <code>OPTIONAL</code>'s filter</td><td>the row is dropped</td></tr>
+<tr><td><code>BIND</code>, a projected <code>(expr AS ?v)</code>, a <code>GROUP BY</code> key</td><td><code>?v</code> is left unbound; the row stays</td></tr>
+<tr><td><code>ORDER BY</code></td><td>sorts as "no value", before everything else</td></tr>
+<tr><td><code>COUNT(expr)</code></td><td>the error is not counted</td></tr>
+<tr><td><code>SUM</code>, <code>GROUP_CONCAT</code>, <code>MIN</code></td><td>the aggregate is unbound for that group. An unbound variable is an error here too, so <code>SUM(?x)</code> over a group where some row lacks <code>?x</code> is unbound</td></tr>
+<tr><td><code>AVG</code></td><td>unbound if some rows error and others do not; <code>0</code> if every row errors, because errors are not counted and the average of zero values is <code>0</code> (§18.5.1.4)</td></tr>
+<tr><td><code>MAX</code></td><td>the largest value that is not an error: MAX orders like <code>ORDER BY DESC</code>, where "no value" comes last (§18.5.1.6, §15.1). MIN orders like <code>ORDER BY ASC</code>, where it comes first, hence the row above</td></tr>
+<tr><td><code>SAMPLE</code></td><td>returns one of the values that is not an error</td></tr>
+</tbody></table>
+<p>Through v0.3.2 rete turned an error into <code>false</code> at the function that raised
+it, so <code>FILTER(!CONTAINS(?iri, "x"))</code> kept every row, <code>BIND(!CONTAINS(?iri, "x") AS ?b)</code> bound <code>true</code>, and <code>SUM</code> / <code>AVG</code> / <code>MIN</code> / <code>MAX</code> / <code>GROUP_CONCAT</code>
+skipped the rows they could not use (<code>MAX</code> still does, as the spec says). Those results were wrong, and the
+<a href="../CHANGELOG.html">CHANGELOG</a> lists this as a result-changing fix.</p>
+<p>Where rete deliberately differs from Oxigraph 0.5, each time because the spec
+text says otherwise: <code>COUNT(expr)</code> removes errors and counts the rest
+(§18.5.1.2; Oxigraph makes the count unbound); <code>MAX</code> ignores error elements
+and an all-error <code>AVG</code> is <code>0</code> (§18.5.1.4-6; Oxigraph makes both unbound); <code>x IN ()</code> is <code>false</code> and
+<code>x NOT IN ()</code> is <code>true</code> (the examples in §17.4.1.9-10; Oxigraph raises an
+error); and the effective boolean value of an ill-typed numeric literal is
+<code>false</code> (§17.2.2; Oxigraph raises an error).</p>
 <h2 id="warnings">Type errors and query warnings</h2>
 <p>The string functions (<code>CONTAINS</code>, <code>STRSTARTS</code>, <code>STRENDS</code>, <code>STRBEFORE</code>,
 <code>STRAFTER</code>, <code>REGEX</code>, <code>REPLACE</code>, <code>STRLEN</code>, <code>UCASE</code>, <code>LCASE</code>, <code>SUBSTR</code>, <code>CONCAT</code>,
 <code>ENCODE_FOR_URI</code>, the hashes) take <strong>string literals</strong>. Given an IRI, a blank
-node, a number or another typed literal, they raise a SPARQL <strong>type error</strong>, and
-the spec says an error inside <code>FILTER</code> counts as <em>false</em>: the row is dropped,
-with no error. In <code>BIND</code> or a projected expression the variable is left
-unbound instead. rete follows the spec here, as Oxigraph and Jena do, so these
-queries return no rows:</p>
+node, a number or another typed literal, they raise a SPARQL <strong>type error</strong>.
+Inside <code>FILTER</code> the row is dropped, with no error, and an enclosing <code>!</code> does
+not rescue it (see <a href="#errors">Expression errors</a>). In <code>BIND</code> or a projected
+expression the variable is left unbound instead. rete follows the spec here,
+as Oxigraph and Jena do, so these queries return no rows:</p>
 <table><thead><tr><th>Query</th><th>Rows</th><th>Why</th></tr></thead><tbody>
 <tr><td><code>FILTER(CONTAINS(?s, "geneva"))</code>, <code>?s</code> an IRI</td><td>0</td><td>an IRI is not a string: use <code>CONTAINS(STR(?s), "geneva")</code></td></tr>
 <tr><td><code>FILTER(STRSTARTS(?year, "15"))</code>, <code>?year</code> an <code>xsd:integer</code></td><td>0</td><td>a number is not a string: use <code>STRSTARTS(STR(?year), "15")</code></td></tr>
@@ -942,7 +978,7 @@ results. <code>rete sparql</code> and <code>rete sparql-url</code> print them to
 stays the result:</p>
 <pre><code class="language-text">$ rete sparql maps.rete 'SELECT ?s WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?s, "geneva")) }'
 0 solution(s)
-warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which FILTER treats as false (BIND leaves the variable unbound); e.g. &lt;http://ex.org/map/geneva-1572&gt;. Hint: wrap it in STR() to match the IRI's text.
+warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, which makes a FILTER drop the row, even under ! (BIND leaves the variable unbound); e.g. &lt;http://ex.org/map/geneva-1572&gt;. Hint: wrap it in STR() to match the IRI's text.
 </code></pre>
 <p>With <code>--json</code>, the result object also gets a <code>warnings</code> array. The array is left
 out when there is nothing to report. Each entry has these fields:</p>
@@ -964,8 +1000,8 @@ from an <code>OPTIONAL</code> that did not match, or is misspelled. An error ins
 nested call (<code>CONTAINS(LCASE(?s), …)</code>) is reported once, by the inner
 function (<code>LCASE</code>).</li>
 <li><strong><code>invalid-regex</code></strong>: rete's regex engine uses Rust syntax, which has no
-look-around and no back-references. An invalid pattern matches nothing and
-is reported along with the parser's message.</li>
+look-around and no back-references. An invalid pattern is an error (the row
+is dropped, even under <code>!</code>) and is reported along with the parser's message.</li>
 <li><strong>The case-sensitivity hint</strong> is given only when all of these hold: the
 result is empty, no type error was raised, <code>CONTAINS</code> / <code>STRSTARTS</code> /
 <code>STRENDS</code> / <code>REGEX</code> without the <code>i</code> flag actually ran on string values and

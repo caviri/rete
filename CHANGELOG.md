@@ -46,6 +46,47 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **SPARQL: expression errors now propagate as the spec says. This changes
+  query results.** rete used to turn an expression error (a type error such
+  as `CONTAINS` on an IRI, an unbound variable, a division by zero) into
+  `false` at the function that raised it. An enclosing `!` then made it
+  `true`, so `FILTER(!CONTAINS(?iri, "x"))` kept rows that Oxigraph and Jena
+  drop. The error is now a value of its own and is resolved only where SPARQL
+  1.1 resolves it:
+  - `!error` is an error. `||` and `&&` follow the three-valued table of
+    §17.2: `true || error` is `true` and `false && error` is `false`.
+    `IF` errors on an erroring condition, `COALESCE` skips errors, `BOUND`
+    never errors, and `IN` / `NOT IN` follow §17.4.1.9-10.
+  - FILTER, HAVING and an OPTIONAL's filter drop a row whose condition is
+    false **or an error**. BIND and projected expressions leave the variable
+    unbound (`BIND(!CONTAINS(?iri, "x") AS ?b)` used to bind `true`), and
+    ORDER BY sorts an error as "no value".
+  - The effective boolean value follows §17.2.2: an ill-typed
+    `"abc"^^xsd:integer` is `false`, a derived numeric type such as
+    `xsd:int` counts, and a value function used as a whole condition
+    (`FILTER(STRLEN(?x))`) takes the EBV of its value instead of `false`.
+  - `isIRI` / `isLiteral` / `isBlank` / `isNumeric` / `sameTerm` /
+    `LANGMATCHES` and the GeoSPARQL relations raise an error on an unbound
+    or erroring argument, like every other function, instead of returning
+    `false`. An invalid `REGEX` pattern is an error.
+  - `IF` accepts a boolean built-in as its condition: `IF(isNumeric(?x), …)`
+    and `IF(CONTAINS(…), …)` used to be unbound on every row.
+  - Aggregates (§18.5.1): an unbound variable or an erroring argument is an
+    error element of the group, where rete used to skip the row. `SUM`,
+    `MIN` and `GROUP_CONCAT` of a group holding one are now **unbound**, and so
+    is `AVG` unless every element errors (then it stays `0`, since errors are
+    not counted). `SUM` also errors on a bound value that is not a number, as
+    `AVG` already did. Unchanged: `COUNT(expr)` counts the elements that are
+    not errors, `MAX` returns the largest one (it orders like `ORDER BY DESC`,
+    where "no value" comes last), and `SAMPLE` returns a value.
+
+  W3C SPARQL 1.1 conformance goes from 237 to 238 passing (`agg-err-02`,
+  "Protect from error in AVG"). On the SPARQL 1.0 suite, `datatype-2` and
+  `lang-1` now pass. A type-error warning's message now reads "which makes a
+  FILTER drop the row, even under !" instead of "which FILTER treats as
+  false", and every error is still counted once, where it is raised. See
+  [SPARQL: expression errors](docs/sparql.md#errors).
+
 - **Claude Desktop extension: a second `build_rete` could not be queried by the
   name it returned.** The tool answers "queryable now — pass `dataset`", but the
   local-file listing it resolves names against was cached for 5 s, so a graph
