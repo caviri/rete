@@ -412,6 +412,13 @@ and an all-error `AVG` is `0` (§18.5.1.4-6; Oxigraph makes both unbound); `x IN
 error); and the effective boolean value of an ill-typed numeric literal is
 `false` (§17.2.2; Oxigraph raises an error).
 
+The boolean built-ins (`isIRI`, `isLiteral`, `isBlank`, `isNumeric`,
+`isTRIPLE`, `CONTAINS`, `STRSTARTS`, `STRENDS`, `REGEX`, `LANGMATCHES`) work
+outside FILTER too: `BIND(CONTAINS(?label, "x") AS ?hit)` binds an
+`xsd:boolean`, or leaves `?hit` unbound on an error. `isNumeric` is true only
+for a literal of a numeric datatype with a valid lexical form, so it is false
+for the string `"10"`.
+
 ## Type errors and query warnings {#warnings}
 
 The string functions (`CONTAINS`, `STRSTARTS`, `STRENDS`, `STRBEFORE`,

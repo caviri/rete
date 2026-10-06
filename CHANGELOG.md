@@ -46,6 +46,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **SPARQL: boolean built-ins have a value outside FILTER, and `isNumeric`
+  checks the datatype.** `BIND(CONTAINS(?label, "x") AS ?hit)`,
+  `(isIRI(?o) AS ?iri)` and `COALESCE(REGEX(…), false)` used to be unbound on
+  every row, because only FILTER evaluated `isIRI` / `isLiteral` / `isBlank` /
+  `isNumeric` / `isTRIPLE` / `CONTAINS` / `STRSTARTS` / `STRENDS` / `REGEX` /
+  `LANGMATCHES`. They now give an `xsd:boolean` (or are unbound on an error)
+  wherever they appear, as §17.4.2-3 define them. `isNumeric` is true only
+  for a literal of a numeric datatype with a valid lexical form (§17.4.2.4),
+  so `isNumeric("10")` on an `xsd:string` and `isNumeric("abc"^^xsd:integer)`
+  are false. Both used to be true. No playground example or dataset-card
+  starter query uses either form, so no published answer changes.
+
 - **SPARQL: expression errors now propagate as the spec says. This changes
   query results.** rete used to turn an expression error (a type error such
   as `CONTAINS` on an IRI, an unbound variable, a division by zero) into
