@@ -948,7 +948,7 @@ value of its own and resolves it only where SPARQL 1.1 says to (§17.2, §17.3,
 <p>Through v0.3.2 rete turned an error into <code>false</code> at the function that raised
 it, so <code>FILTER(!CONTAINS(?iri, "x"))</code> kept every row, <code>BIND(!CONTAINS(?iri, "x") AS ?b)</code> bound <code>true</code>, and <code>SUM</code> / <code>AVG</code> / <code>MIN</code> / <code>MAX</code> / <code>GROUP_CONCAT</code>
 skipped the rows they could not use (<code>MAX</code> still does, as the spec says). Those results were wrong, and the
-<a href="../CHANGELOG.html">CHANGELOG</a> lists this as a result-changing fix.</p>
+<a href="https://github.com/caviri/rete/blob/main/CHANGELOG.html">CHANGELOG</a> lists this as a result-changing fix.</p>
 <p>Where rete deliberately differs from Oxigraph 0.5, each time because the spec
 text says otherwise: <code>COUNT(expr)</code> removes errors and counts the rest
 (§18.5.1.2; Oxigraph makes the count unbound); <code>MAX</code> ignores error elements

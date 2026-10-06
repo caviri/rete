@@ -402,7 +402,7 @@ Through v0.3.2 rete turned an error into `false` at the function that raised
 it, so `FILTER(!CONTAINS(?iri, "x"))` kept every row, `BIND(!CONTAINS(?iri,
 "x") AS ?b)` bound `true`, and `SUM` / `AVG` / `MIN` / `MAX` / `GROUP_CONCAT`
 skipped the rows they could not use (`MAX` still does, as the spec says). Those results were wrong, and the
-[CHANGELOG](../CHANGELOG.md) lists this as a result-changing fix.
+[CHANGELOG](https://github.com/caviri/rete/blob/main/CHANGELOG.md) lists this as a result-changing fix.
 
 Where rete deliberately differs from Oxigraph 0.5, each time because the spec
 text says otherwise: `COUNT(expr)` removes errors and counts the rest
