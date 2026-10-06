@@ -45,6 +45,13 @@ impl FExpr {
                 };
                 Some(Rc::from(fmt_num_typed(v)))
             }
+            // A boolean built-in (isIRI, CONTAINS, REGEX, …) in value position
+            // (BIND, a projected expression, a COALESCE or IF argument) is an
+            // xsd:boolean (§17.4.2, §17.4.3), or an error. It used to fall
+            // through to `func_value`, which has no value for it: unbound.
+            FExpr::Func(f, args) if is_boolean_builtin(*f) => {
+                func_bool(*f, args, ctx, b).map(|v| Rc::from(bool_literal(v)))
+            }
             FExpr::Func(f, args) => func_value(*f, args, ctx, b),
             // COALESCE: the first argument that evaluates without error.
             FExpr::Coalesce(args) => args.iter().find_map(|e| e.value(ctx, b)),
@@ -742,6 +749,30 @@ fn term_ebv(token: &str) -> Option<bool> {
     }
 }
 
+/// `isNumeric` (§17.4.2.4): a literal whose datatype is numeric (including the
+/// types derived from `xsd:decimal`) and whose lexical form is valid for it.
+fn is_numeric_term(token: &str) -> bool {
+    if !token.starts_with('"') {
+        return false;
+    }
+    let Some(dt) = datatype_iri(token) else {
+        return false;
+    };
+    let Some(local) = dt.strip_prefix("http://www.w3.org/2001/XMLSchema#") else {
+        return false;
+    };
+    if !is_numeric_ebv_dt(&dt) {
+        return false;
+    }
+    let lex = crate::terms::lexical(token);
+    match local {
+        "decimal" => is_decimal_lexical(&lex),
+        "float" | "double" => parse_xsd_double(&lex).is_some(),
+        // xsd:integer and every type derived from it.
+        _ => is_int_lexical(&lex),
+    }
+}
+
 /// XSD numeric datatypes, including those derived from `xsd:decimal`, for the
 /// EBV rule ("a numeric type or a typed literal with a datatype derived from a
 /// numeric type", §17.2.2).
@@ -1023,7 +1054,10 @@ fn func_bool(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<bool> {
         Builtin::IsIri => val(0).map(|t| t.starts_with('<')),
         Builtin::IsBlank => val(0).map(|t| t.starts_with("_:")),
         Builtin::IsLiteral => val(0).map(|t| t.starts_with('"')),
-        Builtin::IsNumeric => val(0).map(|t| as_number(&t).is_some()),
+        // isNumeric: a literal of a numeric datatype WITH a valid lexical form
+        // (§17.4.2.4), not any literal whose text parses as a number, which
+        // made isNumeric("10") true for an xsd:string.
+        Builtin::IsNumeric => val(0).map(|t| is_numeric_term(&t)),
         // RDF-star: is the argument a quoted triple (`<<s p o>>`)?
         Builtin::IsTriple => val(0).map(|t| crate::terms::is_quoted_triple(&t)),
         Builtin::Contains => two(|a, c| a.contains(c), diag::MISS_CONTAINS),
@@ -1474,6 +1508,105 @@ mod tests {
         );
     }
 
+    /// Boolean built-ins have a value outside FILTER (§17.4.2 / §17.4.3 return
+    /// xsd:boolean), and isNumeric needs a numeric datatype with a valid
+    /// lexical form (§17.4.2.4).
+    #[test]
+    fn boolean_builtins_have_values_and_is_numeric_is_strict() {
+        let rete = fixture();
+        let mut slots = Slots::new();
+        slots.add("unset");
+        let ctx = Ctx::new(&rete, slots);
+        let row = ctx.slots.empty_row();
+        let f = |b: Builtin, args: &[&str]| {
+            FExpr::Func(
+                b,
+                args.iter().map(|a| FExpr::Const(a.to_string())).collect(),
+            )
+        };
+        let t = bool_literal(true);
+        let fl = bool_literal(false);
+
+        // In value position: a typed boolean, or unbound on an error.
+        assert_eq!(
+            f(Builtin::IsIri, &["<x>"]).value(&ctx, &row).as_deref(),
+            Some(&*t)
+        );
+        assert_eq!(
+            f(Builtin::IsLiteral, &["<x>"]).value(&ctx, &row).as_deref(),
+            Some(&*fl)
+        );
+        assert_eq!(
+            f(Builtin::Contains, &["\"abc\"", "\"b\""])
+                .value(&ctx, &row)
+                .as_deref(),
+            Some(&*t)
+        );
+        assert_eq!(
+            f(Builtin::Contains, &["<x>", "\"b\""]).value(&ctx, &row),
+            None
+        );
+        assert_eq!(
+            FExpr::Func(Builtin::IsBlank, vec![FExpr::Var("unset".into())]).value(&ctx, &row),
+            None
+        );
+        // So COALESCE sees a value, and skips only the error.
+        assert_eq!(
+            FExpr::Coalesce(vec![
+                f(Builtin::StrStarts, &["\"abc\"", "\"z\""]),
+                FExpr::Const(t.clone())
+            ])
+            .value(&ctx, &row)
+            .as_deref(),
+            Some(&*fl)
+        );
+        assert_eq!(
+            FExpr::Coalesce(vec![
+                f(Builtin::Regex, &["<x>", "\"z\""]),
+                FExpr::Const(t.clone())
+            ])
+            .value(&ctx, &row)
+            .as_deref(),
+            Some(&*t)
+        );
+
+        // isNumeric: datatype AND lexical form.
+        let num = |lex: &str, dt: &str| {
+            func_bool(
+                Builtin::IsNumeric,
+                &[FExpr::Const(lit(lex, &format!("{XSD}{dt}")))],
+                &ctx,
+                &row,
+            )
+        };
+        assert_eq!(num("12", "integer"), Some(true));
+        assert_eq!(num("-1.5", "decimal"), Some(true));
+        assert_eq!(num("1e3", "double"), Some(true));
+        assert_eq!(num("INF", "float"), Some(true));
+        assert_eq!(num("7", "int"), Some(true));
+        assert_eq!(num("10", "string"), Some(false));
+        assert_eq!(num("abc", "integer"), Some(false));
+        assert_eq!(num("1.5", "integer"), Some(false));
+        assert_eq!(
+            func_bool(
+                Builtin::IsNumeric,
+                &[FExpr::Const("\"10\"".into())],
+                &ctx,
+                &row
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            func_bool(
+                Builtin::IsNumeric,
+                &[FExpr::Const("<x>".into())],
+                &ctx,
+                &row
+            ),
+            Some(false)
+        );
+    }
+
     #[test]
     fn value_builtins_cover_strings_dates_hashes_casts_and_rdf_star() {
         let rete = fixture();
@@ -1636,7 +1769,10 @@ mod tests {
         assert!(boolean(Builtin::IsIri, &["<iri>"]));
         assert!(boolean(Builtin::IsBlank, &["_:b"]));
         assert!(boolean(Builtin::IsLiteral, &["\"x\""]));
-        assert!(boolean(Builtin::IsNumeric, &["42"]));
+        assert!(boolean(
+            Builtin::IsNumeric,
+            &[&lit("42", &format!("{XSD}integer"))]
+        ));
         assert!(boolean(Builtin::IsTriple, &["<<<s> <p> <o>>>"]));
         assert!(boolean(Builtin::Contains, &["\"abc\"", "\"b\""]));
         assert!(boolean(Builtin::StrStarts, &["\"abc\"", "\"a\""]));
