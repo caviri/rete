@@ -54,7 +54,8 @@ Recommended workflow:
    while exploring. reason=true turns on OWL 2 QL entailment where the graph
    carries an ontology.
    CONTAINS / STRSTARTS / REGEX need strings: wrap an IRI or a number in STR(),
-   e.g. CONTAINS(STR(?s), "x"); otherwise the FILTER is silently false (see warnings).
+   e.g. CONTAINS(STR(?s), "x"); otherwise the row is silently dropped, even
+   under ! (see warnings).
 6. find_entities — resolve a name to IRIs before asking about a specific thing.
 7. validate_shacl — data-quality checks with SHACL Core shapes.
 8. build_rete — turn RDF text (Turtle / TriG / N-Triples / N-Quads) into a new
@@ -106,7 +107,8 @@ const lastStats = new WeakMap();
 /** Physical reads for this call, and the fraction of the file they are. */
 // --- query diagnostics -------------------------------------------------------
 // A FILTER that hits a SPARQL type error (CONTAINS on an IRI, STRSTARTS on a
-// number, a language-tag mismatch, …) is false by the spec — the query returns
+// number, a language-tag mismatch, …) drops the row by the spec — even under
+// `!`, since the error propagates through it (#284) — so the query returns
 // fewer rows, or none, and no error. An agent reads "0 rows" as "CONTAINS is
 // unsupported". The engine counts those errors; say them in plain words.
 
@@ -137,7 +139,7 @@ function warningLine(size, warnings) {
       .join("; ");
     parts.push(
       `${errors.length} FILTER type error${errors.length === 1 ? "" : "s"}: ${what}. ` +
-        "(SPARQL makes a FILTER false on a type error, without any error.)",
+        "(A SPARQL type error makes a FILTER drop the row, even under !, without raising an error.)",
     );
   }
   for (const h of hints) parts.push(`Hint: ${h.message.replace(/^No results\. /, "")}`);

@@ -21,7 +21,9 @@ python scripts/sparql_conformance.py \
 
 ## Scorecard
 
-**309 query-evaluation tests**, byte-for-byte against the W3C expected results.
+**312 query-evaluation tests**, byte-for-byte against the W3C expected results.
+Measured 2026-10-06 on `main` (`4c58a2dd`) against `w3c/rdf-tests` `5e5da96`
+(2026-10-02).
 "n/s" = errored / not supported.
 
 | Category | pass | n/s | notes |
@@ -31,24 +33,27 @@ python scripts/sparql_conformance.py \
 | cast | 6 / 6 | 0 | ✅ full — xsd:integer/decimal/float/double/boolean/string |
 | bind | 10 / 10 | 0 | ✅ full — in-pattern BIND visible to later FILTER/join |
 | grouping | 4 / 4 | 0 | ✅ full |
-| bindings (VALUES) | 10 / 11 | 1 | |
-| aggregates | 39 / 42 | 3 | GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT |
-| property-path | 30 / 33 | 2 | incl. negated property sets + zero-length on empty data |
+| bindings (VALUES) | 10 / 12 | 2 | |
+| aggregates | 40 / 42 | 2 | GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT |
+| property-path | 29 / 33 | 2 | incl. negated property sets + zero-length on empty data |
 | construct | 3 / 5 | 1 | graph-isomorphism check |
 | exists | 4 / 6 | 1 | |
 | project-expression | 7 / 7 | 0 | ✅ full |
 | functions | 73 / 75 | 1 | nearly full — only NOW() + IRI() base resolution |
 | entailment | 28 / 70 | 4 | needs `build --materialize` |
-| subquery | 2 / 14 | 12 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
-| service | 0 / 7 | 7 | `SERVICE` **is** implemented — these tests need a live endpoint, so they're excluded from the offline run |
+| subquery | 7 / 16 | 7 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
+| service | 1 / 7 | 6 | `SERVICE` **is** implemented — most of these tests need a live endpoint, which the offline run does not have |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **236 / 309 (76.4%)** | 29 | |
+| **TOTAL** | **238 / 312 (76.3%)** | 29 | |
 
 > This total is **measured in CI**, not written by hand. The conformance job runs
 > the harness against the W3C suite on every Rust change and fails if the passing
 > count drops below `tests/conformance-baseline.json`. It was not always so: the
 > figure here read 232 / 75.1% while the engine actually scored 236 / 76.4%, and
-> nothing would have caught it moving the other way.
+> nothing would have caught it moving the other way. It then drifted again, to a
+> stale 236 / 309, because only the baseline file is checked, not this page.
+> The suite itself also moves: CI clones `w3c/rdf-tests` at HEAD on every run,
+> so the denominator follows upstream (309 tests in June, 312 by October).
 
 ## Coverage notes
 
