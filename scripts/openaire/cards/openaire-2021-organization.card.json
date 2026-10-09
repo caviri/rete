@@ -28,7 +28,7 @@
     "## What is in it",
     "",
     "- One `oaire:Organization` per record, with legal name, short name, country code and website.",
-    "- An organisation with a ROR id *is* `https://ror.org/{id}`, so this shard joins the `ror` graph and every affiliation that cites ROR. The others keep their OpenAIRE id under `https://w3id.org/rete/openaire/20/…`.",
+    "- Every organisation keeps its OpenAIRE id under `https://w3id.org/rete/openaire/20/…`. The converter would mint `https://ror.org/{id}` for a ROR id, but the 2021 dump identifies organisations by GRID, so this shard has none. That gap is left as it was published, so this file differs from the 2021 build only by the IRI repairs described below.",
     "",
     "## Provenance",
     "",
@@ -41,7 +41,7 @@
     "The converter prints its tally on every run. It never adds a scheme to a value that does not state one, and it never rewrites a host."
   ],
   "example_queries": [
-    "# Organisations identified by ROR\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?org ?name WHERE {\n  ?org a oaire:Organization ; oaire:legalName ?name .\n  FILTER(STRSTARTS(STR(?org), \"https://ror.org/\"))\n} LIMIT 20",
+    "# Organisations and their OpenAIRE ids\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?org ?name ?id WHERE {\n  ?org a oaire:Organization ; oaire:legalName ?name ; oaire:openaireId ?id .\n} LIMIT 20",
     "# Organisations per country\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?country (COUNT(?org) AS ?organisations) WHERE {\n  ?org oaire:countryCode ?country .\n} GROUP BY ?country ORDER BY DESC(?organisations) LIMIT 20",
     "# Organisations and their websites\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?org ?name ?website WHERE {\n  ?org oaire:legalName ?name ; oaire:website ?website .\n} LIMIT 20",
     "# Short names next to legal names\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?short ?name WHERE {\n  ?org oaire:legalShortName ?short ; oaire:legalName ?name .\n} LIMIT 20",

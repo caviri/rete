@@ -27,9 +27,16 @@
     "",
     "## What is in it",
     "",
-    "- One `oaire:Software` per record, with title, publication year (`xsd:gYear`), issue date, publisher, language, best access right (`OPEN`, `RESTRICTED`, `CLOSED`, `EMBARGO`), subjects (`dct:subject`), venue and links to full text (`oaire:fulltextUrl`).",
-    "- **Reified authorship.** `oaire:hasAuthor` points at an `oaire:AuthorRole` with an `oaire:rank`, held (`oaire:isHeldBy`) by an `oaire:Agent`. That makes \"second author of X\" a question the graph can answer.",
-    "- **Joins by IRI, not by string.** A record with a DOI *is* `https://doi.org/{doi}`, and an author with an ORCID *is* `https://orcid.org/{id}`. This shard therefore federates with crossref, datacite, opencitations, dblp and orcid. Everything else keeps its OpenAIRE id under `https://w3id.org/rete/openaire/50/…`.",
+    "- One `oaire:Software` per record, with title, publication year (`xsd:gYear`), issue date, publisher, language, best access right (`OPEN`, `RESTRICTED`, `CLOSED`, `EMBARGO`), venue and links to full text (`oaire:fulltextUrl`).",
+    "- **Reified authorship.** `oaire:hasAuthor` points at an `oaire:AuthorRole` with an `oaire:rank`, held (`oaire:isHeldBy`) by an `oaire:Agent` with an `oaire:agentName`. That makes \"second author of X\" a question the graph can answer.",
+    "- **Joins by IRI, not by string.** A record with a DOI *is* `https://doi.org/{doi}`, so this shard federates with crossref, datacite, opencitations, dblp and zenodo on the DOI. A record without one keeps its OpenAIRE id under `https://w3id.org/rete/openaire/50/…`.",
+    "",
+    "## Known gaps",
+    "",
+    "- **No ORCID IRIs.** The converter would mint `https://orcid.org/{id}` for an author who carries one, but it does not read the 2021 dump's author-pid shape, so every author here is a record-local `oaire:Agent`.",
+    "- **Almost no subjects.** The 2021 records nest a subject's value one level deeper (`subject.value`) than the converter reads.",
+    "",
+    "Both gaps are left as they were published, so this file differs from the 2021 build only by the IRI repairs described below.",
     "",
     "## Provenance",
     "",
@@ -43,9 +50,9 @@
   ],
   "example_queries": [
     "# Ten software records with a DOI, and their titles\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?doi ?title WHERE {\n  ?record a oaire:Software ; oaire:doi ?doi ; oaire:title ?title .\n} LIMIT 10",
-    "# Authors with an ORCID, in rank order on their record\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?rank ?author WHERE {\n  ?record oaire:hasAuthor ?role .\n  ?role oaire:rank ?rank ; oaire:isHeldBy ?author .\n  FILTER(STRSTARTS(STR(?author), \"https://orcid.org/\"))\n} LIMIT 20",
+    "# Authors by name, with their rank on the record\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?rank ?name WHERE {\n  ?record oaire:hasAuthor ?role .\n  ?role oaire:rank ?rank ; oaire:isHeldBy ?author .\n  ?author oaire:agentName ?name .\n} LIMIT 20",
     "# Open-access software records published in 2020\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nSELECT ?record ?title WHERE {\n  ?record oaire:publicationYear \"2020\"^^xsd:gYear ; oaire:accessRight \"OPEN\" ; oaire:title ?title .\n} LIMIT 20",
     "# Where to read them: full-text links\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?url WHERE {\n  ?record oaire:fulltextUrl ?url .\n} LIMIT 20",
-    "# Subjects and publisher of a sample of records\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nPREFIX dct: <http://purl.org/dc/terms/>\nSELECT ?record ?publisher ?subject WHERE {\n  ?record oaire:publisherName ?publisher ; dct:subject ?subject .\n} LIMIT 20"
+    "# Records with their publisher and language\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?publisher ?language WHERE {\n  ?record oaire:publisherName ?publisher ; oaire:language ?language .\n} LIMIT 20"
   ]
 }
