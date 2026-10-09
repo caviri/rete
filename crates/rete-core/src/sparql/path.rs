@@ -183,7 +183,7 @@ fn bind_pair(ctx: &Ctx, subj: &PatternTerm, obj: &PatternTerm, a: u32, b: u32) -
 /// Can `ast` relate a node to *itself* via a zero-length path (`*`/`?`)? Used so
 /// a constant endpoint that isn't even in the graph still yields the identity
 /// solution (`:x :p* ?o` ⇒ `?o = :x`, even on an empty dataset).
-fn matches_zero_length(ast: &PathAst) -> bool {
+pub(super) fn matches_zero_length(ast: &PathAst) -> bool {
     match ast {
         PathAst::Rep(_, Rep::ZeroOrMore | Rep::ZeroOrOne) => true,
         PathAst::Rep(inner, Rep::One) => matches_zero_length(inner),

@@ -22,7 +22,7 @@ python scripts/sparql_conformance.py \
 ## Scorecard
 
 **312 query-evaluation tests**, byte-for-byte against the W3C expected results.
-Measured 2026-10-06 on `main` (`4c58a2dd`) against `w3c/rdf-tests` `5e5da96`
+Measured 2026-10-09 (after the correlated zero-length path fix) against `w3c/rdf-tests` `5e5da96`
 (2026-10-02) — the revision pinned in
 [`tests/w3c-rdf-tests.rev`](https://github.com/caviri/rete/blob/main/tests/w3c-rdf-tests.rev)
 (see [The pinned suite](#the-pinned-suite)).
@@ -37,7 +37,7 @@ Measured 2026-10-06 on `main` (`4c58a2dd`) against `w3c/rdf-tests` `5e5da96`
 | grouping | 4 / 4 | 0 | ✅ full |
 | bindings (VALUES) | 10 / 12 | 2 | |
 | aggregates | 40 / 42 | 2 | GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT |
-| property-path | 29 / 33 | 2 | incl. negated property sets + zero-length on empty data |
+| property-path | 30 / 33 | 2 | incl. negated property sets + zero-length on empty data |
 | construct | 3 / 5 | 1 | graph-isomorphism check |
 | exists | 4 / 6 | 1 | |
 | project-expression | 7 / 7 | 0 | ✅ full |
@@ -46,7 +46,7 @@ Measured 2026-10-06 on `main` (`4c58a2dd`) against `w3c/rdf-tests` `5e5da96`
 | subquery | 7 / 16 | 7 | nested SELECT joins; GRAPH-scoped + RDF/XML data n/a |
 | service | 1 / 7 | 6 | `SERVICE` **is** implemented — most of these tests need a live endpoint, which the offline run does not have |
 | csv-tsv-res | 0 / 3 | 3 | CSV/TSV result format |
-| **TOTAL** | **238 / 312 (76.3%)** | 29 | |
+| **TOTAL** | **239 / 312 (76.6%)** | 29 | |
 
 > This total is **measured in CI**, not written by hand. The conformance job runs
 > the harness against the W3C suite on every Rust change and fails if the passing

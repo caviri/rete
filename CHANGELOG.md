@@ -46,6 +46,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **SPARQL: a zero-length path no longer returns a term the graph does not
+  have.** `SELECT * WHERE { VALUES ?v { 1 } ?v <p>? ?v }` answered `?v = 1` on
+  a graph with no `1` in it. With both endpoints variables, a `?` / `*` path
+  matches graph nodes only. The correlated property-path join (which fixes a
+  bound endpoint to drive the path from it) took the rule for a constant
+  written in the query instead. The two now agree again. W3C SPARQL 1.1:
+  property-path 29 -> 30 / 33, total 238 -> 239 / 312
+  (`property-path/values_and_path`, lost in June and now restored).
+
 - **SPARQL: boolean built-ins have a value outside FILTER, and `isNumeric`
   checks the datatype.** `BIND(CONTAINS(?label, "x") AS ?hit)`,
   `(isIRI(?o) AS ?iri)` and `COALESCE(REGEX(…), false)` used to be unbound on

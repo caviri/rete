@@ -12,7 +12,7 @@
 
 use super::aggregate::aggregate;
 use super::expr::SortKey;
-use super::path::eval_path;
+use super::path::{eval_path, matches_zero_length};
 use super::*;
 use crate::bgp::{
     bgp_exists, collect_pattern_slots, eval_bgp_rows, row_to_binding, BgpSolutions, Binding,
@@ -1743,6 +1743,38 @@ fn fix_endpoint(ctx: &Ctx, t: &PatternTerm, lrow: &Row) -> PatternTerm {
     t.clone()
 }
 
+/// Would fixing `orig` to `fixed` invent a zero-length solution that the
+/// uncorrelated evaluation never produces?
+///
+/// Fixing a variable endpoint turns `eval_path`'s `(?s, ?o)` arm into a
+/// `(Const, _)` one, and the two differ on a term that is not a graph node: a
+/// constant endpoint absent from the graph still gets the zero-length identity
+/// (`:x :p* ?o` ⇒ `?o = :x`, §18.4 — a term written in the query), while the
+/// variable form enumerates graph nodes only. So `VALUES ?v { 1 } ?v :p? ?v`
+/// on an empty graph answered `?v = 1` instead of nothing (W3C
+/// `property-path/values_and_path`, "ZeroOrX property paths should only return
+/// terms in the graph and not also terms defined in the query").
+///
+/// Only when the *other* endpoint is a variable in the query too: with a
+/// constant there, the uncorrelated form is itself a `(Const, _)` evaluation
+/// whose self-binding the correlated one reproduces exactly. Without a
+/// zero-length step a non-node start reaches nothing either way, so the
+/// dictionary lookup is skipped.
+fn invents_zero_length(
+    ctx: &Ctx,
+    spec: &PathAst,
+    orig: &PatternTerm,
+    fixed: &PatternTerm,
+    other_orig: &PatternTerm,
+) -> bool {
+    match (orig, fixed, other_orig) {
+        (PatternTerm::Var(_), PatternTerm::Const(t), PatternTerm::Var(_)) => {
+            matches_zero_length(spec) && ctx.rete.dictionary().node_of_term(t).is_none()
+        }
+        _ => false,
+    }
+}
+
 /// Correlated property-path join: for each row of the already-bound `bound`
 /// side, fix any endpoint variable the path shares with it, evaluate the path
 /// from that fixed endpoint, and merge. The cheap alternative to materializing
@@ -1768,7 +1800,17 @@ fn correlated_path_join<'q>(
         );
         let mut cache = ExistsCache::new();
         let mut out: Vec<Row> = Vec::new();
-        for pr in eval_path(ctx, index, &s2, spec, &o2) {
+        // Same multiset as the uncorrelated hash join: a variable endpoint
+        // fixed to a non-node has no path solutions there (see
+        // `invents_zero_length`).
+        let phantom = invents_zero_length(ctx, spec, subj, &s2, obj)
+            || invents_zero_length(ctx, spec, obj, &o2, subj);
+        let paths = if phantom {
+            Vec::new()
+        } else {
+            eval_path(ctx, index, &s2, spec, &o2)
+        };
+        for pr in paths {
             if let Some(m) = merge_rows(&lrow, &pr) {
                 if cond.is_none_or(|f| f.boolean(ctx, index, &m, &mut cache)) {
                     out.push(m);
