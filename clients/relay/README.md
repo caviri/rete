@@ -39,6 +39,21 @@ SELECT answers carry W3C SPARQL-JSON `results` **and** a plain-values
 into network vs disk-cache reads. ASK → `boolean`; CONSTRUCT/DESCRIBE →
 `triples`. `reason: true` adds OWL 2 QL entailment by query rewriting.
 
+A quoted triple in a CONSTRUCT/DESCRIBE answer is written as the RDF 1.2
+triple term `<<( s p o )>>`, as `rete export` does by default, on every plane
+(`/api`, `/sparql`, `/mcp`). `quoted_triple_syntax: "rdf-star"` returns rete's
+stored `<<s p o>>` instead; RDF 1.2 has no spelling for a quoted triple in
+subject position, so that case is refused (400 on `/api`, 406 on `/sparql`)
+naming the option.
+
+Every answer also carries `warnings`: the FILTER type errors the engine
+reported (`Graph.last_warnings()`), e.g. `CONTAINS(?iri, "x")`. SPARQL makes
+such a FILTER false, so rows vanish with no error; each warning names the
+function and argument and gives a hint (`wrap it in STR()`). On `/sparql` they
+come back in an `X-Rete-Warnings` header (a JSON array of messages) and, for
+SPARQL-JSON results, a `warnings` member. Both are absent when there is
+nothing to report.
+
 **Two-tier lazy cache.** Every open is lazy (HTTP Range). Fetched byte
 blocks (256 KiB) persist under `DATA_DIR/.rete-cache` — LRU-capped by
 `RETE_CACHE_MAX_MB`, validated by length+ETag against the origin — so a
@@ -153,3 +168,17 @@ Push `Dockerfile`, `requirements.txt`, `app.py`, `rete_service.py`,
 `branding.json` + this README to a Docker Space. Persistent storage at
 `/data` makes the disk cache survive restarts (and lets you drop local
 `.rete` files in).
+
+## Tests
+
+`tests/` runs inside the relay image against the `rete-graph` wheel it installs
+from PyPI. The `Relay tests` workflow runs the same commands:
+
+```sh
+docker build -t rete-relay-test clients/relay
+docker run --rm -v "$PWD/clients/relay:/src" -w /src rete-relay-test sh -c \
+  'pip install -q -r requirements-test.txt && python -m pytest tests -q'
+```
+
+No network and no LLM: datasets are built into a temporary `DATA_DIR`, and the
+`/api/ask` agent runs on pydantic-ai's scripted `FunctionModel`.
