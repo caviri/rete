@@ -10,7 +10,7 @@ publish = false
 # pulls in Oxigraph only here. In-memory Oxigraph needs no RocksDB/clang, so we
 # disable default features to keep the build light.
 [dependencies]
-rete-core = { version = "=0.3.2", path = "../rete-core", features = ["parallel"] }
+rete-core = { version = "=0.3.3", path = "../rete-core", features = ["parallel"] }
 # `rdf-12`, because rete-core's `rdf12-turtle` feature pulls `oxttl` 0.2, which
 # turns `oxrdf` 0.3's `rdf-12` on — and Cargo unifies features per crate
 # version, so Oxigraph's own graph sees that `oxrdf` too. `spargebra` 0.4 then

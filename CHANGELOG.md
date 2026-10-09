@@ -5,6 +5,43 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-09
+
+**Where 0.3.3 is published: PyPI (`rete-graph` 0.3.3) and the Claude Desktop
+extension (`rete-0.3.3.mcpb`, and the `rete.mcpb` "current build" link) only.**
+It is **not** published to crates.io or npm, and there is no GitHub release or
+container image for it: `rete-core` / `rete-cli` / `rete-wasm` / `rete-graph`
+on crates.io and `rete-graph` on npm stay at 0.3.2. The workspace and every
+client manifest say 0.3.3, so a build from source reports 0.3.3. The JavaScript
+changes below (`lastWarnings()`, the RDF 1.2 N-Quads writers) reach users only
+through the extension, which bundles the JS client, until an npm release.
+
+This is the first release since 0.3.2 (2026-08-01). The engine changes below
+all reach Python (the wheel embeds the engine) and the extension (it embeds the
+same engine compiled to wasm). The ones that matter most:
+
+- **SPARQL results change in two places.** Expression errors now propagate as
+  SPARQL 1.1 specifies, so `FILTER(!CONTAINS(?iri, "x"))` no longer keeps rows
+  that Oxigraph and Jena drop. And boolean built-ins (`CONTAINS`, `isIRI`,
+  `REGEX`, …) now have a value outside FILTER, where they used to be unbound.
+  String functions read the whole literal, not up to its first embedded quote.
+- **FILTER type errors are reported, not silent.** `CONTAINS` on an IRI,
+  `STRSTARTS` on a number and similar errors are counted and explained with a
+  hint. Python gets `Graph.last_warnings()`, and the extension's
+  `sparql_query` states them in words the agent reads. Results are unchanged.
+- **RDF 1.2 quoted triples.** Exports write the RDF 1.2 triple term
+  `<<( s p o )>>` by default, so a dump with quoted triples loads in current
+  parsers. `rete build` and the clients read both surfaces, including RDF 1.2
+  Turtle/TriG. Python's `to_nquads()` writes RDF 1.2 too.
+- **Export.** It runs in bounded memory (`--memory-budget-mb`), and gains
+  streaming Turtle and TriG writers, `--compress zstd|gzip` and
+  `--format hdt`. IRI validity is decided by an RFC 3987 parser.
+- **Format and cards.** The three merge-join permutations are optional
+  (`--permutations 3`). Dataset Card derivation moved into `rete-core`, and
+  the card says whether a file holds quoted triples.
+
+The full list follows.
+
 ### Added
 
 - **SPARQL: warnings for FILTER type errors that used to be silent.**

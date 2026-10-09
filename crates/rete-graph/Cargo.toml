@@ -17,7 +17,7 @@ include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
 [dependencies]
 # Pinned exactly, like every other crate in this workspace: a published facade
 # must never resolve an engine it was not built against.
-rete-core = { version = "=0.3.2", path = "../rete-core" }
+rete-core = { version = "=0.3.3", path = "../rete-core" }
 
 [features]
 default = ["compression"]

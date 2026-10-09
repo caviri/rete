@@ -34,7 +34,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Pre-1.0 — expect breaking changes.** rete is **0.3.2**, and until **1.0.0**
+> **Pre-1.0 — expect breaking changes.** rete is **0.3.3**, and until **1.0.0**
 > *both* the public API and the `.rete` file format may change in ways that break
 > what you built on them — including changes that require rebuilding a file you
 > already published. See
@@ -403,9 +403,10 @@ regenerated with `cargo run -p docgen`).
 
 ## Status
 
-**v0.3.2** — the 0.3.x engine line, shipped to crates.io (`rete-core`,
-`rete-cli`, `rete-wasm`, `rete-graph`), PyPI and npm with every client in
-lockstep (see [CHANGELOG](CHANGELOG.md)). The Java client and the R package are
+**v0.3.3** — the 0.3.x engine line. 0.3.3 is on PyPI (`rete-graph`) and ships
+as the Claude Desktop extension (`rete.mcpb`); crates.io (`rete-core`,
+`rete-cli`, `rete-wasm`, `rete-graph`) and npm stay at 0.3.2, the last release
+that went to every registry (see [CHANGELOG](CHANGELOG.md)). The Java client and the R package are
 built from this repo and are not on Maven Central or CRAN.
 Working end-to-end — the single-file format, dictionary + permutation indexes, the
 community summary and a self-describing **schema pyramid**, SPARQL + GeoSPARQL,
