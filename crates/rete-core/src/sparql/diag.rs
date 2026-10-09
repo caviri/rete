@@ -18,7 +18,75 @@
 
 use std::cell::RefCell;
 
-use super::{Builtin, FExpr, QueryOutput};
+use super::{ArithOp, Builtin, FExpr, Op, QueryOutput};
+
+/// Where a type error was raised: a built-in function, or an operator
+/// (`+ - * /`, a comparison, `IN`), which SPARQL defines as functions too
+/// (`op:numeric-add`, `op:numeric-equal`, …) but which have no call syntax.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Site {
+    Fn(Builtin),
+    /// The operator's SPARQL spelling: `+`, `<=`, `IN`, …
+    Op(&'static str),
+}
+
+impl From<Builtin> for Site {
+    fn from(f: Builtin) -> Self {
+        Site::Fn(f)
+    }
+}
+
+impl Site {
+    pub(crate) fn arith(op: ArithOp) -> Site {
+        Site::Op(match op {
+            ArithOp::Add => "+",
+            ArithOp::Sub => "-",
+            ArithOp::Mul => "*",
+            ArithOp::Div => "/",
+        })
+    }
+
+    pub(crate) fn compare(op: Op) -> Site {
+        Site::Op(match op {
+            Op::Eq => "=",
+            Op::Ne => "!=",
+            Op::Lt => "<",
+            Op::Le => "<=",
+            Op::Gt => ">",
+            Op::Ge => ">=",
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Site::Fn(f) => fn_name(f),
+            Site::Op(sym) => sym,
+        }
+    }
+
+    /// The family a site belongs to, which decides the hint.
+    fn family(self) -> Family {
+        match self {
+            Site::Fn(Builtin::Abs | Builtin::Ceil | Builtin::Floor | Builtin::Round) => {
+                Family::Numeric
+            }
+            Site::Op("+" | "-" | "*" | "/") => Family::Numeric,
+            Site::Op(_) => Family::Compare,
+            Site::Fn(Builtin::Lang | Builtin::Datatype) => Family::LiteralAccessor,
+            Site::Fn(Builtin::StrDt | Builtin::StrLang) => Family::Constructor,
+            Site::Fn(_) => Family::Other,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Family {
+    Numeric,
+    Compare,
+    LiteralAccessor,
+    Constructor,
+    Other,
+}
 
 /// How serious a [`QueryWarning`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,13 +117,18 @@ impl WarningSeverity {
 #[non_exhaustive]
 pub struct QueryWarning {
     pub severity: WarningSeverity,
-    /// The SPARQL function name, upper-case (`"CONTAINS"`).
+    /// The SPARQL function name, upper-case (`"CONTAINS"`), or the operator's
+    /// spelling for an operator: `+` `-` `*` `/`, `=` `!=` `<` `<=` `>` `>=`,
+    /// `IN`.
     pub function: String,
     /// 1-based argument position the problem is about (0 = not argument-specific).
+    /// For an operator, 1 is the left operand and 2 the right one.
     pub argument: usize,
     /// What the argument was: `iri`, `blank-node`, `quoted-triple`, `numeric`,
-    /// `typed-literal`, `language-mismatch`, `unbound`, `invalid-regex`,
-    /// `not-a-datetime`, or `case-sensitive` for the hint.
+    /// `typed-literal`, `string`, `language-tagged`, `invalid-number`,
+    /// `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`,
+    /// `division-by-zero` (argument 2 of `/`), or `case-sensitive` for the
+    /// hint.
     pub kind: String,
     /// How many evaluations raised this error (an evaluation is one row reaching
     /// the expression; LIMIT / ASK stop early, so this is not a data count).
@@ -82,6 +155,15 @@ pub(crate) enum ArgKind {
     Unbound,
     InvalidRegex,
     NotDatetime,
+    /// A string literal (plain or `xsd:string`) where a number, a literal
+    /// accessor's operand or a simple literal was needed.
+    StringLit,
+    /// A language-tagged literal where a simple literal was needed.
+    LangTagged,
+    /// A literal of a numeric datatype whose lexical form is not a number.
+    InvalidNumber,
+    /// The divisor of `/` was zero.
+    DivByZero,
 }
 
 impl ArgKind {
@@ -96,12 +178,16 @@ impl ArgKind {
             ArgKind::Unbound => "unbound",
             ArgKind::InvalidRegex => "invalid-regex",
             ArgKind::NotDatetime => "not-a-datetime",
+            ArgKind::StringLit => "string",
+            ArgKind::LangTagged => "language-tagged",
+            ArgKind::InvalidNumber => "invalid-number",
+            ArgKind::DivByZero => "division-by-zero",
         }
     }
 }
 
 struct Entry {
-    func: Builtin,
+    site: Site,
     pos: usize,
     kind: ArgKind,
     count: u64,
@@ -142,24 +228,25 @@ pub(crate) fn begin() {
 #[cold]
 #[inline(never)]
 pub(crate) fn record(
-    func: Builtin,
+    site: impl Into<Site>,
     pos: usize,
     kind: ArgKind,
     describe: impl FnOnce() -> (String, String),
 ) {
+    let site = site.into();
     SINK.with(|s| {
         let mut s = s.borrow_mut();
         if let Some(e) = s
             .entries
             .iter_mut()
-            .find(|e| e.func == func && e.pos == pos && e.kind == kind)
+            .find(|e| e.site == site && e.pos == pos && e.kind == kind)
         {
             e.count += 1;
             return;
         }
         let (sample, detail) = describe();
         s.entries.push(Entry {
-            func,
+            site,
             pos,
             kind,
             count: 1,
@@ -207,8 +294,8 @@ pub(crate) fn lang_mismatch(func: Builtin, text: &str, pat: &str) {
 /// The argument at 1-based `pos` is the variable `var`, unbound in this row.
 #[cold]
 #[inline(never)]
-pub(crate) fn unbound(func: Builtin, pos: usize, var: &str) {
-    record(func, pos, ArgKind::Unbound, || {
+pub(crate) fn unbound(site: impl Into<Site>, pos: usize, var: &str) {
+    record(site, pos, ArgKind::Unbound, || {
         (format!("?{var}"), String::new())
     });
 }
@@ -236,6 +323,74 @@ pub(crate) fn bad_datetime(func: Builtin, token: &str) {
         };
         (token.to_string(), detail)
     });
+}
+
+/// A numeric function or an arithmetic operator got a term that is not a
+/// number (by the rule that site applies: arithmetic takes numeric-typed
+/// literals only, ABS / CEIL / FLOOR / ROUND any literal whose text parses).
+#[cold]
+#[inline(never)]
+pub(crate) fn not_a_number(site: impl Into<Site>, pos: usize, token: &str) {
+    let kind = match term_kind(token) {
+        ArgKind::Numeric => ArgKind::InvalidNumber,
+        k => k,
+    };
+    record(site, pos, kind, || {
+        (token.to_string(), detail_of_any(token))
+    });
+}
+
+/// `/` with a zero divisor (`token` is the divisor as written).
+#[cold]
+#[inline(never)]
+pub(crate) fn div_by_zero(token: &str) {
+    record(Site::Op("/"), 2, ArgKind::DivByZero, || {
+        (token.to_string(), detail_of(token))
+    });
+}
+
+/// LANG / DATATYPE got a term that is not a literal.
+#[cold]
+#[inline(never)]
+pub(crate) fn not_a_literal(func: Builtin, token: &str) {
+    record(func, 1, kind_of(token), || {
+        (token.to_string(), String::new())
+    });
+}
+
+/// STRDT / STRLANG argument 1 is not a simple literal, or STRDT argument 2 is
+/// not an IRI.
+#[cold]
+#[inline(never)]
+pub(crate) fn bad_constructor_arg(func: Builtin, pos: usize, token: &str) {
+    record(func, pos, term_kind(token), || {
+        (token.to_string(), detail_of_any(token))
+    });
+}
+
+/// Classify any term, telling string and language-tagged literals apart from
+/// other typed ones (no allocation for IRIs and blank nodes).
+fn term_kind(token: &str) -> ArgKind {
+    if !token.starts_with('"') {
+        return kind_of(token);
+    }
+    if crate::terms::lang_tag(token).is_some_and(|l| !l.is_empty()) {
+        return ArgKind::LangTagged;
+    }
+    match crate::terms::literal_datatype(token) {
+        Some(dt) if dt == "http://www.w3.org/2001/XMLSchema#string" => ArgKind::StringLit,
+        None => ArgKind::StringLit,
+        Some(dt) if is_numeric_datatype(&dt) => ArgKind::Numeric,
+        Some(_) => ArgKind::TypedLiteral,
+    }
+}
+
+/// [`detail_of`], but a language-tagged literal reports its tag (`@en`).
+fn detail_of_any(token: &str) -> String {
+    match crate::terms::lang_tag(token).filter(|l| !l.is_empty()) {
+        Some(l) if token.starts_with('"') => format!("@{l}"),
+        _ => detail_of(token),
+    }
 }
 
 /// Classify a bound term that a string function rejected (no allocation for
@@ -331,12 +486,24 @@ pub(crate) fn fn_name(f: Builtin) -> &'static str {
         Builtin::Seconds => "SECONDS",
         Builtin::Timezone => "TIMEZONE",
         Builtin::Tz => "TZ",
+        Builtin::Abs => "ABS",
+        Builtin::Ceil => "CEIL",
+        Builtin::Floor => "FLOOR",
+        Builtin::Round => "ROUND",
+        Builtin::Lang => "LANG",
+        Builtin::Datatype => "DATATYPE",
+        Builtin::StrDt => "STRDT",
+        Builtin::StrLang => "STRLANG",
         _ => "function",
     }
 }
 
-fn ordinal(pos: usize) -> String {
-    format!("argument {pos}")
+fn ordinal(site: Site, pos: usize) -> String {
+    match (site, pos) {
+        (Site::Op(_), 1) => "the left operand".to_string(),
+        (Site::Op(_), 2) => "the right operand".to_string(),
+        _ => format!("argument {pos}"),
+    }
 }
 
 fn rows(n: u64) -> String {
@@ -347,10 +514,43 @@ fn rows(n: u64) -> String {
     }
 }
 
+/// The hint for a site family other than the string functions, or `None` to
+/// keep the kind's own hint (which was written for the string functions).
+fn family_hint(family: Family, pos: usize, kind: ArgKind) -> Option<&'static str> {
+    use ArgKind::*;
+    Some(match (family, kind) {
+        (_, Unbound | InvalidRegex | NotDatetime | LangMismatch | DivByZero) => return None,
+        (Family::Numeric, StringLit) => {
+            "a string is not a number; cast one that holds a number first, e.g. \
+             xsd:decimal(?x), or restrict the variable with isNumeric()"
+        }
+        (Family::Numeric, InvalidNumber) => {
+            "its text is not a valid number for its datatype; restrict the variable with \
+             isNumeric(), which checks the lexical form"
+        }
+        (Family::Numeric, _) => "it is not a number; restrict the variable with isNumeric()",
+        (Family::LiteralAccessor, _) => {
+            "LANG() and DATATYPE() take a literal; restrict the variable with isLiteral()"
+        }
+        (Family::Constructor, Blank | QuotedTriple) if pos == 1 => {
+            "argument 1 must be a simple literal; restrict the variable with isLiteral()"
+        }
+        (Family::Constructor, _) if pos == 1 => {
+            "argument 1 must be a simple literal (no language tag, no datatype); use STR() on \
+             it to take its lexical form"
+        }
+        (Family::Constructor, _) => {
+            "argument 2 of STRDT must be a datatype IRI, e.g. xsd:integer; IRI(?x) turns a \
+             string into one"
+        }
+        (Family::Compare | Family::Other, _) => return None,
+    })
+}
+
 impl Entry {
     fn into_warning(self) -> QueryWarning {
-        let name = fn_name(self.func);
-        let arg = ordinal(self.pos);
+        let name = self.site.name();
+        let arg = ordinal(self.site, self.pos);
         let n = rows(self.count);
         let dt = |what: &str| {
             if self.detail.is_empty() {
@@ -381,6 +581,18 @@ impl Entry {
                 dt("a non-string typed literal"),
                 "wrap it in STR() to match its lexical form".to_string(),
             ),
+            ArgKind::StringLit => (
+                "a string".to_string(),
+                "wrap it in STR() to match its lexical form".to_string(),
+            ),
+            ArgKind::LangTagged => (
+                dt("a language-tagged literal"),
+                "use STR() on it to drop the language tag".to_string(),
+            ),
+            ArgKind::InvalidNumber => (
+                dt("a literal whose text is not a valid number for its datatype"),
+                String::new(),
+            ),
             ArgKind::LangMismatch => (
                 format!(
                     "a literal whose language tag does not match argument 1 ({})",
@@ -408,12 +620,27 @@ impl Entry {
                  use SUBSTR(STR(?x), 1, 4)"
                     .to_string(),
             ),
+            ArgKind::DivByZero => (
+                "zero".to_string(),
+                "guard the divisor, e.g. IF(?d != 0, ?n / ?d, 0), or FILTER(?d != 0) first"
+                    .to_string(),
+            ),
         };
-        let mut message = format!("{name} received {what} as {arg} in {n}: a SPARQL type error");
+        let hint = match family_hint(self.site.family(), self.pos, self.kind) {
+            Some(h) => h.to_string(),
+            None => hint,
+        };
+        let mut message = match (self.kind, self.site) {
+            (ArgKind::DivByZero, _) => format!("{name} divided by zero in {n}: a SPARQL error"),
+            (_, Site::Op(_)) => {
+                format!("Operator {name} received {what} as {arg} in {n}: a SPARQL type error")
+            }
+            _ => format!("{name} received {what} as {arg} in {n}: a SPARQL type error"),
+        };
         message.push_str(
             ", which makes a FILTER drop the row, even under ! (BIND leaves the variable unbound)",
         );
-        if !matches!(self.kind, ArgKind::Unbound) && !self.sample.is_empty() {
+        if !matches!(self.kind, ArgKind::Unbound | ArgKind::DivByZero) && !self.sample.is_empty() {
             message.push_str(&format!("; e.g. {}", self.sample));
         }
         message.push_str(&format!(". Hint: {hint}."));

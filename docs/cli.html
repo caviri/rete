@@ -1266,6 +1266,12 @@ CONSTRUCT as N-Triples). Queries may themselves contain <code>SERVICE</code> blo
 <li><code>POST /sparql</code> (or <code>/update</code>) with <code>update=</code> or an
 <code>application/sparql-update</code> body → <code>INSERT DATA</code> / <code>DELETE DATA</code> /
 <code>DELETE/INSERT … WHERE</code> / <code>CLEAR</code> / <code>DROP</code> (<code>LOAD</code> and <code>USING</code> are rejected).</li>
+<li>A query whose expressions raised SPARQL type errors (a FILTER drops those
+rows silently; see <a href="sparql.html#warnings">query warnings</a>) gets two response
+headers: <code>Rete-Warnings</code>, the warnings as a JSON array (ASCII-escaped), and
+<code>Rete-Warning-Count</code>. Headers, not a body member: the result document stays
+standard SPARQL JSON or N-Triples, which any client parses unchanged. A
+query with nothing to report gets neither header.</li>
 <li>Binds loopback by default. Expose deliberately (<code>--bind 0.0.0.0:7878</code>) and
 set <code>--token</code>: updates then require <code>Authorization: Bearer &lt;t&gt;</code> (reads stay
 open). CORS is enabled, so browsers can query it directly.</li>

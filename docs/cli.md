@@ -794,6 +794,12 @@ federate against the endpoint with `SERVICE <http://host:port/sparql>`.
 - `POST /sparql` (or `/update`) with `update=` or an
   `application/sparql-update` body → `INSERT DATA` / `DELETE DATA` /
   `DELETE/INSERT … WHERE` / `CLEAR` / `DROP` (`LOAD` and `USING` are rejected).
+- A query whose expressions raised SPARQL type errors (a FILTER drops those
+  rows silently; see [query warnings](sparql.md#warnings)) gets two response
+  headers: `Rete-Warnings`, the warnings as a JSON array (ASCII-escaped), and
+  `Rete-Warning-Count`. Headers, not a body member: the result document stays
+  standard SPARQL JSON or N-Triples, which any client parses unchanged. A
+  query with nothing to report gets neither header.
 - Binds loopback by default. Expose deliberately (`--bind 0.0.0.0:7878`) and
   set `--token`: updates then require `Authorization: Bearer <t>` (reads stay
   open). CORS is enabled, so browsers can query it directly.

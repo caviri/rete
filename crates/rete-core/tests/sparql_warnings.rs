@@ -376,3 +376,211 @@ fn warnings_serialize_and_unknown_functions_fail_loudly() {
         Err(SparqlError::Parse(_))
     ));
 }
+
+/// `(function, argument, kind)` of every warning, sorted.
+fn keys(w: &[QueryWarning]) -> Vec<(String, usize, String)> {
+    let mut k: Vec<_> = w
+        .iter()
+        .map(|w| (w.function.clone(), w.argument, w.kind.clone()))
+        .collect();
+    k.sort();
+    k
+}
+
+fn key(f: &str, arg: usize, kind: &str) -> (String, usize, String) {
+    (f.to_string(), arg, kind.to_string())
+}
+
+#[test]
+fn numeric_functions_and_arithmetic_report_non_numbers() {
+    let bytes = graph();
+    let rete = Rete::open(&bytes).unwrap();
+
+    // ABS on a string that is not a number.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/note> ?n FILTER(ABS(?n) > 0) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key("ABS", 1, "string")]);
+    assert_eq!(w1.sample.as_deref(), Some("\"a (plain) note\""));
+    assert!(w1.hint.contains("isNumeric()"), "{}", w1.hint);
+    assert!(
+        w1.message
+            .starts_with("ABS received a string as argument 1 in 1 row"),
+        "{}",
+        w1.message
+    );
+
+    // ROUND / CEIL / FLOOR on an IRI.
+    for f in ["ROUND", "CEIL", "FLOOR"] {
+        let (n, w) = run(
+            &rete,
+            &format!("SELECT ?s WHERE {{ ?s <http://ex.org/year> ?y FILTER({f}(?s) > 0) }}"),
+        );
+        assert_eq!(n, 0);
+        assert_eq!(keys(&w), vec![key(f, 1, "iri")], "{f}");
+    }
+
+    // Arithmetic on a string literal: `+` takes numeric-typed literals only.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/note> ?n FILTER(?n + 1 > 0) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key("+", 1, "string")]);
+    assert!(
+        w1.message
+            .starts_with("Operator + received a string as the left operand in 1 row"),
+        "{}",
+        w1.message
+    );
+
+    // A numeric datatype whose text is not a number.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?v WHERE { VALUES ?v { "abc"^^<http://www.w3.org/2001/XMLSchema#integer> } FILTER(2 * ?v > 0) }"#,
+    );
+    assert_eq!(n, 0);
+    assert_eq!(keys(&w), vec![key("*", 2, "invalid-number")]);
+
+    // Division by zero leaves a BIND unbound and keeps the row.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?z WHERE { ?s <http://ex.org/year> ?y BIND(?y / 0 AS ?z) }"#,
+    );
+    assert_eq!(n, 1);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key("/", 2, "division-by-zero")]);
+    assert!(
+        w1.message.starts_with("/ divided by zero in 1 row"),
+        "{}",
+        w1.message
+    );
+    assert!(w1.hint.contains("IF(?d != 0"), "{}", w1.hint);
+
+    // Correct shapes stay silent.
+    for q in [
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(ABS(?y) > 0) }"#,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(ROUND(?y / 2) = 786) }"#,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(-?y < 0) }"#,
+        // ABS takes any literal whose text parses: a numeric string is fine.
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(ABS("12") = 12) }"#,
+    ] {
+        let (n, w) = run(&rete, q);
+        assert_eq!((n, w.len()), (1, 0), "{q}: {w:#?}");
+    }
+}
+
+#[test]
+fn comparisons_report_only_where_the_engine_errors() {
+    let bytes = graph();
+    let rete = Rete::open(&bytes).unwrap();
+
+    // An OPTIONAL that did not match leaves ?m unbound: `>` errors on it.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l OPTIONAL { ?s <http://ex.org/missing> ?m } FILTER(?m > 3) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key(">", 1, "unbound")]);
+    assert!(
+        w1.message.starts_with(
+            "Operator > received an unbound variable (?m) as the left operand in 1 row"
+        ),
+        "{}",
+        w1.message
+    );
+    assert!(w1.hint.contains("BOUND()"), "{}", w1.hint);
+
+    // The right operand, and IN.
+    let (_, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l OPTIONAL { ?s <http://ex.org/missing> ?m } FILTER(3 <= ?m) }"#,
+    );
+    assert_eq!(keys(&w), vec![key("<=", 2, "unbound")]);
+    let (_, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l OPTIONAL { ?s <http://ex.org/missing> ?m } FILTER(?m IN (1, 2)) }"#,
+    );
+    assert_eq!(keys(&w), vec![key("IN", 1, "unbound")]);
+
+    // The engine compares any two BOUND terms (numerically when both parse,
+    // else lexically), so none of these errors and none warns. Whether they
+    // should is a semantics question this change does not touch.
+    for q in [
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(?y > "abc") }"#,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER("1572" = ?y) }"#,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(?s < ?l) }"#,
+    ] {
+        let (_, w) = run(&rete, q);
+        assert!(w.is_empty(), "{q}: {w:#?}");
+    }
+
+    // A nested error is reported once, by the function that raised it, not
+    // again by the comparison it propagates through.
+    let (_, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(STRLEN(?s) > 3) }"#,
+    );
+    assert_eq!(keys(&w), vec![key("STRLEN", 1, "iri")]);
+}
+
+#[test]
+fn lang_datatype_and_constructors_report_misuse() {
+    let bytes = graph();
+    let rete = Rete::open(&bytes).unwrap();
+
+    for f in ["LANG", "DATATYPE"] {
+        let (n, w) = run(
+            &rete,
+            &format!(
+                "SELECT ?s WHERE {{ ?s rdfs:label ?l FILTER(BOUND(?s) && STR({f}(?s)) != \"x\") }}"
+            ),
+        );
+        assert_eq!(n, 0, "{f}");
+        let w1 = one(&w);
+        assert_eq!(keys(&w), vec![key(f, 1, "iri")]);
+        assert!(w1.hint.contains("isLiteral()"), "{}", w1.hint);
+    }
+
+    // STRDT / STRLANG: argument 1 must be a simple literal.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?x WHERE { ?s rdfs:label ?l BIND(STRDT(?l, <http://ex.org/t>) AS ?x) FILTER(BOUND(?x)) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key("STRDT", 1, "language-tagged")]);
+    assert!(w1.message.contains("(@en)"), "{}", w1.message);
+    assert!(w1.hint.contains("STR()"), "{}", w1.hint);
+
+    let (_, w) = run(
+        &rete,
+        r#"SELECT ?x WHERE { ?s <http://ex.org/year> ?y BIND(STRLANG(?y, "en") AS ?x) }"#,
+    );
+    assert_eq!(keys(&w), vec![key("STRLANG", 1, "numeric")]);
+
+    // STRDT argument 2 must be an IRI.
+    let (_, w) = run(
+        &rete,
+        r#"SELECT ?x WHERE { ?s <http://ex.org/year> ?y BIND(STRDT("7", "xsd:integer") AS ?x) }"#,
+    );
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key("STRDT", 2, "string")]);
+    assert!(w1.hint.contains("datatype IRI"), "{}", w1.hint);
+
+    // Correct shapes stay silent.
+    for q in [
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(LANG(?l) = "en") }"#,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(DATATYPE(?y) = <http://www.w3.org/2001/XMLSchema#integer>) }"#,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(STRDT(STR(?l), <http://ex.org/t>) != "") }"#,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(LANG(STRLANG(STR(?l), "fr")) = "fr") }"#,
+    ] {
+        let (n, w) = run(&rete, q);
+        assert_eq!((n, w.len()), (1, 0), "{q}: {w:#?}");
+    }
+}

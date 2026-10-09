@@ -25,7 +25,10 @@ use std::collections::BTreeSet;
 use std::io::Write as _;
 
 use rete_core::ingest::{assemble_dataset_with_opts, parse_quads, RawQuad};
-use rete_core::{eval_query, sparql_json_ask, sparql_json_results, QueryOutput, Rete};
+use rete_core::{
+    eval_query_with_warnings, sparql_json_ask, sparql_json_results, QueryOpts, QueryOutput,
+    QueryWarning, Rete,
+};
 use spargebra::term::{
     GraphName, GraphNamePattern, GroundQuadPattern, GroundTermPattern, NamedNodePattern,
     QuadPattern, TermPattern,
@@ -509,6 +512,59 @@ fn classify(req: &mut tiny_http::Request) -> anyhow::Result<Action> {
     })
 }
 
+/// The query's warnings (expression type errors a FILTER absorbed, see
+/// `rete_core::eval_query_with_warnings`) travel in response HEADERS, not in
+/// the body: the body stays the standard SPARQL result document byte for byte
+/// — JSON results for SELECT/ASK, N-Triples for CONSTRUCT, which has no JSON
+/// member to extend — so every SPARQL client parses it exactly as before, and
+/// one mechanism covers every result form. `Rete-Warnings` is the JSON array
+/// `rete sparql --json` prints (`warnings_json`), escaped to ASCII as a header
+/// value must be; `Rete-Warning-Count` is the total. Both are absent when the
+/// query raised no warning, so such a response is unchanged.
+const WARNINGS_HEADER: &str = "Rete-Warnings";
+const WARNING_COUNT_HEADER: &str = "Rete-Warning-Count";
+
+/// Header budget for `Rete-Warnings`. Common servers and proxies cap a header
+/// near 8 KiB; whole warnings are dropped from the end until the array fits,
+/// and `Rete-Warning-Count` still says how many there were.
+const WARNINGS_HEADER_MAX: usize = 6 * 1024;
+
+/// JSON with every non-ASCII character (and DEL) as a `\uXXXX` escape — still
+/// the same JSON value, now a legal HTTP header value.
+fn ascii_json(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    for c in json.chars() {
+        if c.is_ascii() && c != '\u{7f}' {
+            out.push(c);
+        } else {
+            let mut units = [0u16; 2];
+            for u in c.encode_utf16(&mut units) {
+                out.push_str(&format!("\\u{u:04x}"));
+            }
+        }
+    }
+    out
+}
+
+/// The warning headers for a response, or none when there are no warnings.
+fn warning_headers(warnings: &[QueryWarning]) -> Vec<(&'static str, String)> {
+    if warnings.is_empty() {
+        return Vec::new();
+    }
+    let mut kept = warnings.len();
+    let json = loop {
+        let json = ascii_json(&rete_core::warnings_json(&warnings[..kept]));
+        if json.len() <= WARNINGS_HEADER_MAX || kept == 0 {
+            break json;
+        }
+        kept -= 1;
+    };
+    vec![
+        (WARNINGS_HEADER, json),
+        (WARNING_COUNT_HEADER, warnings.len().to_string()),
+    ]
+}
+
 /// Build a response with the CORS headers every browser client needs.
 fn respond(
     req: tiny_http::Request,
@@ -516,8 +572,19 @@ fn respond(
     content_type: &str,
     body: Vec<u8>,
 ) -> anyhow::Result<()> {
+    respond_with(req, status, content_type, body, &[])
+}
+
+/// [`respond`] plus `extra` headers.
+fn respond_with(
+    req: tiny_http::Request,
+    status: u16,
+    content_type: &str,
+    body: Vec<u8>,
+    extra: &[(&str, String)],
+) -> anyhow::Result<()> {
     let mut resp = tiny_http::Response::from_data(body).with_status_code(status);
-    for (k, v) in [
+    let fixed = [
         ("Content-Type", content_type),
         ("Access-Control-Allow-Origin", "*"),
         ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
@@ -525,7 +592,16 @@ fn respond(
             "Access-Control-Allow-Headers",
             "Content-Type, Authorization",
         ),
-    ] {
+        // A browser script may read only the response headers named here.
+        (
+            "Access-Control-Expose-Headers",
+            "Rete-Warnings, Rete-Warning-Count",
+        ),
+    ];
+    for (k, v) in fixed
+        .into_iter()
+        .chain(extra.iter().map(|(k, v)| (*k, v.as_str())))
+    {
         resp.add_header(
             tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes())
                 .map_err(|_| anyhow::anyhow!("bad header"))?,
@@ -533,6 +609,15 @@ fn respond(
     }
     req.respond(resp)?;
     Ok(())
+}
+
+/// `", 2 warning(s)"` for the request log, or nothing.
+fn warned(warnings: &[QueryWarning]) -> String {
+    if warnings.is_empty() {
+        String::new()
+    } else {
+        format!(", {} warning(s)", warnings.len())
+    }
 }
 
 /// `rete serve`: run the endpoint until interrupted.
@@ -595,28 +680,36 @@ pub(crate) fn serve(
                 Err(e) => respond(req, 500, "text/plain", format!("{e}\n").into_bytes()),
             },
             Action::Query(q) => match store.ensure_current() {
-                Ok(()) => match eval_query(&store.rete, &q) {
-                    Ok(QueryOutput::Select(vars, rows)) => {
-                        eprintln!("  query: {} row(s)", rows.len());
-                        respond(
+                Ok(()) => match eval_query_with_warnings(&store.rete, &q, QueryOpts::default()) {
+                    Ok((QueryOutput::Select(vars, rows), warnings)) => {
+                        eprintln!("  query: {} row(s){}", rows.len(), warned(&warnings));
+                        respond_with(
                             req,
                             200,
                             "application/sparql-results+json",
                             sparql_json_results(&vars, &rows).into_bytes(),
+                            &warning_headers(&warnings),
                         )
                     }
-                    Ok(QueryOutput::Ask(b)) => respond(
+                    Ok((QueryOutput::Ask(b), warnings)) => respond_with(
                         req,
                         200,
                         "application/sparql-results+json",
                         sparql_json_ask(b).into_bytes(),
+                        &warning_headers(&warnings),
                     ),
-                    Ok(QueryOutput::Construct(triples)) => {
+                    Ok((QueryOutput::Construct(triples), warnings)) => {
                         let mut body = String::new();
                         for (s, p, o) in &triples {
                             body.push_str(&format!("{s} {p} {o} .\n"));
                         }
-                        respond(req, 200, "application/n-triples", body.into_bytes())
+                        respond_with(
+                            req,
+                            200,
+                            "application/n-triples",
+                            body.into_bytes(),
+                            &warning_headers(&warnings),
+                        )
                     }
                     Ok(_) => respond(
                         req,
