@@ -152,12 +152,12 @@ never loaded into memory.
 
 ### Try it now
 
-**⬇ [Download rete.mcpb](https://data.graphplaza.com/mcpb/rete.mcpb)** (1.4 MB)
+**⬇ [Download rete.mcpb](https://data.graphplaza.com/mcpb/rete.mcpb)** (1.6 MB)
 — then double-click it, or drag it into Claude Desktop.
 
 That link always serves the current build; a pinned copy of each version sits
 beside it (for example
-[`rete-0.3.0.mcpb`](https://data.graphplaza.com/mcpb/rete-0.3.0.mcpb)). Every
+[`rete-0.3.3.mcpb`](https://data.graphplaza.com/mcpb/rete-0.3.3.mcpb)). Every
 tagged release additionally attaches `rete-<version>.mcpb` to the
 [releases page](https://github.com/caviri/rete/releases), built by the release
 workflow with a SHA-256 checksum and build provenance — take that copy if you
