@@ -1043,7 +1043,7 @@ const csvCell = (v) => (/[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` 
  * the verb the archive metaphor promises and that RDF tooling never offers —
  * "give me this folder as a spreadsheet".
  */
-export async function extract(ctx, node, { format = "csv", limit = 5000 } = {}) {
+export async function extract(ctx, node, { format = "csv", limit = 5000, quotedTripleSyntax = "rdf12" } = {}) {
   let q, filename;
   // A predicate folder yields two columns, so its N-Triples form has to put the
   // predicate back in the middle — the other folders already select all three.
@@ -1075,12 +1075,125 @@ export async function extract(ctx, node, { format = "csv", limit = 5000 } = {}) 
     );
     return { filename: `${filename}.json`, mime: "application/json", body, count: rows.length };
   }
-  const body = rows
-    .map((r) => {
-      const cols = vars.map((v) => r[v]);
-      const triple = fixedPredicate ? [cols[0], esc(fixedPredicate), cols[1]] : cols;
-      return `${triple.join(" ")} .`;
+  const triples = rows.map((r) => {
+    const cols = vars.map((v) => r[v]);
+    return fixedPredicate ? [cols[0], esc(fixedPredicate), cols[1]] : cols;
+  });
+  const body = ntriplesBody(triples, quotedTripleSyntax);
+  return { filename: `${filename}.nt`, mime: "application/n-triples", body, count: rows.length };
+}
+
+// ---------------------------------------------------- quoted triples (RDF 1.2)
+//
+// rete stores a quoted triple as one token in the RDF-star surface `<<s p o>>`,
+// and the engine hands it back verbatim. Current RDF 1.2 parsers (Oxigraph 0.5,
+// Jena 5) REJECT that surface in N-Triples, so an extract carrying one loaded
+// nowhere. `rete export` writes the RDF 1.2 triple term `<<( s p o )>>` by
+// default and keeps `<<s p o>>` behind `--quoted-triple-syntax rdf-star`
+// (#262); this is the same rule in JS, so the browser explorer and the Tauri
+// app (which share this file) write what the CLI writes.
+
+/** One term starting at `i` (after optional spaces): `[token, next]`, or null. */
+function takeTerm(s, i) {
+  while (s[i] === " " || s[i] === "\t") i++;
+  if (i >= s.length) return null;
+  if (s.startsWith("<<", i)) {
+    const parts = [];
+    let j = i + 2;
+    for (let k = 0; k < 3; k++) {
+      const t = takeTerm(s, j);
+      if (!t) return null;
+      parts.push(t[0]);
+      j = t[1];
+    }
+    while (s[j] === " " || s[j] === "\t") j++;
+    if (!s.startsWith(">>", j)) return null;
+    return [s.slice(i, j + 2), j + 2, parts];
+  }
+  if (s[i] === "<") {
+    const end = s.indexOf(">", i + 1);
+    return end < 0 ? null : [s.slice(i, end + 1), end + 1];
+  }
+  if (s.startsWith("_:", i)) {
+    let j = i + 2;
+    while (j < s.length && !/[\s>]/.test(s[j])) j++;
+    return [s.slice(i, j), j];
+  }
+  if (s[i] === '"') {
+    let j = i + 1;
+    while (j < s.length && s[j] !== '"') j += s[j] === "\\" ? 2 : 1;
+    if (j >= s.length) return null;
+    j++;
+    if (s[j] === "@") {
+      j++;
+      while (j < s.length && /[A-Za-z0-9-]/.test(s[j])) j++;
+    } else if (s.startsWith("^^<", j)) {
+      const end = s.indexOf(">", j + 3);
+      if (end < 0) return null;
+      j = end + 1;
+    }
+    return [s.slice(i, j), j];
+  }
+  return null;
+}
+
+const isQuoted = (t) => String(t).startsWith("<<");
+
+/**
+ * A stored term in the RDF 1.2 surface: unchanged unless it is a quoted
+ * triple, which becomes `<<( s p o )>>` (nested object triple terms too).
+ * `null` when it has no RDF 1.2 spelling — a quoted triple in the subject of
+ * another (`ttSubject ::= iri | BlankNode`) — or does not parse.
+ * Mirrors `rete_core::terms::rdf12_triple_term`.
+ */
+export function rdf12TripleTerm(token) {
+  if (!isQuoted(token)) return token;
+  const t = takeTerm(token, 0);
+  if (!t || t[1] !== token.length || !t[2]) return null;
+  const [s, p, o] = t[2];
+  if (isQuoted(s) || isQuoted(p)) return null;
+  const o12 = rdf12TripleTerm(o);
+  return o12 == null ? null : `<<( ${s} ${p} ${o12} )>>`;
+}
+
+/**
+ * N-Triples lines for `[s, p, o]` term triples, spelling quoted triples like
+ * `rete export --quoted-triple-syntax`: `"rdf12"` (the default) or
+ * `"rdf-star"` (the stored token). Under rdf12 a quoted triple in a subject
+ * or predicate has no spelling and is refused by name, as the CLI refuses it,
+ * rather than written as a line no RDF 1.2 parser reads. A graph with no
+ * quoted triple comes out byte-for-byte the same under both.
+ */
+export function ntriplesBody(triples, quotedTripleSyntax = "rdf12") {
+  if (quotedTripleSyntax !== "rdf12" && quotedTripleSyntax !== "rdf-star") {
+    throw new Error(`unknown quotedTripleSyntax "${quotedTripleSyntax}" (expected "rdf12" or "rdf-star")`);
+  }
+  const rdf12 = quotedTripleSyntax === "rdf12";
+  return triples
+    .map(([s, p, o]) => {
+      if (rdf12) {
+        if (isQuoted(s) || isQuoted(p)) {
+          const slot = isQuoted(s) ? "subject" : "predicate";
+          throw new Error(
+            `this graph has a quoted triple in the ${slot} position of a statement, and RDF 1.2 ` +
+            `has no syntax for one there: a triple term may stand in OBJECT position only.\n` +
+            `statement: ${s} ${p} ${o} .\n` +
+            `hint: quotedTripleSyntax "rdf-star" writes the RDF-star surface <<s p o>>, which ` +
+            `rete re-ingests losslessly`,
+          );
+        }
+        const o12 = rdf12TripleTerm(o);
+        if (o12 == null) {
+          throw new Error(
+            `this graph has a quoted triple nested in the SUBJECT of another quoted triple, and ` +
+            `RDF 1.2 has no syntax for one there.\n` +
+            `statement: ${s} ${p} ${o} .\n` +
+            `hint: quotedTripleSyntax "rdf-star" writes the RDF-star surface <<s p o>>`,
+          );
+        }
+        o = o12;
+      }
+      return `${s} ${p} ${o} .`;
     })
     .join("\n");
-  return { filename: `${filename}.nt`, mime: "application/n-triples", body, count: rows.length };
 }

@@ -1015,6 +1015,12 @@ spellings unconditionally.</li>
 all and <strong>refuse</strong> a file that contains one, naming <code>--format trig</code>. They used
 to write it as though it were an IRI — a file that loads cleanly and means
 something else.</p>
+<p>The browser engine's CONSTRUCT writers (<code>format</code> <code>"ttl"</code> / <code>"jsonld"</code>, see
+<a href="browser.html">browser</a>), the desktop explorer's Turtle, and the file
+explorer's N-Triples extract all follow the same rule. RDF 1.2 is the
+default, <code>rdf-star</code> is opt-in (<code>"ttl;quotedTripleSyntax=rdf-star"</code>, or
+<code>extract(…, { quotedTripleSyntax: "rdf-star" })</code>), and a subject-position
+quoted triple or JSON-LD is refused rather than mis-written.</p>
 <p><strong>HDT (<code>--format hdt</code>).</strong> A binary serialization whose point is that a reader
 memory-maps it and answers triple patterns against the mapped bytes. Opening the
 1.39 GB reference HDT costs 50.7 MB of RSS and 0.31 s, whatever the file's size —
