@@ -3,6 +3,6 @@
   "type": "module",
   "description": "Marks js/*.js as ES modules for Node, so the test suite can import rete-fs.js. Browsers and the Tauri app ignore this file.",
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/rete-fs.test.mjs"
   }
 }

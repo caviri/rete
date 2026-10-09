@@ -1,6 +1,6 @@
 // The explorer's N-Triples extract and its quoted-triple surface.
 //
-//   node --test experiments/rete-file-explorer/test/
+//   node --test experiments/rete-file-explorer/test/rete-fs.test.mjs
 //
 // rete-fs.js is shared by the browser explorer and the Tauri app, and its
 // N-Triples extract wrote the stored RDF-star token `<<s p o>>`, which current

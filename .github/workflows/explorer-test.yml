@@ -34,4 +34,4 @@ jobs:
           node-version: 22
       - name: Unit tests
         working-directory: experiments/rete-file-explorer
-        run: node --test test/
+        run: node --test test/rete-fs.test.mjs
