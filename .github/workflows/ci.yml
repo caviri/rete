@@ -74,6 +74,8 @@ jobs:
               - 'tests/gate/**'
               - 'tests/interop/**'
               - 'tests/conformance-baseline.json'
+              - 'tests/w3c-rdf-tests.rev'
+              - 'scripts/sparql_conformance.py'
               - 'rdf-tests/**'
               - 'docker/**'
               - 'compose.yaml'
@@ -569,14 +571,49 @@ jobs:
           name: ${{ env.RETE_DEV_ARTIFACT }}
           path: /tmp
       - run: docker load --input /tmp/rete-dev.tar
-      - name: Fetch the W3C test suite
-        # Not vendored (it is gitignored), so the suite is cloned shallowly.
-        run: git clone --depth 1 https://github.com/w3c/rdf-tests.git rdf-tests
+      # The suite is PINNED to the commit in tests/w3c-rdf-tests.rev. It used to
+      # be cloned at upstream HEAD, so the denominator followed w3c/rdf-tests
+      # (309 tests in June 2026, 312 by October) and this job could change its
+      # verdict with no rete commit at all. Bumping the suite is now a one-line
+      # change to that file — see docs/conformance.md, "The pinned suite".
+      - name: Read the pinned W3C suite revision
+        id: suite
+        run: |
+          REV=$(tr -d '[:space:]' < tests/w3c-rdf-tests.rev)
+          echo "$REV" | grep -Eq '^[0-9a-f]{40}$' || { echo "tests/w3c-rdf-tests.rev must hold one full 40-hex commit SHA, got '$REV'" >&2; exit 1; }
+          echo "rev=$REV" >> "$GITHUB_OUTPUT"
+      # A commit is immutable, so a cache keyed on its SHA can never go stale;
+      # it keeps the job off GitHub's network for the suite on every rerun.
+      - name: Cache the pinned W3C suite
+        id: suite-cache
+        uses: actions/cache@v6
+        with:
+          path: rdf-tests
+          key: w3c-rdf-tests-sparql11-${{ steps.suite.outputs.rev }}
+      - name: Fetch the W3C test suite at the pinned revision
+        # Not vendored (it is gitignored). Only sparql/sparql11 is checked out
+        # (~3.4 MB), and only the pinned commit is fetched.
+        if: steps.suite-cache.outputs.cache-hit != 'true'
+        env:
+          REV: ${{ steps.suite.outputs.rev }}
+        run: |
+          git init -q rdf-tests
+          git -C rdf-tests remote add origin https://github.com/w3c/rdf-tests.git
+          git -C rdf-tests sparse-checkout set sparql/sparql11
+          git -C rdf-tests fetch -q --depth 1 --filter=blob:none origin "$REV"
+          git -C rdf-tests -c advice.detachedHead=false checkout -q FETCH_HEAD
+      - name: Verify the suite is the pinned commit
+        env:
+          REV: ${{ steps.suite.outputs.rev }}
+        run: |
+          GOT=$(git -C rdf-tests rev-parse HEAD)
+          echo "w3c/rdf-tests @ $GOT"
+          test "$GOT" = "$REV" || { echo "suite is at $GOT, pinned $REV" >&2; exit 1; }
       - name: Score against the committed baseline
         run: |
           BASELINE=$(python3 -c "import json;print(json.load(open('tests/conformance-baseline.json'))['pass'])")
           echo "baseline: $BASELINE passing"
-          docker run --rm --user root             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup             -e CARGO_TARGET_DIR=/work/target             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}"             sh -lc "git config --global --add safe.directory /work               && cargo build --release -p rete-cli               && pip install --quiet --break-system-packages rdflib               && python3 scripts/sparql_conformance.py                    --rete target/release/rete                    --suite rdf-tests/sparql/sparql11                    --min-pass $BASELINE                    --json conformance.json"
+          docker run --rm --user root             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup             -e CARGO_TARGET_DIR=/work/target             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}"             sh -lc "git config --global --add safe.directory /work               && git config --global --add safe.directory /work/rdf-tests               && cargo build --release -p rete-cli               && pip install --quiet --break-system-packages rdflib               && python3 scripts/sparql_conformance.py                    --rete target/release/rete                    --suite rdf-tests/sparql/sparql11                    --min-pass $BASELINE                    --json conformance.json"
       - name: Publish the measured score
         if: always()
         run: cat conformance.json 2>/dev/null || echo "no score produced"

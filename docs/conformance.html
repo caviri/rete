@@ -627,7 +627,9 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 <h2 id="scorecard">Scorecard</h2>
 <p><strong>312 query-evaluation tests</strong>, byte-for-byte against the W3C expected results.
 Measured 2026-10-06 on <code>main</code> (<code>4c58a2dd</code>) against <code>w3c/rdf-tests</code> <code>5e5da96</code>
-(2026-10-02).
+(2026-10-02) — the revision pinned in
+<a href="https://github.com/caviri/rete/blob/main/tests/w3c-rdf-tests.rev"><code>tests/w3c-rdf-tests.rev</code></a>
+(see <a href="#the-pinned-suite">The pinned suite</a>).
 "n/s" = errored / not supported.</p>
 <table><thead><tr><th>Category</th><th style="text-align: right">pass</th><th style="text-align: right">n/s</th><th>notes</th></tr></thead><tbody>
 <tr><td>negation</td><td style="text-align: right">12 / 12</td><td style="text-align: right">0</td><td>✅ full</td></tr>
@@ -655,9 +657,30 @@ count drops below <code>tests/conformance-baseline.json</code>. It was not alway
 figure here read 232 / 75.1% while the engine actually scored 236 / 76.4%, and
 nothing would have caught it moving the other way. It then drifted again, to a
 stale 236 / 309, because only the baseline file is checked, not this page.
-The suite itself also moves: CI clones <code>w3c/rdf-tests</code> at HEAD on every run,
-so the denominator follows upstream (309 tests in June, 312 by October).</p>
+The suite itself also moved: CI used to clone <code>w3c/rdf-tests</code> at HEAD on every
+run, so the denominator followed upstream (309 tests in June, 312 by October)
+and the job could change its verdict with no rete commit. It is pinned now.</p>
 </blockquote>
+<h2 id="the-pinned-suite">The pinned suite</h2>
+<p>The W3C suite revision lives in <strong>one place</strong>:
+<a href="https://github.com/caviri/rete/blob/main/tests/w3c-rdf-tests.rev"><code>tests/w3c-rdf-tests.rev</code></a>,
+a single full commit SHA of <a href="https://github.com/w3c/rdf-tests"><code>w3c/rdf-tests</code></a>
+— currently <code>5e5da96bb06c551ae3ac57d30fec8116f7161b9b</code> (2026-10-02, 312
+query-evaluation tests). CI checks out exactly that commit (sparse, only
+<code>sparql/sparql11</code>, cached by SHA) and fails if what it got is anything else;
+<code>tests/conformance-baseline.json</code> names the file in <code>suite_revision_file</code>, and
+its counts are only meaningful against that commit. The harness prints the
+revision it ran against and warns when it is not the pinned one.</p>
+<p><strong>Bumping the suite is a deliberate one-line change</strong> — replace the SHA in
+<code>tests/w3c-rdf-tests.rev</code>. Do it in its own PR, and in the same PR:</p>
+<ol>
+<li>re-run the harness against the new commit and regenerate the baseline in
+place (<code>--json tests/conformance-baseline.json</code> keeps <code>_comment</code> and
+<code>suite_revision_file</code>, and updates only the counts);</li>
+<li>update the scorecard above — the date, the SHA and the per-category rows;</li>
+<li>explain any change in <code>pass</code> that is the suite's doing (new or changed
+tests) rather than rete's, since the two now move separately.</li>
+</ol>
 <h2 id="coverage-notes">Coverage notes</h2>
 <p><strong>Strong areas.</strong> Negation (<code>MINUS</code> / <code>NOT EXISTS</code>), JSON results, XSD casts
 (with strict lexical validation), and projection expressions are 100%. Property
@@ -707,8 +730,12 @@ lazily from a CDN, or federated across shards. The tiny conformance fixtures mak
 per-mode <em>timing</em> meaningless — that comparison lives in
 <a href="BENCHMARK.html">BENCHMARK</a>, on a graph large enough for it to matter.</p>
 <h2 id="reproduce">Reproduce</h2>
-<pre><code class="language-sh">git clone --depth 1 --filter=blob:none --sparse https://github.com/w3c/rdf-tests
-cd rdf-tests &amp;&amp; git sparse-checkout set sparql/sparql11 &amp;&amp; cd ..
+<pre><code class="language-sh">REV=$(tr -d '[:space:]' &lt; tests/w3c-rdf-tests.rev)     # the pinned suite
+git init -q rdf-tests
+git -C rdf-tests remote add origin https://github.com/w3c/rdf-tests.git
+git -C rdf-tests sparse-checkout set sparql/sparql11
+git -C rdf-tests fetch -q --depth 1 --filter=blob:none origin "$REV"
+git -C rdf-tests checkout -q FETCH_HEAD
 cargo build --release -p rete-cli
 python scripts/sparql_conformance.py --rete target/release/rete \
   --suite rdf-tests/sparql/sparql11            # add --relaxed for the value column

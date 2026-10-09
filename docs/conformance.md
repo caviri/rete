@@ -23,7 +23,9 @@ python scripts/sparql_conformance.py \
 
 **312 query-evaluation tests**, byte-for-byte against the W3C expected results.
 Measured 2026-10-06 on `main` (`4c58a2dd`) against `w3c/rdf-tests` `5e5da96`
-(2026-10-02).
+(2026-10-02) — the revision pinned in
+[`tests/w3c-rdf-tests.rev`](https://github.com/caviri/rete/blob/main/tests/w3c-rdf-tests.rev)
+(see [The pinned suite](#the-pinned-suite)).
 "n/s" = errored / not supported.
 
 | Category | pass | n/s | notes |
@@ -52,8 +54,31 @@ Measured 2026-10-06 on `main` (`4c58a2dd`) against `w3c/rdf-tests` `5e5da96`
 > figure here read 232 / 75.1% while the engine actually scored 236 / 76.4%, and
 > nothing would have caught it moving the other way. It then drifted again, to a
 > stale 236 / 309, because only the baseline file is checked, not this page.
-> The suite itself also moves: CI clones `w3c/rdf-tests` at HEAD on every run,
-> so the denominator follows upstream (309 tests in June, 312 by October).
+> The suite itself also moved: CI used to clone `w3c/rdf-tests` at HEAD on every
+> run, so the denominator followed upstream (309 tests in June, 312 by October)
+> and the job could change its verdict with no rete commit. It is pinned now.
+
+## The pinned suite
+
+The W3C suite revision lives in **one place**:
+[`tests/w3c-rdf-tests.rev`](https://github.com/caviri/rete/blob/main/tests/w3c-rdf-tests.rev),
+a single full commit SHA of [`w3c/rdf-tests`](https://github.com/w3c/rdf-tests)
+— currently `5e5da96bb06c551ae3ac57d30fec8116f7161b9b` (2026-10-02, 312
+query-evaluation tests). CI checks out exactly that commit (sparse, only
+`sparql/sparql11`, cached by SHA) and fails if what it got is anything else;
+`tests/conformance-baseline.json` names the file in `suite_revision_file`, and
+its counts are only meaningful against that commit. The harness prints the
+revision it ran against and warns when it is not the pinned one.
+
+**Bumping the suite is a deliberate one-line change** — replace the SHA in
+`tests/w3c-rdf-tests.rev`. Do it in its own PR, and in the same PR:
+
+1. re-run the harness against the new commit and regenerate the baseline in
+   place (`--json tests/conformance-baseline.json` keeps `_comment` and
+   `suite_revision_file`, and updates only the counts);
+2. update the scorecard above — the date, the SHA and the per-category rows;
+3. explain any change in `pass` that is the suite's doing (new or changed
+   tests) rather than rete's, since the two now move separately.
 
 ## Coverage notes
 
@@ -111,8 +136,12 @@ per-mode *timing* meaningless — that comparison lives in
 ## Reproduce
 
 ```sh
-git clone --depth 1 --filter=blob:none --sparse https://github.com/w3c/rdf-tests
-cd rdf-tests && git sparse-checkout set sparql/sparql11 && cd ..
+REV=$(tr -d '[:space:]' < tests/w3c-rdf-tests.rev)     # the pinned suite
+git init -q rdf-tests
+git -C rdf-tests remote add origin https://github.com/w3c/rdf-tests.git
+git -C rdf-tests sparse-checkout set sparql/sparql11
+git -C rdf-tests fetch -q --depth 1 --filter=blob:none origin "$REV"
+git -C rdf-tests checkout -q FETCH_HEAD
 cargo build --release -p rete-cli
 python scripts/sparql_conformance.py --rete target/release/rete \
   --suite rdf-tests/sparql/sparql11            # add --relaxed for the value column
