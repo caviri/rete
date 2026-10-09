@@ -25,14 +25,18 @@ same engine compiled to wasm). The ones that matter most:
   that Oxigraph and Jena drop. And boolean built-ins (`CONTAINS`, `isIRI`,
   `REGEX`, …) now have a value outside FILTER, where they used to be unbound.
   String functions read the whole literal, not up to its first embedded quote.
+  A correlated zero-length property path returns only terms in the graph.
 - **FILTER type errors are reported, not silent.** `CONTAINS` on an IRI,
-  `STRSTARTS` on a number and similar errors are counted and explained with a
-  hint. Python gets `Graph.last_warnings()`, and the extension's
-  `sparql_query` states them in words the agent reads. Results are unchanged.
+  `STRSTARTS` on a number, a failed numeric cast or comparison, `LANG` /
+  `DATATYPE` on the wrong kind of term, and similar errors are counted and
+  explained with a hint. `rete sparql` and `rete serve` show them. Python
+  gets `Graph.last_warnings()`, and the extension's `sparql_query` states them
+  in words the agent reads. Results are unchanged.
 - **RDF 1.2 quoted triples.** Exports write the RDF 1.2 triple term
   `<<( s p o )>>` by default, so a dump with quoted triples loads in current
   parsers. `rete build` and the clients read both surfaces, including RDF 1.2
-  Turtle/TriG. Python's `to_nquads()` writes RDF 1.2 too.
+  Turtle/TriG. Python's `to_nquads()` and the browser engine's CONSTRUCT
+  writers write RDF 1.2 too.
 - **Export.** It runs in bounded memory (`--memory-budget-mb`), and gains
   streaming Turtle and TriG writers, `--compress zstd|gzip` and
   `--format hdt`. IRI validity is decided by an RFC 3987 parser.
