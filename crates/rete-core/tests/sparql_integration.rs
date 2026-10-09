@@ -710,6 +710,57 @@ fn property_path_zero_length_semantics() {
 }
 
 #[test]
+fn correlated_zero_length_path_returns_only_graph_terms() {
+    // W3C property-path/values_and_path: "ZeroOrX property paths should only
+    // return terms in the graph and not also terms defined in the query". A
+    // VALUES-bound endpoint drives the correlated path join, which fixes the
+    // variable to a constant; a constant absent from the graph gets the
+    // zero-length identity, a variable endpoint does not. Regressed in
+    // fc455458 (correlated property-path join): 30 -> 29 / 33.
+    let rete = Rete::open(&dataset()).unwrap();
+    let rows = |q: &str| {
+        let (_, sols) = eval_sparql(&rete, &format!("{PREFIX}{q}")).unwrap();
+        let mut v: Vec<String> = sols
+            .iter()
+            .map(|b| {
+                let mut kv: Vec<String> = b.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                kv.sort();
+                kv.join(" ")
+            })
+            .collect();
+        v.sort();
+        v
+    };
+
+    // The W3C shape: a literal that is in no triple.
+    assert!(rows("SELECT * WHERE { VALUES ?v { 1 } ?v ex:knows? ?v }").is_empty());
+    // An IRI that is in no triple, on either side of the join and with `*`.
+    assert!(rows("SELECT * WHERE { VALUES ?v { ex:Nobody } ?v ex:knows* ?y }").is_empty());
+    assert!(rows("SELECT * WHERE { VALUES ?v { ex:Nobody } ?y ex:knows* ?v }").is_empty());
+    // A graph node keeps its zero-length self-match; the phantom beside it goes.
+    assert_eq!(
+        rows("SELECT * WHERE { VALUES ?v { ex:Eve ex:Nobody } ?v ex:knows? ?v }"),
+        vec!["v=<http://ex/Eve>"]
+    );
+    // A constant in the query is still its own zero-length solution, graph or
+    // not (52407023): correlating on ?v must not take that away.
+    assert_eq!(
+        rows("SELECT * WHERE { VALUES ?v { ex:Nobody } ?v ex:knows? ex:Nobody }"),
+        vec!["v=<http://ex/Nobody>"]
+    );
+    // OPTIONAL keeps the left row, unextended.
+    assert_eq!(
+        rows("SELECT * WHERE { VALUES ?v { 1 } OPTIONAL { ?v ex:knows? ?y } }"),
+        vec!["v=\"1\"^^<http://www.w3.org/2001/XMLSchema#integer>"]
+    );
+    // Without a zero-length step nothing changes: a real start still walks.
+    assert_eq!(
+        rows("SELECT ?y WHERE { VALUES ?v { ex:Dave } ?v ex:knows+ ?y }"),
+        vec!["y=<http://ex/Eve>"]
+    );
+}
+
+#[test]
 fn subquery_evaluates_and_joins_with_the_outer_pattern() {
     // A nested SELECT is evaluated independently; its projected solutions join
     // with the surrounding pattern on shared variables.
