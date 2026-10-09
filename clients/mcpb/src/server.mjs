@@ -122,7 +122,17 @@ const ARG_KIND = {
   unbound: "an unbound variable",
   "invalid-regex": "an invalid regex pattern",
   "not-a-datetime": "a value that is not an xsd:dateTime",
+  string: "a string",
+  "language-tagged": "a language-tagged literal",
+  "invalid-number": "a literal whose text is not a valid number for its datatype",
 };
+
+/** An operator (`+`, `<`, `IN`, …) has operands, not numbered arguments. */
+const isOperator = (f) => !/^[A-Z_0-9]+$/.test(f);
+const position = (w) =>
+  isOperator(w.function)
+    ? (w.argument === 1 ? "the left operand" : "the right operand")
+    : `argument ${w.argument}`;
 
 /** One line an agent will read: the result size, then each warning. */
 function warningLine(size, warnings) {
@@ -134,7 +144,8 @@ function warningLine(size, warnings) {
       .map((w) => {
         const kind = ARG_KIND[w.argKind] ?? w.argKind;
         const times = w.count === 1 ? "1 row" : `${w.count} rows`;
-        return `${w.function} received ${kind} as argument ${w.argument} (${times}) — ${w.hint}`;
+        if (w.argKind === "division-by-zero") return `${w.function} divided by zero (${times}) — ${w.hint}`;
+        return `${w.function} received ${kind} as ${position(w)} (${times}) — ${w.hint}`;
       })
       .join("; ");
     parts.push(

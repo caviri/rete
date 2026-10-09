@@ -36,13 +36,17 @@ export interface QueryOptions {
 export interface QueryWarning {
   /** `"type-error"`: an error was raised and absorbed. `"hint"`: a suggestion only. */
   severity: "type-error" | "hint";
-  /** The SPARQL function, e.g. `"CONTAINS"`. */
+  /**
+   * The SPARQL function, e.g. `"CONTAINS"`, or an operator's spelling:
+   * `+ - * /`, `= != < <= > >=`, `IN`.
+   */
   function: string;
-  /** 1-based argument position. */
+  /** 1-based argument position (for an operator: 1 left, 2 right). */
   argument: number;
   /**
    * `iri`, `blank-node`, `quoted-triple`, `numeric`, `typed-literal`,
-   * `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`, or
+   * `string`, `language-tagged`, `invalid-number`, `language-mismatch`,
+   * `unbound`, `invalid-regex`, `not-a-datetime`, `division-by-zero`, or
    * `case-sensitive` (the hint).
    */
   argKind: string;

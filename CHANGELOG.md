@@ -25,6 +25,26 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   doesn't implement now names the IRI in its error. See
   [SPARQL: type errors and query warnings](docs/sparql.md#warnings).
 
+- **SPARQL warnings cover more silent errors, and show where results are
+  read.** Besides the string, regex, hash and date/time functions, a
+  warning now names:
+  - `ABS` / `CEIL` / `FLOOR` / `ROUND` given something that is not a number;
+  - `+ - * /` given a non-numeric operand, and division by zero;
+  - a comparison (`=`, `<`, …) or `IN` whose operand is unbound, the
+    usual result of an `OPTIONAL` that did not match. Comparison semantics
+    are unchanged: only cases that already raised an error are reported;
+  - `LANG` / `DATATYPE` on an IRI or blank node;
+  - `STRDT` / `STRLANG` on a literal that is not simple, and an `STRDT`
+    datatype that is not an IRI.
+
+  Operators are reported by their spelling (`function: "/"`, argument 1
+  = left operand) and four new `argKind` values (`string`,
+  `language-tagged`, `invalid-number`, `division-by-zero`) describe them.
+  Results are unchanged. The **playground** shows the warnings above the
+  result and counts them in the run summary. **`rete serve`** returns them
+  in `Rete-Warnings` (JSON) and `Rete-Warning-Count` response headers, so
+  the body stays standard SPARQL JSON / N-Triples.
+
 - **Python: the same warnings.** `Graph.last_warnings()` returns the warnings
   from the most recent `query()` / `query_raw()` / `query_df()` (`[]` when
   there are none), and `query_raw()` carries them as an optional `warnings`

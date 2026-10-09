@@ -437,6 +437,12 @@ as Oxigraph and Jena do, so these queries return no rows:
 | `FILTER(REGEX(?s, "geneva"))`, `?s` an IRI | 0 | same: `REGEX(STR(?s), "geneva")` |
 | `FILTER(CONTAINS(?label, "Geneva"@fr))`, `?label` is `@en` | 0 | the arguments are *incompatible* (§17.4.3): a tagged needle must carry the haystack's tag. Use `STR()` on both |
 | `FILTER(CONTAINS(?label, "geneva"))`, label `"Geneva …"` | 0 | not an error: matching is case-sensitive. Use `LCASE(?label)` or `REGEX(?label, "geneva", "i")` |
+| `FILTER(ABS(?note) > 0)`, `?note` the string `"a note"` | 0 | `ABS` / `CEIL` / `FLOOR` / `ROUND` need a number (rete accepts any literal whose text parses as one) |
+| `FILTER(?label + 1 > 0)`, `?label` a string | 0 | `+ - * /` take numeric-typed literals only: cast first, `xsd:decimal(?label)` |
+| `BIND(?n / 0 AS ?r)` | 1, `?r` unbound | division by zero is an error |
+| `OPTIONAL { ?s ex:age ?a } FILTER(?a > 18)` | rows without an age dropped | a comparison (or `IN`) with an unbound operand is an error |
+| `FILTER(LANG(?s) = "en")`, `?s` an IRI | 0 | `LANG` / `DATATYPE` take a literal |
+| `BIND(STRDT(?label, xsd:token) AS ?t)`, `?label` is `@en` | 1, `?t` unbound | `STRDT` / `STRLANG` need a simple literal: `STRDT(STR(?label), …)`; `STRDT`'s datatype must be an IRI |
 
 Results are never changed to be helpful. What rete adds is a **side channel**:
 every such error is counted, and the query reports **warnings** next to its
@@ -455,9 +461,9 @@ out when there is nothing to report. Each entry has these fields:
 | Field | Meaning |
 |---|---|
 | `severity` | `type-error` (an error was raised and absorbed) or `hint` (a suggestion; nothing went wrong) |
-| `function` | the SPARQL function, e.g. `CONTAINS` |
-| `argument` | 1-based argument position |
-| `argKind` | `iri`, `blank-node`, `quoted-triple`, `numeric`, `typed-literal`, `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`, or `case-sensitive` for the hint |
+| `function` | the SPARQL function, e.g. `CONTAINS`, or for an operator its spelling: `+` `-` `*` `/`, `=` `!=` `<` `<=` `>` `>=`, `IN` |
+| `argument` | 1-based argument position; for an operator 1 is the left operand, 2 the right |
+| `argKind` | `iri`, `blank-node`, `quoted-triple`, `numeric`, `typed-literal`, `string`, `language-tagged`, `invalid-number` (a numeric datatype whose text is not a number), `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`, `division-by-zero` (argument 2 of `/`), or `case-sensitive` for the hint |
 | `count` | how many evaluations raised it. A row is evaluated only when it reaches the expression, and LIMIT / ASK stop early, so this is not a count of the data |
 | `sample` | the first offending value, cut to 80 characters |
 | `hint` | what to change, e.g. `wrap it in STR() to match the IRI's text` |
@@ -465,11 +471,21 @@ out when there is nothing to report. Each entry has these fields:
 
 Notes:
 
-- **`unbound`** is reported only for a bare variable passed to `CONTAINS`,
-  `STRSTARTS`, `STRENDS` or `REGEX` in a filter. Such a variable usually comes
-  from an `OPTIONAL` that did not match, or is misspelled. An error inside a
-  nested call (`CONTAINS(LCASE(?s), …)`) is reported once, by the inner
-  function (`LCASE`).
+- **`unbound`** is reported for a bare variable passed to `CONTAINS`,
+  `STRSTARTS`, `STRENDS`, `REGEX`, the numeric functions, `LANG`,
+  `DATATYPE`, `STRDT` / `STRLANG`, an arithmetic operator, a comparison or
+  `IN`. Such a variable usually comes from an `OPTIONAL` that did not match,
+  or is misspelled. An error inside a nested call (`CONTAINS(LCASE(?s), …)`,
+  `STRLEN(?s) > 3`) is reported once, by the inner function.
+- **Comparisons** are reported only where rete already raises an error,
+  which today is an operand that is itself an error (most often unbound).
+  rete compares any two bound terms, numerically when both parse as numbers
+  and lexically otherwise, so `"10" = 10` is true and `?year > "abc"` is
+  silently lexical. Where that differs from the spec it is a semantics
+  question, deliberately not changed by the warnings.
+- **Division by zero** is an error for every numeric type in rete, as it
+  is for `xsd:integer` and `xsd:decimal` in the spec (for `xsd:double` the
+  spec gives `INF`).
 - **`invalid-regex`**: rete's regex engine uses Rust syntax, which has no
   look-around and no back-references. An invalid pattern is an error (the row
   is dropped, even under `!`) and is reported along with the parser's message.
@@ -483,6 +499,14 @@ Notes:
   no errors does no extra work beyond resetting the counter once per query.
 - From Rust: `rete_core::eval_query_with_warnings(&rete, query, opts)` returns
   `(QueryOutput, Vec<QueryWarning>)`. `eval_query` is unchanged.
+- **The playground** shows them in a box above the result, in every output
+  view, and counts them in the run summary (`0 row(s) · ⚠ 1 warning`).
+- **`rete serve`** sends them as response headers, so the body stays the
+  standard SPARQL result document: `Rete-Warnings` holds the same JSON array
+  (non-ASCII escaped as `\uXXXX`, as a header value must be), and
+  `Rete-Warning-Count` the total. Both are left out when there is nothing to
+  report. Browsers can read them (`Access-Control-Expose-Headers`). See
+  [`rete serve`](cli.html#rete-serve-file---bind-addr---token-t---journal-path).
 
 A function rete doesn't know is never silently false. An unknown name
 (`NOSUCHFN(?x)`) is a parse error, and an extension-function IRI that rete

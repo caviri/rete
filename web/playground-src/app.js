@@ -7632,7 +7632,38 @@ self.onmessage = function (e) {
     return `${totalItems} dated item(s) · ${fmtYear(min)}–${fmtYear(max)}`;
   }
 
+  // The engine's expression type errors (CONTAINS on an IRI, ABS on a string,
+  // a division by zero, an unbound variable in a comparison, ...) arrive in
+  // the envelope's optional `warnings` member. A FILTER drops such a row
+  // without a word, so an empty or short result is otherwise unexplained.
+  // Shown above every Output view; the rows themselves are unchanged.
+  function queryWarningsHtml(warnings) {
+    const list = Array.isArray(warnings) ? warnings : [];
+    if (!list.length) return "";
+    const errors = list.filter((w) => w.severity !== "hint");
+    const hints = list.length - errors.length;
+    const head = errors.length
+      ? `<b>⚠ ${errors.length} warning${errors.length === 1 ? "" : "s"}:</b> part of this query raised a SPARQL type error, which drops the row in a FILTER (or leaves a BIND unbound) without an error message. The results follow the spec; the query may not do what you meant.`
+      : `<b>💡 ${hints === 1 ? "Hint" : hints + " hints"}:</b>`;
+    const items = list.map((w) => {
+      const where = w.argument ? ` · argument ${esc(w.argument)}` : "";
+      const count = w.count ? ` · ${esc(w.count)} row${w.count === 1 ? "" : "s"}` : "";
+      return `<li><code>${esc(w.function)}</code>${where}${count} — ${esc(w.message)}</li>`;
+    }).join("");
+    return `<div class="note query-warnings" role="status">${head}<ul>${items}</ul></div>`;
+  }
+
   function renderResult(res, fmt) {
+    const summary = renderResultBody(res, fmt);
+    const warnings = res && Array.isArray(res.warnings) ? res.warnings : [];
+    if (!warnings.length) return summary;
+    const el = $("out");
+    if (el && !el.querySelector(".query-warnings")) el.insertAdjacentHTML("afterbegin", queryWarningsHtml(warnings));
+    const n = warnings.filter((w) => w.severity !== "hint").length;
+    return n ? `${summary} · ⚠ ${n} warning${n === 1 ? "" : "s"}` : summary;
+  }
+
+  function renderResultBody(res, fmt) {
     const progressive = res.progressive || null;
     renderProgressiveInfo(progressive);
 

@@ -34,13 +34,16 @@ impl FExpr {
             }
             FExpr::Const(c) => Some(Rc::from(c.as_str())),
             FExpr::Arith(op, l, r) => {
-                let a = arith_number(&l.value(ctx, b)?)?;
-                let c = arith_number(&r.value(ctx, b)?)?;
+                let (a, _) = arith_operand(*op, 1, l, ctx, b)?;
+                let (c, ct) = arith_operand(*op, 2, r, ctx, b)?;
                 let v = match op {
                     ArithOp::Add => a + c,
                     ArithOp::Sub => a - c,
                     ArithOp::Mul => a * c,
-                    ArithOp::Div if c == 0.0 => return None,
+                    ArithOp::Div if c == 0.0 => {
+                        diag::div_by_zero(&ct);
+                        return None;
+                    }
                     ArithOp::Div => a / c,
                 };
                 Some(Rc::from(fmt_num_typed(v)))
@@ -88,12 +91,26 @@ impl FExpr {
             FExpr::Not(e) => e.ebv3(ctx, b).map(|v| !v),
             FExpr::And(l, r) => logical_and(l.ebv3(ctx, b), || r.ebv3(ctx, b)),
             FExpr::Or(l, r) => logical_or(l.ebv3(ctx, b), || r.ebv3(ctx, b)),
+            // A comparison errors only when an operand does (the engine
+            // compares any two bound terms); an unbound variable is reported.
             FExpr::Compare(op, l, r) => {
-                let a = l.value(ctx, b)?;
-                let c = r.value(ctx, b)?;
+                let Some(a) = l.value(ctx, b) else {
+                    missing_operand(diag::Site::compare(*op), 1, l);
+                    return None;
+                };
+                let Some(c) = r.value(ctx, b) else {
+                    missing_operand(diag::Site::compare(*op), 2, r);
+                    return None;
+                };
                 Some(compare(*op, &a, &c))
             }
-            FExpr::In(e, list) => in_list(&e.value(ctx, b)?, list, ctx, b),
+            FExpr::In(e, list) => {
+                let Some(lhs) = e.value(ctx, b) else {
+                    missing_operand(diag::Site::Op("IN"), 1, e);
+                    return None;
+                };
+                in_list(&lhs, list, ctx, b)
+            }
             // sameTerm is strict term identity — no numeric/lexical coercion.
             FExpr::SameTerm(l, r) => {
                 let a = l.value(ctx, b)?;
@@ -261,6 +278,25 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
     let sl = |x: String, lang: Option<&str>| -> Option<Rc<str>> {
         Some(Rc::from(make_literal(&x, lang, None)))
     };
+    // Argument `i`, reporting it when it is an unbound variable.
+    let arg = |i: usize| {
+        let v = args.get(i).and_then(|e| e.value(ctx, b));
+        if v.is_none() {
+            missing_arg(f, i, args);
+        }
+        v
+    };
+    // The numeric value of argument 1 for ABS / CEIL / FLOOR / ROUND, reporting
+    // a term that is not one (by the lenient rule these have always used: any
+    // literal whose text parses as a number).
+    let n0 = || {
+        let a = arg(0)?;
+        let n = as_number(&a);
+        if n.is_none() {
+            diag::not_a_number(f, 1, &a);
+        }
+        n
+    };
     // The xsd:dateTime parts of argument 1, reporting a value that is not one.
     let dtm = || {
         let a = a0()?;
@@ -312,13 +348,13 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
             let lang = string_arg_of(f, 0, &a)?;
             sl(lex(&a).to_lowercase(), lang.as_deref())
         }
-        Builtin::Abs => num(as_number(&a0()?)?.abs()),
-        Builtin::Ceil => num(as_number(&a0()?)?.ceil()),
-        Builtin::Floor => num(as_number(&a0()?)?.floor()),
+        Builtin::Abs => num(n0()?.abs()),
+        Builtin::Ceil => num(n0()?.ceil()),
+        Builtin::Floor => num(n0()?.floor()),
         // SPARQL ROUND rounds a tie toward +∞ (`floor(x + 0.5)`), unlike Rust's
         // `f64::round` which rounds a tie away from zero — so ROUND(-3.5) is -3,
         // not -4 (caught by the Oxigraph differential).
-        Builtin::Round => num((as_number(&a0()?)? + 0.5).floor()),
+        Builtin::Round => num((n0()? + 0.5).floor()),
         Builtin::Concat => {
             // Every argument must be a string literal (else a type error); the
             // result keeps the common language tag iff all share that same
@@ -386,13 +422,17 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // STRDT/STRLANG require a simple string arg1 (RDF 1.1): a lang-tagged or
         // otherwise-typed literal is a type error.
         Builtin::StrDt => {
-            let v = simple_string(&a0()?)?;
-            let dt = iri_content(&args.get(1)?.value(ctx, b)?)?.to_string();
-            Some(Rc::from(make_literal(&v, None, Some(&dt))))
+            let v = simple_arg(f, &arg(0)?)?;
+            let t = arg(1)?;
+            let Some(dt) = iri_content(&t) else {
+                diag::bad_constructor_arg(f, 2, &t);
+                return None;
+            };
+            Some(Rc::from(make_literal(&v, None, Some(dt))))
         }
         Builtin::StrLang => {
-            let v = simple_string(&a0()?)?;
-            let lang = lex(&args.get(1)?.value(ctx, b)?);
+            let v = simple_arg(f, &arg(0)?)?;
+            let lang = lex(&arg(1)?);
             Some(Rc::from(make_literal(&v, Some(&lang), None)))
         }
         // IRI()/URI(): an IRI argument passes through; a string becomes <...>.
@@ -481,10 +521,24 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         // `^^<dt>`, else `rdf:langString` for a language-tagged literal, else
         // `xsd:string` for a plain one. A non-literal (IRI/blank) is a type
         // error → `None` (FILTER sees it as false).
-        Builtin::Datatype => datatype_iri(&a0()?).map(|iri| Rc::from(format!("<{iri}>"))),
+        Builtin::Datatype => {
+            let a = arg(0)?;
+            let Some(iri) = datatype_iri(&a) else {
+                diag::not_a_literal(f, &a);
+                return None;
+            };
+            Some(Rc::from(format!("<{iri}>")))
+        }
         // LANG(literal) → its language tag as a plain literal (`"en"`), or `""`
         // for a non-language-tagged literal; non-literal → `None`.
-        Builtin::Lang => lang_of(&a0()?).map(|l| Rc::from(format!("\"{l}\""))),
+        Builtin::Lang => {
+            let a = arg(0)?;
+            let Some(l) = lang_of(&a) else {
+                diag::not_a_literal(f, &a);
+                return None;
+            };
+            Some(Rc::from(format!("\"{l}\"")))
+        }
         // GeoSPARQL relations in value position (e.g. `BIND(geof:sfWithin(..) AS ?x)`)
         // → a typed xsd:boolean; a type error → None (unbound).
         Builtin::GeoSfContains
@@ -1129,6 +1183,42 @@ fn no_match(ctx: &Ctx, f: Builtin, bit: u8, args: &[FExpr]) {
         if let Some(needle) = args.get(1) {
             diag::note_no_match(f, needle);
         }
+    }
+}
+
+/// [`simple_string`] for argument 1 of STRDT / STRLANG, reporting a term that
+/// is not a simple literal.
+#[inline]
+fn simple_arg(f: Builtin, token: &str) -> Option<String> {
+    let v = simple_string(token);
+    if v.is_none() {
+        diag::bad_constructor_arg(f, 1, token);
+    }
+    v
+}
+
+/// One operand of `+ - * /` as a number (with its term, for the division-by-
+/// zero sample), reporting an unbound variable or a non-numeric term.
+#[inline]
+fn arith_operand(op: ArithOp, pos: usize, e: &FExpr, ctx: &Ctx, b: &Row) -> Option<(f64, Rc<str>)> {
+    let Some(t) = e.value(ctx, b) else {
+        missing_operand(diag::Site::arith(op), pos, e);
+        return None;
+    };
+    match arith_number(&t) {
+        Some(n) => Some((n, t)),
+        None => {
+            diag::not_a_number(diag::Site::arith(op), pos, &t);
+            None
+        }
+    }
+}
+
+/// An operand evaluated to nothing: report it when it is a bare variable
+/// (unbound in this row); a nested expression reports its own error.
+fn missing_operand(site: diag::Site, pos: usize, e: &FExpr) {
+    if let FExpr::Var(v) = e {
+        diag::unbound(site, pos, v);
     }
 }
 

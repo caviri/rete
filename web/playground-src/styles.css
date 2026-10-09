@@ -1944,6 +1944,15 @@ pre {
   color: #7c4124;
 }
 
+.query-warnings ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.query-warnings li {
+  margin: 3px 0;
+  line-height: 1.45;
+}
+
 .error-box {
   border: 1px solid var(--tint-red-border);
   background: var(--tint-red);

@@ -196,6 +196,94 @@ fn serve_query_update_snapshot_and_journal_replay() {
 }
 
 #[test]
+fn serve_reports_query_warnings_in_headers_and_leaves_the_body_standard() {
+    let _server_test_guard = SERVER_TEST_LOCK.lock().unwrap();
+    let file = build_fixture("warnings");
+    let port = free_port();
+    let server = spawn_server(&file, port, &[]);
+    let query = |q: &str| {
+        ureq::post(&format!("http://127.0.0.1:{port}/sparql"))
+            .send_form(&[("query", q)])
+            .expect("query ok")
+    };
+
+    // No error, no header: the response is what it always was.
+    let r = query("SELECT ?s WHERE { ?s <http://ex/name> ?n FILTER(CONTAINS(?n, \"li\")) }");
+    assert_eq!(r.header("Rete-Warnings"), None);
+    assert_eq!(r.header("Rete-Warning-Count"), None);
+    assert_eq!(
+        r.header("Access-Control-Expose-Headers"),
+        Some("Rete-Warnings, Rete-Warning-Count")
+    );
+    assert_eq!(
+        rete_core::parse_sparql_json_results(&r.into_string().unwrap())
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // CONTAINS on an IRI and a language-mismatched non-ASCII needle: two
+    // warnings, the body still the plain (empty) SPARQL JSON result.
+    let r = query(
+        "SELECT ?s WHERE { ?s <http://ex/name> ?n \
+         FILTER(CONTAINS(?s, \"a\") || CONTAINS(?n, \"é\"@fr)) }",
+    );
+    assert_eq!(r.header("Rete-Warning-Count"), Some("2"));
+    let raw = r
+        .header("Rete-Warnings")
+        .expect("warnings header")
+        .to_string();
+    assert!(raw.is_ascii(), "header value must be ASCII: {raw}");
+    assert!(raw.contains("\\u00e9"), "{raw}");
+    let w: serde_json::Value = serde_json::from_str(&raw).expect("header is JSON");
+    let kinds: Vec<(&str, &str)> = w
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            (
+                x["function"].as_str().unwrap(),
+                x["argKind"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert!(kinds.contains(&("CONTAINS", "iri")), "{kinds:?}");
+    assert!(
+        kinds.contains(&("CONTAINS", "language-mismatch")),
+        "{kinds:?}"
+    );
+    assert!(
+        w.as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["sample"].as_str() == Some("\"é\"@fr")),
+        "the escape decodes back to the sample: {w}"
+    );
+    let body = r.into_string().unwrap();
+    assert_eq!(
+        body,
+        rete_core::sparql_json_results(&["s".to_string()], &[])
+    );
+
+    // ASK and CONSTRUCT carry them the same way; the N-Triples body is untouched.
+    let r = query("ASK { ?s <http://ex/name> ?n FILTER(STRLEN(?n) / 0 > 1) }");
+    assert_eq!(r.header("Rete-Warning-Count"), Some("1"));
+    assert!(r
+        .header("Rete-Warnings")
+        .unwrap()
+        .contains("division-by-zero"));
+    let r = query(
+        "CONSTRUCT { ?s <http://ex/len> ?l } WHERE { ?s <http://ex/name> ?n BIND(ABS(?n) AS ?l) }",
+    );
+    assert_eq!(r.header("Content-Type"), Some("application/n-triples"));
+    assert_eq!(r.header("Rete-Warning-Count"), Some("1"));
+    assert_eq!(r.into_string().unwrap(), "");
+
+    stop_server(server);
+    let _ = std::fs::remove_file(format!("{}.changes", file.display()));
+}
+
+#[test]
 fn serve_update_token_guards_writes_not_reads() {
     let _server_test_guard = SERVER_TEST_LOCK.lock().unwrap();
     let file = build_fixture("guarded");

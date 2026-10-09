@@ -977,6 +977,12 @@ as Oxigraph and Jena do, so these queries return no rows:</p>
 <tr><td><code>FILTER(REGEX(?s, "geneva"))</code>, <code>?s</code> an IRI</td><td>0</td><td>same: <code>REGEX(STR(?s), "geneva")</code></td></tr>
 <tr><td><code>FILTER(CONTAINS(?label, "Geneva"@fr))</code>, <code>?label</code> is <code>@en</code></td><td>0</td><td>the arguments are <em>incompatible</em> (§17.4.3): a tagged needle must carry the haystack's tag. Use <code>STR()</code> on both</td></tr>
 <tr><td><code>FILTER(CONTAINS(?label, "geneva"))</code>, label <code>"Geneva …"</code></td><td>0</td><td>not an error: matching is case-sensitive. Use <code>LCASE(?label)</code> or <code>REGEX(?label, "geneva", "i")</code></td></tr>
+<tr><td><code>FILTER(ABS(?note) &gt; 0)</code>, <code>?note</code> the string <code>"a note"</code></td><td>0</td><td><code>ABS</code> / <code>CEIL</code> / <code>FLOOR</code> / <code>ROUND</code> need a number (rete accepts any literal whose text parses as one)</td></tr>
+<tr><td><code>FILTER(?label + 1 &gt; 0)</code>, <code>?label</code> a string</td><td>0</td><td><code>+ - * /</code> take numeric-typed literals only: cast first, <code>xsd:decimal(?label)</code></td></tr>
+<tr><td><code>BIND(?n / 0 AS ?r)</code></td><td>1, <code>?r</code> unbound</td><td>division by zero is an error</td></tr>
+<tr><td><code>OPTIONAL { ?s ex:age ?a } FILTER(?a &gt; 18)</code></td><td>rows without an age dropped</td><td>a comparison (or <code>IN</code>) with an unbound operand is an error</td></tr>
+<tr><td><code>FILTER(LANG(?s) = "en")</code>, <code>?s</code> an IRI</td><td>0</td><td><code>LANG</code> / <code>DATATYPE</code> take a literal</td></tr>
+<tr><td><code>BIND(STRDT(?label, xsd:token) AS ?t)</code>, <code>?label</code> is <code>@en</code></td><td>1, <code>?t</code> unbound</td><td><code>STRDT</code> / <code>STRLANG</code> need a simple literal: <code>STRDT(STR(?label), …)</code>; <code>STRDT</code>'s datatype must be an IRI</td></tr>
 </tbody></table>
 <p>Results are never changed to be helpful. What rete adds is a <strong>side channel</strong>:
 every such error is counted, and the query reports <strong>warnings</strong> next to its
@@ -990,9 +996,9 @@ warning: CONTAINS received an IRI as argument 1 in 1 row: a SPARQL type error, w
 out when there is nothing to report. Each entry has these fields:</p>
 <table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
 <tr><td><code>severity</code></td><td><code>type-error</code> (an error was raised and absorbed) or <code>hint</code> (a suggestion; nothing went wrong)</td></tr>
-<tr><td><code>function</code></td><td>the SPARQL function, e.g. <code>CONTAINS</code></td></tr>
-<tr><td><code>argument</code></td><td>1-based argument position</td></tr>
-<tr><td><code>argKind</code></td><td><code>iri</code>, <code>blank-node</code>, <code>quoted-triple</code>, <code>numeric</code>, <code>typed-literal</code>, <code>language-mismatch</code>, <code>unbound</code>, <code>invalid-regex</code>, <code>not-a-datetime</code>, or <code>case-sensitive</code> for the hint</td></tr>
+<tr><td><code>function</code></td><td>the SPARQL function, e.g. <code>CONTAINS</code>, or for an operator its spelling: <code>+</code> <code>-</code> <code>*</code> <code>/</code>, <code>=</code> <code>!=</code> <code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code>, <code>IN</code></td></tr>
+<tr><td><code>argument</code></td><td>1-based argument position; for an operator 1 is the left operand, 2 the right</td></tr>
+<tr><td><code>argKind</code></td><td><code>iri</code>, <code>blank-node</code>, <code>quoted-triple</code>, <code>numeric</code>, <code>typed-literal</code>, <code>string</code>, <code>language-tagged</code>, <code>invalid-number</code> (a numeric datatype whose text is not a number), <code>language-mismatch</code>, <code>unbound</code>, <code>invalid-regex</code>, <code>not-a-datetime</code>, <code>division-by-zero</code> (argument 2 of <code>/</code>), or <code>case-sensitive</code> for the hint</td></tr>
 <tr><td><code>count</code></td><td>how many evaluations raised it. A row is evaluated only when it reaches the expression, and LIMIT / ASK stop early, so this is not a count of the data</td></tr>
 <tr><td><code>sample</code></td><td>the first offending value, cut to 80 characters</td></tr>
 <tr><td><code>hint</code></td><td>what to change, e.g. <code>wrap it in STR() to match the IRI's text</code></td></tr>
@@ -1000,11 +1006,21 @@ out when there is nothing to report. Each entry has these fields:</p>
 </tbody></table>
 <p>Notes:</p>
 <ul>
-<li><strong><code>unbound</code></strong> is reported only for a bare variable passed to <code>CONTAINS</code>,
-<code>STRSTARTS</code>, <code>STRENDS</code> or <code>REGEX</code> in a filter. Such a variable usually comes
-from an <code>OPTIONAL</code> that did not match, or is misspelled. An error inside a
-nested call (<code>CONTAINS(LCASE(?s), …)</code>) is reported once, by the inner
-function (<code>LCASE</code>).</li>
+<li><strong><code>unbound</code></strong> is reported for a bare variable passed to <code>CONTAINS</code>,
+<code>STRSTARTS</code>, <code>STRENDS</code>, <code>REGEX</code>, the numeric functions, <code>LANG</code>,
+<code>DATATYPE</code>, <code>STRDT</code> / <code>STRLANG</code>, an arithmetic operator, a comparison or
+<code>IN</code>. Such a variable usually comes from an <code>OPTIONAL</code> that did not match,
+or is misspelled. An error inside a nested call (<code>CONTAINS(LCASE(?s), …)</code>,
+<code>STRLEN(?s) &gt; 3</code>) is reported once, by the inner function.</li>
+<li><strong>Comparisons</strong> are reported only where rete already raises an error,
+which today is an operand that is itself an error (most often unbound).
+rete compares any two bound terms, numerically when both parse as numbers
+and lexically otherwise, so <code>"10" = 10</code> is true and <code>?year &gt; "abc"</code> is
+silently lexical. Where that differs from the spec it is a semantics
+question, deliberately not changed by the warnings.</li>
+<li><strong>Division by zero</strong> is an error for every numeric type in rete, as it
+is for <code>xsd:integer</code> and <code>xsd:decimal</code> in the spec (for <code>xsd:double</code> the
+spec gives <code>INF</code>).</li>
 <li><strong><code>invalid-regex</code></strong>: rete's regex engine uses Rust syntax, which has no
 look-around and no back-references. An invalid pattern is an error (the row
 is dropped, even under <code>!</code>) and is reported along with the parser's message.</li>
@@ -1018,6 +1034,14 @@ count and one sample) per function, argument and kind. A query that raises
 no errors does no extra work beyond resetting the counter once per query.</li>
 <li>From Rust: <code>rete_core::eval_query_with_warnings(&amp;rete, query, opts)</code> returns
 <code>(QueryOutput, Vec&lt;QueryWarning&gt;)</code>. <code>eval_query</code> is unchanged.</li>
+<li><strong>The playground</strong> shows them in a box above the result, in every output
+view, and counts them in the run summary (<code>0 row(s) · ⚠ 1 warning</code>).</li>
+<li><strong><code>rete serve</code></strong> sends them as response headers, so the body stays the
+standard SPARQL result document: <code>Rete-Warnings</code> holds the same JSON array
+(non-ASCII escaped as <code>\uXXXX</code>, as a header value must be), and
+<code>Rete-Warning-Count</code> the total. Both are left out when there is nothing to
+report. Browsers can read them (<code>Access-Control-Expose-Headers</code>). See
+<a href="cli.html#rete-serve-file---bind-addr---token-t---journal-path"><code>rete serve</code></a>.</li>
 </ul>
 <p>A function rete doesn't know is never silently false. An unknown name
 (<code>NOSUCHFN(?x)</code>) is a parse error, and an extension-function IRI that rete
