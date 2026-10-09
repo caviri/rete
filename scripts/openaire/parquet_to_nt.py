@@ -34,6 +34,7 @@ Usage:
 """
 import argparse
 import glob
+import ipaddress
 import json
 import os
 import re
@@ -53,7 +54,6 @@ DCT = "http://purl.org/dc/terms/"
 XSD = "http://www.w3.org/2001/XMLSchema#"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-_IRI_BAD = re.compile(r'[\x00-\x20<>"{}|\\^`]')
 _ESC = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 _ESC_RE = re.compile(r'[\\"\n\r\t]')
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -70,14 +70,22 @@ TYPES = {
 
 
 def ienc(s):
-    """Escape the IRIREF-forbidden characters of an id WE mint.
+    """Escape an id WE mint so that prefix + id is a valid IRI.
 
     Only ever applied under a constant prefix (``N``, ``DOI``, ``ORCID``,
     ``ROR``), so the scheme is ours and the result is absolute by construction.
     Free text out of the dump goes through :func:`data_iri` instead — this
     function alone is NOT enough to make an arbitrary string an IRI.
+
+    It is :func:`iri_escape`, the same transformation ``rete export
+    --sanitize-iris`` applies: an id that was already a valid IRI suffix comes
+    out unchanged, so no published IRI moves, and an id with a ``[``/``]``, a
+    second ``#`` or a stray ``%`` (DOIs carry all three) comes out exactly as
+    the sanitized dumps already wrote it. Escaping only the IRIREF-forbidden
+    characters, as this did first, let those through, and `rete build --strict`
+    refuses them.
     """
-    return _IRI_BAD.sub(lambda m: "%%%02X" % ord(m.group()), str(s))
+    return iri_escape(str(s))
 
 
 # --------------------------------------------------------------- IRI validity
@@ -112,6 +120,12 @@ def _ip_literal_brackets(b, colon):
     return None if close < 0 else (start, close)
 
 
+def _is_ucschar(cp):
+    """RFC 3987 ``ucschar``: what an IRI may carry unescaped above U+007F."""
+    return (0xA0 <= cp <= 0xD7FF or 0xF900 <= cp <= 0xFDCF or 0xFDF0 <= cp <= 0xFFEF
+            or (0x10000 <= cp <= 0xEFFFD and (cp & 0xFFFF) <= 0xFFFD))
+
+
 def iri_escape(s):
     """Percent-encode every IRIREF defect escaping CAN repair.
 
@@ -126,8 +140,23 @@ def iri_escape(s):
     seen_hash = False
     while i < len(b):
         c = b[i]
-        if c >= 0x80:  # RFC 3987 ucschar — legal, never touched
-            out.append(c)
+        if c >= 0x80:
+            # One whole UTF-8 sequence. A `ucschar` (RFC 3987) is legal and
+            # never touched; anything else -- a C1 control, a noncharacter, a
+            # private-use or lone-surrogate code point -- is percent-encoded
+            # byte by byte, which is the IRI -> URI mapping and keeps the meaning.
+            n = 2 if c < 0xE0 else 3 if c < 0xF0 else 4
+            seq = b[i : i + n]
+            try:
+                cp = ord(seq.decode("utf-8", "surrogatepass"))
+            except (UnicodeDecodeError, TypeError):
+                cp = -1
+            if _is_ucschar(cp):
+                out += seq
+            else:
+                out += b"".join(b"%%%02X" % x for x in seq)
+            i += len(seq)
+            continue
         elif c <= 0x20 or c == 0x7F or c in b'<>"{}|^`\\':
             out += b"%%%02X" % c
         elif c in (0x5B, 0x5D) and not (brackets and i in brackets):
@@ -150,6 +179,73 @@ def iri_escape(s):
     return out.decode("utf-8", "surrogatepass")
 
 
+# A scheme followed by `//` opens an authority, and RFC 3987 constrains it:
+# `[iuserinfo "@"] ihost [":" port]`, the port digits only, an IP-literal in
+# brackets. A value can carry a perfectly good scheme and still fail here --
+# `http//:host.hu` repaired to `http://:host.hu` has an empty host and the port
+# `host.hu`. The RFC 3987 parser behind rete's gate (#255) and Oxigraph rejects
+# it, so it is dropped and counted like a missing scheme, never rewritten.
+_AUTH_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://([^/?#]*)")
+_REG_NAME_RE = re.compile(
+    r"^(?:[A-Za-z0-9\-._~!$&'()*+,;=\u00a0-\U0010ffff]|%[0-9A-Fa-f]{2})*$")
+_USERINFO_RE = re.compile(
+    r"^(?:[A-Za-z0-9\-._~!$&'()*+,;=:\u00a0-\U0010ffff]|%[0-9A-Fa-f]{2})*$")
+_IPVFUTURE_RE = re.compile(r"^[vV][0-9A-Fa-f]+\.[A-Za-z0-9\-._~!$&'()*+,;=:]+$")
+
+
+def authority_defect(iri):
+    """Why ``iri``'s authority is not a valid RFC 3987 ``iauthority``, or ``None``.
+
+    ``None`` too when the IRI has no authority at all (no ``//`` after the
+    scheme). An EMPTY host is legal syntax (``file:///x``), exactly as for the
+    parser the gate uses; what fails is a malformed one.
+    """
+    m = _AUTH_RE.match(iri)
+    if not m:
+        return None
+    userinfo, at, hostport = m.group(1).rpartition("@")
+    if at and not _USERINFO_RE.match(userinfo):
+        return "userinfo"
+    if hostport.startswith("["):
+        close = hostport.find("]")
+        if close < 0:
+            return "unclosed IP-literal"
+        literal, rest = hostport[1:close], hostport[close + 1 :]
+        try:
+            if "%" in literal:  # Python takes a zone id; RFC 3986 does not
+                raise ValueError(literal)
+            ipaddress.IPv6Address(literal)
+        except ValueError:
+            if not _IPVFUTURE_RE.match(literal):
+                return "IP-literal"
+        port = rest[1:] if rest.startswith(":") else None
+        if rest and port is None:
+            return "text after IP-literal"
+    else:
+        host, colon, port = hostport.partition(":")
+        if not colon:
+            port = None
+        if not _REG_NAME_RE.match(host):
+            return "host"
+    if port and not port.isdigit():
+        return "port"
+    return None
+
+
+# What a dropped value looked like -- the shapes measured on the refused 2021
+# dumps (empty / bare host / not a URL; the broken-scheme shape is REPAIRED),
+# so a rebuild's tally can be checked against them one by one.
+_BARE_HOST_RE = re.compile(r"^[^\s/:@]+\.[A-Za-z][^\s/:@]*(?::\d+)?(?:[/?#]|$)")
+
+
+def _shape(raw):
+    if not raw:
+        return "empty"
+    if _BARE_HOST_RE.match(raw):
+        return "bare host"
+    return "not a URL"
+
+
 class IriAudit:
     """What the converter did to the free-text URLs the dump handed it."""
 
@@ -158,6 +254,7 @@ class IriAudit:
         self.escaped = 0
         self.rescued = Counter()
         self.dropped = Counter()
+        self.shapes = Counter()
         self.samples = defaultdict(list)
 
     def _sample(self, field, raw):
@@ -172,7 +269,8 @@ class IriAudit:
             f"IRI audit: {self.seen:,} free-text URL(s) seen, "
             f"{self.escaped:,} percent-escaped, "
             f"{sum(self.rescued.values()):,} scheme punctuation repaired, "
-            f"{drops:,} DROPPED (no scheme — not repairable).",
+            f"{drops:,} DROPPED (empty, no scheme, or an invalid authority — "
+            f"not repairable).",
             file=stream,
         )
         for field, n in self.rescued.most_common():
@@ -181,6 +279,11 @@ class IriAudit:
             print(f"  dropped  {n:>7}  {field}", file=stream)
             for raw in self.samples[field]:
                 print(f"             e.g. {raw!r}", file=stream)
+        # One machine-readable line: the per-shape numbers a rebuild is checked
+        # against. `repaired` is the broken-scheme shape (`http//x`).
+        shapes = " ".join(f"{k.replace(' ', '_')}={v}" for k, v in sorted(self.shapes.items()))
+        print(f"IRI audit shapes: repaired={sum(self.rescued.values())} {shapes}".rstrip(),
+              file=stream)
 
 
 def data_iri(value, audit, field):
@@ -193,28 +296,41 @@ def data_iri(value, audit, field):
     2. **repair** a scheme the value itself states but mispunctuates
        (``http//x`` -> ``http://x``): the intended value is in the data, not
        invented;
-    3. **drop** anything still relative. ``www.x.org`` does not say whether it
+    3. **drop** anything still relative, empty, or with an authority RFC 3987
+       rejects (see :func:`authority_defect`). ``www.x.org`` does not say whether it
        meant ``http`` or ``https``, and a converter that picks one is inventing
        a fact. Emitting it verbatim is worse still: `rete build` stores it, the
        `.nq` export carries it, and Oxigraph then rejects the entire ~102,000
        line chunk it landed in (rete issue #233).
     """
     raw = str(value).strip()
-    if not raw:
-        return None
     audit.seen += 1
+    if not raw:
+        # An absent URL. The 2021 dump writes it as "" inside instance.url, and
+        # the first converter emitted it as the IRI `<>`. Dropped, and COUNTED,
+        # so the tally accounts for every statement a rebuild no longer has.
+        return _drop(audit, field, raw, "empty")
     s = iri_escape(raw)
     if s != raw:
         audit.escaped += 1
     if _SCHEME_RE.match(s):
+        if authority_defect(s) is not None:
+            return _drop(audit, field, raw, "invalid authority")
         return s
     m = _LAME_SCHEME_RE.match(s)
     if m and m.group(1).lower() in _KNOWN_SCHEMES:
         s = m.group(1).lower() + "://" + s[m.end() :]
         if _SCHEME_RE.match(s):
+            if authority_defect(s) is not None:
+                return _drop(audit, field, raw, "invalid authority")
             audit.rescued[field] += 1
             return s
+    return _drop(audit, field, raw, _shape(raw))
+
+
+def _drop(audit, field, raw, shape):
     audit.dropped[field] += 1
+    audit.shapes[shape] += 1
     audit._sample(field, raw)
     return None
 

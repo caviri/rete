@@ -1,0 +1,50 @@
+{
+  "title": "OpenAIRE Graph — organization",
+  "license": "CC-BY-4.0",
+  "source": "https://graph.openaire.eu",
+  "version": "2021-04-27 (dump v3.0)",
+  "source_date": "2021-04-27",
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/openaire-2021/openaire-2021-organization.rete",
+  "derived_from": [
+    "https://doi.org/10.5281/zenodo.4707307"
+  ],
+  "cite_as": "Manghi, P. et al. OpenAIRE Research Graph Dump (v3.0), Zenodo, 2021. https://doi.org/10.5281/zenodo.4707307",
+  "keywords": [
+    "OpenAIRE",
+    "scholarly communication",
+    "research graph",
+    "open science",
+    "organization"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH"
+  ],
+  "description": [
+    "The **organization** slice of the 2021 OpenAIRE Graph: 277,330 research organisations as one range-queryable graph.",
+    "",
+    "## What is in it",
+    "",
+    "- One `oaire:Organization` per record, with legal name, short name, country code and website.",
+    "- An organisation with a ROR id *is* `https://ror.org/{id}`, so this shard joins the `ror` graph and every affiliation that cites ROR. The others keep their OpenAIRE id under `https://w3id.org/rete/openaire/20/…`.",
+    "",
+    "## Provenance",
+    "",
+    "Source: the **OpenAIRE Research Graph Dump v3.0** (Zenodo [10.5281/zenodo.4707307](https://doi.org/10.5281/zenodo.4707307), published 2021-04-27, CC BY 4.0), converted to Parquet on 2026-07-15 with `scripts/openaire/tars_to_parquet.py` (19 source tars matched by name and size, zero bad lines), then to N-Triples by `scripts/openaire/parquet_to_nt.py --only organization`. Vocabulary `oaire:` = <https://w3id.org/rete/openaire#>.",
+    "",
+    "## Build conditions",
+    "",
+    "Rebuilt with `rete build - --strict --memory-budget-mb 1500 --no-pyramid`. `--strict` refuses any IRI the N-Triples grammar or RFC 3987 rejects, so every IRI here loads into a strict triple store as-is. Website URLs (`websiteurl`) are percent-escaped where escaping keeps their meaning and repaired where the scheme is stated but mispunctuated (`http//www.uvs.edu`). They are **dropped and counted** when they carry no scheme (`www.sustech.edu.cn`) or when the repair still leaves an authority RFC 3987 rejects (`http//:hecon.uni-corvinus.hu`).",
+    "",
+    "The converter prints its tally on every run. It never adds a scheme to a value that does not state one, and it never rewrites a host."
+  ],
+  "example_queries": [
+    "# Organisations identified by ROR\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?org ?name WHERE {\n  ?org a oaire:Organization ; oaire:legalName ?name .\n  FILTER(STRSTARTS(STR(?org), \"https://ror.org/\"))\n} LIMIT 20",
+    "# Organisations per country\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?country (COUNT(?org) AS ?organisations) WHERE {\n  ?org oaire:countryCode ?country .\n} GROUP BY ?country ORDER BY DESC(?organisations) LIMIT 20",
+    "# Organisations and their websites\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?org ?name ?website WHERE {\n  ?org oaire:legalName ?name ; oaire:website ?website .\n} LIMIT 20",
+    "# Short names next to legal names\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?short ?name WHERE {\n  ?org oaire:legalShortName ?short ; oaire:legalName ?name .\n} LIMIT 20",
+    "# Swiss organisations\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?org ?name WHERE {\n  ?org oaire:countryCode \"CH\" ; oaire:legalName ?name .\n} LIMIT 20"
+  ]
+}

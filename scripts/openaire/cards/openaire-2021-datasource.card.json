@@ -1,0 +1,50 @@
+{
+  "title": "OpenAIRE Graph — datasource",
+  "license": "CC-BY-4.0",
+  "source": "https://graph.openaire.eu",
+  "version": "2021-04-27 (dump v3.0)",
+  "source_date": "2021-04-27",
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete",
+  "derived_from": [
+    "https://doi.org/10.5281/zenodo.4707307"
+  ],
+  "cite_as": "Manghi, P. et al. OpenAIRE Research Graph Dump (v3.0), Zenodo, 2021. https://doi.org/10.5281/zenodo.4707307",
+  "keywords": [
+    "OpenAIRE",
+    "scholarly communication",
+    "research graph",
+    "open science",
+    "datasource"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH"
+  ],
+  "description": [
+    "The **datasource** slice of the 2021 OpenAIRE Graph: 94,700 data sources (journals, institutional, thematic and data repositories, aggregators) as one range-queryable graph.",
+    "",
+    "## What is in it",
+    "",
+    "- One `oaire:Datasource` per record, with official and English name, type (`Journal`, `Institutional Repository`, `Data Repository`…), OpenAIRE compatibility level and website.",
+    "- Ids sit under `https://w3id.org/rete/openaire/10/…`, the ids the result shards' provenance and hosting relations point at.",
+    "",
+    "## Provenance",
+    "",
+    "Source: the **OpenAIRE Research Graph Dump v3.0** (Zenodo [10.5281/zenodo.4707307](https://doi.org/10.5281/zenodo.4707307), published 2021-04-27, CC BY 4.0), converted to Parquet on 2026-07-15 with `scripts/openaire/tars_to_parquet.py` (19 source tars matched by name and size, zero bad lines), then to N-Triples by `scripts/openaire/parquet_to_nt.py --only datasource`. Vocabulary `oaire:` = <https://w3id.org/rete/openaire#>.",
+    "",
+    "## Build conditions",
+    "",
+    "Rebuilt with `rete build - --strict --memory-budget-mb 1500 --no-pyramid`. `--strict` refuses any IRI the N-Triples grammar or RFC 3987 rejects, so every IRI here loads into a strict triple store as-is. Website URLs (`websiteurl`) are percent-escaped where escaping keeps their meaning, and **dropped and counted** when they carry no scheme (`journal.unj.ac.id/…`, `www.ijrpsonline.com`) or are not a URL at all (a journal title, a number, an embargo note).",
+    "",
+    "The converter prints its tally on every run. It never adds a scheme to a value that does not state one, and it never rewrites a host."
+  ],
+  "example_queries": [
+    "# Data sources per type\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?type (COUNT(?ds) AS ?n) WHERE {\n  ?ds oaire:datasourceType ?type .\n} GROUP BY ?type ORDER BY DESC(?n)",
+    "# OpenAIRE compatibility levels\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?level (COUNT(?ds) AS ?n) WHERE {\n  ?ds oaire:openaireCompatibility ?level .\n} GROUP BY ?level ORDER BY DESC(?n)",
+    "# Data repositories and their websites\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?ds ?name ?website WHERE {\n  ?ds oaire:datasourceType \"Data Repository\" ; oaire:officialName ?name ; oaire:website ?website .\n} LIMIT 20",
+    "# Institutional repositories\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?ds ?name WHERE {\n  ?ds oaire:datasourceType \"Institutional Repository\" ; oaire:officialName ?name .\n} LIMIT 20",
+    "# Data sources whose English name differs from the official one\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?official ?english WHERE {\n  ?ds oaire:officialName ?official ; oaire:englishName ?english .\n  FILTER(?official != ?english)\n} LIMIT 20"
+  ]
+}
