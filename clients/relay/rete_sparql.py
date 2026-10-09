@@ -16,7 +16,17 @@ re-normalized):
   * results by content negotiation: SELECT/ASK as
     ``application/sparql-results+json``, CONSTRUCT/DESCRIBE as
     ``application/n-triples`` (a subset of Turtle, so ``text/turtle``
-    requests are honored with the same bytes)
+    requests are honored with the same bytes). A quoted triple is written as
+    the RDF 1.2 triple term ``<<( s p o )>>``, the default of ``rete export``;
+    ``quoted_triple_syntax=rdf-star`` (URL or form parameter) returns rete's
+    stored RDF-star surface ``<<s p o>>`` instead. RDF 1.2 has no spelling
+    for a quoted triple in subject position, so such a result answers
+    ``406`` naming that parameter.
+  * FILTER type errors (``CONTAINS`` on an IRI, …) are false by the spec and
+    silently drop rows. The engine's warnings about them come back in an
+    ``X-Rete-Warnings`` header (a JSON array of messages, ASCII-escaped) on
+    every result form, and as a ``warnings`` member of a SPARQL-JSON body.
+    Both are absent when there is nothing to report.
   * ``GET`` without ``query`` returns a service description
     (``sd:`` vocabulary, Turtle)
 
@@ -74,10 +84,22 @@ def _service_description(request: Request, dataset: str) -> Response:
     return Response(content=ttl, media_type=MIME_TTL)
 
 
-def _respond(dataset: str, query: str, accept: str) -> Response:
+def _warning_headers(warnings: list) -> dict:
+    if not warnings:
+        return {}
+    messages = [w.get("message") or str(w) for w in warnings]
+    return {"X-Rete-Warnings": json.dumps(messages, ensure_ascii=True)}
+
+
+def _respond(dataset: str, query: str, accept: str,
+             quoted_triple_syntax: Optional[str] = None) -> Response:
     key, url = _split_source(dataset)
     try:
-        doc = svc.run_query(key, url, query)
+        doc = svc.run_query(key, url, query,
+                            quoted_triple_syntax=quoted_triple_syntax or "rdf12")
+    except svc.UnrepresentableResult as e:
+        return _error(406, f"{e}\nRetry with quoted_triple_syntax=rdf-star "
+                           "to receive the RDF-star surface <<s p o>>.")
     except ValueError as e:
         return _error(404 if "unknown dataset" in str(e) else 400, str(e))
     except TimeoutError as e:
@@ -87,17 +109,24 @@ def _respond(dataset: str, query: str, accept: str) -> Response:
         return _error(400, f"{type(e).__name__}: {e}")
 
     kind = doc.get("kind")
-    if kind == "ask":
-        body = json.dumps({"head": {}, "boolean": doc["boolean"]})
-        return Response(content=body, media_type=MIME_SRJ)
-    if kind in ("select", None):
-        body = json.dumps({"head": doc.get("head") or {"vars": []},
-                           "results": doc.get("results") or {"bindings": []}})
-        return Response(content=body, media_type=MIME_SRJ)
-    # CONSTRUCT / DESCRIBE: token triples are already N-Triples terms.
-    lines = [" ".join(t) + " ." for t in (doc.get("triples") or [])]
+    warnings = doc.get("warnings") or []
+    headers = _warning_headers(warnings)
+    if kind in ("ask", "select", None):
+        if kind == "ask":
+            payload = {"head": {}, "boolean": doc["boolean"]}
+        else:
+            payload = {"head": doc.get("head") or {"vars": []},
+                       "results": doc.get("results") or {"bindings": []}}
+        if warnings:
+            # Not part of SPARQL-JSON; standard parsers ignore an extra member.
+            payload["warnings"] = warnings
+        return Response(content=json.dumps(payload), media_type=MIME_SRJ, headers=headers)
+    # CONSTRUCT / DESCRIBE: N-Triples terms, quoted triples already respelled
+    # by run_query.
+    lines = [" ".join(t[:3]) + " ." for t in (doc.get("triples") or [])]
     media = MIME_TTL if MIME_TTL in (accept or "") else MIME_NT
-    return Response(content="\n".join(lines) + ("\n" if lines else ""), media_type=media)
+    return Response(content="\n".join(lines) + ("\n" if lines else ""), media_type=media,
+                    headers=headers)
 
 
 @router.get("/sparql/{dataset:path}")
@@ -106,13 +135,15 @@ def sparql_get(dataset: str, request: Request, query: Optional[str] = None):
     answers with the endpoint's service description."""
     if query is None:
         return _service_description(request, dataset)
-    return _respond(dataset, query, request.headers.get("accept", ""))
+    return _respond(dataset, query, request.headers.get("accept", ""),
+                    request.query_params.get("quoted_triple_syntax"))
 
 
 @router.post("/sparql/{dataset:path}")
 async def sparql_post(dataset: str, request: Request):
     """SPARQL 1.1 Protocol query operation (both POST forms)."""
     ctype = (request.headers.get("content-type") or "").split(";")[0].strip()
+    syntax = request.query_params.get("quoted_triple_syntax")
     if ctype == MIME_SPARQL:
         query = (await request.body()).decode("utf-8", "replace")
     elif ctype in ("application/x-www-form-urlencoded", ""):
@@ -120,7 +151,8 @@ async def sparql_post(dataset: str, request: Request):
         query = form.get("query")
         if not query:
             return _error(400, "missing form parameter: query")
+        syntax = form.get("quoted_triple_syntax") or syntax
     else:
         return _error(415, f"unsupported content type {ctype!r}; use "
                            f"{MIME_SPARQL} or application/x-www-form-urlencoded")
-    return _respond(dataset, query, request.headers.get("accept", ""))
+    return _respond(dataset, query, request.headers.get("accept", ""), syntax)

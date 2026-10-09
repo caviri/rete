@@ -5,7 +5,7 @@
 # rete-graph ships an abi3 manylinux wheel, so this resolves without a compiler.
 # Pinned to the released version so a Binder launch matches what the docs
 # describe; bump it with the release.
-rete-graph==0.3.2
+rete-graph==0.3.3
 pandas
 networkx
 scipy

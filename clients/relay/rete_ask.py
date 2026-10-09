@@ -58,9 +58,12 @@ def answer_question(model: str, dataset: str, question: str) -> Dict[str, Any]:
 
     @agent.tool
     def sparql_query(ctx: RunContext[str], query: str) -> str:
-        """Run SPARQL against the dataset; returns rows as plain values."""
+        """Run SPARQL against the dataset; returns rows as plain values, and
+        `warnings` when a FILTER hit a type error (e.g. CONTAINS on an IRI —
+        wrap it in STR()) and so dropped rows without an error."""
         doc = svc.run_query(ctx.deps, None, query, False, 200)
-        return json.dumps({k: doc.get(k) for k in ("kind", "boolean", "table", "triples", "truncated")})
+        keys = ("kind", "boolean", "table", "triples", "truncated", "warnings")
+        return json.dumps({k: doc.get(k) for k in keys})
 
     result = agent.run_sync(question, deps=dataset)
     out = result.output

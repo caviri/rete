@@ -36,7 +36,11 @@ Recommended workflow:
    fastest route to correct query shapes.
 5. `sparql_query(dataset, query)` — run SELECT / ASK / CONSTRUCT / DESCRIBE.
    Always add a LIMIT while exploring. Set reason=true for OWL 2 QL
-   entailment on ontology-bearing datasets.
+   entailment on ontology-bearing datasets. CONTAINS / STRSTARTS / STRENDS /
+   REGEX need strings: wrap an IRI or a number in STR(). A FILTER that hits
+   such a type error is false, so rows vanish without an error; when that
+   happens the result's `warnings` say which function, which argument and
+   what to change. Read them before concluding the data has no match.
 6. `find_entities(dataset, text)` — resolve a name to entity IRIs first when
    a question mentions a specific thing.
 7. `validate_shacl(dataset, shapes)` — data-quality checks: validate SHACL
@@ -97,13 +101,18 @@ def example_queries(dataset: str) -> List[Dict[str, Any]]:
 
 @mcp.tool
 def sparql_query(dataset: Optional[str] = None, query: str = "", reason: bool = False,
-                 url: Optional[str] = None, limit: Optional[int] = None) -> Dict[str, Any]:
+                 url: Optional[str] = None, limit: Optional[int] = None,
+                 quoted_triple_syntax: str = "rdf12") -> Dict[str, Any]:
     """Run a SPARQL 1.1 query (SELECT / ASK / CONSTRUCT / DESCRIBE) against a
     dataset key from list_datasets — or any range-readable .rete URL via
     `url`. Reads are lazy and disk-cached, so repeated queries get faster.
     Use LIMIT while exploring; `reason=true` adds OWL 2 QL entailment.
-    SELECT returns `table` (plain values) and W3C-shaped `results`."""
-    return svc.run_query(dataset, url, query, reason, limit)
+    SELECT returns `table` (plain values) and W3C-shaped `results`;
+    CONSTRUCT/DESCRIBE return `triples` with quoted triples as RDF 1.2
+    `<<( s p o )>>` (`quoted_triple_syntax="rdf-star"` for `<<s p o>>`).
+    `warnings` lists FILTER type errors (e.g. CONTAINS on an IRI — wrap it in
+    STR()) that made rows silently drop; it is empty when there are none."""
+    return svc.run_query(dataset, url, query, reason, limit, quoted_triple_syntax)
 
 
 @mcp.tool

@@ -251,7 +251,8 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["GET", "HEAD", "POST", "OPTIONS"],
     allow_headers=["Range", "Content-Type", "Authorization", "Mcp-Session-Id", "Mcp-Protocol-Version"],
-    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type", "Mcp-Session-Id"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type", "Mcp-Session-Id",
+                    "X-Rete-Warnings"],
     max_age=86400,
 )
 app.include_router(api_router)

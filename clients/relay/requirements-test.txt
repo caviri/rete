@@ -1,0 +1,5 @@
+# Test-only dependencies, on top of requirements.txt (which the image installs).
+# pyoxigraph is the independent referee: it parses relay's CONSTRUCT output as
+# RDF 1.2 N-Triples, the way python-test.yml referees Graph.to_nquads().
+pytest==8.4.2
+pyoxigraph==0.5.11

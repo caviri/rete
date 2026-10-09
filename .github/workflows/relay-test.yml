@@ -1,0 +1,45 @@
+name: Relay tests
+
+# The relay (clients/relay, the HF Space gateway) had no tests: docker-publish's
+# PR `verify` job only proves its image BUILDS. This runs the test suite inside
+# that same image, so the code is exercised against the rete-graph wheel the
+# image resolves from PyPI, exactly as a Space rebuild would. Allow-listed to
+# the relay and this file; nothing else can change what it tests.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "clients/relay/**"
+      - ".github/workflows/relay-test.yml"
+  pull_request:
+    paths:
+      - "clients/relay/**"
+      - ".github/workflows/relay-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest in the relay image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the relay image (installs rete-graph from PyPI)
+        run: docker build -t rete-relay-test clients/relay
+      - name: Run the test suite inside it
+        # The checkout is mounted so the tests run the working-tree code; the
+        # image supplies Python, the pinned-floor wheel and the app's deps.
+        run: |
+          docker run --rm -v "$PWD/clients/relay:/src" -w /src rete-relay-test sh -c '
+            set -e
+            pip install --quiet --no-cache-dir --root-user-action=ignore -r requirements-test.txt
+            pip show rete-graph | head -2
+            python -m pytest tests -q -p no:cacheprovider
+          '

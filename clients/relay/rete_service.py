@@ -342,20 +342,77 @@ def _bindings(env: Dict[str, Any]) -> Tuple[List[str], List[Dict[str, Any]], Lis
     return variables, bindings, table
 
 
+QUOTED_TRIPLE_SYNTAXES = ("rdf12", "rdf-star")
+
+
+class UnrepresentableResult(ValueError):
+    """A CONSTRUCT/DESCRIBE result the requested quoted-triple surface cannot
+    spell (RDF 1.2 allows a triple term in OBJECT position only)."""
+
+
+def _respell_triples(triples: List[List[str]], quoted_triple_syntax: str) -> List[List[str]]:
+    """Write quoted triples the way ``rete export`` does by default.
+
+    The engine hands CONSTRUCT/DESCRIBE triples back as stored tokens, and a
+    quoted triple is stored in the RDF-star surface ``<<s p o>>``. Current RDF
+    1.2 parsers reject that in N-Triples and read it as a *reifier* (a
+    different graph) in Turtle, so ``"rdf12"`` (the default, as for
+    ``rete export --quoted-triple-syntax``) rewrites it to the triple term
+    ``<<( s p o )>>``. A quoted triple in subject or predicate position has no
+    RDF 1.2 spelling and is refused by name; ``"rdf-star"`` keeps the stored
+    tokens unchanged.
+    """
+    if quoted_triple_syntax not in QUOTED_TRIPLE_SYNTAXES:
+        raise ValueError(
+            f"unknown quoted_triple_syntax {quoted_triple_syntax!r} "
+            "(expected 'rdf12' or 'rdf-star')"
+        )
+    if quoted_triple_syntax == "rdf-star":
+        return triples
+    out = []
+    for triple in triples:
+        s, p, o = triple[0], triple[1], triple[2]
+        if not (s.startswith("<<") or p.startswith("<<") or o.startswith("<<")):
+            out.append(triple)
+            continue
+        try:
+            # The Python client's own RDF 1.2 writer (Graph.to_nquads uses
+            # it), which wraps rete_core::terms::rdf12_triple_term, so relay
+            # spells a triple term byte-for-byte as the CLI export does.
+            o = rete._rdf12_object(s, p, o)
+        except ValueError as e:
+            raise UnrepresentableResult(str(e)) from None
+        out.append([s, p, o, *triple[3:]])
+    return out
+
+
 def run_query(dataset: Optional[str], url: Optional[str], query: str,
-              reason: bool = False, row_cap: Optional[int] = None) -> Dict[str, Any]:
+              reason: bool = False, row_cap: Optional[int] = None,
+              quoted_triple_syntax: str = "rdf12") -> Dict[str, Any]:
     """Run a SPARQL query and return a transport-ready result document.
 
     SELECT → W3C SPARQL-JSON (`head`/`results`) plus a `table` of plain
-    values; ASK → `boolean`; CONSTRUCT/DESCRIBE → `triples` (token form).
-    Every response carries `stats` — the bytes physically fetched.
+    values; ASK → `boolean`; CONSTRUCT/DESCRIBE → `triples` (N-Triples token
+    form, quoted triples in the RDF 1.2 surface unless
+    ``quoted_triple_syntax="rdf-star"``). Every response carries `stats` —
+    the bytes physically fetched — and `warnings`: the FILTER type errors
+    the engine reported (``Graph.last_warnings()``), e.g. CONTAINS applied
+    to an IRI, which SPARQL defines as false and so silently drops rows.
     """
+    if quoted_triple_syntax not in QUOTED_TRIPLE_SYNTAXES:
+        raise ValueError(
+            f"unknown quoted_triple_syntax {quoted_triple_syntax!r} "
+            "(expected 'rdf12' or 'rdf-star')"
+        )
     source, entry = resolve_source(dataset, url)
     cap = min(row_cap or ROW_CAP, ROW_CAP)
     handle = get_handle(source)
     started = time.time()
     with handle.lock:
         env = handle.graph.query_raw(query, reason=reason)
+        # Read under the same lock: the warnings belong to the graph handle
+        # and the next query on it resets them.
+        warnings = handle.graph.last_warnings()
     elapsed = time.time() - started
     if elapsed > QUERY_TIMEOUT_S:
         raise TimeoutError(f"query took {elapsed:.1f}s (limit {QUERY_TIMEOUT_S:.0f}s)")
@@ -365,13 +422,14 @@ def run_query(dataset: Optional[str], url: Optional[str], query: str,
         "kind": env.get("kind"),
         "elapsed_seconds": round(elapsed, 3),
         "stats": handle_stats(handle),
+        "warnings": warnings,
     }
     if env.get("kind") == "ask":
         doc["boolean"] = bool(env.get("boolean"))
     elif env.get("kind") == "construct":
         triples = env.get("triples") or []
         doc["truncated"] = len(triples) > cap
-        doc["triples"] = triples[:cap]
+        doc["triples"] = _respell_triples(triples[:cap], quoted_triple_syntax)
     else:
         variables, bindings, table = _bindings(env)
         doc["truncated"] = len(bindings) > cap

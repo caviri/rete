@@ -37,6 +37,11 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="SPARQL 1.1 SELECT / ASK / CONSTRUCT / DESCRIBE")
     reason: bool = Field(False, description="Answer with OWL 2 QL entailment by query rewriting")
     limit: Optional[int] = Field(None, ge=1, description="Row cap for the response (server-capped)")
+    quoted_triple_syntax: str = Field(
+        "rdf12",
+        description="How CONSTRUCT/DESCRIBE write a quoted triple: 'rdf12' (the RDF 1.2 triple "
+                    "term <<( s p o )>>, as `rete export` does by default) or 'rdf-star' "
+                    "(<<s p o>>, rete's stored token)")
 
 
 class QueryStats(BaseModel):
@@ -59,6 +64,10 @@ class QueryResult(BaseModel):
     table: Optional[List[Dict[str, Any]]] = Field(None, description="The same rows as plain Python values")
     triples: Optional[List[Any]] = None
     truncated: Optional[bool] = None
+    warnings: Optional[List[Dict[str, Any]]] = Field(
+        None, description="FILTER type errors the engine reported (e.g. CONTAINS on an IRI), "
+                          "each with function, argument, count, hint and message. A FILTER "
+                          "that errors is false, so these explain rows that silently vanished.")
 
 
 class SearchHit(BaseModel):
@@ -167,14 +176,16 @@ def post_query(req: QueryRequest):
     """Run SPARQL against one dataset (or any .rete URL). Lazy by default:
     only the byte ranges the query touches are fetched, and fetched blocks
     persist in the disk cache for the next request."""
-    return _wrap(svc.run_query, req.dataset, req.url, req.query, req.reason, req.limit)
+    return _wrap(svc.run_query, req.dataset, req.url, req.query, req.reason, req.limit,
+                 req.quoted_triple_syntax)
 
 
 @router.get("/query", response_model=QueryResult, response_model_exclude_none=True)
 def get_query(q: str, dataset: Optional[str] = None, url: Optional[str] = None,
-              reason: bool = False, limit: Optional[int] = None):
+              reason: bool = False, limit: Optional[int] = None,
+              quoted_triple_syntax: str = "rdf12"):
     """GET convenience form of POST /api/query (curl/browser friendly)."""
-    return _wrap(svc.run_query, dataset, url, q, reason, limit)
+    return _wrap(svc.run_query, dataset, url, q, reason, limit, quoted_triple_syntax)
 
 
 @router.get("/cache")
