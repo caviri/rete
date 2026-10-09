@@ -173,6 +173,35 @@ def compare(form, expected, actual_text):
     return False
 
 
+# The single place the W3C suite revision is pinned. CI checks the suite out at
+# exactly this commit; docs/conformance.md and tests/conformance-baseline.json
+# both point here. Bumping it is a deliberate one-line change (see
+# docs/conformance.md, "The pinned suite").
+PIN_FILE = Path(__file__).resolve().parent.parent / "tests" / "w3c-rdf-tests.rev"
+
+
+def report_suite_revision(suite: Path) -> None:
+    """Say which suite commit this run measured, and whether it is the pinned one.
+
+    A score is only comparable to the baseline when both were taken against the
+    same suite: upstream adds tests (309 in June 2026, 312 by October), so an
+    unpinned run moves the denominator with no rete change at all.
+    """
+    try:
+        pinned = PIN_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        pinned = None
+    try:
+        got = subprocess.run(["git", "-C", str(suite), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        got = None
+    print(f"suite: w3c/rdf-tests @ {got or 'unknown (not a git checkout)'}")
+    if pinned and got and got != pinned:
+        print(f"note: the pinned revision is {pinned} (tests/{PIN_FILE.name}); "
+              f"this score is not comparable to tests/conformance-baseline.json")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rete", required=True)
@@ -192,6 +221,7 @@ def main():
     global RELAXED
     RELAXED = args.relaxed
     rete, suite = args.rete, Path(args.suite)
+    report_suite_revision(suite)
 
     cats = {}
     total = Counter()
@@ -250,10 +280,21 @@ def main():
         print(f"pass rate: {100*total['pass']/n:.1f}%")
 
     if args.json_out:
-        Path(args.json_out).write_text(json.dumps({
+        # Keys the harness does not measure (the baseline's `_comment` and
+        # `suite_revision_file`) are kept, so regenerating
+        # tests/conformance-baseline.json in place updates only the counts.
+        out_path = Path(args.json_out)
+        try:
+            doc = json.loads(out_path.read_text(encoding="utf-8"))
+            if not isinstance(doc, dict):
+                doc = {}
+        except (OSError, ValueError):
+            doc = {}
+        doc.update({
             "pass": total["pass"], "fail": total["FAIL"], "err": total["err"],
             "total": n, "rate": round(100 * total["pass"] / n, 1) if n else 0.0,
-        }, indent=2) + "\n", encoding="utf-8")
+        })
+        out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 
     if args.min_pass is not None and total["pass"] < args.min_pass:
         print(

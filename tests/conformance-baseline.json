@@ -1,5 +1,6 @@
 {
-  "_comment": "W3C SPARQL 1.1 query-evaluation scorecard, MEASURED. The CI conformance job fails if `pass` drops below this. Raising it is free; lowering it must be deliberate and explained in the same commit. Regenerate with: python3 scripts/sparql_conformance.py --rete target/release/rete --suite rdf-tests/sparql/sparql11 --json tests/conformance-baseline.json",
+  "_comment": "W3C SPARQL 1.1 query-evaluation scorecard, MEASURED against the w3c/rdf-tests commit pinned in the file named by suite_revision_file (and only comparable to a run against that commit). The CI conformance job fails if `pass` drops below this. Raising it is free; lowering it must be deliberate and explained in the same commit. Regenerate in place (other keys are kept) with: python3 scripts/sparql_conformance.py --rete target/release/rete --suite rdf-tests/sparql/sparql11 --json tests/conformance-baseline.json",
+  "suite_revision_file": "tests/w3c-rdf-tests.rev",
   "pass": 238,
   "fail": 45,
   "err": 29,
