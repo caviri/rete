@@ -1,0 +1,58 @@
+{
+  "title": "OpenAIRE Graph — software",
+  "license": "CC-BY-4.0",
+  "source": "https://graph.openaire.eu",
+  "version": "2021-04-27 (dump v3.0)",
+  "source_date": "2021-04-27",
+  "publisher": {
+    "name": "rete"
+  },
+  "canonical_url": "https://data.graphplaza.com/openaire-2021/openaire-2021-software.rete",
+  "derived_from": [
+    "https://doi.org/10.5281/zenodo.4707307"
+  ],
+  "cite_as": "Manghi, P. et al. OpenAIRE Research Graph Dump (v3.0), Zenodo, 2021. https://doi.org/10.5281/zenodo.4707307",
+  "keywords": [
+    "OpenAIRE",
+    "scholarly communication",
+    "research graph",
+    "open science",
+    "software"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH"
+  ],
+  "description": [
+    "The **software** slice of the 2021 OpenAIRE Graph: 221,817 research software records as one range-queryable graph.",
+    "",
+    "## What is in it",
+    "",
+    "- One `oaire:Software` per record, with title, publication year (`xsd:gYear`), issue date, publisher, language, best access right (`OPEN`, `RESTRICTED`, `CLOSED`, `EMBARGO`), venue and links to full text (`oaire:fulltextUrl`).",
+    "- **Reified authorship.** `oaire:hasAuthor` points at an `oaire:AuthorRole` with an `oaire:rank`, held (`oaire:isHeldBy`) by an `oaire:Agent` with an `oaire:agentName`. That makes \"second author of X\" a question the graph can answer.",
+    "- **Joins by IRI, not by string.** A record with a DOI *is* `https://doi.org/{doi}`, so this shard federates with crossref, datacite, opencitations, dblp and zenodo on the DOI. A record without one keeps its OpenAIRE id under `https://w3id.org/rete/openaire/50/…`.",
+    "",
+    "## Known gaps",
+    "",
+    "- **No ORCID IRIs.** The converter would mint `https://orcid.org/{id}` for an author who carries one, but it does not read the 2021 dump's author-pid shape, so every author here is a record-local `oaire:Agent`.",
+    "- **Almost no subjects.** The 2021 records nest a subject's value one level deeper (`subject.value`) than the converter reads.",
+    "",
+    "Both gaps are left as they were published, so this file differs from the 2021 build only by the IRI repairs described below.",
+    "",
+    "## Provenance",
+    "",
+    "Source: the **OpenAIRE Research Graph Dump v3.0** (Zenodo [10.5281/zenodo.4707307](https://doi.org/10.5281/zenodo.4707307), published 2021-04-27, CC BY 4.0), converted to Parquet on 2026-07-15 with `scripts/openaire/tars_to_parquet.py` (19 source tars matched by name and size, zero bad lines), then to N-Triples by `scripts/openaire/parquet_to_nt.py --only software`. Vocabulary `oaire:` = <https://w3id.org/rete/openaire#>.",
+    "",
+    "## Build conditions",
+    "",
+    "Rebuilt with `rete build - --strict --memory-budget-mb 1500 --no-pyramid`. `--strict` refuses any IRI the N-Triples grammar or RFC 3987 rejects, so every IRI here loads into a strict triple store as-is. Free-text URLs (`instance.url`) are percent-escaped where escaping keeps their meaning, repaired where the value itself states a scheme but mispunctuates it (`http//x`), and otherwise **dropped and counted**: an empty URL (the 2021 build wrote these as the IRI `<>`), a bare host with no scheme, a value that is not a URL at all, or an authority RFC 3987 rejects. Minted DOI IRIs carry the same escaping `rete export --sanitize-iris` applies, so an IRI that was already valid is unchanged.",
+    "",
+    "The converter prints its tally on every run. It never adds a scheme to a value that does not state one, and it never rewrites a host."
+  ],
+  "example_queries": [
+    "# Ten software records with a DOI, and their titles\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?doi ?title WHERE {\n  ?record a oaire:Software ; oaire:doi ?doi ; oaire:title ?title .\n} LIMIT 10",
+    "# Authors by name, with their rank on the record\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?rank ?name WHERE {\n  ?record oaire:hasAuthor ?role .\n  ?role oaire:rank ?rank ; oaire:isHeldBy ?author .\n  ?author oaire:agentName ?name .\n} LIMIT 20",
+    "# Open-access software records published in 2020\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nSELECT ?record ?title WHERE {\n  ?record oaire:publicationYear \"2020\"^^xsd:gYear ; oaire:accessRight \"OPEN\" ; oaire:title ?title .\n} LIMIT 20",
+    "# Where to read them: full-text links\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?url WHERE {\n  ?record oaire:fulltextUrl ?url .\n} LIMIT 20",
+    "# Records with their publisher and language\nPREFIX oaire: <https://w3id.org/rete/openaire#>\nSELECT ?record ?publisher ?language WHERE {\n  ?record oaire:publisherName ?publisher ; oaire:language ?language .\n} LIMIT 20"
+  ]
+}
