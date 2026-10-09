@@ -488,6 +488,13 @@ all and **refuse** a file that contains one, naming `--format trig`. They used
 to write it as though it were an IRI — a file that loads cleanly and means
 something else.
 
+The browser engine's CONSTRUCT writers (`format` `"ttl"` / `"jsonld"`, see
+[browser](browser.md)), the desktop explorer's Turtle, and the file
+explorer's N-Triples extract all follow the same rule. RDF 1.2 is the
+default, `rdf-star` is opt-in (`"ttl;quotedTripleSyntax=rdf-star"`, or
+`extract(…, { quotedTripleSyntax: "rdf-star" })`), and a subject-position
+quoted triple or JSON-LD is refused rather than mis-written.
+
 **HDT (`--format hdt`).** A binary serialization whose point is that a reader
 memory-maps it and answers triple patterns against the mapped bytes. Opening the
 1.39 GB reference HDT costs 50.7 MB of RSS and 0.31 s, whatever the file's size —

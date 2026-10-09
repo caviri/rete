@@ -132,6 +132,19 @@ single JSON envelope with a `kind` field:
   when `format` is `"ttl"`/`"jsonld"`, else
   `{ "schemaVersion":1, "kind":"construct", "triples":[[s,p,o],…] }`.
 
+A **quoted triple** in a CONSTRUCT result is written the way
+[`rete export`](cli.md#rete-export-file---format-nqttltrigjsonldhdt---graph-g---subject-s---predicate-p---object-o---sanitize-iris---no-prefixes---quoted-triple-syntax-rdf12rdf-star---compress-nonezstdgzip---compress-level-n---in-memory)
+writes it. `"ttl"` uses the RDF 1.2 triple term `<<( s p o )>>`, which current
+Turtle 1.2 parsers read. They would read the stored `<< s p o >>` as a reifier,
+a different graph. `"ttl;quotedTripleSyntax=rdf-star"` keeps the stored
+RDF-star token `<<s p o>>`, the counterpart of `--quoted-triple-syntax
+rdf-star`. RDF 1.2 allows a triple term in object position only, so under the
+default a quoted triple used as a subject makes the query fail by name, rather
+than write Turtle that no parser accepts. `"jsonld"` has no term kind for a
+quoted triple and refuses a result holding one, as `--format jsonld` does. A
+result with no quoted triple is written byte-for-byte as before. The `"table"`
+form lists every term as stored.
+
 `Graph.query_reasoned(query, format)` is `query` with OWL 2 QL entailment on
 (see [Reasoning](reasoning.md)); `Graph.query_opts(query, format, reason,
 union)` — and the same two methods on `RemoteGraph` — makes both opt-in

@@ -1,0 +1,37 @@
+name: File explorer tests
+
+# The file explorer's rete-fs.js is shared by the browser explorer and the
+# Tauri desktop app, and nothing else exercised it. Its tests are plain Node
+# (no wasm, no browser), so this runs only when the explorer changes.
+on:
+  push:
+    branches: [main, "release-*"]
+    paths:
+      - "experiments/rete-file-explorer/**"
+      - ".github/workflows/explorer-test.yml"
+  pull_request:
+    paths:
+      - "experiments/rete-file-explorer/**"
+      - ".github/workflows/explorer-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: explorer-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: node --test (rete-fs.js)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Unit tests
+        working-directory: experiments/rete-file-explorer
+        run: node --test test/rete-fs.test.mjs

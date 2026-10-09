@@ -66,6 +66,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Browser engine and file explorer: quoted triples in RDF 1.2 form, as
+  `rete export` writes them.** A CONSTRUCT result requested as Turtle wrote
+  the stored RDF-star token `<<s p o>>`. Current Turtle 1.2 parsers read that
+  as a *reifier*, a different graph. It is now the triple term
+  `<<( s p o )>>`. `"ttl;quotedTripleSyntax=rdf-star"` keeps the old
+  spelling, the counterpart of `--quoted-triple-syntax rdf-star`. A
+  subject-position quoted triple, which RDF 1.2 cannot express, is refused
+  by name. JSON-LD wrote a quoted triple as an `@id` and now refuses, as
+  `rete export --format jsonld` does. The file explorer's N-Triples extract
+  (shared by the browser explorer and the desktop app) follows the same
+  rules, with an `extract(…, { quotedTripleSyntax })` option. Graphs with no
+  quoted triple are written byte-for-byte as before.
+
 - **SPARQL: a zero-length path no longer returns a term the graph does not
   have.** `SELECT * WHERE { VALUES ?v { 1 } ?v <p>? ?v }` answered `?v = 1` on
   a graph with no `1` in it. With both endpoints variables, a `?` / `*` path

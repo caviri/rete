@@ -1710,12 +1710,12 @@ fn query_json_with(
     // optional `warnings` member, present only when there is one, so an
     // envelope without diagnostics is byte-identical to before.
     if warnings.is_empty() {
-        return Ok(write_query_json(&out, format, extra));
+        return write_query_json(&out, format, extra).map_err(js_error);
     }
     let mut extra = extra.to_string();
     extra.push_str(r#","warnings":"#);
     extra.push_str(&rete_core::warnings_json(&warnings));
-    Ok(write_query_json(&out, format, &extra))
+    write_query_json(&out, format, &extra).map_err(js_error)
 }
 
 /// Serialize an already-evaluated [`QueryOutput`] into the playground JSON
@@ -1723,13 +1723,20 @@ fn query_json_with(
 /// host-tested `rete_core::results_envelope_json` (the allocation-lean direct
 /// writer); a `CONSTRUCT` requested as Turtle / JSON-LD wraps the rendered text
 /// (those serializers live here).
-fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
+///
+/// `format` may carry the quoted-triple surface the way `rete export` takes
+/// `--quoted-triple-syntax`: `"ttl"` writes RDF 1.2 triple terms
+/// `<<( s p o )>>` (the default, as on the CLI), and
+/// `"ttl;quotedTripleSyntax=rdf-star"` the RDF-star surface `<<s p o>>`. An
+/// `Err` is a refusal or a bad format, never a partly-written document.
+fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> Result<String, String> {
     let mut versioned_extra = format!(r#","schemaVersion":{JSON_SCHEMA_VERSION}"#);
     versioned_extra.push_str(extra);
     if let QueryOutput::Construct(triples) = out {
-        let text = match format {
-            "ttl" => Some(("ttl", to_turtle(triples))),
-            "jsonld" => Some(("jsonld", to_jsonld(triples))),
+        let (base, syntax) = construct_format(format)?;
+        let text = match base {
+            "ttl" => Some(("ttl", to_turtle(triples, syntax)?)),
+            "jsonld" => Some(("jsonld", to_jsonld(triples)?)),
             _ => None,
         };
         if let Some((fmt, text)) = text {
@@ -1739,10 +1746,45 @@ fn write_query_json(out: &QueryOutput, format: &str, extra: &str) -> String {
             rete_core::push_json_string(&mut s, &text);
             s.push_str(&versioned_extra);
             s.push('}');
-            return s;
+            return Ok(s);
         }
     }
-    rete_core::results_envelope_json(out, &versioned_extra)
+    Ok(rete_core::results_envelope_json(out, &versioned_extra))
+}
+
+/// Split a CONSTRUCT `format` into its base (`ttl`, `jsonld`, …) and the
+/// quoted-triple surface named by an optional `;quotedTripleSyntax=<value>`
+/// parameter — the values of `rete export --quoted-triple-syntax`, with the
+/// same default, `rdf12`. A parameter rete does not know is refused rather
+/// than ignored, so a misspelling cannot silently write the other surface.
+fn construct_format(
+    format: &str,
+) -> Result<(&str, rete_core::ingest::QuotedTripleSurface), String> {
+    use rete_core::ingest::QuotedTripleSurface;
+    let mut parts = format.split(';');
+    let base = parts.next().unwrap_or("").trim();
+    let mut syntax = QuotedTripleSurface::Rdf12;
+    for param in parts {
+        let (key, value) = param.split_once('=').unwrap_or((param, ""));
+        match key.trim() {
+            "quotedTripleSyntax" => {
+                syntax = QuotedTripleSurface::parse(value.trim()).ok_or_else(|| {
+                    format!(
+                        "unknown quotedTripleSyntax {:?} in format {format:?} (expected \"rdf12\" \
+                         or \"rdf-star\")",
+                        value.trim()
+                    )
+                })?;
+            }
+            other => {
+                return Err(format!(
+                    "unknown format parameter {other:?} in {format:?} (the one parameter is \
+                     quotedTripleSyntax=rdf12|rdf-star)"
+                ))
+            }
+        }
+    }
+    Ok((base, syntax))
 }
 
 /// URL scheme naming a `.rete` that is **already in the page** — a `File` the
@@ -2751,7 +2793,7 @@ pub fn sparql_url(url: &str, query: &str, format: &str) -> Result<String, JsValu
         reader.bytes_read(),
         reader.requests(),
     );
-    Ok(write_query_json(&out, format, &extra))
+    write_query_json(&out, format, &extra).map_err(js_error)
 }
 
 /// Evaluate a SELECT with the **community-split strategy**: every basic graph
@@ -3647,11 +3689,32 @@ fn range_json(range: ByteRange) -> serde_json::Value {
 
 /// Serialize a triple list (canonical N-Triples tokens) to Turtle: group by
 /// subject, sort predicates/objects, abbreviate `rdf:type` to `a`. The tokens are
-/// already valid Turtle term syntax, so they pass through verbatim.
-fn to_turtle(triples: &[(String, String, String)]) -> String {
+/// already valid Turtle term syntax, so they pass through verbatim — except a
+/// quoted triple, which `syntax` spells like `rete export` does:
+///
+/// - `rdf12` (the default): the RDF 1.2 triple term `<<( s p o )>>`, which
+///   current Turtle 1.2 parsers read. Written as the stored `<< s p o >>`, the
+///   same parsers read a *reifier* instead, one statement becoming two — the
+///   silent misreading #262 fixed for the CLI. RDF 1.2 puts a triple term in
+///   object position only, so a quoted triple as a subject is refused by name
+///   ([`rdf12_object`]), not written.
+/// - `rdf-star`: the stored token `<<s p o>>`, verbatim.
+///
+/// A graph with no quoted triple is written byte-for-byte the same either way.
+fn to_turtle(
+    triples: &[(String, String, String)],
+    syntax: rete_core::ingest::QuotedTripleSurface,
+) -> Result<String, String> {
+    use std::borrow::Cow;
     use std::collections::BTreeMap;
-    let mut by_subject: BTreeMap<&str, BTreeMap<&str, Vec<&str>>> = BTreeMap::new();
+    let rdf12 = syntax == rete_core::ingest::QuotedTripleSurface::Rdf12;
+    let mut by_subject: BTreeMap<&str, BTreeMap<&str, Vec<Cow<'_, str>>>> = BTreeMap::new();
     for (s, p, o) in triples {
+        let o = if rdf12 {
+            rdf12_object(s, p, o)?
+        } else {
+            Cow::Borrowed(o.as_str())
+        };
         by_subject
             .entry(s)
             .or_default()
@@ -3672,14 +3735,35 @@ fn to_turtle(triples: &[(String, String, String)]) -> String {
         }
         out.push('\n');
     }
-    out
+    Ok(out)
 }
 
 /// Serialize a triple list to expanded JSON-LD (array of node objects keyed by
 /// `@id`; literals as `@value` + optional `@type`/`@language`).
-fn to_jsonld(triples: &[(String, String, String)]) -> String {
+///
+/// Expanded JSON-LD has no term kind for a quoted triple, so a result holding
+/// one is refused, as `rete export --format jsonld` refuses (#262): written
+/// anyway it came out as an `@id`, a document that loads cleanly and means
+/// something else. The CLI refuses from the header flag before any work; here
+/// the CONSTRUCT result is already in hand, so the check is on the result.
+fn to_jsonld(triples: &[(String, String, String)]) -> Result<String, String> {
+    use rete_core::terms::is_quoted_triple;
     use serde_json::{json, Map, Value};
     use std::collections::BTreeMap;
+    if let Some((s, p, o)) = triples
+        .iter()
+        .find(|(s, p, o)| is_quoted_triple(s) || is_quoted_triple(p) || is_quoted_triple(o))
+    {
+        return Err(format!(
+            "this CONSTRUCT result contains an RDF-star quoted triple, and expanded JSON-LD has \
+             no term kind for one.\n\
+             Written anyway, a quoted triple would be serialized as though it were an IRI — a \
+             document that loads cleanly and means something else.\n\
+             statement: {s} {p} {o} .\n\
+             hint: format \"ttl\" writes it as an RDF 1.2 triple term <<( s p o )>> (add \
+             \";quotedTripleSyntax=rdf-star\" for <<s p o>>), and the table output lists it as is."
+        ));
+    }
     let mut nodes: BTreeMap<String, BTreeMap<String, Vec<Value>>> = BTreeMap::new();
     for (s, p, o) in triples {
         let id = node_id(s);
@@ -3706,7 +3790,7 @@ fn to_jsonld(triples: &[(String, String, String)]) -> String {
             Value::Object(obj)
         })
         .collect();
-    serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_default()
+    Ok(serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_default())
 }
 
 /// JSON-LD `@id` for a subject token: bare IRI for `<iri>`, `_:b` verbatim.
@@ -3769,4 +3853,197 @@ fn err<E: std::fmt::Display>(e: E) -> JsValue {
 
 fn js_error(message: impl AsRef<str>) -> JsValue {
     js_sys::Error::new(message.as_ref()).into()
+}
+
+#[cfg(test)]
+mod construct_writer_tests {
+    use super::{construct_format, to_jsonld, to_turtle, write_query_json};
+    use rete_core::ingest::QuotedTripleSurface::{Rdf12, RdfStar};
+    use rete_core::QueryOutput;
+
+    const S: &str = "<http://ex/s>";
+    const P: &str = "<http://ex/p>";
+    const QT: &str = "<<<http://ex/a> <http://ex/b> <http://ex/c>>>";
+
+    fn t(s: &str, p: &str, o: &str) -> (String, String, String) {
+        (s.to_string(), p.to_string(), o.to_string())
+    }
+
+    /// A graph with no quoted triple, the shape every published file has.
+    fn plain() -> Vec<(String, String, String)> {
+        vec![
+            t(S, P, "\"a > b << c\"@en"),
+            t(
+                S,
+                "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+                "<http://ex/T>",
+            ),
+            t(S, P, "_:b0"),
+            t(
+                "_:b0",
+                P,
+                "\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            ),
+        ]
+    }
+
+    /// The writer as it was before this change, kept verbatim as the oracle
+    /// for byte identity.
+    fn legacy_turtle(triples: &[(String, String, String)]) -> String {
+        use std::collections::BTreeMap;
+        let mut by_subject: BTreeMap<&str, BTreeMap<&str, Vec<&str>>> = BTreeMap::new();
+        for (s, p, o) in triples {
+            by_subject
+                .entry(s)
+                .or_default()
+                .entry(p)
+                .or_default()
+                .push(o);
+        }
+        let mut out = String::new();
+        for (s, preds) in &by_subject {
+            out.push_str(s);
+            out.push('\n');
+            let pred_count = preds.len();
+            for (i, (p, objs)) in preds.iter().enumerate() {
+                let pred = if *p == super::RDF_TYPE_IRI { "a" } else { p };
+                let objects = objs.join(" , ");
+                let terminator = if i + 1 == pred_count { " ." } else { " ;" };
+                out.push_str(&format!("    {pred} {objects}{terminator}\n"));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn turtle_without_quoted_triples_is_byte_identical_under_both_surfaces() {
+        let g = plain();
+        let before = legacy_turtle(&g);
+        assert_eq!(to_turtle(&g, Rdf12).unwrap(), before);
+        assert_eq!(to_turtle(&g, RdfStar).unwrap(), before);
+    }
+
+    #[test]
+    fn turtle_writes_an_object_triple_term_in_the_rdf12_surface_by_default() {
+        let g = vec![t(S, P, QT)];
+        let out = to_turtle(&g, Rdf12).unwrap();
+        assert!(
+            out.contains("<<( <http://ex/a> <http://ex/b> <http://ex/c> )>>"),
+            "{out}"
+        );
+        assert!(!out.contains("<<<"), "the legacy surface leaked: {out}");
+        // Nested in the object slot: rewritten at depth too.
+        let nested = format!("<<<http://ex/x> <http://ex/y> {QT}>>");
+        let out = to_turtle(&[t(S, P, &nested)], Rdf12).unwrap();
+        assert!(
+            out.contains(
+                "<<( <http://ex/x> <http://ex/y> <<( <http://ex/a> <http://ex/b> <http://ex/c> )>> )>>"
+            ),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn turtle_output_reads_back_as_the_same_graph_under_rdf12() {
+        // Through rete's own RDF 1.2 Turtle reader: one statement (a triple
+        // term, not a reifier), carrying the stored token it started as. The
+        // grouped `;` / `,` layout is exercised by a second predicate.
+        let g = vec![
+            t(S, P, QT),
+            t(S, P, "<http://ex/o>"),
+            t(S, "<http://ex/q>", QT),
+        ];
+        let out = to_turtle(&g, Rdf12).unwrap();
+        let mut quads = rete_core::ingest::parse_statements_audited_surface(
+            &out,
+            "ttl",
+            None,
+            rete_core::ingest::QuotedTripleSurface::Rdf12,
+        )
+        .unwrap();
+        quads.sort();
+        let mut want: Vec<_> = g
+            .iter()
+            .map(|(s, p, o)| (s.clone(), p.clone(), o.clone()))
+            .collect();
+        want.sort();
+        let got: Vec<_> = quads
+            .iter()
+            .map(|q| (q.0.clone(), q.1.clone(), q.2.clone()))
+            .collect();
+        assert_eq!(got, want, "{out}");
+    }
+
+    #[test]
+    fn turtle_rdf_star_keeps_the_stored_token() {
+        let out = to_turtle(&[t(S, P, QT)], RdfStar).unwrap();
+        assert_eq!(out, legacy_turtle(&[t(S, P, QT)]));
+        assert!(out.contains(QT));
+    }
+
+    #[test]
+    fn turtle_refuses_a_subject_position_quoted_triple_by_name() {
+        let e = to_turtle(&[t(QT, P, "<http://ex/o>")], Rdf12).unwrap_err();
+        assert!(e.contains("quoted triple in the subject position"), "{e}");
+        assert!(e.contains("OBJECT position only"), "{e}");
+        assert!(e.contains("rdf-star"), "the hint names the escape: {e}");
+        // …and one nested in another's subject.
+        let inner_subject = format!("<<{QT} <http://ex/y> <http://ex/z>>>");
+        let e = to_turtle(&[t(S, P, &inner_subject)], Rdf12).unwrap_err();
+        assert!(e.contains("nested in the SUBJECT"), "{e}");
+        // The RDF-star surface has a spelling for both.
+        assert!(to_turtle(&[t(QT, P, "<http://ex/o>")], RdfStar).is_ok());
+    }
+
+    #[test]
+    fn jsonld_refuses_a_quoted_triple_in_any_position() {
+        for g in [vec![t(S, P, QT)], vec![t(QT, P, "<http://ex/o>")]] {
+            let e = to_jsonld(&g).unwrap_err();
+            assert!(e.contains("expanded JSON-LD has no term kind"), "{e}");
+            assert!(e.contains("<<( s p o )>>"), "{e}");
+        }
+    }
+
+    #[test]
+    fn jsonld_without_quoted_triples_is_unchanged() {
+        let out = to_jsonld(&plain()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 2);
+        // A literal that merely contains `<<` is not a quoted triple.
+        assert!(out.contains(r#""@value": "a > b << c""#), "{out}");
+    }
+
+    #[test]
+    fn the_format_parameter_mirrors_the_cli_flag() {
+        assert_eq!(construct_format("ttl").unwrap(), ("ttl", Rdf12));
+        assert_eq!(
+            construct_format("ttl;quotedTripleSyntax=rdf-star").unwrap(),
+            ("ttl", RdfStar)
+        );
+        assert_eq!(
+            construct_format("ttl;quotedTripleSyntax=rdf12").unwrap(),
+            ("ttl", Rdf12)
+        );
+        assert!(construct_format("ttl;quotedTripleSyntax=rdfstar")
+            .unwrap_err()
+            .contains("unknown quotedTripleSyntax"));
+        assert!(construct_format("ttl;surface=rdf12")
+            .unwrap_err()
+            .contains("unknown format parameter"));
+
+        // End to end through the envelope.
+        let out = QueryOutput::Construct(vec![t(S, P, QT)]);
+        let env = write_query_json(&out, "ttl", "").unwrap();
+        assert!(
+            env.contains(r#""format":"ttl""#) && env.contains("<<( "),
+            "{env}"
+        );
+        let env = write_query_json(&out, "ttl;quotedTripleSyntax=rdf-star", "").unwrap();
+        assert!(env.contains("<<<http://ex/a>"), "{env}");
+        assert!(write_query_json(&out, "jsonld", "").is_err());
+        // The table form lists the stored token as before.
+        let env = write_query_json(&out, "table", "").unwrap();
+        assert!(env.contains("<<<http://ex/a>"), "{env}");
+    }
 }

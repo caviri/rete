@@ -720,6 +720,17 @@ single JSON envelope with a <code>kind</code> field:</p>
 when <code>format</code> is <code>"ttl"</code>/<code>"jsonld"</code>, else
 <code>{ "schemaVersion":1, "kind":"construct", "triples":[[s,p,o],…] }</code>.</li>
 </ul>
+<p>A <strong>quoted triple</strong> in a CONSTRUCT result is written the way
+<a href="cli.html#rete-export-file---format-nqttltrigjsonldhdt---graph-g---subject-s---predicate-p---object-o---sanitize-iris---no-prefixes---quoted-triple-syntax-rdf12rdf-star---compress-nonezstdgzip---compress-level-n---in-memory"><code>rete export</code></a>
+writes it. <code>"ttl"</code> uses the RDF 1.2 triple term <code>&lt;&lt;( s p o )&gt;&gt;</code>, which current
+Turtle 1.2 parsers read. They would read the stored <code>&lt;&lt; s p o &gt;&gt;</code> as a reifier,
+a different graph. <code>"ttl;quotedTripleSyntax=rdf-star"</code> keeps the stored
+RDF-star token <code>&lt;&lt;s p o&gt;&gt;</code>, the counterpart of <code>--quoted-triple-syntax rdf-star</code>. RDF 1.2 allows a triple term in object position only, so under the
+default a quoted triple used as a subject makes the query fail by name, rather
+than write Turtle that no parser accepts. <code>"jsonld"</code> has no term kind for a
+quoted triple and refuses a result holding one, as <code>--format jsonld</code> does. A
+result with no quoted triple is written byte-for-byte as before. The <code>"table"</code>
+form lists every term as stored.</p>
 <p><code>Graph.query_reasoned(query, format)</code> is <code>query</code> with OWL 2 QL entailment on
 (see <a href="reasoning.html">Reasoning</a>); <code>Graph.query_opts(query, format, reason, union)</code> — and the same two methods on <code>RemoteGraph</code> — makes both opt-in
 evaluation toggles explicit: <code>reason</code> is the entailment switch, <code>union</code> the
