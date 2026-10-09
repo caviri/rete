@@ -626,7 +626,7 @@ graph isomorphism</strong> for CONSTRUCT/DESCRIBE.</p>
 </code></pre>
 <h2 id="scorecard">Scorecard</h2>
 <p><strong>312 query-evaluation tests</strong>, byte-for-byte against the W3C expected results.
-Measured 2026-10-06 on <code>main</code> (<code>4c58a2dd</code>) against <code>w3c/rdf-tests</code> <code>5e5da96</code>
+Measured 2026-10-09 (after the correlated zero-length path fix) against <code>w3c/rdf-tests</code> <code>5e5da96</code>
 (2026-10-02) — the revision pinned in
 <a href="https://github.com/caviri/rete/blob/main/tests/w3c-rdf-tests.rev"><code>tests/w3c-rdf-tests.rev</code></a>
 (see <a href="#the-pinned-suite">The pinned suite</a>).
@@ -639,7 +639,7 @@ Measured 2026-10-06 on <code>main</code> (<code>4c58a2dd</code>) against <code>w
 <tr><td>grouping</td><td style="text-align: right">4 / 4</td><td style="text-align: right">0</td><td>✅ full</td></tr>
 <tr><td>bindings (VALUES)</td><td style="text-align: right">10 / 12</td><td style="text-align: right">2</td><td></td></tr>
 <tr><td>aggregates</td><td style="text-align: right">40 / 42</td><td style="text-align: right">2</td><td>GROUP_CONCAT/SUM/AVG/SAMPLE incl. DISTINCT</td></tr>
-<tr><td>property-path</td><td style="text-align: right">29 / 33</td><td style="text-align: right">2</td><td>incl. negated property sets + zero-length on empty data</td></tr>
+<tr><td>property-path</td><td style="text-align: right">30 / 33</td><td style="text-align: right">2</td><td>incl. negated property sets + zero-length on empty data</td></tr>
 <tr><td>construct</td><td style="text-align: right">3 / 5</td><td style="text-align: right">1</td><td>graph-isomorphism check</td></tr>
 <tr><td>exists</td><td style="text-align: right">4 / 6</td><td style="text-align: right">1</td><td></td></tr>
 <tr><td>project-expression</td><td style="text-align: right">7 / 7</td><td style="text-align: right">0</td><td>✅ full</td></tr>
@@ -648,7 +648,7 @@ Measured 2026-10-06 on <code>main</code> (<code>4c58a2dd</code>) against <code>w
 <tr><td>subquery</td><td style="text-align: right">7 / 16</td><td style="text-align: right">7</td><td>nested SELECT joins; GRAPH-scoped + RDF/XML data n/a</td></tr>
 <tr><td>service</td><td style="text-align: right">1 / 7</td><td style="text-align: right">6</td><td><code>SERVICE</code> <strong>is</strong> implemented — most of these tests need a live endpoint, which the offline run does not have</td></tr>
 <tr><td>csv-tsv-res</td><td style="text-align: right">0 / 3</td><td style="text-align: right">3</td><td>CSV/TSV result format</td></tr>
-<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>238 / 312 (76.3%)</strong></td><td style="text-align: right">29</td><td></td></tr>
+<tr><td><strong>TOTAL</strong></td><td style="text-align: right"><strong>239 / 312 (76.6%)</strong></td><td style="text-align: right">29</td><td></td></tr>
 </tbody></table>
 <blockquote>
 <p>This total is <strong>measured in CI</strong>, not written by hand. The conformance job runs
