@@ -2141,7 +2141,7 @@ dependencies = [
  "oxilangtag",
  "oxiri",
  "rand",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -2180,7 +2180,7 @@ dependencies = [
  "oxilangtag",
  "oxiri",
  "oxrdf 0.3.4",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "rete-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",
