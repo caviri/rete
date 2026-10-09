@@ -1,0 +1,67 @@
+{
+  "title": "Ecosyste.ms Services: advisories, funding, curated lists",
+  "license": "CC-BY-SA-4.0",
+  "source": "https://ecosyste.ms",
+  "version": "2026-08-12",
+  "source_date": "2026-08-12",
+  "publisher": { "name": "rete" },
+  "canonical_url": "https://data.graphplaza.com/ecosyste-ms-services/ecosyste-ms-services.rete",
+  "derived_from": [
+    "https://advisories.ecosyste.ms/api/v1/advisories",
+    "https://sponsors.ecosyste.ms/api/v1/accounts",
+    "https://opencollective.ecosyste.ms/api/v1/collectives",
+    "https://opencollective.ecosyste.ms/api/v1/projects",
+    "https://awesome.ecosyste.ms/api/v1/lists",
+    "https://awesome.ecosyste.ms/api/v1/topics",
+    "https://ost.ecosyste.ms/api/v1/projects",
+    "https://data.graphplaza.com/sources/ecosyste-ms-services/"
+  ],
+  "cite_as": "\"Ecosyste.ms\" (https://ecosyste.ms), CC BY-SA 4.0. Graph: ecosyste-ms-services.rete, harvested 2026-08-12.",
+  "keywords": [
+    "open source",
+    "software supply chain",
+    "security advisories",
+    "funding",
+    "GitHub Sponsors",
+    "Open Collective",
+    "awesome lists",
+    "open sustainable technology",
+    "ecosyste.ms"
+  ],
+  "theme": [
+    "http://publications.europa.eu/resource/authority/data-theme/TECH"
+  ],
+  "description": [
+    "The smaller **ecosyste.ms** services in one graph: who maintains open-source software, who pays for it, and what is known to be vulnerable in it.",
+    "",
+    "## What is in it",
+    "",
+    "- **35,574 security advisories** (`eco:Advisory`) with severity, CVSS, EPSS and blast radius, linked to the **packages** they affect (`eco:affectsPackage`).",
+    "- **39,579 GitHub Sponsors accounts** (`eco:SponsorAccount`) with sponsor counts and minimum tiers.",
+    "- **108,722 Open Collective projects** and the collectives that fund them (`eco:fundsProject`): 3,957 funders, of which the 2,739 the collectives endpoint lists (`eco:Collective`) carry donations and balance.",
+    "- **10,394 awesome lists** and **1,241 awesome topics** (SKOS labels, aliases, related topics).",
+    "- **7,014 Open Sustainable Technology projects** (same schema as `ecosyste-ms-science`) with their packages and repository; 2,937 of them carry a field (`eco:inField`).",
+    "",
+    "Modelled with the Ecosyste.ms Graph Ontology (<https://w3id.org/rete/ecosystems>), which the file carries. Entities sit at canonical IRIs — a repository at its own URL, an account at `https://github.com/{login}`, a collective at `https://opencollective.com/{slug}`, a package at `…/ecosystems/package/{ecosystem}/{name}` — so this graph merges with `ecosyste-ms-science` and `ecosyste-ms-papers` without `owl:sameAs`.",
+    "",
+    "## Provenance",
+    "",
+    "Harvested from the ecosyste.ms public APIs on 2026-08-12 (raw responses: <https://data.graphplaza.com/sources/ecosyste-ms-services/>). Completeness is checked as distinct ids against each API's own total, not pages × page size. Open Collective projects reach 99.6 % of upstream (108,722 of 109,146) through a partitioned, iterate-to-closure pass. `awesome/projects`, `repos`, `packages`, `commits` and `issues` are out of scope by size.",
+    "",
+    "## Build conditions",
+    "",
+    "Converted by `scripts/ecosyste_ms/services_to_nt.py` and built with `rete build --strict`, which refuses any IRI the N-Triples grammar or RFC 3987 rejects. Free-text URL fields are escaped where escaping preserves the meaning (11 statements: a `[`/`]` or a second `#`), and **dropped and counted** where no escaping can make them an IRI: one statement, a sponsor homepage written `https://::1` (an IPv6 address without brackets). Values that are not `http(s)` URLs at all were never emitted. The converter prints the tally on every run.",
+    "",
+    "Upstream text is kept as-is; dates are `xsd:dateTime` as the APIs give them. Licence: CC BY-SA 4.0 — attribute \"Ecosyste.ms\" (https://ecosyste.ms)."
+  ],
+  "example_queries": [
+    "# Packages with the most security advisories\nPREFIX eco: <https://w3id.org/rete/ecosystems#>\nSELECT ?ecosystem ?pkg (COUNT(?a) AS ?advisories) WHERE {\n  ?a a eco:Advisory ; eco:affectsPackage ?p .\n  ?p eco:ecosystem ?ecosystem ; eco:name ?pkg .\n} GROUP BY ?ecosystem ?pkg ORDER BY DESC(?advisories) LIMIT 20",
+    "# Advisories with the widest blast radius\nPREFIX eco: <https://w3id.org/rete/ecosystems#>\nSELECT ?title ?severity ?cvss ?blast WHERE {\n  ?a a eco:Advisory ; eco:name ?title ; eco:blastRadius ?blast .\n  OPTIONAL { ?a eco:severity ?severity }\n  OPTIONAL { ?a eco:cvssScore ?cvss }\n} ORDER BY DESC(?blast) LIMIT 20",
+    "# Best-funded Open Collective collectives, and how many projects each funds\nPREFIX eco: <https://w3id.org/rete/ecosystems#>\nSELECT ?collective ?name ?donations (COUNT(?p) AS ?projects) WHERE {\n  ?collective a eco:Collective ; eco:name ?name ; eco:totalDonations ?donations ; eco:fundsProject ?p .\n} GROUP BY ?collective ?name ?donations ORDER BY DESC(?donations) LIMIT 20",
+    "# GitHub Sponsors accounts with the most active sponsors\nPREFIX eco: <https://w3id.org/rete/ecosystems#>\nSELECT ?account ?login ?active ?kind WHERE {\n  ?account a eco:SponsorAccount ; eco:login ?login ; eco:activeSponsorsCount ?active .\n  OPTIONAL { ?account eco:agentKind ?kind }\n} ORDER BY DESC(?active) LIMIT 20",
+    "# Open Sustainable Technology projects per field\nPREFIX eco: <https://w3id.org/rete/ecosystems#>\nSELECT ?field (COUNT(?p) AS ?projects) WHERE {\n  ?p eco:inField ?field .\n} GROUP BY ?field ORDER BY DESC(?projects)",
+    "# Most-starred repositories behind projects an Open Collective funds\nPREFIX eco: <https://w3id.org/rete/ecosystems#>\nSELECT ?repo ?stars ?collective WHERE {\n  ?collective eco:fundsProject ?p .\n  ?p eco:hasRepository ?repo .\n  ?repo eco:stars ?stars .\n} ORDER BY DESC(?stars) LIMIT 20",
+    "# Awesome lists per primary programming language\nPREFIX eco: <https://w3id.org/rete/ecosystems#>\nSELECT ?language (COUNT(?list) AS ?lists) WHERE {\n  ?list a eco:AwesomeList ; eco:programmingLanguage ?language .\n} GROUP BY ?language ORDER BY DESC(?lists) LIMIT 20",
+    "# Awesome topics and the topics they relate to\nPREFIX eco: <https://w3id.org/rete/ecosystems#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nSELECT ?label (COUNT(?other) AS ?related) WHERE {\n  ?t a eco:Topic ; skos:prefLabel ?label ; skos:related ?other .\n} GROUP BY ?label ORDER BY DESC(?related) LIMIT 20"
+  ]
+}

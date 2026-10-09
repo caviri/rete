@@ -1,0 +1,429 @@
+@prefix eco:     <https://w3id.org/rete/ecosystems#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix foaf:    <http://xmlns.com/foaf/0.1/> .
+@prefix schema:  <http://schema.org/> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix doap:    <http://usefulinc.com/ns/doap#> .
+@prefix org:     <http://www.w3.org/ns/org#> .
+
+<https://w3id.org/rete/ecosystems>
+    a owl:Ontology ;
+    dcterms:title "Ecosyste.ms Graph Ontology"@en ;
+    dcterms:description """A shared vocabulary for the ecosyste.ms family of open-source
+ecosystem datasets: scientific software projects and their science scores, the papers
+that mention that software, security advisories, funding (GitHub Sponsors, Open
+Collective), and curated topic lists.
+
+Designed so the three published .rete datasets — ecosyste-ms-science,
+ecosyste-ms-papers and ecosyste-ms-services — merge into one graph without
+owl:sameAs: every real-world entity is minted at a canonical IRI (a repository at
+its own URL, a package at its purl-style IRI, a paper at https://doi.org/{doi}).
+
+OWL 2 QL-safe: only subClassOf / subPropertyOf / domain / range / inverseOf /
+equivalent* are used, so a query-rewriting reasoner can consume it."""@en ;
+    dcterms:license <https://creativecommons.org/licenses/by-sa/4.0/> ;
+    dcterms:source <https://ecosyste.ms> ;
+    rdfs:seeAlso <https://github.com/ecosyste-ms> ;
+    owl:versionInfo "1.0.0" .
+
+################################################################
+# Agents
+################################################################
+
+eco:Agent a owl:Class ;
+    rdfs:subClassOf foaf:Agent ;
+    rdfs:label "Ecosystem agent"@en ;
+    rdfs:comment "A person or organization acting in an open-source ecosystem. Deliberately NOT disjoint from its subclasses' siblings: the same login appears as a repository owner, a contributor and a sponsor account, and the source does not always say which kind it is."@en .
+
+eco:Owner a owl:Class ;
+    rdfs:subClassOf eco:Agent ;
+    rdfs:label "Repository owner"@en ;
+    rdfs:comment "The account that owns a repository — a GitHub user or organization. `eco:agentKind` carries which, when known."@en .
+
+eco:Contributor a owl:Class ;
+    rdfs:subClassOf eco:Agent ;
+    rdfs:label "Contributor"@en .
+
+eco:SponsorAccount a owl:Class ;
+    rdfs:subClassOf eco:Agent ;
+    rdfs:label "Sponsorable account"@en ;
+    rdfs:comment "An account with a GitHub Sponsors listing."@en .
+
+eco:Collective a owl:Class ;
+    rdfs:subClassOf eco:Agent , org:Organization ;
+    rdfs:label "Open Collective collective"@en .
+
+eco:agentKind a owl:DatatypeProperty ;
+    rdfs:label "agent kind"@en ;
+    rdfs:comment "Verbatim upstream discriminator, typically \"user\" or \"organization\"."@en ;
+    rdfs:domain eco:Agent ;
+    rdfs:range xsd:string .
+
+eco:login a owl:DatatypeProperty ;
+    rdfs:subPropertyOf schema:alternateName ;
+    rdfs:label "login"@en ;
+    rdfs:domain eco:Agent ;
+    rdfs:range xsd:string .
+
+eco:company a owl:DatatypeProperty ;
+    rdfs:subPropertyOf schema:affiliation ;
+    rdfs:label "company"@en ;
+    rdfs:domain eco:Agent ;
+    rdfs:range xsd:string .
+
+eco:location a owl:DatatypeProperty ;
+    rdfs:label "location"@en ;
+    rdfs:domain eco:Agent ;
+    rdfs:range xsd:string .
+
+eco:followers a owl:DatatypeProperty ;
+    rdfs:label "followers"@en ;
+    rdfs:domain eco:Agent ;
+    rdfs:range xsd:integer .
+
+################################################################
+# Software: projects, repositories, packages, releases
+################################################################
+
+eco:Project a owl:Class ;
+    rdfs:subClassOf schema:SoftwareSourceCode , doap:Project ;
+    rdfs:label "Software project"@en ;
+    rdfs:comment "An open-source project as tracked by an ecosyste.ms service. Minted at the project's own source-code URL, so the same project in the science and ost corpora is the same IRI."@en .
+
+eco:ScientificProject a owl:Class ;
+    rdfs:subClassOf eco:Project ;
+    rdfs:label "Scientific software project"@en ;
+    rdfs:comment "A project the ecosyste.ms science service has scored as science-related."@en .
+
+eco:Repository a owl:Class ;
+    rdfs:subClassOf schema:SoftwareSourceCode ;
+    rdfs:label "Code repository"@en .
+
+eco:Package a owl:Class ;
+    rdfs:subClassOf schema:SoftwareApplication ;
+    rdfs:label "Package"@en ;
+    rdfs:comment "A distributable release artifact in a registry (pypi, cran, npm, …)."@en .
+
+eco:Release a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Release"@en .
+
+eco:Issue a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Issue or pull request"@en .
+
+eco:hasRepository a owl:ObjectProperty ;
+    rdfs:subPropertyOf doap:repository ;
+    rdfs:label "has repository"@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range eco:Repository .
+
+eco:ownedBy a owl:ObjectProperty ;
+    rdfs:label "owned by"@en ;
+    rdfs:domain eco:Repository ;
+    rdfs:range eco:Owner ;
+    owl:inverseOf eco:owns .
+
+eco:owns a owl:ObjectProperty ;
+    rdfs:label "owns"@en .
+
+eco:hasPackage a owl:ObjectProperty ;
+    rdfs:label "has package"@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range eco:Package .
+
+eco:hasRelease a owl:ObjectProperty ;
+    rdfs:label "has release"@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range eco:Release .
+
+eco:hasIssue a owl:ObjectProperty ;
+    rdfs:label "has issue"@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range eco:Issue .
+
+eco:contributedTo a owl:ObjectProperty ;
+    rdfs:label "contributed to"@en ;
+    rdfs:domain eco:Contributor ;
+    rdfs:range eco:Project .
+
+eco:dependsOn a owl:ObjectProperty ;
+    rdfs:label "depends on"@en ;
+    rdfs:comment "Declared dependency of a project on a package. NOT transitive: OWL 2 QL forbids transitivity, and the harvested data is a single manifest level anyway."@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range eco:Package .
+
+eco:ecosystem a owl:DatatypeProperty ;
+    rdfs:label "registry ecosystem"@en ;
+    rdfs:comment "Package registry name: pypi, cran, bioconductor, npm, …"@en ;
+    rdfs:range xsd:string .
+
+eco:purl a owl:DatatypeProperty ;
+    rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "package URL (purl)"@en ;
+    rdfs:range xsd:string .
+
+eco:stars a owl:DatatypeProperty ;
+    rdfs:label "stargazers"@en ;
+    rdfs:domain eco:Repository ;
+    rdfs:range xsd:integer .
+
+eco:forks a owl:DatatypeProperty ;
+    rdfs:label "forks"@en ;
+    rdfs:domain eco:Repository ;
+    rdfs:range xsd:integer .
+
+eco:archived a owl:DatatypeProperty ;
+    rdfs:label "archived"@en ;
+    rdfs:domain eco:Repository ;
+    rdfs:range xsd:boolean .
+
+eco:monthlyDownloads a owl:DatatypeProperty ;
+    rdfs:label "monthly downloads"@en ;
+    rdfs:range xsd:integer .
+
+eco:dependentRepositories a owl:DatatypeProperty ;
+    rdfs:label "dependent repositories"@en ;
+    rdfs:range xsd:integer .
+
+eco:dependentPackages a owl:DatatypeProperty ;
+    rdfs:label "dependent packages"@en ;
+    rdfs:range xsd:integer .
+
+################################################################
+# Science scoring (ecosyste.ms science)
+################################################################
+
+eco:scienceScore a owl:DatatypeProperty ;
+    rdfs:label "science score"@en ;
+    rdfs:comment "Percentage 0-100 expressing how likely the project is science-related. Rendered only in HTML upstream; NOT the API's `score`, which is a separate popularity ranking (see eco:rank)."@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range xsd:decimal .
+
+eco:rank a owl:DatatypeProperty ;
+    rdfs:label "ranking score"@en ;
+    rdfs:comment "The ecosyste.ms `score` field: a popularity/impact ranking, distinct from eco:scienceScore."@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range xsd:decimal .
+
+eco:ScoreIndicator a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Science-score indicator"@en ;
+    rdfs:comment "One criterion of the science-score rubric, e.g. presence of a CITATION.cff file."@en .
+
+eco:hasIndicator a owl:ObjectProperty ;
+    rdfs:label "satisfies indicator"@en ;
+    rdfs:comment "Links a project to a rubric indicator it SATISFIES. An indicator that upstream does not render at all is absent rather than false — a missing link means 'not stated', not 'absent'."@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range eco:ScoreIndicator .
+
+eco:citationFile a owl:DatatypeProperty ;
+    rdfs:label "citation file"@en ;
+    rdfs:comment "Verbatim contents of the repository's CITATION.cff / .bib / .md, as rendered upstream."@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range xsd:string .
+
+eco:Field a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Research field"@en .
+
+eco:inField a owl:ObjectProperty ;
+    rdfs:subPropertyOf dcterms:subject ;
+    rdfs:label "in research field"@en ;
+    rdfs:domain eco:Project ;
+    rdfs:range eco:Field .
+
+################################################################
+# Papers and mentions (ecosyste.ms papers)
+################################################################
+
+eco:Paper a owl:Class ;
+    rdfs:subClassOf schema:ScholarlyArticle ;
+    rdfs:label "Paper"@en ;
+    rdfs:comment "A scientific paper. Minted at https://doi.org/{doi} so it merges with any other DOI-keyed dataset."@en .
+
+eco:doi a owl:DatatypeProperty ;
+    rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "DOI"@en ;
+    rdfs:domain eco:Paper ;
+    rdfs:range xsd:string .
+
+eco:openAlexId a owl:DatatypeProperty ;
+    rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "OpenAlex id"@en ;
+    rdfs:range xsd:string .
+
+eco:mentions a owl:ObjectProperty ;
+    rdfs:subPropertyOf dcterms:references ;
+    rdfs:label "mentions software"@en ;
+    rdfs:comment "A paper mentions a package. Uses dcterms:references, NOT cito:references — CiTO does not define that term. Range is eco:Package rather than eco:Project because the upstream corpus keys mentions on (ecosystem, name)."@en ;
+    rdfs:domain eco:Paper ;
+    rdfs:range eco:Package ;
+    owl:inverseOf eco:mentionedBy .
+
+eco:mentionedBy a owl:ObjectProperty ;
+    rdfs:label "mentioned by"@en .
+
+eco:mentionsCount a owl:DatatypeProperty ;
+    rdfs:label "mentions count"@en ;
+    rdfs:range xsd:integer .
+
+################################################################
+# Security advisories
+################################################################
+
+eco:Advisory a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Security advisory"@en .
+
+eco:affectsPackage a owl:ObjectProperty ;
+    rdfs:label "affects package"@en ;
+    rdfs:domain eco:Advisory ;
+    rdfs:range eco:Package .
+
+eco:severity a owl:DatatypeProperty ;
+    rdfs:label "severity"@en ;
+    rdfs:domain eco:Advisory ;
+    rdfs:range xsd:string .
+
+eco:cvssScore a owl:DatatypeProperty ;
+    rdfs:label "CVSS score"@en ;
+    rdfs:domain eco:Advisory ;
+    rdfs:range xsd:decimal .
+
+eco:cvssVector a owl:DatatypeProperty ;
+    rdfs:label "CVSS vector"@en ;
+    rdfs:domain eco:Advisory ;
+    rdfs:range xsd:string .
+
+eco:epssPercentage a owl:DatatypeProperty ;
+    rdfs:label "EPSS probability"@en ;
+    rdfs:domain eco:Advisory ;
+    rdfs:range xsd:decimal .
+
+eco:blastRadius a owl:DatatypeProperty ;
+    rdfs:label "blast radius"@en ;
+    rdfs:comment "ecosyste.ms measure of how far the advisory propagates through the dependency graph."@en ;
+    rdfs:domain eco:Advisory ;
+    rdfs:range xsd:decimal .
+
+################################################################
+# Funding
+################################################################
+
+eco:sponsorsCount a owl:DatatypeProperty ;
+    rdfs:label "sponsors count"@en ;
+    rdfs:domain eco:SponsorAccount ;
+    rdfs:range xsd:integer .
+
+eco:activeSponsorsCount a owl:DatatypeProperty ;
+    rdfs:label "active sponsors count"@en ;
+    rdfs:domain eco:SponsorAccount ;
+    rdfs:range xsd:integer .
+
+eco:minimumSponsorshipAmount a owl:DatatypeProperty ;
+    rdfs:label "minimum sponsorship amount"@en ;
+    rdfs:domain eco:SponsorAccount ;
+    rdfs:range xsd:integer .
+
+eco:totalDonations a owl:DatatypeProperty ;
+    rdfs:label "total donations"@en ;
+    rdfs:domain eco:Collective ;
+    rdfs:range xsd:decimal .
+
+eco:currentBalance a owl:DatatypeProperty ;
+    rdfs:label "current balance"@en ;
+    rdfs:domain eco:Collective ;
+    rdfs:range xsd:decimal .
+
+eco:currency a owl:DatatypeProperty ;
+    rdfs:label "currency"@en ;
+    rdfs:domain eco:Collective ;
+    rdfs:range xsd:string .
+
+eco:fundsProject a owl:ObjectProperty ;
+    rdfs:label "funds project"@en ;
+    rdfs:domain eco:Collective ;
+    rdfs:range eco:Project .
+
+################################################################
+# Curated lists and topics (awesome)
+################################################################
+
+eco:AwesomeList a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Awesome list"@en .
+
+eco:Topic a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Topic"@en .
+
+eco:listsProject a owl:ObjectProperty ;
+    rdfs:subPropertyOf dcterms:hasPart ;
+    rdfs:label "lists project"@en ;
+    rdfs:domain eco:AwesomeList ;
+    rdfs:range eco:Project .
+
+eco:hasTopic a owl:ObjectProperty ;
+    rdfs:subPropertyOf dcterms:subject ;
+    rdfs:label "has topic"@en ;
+    rdfs:range eco:Topic .
+
+################################################################
+# Shared descriptive properties
+################################################################
+
+eco:name a owl:DatatypeProperty ;
+    rdfs:subPropertyOf schema:name ;
+    rdfs:label "name"@en ;
+    rdfs:range xsd:string .
+
+eco:description a owl:DatatypeProperty ;
+    rdfs:subPropertyOf schema:description ;
+    rdfs:label "description"@en ;
+    rdfs:range xsd:string .
+
+eco:homepage a owl:ObjectProperty ;
+    rdfs:subPropertyOf schema:url ;
+    rdfs:label "homepage"@en .
+
+eco:sourceUrl a owl:ObjectProperty ;
+    rdfs:subPropertyOf schema:codeRepository ;
+    rdfs:label "source URL"@en .
+
+eco:programmingLanguage a owl:DatatypeProperty ;
+    rdfs:subPropertyOf schema:programmingLanguage ;
+    rdfs:label "programming language"@en ;
+    rdfs:range xsd:string .
+
+eco:keyword a owl:DatatypeProperty ;
+    rdfs:subPropertyOf schema:keywords ;
+    rdfs:label "keyword"@en ;
+    rdfs:range xsd:string .
+
+eco:createdAt a owl:DatatypeProperty ;
+    rdfs:subPropertyOf dcterms:created ;
+    rdfs:label "created at"@en ;
+    rdfs:range xsd:dateTime .
+
+eco:updatedAt a owl:DatatypeProperty ;
+    rdfs:subPropertyOf dcterms:modified ;
+    rdfs:label "updated at"@en ;
+    rdfs:range xsd:dateTime .
+
+eco:lastSyncedAt a owl:DatatypeProperty ;
+    rdfs:label "last synced at"@en ;
+    rdfs:comment "When ecosyste.ms last refreshed this record — provenance of the snapshot, not of the entity."@en ;
+    rdfs:range xsd:dateTime .
+
+eco:apiUrl a owl:ObjectProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:label "ecosyste.ms API URL"@en .
+
+eco:htmlUrl a owl:ObjectProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:label "ecosyste.ms HTML URL"@en .
