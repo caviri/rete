@@ -5,6 +5,50 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`build` no longer loops forever in the Louvain pyramid step.** On some
+  graphs, `rete build`, the browser/Node `build()` and every client that builds
+  in memory never returned: `pyramid::louvain_one_level` spun at 100% CPU
+  inside one synchronous call. Reported by the Jev Games consumer of
+  `rete-graph` 0.3.2 (a 145-triple game position); the smallest graph found
+  has 15 triples. The cause was that a node moved when its modularity gain
+  `k_{i,c} − Σ_c·k_i/2m` was strictly greater in floating point, and division
+  by `2m` is inexact unless `2m` is a power of two. Two exactly equal gains
+  could round one ulp apart, so two nodes swapped communities on a gain of
+  zero, pass after pass. There was no pass limit. The move test is now exact:
+  it compares `k_{i,c}·2m − Σ_c·k_i`, which are integers because every weight
+  rete builds is a triple count. They are compared in `f64` while
+  `(2m)² ≤ 2^53` (up to about 47 million projected edges) and in `i128` beyond.
+  Non-integer weights can only come from callers of the public
+  `Graph::from_edges`, and for those a move must beat a rounding-error bound.
+  Each level is also capped at `MAX_LOUVAIN_PASSES` (2000) local-moving passes
+  as a backstop. Reaching the cap returns the current partition and does not
+  panic. On 200 million random graphs (3–200 triples) the old code looped on
+  375 and the new code on none. On 300 million smaller ones (3–26 triples) the
+  counts were 86 and none. No level came near the cap: the most passes a level
+  needed was 24 on random graphs, and 186 on 21 real datasets of up to 11.7
+  million triples. Tests: `crates/rete-core/tests/louvain_termination.rs`
+  and, through the built JS package, `clients/js/test/louvain.test.mjs`.
+
+  **Pyramids can change (result-changing for the pyramid section only).**
+  The old code also moved nodes on exact ties that happened to round in favour
+  of the move. Those moves gained nothing, and the new code does not make
+  them, so a graph that used to converge after such a move now gets a
+  different partition. On the random corpus, 0.77% of the graphs that
+  converged before got a different dendrogram. Every one of them traced to such a
+  tie move, and none to any other disagreement between the float test and the
+  exact one. Modularity moves both ways: among the 200 million graphs, the
+  coarsest level of a changed dendrogram scored higher with the new code
+  491,347 times, lower 604,564 times and the same 446,892 times, by −0.0005
+  on average. **None of 21 real datasets changed.** Old and new `rete build`
+  wrote byte-identical files for 14 of them, from 170 to 4.6 million
+  triples, and the dendrogram was identical for 7 more of up to 11.7 million.
+  Build time is unchanged (for example, davidrumsey with 4.6 M triples took
+  28.8 s before and 27.2 s after).
+  Ties still resolve to the smallest community id, so a build stays
+  byte-reproducible across runs and between native and wasm.
+
 ## [0.3.3] - 2026-10-09
 
 **Where 0.3.3 is published: PyPI (`rete-graph` 0.3.3) and the Claude Desktop

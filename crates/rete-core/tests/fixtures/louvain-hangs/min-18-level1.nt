@@ -1,0 +1,21 @@
+# Louvain non-termination regression: 18 triples, a hang at level 1 (the
+# aggregated graph, whose self-loops and summed weights are still integers).
+# Found by dev/louvain-hang (seed 20519787, LH_MAXT=26 LH_MAXN=20).
+<urn:n1> <urn:p0> <urn:n5> .
+<urn:n7> <urn:p0> "0" .
+<urn:n9> <urn:p0> "0" .
+<urn:n11> <urn:p0> "0" .
+<urn:n4> <urn:p0> "0" .
+<urn:n6> <urn:p0> "0" .
+<urn:n0> <urn:p0> "0" .
+<urn:n0> <urn:p0> <urn:n1> .
+<urn:n9> <urn:p0> <urn:n7> .
+<urn:n8> <urn:p0> "0" .
+<urn:n7> <urn:p0> <urn:n3> .
+<urn:n8> <urn:p0> <urn:n3> .
+<urn:n2> <urn:p0> "0" .
+<urn:n0> <urn:p0> <urn:n10> .
+<urn:n10> <urn:p0> "0" .
+<urn:n6> <urn:p0> <urn:n9> .
+<urn:n3> <urn:p0> "0" .
+<urn:n2> <urn:p0> <urn:n7> .

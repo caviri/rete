@@ -227,7 +227,8 @@ pub use meta::{
 };
 #[doc(hidden)]
 pub use pyramid::{
-    build_dendrogram, louvain_one_level, project_graph, Dendrogram, Graph, Partition, PyramidAlgo,
+    build_dendrogram, louvain_one_level, louvain_one_level_stats, project_graph, Dendrogram, Graph,
+    LevelStats, Partition, PyramidAlgo, MAX_LOUVAIN_PASSES,
 };
 #[doc(hidden)]
 pub use reach::{batch_reach_serial, build_adjacency, reach_one};

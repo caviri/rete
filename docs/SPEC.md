@@ -494,6 +494,23 @@ The headline feature. "Zoom" = level of graph detail.
 1. Run hierarchical community detection (**Louvain**; `--pyramid-algo types`
    swaps in a deterministic `rdf:type` partition instead) on the (optionally
    edge-weighted) graph. This yields a dendrogram of communities.
+
+   **Termination and reproducibility.** A node moves to the neighbouring
+   community with the strictly greatest gain `k_{i,c} − Σ_c·k_i/2m`. That
+   comparison is made exactly, on `k_{i,c}·2m − Σ_c·k_i`, which is an integer
+   because every edge weight is a triple count. It is computed in `f64` while
+   `(2m)² ≤ 2^53` (about 47 million projected edges) and in `i128` beyond. A
+   node therefore moves only on a true gain, and the passes end. Rete 0.3.3
+   and earlier divided by `2m` in floating point. Two equal gains could round
+   one ulp apart, two nodes swapped forever, and `build` never returned (a
+   15-triple graph is enough). Each level also stops after
+   `MAX_LOUVAIN_PASSES` = 2000 passes, as a backstop that keeps the partition
+   it has and never panics. Measured with the exact test, the most passes any
+   level needed was 24 over 500 million random graphs (3–200 triples) and
+   186 over 21 real datasets of up to 11.7 million triples (the base level
+   of proteinbase; the next highest was 77). The cap is about ten times that. Ties go to the node's own community, then to
+   the smallest community id, so a build is byte-reproducible across runs and
+   between native and wasm.
 2. Cut the dendrogram into levels. **Level 0** = coarsest: each top-level
    community becomes a **supernode**. **Level N-1** = the full graph.
 

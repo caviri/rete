@@ -1,0 +1,34 @@
+# Louvain non-termination regression, reported by the Jev Games consumer
+# (rete-graph 0.3.2 never returned from build; their fixture
+# test/fixtures/rete-louvain-hangs.json, jev-games commit 8666728, "random"[0]).
+# 30 distinct triples, verbatim.
+<urn:n14> <urn:p0> "1" .
+<urn:n4> <urn:p1> <urn:n10> .
+<urn:n13> <urn:p0> <urn:n3> .
+<urn:n13> <urn:p2> "4" .
+<urn:n18> <urn:p2> "3" .
+<urn:n17> <urn:p2> "0" .
+<urn:n18> <urn:p1> "3" .
+<urn:n13> <urn:p2> <urn:n11> .
+<urn:n18> <urn:p1> <urn:n21> .
+<urn:n8> <urn:p1> <urn:n22> .
+<urn:n13> <urn:p2> "2" .
+<urn:n14> <urn:p2> "2" .
+<urn:n9> <urn:p1> <urn:n6> .
+<urn:n2> <urn:p1> <urn:n4> .
+<urn:n15> <urn:p1> <urn:n18> .
+<urn:n12> <urn:p2> <urn:n20> .
+<urn:n5> <urn:p0> "4" .
+<urn:n18> <urn:p1> "0" .
+<urn:n4> <urn:p0> <urn:n18> .
+<urn:n12> <urn:p1> <urn:n17> .
+<urn:n15> <urn:p2> <urn:n10> .
+<urn:n21> <urn:p1> <urn:n1> .
+<urn:n15> <urn:p2> "0" .
+<urn:n3> <urn:p2> "3" .
+<urn:n16> <urn:p0> <urn:n5> .
+<urn:n8> <urn:p0> "0" .
+<urn:n22> <urn:p2> <urn:n13> .
+<urn:n21> <urn:p1> <urn:n15> .
+<urn:n9> <urn:p1> <urn:n7> .
+<urn:n16> <urn:p0> "3" .
