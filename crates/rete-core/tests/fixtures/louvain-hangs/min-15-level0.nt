@@ -1,0 +1,20 @@
+# Louvain non-termination regression (rete 0.3.3 and earlier never return from
+# build on this graph). 15 triples, 7 nodes, so 2m = 30: two nodes swap between
+# two communities whose gains are exactly equal (10/30 and 12/30) but round one
+# ulp apart in floating point. The smallest hang found: none at <= 13 triples in
+# 100M random graphs. Found by dev/louvain-hang (seed 2959679, LH_MAXT=26 LH_MAXN=20).
+<urn:n0> <urn:p1> <urn:n0> .
+<urn:n1> <urn:p1> "1" .
+<urn:n1> <urn:p1> <urn:n0> .
+<urn:n0> <urn:p1> <urn:n1> .
+<urn:n0> <urn:p0> <urn:n1> .
+<urn:n1> <urn:p0> <urn:n1> .
+<urn:n2> <urn:p0> <urn:n0> .
+<urn:n1> <urn:p1> "0" .
+<urn:n0> <urn:p1> "0" .
+<urn:n0> <urn:p0> "1" .
+<urn:n0> <urn:p0> <urn:n0> .
+<urn:n2> <urn:p1> <urn:n1> .
+<urn:n2> <urn:p1> "2" .
+<urn:n2> <urn:p0> "3" .
+<urn:n1> <urn:p1> "3" .

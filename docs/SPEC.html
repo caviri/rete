@@ -1045,6 +1045,22 @@ are already such a break and must be rebuilt from RDF source.</p>
 <p>Run hierarchical community detection (<strong>Louvain</strong>; <code>--pyramid-algo types</code>
 swaps in a deterministic <code>rdf:type</code> partition instead) on the (optionally
 edge-weighted) graph. This yields a dendrogram of communities.</p>
+<p><strong>Termination and reproducibility.</strong> A node moves to the neighbouring
+community with the strictly greatest gain <code>k_{i,c} − Σ_c·k_i/2m</code>. That
+comparison is made exactly, on <code>k_{i,c}·2m − Σ_c·k_i</code>, which is an integer
+because every edge weight is a triple count. It is computed in <code>f64</code> while
+<code>(2m)² ≤ 2^53</code> (about 47 million projected edges) and in <code>i128</code> beyond. A
+node therefore moves only on a true gain, and the passes end. Rete 0.3.3
+and earlier divided by <code>2m</code> in floating point. Two equal gains could round
+one ulp apart, two nodes swapped forever, and <code>build</code> never returned (a
+15-triple graph is enough). Each level also stops after
+<code>MAX_LOUVAIN_PASSES</code> = 2000 passes, as a backstop that keeps the partition
+it has and never panics. Measured with the exact test, the most passes any
+level needed was 24 over 500 million random graphs (3–200 triples) and
+186 over 21 real datasets of up to 11.7 million triples (the base level
+of proteinbase; the next highest was 77). The cap is about ten times that. Ties go to the node's own community, then to
+the smallest community id, so a build is byte-reproducible across runs and
+between native and wasm.</p>
 </li>
 <li>
 <p>Cut the dendrogram into levels. <strong>Level 0</strong> = coarsest: each top-level
