@@ -41,6 +41,17 @@
 #       exporter now writes them as RDF 1.2 triple terms `<<( s p o )>>`. In
 #       the surface rete stores, the referee refuses the dump outright -- the
 #       limitation #257 recorded and this fixture stops from returning.
+#     - the space check charges the MEASURED .nq.gz/.rete ratio (2.25 by
+#       default, overridable), refuses up front a file that cannot fit, and
+#       charges an --audit-only run nothing for output it never writes.
+#     - the in-flight watchdog kills an export when the disk fills under it,
+#       deletes the truncated .gz, and records `skipped-disk`.
+#     - state.tsv rows with EMPTY fields read back unshifted (an audited row
+#       resumes as audited), and the legacy 7- and 16-column layouts, including
+#       `failed-schemeless`, still resume as they were written.
+#
+#   The disk is faked with RETE_FREE_BYTES_FILE, which the driver reads in
+#   place of `df` on every check.
 #
 # TIER
 #
@@ -415,6 +426,151 @@ assert_eq   "clean is recorded failed, not done" failed "$(col clean 1)"
 assert_grep "…because the bucket was asked, not the uploader" \
   "FAIL     clean: cp exit=0, bucket says 'absent'" "$WORK/5-drop.log"
 
+# ----------------------------------------------------------------------------
+# Sections 6-9 each get their own work dir and lock, so their state files say
+# only what that section did. RETE_FREE_BYTES_FILE stands in for `df`: the
+# driver re-reads it on every check, so a test can fill the disk at will.
+# ----------------------------------------------------------------------------
+drive_at() { # RUNDIR LOCK LOGFILE [args...]   (env assignments come from the caller)
+  local run="$1" lock="$2" logf="$3"; shift 3
+  PATH="$WORK/bin:$PATH" \
+  RETE_E2E_BUCKET_DIR="$WORK/bucket-$lock" RETE_E2E_HF_LOG="$HF_LOG" \
+  RETE_EXPORT_MEM=2g \
+    bash "$DRIVER" \
+      --manifest "$MANIFEST" --bucket "$BUCKET" --prefix scholar \
+      --data "$WORK/data" --work "$run" \
+      --image "$IMAGE" --rete "${E2E_RETE:-/repo/dev/scholar-e2e/bin/rete}" \
+      --headroom-gb 1 --lock "$lock" \
+      "$@" >"$logf" 2>&1
+  DRIVE_CODE=$?
+  return "$DRIVE_CODE"
+}
+nf() { awk -F'\t' -v n="$1" '$2==n {v=NF} END{print v}' "$STATE" 2>/dev/null; }
+GIB=1073741824
+CLEN="$(stat -c %s "$WORK/www/clean.rete")"
+NLEN="$(stat -c %s "$WORK/www/noscheme.rete")"
+
+# ============================================================================
+echo "== 6. the space check charges the MEASURED ratio, not 1.0 =="
+# ============================================================================
+# 1 GiB of headroom plus 2.5x the .rete. The download costs 1x, so a real
+# export needs 1 + 2.25 = 3.25x at the default ratio: refused. At the old 1.0 it
+# needed 2x and would have started -- which is the bug: openaire-2021-relation
+# came out at 1.93x.
+R6="$WORK/run6"; mkdir -p "$R6"; STATE="$R6/state.tsv"
+FREE6="$WORK/free6"
+echo $((GIB + CLEN * 5 / 2)) > "$FREE6"
+# A state file whose last line lost its newline, the way a run killed mid-write
+# leaves it. The next row must still land on its own line.
+printf 'done\tunrelated\t1\t1\t1\thttp://example.invalid/x\t2026-01-01T00:00:00Z' > "$STATE"
+before_uploads="$(uploads)"
+RETE_FREE_BYTES_FILE="$FREE6" drive_at "$R6" e2e6 "$WORK/6-refuse.log" clean
+if [ "$DRIVE_CODE" -ne 0 ]; then pass "a refused file makes the run exit non-zero [$DRIVE_CODE]"
+else fail "a refused file makes the run exit non-zero" "it exited 0"; fi
+assert_eq   "clean: refused up front, recorded skipped-disk" skipped-disk "$(col clean 1)"
+assert_grep "…charged at the default ratio of 2.25" \
+  'SKIP     clean: needs [0-9.]+ GiB free \(ratio=2.25, headroom=1 GiB\)' "$WORK/6-refuse.log"
+assert_no_grep "…before any export started" '(EXPORT   |AUDIT    )clean' "$WORK/6-refuse.log"
+assert_eq   "…writing no output"   0 "$(find "$R6/out" -name '*.nq.gz' | wc -l)"
+assert_eq   "…and uploading nothing" "$before_uploads" "$(uploads)"
+assert_eq   "the newline-less last row was not glued to the new one" "done" "$(col unrelated 1)"
+# The refusal row is mostly EMPTY fields: the round trip below is bug 2.
+assert_eq   "the skipped-disk row has all 19 fields, empty ones included" 19 "$(nf clean)"
+assert_eq   "…its size is in column 3" "$CLEN" "$(col clean 3)"
+assert_eq   "…column 4 (nqgz_bytes) is empty, not shifted" "" "$(col clean 4)"
+assert_eq   "…and column 6 is still the URL" "http://127.0.0.1:$PORT/clean.rete" "$(col clean 6)"
+
+echo "-- the ratio is overridable --"
+RETE_FREE_BYTES_FILE="$FREE6" drive_at "$R6" e2e6 "$WORK/6-flag.log" clean --dry-run --ratio 1.0
+assert_grep "--ratio 1.0 lets the same disk pass the plan" 'PLAN     clean' "$WORK/6-flag.log"
+RETE_NQ_RATIO=1.0 RETE_FREE_BYTES_FILE="$FREE6" drive_at "$R6" e2e6 "$WORK/6-env.log" clean --dry-run
+assert_grep "…and so does RETE_NQ_RATIO=1.0" 'PLAN     clean' "$WORK/6-env.log"
+
+# ============================================================================
+echo "== 7. --audit-only is not charged for output it never writes =="
+# ============================================================================
+# Same disk. An audit writes to /dev/null, so it needs the download (1x) and
+# the headroom, and 2.5x is plenty.
+RETE_FREE_BYTES_FILE="$FREE6" drive_at "$R6" e2e6 "$WORK/7-audit.log" clean --audit-only
+assert_eq      "the audit ran on a disk a real export was refused" audited "$(col clean 1)"
+assert_no_grep "…and was not refused for space" 'SKIP     clean: needs' "$WORK/7-audit.log"
+assert_eq      "the audited row has 19 fields" 19 "$(nf clean)"
+assert_eq      "…an empty nqgz_bytes (column 4)" "" "$(col clean 4)"
+assert_eq      "…and its verdict where it belongs (column 17)" 0 "$(col clean 17)"
+# THE BUG 2 REGRESSION. `IFS=$'\t' read` folded the empty column 4 away, so the
+# resume read rbytes=<the verdict>, never matched the published size, and
+# re-audited the file on every run.
+RETE_FREE_BYTES_FILE="$FREE6" drive_at "$R6" e2e6 "$WORK/7-resume.log" clean --audit-only
+assert_grep    "a resumed audit reads the row back unshifted and skips it" \
+  'SKIP     clean \(state: audited, unrepairable=0 at the published size' "$WORK/7-resume.log"
+assert_no_grep "…without re-auditing" 'AUDIT    clean' "$WORK/7-resume.log"
+
+# ============================================================================
+echo "== 8. legacy state rows still resume =="
+# ============================================================================
+# The 7-column layout of the first runs, and a 16-column `failed-schemeless`
+# row -- the old name of failed-invalid -- with EMPTY nqgz/quads columns and no
+# column 17, so its verdict lives in column 10. Both must be honoured as the
+# run that wrote them meant them: no export, no upload.
+R8="$WORK/run8"; mkdir -p "$R8"; STATE="$R8/state.tsv"
+{
+  printf 'done\tclean\t%s\t1234\t9\thttp://127.0.0.1:%s/clean.rete\t2026-09-01T00:00:00Z\n' "$CLEN" "$PORT"
+  printf 'failed-schemeless\tnoscheme\t%s\t\t\thttp://127.0.0.1:%s/noscheme.rete\t2026-09-01T00:00:00Z\t5\t0\t5\t0\t0\t0\t0\t12\t0.50\n' "$NLEN" "$PORT"
+} > "$STATE"
+before_uploads="$(uploads)"
+drive_at "$R8" e2e8 "$WORK/8-legacy.log" clean noscheme
+assert_grep    "a 7-column done row is trusted" 'SKIP     clean \(state: done, 1234 bytes' "$WORK/8-legacy.log"
+assert_grep    "a 16-column failed-schemeless row with empty fields is not retried" \
+  'SKIP     noscheme \(state: failed-schemeless, unrepairable=5 at the published size; needs a source rebuild' "$WORK/8-legacy.log"
+assert_no_grep "…so nothing was exported" 'EXPORT   ' "$WORK/8-legacy.log"
+assert_eq      "…or uploaded" "$before_uploads" "$(uploads)"
+
+# ============================================================================
+echo "== 9. the watchdog: the disk fills while the export streams =="
+# ============================================================================
+# The ratio is a prediction; this is the measurement behind it. A rete that
+# writes one line and stalls stands in for a long export, the fake disk is
+# "filled" once its partial output exists, and the driver must kill the
+# container, delete the truncated .gz and say skipped-disk -- long before the
+# stalled export would have finished by itself.
+R9="$WORK/run9"; mkdir -p "$R9"; STATE="$R9/state.tsv"
+FREE9="$WORK/free9"
+echo $((1000 * GIB)) > "$FREE9"
+cat > "$WORK/bin/slow-rete" <<'EOF'
+#!/bin/sh
+# tests/scholar/driver_e2e.sh: an export that is still streaming.
+printf '<http://example.org/s> <http://example.org/p> <http://example.org/o> .\n'
+sleep 300
+exec /repo/dev/scholar-e2e/bin/rete "$@"
+EOF
+chmod 0755 "$WORK/bin/slow-rete"
+t9=$(date +%s)
+RETE_FREE_BYTES_FILE="$FREE9" RETE_DISK_WATCH_SECS=1 \
+E2E_RETE=/repo/dev/scholar-e2e/bin/slow-rete \
+  drive_at "$R9" e2e9 "$WORK/9-watchdog.log" clean &
+dpid=$!
+streaming=0
+for _ in $(seq 1 240); do
+  if [ -e "$R9/out/clean.nq.gz" ]; then streaming=1; break; fi
+  sleep 0.5
+done
+assert_eq "the export is streaming: its partial output exists" 1 "$streaming"
+echo 1024 > "$FREE9"      # 1 KiB free against 1 GiB of headroom
+wait "$dpid"; code9=$?
+el9=$(( $(date +%s) - t9 ))
+if [ "$code9" -ne 0 ]; then pass "the run exits non-zero [$code9]"
+else fail "the run exits non-zero" "it exited 0"; fi
+assert_grep "the watchdog fired" 'ABORT    rete-nq-e2e9-.*below the 1.00 GiB headroom mid-export' "$WORK/9-watchdog.log"
+assert_grep "…and the dataset was skipped for disk" \
+  'SKIP     clean: export killed by the disk watchdog' "$WORK/9-watchdog.log"
+assert_eq   "the row says skipped-disk" skipped-disk "$(col clean 1)"
+assert_eq   "…with no output size" "" "$(col clean 4)"
+assert_eq   "the truncated .nq.gz is gone" 0 "$(find "$R9/out" -name '*.nq.gz' | wc -l)"
+assert_eq   "…and so is the downloaded .rete" 0 "$(find "$R9/dl" -name '*.rete' | wc -l)"
+assert_eq   "no export container is left running" "" "$(dk ps -q --filter name=rete-nq-e2e9)"
+if [ "$el9" -lt 120 ]; then pass "it was killed, not waited out [${el9}s against a 300s stall]"
+else fail "it was killed, not waited out" "took ${el9}s"; fi
+
 STATE="$WORK/run/state.tsv"
 
 echo
@@ -442,5 +598,5 @@ for f in "$WORK"/run/out/*.iri.txt; do
   echo "-- $f --"; head -12 "$f"
 done
 echo
-echo "the run is kept in $WORK — 1-plan.log … 5-drop.log, run/state.tsv, run/out/"
+echo "the run is kept in $WORK — 1-plan.log … 9-watchdog.log, run*/state.tsv, run*/out/"
 exit 1

@@ -81,9 +81,53 @@
 # RECLAIMING DISK
 #
 #   Step 6 is the one that matters and it is easy to get half-right. The .nq.gz
-#   must go too, not just the .rete: at the measured 0.42-0.96x the outputs
-#   ALONE would accumulate to roughly 220 GiB against ~197 GiB free, so keeping
-#   them "until the end" fails somewhere in the middle with no clear culprit.
+#   must go too, not just the .rete: at the measured 0.42-1.93x the outputs
+#   ALONE would accumulate to well past the ~197 GiB free, so keeping them
+#   "until the end" fails somewhere in the middle with no clear culprit.
+#
+# THE SPACE CHECK, AND THE WATCHDOG BEHIND IT
+#
+#   Before each export the driver asks for  (the .rete, if it must download it)
+#   + (.rete bytes x --ratio) + --headroom-gb  free on the work filesystem, and
+#   refuses the file (`skipped-disk`) when that is not there.
+#
+#   --ratio is the .nq.gz/.rete size factor, and it is NOT about 1. It used to
+#   default to 1.0 on the strength of three small files (0.64-0.96x). The
+#   October 2026 audit then measured openaire-2021-relation, a 14.75 GiB .rete,
+#   at 28.53 GiB of .nq.gz -- 1.93x -- so the check would have let a file start
+#   that could not fit. How well a graph compresses as a rete dictionary versus
+#   as gzipped text is a property of the graph (an IRI-dense link table loses
+#   the most), so the only defensible default is the top of what has actually
+#   been measured, plus a margin. Over the 19 distinct datasets the audit
+#   exported (dev/180926-scholar-audition/RESULTS.tsv, `nqgz_bytes/rete_bytes`
+#   of the latest export of each):
+#
+#     0.42 0.44 0.57 0.62 0.66 0.69 0.72 0.75 0.76 0.78
+#     0.81 0.83 0.88 0.88 0.91 0.96 0.97 1.09 1.93
+#
+#   median 0.78, p90 1.09, p95 (nearest rank: the 19th of 19) = the max = 1.93.
+#   With 19 samples the p95 IS the worst case seen, and the next dataset can be
+#   worse, so the default is 2.25: that p95 plus ~16%, rounded up to a quarter.
+#   It costs nothing on the small files and is the difference between refusing
+#   up front and filling the disk on the big ones. Override with --ratio or
+#   RETE_NQ_RATIO when a dataset's own ratio is known.
+#
+#   An --audit-only run writes the dump to /dev/null, so it is charged NO output
+#   space at all -- only the download, if there is one, and the headroom.
+#
+#   A ratio is still a prediction, so a measurement backs it: while an export
+#   streams, a WATCHDOG re-reads the free space every RETE_DISK_WATCH_SECS
+#   (default 30) seconds. The moment it falls below --headroom-gb the export
+#   container is killed (`docker kill`, by name -- killing the `docker run`
+#   client would leave the container writing), the partial .nq.gz is deleted
+#   whatever --keep says, and the row is recorded `skipped-disk` with no output
+#   size. A truncated gzip is never kept and never recorded as anything but a
+#   failure. A `skipped-disk` row is retried on the next run, which re-does the
+#   space check from scratch.
+#
+#   RETE_FREE_BYTES_FILE, when set, replaces the `df` reading with the number in
+#   that file, re-read on every check. It exists for tests/scholar/driver_e2e.sh,
+#   which uses it to fake a full disk both up front and mid-export.
 #
 #   Nothing is ever deleted before step 5 has confirmed the object is in the
 #   bucket at the right size. Upload, then verify, then delete — in that order,
@@ -198,12 +242,11 @@
 #   --image NAME        docker image carrying `rete` + pigz (default scholarnq-dev:latest)
 #   --rete PATH         the rete binary INSIDE the container (default /repo/dev/target/release/rete)
 #   --lock NAME         name the single-instance lock (default "default")
-#   --headroom-gb N     free space to leave untouched (default 15)
+#   --headroom-gb N     free space to leave untouched, before an export starts
+#                       AND while it streams (default 15; see THE SPACE CHECK)
 #   --ratio F           conservative .nq.gz / .rete size factor for the space
-#                       check (default 1.0; measured 0.64 on ror, 0.83 on
-#                       epfl-infoscience, 0.96 on openaire-2021-datasource --
-#                       1.0 keeps the check honest, since the ratio is a
-#                       property of how literal-heavy a graph is, not a constant)
+#                       check (default 2.25, or $RETE_NQ_RATIO: the measured p95
+#                       of 1.93x plus a margin -- see THE SPACE CHECK)
 #   --keep              do not delete downloads or .nq.gz after a verified upload
 #                       (or after an invalid-IRI / parse-check refusal)
 #   --parse-report F    print what this script makes of one saved --sanitize-iris
@@ -219,6 +262,9 @@
 #
 # Env: RETE_HF_BUCKET (default katospiegel/rete-public)
 #      RETE_EXPORT_MEM (container memory cap, default 12g)
+#      RETE_NQ_RATIO (the default for --ratio, 2.25)
+#      RETE_DISK_WATCH_SECS (the watchdog's period in seconds, default 30)
+#      RETE_FREE_BYTES_FILE (test hook: read free bytes from this file, not df)
 #      RETE_DOCKER_RUN_ARGS (extra `docker run` flags for the export container;
 #        on a LINUX host whose uid is not 1000 you need
 #        `--user $(id -u):$(id -g)` or the container cannot write the dump into
@@ -228,7 +274,9 @@
 # needed with --audit-only). Everything else runs in Docker.
 #
 # RESUME — the state file, not the bucket, is the authority
-#   dev/scholar-nq/state.tsv is append-only, one line per attempt:
+#   dev/scholar-nq/state.tsv is append-only, one line per attempt, of exactly
+#   19 TAB-separated fields, EMPTY ONES INCLUDED (record() flattens any tab or
+#   newline inside a value, so a field can never split):
 #     1 status  2 name  3 rete_bytes  4 nqgz_bytes  5 quads  6 url  7 utc
 #     8 invalid  9 repaired  10 schemeless  11 bracket  12 forbidden  13 hash
 #     14 percent  15 rss_mb  16 secs  17 unrepairable  18 unclassified
@@ -253,6 +301,15 @@
 #                   class recognised. A non-zero here says rete met a defect shape
 #                   it has no name for — worth a look, but it already blocked.
 #     parse_check   pass | fail | "" — the independent strict parse (step 3).
+#   READING IT BACK. The file is split with `awk -F'\t'` -- one tab, one
+#   separator -- and what reaches bash is joined with \x1f, never with tabs.
+#   To `read`, a tab is IFS WHITESPACE: `IFS=$'\t' read` folds the two tabs
+#   around an empty field into one separator, and every later field lands one
+#   variable early. That is how an `audited` row (no nqgz_bytes) read back with
+#   its size in the nqgz slot and its verdict in the size slot, and how an
+#   audit's empty `quads` column corrupted a row it was copied into. \x1f is
+#   not whitespace, so empty fields survive, and rows with fewer columns (the
+#   older layouts) simply read their missing columns as empty.
 #   status is done | failed | skipped-disk | failed-invalid | failed-parse |
 #   audited. `failed-schemeless` is the old name of `failed-invalid` and is
 #   still recognised on read, so an existing state file resumes correctly.
@@ -288,7 +345,11 @@ IMAGE="scholarnq-dev:latest"
 RETE_BIN="/repo/dev/target/release/rete"
 LOCK_NAME="default"
 HEADROOM_GB=15
-RATIO="1.0"
+# The .nq.gz/.rete factor the space check charges. Derivation in the header
+# (THE SPACE CHECK): the measured p95 of 1.93x over 19 datasets, plus a margin.
+RATIO="${RETE_NQ_RATIO:-2.25}"
+# Seconds between the watchdog's free-space readings while an export streams.
+WATCH_SECS="${RETE_DISK_WATCH_SECS:-30}"
 DRY_RUN=0
 AUDIT_ONLY=0
 NO_UPLOAD=0
@@ -359,6 +420,13 @@ else
     *) echo "--work $WORK is not under the checkout $ROOT, the container cannot see it" >&2; exit 2 ;;
   esac
 fi
+# A number that is not a number would make the space check an awk error that
+# reads as "needs 0 bytes". Refuse it here, loudly, instead.
+is_num() { case "$1" in ''|.|*[!0-9.]*|*.*.*) return 1 ;; esac; }
+is_num "$RATIO"       || { echo "--ratio / RETE_NQ_RATIO must be a non-negative number, got '$RATIO'" >&2; exit 2; }
+is_num "$HEADROOM_GB" || { echo "--headroom-gb must be a non-negative number, got '$HEADROOM_GB'" >&2; exit 2; }
+case "$WATCH_SECS" in ''|*[!0-9]*|0) echo "RETE_DISK_WATCH_SECS must be a positive integer, got '$WATCH_SECS'" >&2; exit 2 ;; esac
+
 LOG="$WORK/export.$LOCK_NAME.log"
 STATE="$WORK/state.tsv"
 FAILURES="$WORK/failures.$LOCK_NAME.txt"
@@ -381,8 +449,13 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   exit 3
 fi
 echo "$$" > "$LOCK/pid"
+# The export container in flight, if any. A container outlives the `docker run`
+# client that started it, so a killed driver would leave it writing; the trap
+# takes it down.
+CUR_CNAME=""
 # shellcheck disable=SC2317  # reached through the trap below, never by a call
 cleanup() {
+  [ -n "$CUR_CNAME" ] && MSYS_NO_PATHCONV=1 docker kill "$CUR_CNAME" >/dev/null 2>&1
   rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null
   # --parse-report works in a throwaway dir rather than the checkout's, so it
   # owns it and takes it with it.
@@ -425,8 +498,19 @@ DATA_HOST="$(host_path "$DATA_DIR")"
 # ---------------------------------------------------------------------------
 fsize() { stat -c %s "$1" 2>/dev/null || echo 0; }
 
-# Free bytes on the filesystem holding $WORK.
-free_bytes() { df -k "$WORK" | awk 'NR==2 {print $4 * 1024}'; }
+# Free bytes on the filesystem holding $WORK. `df -P` keeps a long device name
+# from wrapping onto two lines, which would move the number to another field;
+# %.0f keeps awk from printing a big one in exponent notation.
+#
+# RETE_FREE_BYTES_FILE replaces the reading with the first number in that file,
+# re-read on every call, so a test can fake a disk that fills up mid-export.
+free_bytes() {
+  if [ -n "${RETE_FREE_BYTES_FILE:-}" ]; then
+    awk 'match($0, /[0-9]+/) {print substr($0, RSTART, RLENGTH); exit}' "$RETE_FREE_BYTES_FILE" 2>/dev/null
+    return 0
+  fi
+  df -Pk "$WORK" | awk 'NR==2 {printf "%.0f\n", $4 * 1024}'
+}
 
 # Published Content-Length. HEAD every time: the manifest carries URLs, not
 # sizes, so there is no stale number to trust.
@@ -447,7 +531,14 @@ bucket_size() {
 was_refused() { [ "${1:-}" = "failed-invalid" ] || [ "${1:-}" = "failed-schemeless" ]; }
 
 # The last recorded attempt for a name:
-# "status<TAB>nqgz_bytes<TAB>rete_bytes<TAB>unrepairable", or "".
+# "status US nqgz_bytes US rete_bytes US unrepairable" (US = \x1f), or "".
+#
+# \x1f and NOT a tab, because the caller splits this with `read`, and to `read`
+# a tab is whitespace: `IFS=$'\t' read` folds the two tabs around an empty field
+# into one, and every field after it lands one variable early. An `audited` row
+# has no nqgz_bytes, so it came back as rbytes=<its verdict>, never matched the
+# published size, and was re-audited on every resume; a legacy refusal with an
+# empty nqgz column was re-exported the same way. See READING IT BACK above.
 #
 # Column 17 (unrepairable) is the verdict. Rows written before it existed carry
 # only column 10 (schemeless), which WAS the whole unrepairable count under the
@@ -456,7 +547,7 @@ was_refused() { [ "${1:-}" = "failed-invalid" ] || [ "${1:-}" = "failed-schemele
 # not a clean one.
 state_of() {
   awk -F'\t' -v n="$2" '
-    $2==n { u = ($17 != "" ? $17 : $10); s = $1"\t"$4"\t"$3"\t"u }
+    $2==n { u = ($17 != "" ? $17 : $10); s = $1"\037"$4"\037"$3"\037"u }
     END{if(s)print s}' "$1"
 }
 
@@ -472,12 +563,22 @@ reset_measures() {
   R_UNREPAIRABLE=""; R_UNCLASSIFIED=""; R_PARSE=""
 }
 
+# Exactly 19 fields, every time, empty ones included. A tab or a newline inside
+# a value would split one field into two, or one row into two, so both are
+# flattened to a space. And a state file whose last line lost its newline (a
+# run killed mid-write) gets one first, or this row would be glued onto it.
 record() { # status name rete_bytes nqgz_bytes quads url   (+ the R_* measures)
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$1" "$2" "$3" "${4:-}" "${5:-}" "$6" "$(now)" \
+  local -a fld=("$1" "$2" "$3" "${4:-}" "${5:-}" "$6" "$(now)" \
     "$R_INVALID" "$R_REPAIRED" "$R_SCHEMELESS" "$R_BRACKET" "$R_FORBIDDEN" \
     "$R_HASH" "$R_PERCENT" "$R_RSS_MB" "$R_SECS" \
-    "$R_UNREPAIRABLE" "$R_UNCLASSIFIED" "$R_PARSE" >> "$STATE"
+    "$R_UNREPAIRABLE" "$R_UNCLASSIFIED" "$R_PARSE")
+  local i line=""
+  for i in "${!fld[@]}"; do
+    fld[i]="${fld[i]//$'\t'/ }"; fld[i]="${fld[i]//$'\n'/ }"; fld[i]="${fld[i]//$'\r'/}"
+    if [ "$i" -eq 0 ]; then line="${fld[i]}"; else line="$line"$'\t'"${fld[i]}"; fi
+  done
+  if [ -s "$STATE" ] && [ -n "$(tail -c1 "$STATE")" ]; then echo >> "$STATE"; fi
+  printf '%s\n' "$line" >> "$STATE"
 }
 
 # Parse the --sanitize-iris summary (format in the header) into the R_* counts.
@@ -714,8 +815,14 @@ EXPORT_FLAGS="--format nq --sanitize-iris"
 # tests/scholar/driver_e2e.sh sets exactly that on Linux.
 DOCKER_RUN_ARGS=()
 [ -n "${RETE_DOCKER_RUN_ARGS:-}" ] && read -ra DOCKER_RUN_ARGS <<< "$RETE_DOCKER_RUN_ARGS"
+# EXPORT_CNAME, when set, names the container: the watchdog needs a name to
+# `docker kill`, because killing the `docker run` client leaves it running.
+EXPORT_CNAME=""
 in_docker() {
+  local -a name_args=()
+  [ -n "$EXPORT_CNAME" ] && name_args=(--name "$EXPORT_CNAME")
   MSYS_NO_PATHCONV=1 docker run --rm \
+    ${name_args[@]+"${name_args[@]}"} \
     ${DOCKER_RUN_ARGS[@]+"${DOCKER_RUN_ARGS[@]}"} \
     --memory "$MEM_LIMIT" --memory-swap "$MEM_LIMIT" \
     -v "$ROOT_HOST:/repo" -v "$DATA_HOST:/data:ro" \
@@ -733,6 +840,40 @@ in_docker() {
 TIME_PROLOGUE='if [ -x /usr/bin/time ]; then T="/usr/bin/time -v -o $TF"; else T=""; echo "no /usr/bin/time in image, rss from cgroup peak" > "$TF"; fi'
 # shellcheck disable=SC2016
 CG_EPILOGUE='p=$(cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes 2>/dev/null || echo); echo "CG_PEAK=$p"'
+
+# THE WATCHDOG (header: THE SPACE CHECK). Wait for the backgrounded export job
+# PID, whose container is CNAME, re-reading the free space every $WATCH_SECS
+# seconds. If it drops below the headroom, kill the container and set
+# DISK_ABORT=1. Returns the job's exit status either way. Liveness is polled
+# every second so that a finished export is not held up for a whole period.
+DISK_ABORT=0
+WATCH_FREE=""
+watch_export() { # pid cname
+  local pid="$1" cname="$2" floor fb tick=0 tries
+  floor=$(awk -v h="$HEADROOM_GB" 'BEGIN{printf "%.0f", h*1073741824}')
+  DISK_ABORT=0; WATCH_FREE=""
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ $((tick % WATCH_SECS)) -eq 0 ]; then
+      fb="$(free_bytes)"
+      case "$fb" in *[!0-9]*) fb="" ;; esac
+      if [ -n "$fb" ] && [ "$fb" -lt "$floor" ]; then
+        DISK_ABORT=1; WATCH_FREE="$fb"
+        say "ABORT    $cname: $(gb "$fb") GiB free is below the $(gb "$floor") GiB headroom mid-export -- killing it"
+        # In the first second of a run the container may not exist yet: keep
+        # trying while the client lives, then take the client down as well.
+        tries=0
+        while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 30 ]; do
+          MSYS_NO_PATHCONV=1 docker kill "$cname" >>"$LOG" 2>&1 && break
+          tries=$((tries+1)); sleep 1
+        done
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+        break
+      fi
+    fi
+    sleep 1; tick=$((tick+1))
+  done
+  wait "$pid"
+}
 
 # ---------------------------------------------------------------------------
 # Pick the rows.
@@ -780,7 +921,7 @@ for r in "${sized[@]}"; do
 
   # -- resume: the state file is the authority --------------------------------
   if [ "$FORCE" = "0" ]; then
-    IFS=$'\t' read -r st rec rbytes runrep <<< "$(state_of "$STATE" "$name")"
+    IFS=$'\037' read -r st rec rbytes runrep <<< "$(state_of "$STATE" "$name")"
     if [ "${st:-}" = "done" ] && [ "$AUDIT_ONLY" = "0" ]; then
       if [ "$RECHECK" = "1" ]; then
         landed="$(bucket_size "$key")"
@@ -827,14 +968,16 @@ for r in "${sized[@]}"; do
 
   # -- space ----------------------------------------------------------------
   # The measured need for THIS file, not an average: the .rete only if we have
-  # to bring it down, plus the .nq.gz we are about to write (none in an audit),
-  # plus headroom.
+  # to bring it down, plus the .nq.gz we are about to write at the conservative
+  # --ratio (header: THE SPACE CHECK), plus headroom. An audit writes its dump
+  # to /dev/null and is charged nothing for it: refusing an audit for space it
+  # will never use would block exactly the run that is cheap enough to do.
   out_ratio="$RATIO"; [ "$AUDIT_ONLY" = "1" ] && out_ratio=0
   need=$(awk -v l="$len" -v d="$downloaded" -v r="$out_ratio" -v h="$HEADROOM_GB" \
     'BEGIN{printf "%d", (d==1 ? l : 0) + l*r + h*1073741824}')
   freeb="$(free_bytes)"
   if [ "$freeb" -lt "$need" ]; then
-    say "SKIP     $name: needs $(gb "$need") GiB free, have $(gb "$freeb") GiB"
+    say "SKIP     $name: needs $(gb "$need") GiB free (ratio=$out_ratio, headroom=$HEADROOM_GB GiB), have $(gb "$freeb") GiB"
     echo "$name (disk: need $(gb "$need") GiB, free $(gb "$freeb") GiB)" >> "$FAILURES"
     record skipped-disk "$name" "$len" "" "" "$url"
     failed=$((failed+1)); continue
@@ -915,16 +1058,33 @@ for r in "${sized[@]}"; do
   # the log, so it can be parsed; /usr/bin/time's own report goes to <name>.time.
   rm -f "$out" "$iri" "$tfile" "$exitf"
   t0=$(date +%s)
+  # A real export runs in the background so the watchdog can watch the disk
+  # while it streams. An audit writes nothing, so it runs in the foreground.
+  CUR_CNAME="rete-nq-$LOCK_NAME-$$-$t0"
+  DISK_ABORT=0
   if [ "$AUDIT_ONLY" = "1" ]; then
     say "AUDIT    $name -> /dev/null (report: $iri)"
-    in_docker "TF='$WORK_IN/out/$name.time'; $TIME_PROLOGUE; \$T '$RETE_BIN' export '$inpath' $EXPORT_FLAGS > /dev/null 2> '$WORK_IN/out/$name.iri.txt'; echo \"RETE_EXIT=\$? PIGZ_EXIT=0\"; $CG_EPILOGUE" \
+    EXPORT_CNAME="$CUR_CNAME" in_docker "TF='$WORK_IN/out/$name.time'; $TIME_PROLOGUE; \$T '$RETE_BIN' export '$inpath' $EXPORT_FLAGS > /dev/null 2> '$WORK_IN/out/$name.iri.txt'; echo \"RETE_EXIT=\$? PIGZ_EXIT=0\"; $CG_EPILOGUE" \
       > "$exitf" 2>>"$LOG"
+    drc=$?
   else
-    say "EXPORT   $name -> $out"
-    in_docker "set -o pipefail; TF='$WORK_IN/out/$name.time'; $TIME_PROLOGUE; \$T '$RETE_BIN' export '$inpath' $EXPORT_FLAGS 2> '$WORK_IN/out/$name.iri.txt' | pigz -p \$(nproc) -6 > '$WORK_IN/out/$name.nq.gz'; st=(\${PIPESTATUS[@]}); echo \"RETE_EXIT=\${st[0]} PIGZ_EXIT=\${st[1]}\"; $CG_EPILOGUE" \
-      > "$exitf" 2>>"$LOG"
+    say "EXPORT   $name -> $out (watchdog: abort below $HEADROOM_GB GiB free, read every ${WATCH_SECS}s)"
+    EXPORT_CNAME="$CUR_CNAME" in_docker "set -o pipefail; TF='$WORK_IN/out/$name.time'; $TIME_PROLOGUE; \$T '$RETE_BIN' export '$inpath' $EXPORT_FLAGS 2> '$WORK_IN/out/$name.iri.txt' | pigz -p \$(nproc) -6 > '$WORK_IN/out/$name.nq.gz'; st=(\${PIPESTATUS[@]}); echo \"RETE_EXIT=\${st[0]} PIGZ_EXIT=\${st[1]}\"; $CG_EPILOGUE" \
+      > "$exitf" 2>>"$LOG" &
+    watch_export "$!" "$CUR_CNAME"
+    drc=$?
   fi
-  drc=$?
+  CUR_CNAME=""
+  if [ "$DISK_ABORT" = "1" ]; then
+    # The partial .nq.gz is a truncated gzip. discard() removes it whatever
+    # --keep says, and the row carries no output size, so nothing downstream
+    # can mistake it for a dump.
+    reset_measures
+    say "SKIP     $name: export killed by the disk watchdog after $(( $(date +%s) - t0 ))s ($(gb "$WATCH_FREE") GiB free < $HEADROOM_GB GiB headroom); partial output removed"
+    echo "$name (disk: watchdog abort at $(gb "$WATCH_FREE") GiB free)" >> "$FAILURES"
+    record skipped-disk "$name" "$len" "" "" "$url"
+    failed=$((failed+1)); discard; continue
+  fi
   ex="$(grep -o 'RETE_EXIT=[0-9]*' "$exitf" | grep -o '[0-9]*')"
   px="$(grep -o 'PIGZ_EXIT=[0-9]*' "$exitf" | grep -o '[0-9]*')"
   t1=$(date +%s)
