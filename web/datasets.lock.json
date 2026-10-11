@@ -46,16 +46,16 @@
       "key": "openaire-2021#3",
       "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-dataset.rete",
       "formatVersion": 5,
-      "contentHash": "410b02108c05defcb31634b921c6902f",
-      "size": 4949731879,
+      "contentHash": "6b6d6c22bc80dcbf208c55bc207c7023",
+      "size": 4948645419,
       "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-dataset.rete"
     },
     {
       "key": "openaire-2021#4",
       "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-otherresearchproduct.rete",
       "formatVersion": 5,
-      "contentHash": "ad2c9db4e6a84b8ae3e5a221f9201196",
-      "size": 2050652355,
+      "contentHash": "7ad8cff7b5d0581a4afe8eab9c506a28",
+      "size": 2049709696,
       "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-otherresearchproduct.rete"
     },
     {
@@ -70,24 +70,24 @@
       "key": "openaire-2021#6",
       "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-software.rete",
       "formatVersion": 5,
-      "contentHash": "700feaaa0144a28f326c07e973e0bbfb",
-      "size": 64192742,
+      "contentHash": "c11a9692793a600b079191d748f5d974",
+      "size": 64180606,
       "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-software.rete"
     },
     {
       "key": "openaire-2021#7",
       "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-organization.rete",
       "formatVersion": 5,
-      "contentHash": "76b10a30f5cb7be21a10b5f69cbc450e",
-      "size": 33067528,
+      "contentHash": "743d7d47ea747b490124fdb91aa12df6",
+      "size": 33059695,
       "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-organization.rete"
     },
     {
       "key": "openaire-2021#8",
       "url": "https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete",
       "formatVersion": 5,
-      "contentHash": "98ede50fd7780abe59c69d3915117797",
-      "size": 7664477,
+      "contentHash": "8df2fea8a933325f3cdd55c7a10c6e08",
+      "size": 7664310,
       "cardUrl": "https://data.graphplaza.com/openaire-2021/openaire-2021-datasource.rete"
     },
     {
