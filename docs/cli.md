@@ -637,22 +637,28 @@ system allocator a long export used to keep up to 75% more than its budget in
 freed-but-resident memory. Set `RETE_MEM_TRACE=<seconds>` to print RSS, cache
 residency and the fixed directories periodically on stderr.
 
-What remains on top of N, measured on a full nq export:
+Measured on a full nq export (peak RSS from `/usr/bin/time -v`; 0.3.4 is the
+release before this change, on glibc malloc):
 
-| file | budget | peak RSS | of budget |
-| --- | --- | --- | --- |
-| openaire-2021-relation (14.75 GiB) | 1024 MB | RELATION_1024 | |
-| | 4096 MB | RELATION_4096 | |
-| | 8192 MB | RELATION_8192 | |
-| epfl-infoscience (1.53 GiB) | 256 MB | EPFL_256 | |
-| | 1024 MB | EPFL_1024 | |
-| | 4096 MB | EPFL_4096 | |
+| file | budget | peak RSS | 0.3.4 | export time |
+| --- | --- | --- | --- | --- |
+| openaire-2021-relation (14.75 GiB, 1.8 G quads) | 1024 MB | RELATION_1024 | | RELATION_1024_T |
+| | 4096 MB | 4352 MB (1.06×) | 7224 MB (1.76×) | 10 345 s (0.3.4: MAIN_4096_T) |
+| | 8192 MB | 8452 MB (1.03×) | | 2 067 s |
+| epfl-infoscience (1.53 GiB, 9.8 M quads) | 256 MB | 605 MB (floor) | 790 MB, 50 s | 90 s |
+| | 1024 MB | 1234 MB (1.21×) | 1836 MB, 35 s | 46 s |
+| | 4096 MB | 3877 MB (0.95×) | 4279 MB, 23 s | 22 s |
+
+So peak RSS is about **N plus 0.2–0.26 GB** — jemalloc's not-yet-purged pages
+and thread caches, the decode threads, the binary — whatever the file size.
+The output is byte-identical at every budget.
 
 There is one floor: the dictionary share never drops below 64 MiB, so a budget
-smaller than the fixed directories plus ~300 MB is not honoured — on
-epfl-infoscience that is anything under ~600 MB, where the open itself briefly
-holds the raw chunk directory beside the parsed one (about twice the directory).
-Rebuilding a pre-#198 file shrinks its directory to a few bytes per chunk.
+smaller than the fixed directories plus ~350 MB is not honoured. On
+epfl-infoscience that is anything under ~600 MB; there the open itself briefly
+holds the raw chunk directory beside the parsed one (about twice the
+directory). Rebuilding a pre-#198 file shrinks its directory to a few bytes per
+chunk.
 
 A smaller budget costs time, not correctness: the dictionary cache re-decodes
 chunks it had to evict, so a file whose decoded dictionary is far larger than
