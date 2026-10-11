@@ -183,6 +183,14 @@ impl Dictionary {
         }
     }
 
+    /// Heap bytes the four sections' chunk directories hold for as long as
+    /// the dictionary is open (see [`ChunkedSection::directory_bytes`]).
+    ///
+    /// [`ChunkedSection::directory_bytes`]: crate::dict::ChunkedSection::directory_bytes
+    pub fn directory_bytes(&self) -> u64 {
+        self.sections.iter().map(|s| s.directory_bytes()).sum()
+    }
+
     /// The current chunk-cache byte cap (`u64::MAX` = unlimited).
     pub fn cache_cap(&self) -> u64 {
         self.sections[0].cache().cap()
@@ -231,6 +239,17 @@ impl Dictionary {
     /// turning "one request per distinct output term" into "a handful per
     /// query". No-op for a local dictionary (every chunk is already resident).
     pub fn prefetch_terms(&self, node_ids: &[u32], predicate_ids: &[u32]) {
+        self.prefetch_terms_batched(node_ids, predicate_ids, usize::MAX);
+    }
+
+    /// [`prefetch_terms`](Self::prefetch_terms), faulting at most `batch` chunks
+    /// per bulk read. A bulk read holds every chunk it fetches — the coalesced
+    /// span, the per-chunk slices and the decoded bodies — until all of them
+    /// are cached, so an unbatched prefetch of a scattered window materialized
+    /// up to thousands of chunks at once, outside every cache cap. A bounded
+    /// export batches it so that transient stays a few MB.
+    pub fn prefetch_terms_batched(&self, node_ids: &[u32], predicate_ids: &[u32], batch: usize) {
+        let batch = batch.max(2);
         let mut want: [std::collections::BTreeSet<usize>; 4] = Default::default();
         for &n in node_ids {
             if let Some((si, ci)) = self.node_chunk(n) {
@@ -245,7 +264,9 @@ impl Dictionary {
         for (si, set) in want.iter().enumerate() {
             if set.len() >= 2 {
                 let cis: Vec<usize> = set.iter().copied().collect();
-                self.sections[si].prefetch_chunks(&cis);
+                for part in cis.chunks(batch) {
+                    self.sections[si].prefetch_chunks(part);
+                }
             }
         }
     }

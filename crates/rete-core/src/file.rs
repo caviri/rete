@@ -448,11 +448,16 @@ pub const DEFAULT_EXPORT_BUDGET_MB: u64 = 4096;
 /// thrashing the whole dictionary chunk-by-chunk.
 const MIN_DICT_CACHE_CAP: u64 = 64 << 20; // 64 MiB
 
+/// Upper bound of the budget share [`split_memory_budget`] holds back for
+/// transient, uncached allocations (see the `reserve` there).
+const TRANSIENT_RESERVE_MAX: u64 = 128 << 20; // 128 MiB
+
 /// How a total `--memory-budget-mb` splits across the export's three bounded
-/// consumers. The window's per-row string buffer and the id buffer are small
-/// (bounded by the fixed window row count, not the file), so they are left in
-/// the slack between this sum and the total rather than given a named cap; peak
-/// RSS is therefore `≈ total + window_string_buffer + fixed open overhead`.
+/// consumers. The three caps sum to the total less a small reserve (≤ 128 MiB)
+/// for the window's buffers and one window's in-flight reads, which no cache
+/// owns. [`Rete::set_memory_budget`] further subtracts the open's fixed
+/// directories ([`Rete::fixed_overhead`]) from the dictionary share, so the
+/// live heap of a dump stays within the total.
 #[derive(Debug, Clone, Copy)]
 pub struct MemoryBudget {
     /// Raw file-block LRU (the `BlockCacheReader` that backs the ranged reader).
@@ -487,16 +492,42 @@ pub fn split_memory_budget(total: u64) -> MemoryBudget {
     // Scanned-permutation tiles: modest — tens of MB on epfl-class files. Cap
     // at total/16 (≤ 256 MiB) so the dictionary keeps the rest.
     let tile_cache = (total / 16).min(256 << 20);
+    // Held back for what no cache owns: the window's id and string buffers,
+    // the coalesced read spans and freshly decoded bodies of one window's
+    // prefetch before they enter the cache, and the program itself. Measured at
+    // ~80-120 MB on epfl and openaire-relation (dev/export-memory), so 1/32 of
+    // the budget, capped at 128 MiB.
+    let reserve = (total / 32).min(TRANSIENT_RESERVE_MAX);
     // The dictionary chunk cache gets everything else, floored so a tiny budget
     // still holds a working set of chunks.
     let dict_cache = total
         .saturating_sub(block_cache)
         .saturating_sub(tile_cache)
+        .saturating_sub(reserve)
         .max(MIN_DICT_CACHE_CAP);
     MemoryBudget {
         block_cache,
         dict_cache,
         tile_cache,
+    }
+}
+
+/// Heap an open `Rete` holds outside its bounded caches, by structure — see
+/// [`Rete::fixed_overhead`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FixedOverhead {
+    /// The four dictionary sections' chunk directories.
+    pub dict_directory: u64,
+    /// The default graph's tile directories (every carried permutation).
+    pub index_directory: u64,
+    /// The named-graph directory plus the open graphs' tile directories.
+    pub named_graphs: u64,
+}
+
+impl FixedOverhead {
+    /// The sum of every part.
+    pub fn total(&self) -> u64 {
+        self.dict_directory + self.index_directory + self.named_graphs
     }
 }
 
@@ -2841,6 +2872,37 @@ enum NamedGraphsSlot {
 }
 
 impl NamedGraphsSlot {
+    /// Heap bytes the named-graph directory holds outside any cache: every
+    /// walked entry's IRI and range, the walk buffer, and the directories of
+    /// the graph indexes currently open (see [`GraphIndex::directory_bytes`]).
+    fn directory_bytes(&self) -> u64 {
+        match self {
+            NamedGraphsSlot::Resident(v) => v
+                .iter()
+                .map(|(iri, g)| iri.capacity() as u64 + g.directory_bytes())
+                .sum(),
+            NamedGraphsSlot::Lazy(l) => {
+                let mut bytes = l.walk.lock().map(|w| w.buf.capacity() as u64).unwrap_or(0);
+                if let Some((_, table)) = l.dir.get() {
+                    bytes += table.len() as u64
+                        * std::mem::size_of::<std::sync::OnceLock<Box<[NamedEntry]>>>() as u64;
+                    for slab in table.iter().filter_map(|s| s.get()) {
+                        bytes += slab.len() as u64 * std::mem::size_of::<NamedEntry>() as u64;
+                        for e in slab.iter() {
+                            if let Some((iri, _)) = e.meta.get() {
+                                bytes += iri.capacity() as u64;
+                            }
+                            if let Some(g) = e.index.get() {
+                                bytes += g.directory_bytes();
+                            }
+                        }
+                    }
+                }
+                bytes
+            }
+        }
+    }
+
     fn count(&self) -> usize {
         match self {
             NamedGraphsSlot::Resident(v) => v.len(),
@@ -3451,6 +3513,18 @@ impl Rete {
         let cap = dict.cache_cap();
         let prefetch_window =
             cap == u64::MAX || cap >= (WINDOW as u64) * 2 * (DICT_CHUNK_BUDGET as u64);
+        // Under a finite budget the prefetch also goes in batches of
+        // PREFETCH_BATCH chunks: one bulk read holds everything it fetched
+        // (span, slices, decoded bodies) until it is all cached, which for a
+        // scattered window was thousands of chunks — up to ~1 GB on
+        // openaire-relation — outside the cache cap. Unlimited keeps one read
+        // per section (the latency-optimal shape for a remote file).
+        const PREFETCH_BATCH: usize = 64;
+        let prefetch_batch = if cap == u64::MAX {
+            usize::MAX
+        } else {
+            PREFETCH_BATCH
+        };
         let mut ids: Vec<(u32, u32, u32)> = Vec::with_capacity(WINDOW);
         let mut nodes: Vec<u32> = Vec::with_capacity(WINDOW * 2);
         let mut preds: Vec<u32> = Vec::with_capacity(WINDOW);
@@ -3472,7 +3546,7 @@ impl Rete {
                     nodes.push(dict.object_node(o));
                     preds.push(p);
                 }
-                dict.prefetch_terms(&nodes, &preds);
+                dict.prefetch_terms_batched(&nodes, &preds, prefetch_batch);
             }
             dict.resolve_window(ids, resolver, |s, p, o| f(s, p, o));
             ids.clear();
@@ -4027,10 +4101,35 @@ impl Rete {
     /// they stay unlimited and are released whole per slot instead (see
     /// [`release_named_graph`](Self::release_named_graph)).
     ///
-    /// Returns the split actually applied, for `RETE_OPEN_DEBUG` logging.
+    /// The open's **fixed** heap — chunk and tile directories, the named-graph
+    /// directory walked so far ([`fixed_overhead`](Self::fixed_overhead)) — is
+    /// paid whatever the caches hold, so it comes out of the dictionary share:
+    /// the caps plus the fixed heap stay within `budget`. It grows with the
+    /// file's chunk/tile/graph count (~18 MB of directories on the 14.75 GiB
+    /// openaire-relation, 88 MB with its tile directories; 224 MB on a pre-#198
+    /// epfl-infoscience whose chunk keys are whole boundary terms). Calling
+    /// this again after a walk of the named-graph directory (as `rete export`
+    /// does once it has listed the graph slots) re-subtracts the larger figure.
+    /// The dictionary share never drops below its 64 MiB floor, which is the
+    /// only way the total can be exceeded: a file whose directories alone
+    /// approach the budget.
+    ///
+    /// Returns the split actually applied (dictionary share net of the fixed
+    /// heap), for `RETE_OPEN_DEBUG` logging.
     pub fn set_memory_budget(&self, budget: Option<u64>) -> MemoryBudget {
         let total = budget.unwrap_or(u64::MAX);
-        let split = split_memory_budget(total);
+        let mut split = split_memory_budget(total);
+        let fixed = if total == u64::MAX {
+            0
+        } else {
+            self.fixed_overhead().total()
+        };
+        if split.dict_cache != u64::MAX {
+            split.dict_cache = split
+                .dict_cache
+                .saturating_sub(fixed)
+                .max(MIN_DICT_CACHE_CAP);
+        }
         self.dict.set_cache_cap(split.dict_cache);
         self.index.set_cache_cap(split.tile_cache);
         // Large named graphs (opened lazily, loader-bearing) get the same tile
@@ -4042,7 +4141,7 @@ impl Rete {
         }
         if std::env::var("RETE_OPEN_DEBUG").is_ok() {
             eprintln!(
-                "[memory-budget] total={} dict_cache={} tile_cache={} block_cache={}",
+                "[memory-budget] total={} dict_cache={} tile_cache={} block_cache={} fixed={:.1}MiB",
                 if total == u64::MAX {
                     "unlimited".to_string()
                 } else {
@@ -4051,6 +4150,7 @@ impl Rete {
                 fmt_cap(split.dict_cache),
                 fmt_cap(split.tile_cache),
                 fmt_cap(split.block_cache),
+                fixed as f64 / (1u64 << 20) as f64,
             );
         }
         split
@@ -4061,6 +4161,17 @@ impl Rete {
     /// work-accounting tests and `RETE_OPEN_DEBUG`.
     pub fn dict_cache_stats(&self) -> crate::chunk_cache::CacheStats {
         self.dict.cache_stats()
+    }
+
+    /// Heap bytes this open holds outside the bounded caches — the dictionary
+    /// chunk directories, the index tile directories and the named-graph
+    /// directory — for `RETE_OPEN_DEBUG` / `RETE_MEM_TRACE` accounting.
+    pub fn fixed_overhead(&self) -> FixedOverhead {
+        FixedOverhead {
+            dict_directory: self.dict.directory_bytes(),
+            index_directory: self.index.directory_bytes(),
+            named_graphs: self.named_graphs.directory_bytes(),
+        }
     }
 
     /// The default-graph index tile cache's observability counters.
@@ -7754,6 +7865,75 @@ mod tests {
         assert!(
             ss.evictions > 0,
             "1-byte cap evicts every insert (stats {ss:?})"
+        );
+    }
+
+    /// **The budget pays for the open's fixed directories.** A ranged open holds
+    /// one descriptor per dictionary chunk and per index tile for its whole
+    /// life, outside every cache — 88 MB on the 14.75 GiB openaire-relation,
+    /// 224 MB on epfl-infoscience. `set_memory_budget` used to give the caches
+    /// the whole budget on top of that; it now measures the directories
+    /// ([`Rete::fixed_overhead`]) and takes them out of the dictionary share, so
+    /// caps + directories stay within the total. This checks the arithmetic on
+    /// a many-chunk file, the 64 MiB floor, the unlimited pass-through, and that
+    /// a dump under the capped budget keeps the dictionary cache within its
+    /// (net) share.
+    #[test]
+    fn memory_budget_charges_the_fixed_directories() {
+        use crate::reader::SliceReader;
+        let leaked: &'static [u8] = Box::leak(build_multichunk_image().into_boxed_slice());
+        let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+
+        let fixed = rete.fixed_overhead();
+        // Every chunk and every tile has a descriptor; a multi-chunk dictionary
+        // and a 64-triple tile budget make both directories non-trivial.
+        assert!(
+            fixed.dict_directory > 0 && fixed.index_directory > 0,
+            "{fixed:?}"
+        );
+        assert_eq!(fixed.named_graphs, 0, "no named graphs in this file");
+        assert_eq!(
+            fixed.total(),
+            fixed.dict_directory + fixed.index_directory + fixed.named_graphs
+        );
+
+        // A budget well above the floor: the dictionary share is the plain
+        // split less the directories, exactly.
+        let total: u64 = 512 << 20;
+        let applied = rete.set_memory_budget(Some(total));
+        let plain = split_memory_budget(total);
+        assert_eq!(applied.dict_cache, plain.dict_cache - fixed.total());
+        assert_eq!(rete.dict_cache_cap(), applied.dict_cache);
+        assert_eq!(applied.tile_cache, plain.tile_cache);
+        assert_eq!(applied.block_cache, plain.block_cache);
+        assert!(
+            applied.dict_cache + applied.tile_cache + applied.block_cache + fixed.total() <= total,
+            "caps + fixed directories exceed the budget: {applied:?} + {fixed:?} > {total}"
+        );
+
+        // A budget whose share would fall under the floor keeps the floor.
+        let applied = rete.set_memory_budget(Some(1 << 20));
+        assert_eq!(applied.dict_cache, MIN_DICT_CACHE_CAP);
+
+        // Unlimited stays unlimited: nothing is subtracted from u64::MAX.
+        let applied = rete.set_memory_budget(None);
+        assert_eq!(applied.dict_cache, u64::MAX);
+        assert_eq!(rete.dict_cache_cap(), u64::MAX);
+
+        // Under a cap smaller than the decompressed dictionary, a full dump
+        // keeps the cache within it.
+        let rete = Rete::open_ranged_lazy(SliceReader::new(leaked)).unwrap();
+        rete.dict.set_cache_cap(128 * 1024);
+        let mut rows = 0usize;
+        rete.dump_filtered_each(None, None, None, None, |_, _, _| rows += 1);
+        assert_eq!(rows, 4001);
+        let s = rete.dict_cache_stats();
+        assert!(s.evictions > 0, "the cap must bind: {s:?}");
+        // One oversized chunk may sit alone above the cap (the handout
+        // invariant); otherwise residency is within it.
+        assert!(
+            s.entries <= 1 || s.resident_bytes <= 128 * 1024,
+            "dictionary cache over its cap after the dump: {s:?}"
         );
     }
 

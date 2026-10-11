@@ -45,6 +45,29 @@ pub type CacheKey = (u8, u32);
 /// header, the map node, the recency-order node). A deliberate slight over-count.
 const ENTRY_OVERHEAD: u64 = 96;
 
+/// The `Arc<[u8]>` header (strong + weak counts) allocated in front of a body.
+const ARC_HEADER: u64 = 16;
+
+/// The bytes an allocation of `n` bytes really occupies: `n` rounded up to the
+/// allocator's size class, using jemalloc's spacing (four classes per doubling:
+/// a request in `(2^k, 2^(k+1)]` rounds up to a multiple of `2^(k-2)`), and to
+/// 16 bytes below 64.
+///
+/// Charging the request size instead undercounted badly where it matters
+/// most: a dictionary chunk is cut at ~64 KiB on a run boundary, so most
+/// bodies are a little *over* 64 KiB and land in the 80 KiB class — 20% the
+/// cache never saw. On openaire-relation at `--memory-budget-mb 4096` that was
+/// ~0.7 GB of resident memory outside the cap. Allocators with finer classes
+/// (glibc) waste less than this charges, so the cap errs on the safe side.
+pub fn alloc_footprint(n: u64) -> u64 {
+    if n <= 64 {
+        return n.div_ceil(16).max(1) * 16;
+    }
+    let k = 63 - (n - 1).leading_zeros() as u64; // 2^k < n <= 2^(k+1)
+    let step = 1u64 << (k - 2);
+    n.div_ceil(step) * step
+}
+
 /// A cached decompressed body plus, for a dictionary chunk, its lazily-derived
 /// per-run offset table. Evicted as a unit; handed out behind an `Arc` so it
 /// outlives its map slot (see the module docs).
@@ -86,12 +109,13 @@ impl CacheEntry {
         &self.runs.get_or_init(|| Arc::from(compute(&self.body)))[..]
     }
 
-    /// Bytes this entry charges against the cap. Runs are derived lazily after
-    /// insertion, so they are not counted here (small, and never charged while
-    /// the cap is unlimited); the body plus a fixed overhead is the charge.
+    /// Bytes this entry charges against the cap: what the allocator really
+    /// hands out for the body ([`alloc_footprint`]) plus a fixed overhead. Runs
+    /// are derived lazily after insertion, so they are not counted (about 1% of
+    /// a body).
     #[inline]
     fn charge(&self) -> u64 {
-        self.body.len() as u64 + ENTRY_OVERHEAD
+        alloc_footprint(self.body.len() as u64 + ARC_HEADER) + ENTRY_OVERHEAD
     }
 }
 
@@ -310,6 +334,33 @@ mod tests {
         Arc::from(vec![fill; n])
     }
 
+    fn charge_of(n: u64) -> u64 {
+        alloc_footprint(n + ARC_HEADER) + ENTRY_OVERHEAD
+    }
+
+    #[test]
+    fn footprint_follows_four_classes_per_doubling() {
+        assert_eq!(alloc_footprint(1), 16);
+        assert_eq!(alloc_footprint(64), 64);
+        assert_eq!(alloc_footprint(65), 80);
+        assert_eq!(alloc_footprint(65_536), 65_536);
+        // A chunk body just over 64 KiB is charged its 80 KiB class.
+        assert_eq!(alloc_footprint(65_537), 81_920);
+        assert_eq!(alloc_footprint(100_000), 114_688);
+        for n in [65u64, 1000, 70_000, 1 << 20, 5_000_001] {
+            let c = alloc_footprint(n);
+            assert!(c >= n && c - n <= n / 4, "{n} -> {c}");
+        }
+    }
+
+    #[test]
+    fn charge_is_the_allocation_class_not_the_length() {
+        let cache = ChunkCache::unlimited();
+        cache.insert((0, 0), body(65_600, 1));
+        assert_eq!(cache.stats().resident_bytes, charge_of(65_600));
+        assert_eq!(charge_of(65_600), 81_920 + ENTRY_OVERHEAD);
+    }
+
     #[test]
     fn insert_and_get_round_trip() {
         let cache = ChunkCache::unlimited();
@@ -341,7 +392,7 @@ mod tests {
     #[test]
     fn arc_stays_valid_across_a_forced_eviction() {
         // A cap large enough for exactly one 100-byte body (+overhead).
-        let cache = ChunkCache::new(100 + ENTRY_OVERHEAD);
+        let cache = ChunkCache::new(charge_of(100));
         let first = cache.insert((0, 0), body(100, 1));
         assert!(cache.contains((0, 0)));
         // A second insert pushes the resident total over the cap and evicts the
@@ -361,7 +412,7 @@ mod tests {
 
     #[test]
     fn recency_protects_the_hot_entry() {
-        let cache = ChunkCache::new(2 * (100 + ENTRY_OVERHEAD));
+        let cache = ChunkCache::new(2 * charge_of(100));
         cache.insert((0, 0), body(100, 0));
         cache.insert((0, 1), body(100, 1));
         // Touch key 0 so key 1 becomes the LRU.

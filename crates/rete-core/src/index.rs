@@ -731,6 +731,35 @@ impl GraphIndex {
         self.cache.stats()
     }
 
+    /// Heap bytes this index holds for as long as it is open, outside its tile
+    /// cache: one descriptor per tile of every permutation the file carries
+    /// (plus a tile's group directory, if a bound-leading lookup built one),
+    /// and — on a ranged open — the two copies of the per-tile byte ranges the
+    /// loaders capture. Grows with the tile count, never with what a scan
+    /// touches.
+    pub fn directory_bytes(&self) -> u64 {
+        let tiles: u64 = self.sections.iter().map(|s| s.len() as u64).sum();
+        let caps: u64 = self
+            .sections
+            .iter()
+            .map(|s| s.capacity() as u64)
+            .sum::<u64>()
+            * std::mem::size_of::<Tile>() as u64;
+        let dirs: u64 = self
+            .sections
+            .iter()
+            .flatten()
+            .filter_map(|t| t.dir.get())
+            .map(|d| d.heap_bytes())
+            .sum();
+        let ranges = if self.loader.is_some() {
+            2 * 24 * tiles
+        } else {
+            0
+        };
+        caps + dirs + ranges
+    }
+
     /// A **remote** index: only the tile directories (leading-id ranges per
     /// permutation, ascending) are known; tile payloads fault in through
     /// `loader` on first scan. Check [`load_incomplete`](Self::load_incomplete)

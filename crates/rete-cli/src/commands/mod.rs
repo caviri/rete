@@ -17,6 +17,7 @@ pub(crate) mod hdt;
 pub(crate) mod inspect;
 pub(crate) mod iri_report;
 pub(crate) mod manifest;
+pub(crate) mod memtrace;
 pub(crate) mod merge;
 pub(crate) mod progressive;
 pub(crate) mod query;
