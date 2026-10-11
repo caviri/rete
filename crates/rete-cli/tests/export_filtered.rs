@@ -444,7 +444,13 @@ fn mem_trace_brackets_the_dump_and_leaves_output_unchanged() {
             .lines()
             .find(|l| l.starts_with("[memtrace]") && l.contains(slot))
             .unwrap_or_else(|| panic!("no {slot} line in:\n{err}"));
-        for field in ["rss_mb=", "hwm_mb=", "dict_res_mb=", "fixed_mb=", "dict_dir_mb="] {
+        for field in [
+            "rss_mb=",
+            "hwm_mb=",
+            "dict_res_mb=",
+            "fixed_mb=",
+            "dict_dir_mb=",
+        ] {
             assert!(line.contains(field), "{slot} line lacks {field}: {line}");
         }
     }

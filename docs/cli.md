@@ -620,9 +620,43 @@ RSS scaled ~3 GB per GB of file (6 GB on a 1.53 GB graph; a 52 GB dump would
 need ~150 GB and OOM). `--in-memory` forces that whole-file load back — faster
 for small files that comfortably fit in RAM, but it needs RAM ≈ the file size.
 The dump is **byte-identical** either way: the reader choice changes only how
-the bytes are fetched, never the order or content. A *filtered* export benefits
-most (only the touched tiles are read); a *full* dump still faults every
-dictionary chunk, so its floor is the resident dictionary, not the file.
+the bytes are fetched, never the order or content.
+
+**What `--memory-budget-mb N` bounds** (default 4096; `0` = unlimited). The
+budget is split between three evicting caches — decoded dictionary chunks, the
+scanned permutation's index tiles (N/16, at most 256 MiB) and raw file blocks
+(N/8, at most 256 MiB) — and a reserve of N/32 (at most 128 MiB) for what no
+cache owns: one window's term strings and in-flight reads. Before the
+dictionary gets its share, the open's **fixed directories** are taken out of it:
+one descriptor per dictionary chunk and per index tile, held for the whole
+export (88 MB on the 14.75 GiB openaire-2021-relation, 224 MB on the 1.5 GB
+epfl-infoscience, whose pre-#198 directory stores whole boundary terms). Caches
+are charged what the allocator really hands out for each body, not its length,
+and the CLI uses jemalloc, which returns freed memory to the OS; with the
+system allocator a long export used to keep up to 75% more than its budget in
+freed-but-resident memory. Set `RETE_MEM_TRACE=<seconds>` to print RSS, cache
+residency and the fixed directories periodically on stderr.
+
+What remains on top of N, measured on a full nq export:
+
+| file | budget | peak RSS | of budget |
+| --- | --- | --- | --- |
+| openaire-2021-relation (14.75 GiB) | 1024 MB | RELATION_1024 | |
+| | 4096 MB | RELATION_4096 | |
+| | 8192 MB | RELATION_8192 | |
+| epfl-infoscience (1.53 GiB) | 256 MB | EPFL_256 | |
+| | 1024 MB | EPFL_1024 | |
+| | 4096 MB | EPFL_4096 | |
+
+There is one floor: the dictionary share never drops below 64 MiB, so a budget
+smaller than the fixed directories plus ~300 MB is not honoured — on
+epfl-infoscience that is anything under ~600 MB, where the open itself briefly
+holds the raw chunk directory beside the parsed one (about twice the directory).
+Rebuilding a pre-#198 file shrinks its directory to a few bytes per chunk.
+
+A smaller budget costs time, not correctness: the dictionary cache re-decodes
+chunks it had to evict, so a file whose decoded dictionary is far larger than
+the budget exports more slowly the smaller the budget is.
 
 `--sanitize-iris` percent-encodes IRIs that are outside the N-Triples/N-Quads
 grammar (see [Invalid IRIs](#invalid-iris)), so the dump loads into a strict
