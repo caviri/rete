@@ -28,6 +28,31 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   releases. It now checks and stamps the parent POM, both module POMs, the wasm
   FFI crate and the engine-version test, and requires them to agree exactly;
   they are at 0.3.4.
+- **`rete export` stays within `--memory-budget-mb` on large files.** The
+  caches the budget caps did stay within it, but peak RSS did not: on the
+  14.75 GiB openaire-2021-relation at the default 4096 MB it reached 7.2 GB
+  (1.76×), and 5.1–8.2 GB on other scholar files. The live heap never left
+  ~4.3 GB; glibc kept ~2.8 GB of freed memory it could not hand back, and 88 MB
+  of chunk and tile directories sat outside every cap. Now:
+  - the CLI uses jemalloc (non-MSVC targets, pinned `tikv-jemallocator`
+    0.6.1, +RELEASE_BYTES to the binary), tuned to return freed pages within
+    300 ms from a background thread;
+  - the caches charge each body what the allocator really gives it (a chunk
+    just over 64 KiB takes 80 KiB), not its length;
+  - the open's fixed directories (`Rete::fixed_overhead`) are subtracted from
+    the dictionary's share, and N/32 (at most 128 MiB) is held back for the
+    window and in-flight reads;
+  - a bounded export prefetches at most 64 dictionary chunks per read instead
+    of a whole window's worth at once.
+
+  Peak RSS on openaire-2021-relation: RESULTS_LINE. The dump is
+  byte-identical at every budget and to 0.3.4. A budget now buys less cache
+  than it used to, so the same number can be slower on a file whose decoded
+  dictionary is much larger than it (EXPORT_TIME_LINE); the honest
+  comparison is at equal RSS. `RETE_MEM_TRACE=<seconds>` prints RSS against
+  the caches during an export; `scripts/export_memory_profile.sh` is the
+  full-size measurement. What the budget bounds, and the one floor it keeps,
+  is in [the CLI reference](docs/cli.md).
 
 ## [0.3.4] - 2026-10-11
 
