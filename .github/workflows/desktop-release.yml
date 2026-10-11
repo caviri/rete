@@ -29,7 +29,8 @@ on:
       # `explorer-v*` cuts an app-only build. `v*` makes the desktop app ride
       # along with every workspace release, so a new version is never published
       # with a stale installer beside it. This runs alongside release.yml rather
-      # than inside it — a queued macOS runner must not hold up crates.io.
+      # than inside it — a queued macOS runner must not hold up crates.io — and
+      # uploads into the release release.yml creates (see create-release).
       - "explorer-v*"
       - "v*"
 
@@ -37,57 +38,69 @@ permissions:
   contents: write
 
 jobs:
-  # The draft is created once, here, and the platform jobs only ever upload into
-  # it. Previously both builders raced to create it: in the happy path macOS won
-  # and Windows uploaded, but when macOS failed early Windows was left having to
-  # create the release and died with "Resource not accessible by integration" —
-  # so one broken platform reported as two, and a perfectly good Windows
-  # installer was thrown away.
+  # The release this run uploads into, resolved once here; the platform jobs
+  # only ever upload into it by id. (Previously both builders raced to create
+  # it, and a macOS failure left Windows unable to create it.)
+  #
+  # Who creates it depends on the tag:
+  #   v*           release.yml owns the release. This job NEVER creates one: it
+  #                waits for release.yml's `release` job to make the draft,
+  #                then uploads into it. On v0.3.4 this job created its own
+  #                draft and release.yml created a second, published release.
+  #   explorer-v*  an app-only release, created here if it does not exist yet.
+  #
+  # scripts/github_release.py finds releases by listing them, drafts included,
+  # so a re-run reuses the release instead of creating a duplicate (the old
+  # get-by-tag lookup could not see drafts and re-created them).
   create-release:
-    name: draft release
+    name: resolve release
     runs-on: ubuntu-latest
     outputs:
-      release_id: ${{ steps.draft.outputs.release_id }}
+      release_id: ${{ steps.resolve.outputs.release_id }}
     steps:
-      - uses: actions/github-script@v7
-        id: draft
-        with:
-          script: |
-            const tag = context.payload.inputs?.tag || context.ref.replace('refs/tags/', '');
-            const { owner, repo } = context.repo;
-            let release;
-            try {
-              release = (await github.rest.repos.getReleaseByTag({ owner, repo, tag })).data;
-              core.info(`reusing release ${release.id} for ${tag}`);
-            } catch (e) {
-              if (e.status !== 404) throw e;
-              release = (await github.rest.repos.createRelease({
-                owner, repo, tag_name: tag,
-                name: `Rete File Explorer ${tag}`,
-                draft: true, prerelease: true,
-                body: [
-                  'Browse a `.rete` graph like an archive — folders, files, and extract.',
-                  '',
-                  '**These builds are unsigned and unnotarized.** macOS will say the app',
-                  '"cannot be opened because the developer cannot be verified", or that it',
-                  'is damaged. To run it anyway, once:',
-                  '',
-                  '```sh',
-                  'xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"',
-                  '```',
-                  '',
-                  'Or right-click the app → Open → Open. Both are one-time.',
-                  '',
-                  'The macOS `.dmg` is a universal binary — one download for both Apple',
-                  'Silicon and Intel.',
-                  '',
-                  'Windows builds (`.msi` / `-setup.exe`) are unsigned too: SmartScreen',
-                  'shows "Windows protected your PC" — **More info** → **Run anyway**.',
-                ].join('\n'),
-              })).data;
-              core.info(`created release ${release.id} for ${tag}`);
-            }
-            core.setOutput('release_id', release.id);
+      - uses: actions/checkout@v4
+      - name: Find or create the release
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          # Push events have no inputs: an explorer-v* push drafts, as before.
+          DRAFT: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
+        run: |
+          set -euo pipefail
+          if [[ "$TAG" == v* ]]; then
+            python3 scripts/github_release.py wait "$TAG" --timeout 1200 --interval 20
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/explorer-notes.md"
+          cat > "$notes" <<'EOF'
+          Browse a `.rete` graph like an archive — folders, files, and extract.
+
+          **These builds are unsigned and unnotarized.** macOS will say the app
+          "cannot be opened because the developer cannot be verified", or that it
+          is damaged. To run it anyway, once:
+
+          ```sh
+          xattr -dr com.apple.quarantine "/Applications/Rete File Explorer.app"
+          ```
+
+          Or right-click the app → Open → Open. Both are one-time.
+
+          The macOS `.dmg` is a universal binary — one download for both Apple
+          Silicon and Intel.
+
+          Windows builds (`.msi` / `-setup.exe`) are unsigned too: SmartScreen
+          shows "Windows protected your PC" — **More info** → **Run anyway**.
+          EOF
+          # App-only releases stay prereleases so they never take the Latest
+          # badge from the engine release.
+          draft_flag=()
+          [[ "$DRAFT" == "true" ]] || draft_flag=(--no-draft)
+          python3 scripts/github_release.py ensure "$TAG" \
+            --name "Rete File Explorer $TAG" --notes-file "$notes" \
+            --prerelease true "${draft_flag[@]}"
 
   build:
     needs: create-release
@@ -166,7 +179,7 @@ jobs:
           projectPath: clients/tauri
           tauriScript: tauri
           args: --target ${{ matrix.target }}
-          # Upload into the draft the create-release job already made, rather
+          # Upload into the release the create-release job resolved, rather
           # than creating one. Notes and draft/prerelease flags live there.
           releaseId: ${{ needs.create-release.outputs.release_id }}
 

@@ -38,6 +38,42 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+  # The ONE place a `v*` release is created. desktop-release.yml also builds
+  # for every `v*` tag, and it used to create its own draft while this workflow
+  # created a second, published release at the end: v0.3.4 shipped as two
+  # releases. Now this job creates a DRAFT within a minute of the tag, notes
+  # taken from the tag's CHANGELOG section; desktop-release.yml waits for it
+  # and uploads into it; `assemble` uploads the rest and publishes it.
+  # scripts/github_release.py looks releases up by listing them (drafts are
+  # invisible to get-by-tag), so a re-run reuses the release instead of
+  # duplicating it. The job always runs so `needs` never sees it skipped; on
+  # workflow_dispatch its steps are no-ops and no release is touched.
+  release:
+    name: draft GitHub release
+    needs: meta
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.ensure.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Release notes from the CHANGELOG section (fails if it is missing)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: >-
+          python3 scripts/github_release.py notes "${{ needs.meta.outputs.version }}"
+          --output "$RUNNER_TEMP/release-notes.md"
+      - name: Create the draft, or reuse the release this tag already has
+        id: ensure
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          python3 scripts/github_release.py ensure "${{ needs.meta.outputs.tag }}"
+          --name "Rete ${{ needs.meta.outputs.version }}"
+          --notes-file "$RUNNER_TEMP/release-notes.md"
+
   native:
     name: ${{ matrix.target }}
     needs: meta
@@ -224,7 +260,7 @@ jobs:
 
   assemble:
     name: checksums, SBOM, attestations, and GitHub release
-    needs: [meta, native, wasm, mcpb, blender]
+    needs: [meta, release, native, wasm, mcpb, blender]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -240,7 +276,7 @@ jobs:
           merge-multiple: true
       - name: Create SHA-256 checksums
         working-directory: dist
-        run: sha256sum *.tar.gz *.zip *.mcpb > SHA256SUMS
+        run: sha256sum -- *.tar.gz *.zip *.mcpb > SHA256SUMS
       - name: Generate the locked CycloneDX dependency graph
         run: |
           docker build -t rete-dev-release -f .devcontainer/Dockerfile .
@@ -275,14 +311,21 @@ jobs:
         with:
           name: rete-release-${{ needs.meta.outputs.version }}
           path: dist/*
-      - name: Publish the prerelease
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Rete ${{ needs.meta.outputs.version }}
-          body_path: docs/release.md
-          prerelease: ${{ contains(needs.meta.outputs.version, '-rc.') || startsWith(needs.meta.outputs.version, '0.') }}
-          files: dist/*
+      # Upload into the draft the `release` job made, then publish it. Only a
+      # semver prerelease (-rc.1, -alpha, -beta.2) is marked prerelease; a
+      # final 0.x is a normal release and becomes Latest unless a newer `v*`
+      # release already exists. (The old rule marked every 0.x a prerelease,
+      # which left the Latest badge on v0.3.0 through 0.3.4.) `--clobber` and
+      # `publish` are both idempotent, so re-running this job is safe.
+      - name: Upload into the GitHub release and publish it
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "${{ needs.meta.outputs.tag }}" dist/* --clobber
+          python3 scripts/github_release.py publish "${{ needs.meta.outputs.tag }}" \
+            --version "${{ needs.meta.outputs.version }}"
 
   # crates.io Trusted Publishing can only be configured on a crate that already
   # exists, so the very first publication of each crate has to be the manual

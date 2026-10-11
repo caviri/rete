@@ -79,6 +79,8 @@ cd clients/java && mvn -B -Prelease -DskipTests package
 
 ## Versioning
 
-The artifacts track the engine version (`0.3.0`), kept in lockstep by
-`ffi/Cargo.toml`, both module POMs, and the parent POM. Bump all of them together
-for a new release. Central rejects re-publishing an existing version.
+The artifacts track the engine version (`0.3.4`): `ffi/Cargo.toml`, both module
+POMs, the parent POM and the version assertion in `ReteTest` must agree exactly.
+`scripts/sync_versions.py --set X.Y.Z` stamps all of them with the rest of the
+release cut, and `--check` (CI) fails if they split or leave the engine's minor
+line. Central rejects re-publishing an existing version.

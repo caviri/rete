@@ -5,6 +5,30 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release automation: one GitHub release per `v*` tag, and the Latest badge
+  moves again.** `release.yml` marked every 0.x release a prerelease, so
+  GitHub's Latest badge stayed on v0.3.0 (an empty, hand-made release) through
+  0.3.4; only a semver prerelease (`-rc.1`, `-alpha`, …) is a prerelease now,
+  and a final release is published with `make_latest` set. `release.yml` and
+  `desktop-release.yml` both built for `v*` tags and both created a release —
+  v0.3.4 got two. `release.yml` now owns it: it creates a draft right after the
+  version check, `desktop-release.yml` waits for that draft and uploads into
+  it, and `release.yml` publishes it once its assets are attached. Lookups list
+  releases with drafts included, so re-running either workflow reuses the
+  release instead of duplicating it. The logic lives in
+  `scripts/github_release.py`, tested against a fake `gh`.
+- **The release body is this changelog's section for the tagged version**,
+  not the static `docs/release.md` that still announced "Rete 0.3.0". A tag
+  whose `## [X.Y.Z]` section is missing fails before anything is published.
+  `docs/release.md` is now the release guide and documents the flow.
+- **Java client versions are in the lockstep gate.** `scripts/sync_versions.py`
+  did not know about `clients/java`, which stayed at 0.3.0 through three engine
+  releases. It now checks and stamps the parent POM, both module POMs, the wasm
+  FFI crate and the engine-version test, and requires them to agree exactly;
+  they are at 0.3.4.
+
 ## [0.3.4] - 2026-10-11
 
 **Where 0.3.4 is published: every channel.** crates.io (`rete-core`,

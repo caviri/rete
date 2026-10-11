@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>1.0 release candidate · rete docs</title>
-  <meta name="description" content="The first release of rete-core, rete-cli, and rete-wasm on crates.io." />
+  <meta name="description" content="What a Rete release contains, how a v tag turns into one, and the runbooks behind it. The notes for any one version are its section of the changelog; the GitHub release body is generated from that…" />
   <link rel="canonical" href="https://caviri.github.io/rete/release.html" />
   <meta property="og:type" content="article" />
   <meta property="og:site_name" content="rete" />
   <meta property="og:title" content="1.0 release candidate · rete docs" />
-  <meta property="og:description" content="The first release of rete-core, rete-cli, and rete-wasm on crates.io." />
+  <meta property="og:description" content="What a Rete release contains, how a v tag turns into one, and the runbooks behind it. The notes for any one version are its section of the changelog; the GitHub release body is generated from that…" />
   <meta property="og:url" content="https://caviri.github.io/rete/release.html" />
   <meta property="og:image" content="https://caviri.github.io/rete/og/doc/release.png" />
   <meta property="og:image:width" content="1200" />
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="1.0 release candidate · rete docs" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="1.0 release candidate · rete docs" />
-  <meta name="twitter:description" content="The first release of rete-core, rete-cli, and rete-wasm on crates.io." />
+  <meta name="twitter:description" content="What a Rete release contains, how a v tag turns into one, and the runbooks behind it. The notes for any one version are its section of the changelog; the GitHub release body is generated from that…" />
   <meta name="twitter:image" content="https://caviri.github.io/rete/og/doc/release.png" />
   <meta name="rete:section" content="Publish &amp; share" />
   <script>
@@ -608,15 +608,42 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <main>
     <div class="page">
       <article class="content">
-<h1 id="rete-030">Rete 0.3.0</h1>
-<p>The first release of <code>rete-core</code>, <code>rete-cli</code>, and <code>rete-wasm</code> on crates.io.</p>
-<p>This is deliberately a 0.x. The code is the same code the 1.0 line will ship,
-and the on-disk format is already stable generation 1 — but publishing at 0.3.0
-first proves the packaging, the docs.rs builds, <code>cargo install rete-cli</code>, and
-the release automation against the real registry before any version has to
-honour a compatibility promise. Report problems here rather than against 1.0.0.</p>
+<h1 id="release-guide">Release guide</h1>
+<p>What a Rete release contains, how a <code>v*</code> tag turns into one, and the runbooks
+behind it. The notes for any one version are its section of the
+<a href="https://github.com/caviri/rete/blob/main/CHANGELOG.html">changelog</a>; the GitHub
+release body is generated from that section, not from this page.</p>
+<p>Rete is deliberately 0.x. The on-disk format is already stable generation 1,
+but the 0.3 line proves the packaging, the docs.rs builds, <code>cargo install rete-cli</code>, and the release automation against the real registries before any
+version has to honour a compatibility promise.</p>
+<h2 id="how-a-v-tag-becomes-a-github-release">How a <code>v*</code> tag becomes a GitHub release</h2>
+<p>Two workflows build for every <code>v*</code> tag, and exactly one of them creates the
+release:</p>
+<table><thead><tr><th>step</th><th>workflow / job</th><th>what it does</th></tr></thead><tbody>
+<tr><td>1</td><td><code>release.yml</code> / <code>release identity</code></td><td>checks the tag equals <code>v</code> + the <code>[workspace.package]</code> version</td></tr>
+<tr><td>2</td><td><code>release.yml</code> / <code>draft GitHub release</code></td><td>extracts the <code>## [X.Y.Z]</code> section of <code>CHANGELOG.md</code> (the job <strong>fails</strong> if it is missing or empty) and creates a <strong>draft</strong> release named <code>Rete X.Y.Z</code>, or reuses the one the tag already has</td></tr>
+<tr><td>3</td><td><code>desktop-release.yml</code> / <code>resolve release</code></td><td>never creates a <code>v*</code> release: it waits (up to 20 min) for step 2's draft and hands its id to the macOS and Windows builders, which upload the installers into it</td></tr>
+<tr><td>4</td><td><code>release.yml</code> / <code>checksums, SBOM, attestations, and GitHub release</code></td><td>uploads the archives, WASM bundle, extensions, <code>SHA256SUMS</code> and SBOM with <code>--clobber</code>, then publishes the draft</td></tr>
+<tr><td>5</td><td><code>release.yml</code> / <code>protected crates.io publishing</code></td><td>waits for the <code>crates-io</code> environment approval, publishes, and attaches the receipt</td></tr>
+</tbody></table>
+<p>On publish, only a semver prerelease (<code>-rc.1</code>, <code>-alpha</code>, <code>-beta.2</code>) is marked
+prerelease. A final version, 0.x included, is a normal release and becomes
+<strong>Latest</strong> unless a newer final <code>v*</code> release already exists (so a backport
+cannot take the badge). App-only <code>explorer-v*</code> releases are always prereleases
+and never Latest.</p>
+<p>Re-running any job of either workflow is safe. Releases are looked up by
+listing them, drafts included (GitHub's get-by-tag endpoint cannot see drafts,
+which is how v0.3.4 ended up with two releases), so a re-run reuses the release
+it finds; uploads overwrite same-named assets; publishing an already published
+release only re-applies the flags. If a tag ever carries <strong>more than one</strong>
+release, the jobs stop and name them rather than guess: delete the extras by
+hand. <code>workflow_dispatch</code> runs of <code>release.yml</code> never touch a GitHub release.</p>
+<p>All of that logic lives in <code>scripts/github_release.py</code>, tested against a fake
+<code>gh</code> by <code>python3 -m unittest scripts/tests/test_github_release.py</code>.</p>
+<p>Before tagging, therefore: move the <code>Unreleased</code> entries under a
+<code>## [X.Y.Z] - date</code> heading in <code>CHANGELOG.md</code>.</p>
 <h2 id="install-and-artifacts">Install and artifacts</h2>
-<pre><code class="language-sh">cargo install rete-cli --version 0.3.0 --locked
+<pre><code class="language-sh">cargo install rete-cli --locked
 </code></pre>
 <p>The release also provides native archives for:</p>
 <ul>
@@ -676,8 +703,8 @@ tag and package preflight, and makes no publish call. Later release tags publish
 in dependency order through the same protected job.</p>
 <h2 id="language-clients">Language clients</h2>
 <p>Client versions track the engine's <code>MAJOR.MINOR</code>: <code>rete-graph</code> 0.3.x on PyPI and
-npm, and the R package, all embed engine 0.3.x. The patch component moves
-independently, so a binding-only fix ships as 0.3.1 without an engine release.
+npm, the R package, and the Java client (<code>io.github.caviri:rete-*</code>), all embed
+engine 0.3.x. The patch component moves independently, so a binding-only fix ships as 0.3.1 without an engine release.
 <code>scripts/sync_versions.py --check</code> enforces this in CI; <code>--write</code> realigns.
 Every client also exposes the engine version it embeds — <code>rete_graph .__engine_version__</code> in Python — which is the reliable answer to "does my
 install support feature X?", since the binding's own version tracks the binding.</p>
@@ -728,10 +755,11 @@ See <a href="compatibility.html#stable-rete-file-compatibility">compatibility</a
 public Rust, CLI, and WASM surfaces carry no semantic-versioning promise while
 the crates are 0.x; semver applies from 1.0.0 onward.</p>
 <h2 id="verify-a-download">Verify a download</h2>
-<pre><code class="language-sh">sha256sum -c SHA256SUMS
-gh attestation verify rete-0.3.0-x86_64-unknown-linux-gnu.tar.gz \
+<pre><code class="language-sh">v=0.3.4   # the version you downloaded
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify rete-$v-x86_64-unknown-linux-gnu.tar.gz \
   --repo caviri/rete
-./rete-0.3.0-x86_64-unknown-linux-gnu/rete --version
+./rete-$v-x86_64-unknown-linux-gnu/rete --version
 </code></pre>
 <p>Then build and query a source graph:</p>
 <pre><code class="language-sh">rete build source.nq -o graph.rete --pyramid-algo types --card
