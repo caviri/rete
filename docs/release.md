@@ -1,17 +1,52 @@
-# Rete 0.3.0
+# Release guide
 
-The first release of `rete-core`, `rete-cli`, and `rete-wasm` on crates.io.
+What a Rete release contains, how a `v*` tag turns into one, and the runbooks
+behind it. The notes for any one version are its section of the
+[changelog](https://github.com/caviri/rete/blob/main/CHANGELOG.md); the GitHub
+release body is generated from that section, not from this page.
 
-This is deliberately a 0.x. The code is the same code the 1.0 line will ship,
-and the on-disk format is already stable generation 1 — but publishing at 0.3.0
-first proves the packaging, the docs.rs builds, `cargo install rete-cli`, and
-the release automation against the real registry before any version has to
-honour a compatibility promise. Report problems here rather than against 1.0.0.
+Rete is deliberately 0.x. The on-disk format is already stable generation 1,
+but the 0.3 line proves the packaging, the docs.rs builds, `cargo install
+rete-cli`, and the release automation against the real registries before any
+version has to honour a compatibility promise.
+
+## How a `v*` tag becomes a GitHub release
+
+Two workflows build for every `v*` tag, and exactly one of them creates the
+release:
+
+| step | workflow / job | what it does |
+|---|---|---|
+| 1 | `release.yml` / `release identity` | checks the tag equals `v` + the `[workspace.package]` version |
+| 2 | `release.yml` / `draft GitHub release` | extracts the `## [X.Y.Z]` section of `CHANGELOG.md` (the job **fails** if it is missing or empty) and creates a **draft** release named `Rete X.Y.Z`, or reuses the one the tag already has |
+| 3 | `desktop-release.yml` / `resolve release` | never creates a `v*` release: it waits (up to 20 min) for step 2's draft and hands its id to the macOS and Windows builders, which upload the installers into it |
+| 4 | `release.yml` / `checksums, SBOM, attestations, and GitHub release` | uploads the archives, WASM bundle, extensions, `SHA256SUMS` and SBOM with `--clobber`, then publishes the draft |
+| 5 | `release.yml` / `protected crates.io publishing` | waits for the `crates-io` environment approval, publishes, and attaches the receipt |
+
+On publish, only a semver prerelease (`-rc.1`, `-alpha`, `-beta.2`) is marked
+prerelease. A final version, 0.x included, is a normal release and becomes
+**Latest** unless a newer final `v*` release already exists (so a backport
+cannot take the badge). App-only `explorer-v*` releases are always prereleases
+and never Latest.
+
+Re-running any job of either workflow is safe. Releases are looked up by
+listing them, drafts included (GitHub's get-by-tag endpoint cannot see drafts,
+which is how v0.3.4 ended up with two releases), so a re-run reuses the release
+it finds; uploads overwrite same-named assets; publishing an already published
+release only re-applies the flags. If a tag ever carries **more than one**
+release, the jobs stop and name them rather than guess: delete the extras by
+hand. `workflow_dispatch` runs of `release.yml` never touch a GitHub release.
+
+All of that logic lives in `scripts/github_release.py`, tested against a fake
+`gh` by `python3 -m unittest scripts/tests/test_github_release.py`.
+
+Before tagging, therefore: move the `Unreleased` entries under a
+`## [X.Y.Z] - date` heading in `CHANGELOG.md`.
 
 ## Install and artifacts
 
 ```sh
-cargo install rete-cli --version 0.3.0 --locked
+cargo install rete-cli --locked
 ```
 
 The release also provides native archives for:
@@ -81,8 +116,8 @@ in dependency order through the same protected job.
 ## Language clients
 
 Client versions track the engine's `MAJOR.MINOR`: `rete-graph` 0.3.x on PyPI and
-npm, and the R package, all embed engine 0.3.x. The patch component moves
-independently, so a binding-only fix ships as 0.3.1 without an engine release.
+npm, the R package, and the Java client (`io.github.caviri:rete-*`), all embed
+engine 0.3.x. The patch component moves independently, so a binding-only fix ships as 0.3.1 without an engine release.
 `scripts/sync_versions.py --check` enforces this in CI; `--write` realigns.
 Every client also exposes the engine version it embeds — `rete_graph
 .__engine_version__` in Python — which is the reliable answer to "does my
@@ -153,10 +188,11 @@ the crates are 0.x; semver applies from 1.0.0 onward.
 ## Verify a download
 
 ```sh
-sha256sum -c SHA256SUMS
-gh attestation verify rete-0.3.0-x86_64-unknown-linux-gnu.tar.gz \
+v=0.3.4   # the version you downloaded
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify rete-$v-x86_64-unknown-linux-gnu.tar.gz \
   --repo caviri/rete
-./rete-0.3.0-x86_64-unknown-linux-gnu/rete --version
+./rete-$v-x86_64-unknown-linux-gnu/rete --version
 ```
 
 Then build and query a source graph:

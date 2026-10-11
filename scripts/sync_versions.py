@@ -76,6 +76,37 @@ TARGETS = [
         re.compile(r"(?m)^rete-graph>=([0-9.]+)$"),
         "clients/relay wheel floor",
     ),
+    # The Java client: a parent POM, two modules that name it as <parent>, and
+    # the wasm FFI crate whose CARGO_PKG_VERSION is what `Rete.version()`
+    # returns (so the test asserting it moves with them). Not covered until
+    # 0.3.4, which left the POMs at 0.3.0 through three engine releases.
+    (
+        "clients/java/pom.xml",
+        re.compile(
+            r"(?s)<artifactId>rete-parent</artifactId>\s*(?:<!--.*?-->\s*)?<version>([^<]+)</version>"
+        ),
+        "java parent pom",
+    ),
+    (
+        "clients/java/rete-client/pom.xml",
+        re.compile(r"<artifactId>rete-parent</artifactId>\s*<version>([^<]+)</version>"),
+        "java rete-client parent ref",
+    ),
+    (
+        "clients/java/rete-rdf4j/pom.xml",
+        re.compile(r"<artifactId>rete-parent</artifactId>\s*<version>([^<]+)</version>"),
+        "java rete-rdf4j parent ref",
+    ),
+    (
+        "clients/java/ffi/Cargo.toml",
+        re.compile(r'(?m)^version = "([^"]+)"'),
+        "java wasm ffi crate",
+    ),
+    (
+        "clients/java/rete-client/src/test/java/io/github/caviri/rete/ReteTest.java",
+        re.compile(r'assertEquals\("([^"]+)", rete\.version\(\)\)'),
+        "java engine-version test",
+    ),
 ]
 
 # The Pyodide/JupyterLite fallback wheel is served from our own bucket, so its
@@ -235,6 +266,7 @@ def main() -> int:
 
     problems: list[str] = []
     python_versions: dict[str, str] = {}
+    java_versions: dict[str, str] = {}
 
     # These are `=` pins, not minor-lockstep: they must equal the engine exactly,
     # or `cargo` refuses to resolve the workspace at all.
@@ -267,6 +299,8 @@ def main() -> int:
         current = found.group(1).strip()
         if rel.startswith("clients/python/"):
             python_versions[rel] = current
+        if rel.startswith("clients/java/"):
+            java_versions[rel] = current
 
         if minor_of(current) == target_minor:
             print(f"  ok    {label:32} {current}")
@@ -287,6 +321,11 @@ def main() -> int:
     if len(set(python_versions.values())) > 1:
         pairs = ", ".join(f"{k}={v}" for k, v in python_versions.items())
         problems.append(f"python version split across files: {pairs}")
+    # Likewise Java: Maven refuses a module whose <parent> version is not the
+    # parent's, and the FFI crate's version is what the client reports.
+    if len(set(java_versions.values())) > 1:
+        pairs = ", ".join(f"{k}={v}" for k, v in java_versions.items())
+        problems.append(f"java version split across files: {pairs}")
 
     # Pyodide fallback wheel URL in the docs.
     wheel_path = ROOT / WHEEL_DOC

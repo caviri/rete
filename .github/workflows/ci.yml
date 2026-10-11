@@ -91,6 +91,15 @@ jobs:
               # Also run by `quality`: which crates may reach getrandom 0.3 in
               # the wasm build.
               - 'scripts/check_getrandom03.sh'
+              # Also run by `quality`: the version-lockstep gate (it reads every
+              # client manifest, Java included) and the tests of the release
+              # helper both release workflows call.
+              - 'scripts/sync_versions.py'
+              - 'scripts/github_release.py'
+              - 'scripts/tests/test_github_release.py'
+              - 'clients/java/pom.xml'
+              - 'clients/java/*/pom.xml'
+              - 'clients/java/ffi/Cargo.toml'
               # crates/rete-cli/tests/export_report_roundtrip.rs EXECUTES this
               # script: it feeds the real exporter's stderr to the script's own
               # awk parser. Editing the script can therefore fail `cargo test`,

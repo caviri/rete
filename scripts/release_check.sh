@@ -9,6 +9,8 @@ cd "$(dirname "$0")/.."
 quality() {
   # Cheapest gate first: every client must sit on the engine's minor line.
   python3 scripts/sync_versions.py --check
+  # The release-creation logic both release workflows share, against a fake gh.
+  python3 -m unittest scripts/tests/test_github_release.py
   # getrandom 0.3 in the browser engine may serve only oxrdf's blank-node ids.
   sh scripts/check_getrandom03.sh wasm
   cargo fmt --all -- --check
