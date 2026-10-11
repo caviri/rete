@@ -5,6 +5,59 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-11
+
+**Where 0.3.4 is published: every channel.** crates.io (`rete-core`,
+`rete-graph`, `rete-cli`, `rete-wasm`), PyPI and npm (`rete-graph`), the
+GitHub release with its native archives, browser bundle, Blender add-on and
+`.mcpb`, the container images on GHCR (`rete-cli`, `rete-relay`, `rete-dev`),
+the Claude Desktop extension on the bucket (`rete-0.3.4.mcpb` and the
+`rete.mcpb` link), the Pyodide fallback wheel, and the desktop File Explorer
+installers.
+
+**For crates.io, npm, the GitHub release and the container images, 0.3.4 is
+the first release since 0.3.2 (2026-08-01).** 0.3.3 went to PyPI and the
+Claude Desktop extension only, so on those channels this release carries
+everything in [0.3.3](#033---2026-10-09) as well as the fix below. It is also
+the first workspace release that ships the desktop File Explorer beside it;
+until now it was only available as `explorer-v0.3.0-rc*` drafts.
+
+What 0.3.4 adds on top of 0.3.3, for every channel:
+
+- **`build` always terminates.** The Louvain step of the schema pyramid could
+  loop forever on some graphs, so `rete build`, the browser/Node `build()` and
+  every client that builds in memory never returned. The move test is now
+  exact and each level has a pass cap. Pyramids can change on graphs that used
+  to converge through a tie move; none of 21 real datasets did. Details below.
+- **The relay** (`rete-relay` image and the HF Space) writes quoted triples in
+  CONSTRUCT/DESCRIBE answers as the RDF 1.2 triple term `<<( s p o )>>` on
+  `/api`, `/sparql` and `/mcp` (`quoted_triple_syntax: "rdf-star"` returns
+  `<<s p o>>`; a quoted triple in subject position is refused by name), and
+  returns the engine's FILTER type-error warnings on every plane (a `warnings`
+  member, and an `X-Rete-Warnings` header on `/sparql`). It has its first
+  test suite, run in the relay image. (#294)
+
+What reaches crates.io, npm, the GitHub release and the images for the first
+time, from 0.3.3 (the full list is in the 0.3.3 section):
+
+- **SPARQL results change in two places.** Expression errors propagate as
+  SPARQL 1.1 specifies, so `FILTER(!CONTAINS(?iri, "x"))` no longer keeps rows
+  that Oxigraph and Jena drop, and boolean built-ins have a value outside
+  FILTER. String functions read the whole literal, not up to its first
+  embedded quote. A correlated zero-length property path returns only terms in
+  the graph.
+- **FILTER type errors are reported, not silent**: `rete sparql`, `rete serve`,
+  Python's `Graph.last_warnings()` and, on npm for the first time, the
+  JavaScript client's `lastWarnings()`.
+- **RDF 1.2 quoted triples.** Exports write `<<( s p o )>>` by default;
+  `rete build` and the clients read both surfaces, including RDF 1.2
+  Turtle/TriG. The JavaScript client's N-Quads writers write RDF 1.2 too.
+- **Export** runs in bounded memory (`--memory-budget-mb`), with streaming
+  Turtle and TriG writers, `--compress zstd|gzip` and `--format hdt`.
+- **Format and cards.** The three merge-join permutations are optional
+  (`--permutations 3`), Dataset Card derivation moved into `rete-core`, and
+  the card says whether a file holds quoted triples.
+
 ### Fixed
 
 - **`build` no longer loops forever in the Louvain pyramid step.** On some
