@@ -249,6 +249,19 @@ The full list follows.
     §17.2: `true || error` is `true` and `false && error` is `false`.
     `IF` errors on an erroring condition, `COALESCE` skips errors, `BOUND`
     never errors, and `IN` / `NOT IN` follow §17.4.1.9-10.
+  - **Queries that leaned on the old behaviour change silently. Check yours.**
+    The usual case is `!=` (or `!`) against a variable that has no value
+    where the FILTER sits, most often a FILTER inside a `UNION` branch that
+    names a variable bound only outside it:
+    `?g :toMove ?me . { ?t a :Player . FILTER(?t != ?me) } UNION { … }`.
+    SPARQL evaluates each group bottom-up, so `?me` is not in scope inside
+    the branch and the comparison is an error. 0.3.2 kept every row,
+    including `?t = ?me`, so that FILTER never filtered anything; 0.3.3 and
+    later drop them all, and `lastWarnings()` / `last_warnings()` report the
+    unbound `?me`. Move the FILTER to the group where the variable is bound
+    (`… } UNION { … } FILTER(?t != ?me)`), or bind it inside each branch.
+    Reported by a downstream consumer whose rule had been including the
+    player-to-move since 0.3.2.
   - FILTER, HAVING and an OPTIONAL's filter drop a row whose condition is
     false **or an error**. BIND and projected expressions leave the variable
     unbound (`BIND(!CONTAINS(?iri, "x") AS ?b)` used to bind `true`), and
