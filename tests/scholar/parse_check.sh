@@ -318,6 +318,21 @@ expect_fail "a local binary that dies silently" \
 expect_fail "a gzip stream that ends early" \
   "stream ended early|parse_check=fail" "$TMP/truncated.nq.gz"
 
+echo "== the space-check settings are validated before anything runs =="
+# The disk check is arithmetic on --ratio and the watchdog period. A value that
+# is not a number would turn that arithmetic into "needs 0 bytes" and start an
+# export the disk cannot hold, so the driver refuses it up front -- in every
+# mode, which is what lets this container-only test reach it. The full space
+# check and the watchdog are driven end to end in tests/scholar/driver_e2e.sh.
+expect_fail "a ratio that is not a number is refused" \
+  "RETE_NQ_RATIO must be a non-negative number" "$TMP/clean.nq.gz" "RETE_NQ_RATIO=abc"
+expect_fail "…and so is one with two decimal points" \
+  "RETE_NQ_RATIO must be a non-negative number" "$TMP/clean.nq.gz" "RETE_NQ_RATIO=1.2.3"
+expect_fail "a zero watchdog period is refused" \
+  "RETE_DISK_WATCH_SECS must be a positive integer" "$TMP/clean.nq.gz" "RETE_DISK_WATCH_SECS=0"
+expect_pass "a valid override is accepted" "$TMP/clean.nq.gz" \
+  "RETE_NQ_RATIO=1.5" "RETE_DISK_WATCH_SECS=5"
+
 echo "== the container route =="
 # Both routes must reach the same verdict, which is only checkable where both
 # are available — not inside the dev container, which has no docker. Skipped
