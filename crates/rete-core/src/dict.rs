@@ -569,6 +569,21 @@ impl ChunkedSection {
         &self.cache
     }
 
+    /// Heap bytes this section holds for as long as it is open, independent
+    /// of the chunk cache: the chunk directory (one descriptor plus its
+    /// routing key per chunk), the two copies of the per-chunk byte ranges the
+    /// ranged loaders capture, and any eager restart-offset table. Grows with
+    /// the chunk count, never with what a dump touches.
+    pub fn directory_bytes(&self) -> u64 {
+        let n = self.chunks.len() as u64;
+        let keys: u64 = self.chunks.iter().map(|c| c.key.capacity() as u64).sum();
+        let ranges = if self.loader.is_some() { 2 * 16 * n } else { 0 };
+        n * std::mem::size_of::<SectionChunk>() as u64
+            + keys
+            + ranges
+            + self.meta.restart_offsets.capacity() as u64 * 8
+    }
+
     /// Did any chunk fetch fail since this section was opened — or since the
     /// last [`reset_load_failure`](Self::reset_load_failure)?
     pub fn load_incomplete(&self) -> bool {

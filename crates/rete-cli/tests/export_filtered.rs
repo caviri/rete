@@ -416,3 +416,46 @@ fn memory_budget_dump_matches_in_memory() {
         );
     }
 }
+
+/// `RETE_MEM_TRACE` is a diagnostic only: it brackets the dump with `open` and
+/// `end` lines naming the cache residency and the fixed directories the budget
+/// charges, on stderr, and leaves stdout byte-identical.
+#[test]
+fn mem_trace_brackets_the_dump_and_leaves_output_unchanged() {
+    let (_dir, file) = built();
+    let plain = common::rete()
+        .arg("export")
+        .arg(&file)
+        .args(["--memory-budget-mb", "64"])
+        .output()
+        .unwrap();
+    let traced = common::rete()
+        .arg("export")
+        .arg(&file)
+        .args(["--memory-budget-mb", "64"])
+        .env("RETE_MEM_TRACE", "0")
+        .output()
+        .unwrap();
+    assert!(plain.status.success() && traced.status.success());
+    assert_eq!(plain.stdout, traced.stdout, "the trace changed the dump");
+    let err = String::from_utf8_lossy(&traced.stderr);
+    for slot in ["slot=open", "slot=end"] {
+        let line = err
+            .lines()
+            .find(|l| l.starts_with("[memtrace]") && l.contains(slot))
+            .unwrap_or_else(|| panic!("no {slot} line in:\n{err}"));
+        for field in [
+            "rss_mb=",
+            "hwm_mb=",
+            "dict_res_mb=",
+            "fixed_mb=",
+            "dict_dir_mb=",
+        ] {
+            assert!(line.contains(field), "{slot} line lacks {field}: {line}");
+        }
+    }
+    assert!(
+        !String::from_utf8_lossy(&plain.stderr).contains("[memtrace]"),
+        "the trace must be off unless RETE_MEM_TRACE is set"
+    );
+}

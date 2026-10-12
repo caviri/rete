@@ -395,6 +395,11 @@ impl GroupDirectory {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Heap bytes held by the directory.
+    pub fn heap_bytes(&self) -> u64 {
+        (self.entries.capacity() * std::mem::size_of::<DirEntry>()) as u64
+    }
 }
 
 /// One a-group: its leading id, the byte offset of its first b-group header

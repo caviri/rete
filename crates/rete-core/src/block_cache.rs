@@ -63,6 +63,13 @@ pub fn auto_block(len: u64) -> u64 {
     mult * DEFAULT_BLOCK
 }
 
+/// What a cached block costs against the cap: its allocation's real size
+/// (`Arc` header included, rounded to the allocator's class), not its length —
+/// a 128 KiB block occupies 160 KiB under jemalloc.
+fn charge(data: &Arc<[u8]>) -> u64 {
+    crate::chunk_cache::alloc_footprint(data.len() as u64 + 16)
+}
+
 /// One resident block: its bytes plus the last-touch stamp eviction orders by.
 struct CacheEntry {
     data: Arc<[u8]>,
@@ -191,9 +198,9 @@ impl<R: RangeReader> BlockCacheReader<R> {
                 let hi = hi.min(blob.len());
                 let lo = lo.min(hi);
                 let data: Arc<[u8]> = Arc::from(&blob[lo..hi]);
-                st.used += data.len() as u64;
+                st.used += charge(&data);
                 if let Some(old) = st.map.insert(b, CacheEntry { data, stamp: tick }) {
-                    st.used -= old.data.len() as u64; // concurrent double-fetch
+                    st.used -= charge(&old.data); // concurrent double-fetch
                 }
             }
         }
@@ -203,19 +210,31 @@ impl<R: RangeReader> BlockCacheReader<R> {
     /// Evict least-recently-touched blocks until the resident total fits the
     /// cap. Called after a read has assembled its bytes, so nothing in flight
     /// depends on what gets dropped.
+    ///
+    /// Once over the cap it evicts down to 7/8 of it, not just under it:
+    /// finding the least-recent blocks sorts the whole map, and a full cache
+    /// (every read of a long export) used to pay that sort on every single
+    /// read. The slack amortizes one sort over ~1/8 of the cache's turnover
+    /// (only once the cache holds 32+ blocks, so a tiny cache stays exact LRU).
     fn trim(&self) {
         let mut st = self.cache.lock().unwrap();
         if st.used <= self.cap {
             return;
         }
+        let slack = if self.cap / 8 >= 4 * self.block {
+            self.cap / 8
+        } else {
+            0
+        };
+        let target = self.cap - slack;
         let mut order: Vec<(u64, u64)> = st.map.iter().map(|(&b, e)| (e.stamp, b)).collect();
         order.sort_unstable();
         for (_, b) in order {
-            if st.used <= self.cap {
+            if st.used <= target {
                 break;
             }
             if let Some(e) = st.map.remove(&b) {
-                st.used -= e.data.len() as u64;
+                st.used -= charge(&e.data);
             }
         }
     }
@@ -393,8 +412,9 @@ mod tests {
     fn eviction_is_lru() {
         let data: Vec<u8> = (0..64 * 1024u32).map(|i| i as u8).collect();
         let counting = Arc::new(CountingReader::new(SliceReader::new(&data)));
-        // Cap = exactly 2 blocks of 8 KiB.
-        let r = BlockCacheReader::new(counting.clone(), 8192).with_cache_cap(16 * 1024);
+        // Cap = exactly 2 blocks of 8 KiB (as charged).
+        let two = 2 * charge(&Arc::from(vec![0u8; 8192]));
+        let r = BlockCacheReader::new(counting.clone(), 8192).with_cache_cap(two);
         let block = |i: u64| i * 8192;
         r.read_at(block(0), 16).unwrap(); // cache {0}
         r.read_at(block(1), 16).unwrap(); // cache {0,1}

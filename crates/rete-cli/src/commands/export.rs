@@ -392,9 +392,23 @@ pub(crate) fn export(
             // followed by a frame that closes cleanly produce a *valid* archive
             // with data missing, which is the worst possible failure here.
             let mut err: std::io::Result<()> = Ok(());
-            for slot in filter.slots(&rete) {
+            // Listing the slots walks the named-graph directory, which then
+            // stays resident; re-apply the budget so that walked directory is
+            // charged against the dictionary share too.
+            let slots = filter.slots(&rete);
+            if budget.is_some() {
+                rete.set_memory_budget(budget);
+            }
+            let mut trace = super::memtrace::MemTrace::from_env();
+            if let Some(t) = &trace {
+                t.sample(&rete, "open");
+            }
+            for slot in slots {
                 match &slot {
                     None => rete.dump_filtered_each(None, s, p, o, |s, p, o| {
+                        if let Some(t) = trace.as_mut() {
+                            t.row(&rete, "default");
+                        }
                         if err.is_err() {
                             return;
                         }
@@ -414,6 +428,9 @@ pub(crate) fn export(
                             None => g.clone(),
                         };
                         rete.dump_filtered_each(Some(g), s, p, o, |s, p, o| {
+                            if let Some(t) = trace.as_mut() {
+                                t.row(&rete, "named");
+                            }
                             if err.is_err() {
                                 return;
                             }
@@ -443,6 +460,9 @@ pub(crate) fn export(
                 }
                 return Ok(());
             }
+            if let Some(t) = &trace {
+                t.sample(&rete, "end");
+            }
             if std::env::var("RETE_OPEN_DEBUG").is_ok() {
                 let d = rete.dict_cache_stats();
                 eprintln!(
@@ -464,6 +484,11 @@ pub(crate) fn export(
             } else {
                 vec![select_single_graph(&rete, filter, "Turtle")?]
             };
+            // Charge the named-graph directory the slot listing walked (see
+            // the nq arm).
+            if budget.is_some() {
+                rete.set_memory_budget(budget);
+            }
 
             // Which prefixes the document declares, learned from a bounded
             // prescan of the very scan about to be written. `--no-prefixes`

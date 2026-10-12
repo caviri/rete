@@ -620,9 +620,58 @@ RSS scaled ~3 GB per GB of file (6 GB on a 1.53 GB graph; a 52 GB dump would
 need ~150 GB and OOM). `--in-memory` forces that whole-file load back — faster
 for small files that comfortably fit in RAM, but it needs RAM ≈ the file size.
 The dump is **byte-identical** either way: the reader choice changes only how
-the bytes are fetched, never the order or content. A *filtered* export benefits
-most (only the touched tiles are read); a *full* dump still faults every
-dictionary chunk, so its floor is the resident dictionary, not the file.
+the bytes are fetched, never the order or content.
+
+**What `--memory-budget-mb N` bounds** (default 4096; `0` = unlimited). The
+budget is split between three evicting caches — decoded dictionary chunks, the
+scanned permutation's index tiles (N/16, at most 256 MiB) and raw file blocks
+(N/8, at most 256 MiB) — and a reserve of N/32 (at most 128 MiB) for what no
+cache owns: one window's term strings and in-flight reads. Before the
+dictionary gets its share, the open's **fixed directories** are taken out of it:
+one descriptor per dictionary chunk and per index tile, held for the whole
+export (88 MB on the 14.75 GiB openaire-2021-relation, 224 MB on the 1.5 GB
+epfl-infoscience, whose pre-#198 directory stores whole boundary terms). Caches
+are charged what the allocator really hands out for each body, not its length,
+and the CLI uses jemalloc, which returns freed memory to the OS; with the
+system allocator a long export used to keep up to 75% more than its budget in
+freed-but-resident memory. Set `RETE_MEM_TRACE=<seconds>` to print RSS, cache
+residency and the fixed directories periodically on stderr.
+
+Measured on a full nq export (peak RSS from `/usr/bin/time -v`; 0.3.4 is the
+release before this change, on glibc malloc):
+
+| file | budget | peak RSS | 0.3.4 | export time |
+| --- | --- | --- | --- | --- |
+| openaire-2021-relation (14.75 GiB, 1.8 G quads) | 1024 MB | 1422 MB (1.39×) | | 19 431 s |
+| | 4096 MB | 4352 MB (1.06×) | 7256 MB (1.77×), 7 811 s | 10 345 s |
+| | 8192 MB | 8452 MB (1.03×) | | 2 067 s |
+| datacite (48.6 GiB, 9.8 G quads) | 8192 MB | 8248 MB (1.01×) | 16.7 GB (2.04×), 5 h 16 min¹ | 6 986 s |
+| epfl-infoscience (1.53 GiB, 9.8 M quads) | 256 MB | 605 MB (floor) | 790 MB, 50 s | 90 s |
+| | 1024 MB | 1234 MB (1.21×) | 1836 MB, 35 s | 46 s |
+| | 4096 MB | 3877 MB (0.95×) | 4279 MB, 23 s | 22 s |
+
+¹ The scholar audit's run (with `--sanitize-iris`), not measured side by side.
+
+So peak RSS stays within **N plus ~0.4 GB**, whatever the file size: steady
+state is N plus 0.05–0.26 GB (jemalloc's not-yet-purged pages and thread
+caches, the decode threads, the binary), and the worst transient seen was
++0.4 GB, once, at 1024 MB on relation. The output is byte-identical at every
+budget.
+
+There is one floor: the dictionary share never drops below 64 MiB, so a budget
+smaller than the fixed directories plus ~350 MB is not honoured. On
+epfl-infoscience that is anything under ~600 MB; there the open itself briefly
+holds the raw chunk directory beside the parsed one (about twice the
+directory). Rebuilding a pre-#198 file shrinks its directory to a few bytes per
+chunk.
+
+A smaller budget costs time, not correctness: the dictionary cache re-decodes
+chunks it had to evict, so a file whose decoded dictionary is far larger than
+the budget exports more slowly the smaller the budget is — openaire-relation
+takes 34 min at 8192 MB, 2.9 h at 4096 and 5.4 h at 1024. A budget also buys
+less cache than it did in 0.3.4, which spent memory it did not count: at the
+same 4096 MB this build is ~30% slower on that file, and at the same *peak RSS*
+(8192 MB here vs 4096 MB in 0.3.4, both ~7–8 GB) it is 3.8× faster.
 
 `--sanitize-iris` percent-encodes IRIs that are outside the N-Triples/N-Quads
 grammar (see [Invalid IRIs](#invalid-iris)), so the dump loads into a strict

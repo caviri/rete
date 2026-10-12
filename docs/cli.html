@@ -1125,9 +1125,51 @@ RSS scaled ~3 GB per GB of file (6 GB on a 1.53 GB graph; a 52 GB dump would
 need ~150 GB and OOM). <code>--in-memory</code> forces that whole-file load back — faster
 for small files that comfortably fit in RAM, but it needs RAM ≈ the file size.
 The dump is <strong>byte-identical</strong> either way: the reader choice changes only how
-the bytes are fetched, never the order or content. A <em>filtered</em> export benefits
-most (only the touched tiles are read); a <em>full</em> dump still faults every
-dictionary chunk, so its floor is the resident dictionary, not the file.</p>
+the bytes are fetched, never the order or content.</p>
+<p><strong>What <code>--memory-budget-mb N</code> bounds</strong> (default 4096; <code>0</code> = unlimited). The
+budget is split between three evicting caches — decoded dictionary chunks, the
+scanned permutation's index tiles (N/16, at most 256 MiB) and raw file blocks
+(N/8, at most 256 MiB) — and a reserve of N/32 (at most 128 MiB) for what no
+cache owns: one window's term strings and in-flight reads. Before the
+dictionary gets its share, the open's <strong>fixed directories</strong> are taken out of it:
+one descriptor per dictionary chunk and per index tile, held for the whole
+export (88 MB on the 14.75 GiB openaire-2021-relation, 224 MB on the 1.5 GB
+epfl-infoscience, whose pre-#198 directory stores whole boundary terms). Caches
+are charged what the allocator really hands out for each body, not its length,
+and the CLI uses jemalloc, which returns freed memory to the OS; with the
+system allocator a long export used to keep up to 75% more than its budget in
+freed-but-resident memory. Set <code>RETE_MEM_TRACE=&lt;seconds&gt;</code> to print RSS, cache
+residency and the fixed directories periodically on stderr.</p>
+<p>Measured on a full nq export (peak RSS from <code>/usr/bin/time -v</code>; 0.3.4 is the
+release before this change, on glibc malloc):</p>
+<table><thead><tr><th>file</th><th>budget</th><th>peak RSS</th><th>0.3.4</th><th>export time</th></tr></thead><tbody>
+<tr><td>openaire-2021-relation (14.75 GiB, 1.8 G quads)</td><td>1024 MB</td><td>1422 MB (1.39×)</td><td></td><td>19 431 s</td></tr>
+<tr><td></td><td>4096 MB</td><td>4352 MB (1.06×)</td><td>7256 MB (1.77×), 7 811 s</td><td>10 345 s</td></tr>
+<tr><td></td><td>8192 MB</td><td>8452 MB (1.03×)</td><td></td><td>2 067 s</td></tr>
+<tr><td>datacite (48.6 GiB, 9.8 G quads)</td><td>8192 MB</td><td>8248 MB (1.01×)</td><td>16.7 GB (2.04×), 5 h 16 min¹</td><td>6 986 s</td></tr>
+<tr><td>epfl-infoscience (1.53 GiB, 9.8 M quads)</td><td>256 MB</td><td>605 MB (floor)</td><td>790 MB, 50 s</td><td>90 s</td></tr>
+<tr><td></td><td>1024 MB</td><td>1234 MB (1.21×)</td><td>1836 MB, 35 s</td><td>46 s</td></tr>
+<tr><td></td><td>4096 MB</td><td>3877 MB (0.95×)</td><td>4279 MB, 23 s</td><td>22 s</td></tr>
+</tbody></table>
+<p>¹ The scholar audit's run (with <code>--sanitize-iris</code>), not measured side by side.</p>
+<p>So peak RSS stays within <strong>N plus ~0.4 GB</strong>, whatever the file size: steady
+state is N plus 0.05–0.26 GB (jemalloc's not-yet-purged pages and thread
+caches, the decode threads, the binary), and the worst transient seen was
++0.4 GB, once, at 1024 MB on relation. The output is byte-identical at every
+budget.</p>
+<p>There is one floor: the dictionary share never drops below 64 MiB, so a budget
+smaller than the fixed directories plus ~350 MB is not honoured. On
+epfl-infoscience that is anything under ~600 MB; there the open itself briefly
+holds the raw chunk directory beside the parsed one (about twice the
+directory). Rebuilding a pre-#198 file shrinks its directory to a few bytes per
+chunk.</p>
+<p>A smaller budget costs time, not correctness: the dictionary cache re-decodes
+chunks it had to evict, so a file whose decoded dictionary is far larger than
+the budget exports more slowly the smaller the budget is — openaire-relation
+takes 34 min at 8192 MB, 2.9 h at 4096 and 5.4 h at 1024. A budget also buys
+less cache than it did in 0.3.4, which spent memory it did not count: at the
+same 4096 MB this build is ~30% slower on that file, and at the same <em>peak RSS</em>
+(8192 MB here vs 4096 MB in 0.3.4, both ~7–8 GB) it is 3.8× faster.</p>
 <p><code>--sanitize-iris</code> percent-encodes IRIs that are outside the N-Triples/N-Quads
 grammar (see <a href="#invalid-iris">Invalid IRIs</a>), so the dump loads into a strict
 store instead of being rejected — and a bulk loader rejects the whole <em>chunk</em>,

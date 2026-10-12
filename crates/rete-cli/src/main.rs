@@ -1,5 +1,26 @@
 //! `rete` — build, inspect, and query Rete graph files.
 
+// jemalloc, not the system allocator, on every non-MSVC target: see the note on
+// the dependency in Cargo.toml. Measured on `rete export` of a 14.75 GiB file
+// at `--memory-budget-mb 4096`, glibc malloc held ~2.8 GB of freed space on top
+// of a ~4.3 GB live heap. The tuning below returns freed pages to the OS within
+// ~300 ms (`dirty_decay_ms`) and skips the lazy MADV_FREE stage (`muzzy`), whose
+// pages still count as resident; on Linux a background thread does the purging
+// so the export thread never pays for it.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(all(not(target_env = "msvc"), target_os = "linux"))]
+#[allow(non_upper_case_globals)]
+#[export_name = "_rjem_malloc_conf"]
+pub static malloc_conf: &[u8] = b"background_thread:true,dirty_decay_ms:300,muzzy_decay_ms:0\0";
+
+#[cfg(all(not(target_env = "msvc"), not(target_os = "linux")))]
+#[allow(non_upper_case_globals)]
+#[export_name = "_rjem_malloc_conf"]
+pub static malloc_conf: &[u8] = b"dirty_decay_ms:300,muzzy_decay_ms:0\0";
+
 mod commands;
 mod cypher;
 mod http;
@@ -615,7 +636,11 @@ enum Command {
         /// to a share of N and evict least-recently-used bodies, so a full dump
         /// no longer keeps the whole decompressed dictionary resident — the old
         /// floor that scaled RSS with file size and OOM'd 50-GB-class files.
-        /// Peak RSS ends up roughly N MiB plus a small fixed working set.
+        /// The open's fixed chunk and tile directories are charged against N
+        /// too, so peak RSS stays close to N MiB — unless N is below those
+        /// directories plus ~300 MiB (the dictionary cache keeps a 64 MiB
+        /// floor). See "What --memory-budget-mb bounds" in docs/cli.md;
+        /// `RETE_MEM_TRACE=<seconds>` prints RSS against the caches on stderr.
         ///
         /// A smaller budget costs extra decompression passes but the same
         /// output; `0` means unlimited (no eviction). Ignored with `--in-memory`

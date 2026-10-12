@@ -60,3 +60,14 @@ assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3.20"
 serde_json.workspace = true
+
+# jemalloc as the global allocator wherever it builds (not MSVC). A bounded
+# `rete export` churns millions of decoded chunk bodies through an LRU cache;
+# glibc malloc could not return the freed space (allocations of every size
+# share its arenas), so peak RSS ran to 1.75x `--memory-budget-mb` on a
+# 14.75 GiB file while the live heap stayed within it. jemalloc's size-class
+# segregation and timed purging keep RSS at the live heap. Pinned exactly:
+# allocator behavior is what the export memory bound is measured against.
+# See docs/cli.md (`--memory-budget-mb`) and src/main.rs.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "=0.6.1"
