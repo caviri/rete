@@ -35,7 +35,7 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   ~4.3 GB; glibc kept ~2.8 GB of freed memory it could not hand back, and 88 MB
   of chunk and tile directories sat outside every cap. Now:
   - the CLI uses jemalloc (non-MSVC targets, pinned `tikv-jemallocator`
-    0.6.1, +RELEASE_BYTES to the binary), tuned to return freed pages within
+    0.6.1, +0.46 MB to the binary), tuned to return freed pages within
     300 ms from a background thread;
   - the caches charge each body what the allocator really gives it (a chunk
     just over 64 KiB takes 80 KiB), not its length;
@@ -45,14 +45,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   - a bounded export prefetches at most 64 dictionary chunks per read instead
     of a whole window's worth at once.
 
-  Peak RSS on openaire-2021-relation: RESULTS_LINE. The dump is
-  byte-identical at every budget and to 0.3.4. A budget now buys less cache
-  than it used to, so the same number can be slower on a file whose decoded
-  dictionary is much larger than it (EXPORT_TIME_LINE); the honest
-  comparison is at equal RSS. `RETE_MEM_TRACE=<seconds>` prints RSS against
-  the caches during an export; `scripts/export_memory_profile.sh` is the
-  full-size measurement. What the budget bounds, and the one floor it keeps,
-  is in [the CLI reference](docs/cli.md).
+  Peak RSS on openaire-2021-relation: 1422 MB at 1024, 4352 MB at 4096 and
+  8452 MB at 8192 (0.3.4: 7256 MB at 4096); on datacite (9.8 G quads) 8248 MB
+  at 8192, where 0.3.4 peaked at 16.7 GB. The dump is byte-identical at every
+  budget and to 0.3.4. A budget now buys less cache than it used to, so the
+  same number is slower on a file whose decoded dictionary dwarfs it:
+  openaire-2021-relation takes 10 345 s at 4096 against 7 811 s on 0.3.4, and
+  5.4 h at 1024; at equal peak RSS (8192 now, 4096 before) it is 3.8× faster.
+  `RETE_MEM_TRACE=<seconds>` prints RSS against the caches during an export;
+  `scripts/export_memory_profile.sh` is the full-size measurement. What the
+  budget bounds, and the floor it keeps, is in [the CLI reference](docs/cli.md).
 
 ## [0.3.4] - 2026-10-11
 

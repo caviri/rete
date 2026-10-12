@@ -642,16 +642,21 @@ release before this change, on glibc malloc):
 
 | file | budget | peak RSS | 0.3.4 | export time |
 | --- | --- | --- | --- | --- |
-| openaire-2021-relation (14.75 GiB, 1.8 G quads) | 1024 MB | RELATION_1024 | | RELATION_1024_T |
-| | 4096 MB | 4352 MB (1.06×) | 7224 MB (1.76×) | 10 345 s (0.3.4: MAIN_4096_T) |
+| openaire-2021-relation (14.75 GiB, 1.8 G quads) | 1024 MB | 1422 MB (1.39×) | | 19 431 s |
+| | 4096 MB | 4352 MB (1.06×) | 7256 MB (1.77×), 7 811 s | 10 345 s |
 | | 8192 MB | 8452 MB (1.03×) | | 2 067 s |
+| datacite (48.6 GiB, 9.8 G quads) | 8192 MB | 8248 MB (1.01×) | 16.7 GB (2.04×), 5 h 16 min¹ | 6 986 s |
 | epfl-infoscience (1.53 GiB, 9.8 M quads) | 256 MB | 605 MB (floor) | 790 MB, 50 s | 90 s |
 | | 1024 MB | 1234 MB (1.21×) | 1836 MB, 35 s | 46 s |
 | | 4096 MB | 3877 MB (0.95×) | 4279 MB, 23 s | 22 s |
 
-So peak RSS is about **N plus 0.2–0.26 GB** — jemalloc's not-yet-purged pages
-and thread caches, the decode threads, the binary — whatever the file size.
-The output is byte-identical at every budget.
+¹ The scholar audit's run (with `--sanitize-iris`), not measured side by side.
+
+So peak RSS stays within **N plus ~0.4 GB**, whatever the file size: steady
+state is N plus 0.05–0.26 GB (jemalloc's not-yet-purged pages and thread
+caches, the decode threads, the binary), and the worst transient seen was
++0.4 GB, once, at 1024 MB on relation. The output is byte-identical at every
+budget.
 
 There is one floor: the dictionary share never drops below 64 MiB, so a budget
 smaller than the fixed directories plus ~350 MB is not honoured. On
@@ -662,7 +667,11 @@ chunk.
 
 A smaller budget costs time, not correctness: the dictionary cache re-decodes
 chunks it had to evict, so a file whose decoded dictionary is far larger than
-the budget exports more slowly the smaller the budget is.
+the budget exports more slowly the smaller the budget is — openaire-relation
+takes 34 min at 8192 MB, 2.9 h at 4096 and 5.4 h at 1024. A budget also buys
+less cache than it did in 0.3.4, which spent memory it did not count: at the
+same 4096 MB this build is ~30% slower on that file, and at the same *peak RSS*
+(8192 MB here vs 4096 MB in 0.3.4, both ~7–8 GB) it is 3.8× faster.
 
 `--sanitize-iris` percent-encodes IRIs that are outside the N-Triples/N-Quads
 grammar (see [Invalid IRIs](#invalid-iris)), so the dump loads into a strict
