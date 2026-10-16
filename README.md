@@ -34,7 +34,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Pre-1.0 — expect breaking changes.** rete is **0.3.4**, and until **1.0.0**
+> **Pre-1.0 — expect breaking changes.** rete is **0.3.5**, and until **1.0.0**
 > *both* the public API and the `.rete` file format may change in ways that break
 > what you built on them — including changes that require rebuilding a file you
 > already published. See
@@ -99,7 +99,7 @@ client versions track the engine's 0.3.x line):
 | Client | Get it | Notes |
 |---|---|---|
 | **Python** [![PyPI](https://img.shields.io/pypi/v/rete-graph?label=rete-graph)](https://pypi.org/project/rete-graph/) | `pip install rete-graph` | CPython ≥ 3.9 wheels for Linux/macOS/Windows **plus Pyodide** (JupyterLite, marimo WASM) · [docs](https://caviri.github.io/rete/python.html) · [tutorial](https://caviri.github.io/rete/python-build-tutorial.html) |
-| **JavaScript** [![npm](https://img.shields.io/npm/v/rete-graph?label=rete-graph)](https://www.npmjs.com/package/rete-graph) | `npm install rete-graph` — or one `<script>` tag: `cdn.jsdelivr.net/npm/rete-graph@0.3.4/dist/rete-graph.min.js` | Node ≥ 18 + browsers; TypeScript types included · [docs](https://caviri.github.io/rete/javascript.html) |
+| **JavaScript** [![npm](https://img.shields.io/npm/v/rete-graph?label=rete-graph)](https://www.npmjs.com/package/rete-graph) | `npm install rete-graph` — or one `<script>` tag: `cdn.jsdelivr.net/npm/rete-graph@0.3.5/dist/rete-graph.min.js` | Node ≥ 18 + browsers; TypeScript types included · [docs](https://caviri.github.io/rete/javascript.html) |
 | **Rust** [![crates.io](https://img.shields.io/crates/v/rete-cli?label=rete-cli)](https://crates.io/crates/rete-cli) | `cargo install rete-cli --locked`, or `rete-core` as a library | native + wasm · [Rust API](https://caviri.github.io/rete/rust-api.html) · [CLI reference](https://caviri.github.io/rete/cli.html) · [docs.rs](https://docs.rs/rete-core) |
 | **Java** | `mvn -f clients/java install` — **not published to Maven Central yet**, so there is no coordinate to depend on | pure JVM — the engine as wasm on Chicory, plus an RDF4J `Sail` binding · [readme](clients/java/README.md) |
 | **R** | `remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)` (needs Rust) — **not on CRAN or R-universe** | R ≥ 4.2; SPARQL results as data frames · [docs](https://caviri.github.io/rete/r.html) |
@@ -403,7 +403,7 @@ regenerated with `cargo run -p docgen`).
 
 ## Status
 
-**v0.3.4** — the 0.3.x engine line, shipped to crates.io (`rete-core`,
+**v0.3.5** — the 0.3.x engine line, shipped to crates.io (`rete-core`,
 `rete-cli`, `rete-wasm`, `rete-graph`), PyPI and npm (`rete-graph`), the
 container images, the Claude Desktop extension and the desktop File Explorer,
 with every client in lockstep (see [CHANGELOG](CHANGELOG.md)). The Java client and the R package are

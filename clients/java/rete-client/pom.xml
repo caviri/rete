@@ -7,7 +7,7 @@
   <parent>
     <groupId>io.github.caviri</groupId>
     <artifactId>rete-parent</artifactId>
-    <version>0.3.4</version>
+    <version>0.3.5</version>
   </parent>
 
   <artifactId>rete-client</artifactId>
