@@ -1,0 +1,402 @@
+@prefix dcite:   <https://w3id.org/rete/datacite#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix foaf:    <http://xmlns.com/foaf/0.1/> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix pav:     <http://purl.org/pav/> .
+@prefix dcat:    <http://www.w3.org/ns/dcat#> .
+@prefix schema:  <https://schema.org/> .
+@prefix fabio:   <http://purl.org/spar/fabio/> .
+@prefix cito:    <http://purl.org/spar/cito/> .
+@prefix pro:     <http://purl.org/spar/pro/> .
+@prefix frapo:   <http://purl.org/cerif/frapo/> .
+@prefix datacite:<http://purl.org/spar/datacite/> .
+
+#################################################################
+#  Ontology
+#################################################################
+
+dcite: a owl:Ontology ;
+    dcterms:title "DataCite Ontology (rete)"@en ;
+    rdfs:comment """A domain ontology for the DataCite Public Data Files: DOI-identified
+        research outputs (datasets, software, text, images, physical objects, …), their
+        creators, funders and identifiers, and — crucially — the rich relation network
+        between them (Cites, IsSupplementTo, IsVersionOf, IsPartOf, IsDerivedFrom,
+        IsIdenticalTo, …) that also forms the standalone 'PID Links' edge tables.
+
+        Designed for interoperability: research outputs align to schema.org, DCAT and
+        FaBiO; the relation vocabulary aligns to CiTO (citations), Dublin Core and PAV
+        (versioning) and PROV-O (derivation); identifiers to the SPAR DataCite ontology;
+        funding to FRAPO; agents to FOAF/PRO. The PID Links event is reified as a
+        provenance-bearing dcite:PidRelation.
+
+        Kept within OWL 2 QL (domain/range, subClass/subProperty, inverseOf and
+        existential superclass restrictions only — no functional/transitive/cardinality
+        axioms, no property chains) so rete's lazy query-rewriting reasoner can use it."""@en ;
+    dcterms:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
+    rdfs:seeAlso <https://schema.datacite.org/> ;
+    owl:versionInfo "1.1.0 (2026-10-16): full DataCite 4.6 relationType and resourceTypeGeneral vocabularies, dcite:fromSnapshot, raw-value properties" .
+
+#################################################################
+#  Core classes
+#################################################################
+
+dcite:Resource a owl:Class ;
+    rdfs:label "Resource"@en ;
+    rdfs:comment "A research output identified by a DataCite DOI (one metadata row)."@en ;
+    rdfs:subClassOf schema:CreativeWork , fabio:Work .
+
+dcite:Agent a owl:Class ;
+    rdfs:label "Agent"@en ;
+    rdfs:comment "A creator or contributor of a resource (person or organization), often carrying an ORCID or ROR identifier."@en ;
+    rdfs:subClassOf foaf:Agent , prov:Agent .
+
+dcite:AgentRole a owl:Class ;
+    rdfs:label "Agent role"@en ;
+    rdfs:comment "The reified role an agent plays for a resource (creator/contributor with a DataCite contributorType) and its ordering."@en ;
+    rdfs:subClassOf pro:RoleInTime ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty dcite:isRoleIn ;
+                      owl:someValuesFrom dcite:Resource ] .
+
+dcite:Funder a owl:Class ;
+    rdfs:label "Funder"@en ;
+    rdfs:comment "A funding organization referenced by a resource (a fundingReference funderName / funderIdentifier, e.g. a Crossref Funder ID)."@en ;
+    rdfs:subClassOf frapo:FundingAgency , foaf:Organization .
+
+dcite:Identifier a owl:Class ;
+    rdfs:label "Identifier"@en ;
+    rdfs:comment "A persistent identifier (DOI, URL, ISSN, handle, …) of a resource or agent, when the datatype shortcut is not enough."@en ;
+    rdfs:subClassOf datacite:Identifier .
+
+dcite:PidRelation a owl:Class ;
+    rdfs:label "PID relation"@en ;
+    rdfs:comment "A reified relationship event from the DataCite PID Graph ('PID Links' tables): a typed, provenance-bearing edge between a subject and an object PID, with the asserting source and timestamps. Reifying it keeps provenance (source_id) and time that a bare triple would lose."@en ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty dcite:relationObject ;
+                      owl:someValuesFrom dcite:Resource ] .
+
+#################################################################
+#  resourceTypeGeneral vocabulary  ->  schema.org / DCAT / FaBiO
+#################################################################
+
+dcite:Dataset        a owl:Class ; rdfs:label "Dataset"@en ;        rdfs:subClassOf dcite:Resource , dcat:Dataset ; owl:equivalentClass schema:Dataset .
+dcite:Software       a owl:Class ; rdfs:label "Software"@en ;       rdfs:subClassOf dcite:Resource ; owl:equivalentClass schema:SoftwareSourceCode .
+dcite:Text           a owl:Class ; rdfs:label "Text"@en ;           rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:Expression .
+dcite:Image          a owl:Class ; rdfs:label "Image"@en ;          rdfs:subClassOf dcite:Resource ; owl:equivalentClass schema:ImageObject .
+dcite:Audiovisual    a owl:Class ; rdfs:label "Audiovisual"@en ;    rdfs:subClassOf dcite:Resource ; owl:equivalentClass schema:MediaObject .
+dcite:Sound          a owl:Class ; rdfs:label "Sound"@en ;          rdfs:subClassOf dcite:Resource ; owl:equivalentClass schema:AudioObject .
+dcite:Collection     a owl:Class ; rdfs:label "Collection"@en ;     rdfs:subClassOf dcite:Resource ; owl:equivalentClass schema:Collection .
+dcite:PhysicalObject a owl:Class ; rdfs:label "Physical object"@en ;rdfs:subClassOf dcite:Resource .
+dcite:Preprint       a owl:Class ; rdfs:label "Preprint"@en ;       rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:Preprint .
+dcite:JournalArticle a owl:Class ; rdfs:label "Journal article"@en ;rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:JournalArticle .
+dcite:Book           a owl:Class ; rdfs:label "Book"@en ;           rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:Book .
+dcite:ConferencePaper a owl:Class ; rdfs:label "Conference paper"@en ; rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:ConferencePaper .
+dcite:Dissertation   a owl:Class ; rdfs:label "Dissertation"@en ;   rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:Thesis .
+dcite:Report         a owl:Class ; rdfs:label "Report"@en ;         rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:ReportDocument .
+dcite:Workflow       a owl:Class ; rdfs:label "Workflow"@en ;       rdfs:subClassOf dcite:Resource .
+dcite:Model          a owl:Class ; rdfs:label "Model"@en ;          rdfs:subClassOf dcite:Resource .
+dcite:OtherResource  a owl:Class ; rdfs:label "Other"@en ;          rdfs:subClassOf dcite:Resource .
+dcite:Award a owl:Class ; rdfs:label "Award"@en ; rdfs:subClassOf dcite:Resource .
+dcite:BookChapter a owl:Class ; rdfs:label "Book chapter"@en ; rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:BookChapter .
+dcite:ComputationalNotebook a owl:Class ; rdfs:label "Computational notebook"@en ; rdfs:subClassOf dcite:Resource .
+dcite:ConferenceProceeding a owl:Class ; rdfs:label "Conference proceeding"@en ; rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:ConferenceProceedings .
+dcite:DataPaper a owl:Class ; rdfs:label "Data paper"@en ; rdfs:subClassOf dcite:Resource .
+dcite:Event a owl:Class ; rdfs:label "Event"@en ; rdfs:subClassOf dcite:Resource ; owl:equivalentClass schema:Event .
+dcite:Instrument a owl:Class ; rdfs:label "Instrument"@en ; rdfs:subClassOf dcite:Resource .
+dcite:InteractiveResource a owl:Class ; rdfs:label "Interactive resource"@en ; rdfs:subClassOf dcite:Resource .
+dcite:Journal a owl:Class ; rdfs:label "Journal"@en ; rdfs:subClassOf dcite:Resource ; owl:equivalentClass fabio:Journal .
+dcite:OutputManagementPlan a owl:Class ; rdfs:label "Output management plan"@en ; rdfs:subClassOf dcite:Resource .
+dcite:PeerReview a owl:Class ; rdfs:label "Peer review"@en ; rdfs:subClassOf dcite:Resource .
+dcite:Project a owl:Class ; rdfs:label "Project"@en ; rdfs:subClassOf dcite:Resource .
+dcite:Service a owl:Class ; rdfs:label "Service"@en ; rdfs:subClassOf dcite:Resource .
+dcite:Standard a owl:Class ; rdfs:label "Standard"@en ; rdfs:subClassOf dcite:Resource .
+dcite:StudyRegistration a owl:Class ; rdfs:label "Study registration"@en ; rdfs:subClassOf dcite:Resource .
+
+#################################################################
+#  Object properties — the relation network (relationType / PID Links)
+#################################################################
+
+# citation-like  ->  CiTO
+dcite:cites a owl:ObjectProperty ; rdfs:label "cites"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ;
+    owl:inverseOf dcite:isCitedBy ; rdfs:subPropertyOf cito:cites .
+dcite:isCitedBy a owl:ObjectProperty ; rdfs:label "is cited by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf cito:isCitedBy .
+dcite:references a owl:ObjectProperty ; rdfs:label "references"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ;
+    owl:inverseOf dcite:isReferencedBy ; rdfs:subPropertyOf cito:cites .
+dcite:isReferencedBy a owl:ObjectProperty ; rdfs:label "is referenced by"@en ;
+    rdfs:subPropertyOf cito:isCitedBy .
+dcite:isSupplementTo a owl:ObjectProperty ; rdfs:label "is supplement to"@en ;
+    rdfs:comment "The subject is supplementary material to the object (DataCite IsSupplementTo)."@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ;
+    owl:inverseOf dcite:isSupplementedBy ; rdfs:subPropertyOf dcterms:relation .
+dcite:isSupplementedBy a owl:ObjectProperty ; rdfs:label "is supplemented by"@en ;
+    rdfs:subPropertyOf dcterms:relation .
+
+# versioning  ->  Dublin Core / PAV
+dcite:isVersionOf a owl:ObjectProperty ; rdfs:label "is version of"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ;
+    owl:inverseOf dcite:hasVersion ; rdfs:subPropertyOf dcterms:isVersionOf .
+dcite:hasVersion a owl:ObjectProperty ; rdfs:label "has version"@en ;
+    rdfs:subPropertyOf dcterms:hasVersion .
+dcite:isNewVersionOf a owl:ObjectProperty ; rdfs:label "is new version of"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ;
+    rdfs:subPropertyOf pav:previousVersion .
+
+# part-of  ->  Dublin Core
+dcite:isPartOf a owl:ObjectProperty ; rdfs:label "is part of"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ;
+    owl:inverseOf dcite:hasPart ; rdfs:subPropertyOf dcterms:isPartOf .
+dcite:hasPart a owl:ObjectProperty ; rdfs:label "has part"@en ;
+    rdfs:subPropertyOf dcterms:hasPart .
+
+# derivation  ->  PROV
+dcite:isDerivedFrom a owl:ObjectProperty ; rdfs:label "is derived from"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ;
+    owl:inverseOf dcite:isSourceOf ; rdfs:subPropertyOf prov:wasDerivedFrom .
+dcite:isSourceOf a owl:ObjectProperty ; rdfs:label "is source of"@en ; rdfs:domain dcite:Resource ; rdfs:range dcite:Resource .
+
+# identity / generic relatedness
+dcite:isIdenticalTo a owl:ObjectProperty , owl:SymmetricProperty ; rdfs:label "is identical to"@en ;
+    rdfs:comment "Two DOIs describing the identical resource (not owl:sameAs — the DOIs remain distinct)."@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf skos:exactMatch .
+dcite:isRelatedTo a owl:ObjectProperty , owl:SymmetricProperty ; rdfs:label "is related to"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+
+# DataCite 4.6 relation types added in 1.1.0 (the full 38-term vocabulary is now covered)
+dcite:isContinuedBy a owl:ObjectProperty ; rdfs:label "is continued by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:continues a owl:ObjectProperty ; rdfs:label "continues"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:isContinuedBy ; rdfs:subPropertyOf dcterms:relation .
+dcite:isPreviousVersionOf a owl:ObjectProperty ; rdfs:label "is previous version of"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:isNewVersionOf ; rdfs:subPropertyOf dcterms:relation .
+dcite:isPublishedIn a owl:ObjectProperty ; rdfs:label "is published in"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:isDocumentedBy a owl:ObjectProperty ; rdfs:label "is documented by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:documents a owl:ObjectProperty ; rdfs:label "documents"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:isDocumentedBy ; rdfs:subPropertyOf dcterms:relation .
+dcite:isCompiledBy a owl:ObjectProperty ; rdfs:label "is compiled by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:compiles a owl:ObjectProperty ; rdfs:label "compiles"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:isCompiledBy ; rdfs:subPropertyOf dcterms:relation .
+dcite:isVariantFormOf a owl:ObjectProperty ; rdfs:label "is variant form of"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:isOriginalFormOf a owl:ObjectProperty ; rdfs:label "is original form of"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:isVariantFormOf ; rdfs:subPropertyOf dcterms:relation .
+dcite:hasMetadata a owl:ObjectProperty ; rdfs:label "has metadata"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:isMetadataFor a owl:ObjectProperty ; rdfs:label "is metadata for"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:hasMetadata ; rdfs:subPropertyOf dcterms:relation .
+dcite:reviews a owl:ObjectProperty ; rdfs:label "reviews"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf cito:reviews .
+dcite:isReviewedBy a owl:ObjectProperty ; rdfs:label "is reviewed by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:reviews ; rdfs:subPropertyOf cito:isReviewedBy .
+dcite:describes a owl:ObjectProperty ; rdfs:label "describes"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:isDescribedBy a owl:ObjectProperty ; rdfs:label "is described by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:describes ; rdfs:subPropertyOf dcterms:relation .
+dcite:requires a owl:ObjectProperty ; rdfs:label "requires"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:requires .
+dcite:isRequiredBy a owl:ObjectProperty ; rdfs:label "is required by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:requires ; rdfs:subPropertyOf dcterms:isRequiredBy .
+dcite:obsoletes a owl:ObjectProperty ; rdfs:label "obsoletes"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:replaces .
+dcite:isObsoletedBy a owl:ObjectProperty ; rdfs:label "is obsoleted by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:obsoletes ; rdfs:subPropertyOf dcterms:isReplacedBy .
+dcite:collects a owl:ObjectProperty ; rdfs:label "collects"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:isCollectedBy a owl:ObjectProperty ; rdfs:label "is collected by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:collects ; rdfs:subPropertyOf dcterms:relation .
+dcite:hasTranslation a owl:ObjectProperty ; rdfs:label "has translation"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; rdfs:subPropertyOf dcterms:relation .
+dcite:isTranslationOf a owl:ObjectProperty ; rdfs:label "is translation of"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Resource ; owl:inverseOf dcite:hasTranslation ; rdfs:subPropertyOf dcterms:relation .
+
+# PID-Links relation types DataCite Event Data adds beyond the 4.6 vocabulary
+dcite:isAuthoredAt a owl:ObjectProperty ; rdfs:label "is authored at"@en ;
+    rdfs:comment "PID Links is-authored-at: a work and the (ROR) organization its authors were at."@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Agent ; rdfs:subPropertyOf dcterms:relation .
+dcite:isAffiliatedWith a owl:ObjectProperty ; rdfs:label "is affiliated with"@en ;
+    rdfs:comment "PID Links is-affiliated-with: a person (ORCID) and an organization (ROR)."@en ;
+    rdfs:domain dcite:Agent ; rdfs:range dcite:Agent .
+
+# provenance of a record: which DataCite Public Data File it was taken from (R9)
+dcite:fromSnapshot a owl:ObjectProperty ; rdfs:label "from snapshot"@en ;
+    rdfs:comment "The DataCite Public Data File this record was converted from. One record per DOI: the newest snapshot that contains the DOI (2025, else 2024, else 2023), so a record taken from 2023 or 2024 is a DOI absent from the later files."@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Snapshot ; rdfs:subPropertyOf prov:hadPrimarySource .
+
+# person↔work (PID Links "is-authored-by")
+dcite:isAuthoredBy a owl:ObjectProperty ; rdfs:label "is authored by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Agent ; rdfs:subPropertyOf dcterms:creator .
+
+# creators / funders / identifiers
+dcite:hasContributor a owl:ObjectProperty ; rdfs:label "has contributor"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:AgentRole ;
+    rdfs:subPropertyOf pro:isDocumentContextFor ; owl:inverseOf dcite:isRoleIn .
+dcite:isRoleIn a owl:ObjectProperty ; rdfs:label "is role in"@en ;
+    rdfs:domain dcite:AgentRole ; rdfs:range dcite:Resource ; rdfs:subPropertyOf pro:relatesToDocument .
+dcite:isHeldBy a owl:ObjectProperty ; rdfs:label "is held by"@en ;
+    rdfs:domain dcite:AgentRole ; rdfs:range dcite:Agent ; owl:equivalentProperty pro:isHeldBy .
+dcite:creator a owl:ObjectProperty ; rdfs:label "creator"@en ;
+    rdfs:comment "Direct resource→agent shortcut for a creator."@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Agent ; rdfs:subPropertyOf dcterms:creator .
+dcite:fundedBy a owl:ObjectProperty ; rdfs:label "funded by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Funder ; rdfs:subPropertyOf frapo:hasFundingAgency .
+dcite:hasIdentifier a owl:ObjectProperty ; rdfs:label "has identifier"@en ;
+    owl:equivalentProperty datacite:hasIdentifier .
+dcite:publishedBy a owl:ObjectProperty ; rdfs:label "published by"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:Agent ; rdfs:subPropertyOf dcterms:publisher .
+
+# reified PID-relation links + provenance
+dcite:relationSubject a owl:ObjectProperty ; rdfs:label "relation subject"@en ;
+    rdfs:domain dcite:PidRelation ; rdfs:range dcite:Resource ; rdfs:subPropertyOf prov:used .
+dcite:relationObject a owl:ObjectProperty ; rdfs:label "relation object"@en ;
+    rdfs:domain dcite:PidRelation ; rdfs:range dcite:Resource ; rdfs:subPropertyOf prov:used .
+dcite:relationType a owl:ObjectProperty ; rdfs:label "relation type"@en ;
+    rdfs:domain dcite:PidRelation ; rdfs:range skos:Concept .
+dcite:assertedBy a owl:ObjectProperty ; rdfs:label "asserted by"@en ;
+    rdfs:comment "The source that asserted a relation (e.g. crossref, datacite-related)."@en ;
+    rdfs:domain dcite:PidRelation ; rdfs:range prov:Agent ; rdfs:subPropertyOf prov:wasAssociatedWith .
+
+#################################################################
+#  Datatype properties
+#################################################################
+
+dcite:doi a owl:DatatypeProperty ; rdfs:label "DOI"@en ;
+    rdfs:comment "The DOI of the resource. Primary cross-dataset join key; lowercase on join."@en ;
+    rdfs:domain dcite:Resource ; rdfs:range xsd:string .
+dcite:prefix a owl:DatatypeProperty ; rdfs:label "DOI prefix"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:string .
+dcite:title a owl:DatatypeProperty ; rdfs:label "title"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:string ; rdfs:subPropertyOf dcterms:title .
+dcite:publicationYear a owl:DatatypeProperty ; rdfs:label "publication year"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:gYear .
+dcite:registered a owl:DatatypeProperty ; rdfs:label "registered"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:dateTime ; rdfs:subPropertyOf dcterms:dateSubmitted .
+dcite:created a owl:DatatypeProperty ; rdfs:label "created"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:dateTime ; rdfs:subPropertyOf dcterms:created .
+dcite:updated a owl:DatatypeProperty ; rdfs:label "updated"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:dateTime ; rdfs:subPropertyOf dcterms:modified .
+dcite:resourceType a owl:DatatypeProperty ; rdfs:label "resource type"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:string ; rdfs:subPropertyOf dcterms:type .
+dcite:language a owl:DatatypeProperty ; rdfs:label "language"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:language ; rdfs:subPropertyOf dcterms:language .
+dcite:version a owl:DatatypeProperty ; rdfs:label "version"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:string .
+dcite:schemaVersion a owl:DatatypeProperty ; rdfs:label "schema version"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:string .
+dcite:landingPage a owl:DatatypeProperty ; rdfs:label "landing page"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:anyURI ; rdfs:subPropertyOf schema:url .
+dcite:publisherName a owl:DatatypeProperty ; rdfs:label "publisher name"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:string ; rdfs:subPropertyOf dcterms:publisher .
+dcite:state a owl:DatatypeProperty ; rdfs:label "state"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:string .
+dcite:clientId a owl:DatatypeProperty ; rdfs:label "client (repository) id"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:string .
+
+# usage / citation metrics (2024+ files)
+dcite:citationCount a owl:DatatypeProperty ; rdfs:label "citation count"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:integer .
+dcite:referenceCount a owl:DatatypeProperty ; rdfs:label "reference count"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:integer .
+dcite:viewCount a owl:DatatypeProperty ; rdfs:label "view count"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:integer .
+dcite:downloadCount a owl:DatatypeProperty ; rdfs:label "download count"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:integer .
+
+# agents & identifiers
+dcite:agentName a owl:DatatypeProperty ; rdfs:label "agent name"@en ; rdfs:domain dcite:Agent ; rdfs:range xsd:string ; rdfs:subPropertyOf foaf:name .
+dcite:orcid a owl:DatatypeProperty ; rdfs:label "ORCID iD"@en ;
+    rdfs:comment "ORCID iD of a creator/contributor (nameIdentifier with scheme ORCID). Join key to the ORCID dataset."@en ;
+    rdfs:domain dcite:Agent ; rdfs:range xsd:string .
+dcite:affiliationName a owl:DatatypeProperty ; rdfs:label "affiliation name"@en ; rdfs:domain dcite:Agent ; rdfs:range xsd:string .
+dcite:rorId a owl:DatatypeProperty ; rdfs:label "ROR id"@en ; rdfs:domain dcite:Agent ; rdfs:range xsd:anyURI .
+dcite:identifierValue a owl:DatatypeProperty ; rdfs:label "identifier value"@en ; rdfs:domain dcite:Identifier ; rdfs:range xsd:string .
+
+# values kept as text because the converter will not type or mint them (faithful, not cleaned)
+dcite:publicationYearText a owl:DatatypeProperty ; rdfs:label "publication year (as given)"@en ;
+    rdfs:comment "publicationYear exactly as DataCite has it when it is outside 1000-2027 (0, 9999, …) and so is not asserted as an xsd:gYear."@en ;
+    rdfs:domain dcite:Resource ; rdfs:range xsd:string .
+dcite:resourceTypeGeneralText a owl:DatatypeProperty ; rdfs:label "resourceTypeGeneral (as given)"@en ;
+    rdfs:comment "resourceTypeGeneral exactly as DataCite has it when it is not one of the 32 DataCite 4.6 values (the record is then typed only dcite:Resource)."@en ;
+    rdfs:domain dcite:Resource ; rdfs:range xsd:string .
+dcite:rawIdentifier a owl:DatatypeProperty ; rdfs:label "raw identifier"@en ;
+    rdfs:comment "An identifier exactly as DataCite records it, kept as text because no IRI is minted from it: an ORCID or ROR id whose check digits fail, or a scheme without an IRI rule here (GRID, ISNI, Other). Not a join key."@en ;
+    rdfs:range xsd:string .
+dcite:rawIdentifierScheme a owl:DatatypeProperty ; rdfs:label "raw identifier scheme"@en ;
+    rdfs:range xsd:string .
+
+# PID-relation datatype fields
+dcite:occurredAt a owl:DatatypeProperty ; rdfs:label "occurred at"@en ; rdfs:domain dcite:PidRelation ; rdfs:range xsd:dateTime ; rdfs:subPropertyOf prov:atTime .
+
+#################################################################
+#  Source snapshots (dcite:fromSnapshot)
+#################################################################
+
+dcite:Snapshot a owl:Class ; rdfs:label "Snapshot"@en ;
+    rdfs:comment "One DataCite Public Data File (https://datafiles.datacite.org/)."@en ;
+    rdfs:subClassOf prov:Entity , dcat:Distribution .
+dcite:snapshot-2023 a dcite:Snapshot ; rdfs:label "DataCite Public Data File 2023"@en ;
+    rdfs:comment "52,863,283 DOI records."@en .
+dcite:snapshot-2024 a dcite:Snapshot ; rdfs:label "DataCite Public Data File 2024"@en ;
+    rdfs:comment "72,019,577 DOI records."@en .
+dcite:snapshot-2025 a dcite:Snapshot ; rdfs:label "DataCite Public Data File 2025"@en ;
+    rdfs:comment "108,468,906 DOI records."@en .
+
+#################################################################
+#  SKOS vocabularies: relation types, resource types, id schemes
+#################################################################
+
+dcite:RelationType a owl:Class ; rdfs:subClassOf skos:Concept ; rdfs:label "Relation type"@en .
+dcite:rel-cites a dcite:RelationType ; skos:prefLabel "Cites"@en ; skos:closeMatch cito:cites .
+dcite:rel-isSupplementTo a dcite:RelationType ; skos:prefLabel "IsSupplementTo"@en .
+dcite:rel-isVersionOf a dcite:RelationType ; skos:prefLabel "IsVersionOf"@en ; skos:closeMatch dcterms:isVersionOf .
+dcite:rel-isPartOf a dcite:RelationType ; skos:prefLabel "IsPartOf"@en ; skos:closeMatch dcterms:isPartOf .
+dcite:rel-isDerivedFrom a dcite:RelationType ; skos:prefLabel "IsDerivedFrom"@en ; skos:closeMatch prov:wasDerivedFrom .
+dcite:rel-isIdenticalTo a dcite:RelationType ; skos:prefLabel "IsIdenticalTo"@en .
+dcite:rel-references a dcite:RelationType ; skos:prefLabel "References"@en ; skos:closeMatch cito:cites .
+dcite:rel-isAuthoredBy a dcite:RelationType ; skos:prefLabel "IsAuthoredBy"@en .
+# 1.1.0: a concept for every 4.6 relationType and every PID-Links relation_type seen
+dcite:rel-isCitedBy a dcite:RelationType ; skos:prefLabel "IsCitedBy"@en .
+dcite:rel-isSupplementedBy a dcite:RelationType ; skos:prefLabel "IsSupplementedBy"@en .
+dcite:rel-isContinuedBy a dcite:RelationType ; skos:prefLabel "IsContinuedBy"@en .
+dcite:rel-continues a dcite:RelationType ; skos:prefLabel "Continues"@en .
+dcite:rel-isNewVersionOf a dcite:RelationType ; skos:prefLabel "IsNewVersionOf"@en .
+dcite:rel-isPreviousVersionOf a dcite:RelationType ; skos:prefLabel "IsPreviousVersionOf"@en .
+dcite:rel-hasPart a dcite:RelationType ; skos:prefLabel "HasPart"@en .
+dcite:rel-isPublishedIn a dcite:RelationType ; skos:prefLabel "IsPublishedIn"@en .
+dcite:rel-isReferencedBy a dcite:RelationType ; skos:prefLabel "IsReferencedBy"@en .
+dcite:rel-isDocumentedBy a dcite:RelationType ; skos:prefLabel "IsDocumentedBy"@en .
+dcite:rel-documents a dcite:RelationType ; skos:prefLabel "Documents"@en .
+dcite:rel-isCompiledBy a dcite:RelationType ; skos:prefLabel "IsCompiledBy"@en .
+dcite:rel-compiles a dcite:RelationType ; skos:prefLabel "Compiles"@en .
+dcite:rel-isVariantFormOf a dcite:RelationType ; skos:prefLabel "IsVariantFormOf"@en .
+dcite:rel-isOriginalFormOf a dcite:RelationType ; skos:prefLabel "IsOriginalFormOf"@en .
+dcite:rel-hasMetadata a dcite:RelationType ; skos:prefLabel "HasMetadata"@en .
+dcite:rel-isMetadataFor a dcite:RelationType ; skos:prefLabel "IsMetadataFor"@en .
+dcite:rel-reviews a dcite:RelationType ; skos:prefLabel "Reviews"@en .
+dcite:rel-isReviewedBy a dcite:RelationType ; skos:prefLabel "IsReviewedBy"@en .
+dcite:rel-isSourceOf a dcite:RelationType ; skos:prefLabel "IsSourceOf"@en .
+dcite:rel-describes a dcite:RelationType ; skos:prefLabel "Describes"@en .
+dcite:rel-isDescribedBy a dcite:RelationType ; skos:prefLabel "IsDescribedBy"@en .
+dcite:rel-hasVersion a dcite:RelationType ; skos:prefLabel "HasVersion"@en .
+dcite:rel-requires a dcite:RelationType ; skos:prefLabel "Requires"@en .
+dcite:rel-isRequiredBy a dcite:RelationType ; skos:prefLabel "IsRequiredBy"@en .
+dcite:rel-obsoletes a dcite:RelationType ; skos:prefLabel "Obsoletes"@en .
+dcite:rel-isObsoletedBy a dcite:RelationType ; skos:prefLabel "IsObsoletedBy"@en .
+dcite:rel-collects a dcite:RelationType ; skos:prefLabel "Collects"@en .
+dcite:rel-isCollectedBy a dcite:RelationType ; skos:prefLabel "IsCollectedBy"@en .
+dcite:rel-hasTranslation a dcite:RelationType ; skos:prefLabel "HasTranslation"@en .
+dcite:rel-isTranslationOf a dcite:RelationType ; skos:prefLabel "IsTranslationOf"@en .
+dcite:rel-isRelatedTo a dcite:RelationType ; skos:prefLabel "is-related-to"@en .
+dcite:rel-isAuthoredAt a dcite:RelationType ; skos:prefLabel "is-authored-at"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isFundedBy a dcite:RelationType ; skos:prefLabel "is-funded-by"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isAffiliatedWith a dcite:RelationType ; skos:prefLabel "is-affiliated-with"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isReviewOf a dcite:RelationType ; skos:prefLabel "is-review-of"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-hasReview a dcite:RelationType ; skos:prefLabel "has-review"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isPreprintOf a dcite:RelationType ; skos:prefLabel "is-preprint-of"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-hasPreprint a dcite:RelationType ; skos:prefLabel "has-preprint"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-hasComment a dcite:RelationType ; skos:prefLabel "has-comment"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isCommentOn a dcite:RelationType ; skos:prefLabel "is-comment-on"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isSameAs a dcite:RelationType ; skos:prefLabel "is-same-as"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-hasRelatedMaterial a dcite:RelationType ; skos:prefLabel "has-related-material"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isRelatedMaterial a dcite:RelationType ; skos:prefLabel "is-related-material"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isManuscriptOf a dcite:RelationType ; skos:prefLabel "is-manuscript-of"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isBasedOn a dcite:RelationType ; skos:prefLabel "is-based-on"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-basedOnData a dcite:RelationType ; skos:prefLabel "based-on-data"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+dcite:rel-isReplyTo a dcite:RelationType ; skos:prefLabel "is-reply-to"@en ; skos:scopeNote "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+
+dcite:IdentifierScheme a owl:Class ; rdfs:subClassOf skos:Concept ; rdfs:label "Identifier scheme"@en .
+dcite:scheme-doi a dcite:IdentifierScheme ; skos:prefLabel "DOI"@en ; skos:closeMatch datacite:doi .
+dcite:scheme-url a dcite:IdentifierScheme ; skos:prefLabel "URL"@en ; skos:closeMatch datacite:url .
+dcite:scheme-orcid a dcite:IdentifierScheme ; skos:prefLabel "ORCID"@en ; skos:closeMatch datacite:orcid .
+dcite:scheme-ror a dcite:IdentifierScheme ; skos:prefLabel "ROR"@en .
+dcite:scheme-issn a dcite:IdentifierScheme ; skos:prefLabel "ISSN"@en ; skos:closeMatch datacite:issn .
