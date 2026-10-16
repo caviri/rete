@@ -351,16 +351,15 @@ def rete_card(tally):
         "# The PID Graph: what a work points at, and why\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?from ?type ?to ?assertedBy WHERE {\n  ?rel a dcite:PidRelation ;\n       dcite:relationSubject ?from ;\n       dcite:relationType ?type ;\n       dcite:relationObject ?to .\n  OPTIONAL { ?rel dcite:assertedBy ?assertedBy }\n}\nLIMIT 25",
         "# Funders of one record, joined to Crossref Funder IDs by IRI\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?funder ?name WHERE {\n  <https://doi.org/10.17638/00008533> dcite:fundedBy ?funder .\n  OPTIONAL { ?funder dcite:agentName ?name }\n}",
     ]
-    extra = {"conversion": {
-        "converter": "scripts/datacite/parquet_to_nt.py",
-        "ontology_version": "1.1.0",
-        "records_by_snapshot": recs,
-        "plan": plan,
-        "statements_emitted": trip,
-        "rules": {rule: rules.get(rule, {}) for rule, _ in RULES},
-        "relation_edges_by_property": dict(sorted(edges.items(), key=lambda kv: -kv[1])),
-        "tally_file": "datacite.tally.json",
-    }}
+    # `extra` may nest two container levels at most (rete refuses deeper card fields)
+    extra = {
+        "conversion": {"converter": "scripts/datacite/parquet_to_nt.py", "ontology_version": "1.1.0",
+                       "statements_emitted": trip, "tally_file": "datacite.tally.json"},
+        "conversion_records_by_snapshot": recs,
+        "conversion_plan": plan,
+        "conversion_rules": {rule: rules.get(rule, {}) for rule, _ in RULES},
+        "conversion_relation_edges": dict(sorted(edges.items(), key=lambda kv: -kv[1])),
+    }
     return {
         "title": "DataCite",
         "license": "CC0-1.0",

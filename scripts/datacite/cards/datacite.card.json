@@ -76,121 +76,121 @@
     "conversion": {
       "converter": "scripts/datacite/parquet_to_nt.py",
       "ontology_version": "1.1.0",
-      "records_by_snapshot": {
-        "2025": 108468903,
-        "2024": 308793,
-        "2023": 486297
-      },
-      "plan": {
-        "dois": 109263993,
-        "records_from_2023": 486297,
-        "records_from_2024": 308793,
-        "records_from_2025": 108468903,
-        "rows_not_emitted_2023": 52376986,
-        "rows_not_emitted_2024": 71710784,
-        "rows_not_emitted_2025": 3,
-        "rows_read": 233351766,
-        "top_year": 2025,
-        "within_year_duplicate_dois_2024": 728,
-        "within_year_duplicate_dois_2025": 3,
-        "within_year_duplicate_rows_2024": 1456,
-        "within_year_duplicate_rows_2025": 6
-      },
       "statements_emitted": 11731454390,
-      "rules": {
-        "R1": {
-          "kept": 83,
-          "rescued": 173978334
-        },
-        "R2": {
-          "encoded": 302503
-        },
-        "R3": {
-          "kept": 200193,
-          "rescued": 13
-        },
-        "R4": {
-          "dropped": 20
-        },
-        "R5": {
-          "dropped": 460,
-          "rescued": 84
-        },
-        "R6": {
-          "kept": 14944,
-          "rescued": 14666
-        },
-        "R7": {
-          "rescued": 28884493
-        },
-        "R8": {
-          "dropped": 1204136,
-          "empty": 455906
-        },
-        "R9": {
-          "dropped": 124087770
-        },
-        "R10": {
-          "dropped": 731
-        },
-        "R11": {
-          "dropped": 27894,
-          "kept": 271014
-        },
-        "R12": {
-          "kept": 10624
-        },
-        "R13": {},
-        "R14": {
-          "rescued": 51705,
-          "kept": 8438
-        }
-      },
-      "relation_edges_by_property": {
-        "isDerivedFrom": 866577380,
-        "references": 104510838,
-        "isAuthoredBy": 29875172,
-        "isVersionOf": 7106740,
-        "isPartOf": 6903698,
-        "hasVersion": 5592587,
-        "hasPart": 4009670,
-        "isSupplementTo": 3831646,
-        "fundedBy": 3316702,
-        "isIdenticalTo": 2412166,
-        "cites": 1799897,
-        "isAuthoredAt": 1550191,
-        "isCitedBy": 1536364,
-        "isPreviousVersionOf": 1464464,
-        "isDocumentedBy": 587205,
-        "isNewVersionOf": 565101,
-        "isSourceOf": 422372,
-        "continues": 385755,
-        "isContinuedBy": 373009,
-        "isAffiliatedWith": 226474,
-        "isVariantFormOf": 171563,
-        "isReferencedBy": 63488,
-        "isCompiledBy": 59182,
-        "isSupplementedBy": 57856,
-        "reviews": 49896,
-        "hasMetadata": 33339,
-        "isPublishedIn": 24201,
-        "isDescribedBy": 15811,
-        "requires": 12607,
-        "documents": 10670,
-        "isRequiredBy": 9913,
-        "describes": 6763,
-        "isObsoletedBy": 5061,
-        "compiles": 4839,
-        "isMetadataFor": 3710,
-        "isOriginalFormOf": 1794,
-        "obsoletes": 1589,
-        "isTranslationOf": 933,
-        "isReviewedBy": 472,
-        "hasTranslation": 91,
-        "isCollectedBy": 16,
-        "collects": 3
-      },
       "tally_file": "datacite.tally.json"
+    },
+    "conversion_records_by_snapshot": {
+      "2025": 108468903,
+      "2024": 308793,
+      "2023": 486297
+    },
+    "conversion_plan": {
+      "dois": 109263993,
+      "records_from_2023": 486297,
+      "records_from_2024": 308793,
+      "records_from_2025": 108468903,
+      "rows_not_emitted_2023": 52376986,
+      "rows_not_emitted_2024": 71710784,
+      "rows_not_emitted_2025": 3,
+      "rows_read": 233351766,
+      "top_year": 2025,
+      "within_year_duplicate_dois_2024": 728,
+      "within_year_duplicate_dois_2025": 3,
+      "within_year_duplicate_rows_2024": 1456,
+      "within_year_duplicate_rows_2025": 6
+    },
+    "conversion_rules": {
+      "R1": {
+        "kept": 83,
+        "rescued": 173978334
+      },
+      "R2": {
+        "encoded": 302503
+      },
+      "R3": {
+        "kept": 200193,
+        "rescued": 13
+      },
+      "R4": {
+        "dropped": 20
+      },
+      "R5": {
+        "dropped": 460,
+        "rescued": 84
+      },
+      "R6": {
+        "kept": 14944,
+        "rescued": 14666
+      },
+      "R7": {
+        "rescued": 28884493
+      },
+      "R8": {
+        "dropped": 1204136,
+        "empty": 455906
+      },
+      "R9": {
+        "dropped": 124087770
+      },
+      "R10": {
+        "dropped": 731
+      },
+      "R11": {
+        "dropped": 27894,
+        "kept": 271014
+      },
+      "R12": {
+        "kept": 10624
+      },
+      "R13": {},
+      "R14": {
+        "rescued": 51705,
+        "kept": 8438
+      }
+    },
+    "conversion_relation_edges": {
+      "isDerivedFrom": 866577380,
+      "references": 104510838,
+      "isAuthoredBy": 29875172,
+      "isVersionOf": 7106740,
+      "isPartOf": 6903698,
+      "hasVersion": 5592587,
+      "hasPart": 4009670,
+      "isSupplementTo": 3831646,
+      "fundedBy": 3316702,
+      "isIdenticalTo": 2412166,
+      "cites": 1799897,
+      "isAuthoredAt": 1550191,
+      "isCitedBy": 1536364,
+      "isPreviousVersionOf": 1464464,
+      "isDocumentedBy": 587205,
+      "isNewVersionOf": 565101,
+      "isSourceOf": 422372,
+      "continues": 385755,
+      "isContinuedBy": 373009,
+      "isAffiliatedWith": 226474,
+      "isVariantFormOf": 171563,
+      "isReferencedBy": 63488,
+      "isCompiledBy": 59182,
+      "isSupplementedBy": 57856,
+      "reviews": 49896,
+      "hasMetadata": 33339,
+      "isPublishedIn": 24201,
+      "isDescribedBy": 15811,
+      "requires": 12607,
+      "documents": 10670,
+      "isRequiredBy": 9913,
+      "describes": 6763,
+      "isObsoletedBy": 5061,
+      "compiles": 4839,
+      "isMetadataFor": 3710,
+      "isOriginalFormOf": 1794,
+      "obsoletes": 1589,
+      "isTranslationOf": 933,
+      "isReviewedBy": 472,
+      "hasTranslation": 91,
+      "isCollectedBy": 16,
+      "collects": 3
     }
   },
   "example_queries": [
