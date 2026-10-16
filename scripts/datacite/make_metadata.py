@@ -333,7 +333,7 @@ def rete_card(tally):
         "For R9 and R10, *Dropped* counts metadata **rows** not converted because a newer row of the same DOI was (no DOI is lost); for R7, *Rescued* counts relation edges that use a property this build added.",
         "",
         f"R7 in numbers: {_n(new_edges)} relation edges now use one of the properties added in this build (they were dropped, or for links folded into `isRelatedTo`, before); {_n(outside)} link events carry a type outside the DataCite 4.6 vocabulary and are `dcite:isRelatedTo` with their exact type on the `dcite:PidRelation`.",
-        f"R3 routes: {_n(f3.get('funder.ror', 0))} ROR, {_n(sum(v for k, v in f3.items() if k.startswith('funder.doi.')))} Crossref Funder ID / DOI, {_n(f3.get('funder.name_minted', 0))} name-minted.",
+        f"R3 routes: {_n(f3.get('funder.ror', 0))} ROR, {_n(f3.get('funder.doi', 0))} Crossref Funder ID / DOI, {_n(f3.get('funder.name_minted', 0))} name-minted.",
         "",
         "The full per-file tally, with examples of every rescued, kept and dropped shape, is `datacite.tally.json` beside this file.",
         "",
