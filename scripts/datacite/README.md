@@ -197,6 +197,39 @@ collapses into the same `dcite:PidRelation`.
 | R13 | Literals are not repaired. |
 | R14 | `rorId` only when the ROR check digits pass (written as `https://ror.org/<id>`); otherwise `dcite:rawIdentifier`. |
 
+### Counts (2026-10 build)
+
+From the converter's tally over all five sets (occurrences; the Dataset Card of
+`datacite.rete` carries the same table, and `datacite.tally.json` beside the file
+has every counter per set with examples). 109,263,993 records (2025: 108,468,903;
+2024 only: 308,793; 2023 only: 486,297) and 760,802,549 PID Links events became
+11,731,454,390 statements, every one parsed by Oxigraph 0.5.11 before the build.
+
+| Rule | Rescued | Encoded | Kept as text | Dropped |
+|---|---:|---:|---:|---:|
+| R1 | 173,978,334 | 0 | 83 | 0 |
+| R2 | 0 | 302,503 | 0 | 0 |
+| R3 | 13 | 0 | 200,193 | 0 |
+| R4 | 0 | 0 | 0 | 20 |
+| R5 | 84 | 0 | 0 | 460 |
+| R6 | 14,666 | 0 | 14,944 | 0 |
+| R7 | 28,884,493 | 0 | 0 | 0 |
+| R8 | 0 | 0 | 0 | 1,204,136 |
+| R9 | 0 | 0 | 0 | 124,087,770 |
+| R10 | 0 | 0 | 0 | 731 |
+| R11 | 0 | 0 | 271,014 | 27,894 |
+| R12 | 0 | 0 | 10,624 | 0 |
+| R13 | 0 | 0 | 0 | 0 |
+| R14 | 51,705 | 0 | 8,438 | 0 |
+
+R1's rescues are mostly `https://doi.org/…` related identifiers (88.2 M, which the
+2026-07 build wrote as `https://doi.org/https://doi.org/…`) and doi.org-URL funder
+ids (84.8 M; the old build stripped `https://doi.org/` but turned
+`http://dx.doi.org/10.13039/…` into `https://doi.org/http://dx.doi.org/…`). R7's are edges using a property this build
+added (e.g. 14.3 M `hasMetadata` link events that were `isRelatedTo`). R5 drops
+460 link events (81 of them the audit's scheme-less values, 377 values that start
+like a DOI but are not one); R9/R10 "dropped" are superseded **rows**, not DOIs.
+
 Not converted: related identifiers that are not DOI-typed (URL, Handle, ISSN,
 arXiv, PMID, …), descriptions, typed dates, rights, contributors other than
 creators, geo locations, sizes and formats.
