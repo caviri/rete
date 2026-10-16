@@ -408,7 +408,7 @@ pub(crate) fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> 
         #[cfg(not(feature = "compression"))]
         CODEC_ZSTD => {
             use std::io::Read;
-            let mut dec = ruzstd::StreamingDecoder::new(bytes)
+            let mut dec = ruzstd::decoding::StreamingDecoder::new(bytes)
                 .map_err(|e| FileError::Decompress(std::io::Error::other(e.to_string())))?;
             let mut out = Vec::new();
             dec.read_to_end(&mut out).map_err(FileError::Decompress)?;
@@ -5208,6 +5208,22 @@ mod tests {
     use super::*;
     use crate::dictionary::DictionaryBuilder;
     use crate::index::GraphIndexBuilder;
+
+    /// The pure-Rust decode path (wasm, `--no-default-features`) reads a zstd
+    /// frame back byte for byte. Guards the `ruzstd` API across upgrades.
+    #[cfg(not(feature = "compression"))]
+    #[test]
+    fn ruzstd_decodes_a_zstd_frame() {
+        let data: Vec<u8> = (0..50_000u32)
+            .flat_map(|i| (i % 251).to_le_bytes())
+            .collect();
+        let frame = ruzstd::encoding::compress_to_vec(
+            &data[..],
+            ruzstd::encoding::CompressionLevel::Fastest,
+        );
+        assert!(frame.len() < data.len());
+        assert_eq!(decompress(CODEC_ZSTD, &frame).unwrap(), data);
+    }
 
     /// A three-permutation file must survive every opener — resident, ranged,
     /// ranged-lazy — and answer every pattern shape with the rows the

@@ -5,6 +5,17 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Security
+
+- **The pure-Rust zstd decoder is `ruzstd` 0.9.1** (was 0.7.3), fixing
+  RUSTSEC-2026-0344: a tiny crafted frame could exhaust memory. This is the
+  decoder the browser/Node engine (`rete-wasm`, npm `rete-graph`, the
+  playground) uses for every compressed `.rete` section it reads, including
+  remote files; native builds decode through the C `zstd` library and were
+  not affected.
+- **`rustls` 0.23.46** (was 0.23.42–0.23.45 across the lockfiles), fixing
+  RUSTSEC-2026-0346 to -0349 in the TLS stack behind remote reads over HTTPS.
+
 ### Fixed
 
 - **Release automation: one GitHub release per `v*` tag, and the Latest badge

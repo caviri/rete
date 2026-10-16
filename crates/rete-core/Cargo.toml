@@ -44,7 +44,7 @@ blake3.workspace = true
 # (wasm, or a `--no-default-features` build). When the `compression` feature is
 # on (native, incl. the CLI), BOTH encode and decode go through the faster C
 # `zstd` below instead; this crate is then only the wasm decoder.
-ruzstd = "0.7"
+ruzstd = "0.9"
 # Tiny pure-Rust regex engine for SPARQL `REGEX(...)` — `regex-lite` keeps the
 # wasm small (no SIMD/aho-corasick), unlike the full `regex` crate.
 regex-lite = "0.1"
