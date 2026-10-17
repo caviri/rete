@@ -5,6 +5,43 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-10-16
+
+**Where 0.3.5 is published: every channel.** crates.io (`rete-core`,
+`rete-graph`, `rete-cli`, `rete-wasm`), PyPI and npm (`rete-graph`), the
+GitHub release with its native archives, browser bundle, Blender add-on and
+`.mcpb`, the container images on GHCR (`rete-cli`, `rete-relay`, `rete-dev`),
+the Claude Desktop extension on the bucket (`rete-0.3.5.mcpb` and the
+`rete.mcpb` link), the Pyodide fallback wheel, and the desktop File Explorer
+installers.
+
+What 0.3.5 changes on top of 0.3.4:
+
+- **`rete export` keeps peak RSS within `--memory-budget-mb`** (plus about
+  0.4 GB). The native CLI now uses jemalloc, the caches count what the
+  allocator really hands out, the open's chunk and tile directories are
+  counted against the budget, and 1/32 of it is held back for transient
+  reads. Output is byte-identical to 0.3.4; a given budget buys less cache,
+  so the same number can be slower on very large files. Details below.
+- **One GitHub release per tag, marked Latest, with these notes.** This is
+  the first release cut by the fixed `release.yml`: a single release for the
+  `v0.3.5` tag that holds both the CLI and the File Explorer assets, a
+  prerelease only for `-rc`/`-alpha`/`-beta` tags, its body taken from this
+  section, and the crates.io receipt attached.
+- **Security: the wasm engine's zstd decoder and the TLS stack are patched.**
+  `ruzstd` 0.9.1 (RUSTSEC-2026-0344, a decompression bomb on the decode path
+  the browser/Node engine uses for every compressed section) and `rustls`
+  0.23.46 (RUSTSEC-2026-0346 to -0349). Details below.
+- **Java client versions follow the release.** The Java POMs and FFI crate
+  are now in the lockstep gate and are stamped 0.3.5 with everything else.
+
+Repository-only changes in this release, with no effect on the published
+packages: the scholar export driver (`scripts/export_scholar_nquads.sh`)
+charges the `.nq.gz` at a measured 2.25× the `.rete`, watches free disk while
+an export runs, and reads its `state.tsv` without shifting empty fields
+(#298); the five rebuilt openaire-2021 shards are locked in
+`web/datasets.lock.json` (#299).
+
 ### Security
 
 - **The pure-Rust zstd decoder is `ruzstd` 0.9.1** (was 0.7.3), fixing
@@ -38,7 +75,7 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   did not know about `clients/java`, which stayed at 0.3.0 through three engine
   releases. It now checks and stamps the parent POM, both module POMs, the wasm
   FFI crate and the engine-version test, and requires them to agree exactly;
-  they are at 0.3.4.
+  they are at 0.3.5.
 - **`rete export` stays within `--memory-budget-mb` on large files.** The
   caches the budget caps did stay within it, but peak RSS did not: on the
   14.75 GiB openaire-2021-relation at the default 4096 MB it reached 7.2 GB
