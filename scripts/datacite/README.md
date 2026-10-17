@@ -230,6 +230,30 @@ added (e.g. 14.3 M `hasMetadata` link events that were `isRelatedTo`). R5 drops
 460 link events (81 of them the audit's scheme-less values, 377 values that start
 like a DOI but are not one); R9/R10 "dropped" are superseded **rows**, not DOIs.
 
+The build stored **9,530,064,339 unique triples** (1,868,733,611 terms, 49.1 GB);
+the 2026-07 build had 9,834,714,813. Per predicate, the difference (−304.65 M) is:
+
+- `references` −370.3 M: GBIF download records (prefix `10.15468`) listed their
+  source datasets as `References` in the 2023 file and as `IsDerivedFrom` from 2024
+  on (e.g. `10.15468/dl.1bnyzy`). The old build carried both; R9 keeps the current
+  statement. The `IsDerivedFrom` edges were in both builds.
+- `fromSnapshot` +109.3 M (R9 provenance, one per record).
+- `relationType` +34.4 M: every `dcite:PidRelation` now carries its type (the old
+  build had concepts for 8 types).
+- one value per record instead of one per snapshot (R9/R10): `updated` −32.6 M,
+  `title` −6.9 M, `agentName` −6.9 M, `referenceCount` −5.7 M, `rdf:type` −3.9 M,
+  `landingPage` −3.4 M, `schemaVersion` −3.1 M, `affiliationName` −2.3 M,
+  creators/roles ≈ −2 M each, `subject` −1.3 M, `publisherName` −1.1 M, …
+- `isRelatedTo` −16.8 M against the R7 properties that replace it (`hasMetadata`
+  +9.7 M, `isPreviousVersionOf` +1.5 M, `isAuthoredAt` +1.4 M, `isDocumentedBy`
+  +1.1 M, `continues`/`isContinuedBy` +0.76 M, …).
+- `publicationYearText` +271 k (R11), `rawIdentifier` +221 k (R3/R6/R14).
+
+Known residual: a handful of funder ids are DOI-shaped placeholders
+(`https://doi.org/10.13039/funder%20id`, 15 references in 2025). They are DOIs as
+written, so they are minted as such, and the funders that share the placeholder
+share its IRI (with all their names).
+
 Not converted: related identifiers that are not DOI-typed (URL, Handle, ISSN,
 arXiv, PMID, …), descriptions, typed dates, rights, contributors other than
 creators, geo locations, sizes and formats.
