@@ -1,0 +1,736 @@
+<https://w3id.org/rete/datacite#> <http://purl.org/dc/terms/license> <https://creativecommons.org/publicdomain/zero/1.0/> .
+<https://w3id.org/rete/datacite#> <http://purl.org/dc/terms/title> "DataCite Ontology (rete)"@en .
+<https://w3id.org/rete/datacite#> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<https://w3id.org/rete/datacite#> <http://www.w3.org/2000/01/rdf-schema#comment> "A domain ontology for the DataCite Public Data Files: DOI-identified\n        research outputs (datasets, software, text, images, physical objects, …), their\n        creators, funders and identifiers, and — crucially — the rich relation network\n        between them (Cites, IsSupplementTo, IsVersionOf, IsPartOf, IsDerivedFrom,\n        IsIdenticalTo, …) that also forms the standalone 'PID Links' edge tables.\n\n        Designed for interoperability: research outputs align to schema.org, DCAT and\n        FaBiO; the relation vocabulary aligns to CiTO (citations), Dublin Core and PAV\n        (versioning) and PROV-O (derivation); identifiers to the SPAR DataCite ontology;\n        funding to FRAPO; agents to FOAF/PRO. The PID Links event is reified as a\n        provenance-bearing dcite:PidRelation.\n\n        Kept within OWL 2 QL (domain/range, subClass/subProperty, inverseOf and\n        existential superclass restrictions only — no functional/transitive/cardinality\n        axioms, no property chains) so rete's lazy query-rewriting reasoner can use it."@en .
+<https://w3id.org/rete/datacite#> <http://www.w3.org/2000/01/rdf-schema#seeAlso> <https://schema.datacite.org/> .
+<https://w3id.org/rete/datacite#> <http://www.w3.org/2002/07/owl#versionInfo> "1.1.0 (2026-10-16): full DataCite 4.6 relationType and resourceTypeGeneral vocabularies, dcite:fromSnapshot, raw-value properties" .
+<https://w3id.org/rete/datacite#Agent> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Agent> <http://www.w3.org/2000/01/rdf-schema#comment> "A creator or contributor of a resource (person or organization), often carrying an ORCID or ROR identifier."@en .
+<https://w3id.org/rete/datacite#Agent> <http://www.w3.org/2000/01/rdf-schema#label> "Agent"@en .
+<https://w3id.org/rete/datacite#Agent> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/ns/prov#Agent> .
+<https://w3id.org/rete/datacite#Agent> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://xmlns.com/foaf/0.1/Agent> .
+<https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#comment> "The reified role an agent plays for a resource (creator/contributor with a DataCite contributorType) and its ordering."@en .
+<https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#label> "Agent role"@en .
+<https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://purl.org/spar/pro/RoleInTime> .
+<https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:cd101ebfc3d6e3ce196c01fbed66818b .
+<https://w3id.org/rete/datacite#Audiovisual> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Audiovisual> <http://www.w3.org/2000/01/rdf-schema#label> "Audiovisual"@en .
+<https://w3id.org/rete/datacite#Audiovisual> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Audiovisual> <http://www.w3.org/2002/07/owl#equivalentClass> <https://schema.org/MediaObject> .
+<https://w3id.org/rete/datacite#Award> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Award> <http://www.w3.org/2000/01/rdf-schema#label> "Award"@en .
+<https://w3id.org/rete/datacite#Award> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Book> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Book> <http://www.w3.org/2000/01/rdf-schema#label> "Book"@en .
+<https://w3id.org/rete/datacite#Book> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Book> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/Book> .
+<https://w3id.org/rete/datacite#BookChapter> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#BookChapter> <http://www.w3.org/2000/01/rdf-schema#label> "Book chapter"@en .
+<https://w3id.org/rete/datacite#BookChapter> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#BookChapter> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/BookChapter> .
+<https://w3id.org/rete/datacite#Collection> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Collection> <http://www.w3.org/2000/01/rdf-schema#label> "Collection"@en .
+<https://w3id.org/rete/datacite#Collection> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Collection> <http://www.w3.org/2002/07/owl#equivalentClass> <https://schema.org/Collection> .
+<https://w3id.org/rete/datacite#ComputationalNotebook> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#ComputationalNotebook> <http://www.w3.org/2000/01/rdf-schema#label> "Computational notebook"@en .
+<https://w3id.org/rete/datacite#ComputationalNotebook> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#ConferencePaper> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#ConferencePaper> <http://www.w3.org/2000/01/rdf-schema#label> "Conference paper"@en .
+<https://w3id.org/rete/datacite#ConferencePaper> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#ConferencePaper> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/ConferencePaper> .
+<https://w3id.org/rete/datacite#ConferenceProceeding> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#ConferenceProceeding> <http://www.w3.org/2000/01/rdf-schema#label> "Conference proceeding"@en .
+<https://w3id.org/rete/datacite#ConferenceProceeding> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#ConferenceProceeding> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/ConferenceProceedings> .
+<https://w3id.org/rete/datacite#DataPaper> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#DataPaper> <http://www.w3.org/2000/01/rdf-schema#label> "Data paper"@en .
+<https://w3id.org/rete/datacite#DataPaper> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Dataset> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Dataset> <http://www.w3.org/2000/01/rdf-schema#label> "Dataset"@en .
+<https://w3id.org/rete/datacite#Dataset> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/ns/dcat#Dataset> .
+<https://w3id.org/rete/datacite#Dataset> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Dataset> <http://www.w3.org/2002/07/owl#equivalentClass> <https://schema.org/Dataset> .
+<https://w3id.org/rete/datacite#Dissertation> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Dissertation> <http://www.w3.org/2000/01/rdf-schema#label> "Dissertation"@en .
+<https://w3id.org/rete/datacite#Dissertation> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Dissertation> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/Thesis> .
+<https://w3id.org/rete/datacite#Event> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Event> <http://www.w3.org/2000/01/rdf-schema#label> "Event"@en .
+<https://w3id.org/rete/datacite#Event> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Event> <http://www.w3.org/2002/07/owl#equivalentClass> <https://schema.org/Event> .
+<https://w3id.org/rete/datacite#Funder> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Funder> <http://www.w3.org/2000/01/rdf-schema#comment> "A funding organization referenced by a resource (a fundingReference funderName / funderIdentifier, e.g. a Crossref Funder ID)."@en .
+<https://w3id.org/rete/datacite#Funder> <http://www.w3.org/2000/01/rdf-schema#label> "Funder"@en .
+<https://w3id.org/rete/datacite#Funder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://purl.org/cerif/frapo/FundingAgency> .
+<https://w3id.org/rete/datacite#Funder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://xmlns.com/foaf/0.1/Organization> .
+<https://w3id.org/rete/datacite#Identifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Identifier> <http://www.w3.org/2000/01/rdf-schema#comment> "A persistent identifier (DOI, URL, ISSN, handle, …) of a resource or agent, when the datatype shortcut is not enough."@en .
+<https://w3id.org/rete/datacite#Identifier> <http://www.w3.org/2000/01/rdf-schema#label> "Identifier"@en .
+<https://w3id.org/rete/datacite#Identifier> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://purl.org/spar/datacite/Identifier> .
+<https://w3id.org/rete/datacite#IdentifierScheme> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#IdentifierScheme> <http://www.w3.org/2000/01/rdf-schema#label> "Identifier scheme"@en .
+<https://w3id.org/rete/datacite#IdentifierScheme> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/2004/02/skos/core#Concept> .
+<https://w3id.org/rete/datacite#Image> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Image> <http://www.w3.org/2000/01/rdf-schema#label> "Image"@en .
+<https://w3id.org/rete/datacite#Image> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Image> <http://www.w3.org/2002/07/owl#equivalentClass> <https://schema.org/ImageObject> .
+<https://w3id.org/rete/datacite#Instrument> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Instrument> <http://www.w3.org/2000/01/rdf-schema#label> "Instrument"@en .
+<https://w3id.org/rete/datacite#Instrument> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#InteractiveResource> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#InteractiveResource> <http://www.w3.org/2000/01/rdf-schema#label> "Interactive resource"@en .
+<https://w3id.org/rete/datacite#InteractiveResource> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Journal> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Journal> <http://www.w3.org/2000/01/rdf-schema#label> "Journal"@en .
+<https://w3id.org/rete/datacite#Journal> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Journal> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/Journal> .
+<https://w3id.org/rete/datacite#JournalArticle> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#JournalArticle> <http://www.w3.org/2000/01/rdf-schema#label> "Journal article"@en .
+<https://w3id.org/rete/datacite#JournalArticle> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#JournalArticle> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/JournalArticle> .
+<https://w3id.org/rete/datacite#Model> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Model> <http://www.w3.org/2000/01/rdf-schema#label> "Model"@en .
+<https://w3id.org/rete/datacite#Model> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#OtherResource> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#OtherResource> <http://www.w3.org/2000/01/rdf-schema#label> "Other"@en .
+<https://w3id.org/rete/datacite#OtherResource> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#OutputManagementPlan> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#OutputManagementPlan> <http://www.w3.org/2000/01/rdf-schema#label> "Output management plan"@en .
+<https://w3id.org/rete/datacite#OutputManagementPlan> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#PeerReview> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#PeerReview> <http://www.w3.org/2000/01/rdf-schema#label> "Peer review"@en .
+<https://w3id.org/rete/datacite#PeerReview> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#PhysicalObject> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#PhysicalObject> <http://www.w3.org/2000/01/rdf-schema#label> "Physical object"@en .
+<https://w3id.org/rete/datacite#PhysicalObject> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#comment> "A reified relationship event from the DataCite PID Graph ('PID Links' tables): a typed, provenance-bearing edge between a subject and an object PID, with the asserting source and timestamps. Reifying it keeps provenance (source_id) and time that a bare triple would lose."@en .
+<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#label> "PID relation"@en .
+<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/ns/prov#Activity> .
+<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:b6e0a7773efc15d9294d0f88bdd6def2 .
+<https://w3id.org/rete/datacite#Preprint> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Preprint> <http://www.w3.org/2000/01/rdf-schema#label> "Preprint"@en .
+<https://w3id.org/rete/datacite#Preprint> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Preprint> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/Preprint> .
+<https://w3id.org/rete/datacite#Project> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Project> <http://www.w3.org/2000/01/rdf-schema#label> "Project"@en .
+<https://w3id.org/rete/datacite#Project> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#RelationType> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#RelationType> <http://www.w3.org/2000/01/rdf-schema#label> "Relation type"@en .
+<https://w3id.org/rete/datacite#RelationType> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/2004/02/skos/core#Concept> .
+<https://w3id.org/rete/datacite#Report> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Report> <http://www.w3.org/2000/01/rdf-schema#label> "Report"@en .
+<https://w3id.org/rete/datacite#Report> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Report> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/ReportDocument> .
+<https://w3id.org/rete/datacite#Resource> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Resource> <http://www.w3.org/2000/01/rdf-schema#comment> "A research output identified by a DataCite DOI (one metadata row)."@en .
+<https://w3id.org/rete/datacite#Resource> <http://www.w3.org/2000/01/rdf-schema#label> "Resource"@en .
+<https://w3id.org/rete/datacite#Resource> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://purl.org/spar/fabio/Work> .
+<https://w3id.org/rete/datacite#Resource> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://schema.org/CreativeWork> .
+<https://w3id.org/rete/datacite#Service> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Service> <http://www.w3.org/2000/01/rdf-schema#label> "Service"@en .
+<https://w3id.org/rete/datacite#Service> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Snapshot> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Snapshot> <http://www.w3.org/2000/01/rdf-schema#comment> "One DataCite Public Data File (https://datafiles.datacite.org/)."@en .
+<https://w3id.org/rete/datacite#Snapshot> <http://www.w3.org/2000/01/rdf-schema#label> "Snapshot"@en .
+<https://w3id.org/rete/datacite#Snapshot> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/ns/dcat#Distribution> .
+<https://w3id.org/rete/datacite#Snapshot> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/ns/prov#Entity> .
+<https://w3id.org/rete/datacite#Software> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Software> <http://www.w3.org/2000/01/rdf-schema#label> "Software"@en .
+<https://w3id.org/rete/datacite#Software> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Software> <http://www.w3.org/2002/07/owl#equivalentClass> <https://schema.org/SoftwareSourceCode> .
+<https://w3id.org/rete/datacite#Sound> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Sound> <http://www.w3.org/2000/01/rdf-schema#label> "Sound"@en .
+<https://w3id.org/rete/datacite#Sound> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Sound> <http://www.w3.org/2002/07/owl#equivalentClass> <https://schema.org/AudioObject> .
+<https://w3id.org/rete/datacite#Standard> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Standard> <http://www.w3.org/2000/01/rdf-schema#label> "Standard"@en .
+<https://w3id.org/rete/datacite#Standard> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#StudyRegistration> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#StudyRegistration> <http://www.w3.org/2000/01/rdf-schema#label> "Study registration"@en .
+<https://w3id.org/rete/datacite#StudyRegistration> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Text> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Text> <http://www.w3.org/2000/01/rdf-schema#label> "Text"@en .
+<https://w3id.org/rete/datacite#Text> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#Text> <http://www.w3.org/2002/07/owl#equivalentClass> <http://purl.org/spar/fabio/Expression> .
+<https://w3id.org/rete/datacite#Workflow> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#Workflow> <http://www.w3.org/2000/01/rdf-schema#label> "Workflow"@en .
+<https://w3id.org/rete/datacite#Workflow> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/2000/01/rdf-schema#label> "affiliation name"@en .
+<https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#agentName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#agentName> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#agentName> <http://www.w3.org/2000/01/rdf-schema#label> "agent name"@en .
+<https://w3id.org/rete/datacite#agentName> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#agentName> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://xmlns.com/foaf/0.1/name> .
+<https://w3id.org/rete/datacite#assertedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#assertedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "The source that asserted a relation (e.g. crossref, datacite-related)."@en .
+<https://w3id.org/rete/datacite#assertedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#PidRelation> .
+<https://w3id.org/rete/datacite#assertedBy> <http://www.w3.org/2000/01/rdf-schema#label> "asserted by"@en .
+<https://w3id.org/rete/datacite#assertedBy> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/ns/prov#Agent> .
+<https://w3id.org/rete/datacite#assertedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://www.w3.org/ns/prov#wasAssociatedWith> .
+<https://w3id.org/rete/datacite#citationCount> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#citationCount> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#citationCount> <http://www.w3.org/2000/01/rdf-schema#label> "citation count"@en .
+<https://w3id.org/rete/datacite#citationCount> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#integer> .
+<https://w3id.org/rete/datacite#cites> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#cites> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#cites> <http://www.w3.org/2000/01/rdf-schema#label> "cites"@en .
+<https://w3id.org/rete/datacite#cites> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#cites> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/cito/cites> .
+<https://w3id.org/rete/datacite#cites> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isCitedBy> .
+<https://w3id.org/rete/datacite#clientId> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#clientId> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#clientId> <http://www.w3.org/2000/01/rdf-schema#label> "client (repository) id"@en .
+<https://w3id.org/rete/datacite#clientId> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#collects> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#collects> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#collects> <http://www.w3.org/2000/01/rdf-schema#label> "collects"@en .
+<https://w3id.org/rete/datacite#collects> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#collects> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#compiles> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#compiles> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#compiles> <http://www.w3.org/2000/01/rdf-schema#label> "compiles"@en .
+<https://w3id.org/rete/datacite#compiles> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#compiles> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#compiles> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isCompiledBy> .
+<https://w3id.org/rete/datacite#continues> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#continues> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#continues> <http://www.w3.org/2000/01/rdf-schema#label> "continues"@en .
+<https://w3id.org/rete/datacite#continues> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#continues> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#continues> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isContinuedBy> .
+<https://w3id.org/rete/datacite#created> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#created> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#created> <http://www.w3.org/2000/01/rdf-schema#label> "created"@en .
+<https://w3id.org/rete/datacite#created> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#dateTime> .
+<https://w3id.org/rete/datacite#created> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/created> .
+<https://w3id.org/rete/datacite#creator> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#creator> <http://www.w3.org/2000/01/rdf-schema#comment> "Direct resource→agent shortcut for a creator."@en .
+<https://w3id.org/rete/datacite#creator> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#creator> <http://www.w3.org/2000/01/rdf-schema#label> "creator"@en .
+<https://w3id.org/rete/datacite#creator> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#creator> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/creator> .
+<https://w3id.org/rete/datacite#describes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#describes> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#describes> <http://www.w3.org/2000/01/rdf-schema#label> "describes"@en .
+<https://w3id.org/rete/datacite#describes> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#describes> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#documents> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#documents> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#documents> <http://www.w3.org/2000/01/rdf-schema#label> "documents"@en .
+<https://w3id.org/rete/datacite#documents> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#documents> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#documents> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isDocumentedBy> .
+<https://w3id.org/rete/datacite#doi> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#doi> <http://www.w3.org/2000/01/rdf-schema#comment> "The DOI of the resource. Primary cross-dataset join key; lowercase on join."@en .
+<https://w3id.org/rete/datacite#doi> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#doi> <http://www.w3.org/2000/01/rdf-schema#label> "DOI"@en .
+<https://w3id.org/rete/datacite#doi> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#downloadCount> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#downloadCount> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#downloadCount> <http://www.w3.org/2000/01/rdf-schema#label> "download count"@en .
+<https://w3id.org/rete/datacite#downloadCount> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#integer> .
+<https://w3id.org/rete/datacite#fromSnapshot> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#fromSnapshot> <http://www.w3.org/2000/01/rdf-schema#comment> "The DataCite Public Data File this record was converted from. One record per DOI: the newest snapshot that contains the DOI (2025, else 2024, else 2023), so a record taken from 2023 or 2024 is a DOI absent from the later files."@en .
+<https://w3id.org/rete/datacite#fromSnapshot> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#fromSnapshot> <http://www.w3.org/2000/01/rdf-schema#label> "from snapshot"@en .
+<https://w3id.org/rete/datacite#fromSnapshot> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Snapshot> .
+<https://w3id.org/rete/datacite#fromSnapshot> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://www.w3.org/ns/prov#hadPrimarySource> .
+<https://w3id.org/rete/datacite#fundedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#fundedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#fundedBy> <http://www.w3.org/2000/01/rdf-schema#label> "funded by"@en .
+<https://w3id.org/rete/datacite#fundedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Funder> .
+<https://w3id.org/rete/datacite#fundedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/cerif/frapo/hasFundingAgency> .
+<https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2000/01/rdf-schema#label> "has contributor"@en .
+<https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#AgentRole> .
+<https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/pro/isDocumentContextFor> .
+<https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isRoleIn> .
+<https://w3id.org/rete/datacite#hasIdentifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#hasIdentifier> <http://www.w3.org/2000/01/rdf-schema#label> "has identifier"@en .
+<https://w3id.org/rete/datacite#hasIdentifier> <http://www.w3.org/2002/07/owl#equivalentProperty> <http://purl.org/spar/datacite/hasIdentifier> .
+<https://w3id.org/rete/datacite#hasMetadata> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#hasMetadata> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#hasMetadata> <http://www.w3.org/2000/01/rdf-schema#label> "has metadata"@en .
+<https://w3id.org/rete/datacite#hasMetadata> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#hasMetadata> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#hasPart> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#hasPart> <http://www.w3.org/2000/01/rdf-schema#label> "has part"@en .
+<https://w3id.org/rete/datacite#hasPart> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/hasPart> .
+<https://w3id.org/rete/datacite#hasTranslation> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#hasTranslation> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#hasTranslation> <http://www.w3.org/2000/01/rdf-schema#label> "has translation"@en .
+<https://w3id.org/rete/datacite#hasTranslation> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#hasTranslation> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#hasVersion> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#hasVersion> <http://www.w3.org/2000/01/rdf-schema#label> "has version"@en .
+<https://w3id.org/rete/datacite#hasVersion> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/hasVersion> .
+<https://w3id.org/rete/datacite#identifierValue> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#identifierValue> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Identifier> .
+<https://w3id.org/rete/datacite#identifierValue> <http://www.w3.org/2000/01/rdf-schema#label> "identifier value"@en .
+<https://w3id.org/rete/datacite#identifierValue> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#isAffiliatedWith> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isAffiliatedWith> <http://www.w3.org/2000/01/rdf-schema#comment> "PID Links is-affiliated-with: a person (ORCID) and an organization (ROR)."@en .
+<https://w3id.org/rete/datacite#isAffiliatedWith> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#isAffiliatedWith> <http://www.w3.org/2000/01/rdf-schema#label> "is affiliated with"@en .
+<https://w3id.org/rete/datacite#isAffiliatedWith> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#isAuthoredAt> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isAuthoredAt> <http://www.w3.org/2000/01/rdf-schema#comment> "PID Links is-authored-at: a work and the (ROR) organization its authors were at."@en .
+<https://w3id.org/rete/datacite#isAuthoredAt> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isAuthoredAt> <http://www.w3.org/2000/01/rdf-schema#label> "is authored at"@en .
+<https://w3id.org/rete/datacite#isAuthoredAt> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#isAuthoredAt> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isAuthoredBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isAuthoredBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isAuthoredBy> <http://www.w3.org/2000/01/rdf-schema#label> "is authored by"@en .
+<https://w3id.org/rete/datacite#isAuthoredBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#isAuthoredBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/creator> .
+<https://w3id.org/rete/datacite#isCitedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isCitedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isCitedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is cited by"@en .
+<https://w3id.org/rete/datacite#isCitedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isCitedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/cito/isCitedBy> .
+<https://w3id.org/rete/datacite#isCollectedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isCollectedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isCollectedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is collected by"@en .
+<https://w3id.org/rete/datacite#isCollectedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isCollectedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isCollectedBy> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#collects> .
+<https://w3id.org/rete/datacite#isCompiledBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isCompiledBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isCompiledBy> <http://www.w3.org/2000/01/rdf-schema#label> "is compiled by"@en .
+<https://w3id.org/rete/datacite#isCompiledBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isCompiledBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isContinuedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isContinuedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isContinuedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is continued by"@en .
+<https://w3id.org/rete/datacite#isContinuedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isContinuedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isDerivedFrom> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isDerivedFrom> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isDerivedFrom> <http://www.w3.org/2000/01/rdf-schema#label> "is derived from"@en .
+<https://w3id.org/rete/datacite#isDerivedFrom> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isDerivedFrom> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://www.w3.org/ns/prov#wasDerivedFrom> .
+<https://w3id.org/rete/datacite#isDerivedFrom> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isSourceOf> .
+<https://w3id.org/rete/datacite#isDescribedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isDescribedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isDescribedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is described by"@en .
+<https://w3id.org/rete/datacite#isDescribedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isDescribedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isDescribedBy> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#describes> .
+<https://w3id.org/rete/datacite#isDocumentedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isDocumentedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isDocumentedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is documented by"@en .
+<https://w3id.org/rete/datacite#isDocumentedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isDocumentedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isHeldBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isHeldBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#AgentRole> .
+<https://w3id.org/rete/datacite#isHeldBy> <http://www.w3.org/2000/01/rdf-schema#label> "is held by"@en .
+<https://w3id.org/rete/datacite#isHeldBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#isHeldBy> <http://www.w3.org/2002/07/owl#equivalentProperty> <http://purl.org/spar/pro/isHeldBy> .
+<https://w3id.org/rete/datacite#isIdenticalTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isIdenticalTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#SymmetricProperty> .
+<https://w3id.org/rete/datacite#isIdenticalTo> <http://www.w3.org/2000/01/rdf-schema#comment> "Two DOIs describing the identical resource (not owl:sameAs — the DOIs remain distinct)."@en .
+<https://w3id.org/rete/datacite#isIdenticalTo> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isIdenticalTo> <http://www.w3.org/2000/01/rdf-schema#label> "is identical to"@en .
+<https://w3id.org/rete/datacite#isIdenticalTo> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isIdenticalTo> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://www.w3.org/2004/02/skos/core#exactMatch> .
+<https://w3id.org/rete/datacite#isMetadataFor> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isMetadataFor> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isMetadataFor> <http://www.w3.org/2000/01/rdf-schema#label> "is metadata for"@en .
+<https://w3id.org/rete/datacite#isMetadataFor> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isMetadataFor> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isMetadataFor> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#hasMetadata> .
+<https://w3id.org/rete/datacite#isNewVersionOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isNewVersionOf> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isNewVersionOf> <http://www.w3.org/2000/01/rdf-schema#label> "is new version of"@en .
+<https://w3id.org/rete/datacite#isNewVersionOf> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isNewVersionOf> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/pav/previousVersion> .
+<https://w3id.org/rete/datacite#isObsoletedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isObsoletedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isObsoletedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is obsoleted by"@en .
+<https://w3id.org/rete/datacite#isObsoletedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isObsoletedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/isReplacedBy> .
+<https://w3id.org/rete/datacite#isObsoletedBy> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#obsoletes> .
+<https://w3id.org/rete/datacite#isOriginalFormOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isOriginalFormOf> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isOriginalFormOf> <http://www.w3.org/2000/01/rdf-schema#label> "is original form of"@en .
+<https://w3id.org/rete/datacite#isOriginalFormOf> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isOriginalFormOf> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isOriginalFormOf> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isVariantFormOf> .
+<https://w3id.org/rete/datacite#isPartOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isPartOf> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isPartOf> <http://www.w3.org/2000/01/rdf-schema#label> "is part of"@en .
+<https://w3id.org/rete/datacite#isPartOf> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isPartOf> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/isPartOf> .
+<https://w3id.org/rete/datacite#isPartOf> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#hasPart> .
+<https://w3id.org/rete/datacite#isPreviousVersionOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isPreviousVersionOf> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isPreviousVersionOf> <http://www.w3.org/2000/01/rdf-schema#label> "is previous version of"@en .
+<https://w3id.org/rete/datacite#isPreviousVersionOf> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isPreviousVersionOf> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isPreviousVersionOf> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isNewVersionOf> .
+<https://w3id.org/rete/datacite#isPublishedIn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isPublishedIn> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isPublishedIn> <http://www.w3.org/2000/01/rdf-schema#label> "is published in"@en .
+<https://w3id.org/rete/datacite#isPublishedIn> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isPublishedIn> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isReferencedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isReferencedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is referenced by"@en .
+<https://w3id.org/rete/datacite#isReferencedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/cito/isCitedBy> .
+<https://w3id.org/rete/datacite#isRelatedTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isRelatedTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#SymmetricProperty> .
+<https://w3id.org/rete/datacite#isRelatedTo> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isRelatedTo> <http://www.w3.org/2000/01/rdf-schema#label> "is related to"@en .
+<https://w3id.org/rete/datacite#isRelatedTo> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isRelatedTo> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isRequiredBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isRequiredBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isRequiredBy> <http://www.w3.org/2000/01/rdf-schema#label> "is required by"@en .
+<https://w3id.org/rete/datacite#isRequiredBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isRequiredBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/isRequiredBy> .
+<https://w3id.org/rete/datacite#isRequiredBy> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#requires> .
+<https://w3id.org/rete/datacite#isReviewedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isReviewedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isReviewedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is reviewed by"@en .
+<https://w3id.org/rete/datacite#isReviewedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isReviewedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/cito/isReviewedBy> .
+<https://w3id.org/rete/datacite#isReviewedBy> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#reviews> .
+<https://w3id.org/rete/datacite#isRoleIn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isRoleIn> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#AgentRole> .
+<https://w3id.org/rete/datacite#isRoleIn> <http://www.w3.org/2000/01/rdf-schema#label> "is role in"@en .
+<https://w3id.org/rete/datacite#isRoleIn> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isRoleIn> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/pro/relatesToDocument> .
+<https://w3id.org/rete/datacite#isSourceOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isSourceOf> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isSourceOf> <http://www.w3.org/2000/01/rdf-schema#label> "is source of"@en .
+<https://w3id.org/rete/datacite#isSourceOf> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isSupplementTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isSupplementTo> <http://www.w3.org/2000/01/rdf-schema#comment> "The subject is supplementary material to the object (DataCite IsSupplementTo)."@en .
+<https://w3id.org/rete/datacite#isSupplementTo> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isSupplementTo> <http://www.w3.org/2000/01/rdf-schema#label> "is supplement to"@en .
+<https://w3id.org/rete/datacite#isSupplementTo> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isSupplementTo> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isSupplementTo> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isSupplementedBy> .
+<https://w3id.org/rete/datacite#isSupplementedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isSupplementedBy> <http://www.w3.org/2000/01/rdf-schema#label> "is supplemented by"@en .
+<https://w3id.org/rete/datacite#isSupplementedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isTranslationOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isTranslationOf> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isTranslationOf> <http://www.w3.org/2000/01/rdf-schema#label> "is translation of"@en .
+<https://w3id.org/rete/datacite#isTranslationOf> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isTranslationOf> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isTranslationOf> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#hasTranslation> .
+<https://w3id.org/rete/datacite#isVariantFormOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isVariantFormOf> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isVariantFormOf> <http://www.w3.org/2000/01/rdf-schema#label> "is variant form of"@en .
+<https://w3id.org/rete/datacite#isVariantFormOf> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isVariantFormOf> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/relation> .
+<https://w3id.org/rete/datacite#isVersionOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#isVersionOf> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isVersionOf> <http://www.w3.org/2000/01/rdf-schema#label> "is version of"@en .
+<https://w3id.org/rete/datacite#isVersionOf> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#isVersionOf> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/isVersionOf> .
+<https://w3id.org/rete/datacite#isVersionOf> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#hasVersion> .
+<https://w3id.org/rete/datacite#landingPage> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#landingPage> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#landingPage> <http://www.w3.org/2000/01/rdf-schema#label> "landing page"@en .
+<https://w3id.org/rete/datacite#landingPage> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#anyURI> .
+<https://w3id.org/rete/datacite#landingPage> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <https://schema.org/url> .
+<https://w3id.org/rete/datacite#language> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#language> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#language> <http://www.w3.org/2000/01/rdf-schema#label> "language"@en .
+<https://w3id.org/rete/datacite#language> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#language> .
+<https://w3id.org/rete/datacite#language> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/language> .
+<https://w3id.org/rete/datacite#obsoletes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#obsoletes> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#obsoletes> <http://www.w3.org/2000/01/rdf-schema#label> "obsoletes"@en .
+<https://w3id.org/rete/datacite#obsoletes> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#obsoletes> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/replaces> .
+<https://w3id.org/rete/datacite#occurredAt> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#occurredAt> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#PidRelation> .
+<https://w3id.org/rete/datacite#occurredAt> <http://www.w3.org/2000/01/rdf-schema#label> "occurred at"@en .
+<https://w3id.org/rete/datacite#occurredAt> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#dateTime> .
+<https://w3id.org/rete/datacite#occurredAt> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://www.w3.org/ns/prov#atTime> .
+<https://w3id.org/rete/datacite#orcid> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#orcid> <http://www.w3.org/2000/01/rdf-schema#comment> "ORCID iD of a creator/contributor (nameIdentifier with scheme ORCID). Join key to the ORCID dataset."@en .
+<https://w3id.org/rete/datacite#orcid> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#orcid> <http://www.w3.org/2000/01/rdf-schema#label> "ORCID iD"@en .
+<https://w3id.org/rete/datacite#orcid> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#prefix> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#prefix> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#prefix> <http://www.w3.org/2000/01/rdf-schema#label> "DOI prefix"@en .
+<https://w3id.org/rete/datacite#prefix> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#publicationYear> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#publicationYear> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#publicationYear> <http://www.w3.org/2000/01/rdf-schema#label> "publication year"@en .
+<https://w3id.org/rete/datacite#publicationYear> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#gYear> .
+<https://w3id.org/rete/datacite#publicationYearText> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#publicationYearText> <http://www.w3.org/2000/01/rdf-schema#comment> "publicationYear exactly as DataCite has it when it is outside 1000-2027 (0, 9999, …) and so is not asserted as an xsd:gYear."@en .
+<https://w3id.org/rete/datacite#publicationYearText> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#publicationYearText> <http://www.w3.org/2000/01/rdf-schema#label> "publication year (as given)"@en .
+<https://w3id.org/rete/datacite#publicationYearText> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#publishedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#publishedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#publishedBy> <http://www.w3.org/2000/01/rdf-schema#label> "published by"@en .
+<https://w3id.org/rete/datacite#publishedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#publishedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/publisher> .
+<https://w3id.org/rete/datacite#publisherName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#publisherName> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#publisherName> <http://www.w3.org/2000/01/rdf-schema#label> "publisher name"@en .
+<https://w3id.org/rete/datacite#publisherName> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#publisherName> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/publisher> .
+<https://w3id.org/rete/datacite#rawIdentifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#rawIdentifier> <http://www.w3.org/2000/01/rdf-schema#comment> "An identifier exactly as DataCite records it, kept as text because no IRI is minted from it: an ORCID or ROR id whose check digits fail, or a scheme without an IRI rule here (GRID, ISNI, Other). Not a join key."@en .
+<https://w3id.org/rete/datacite#rawIdentifier> <http://www.w3.org/2000/01/rdf-schema#label> "raw identifier"@en .
+<https://w3id.org/rete/datacite#rawIdentifier> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#rawIdentifierScheme> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#rawIdentifierScheme> <http://www.w3.org/2000/01/rdf-schema#label> "raw identifier scheme"@en .
+<https://w3id.org/rete/datacite#rawIdentifierScheme> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#referenceCount> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#referenceCount> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#referenceCount> <http://www.w3.org/2000/01/rdf-schema#label> "reference count"@en .
+<https://w3id.org/rete/datacite#referenceCount> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#integer> .
+<https://w3id.org/rete/datacite#references> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#references> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#references> <http://www.w3.org/2000/01/rdf-schema#label> "references"@en .
+<https://w3id.org/rete/datacite#references> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#references> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/cito/cites> .
+<https://w3id.org/rete/datacite#references> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isReferencedBy> .
+<https://w3id.org/rete/datacite#registered> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#registered> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#registered> <http://www.w3.org/2000/01/rdf-schema#label> "registered"@en .
+<https://w3id.org/rete/datacite#registered> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#dateTime> .
+<https://w3id.org/rete/datacite#registered> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/dateSubmitted> .
+<https://w3id.org/rete/datacite#rel-basedOnData> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-basedOnData> <http://www.w3.org/2004/02/skos/core#prefLabel> "based-on-data"@en .
+<https://w3id.org/rete/datacite#rel-basedOnData> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-cites> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-cites> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://purl.org/spar/cito/cites> .
+<https://w3id.org/rete/datacite#rel-cites> <http://www.w3.org/2004/02/skos/core#prefLabel> "Cites"@en .
+<https://w3id.org/rete/datacite#rel-collects> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-collects> <http://www.w3.org/2004/02/skos/core#prefLabel> "Collects"@en .
+<https://w3id.org/rete/datacite#rel-compiles> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-compiles> <http://www.w3.org/2004/02/skos/core#prefLabel> "Compiles"@en .
+<https://w3id.org/rete/datacite#rel-continues> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-continues> <http://www.w3.org/2004/02/skos/core#prefLabel> "Continues"@en .
+<https://w3id.org/rete/datacite#rel-describes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-describes> <http://www.w3.org/2004/02/skos/core#prefLabel> "Describes"@en .
+<https://w3id.org/rete/datacite#rel-documents> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-documents> <http://www.w3.org/2004/02/skos/core#prefLabel> "Documents"@en .
+<https://w3id.org/rete/datacite#rel-hasComment> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-hasComment> <http://www.w3.org/2004/02/skos/core#prefLabel> "has-comment"@en .
+<https://w3id.org/rete/datacite#rel-hasComment> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-hasMetadata> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-hasMetadata> <http://www.w3.org/2004/02/skos/core#prefLabel> "HasMetadata"@en .
+<https://w3id.org/rete/datacite#rel-hasPart> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-hasPart> <http://www.w3.org/2004/02/skos/core#prefLabel> "HasPart"@en .
+<https://w3id.org/rete/datacite#rel-hasPreprint> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-hasPreprint> <http://www.w3.org/2004/02/skos/core#prefLabel> "has-preprint"@en .
+<https://w3id.org/rete/datacite#rel-hasPreprint> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-hasRelatedMaterial> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-hasRelatedMaterial> <http://www.w3.org/2004/02/skos/core#prefLabel> "has-related-material"@en .
+<https://w3id.org/rete/datacite#rel-hasRelatedMaterial> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-hasReview> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-hasReview> <http://www.w3.org/2004/02/skos/core#prefLabel> "has-review"@en .
+<https://w3id.org/rete/datacite#rel-hasReview> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-hasTranslation> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-hasTranslation> <http://www.w3.org/2004/02/skos/core#prefLabel> "HasTranslation"@en .
+<https://w3id.org/rete/datacite#rel-hasVersion> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-hasVersion> <http://www.w3.org/2004/02/skos/core#prefLabel> "HasVersion"@en .
+<https://w3id.org/rete/datacite#rel-isAffiliatedWith> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isAffiliatedWith> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-affiliated-with"@en .
+<https://w3id.org/rete/datacite#rel-isAffiliatedWith> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isAuthoredAt> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isAuthoredAt> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-authored-at"@en .
+<https://w3id.org/rete/datacite#rel-isAuthoredAt> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isAuthoredBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isAuthoredBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsAuthoredBy"@en .
+<https://w3id.org/rete/datacite#rel-isBasedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isBasedOn> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-based-on"@en .
+<https://w3id.org/rete/datacite#rel-isBasedOn> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isCitedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isCitedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsCitedBy"@en .
+<https://w3id.org/rete/datacite#rel-isCollectedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isCollectedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsCollectedBy"@en .
+<https://w3id.org/rete/datacite#rel-isCommentOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isCommentOn> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-comment-on"@en .
+<https://w3id.org/rete/datacite#rel-isCommentOn> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isCompiledBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isCompiledBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsCompiledBy"@en .
+<https://w3id.org/rete/datacite#rel-isContinuedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isContinuedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsContinuedBy"@en .
+<https://w3id.org/rete/datacite#rel-isDerivedFrom> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isDerivedFrom> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://www.w3.org/ns/prov#wasDerivedFrom> .
+<https://w3id.org/rete/datacite#rel-isDerivedFrom> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsDerivedFrom"@en .
+<https://w3id.org/rete/datacite#rel-isDescribedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isDescribedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsDescribedBy"@en .
+<https://w3id.org/rete/datacite#rel-isDocumentedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isDocumentedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsDocumentedBy"@en .
+<https://w3id.org/rete/datacite#rel-isFundedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isFundedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-funded-by"@en .
+<https://w3id.org/rete/datacite#rel-isFundedBy> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isIdenticalTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isIdenticalTo> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsIdenticalTo"@en .
+<https://w3id.org/rete/datacite#rel-isManuscriptOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isManuscriptOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-manuscript-of"@en .
+<https://w3id.org/rete/datacite#rel-isManuscriptOf> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isMetadataFor> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isMetadataFor> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsMetadataFor"@en .
+<https://w3id.org/rete/datacite#rel-isNewVersionOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isNewVersionOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsNewVersionOf"@en .
+<https://w3id.org/rete/datacite#rel-isObsoletedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isObsoletedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsObsoletedBy"@en .
+<https://w3id.org/rete/datacite#rel-isOriginalFormOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isOriginalFormOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsOriginalFormOf"@en .
+<https://w3id.org/rete/datacite#rel-isPartOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isPartOf> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://purl.org/dc/terms/isPartOf> .
+<https://w3id.org/rete/datacite#rel-isPartOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsPartOf"@en .
+<https://w3id.org/rete/datacite#rel-isPreprintOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isPreprintOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-preprint-of"@en .
+<https://w3id.org/rete/datacite#rel-isPreprintOf> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isPreviousVersionOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isPreviousVersionOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsPreviousVersionOf"@en .
+<https://w3id.org/rete/datacite#rel-isPublishedIn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isPublishedIn> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsPublishedIn"@en .
+<https://w3id.org/rete/datacite#rel-isReferencedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isReferencedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsReferencedBy"@en .
+<https://w3id.org/rete/datacite#rel-isRelatedMaterial> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isRelatedMaterial> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-related-material"@en .
+<https://w3id.org/rete/datacite#rel-isRelatedMaterial> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isRelatedTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isRelatedTo> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-related-to"@en .
+<https://w3id.org/rete/datacite#rel-isReplyTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isReplyTo> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-reply-to"@en .
+<https://w3id.org/rete/datacite#rel-isReplyTo> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isRequiredBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isRequiredBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsRequiredBy"@en .
+<https://w3id.org/rete/datacite#rel-isReviewOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isReviewOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-review-of"@en .
+<https://w3id.org/rete/datacite#rel-isReviewOf> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isReviewedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isReviewedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsReviewedBy"@en .
+<https://w3id.org/rete/datacite#rel-isSameAs> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isSameAs> <http://www.w3.org/2004/02/skos/core#prefLabel> "is-same-as"@en .
+<https://w3id.org/rete/datacite#rel-isSameAs> <http://www.w3.org/2004/02/skos/core#scopeNote> "PID Links relation_type outside the DataCite 4.6 vocabulary."@en .
+<https://w3id.org/rete/datacite#rel-isSourceOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isSourceOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsSourceOf"@en .
+<https://w3id.org/rete/datacite#rel-isSupplementTo> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isSupplementTo> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsSupplementTo"@en .
+<https://w3id.org/rete/datacite#rel-isSupplementedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isSupplementedBy> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsSupplementedBy"@en .
+<https://w3id.org/rete/datacite#rel-isTranslationOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isTranslationOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsTranslationOf"@en .
+<https://w3id.org/rete/datacite#rel-isVariantFormOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isVariantFormOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsVariantFormOf"@en .
+<https://w3id.org/rete/datacite#rel-isVersionOf> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-isVersionOf> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://purl.org/dc/terms/isVersionOf> .
+<https://w3id.org/rete/datacite#rel-isVersionOf> <http://www.w3.org/2004/02/skos/core#prefLabel> "IsVersionOf"@en .
+<https://w3id.org/rete/datacite#rel-obsoletes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-obsoletes> <http://www.w3.org/2004/02/skos/core#prefLabel> "Obsoletes"@en .
+<https://w3id.org/rete/datacite#rel-references> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-references> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://purl.org/spar/cito/cites> .
+<https://w3id.org/rete/datacite#rel-references> <http://www.w3.org/2004/02/skos/core#prefLabel> "References"@en .
+<https://w3id.org/rete/datacite#rel-requires> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-requires> <http://www.w3.org/2004/02/skos/core#prefLabel> "Requires"@en .
+<https://w3id.org/rete/datacite#rel-reviews> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#RelationType> .
+<https://w3id.org/rete/datacite#rel-reviews> <http://www.w3.org/2004/02/skos/core#prefLabel> "Reviews"@en .
+<https://w3id.org/rete/datacite#relationObject> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#relationObject> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#PidRelation> .
+<https://w3id.org/rete/datacite#relationObject> <http://www.w3.org/2000/01/rdf-schema#label> "relation object"@en .
+<https://w3id.org/rete/datacite#relationObject> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#relationObject> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://www.w3.org/ns/prov#used> .
+<https://w3id.org/rete/datacite#relationSubject> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#relationSubject> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#PidRelation> .
+<https://w3id.org/rete/datacite#relationSubject> <http://www.w3.org/2000/01/rdf-schema#label> "relation subject"@en .
+<https://w3id.org/rete/datacite#relationSubject> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#relationSubject> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://www.w3.org/ns/prov#used> .
+<https://w3id.org/rete/datacite#relationType> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#relationType> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#PidRelation> .
+<https://w3id.org/rete/datacite#relationType> <http://www.w3.org/2000/01/rdf-schema#label> "relation type"@en .
+<https://w3id.org/rete/datacite#relationType> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2004/02/skos/core#Concept> .
+<https://w3id.org/rete/datacite#requires> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#requires> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#requires> <http://www.w3.org/2000/01/rdf-schema#label> "requires"@en .
+<https://w3id.org/rete/datacite#requires> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#requires> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/requires> .
+<https://w3id.org/rete/datacite#resourceType> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#resourceType> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#resourceType> <http://www.w3.org/2000/01/rdf-schema#label> "resource type"@en .
+<https://w3id.org/rete/datacite#resourceType> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#resourceType> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/type> .
+<https://w3id.org/rete/datacite#resourceTypeGeneralText> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#resourceTypeGeneralText> <http://www.w3.org/2000/01/rdf-schema#comment> "resourceTypeGeneral exactly as DataCite has it when it is not one of the 32 DataCite 4.6 values (the record is then typed only dcite:Resource)."@en .
+<https://w3id.org/rete/datacite#resourceTypeGeneralText> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#resourceTypeGeneralText> <http://www.w3.org/2000/01/rdf-schema#label> "resourceTypeGeneral (as given)"@en .
+<https://w3id.org/rete/datacite#resourceTypeGeneralText> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#reviews> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#reviews> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#reviews> <http://www.w3.org/2000/01/rdf-schema#label> "reviews"@en .
+<https://w3id.org/rete/datacite#reviews> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#reviews> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/cito/reviews> .
+<https://w3id.org/rete/datacite#rorId> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#rorId> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#rorId> <http://www.w3.org/2000/01/rdf-schema#label> "ROR id"@en .
+<https://w3id.org/rete/datacite#rorId> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#anyURI> .
+<https://w3id.org/rete/datacite#schemaVersion> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#schemaVersion> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#schemaVersion> <http://www.w3.org/2000/01/rdf-schema#label> "schema version"@en .
+<https://w3id.org/rete/datacite#schemaVersion> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#scheme-doi> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#IdentifierScheme> .
+<https://w3id.org/rete/datacite#scheme-doi> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://purl.org/spar/datacite/doi> .
+<https://w3id.org/rete/datacite#scheme-doi> <http://www.w3.org/2004/02/skos/core#prefLabel> "DOI"@en .
+<https://w3id.org/rete/datacite#scheme-issn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#IdentifierScheme> .
+<https://w3id.org/rete/datacite#scheme-issn> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://purl.org/spar/datacite/issn> .
+<https://w3id.org/rete/datacite#scheme-issn> <http://www.w3.org/2004/02/skos/core#prefLabel> "ISSN"@en .
+<https://w3id.org/rete/datacite#scheme-orcid> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#IdentifierScheme> .
+<https://w3id.org/rete/datacite#scheme-orcid> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://purl.org/spar/datacite/orcid> .
+<https://w3id.org/rete/datacite#scheme-orcid> <http://www.w3.org/2004/02/skos/core#prefLabel> "ORCID"@en .
+<https://w3id.org/rete/datacite#scheme-ror> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#IdentifierScheme> .
+<https://w3id.org/rete/datacite#scheme-ror> <http://www.w3.org/2004/02/skos/core#prefLabel> "ROR"@en .
+<https://w3id.org/rete/datacite#scheme-url> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#IdentifierScheme> .
+<https://w3id.org/rete/datacite#scheme-url> <http://www.w3.org/2004/02/skos/core#closeMatch> <http://purl.org/spar/datacite/url> .
+<https://w3id.org/rete/datacite#scheme-url> <http://www.w3.org/2004/02/skos/core#prefLabel> "URL"@en .
+<https://w3id.org/rete/datacite#snapshot-2023> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#Snapshot> .
+<https://w3id.org/rete/datacite#snapshot-2023> <http://www.w3.org/2000/01/rdf-schema#comment> "52,863,283 DOI records."@en .
+<https://w3id.org/rete/datacite#snapshot-2023> <http://www.w3.org/2000/01/rdf-schema#label> "DataCite Public Data File 2023"@en .
+<https://w3id.org/rete/datacite#snapshot-2024> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#Snapshot> .
+<https://w3id.org/rete/datacite#snapshot-2024> <http://www.w3.org/2000/01/rdf-schema#comment> "72,019,577 DOI records."@en .
+<https://w3id.org/rete/datacite#snapshot-2024> <http://www.w3.org/2000/01/rdf-schema#label> "DataCite Public Data File 2024"@en .
+<https://w3id.org/rete/datacite#snapshot-2025> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/rete/datacite#Snapshot> .
+<https://w3id.org/rete/datacite#snapshot-2025> <http://www.w3.org/2000/01/rdf-schema#comment> "108,468,906 DOI records."@en .
+<https://w3id.org/rete/datacite#snapshot-2025> <http://www.w3.org/2000/01/rdf-schema#label> "DataCite Public Data File 2025"@en .
+<https://w3id.org/rete/datacite#state> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#state> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#state> <http://www.w3.org/2000/01/rdf-schema#label> "state"@en .
+<https://w3id.org/rete/datacite#state> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#title> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#title> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#title> <http://www.w3.org/2000/01/rdf-schema#label> "title"@en .
+<https://w3id.org/rete/datacite#title> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#title> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/title> .
+<https://w3id.org/rete/datacite#updated> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#updated> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#updated> <http://www.w3.org/2000/01/rdf-schema#label> "updated"@en .
+<https://w3id.org/rete/datacite#updated> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#dateTime> .
+<https://w3id.org/rete/datacite#updated> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/modified> .
+<https://w3id.org/rete/datacite#version> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#version> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#version> <http://www.w3.org/2000/01/rdf-schema#label> "version"@en .
+<https://w3id.org/rete/datacite#version> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://w3id.org/rete/datacite#viewCount> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#viewCount> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#viewCount> <http://www.w3.org/2000/01/rdf-schema#label> "view count"@en .
+<https://w3id.org/rete/datacite#viewCount> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#integer> .
+_:b6e0a7773efc15d9294d0f88bdd6def2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:b6e0a7773efc15d9294d0f88bdd6def2 <http://www.w3.org/2002/07/owl#onProperty> <https://w3id.org/rete/datacite#relationObject> .
+_:b6e0a7773efc15d9294d0f88bdd6def2 <http://www.w3.org/2002/07/owl#someValuesFrom> <https://w3id.org/rete/datacite#Resource> .
+_:cd101ebfc3d6e3ce196c01fbed66818b <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:cd101ebfc3d6e3ce196c01fbed66818b <http://www.w3.org/2002/07/owl#onProperty> <https://w3id.org/rete/datacite#isRoleIn> .
+_:cd101ebfc3d6e3ce196c01fbed66818b <http://www.w3.org/2002/07/owl#someValuesFrom> <https://w3id.org/rete/datacite#Resource> .

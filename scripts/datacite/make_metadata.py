@@ -1,16 +1,25 @@
-"""Generate a JSON Schema and an MLCommons Croissant (1.0) JSON-LD description
-for the DataCite Parquet datasets (metadata 2023/2024/2025 + PID Links
-2023/May-2025).
+"""Generate the machine-readable metadata of the DataCite datasets.
 
-Writes:
+Parquet (metadata 2023/2024/2025 + PID Links 2023/May-2025):
   data/datacite/schema.json       JSON Schema (draft 2020-12): 'metadata' + 'pid_link'
   data/datacite/croissant.jsonld  Croissant 1.0: 5 FileSets + 5 RecordSets
+                                  (+ the datacite.rete FileObject with --tally)
+RDF (datacite.rete), with --tally <the converter's JSON report>:
+  scripts/datacite/cards/datacite.card.json   the Dataset Card `rete build --card-file`
+                                              embeds: the conversion rules and what each
+                                              rescued, encoded, kept as text or dropped
+
+Usage: python make_metadata.py [--out data/datacite] [--tally tally.json]
 """
 
+import argparse
 import json
 import os
 
-OUT = r"D:\pro\rete\data\datacite"
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
+OUT = os.path.join(REPO, "data", "datacite")
+CARD = os.path.join(HERE, "cards", "datacite.card.json")
 
 METADATA_FULL = [  # 2024/2025 (51 cols)
     ("doi","VARCHAR"),("prefix","VARCHAR"),("state","VARCHAR"),("source","VARCHAR"),
@@ -210,13 +219,203 @@ def croissant():
     }
 
 
+# ----------------------------------------------------------------------- the .rete card
+RETE_URL = "https://data.graphplaza.com/datacite/datacite.rete"
+# relation properties the 2026-07 build already had; everything else in the tally is new (R7)
+OLD_PROPS = {"cites", "isCitedBy", "references", "isReferencedBy", "isSupplementTo",
+             "isSupplementedBy", "isVersionOf", "hasVersion", "isNewVersionOf", "isPartOf",
+             "hasPart", "isDerivedFrom", "isSourceOf", "isIdenticalTo", "isRelatedTo",
+             "isAuthoredBy"}
+RULES = [  # (rule, one line on what it does) -- kept in step with parquet_to_nt.py's docstring
+    ("R1", "One DOI normaliser for related identifiers, funder ids and link endpoints: strip doi.org / dx.doi.org URL prefixes, `doi:`, `doi/`, `org/`, a leading `%20` / `%7C%5D`, spaces inside the `10.NNNN` prefix. Lower-case (DOIs are case-insensitive)."),
+    ("R2", "Percent-encode what RFC 3987 forbids (`[ ]`, a second `#`, a stray `%`, U+FFFD, C1, private-use, noncharacters) exactly as `rete export --sanitize-iris` does; a valid IRI never moves. Every IRI is then checked by oxiri (pyoxigraph); one it still rejects is dropped."),
+    ("R3", "Funder IRI: ROR (check digits must pass) > Crossref Funder ID (`10.13039/…`, also a bare Funder Registry number) > a record-scoped IRI `<doi>/funder/<sha1(NFC(name))[:16]>`. The name is always kept as `dcite:agentName`, never truncated."),
+    ("R4", "A funder name that is empty or `#PLACEHOLDER_PARENT_METADATA_VALUE#` is not a name; a reference with neither a name nor a usable id is dropped."),
+    ("R5", "A link endpoint with no scheme is rescued by R1 or dropped (with its whole event); a URL the IRI parser rejects is dropped."),
+    ("R6", "`hdl:` -> `https://hdl.handle.net/`. An `https://orcid.org/` IRI is minted only when the ISO 7064 mod 11-2 check digit passes (16 digits without hyphens are re-hyphenated); a creator's failing value is kept as `dcite:rawIdentifier`, a link URL that fails is kept verbatim."),
+    ("R7", "All 38 DataCite 4.6 relationType values have their own property, for metadata and PID links alike; `is-funded-by` is `dcite:fundedBy`, `is-authored-at` / `is-affiliated-with` have their own properties; any other link type is `dcite:isRelatedTo` and keeps its exact type on the reified `dcite:PidRelation`."),
+    ("R8", "A DOI-typed related identifier with no DOI after R1 is dropped; a DOI inside other text is taken only when exactly one stands there, not glued to other characters."),
+    ("R9", "One record per DOI: the 2025 file wins, else 2024, else 2023; `dcite:fromSnapshot` names the file each record came from."),
+    ("R10", "Within one file, the row with the latest `updated` wins."),
+    ("R11", "`occurredAt` `0000-01-01` (DataCite's 'unknown') is not emitted. A publicationYear outside 1000-2027 is kept as `dcite:publicationYearText`, not typed `xsd:gYear`."),
+    ("R12", "`landingPage` is typed `xsd:anyURI` only when it parses as an IRI; otherwise it is kept as a plain string."),
+    ("R13", "Literals are written as DataCite has them: no trimming, no Unicode normalisation, no mojibake repair (U+FFFD and double-encoded UTF-8 are upstream). C0 controls are written as N-Triples `\\u` escapes, not removed."),
+    ("R14", "`rorId` only when the ROR check digits pass; otherwise the value is kept as `dcite:rawIdentifier`."),
+]
+
+
+def _bucket(what):
+    if what.startswith("rescued"):
+        return "rescued"
+    if what.startswith("encoded"):
+        return "encoded"
+    if what.startswith("skipped"):
+        return "empty"
+    if what.startswith("dropped"):
+        return "dropped"
+    if any(k in what for k in ("kept_as_text", "kept_verbatim", "failed_check", "id_not_minted",
+                               "untyped_landing_page", "nonstandard_doi", "doi_url_without_doi")):
+        return "kept"
+    return None
+
+
+def summarize(tally):
+    """Aggregate the converter's per-set tally into per-rule totals."""
+    rules, info = {}, {}
+    for st, per_rule in tally["counts"].items():
+        for rule, kv in per_rule.items():
+            for what, n in kv.items():
+                b = _bucket(what)
+                if b:
+                    rules.setdefault(rule, {}).setdefault(b, 0)
+                    rules[rule][b] += n
+                info.setdefault(rule, {}).setdefault(what, 0)
+                info[rule][what] += n
+    return rules, info
+
+
+def _n(x):
+    return f"{x:,}"
+
+
+def rete_card(tally):
+    rules, info = summarize(tally)
+    plan = tally.get("plan", {}).get("stats", {})
+    trip = sum(v for k, v in info.get("output", {}).items() if k == "triples")
+    edges = {k.split(".", 1)[1]: v for k, v in info.get("R7", {}).items()
+             if k.startswith(("relid.", "link.")) and not k.startswith("link.outside")}
+    new_edges = sum(v for k, v in info.get("R7", {}).items()
+                    if k.startswith(("relid.", "link.")) and k.split(".", 1)[1] not in OLD_PROPS
+                    and not k.startswith("link.outside"))
+    outside = sum(v for k, v in info.get("R7", {}).items() if k.startswith("link.outside"))
+    recs = {y: plan.get(f"records_from_{y}", 0) for y in ("2025", "2024", "2023")}
+    link_rows = sum(v for st, r in tally["counts"].items() if st.startswith("links-")
+                    for k, v in r.get("input", {}).items() if k == "rows")
+    # rules whose numbers come from the plan or from edge counts rather than from buckets
+    rules.setdefault("R7", {})["rescued"] = new_edges
+    rules.setdefault("R9", {})["dropped"] = (plan.get("rows_not_emitted_2023", 0)
+                                             + plan.get("rows_not_emitted_2024", 0))
+    rules.setdefault("R10", {})["dropped"] = sum(
+        plan.get(f"within_year_duplicate_rows_{y}", 0) - plan.get(f"within_year_duplicate_dois_{y}", 0)
+        for y in ("2023", "2024", "2025"))
+    rows = ["| Rule | What it does | Rescued | Encoded | Kept as text | Dropped |",
+            "|---|---|---:|---:|---:|---:|"]
+    for rule, text in RULES:
+        r = rules.get(rule, {})
+        rows.append(f"| {rule} | {text} | {_n(r.get('rescued', 0))} | {_n(r.get('encoded', 0))} | "
+                    f"{_n(r.get('kept', 0))} | {_n(r.get('dropped', 0))} |")
+    f3 = info.get("R3", {})
+    desc = [
+        f"The **DataCite Public Data Files** (CC0) as one range-queryable graph: **{_n(sum(recs.values()))} DOI records**, one per DOI, and the **PID Graph** ({_n(link_rows)} relation events from the 2023 and May 2025 PID Links files), reified as provenance-bearing `dcite:PidRelation`s. Converted by `scripts/datacite/parquet_to_nt.py`; the converter wrote {_n(trip)} statements.",
+        "",
+        "## What is in it",
+        "",
+        "- One `dcite:Resource` per DOI at `https://doi.org/{doi}`, typed by its resourceTypeGeneral (all 32 DataCite 4.6 values), with title, publisher, publication year, dates, version, language, landing page, usage metrics (2024+), subjects, reified creators (`dcite:AgentRole` held by an `https://orcid.org/` agent when the ORCID is valid), funders (`dcite:fundedBy`) and DOI-typed related identifiers as typed edges.",
+        "- The PID Graph: every event is a direct typed edge **and** a `dcite:PidRelation` with `relationSubject`, `relationObject`, its exact `relationType`, `assertedBy` (the source) and `occurredAt`. Events from both PID Links files are kept; an event present in both collapses into one `dcite:PidRelation`.",
+        "- Works key by DOI and people by ORCID, so the graph joins crossref, opencitations, openaire, dblp, zenodo and orcid by IRI.",
+        "",
+        "## One record per DOI, and where it came from",
+        "",
+        f"DataCite published three snapshots. Each DOI is converted **once**, from the newest file that has it (R9), and within one file from the row with the latest `updated` (R10: {_n(plan.get('within_year_duplicate_dois_2024', 0))} DOIs in 2024, {_n(plan.get('within_year_duplicate_dois_2025', 0))} in 2025). `dcite:fromSnapshot` says which file:",
+        "",
+        f"- `dcite:snapshot-2025`: {_n(recs['2025'])} records",
+        f"- `dcite:snapshot-2024`: {_n(recs['2024'])} records whose DOI is not in the 2025 file",
+        f"- `dcite:snapshot-2023`: {_n(recs['2023'])} records whose DOI is in neither later file",
+        "",
+        "Filter with `?r dcite:fromSnapshot dcite:snapshot-2025` for the 2025 state only. The 2026-07 build emitted every row of all three files, so a DOI present in several years carried several titles, creators and relation sets at once; that is gone.",
+        "",
+        "## Conversion rules and what each did",
+        "",
+        "The principle is **faithfulness**: the graph says what DataCite says. An identifier is rewritten only when the rewrite is deterministic and names the same thing (`https://doi.org/10.x/y` is the DOI `10.x/y`); anything that cannot be made a valid IRI that way is **dropped and counted**, never guessed. Literals are never cleaned. Counts are occurrences, summed over all five files.",
+        "",
+        *rows,
+        "",
+        "For R9 and R10, *Dropped* counts metadata **rows** not converted because a newer row of the same DOI was (no DOI is lost); for R7, *Rescued* counts relation edges that use a property this build added.",
+        "",
+        f"R7 in numbers: {_n(new_edges)} relation edges now use one of the properties added in this build (they were dropped, or for links folded into `isRelatedTo`, before); {_n(outside)} link events carry a type outside the DataCite 4.6 vocabulary and are `dcite:isRelatedTo` with their exact type on the `dcite:PidRelation`.",
+        f"R3 routes: {_n(f3.get('funder.ror', 0))} ROR, {_n(f3.get('funder.doi', 0))} Crossref Funder ID / DOI, {_n(f3.get('funder.name_minted', 0))} name-minted.",
+        "",
+        "The full per-file tally, with examples of every rescued, kept and dropped shape, is `datacite.tally.json` beside this file.",
+        "",
+        "## Not converted",
+        "",
+        "Related identifiers that are not DOI-typed (URL, Handle, ISSN, arXiv, PMID, …), descriptions/abstracts, typed dates, rights, contributors other than creators, geo locations, sizes and formats are in the Parquet but not in this graph.",
+        "",
+        "## Build",
+        "",
+        "`parquet_to_nt.py emit | rete build - --strict --memory-budget-mb`, so the build refuses any IRI the N-Triples grammar or RFC 3987 rejects; every emitted statement was also parsed by Oxigraph 0.5.11 before the build. Ontology `dcite:` 1.1.0 (`https://w3id.org/rete/datacite#`, OWL 2 QL-safe) travels in the file. No pyramid at this scale: keep queries selective.",
+    ]
+    queries = [
+        "# Research-output cards straight from the DOI registry\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?doi ?title ?year ?publisher ?type WHERE {\n  ?doi dcite:title ?title ;\n       dcite:publicationYear ?year ;\n       dcite:publisherName ?publisher ;\n       dcite:resourceType ?type .\n}\nLIMIT 25",
+        "# Records whose DOI exists only in the 2023 snapshot\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?doi ?title WHERE {\n  ?doi dcite:fromSnapshot dcite:snapshot-2023 ;\n       dcite:title ?title .\n}\nLIMIT 25",
+        "# The PID Graph: what a work points at, and why\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?from ?type ?to ?assertedBy WHERE {\n  ?rel a dcite:PidRelation ;\n       dcite:relationSubject ?from ;\n       dcite:relationType ?type ;\n       dcite:relationObject ?to .\n  OPTIONAL { ?rel dcite:assertedBy ?assertedBy }\n}\nLIMIT 25",
+        "# Funders of one record, joined to Crossref Funder IDs by IRI\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?funder ?name WHERE {\n  <https://doi.org/10.17638/00008533> dcite:fundedBy ?funder .\n  OPTIONAL { ?funder dcite:agentName ?name }\n}",
+    ]
+    # `extra` may nest two container levels at most (rete refuses deeper card fields)
+    extra = {
+        "conversion": {"converter": "scripts/datacite/parquet_to_nt.py", "ontology_version": "1.1.0",
+                       "statements_emitted": trip, "tally_file": "datacite.tally.json"},
+        "conversion_records_by_snapshot": recs,
+        "conversion_plan": plan,
+        "conversion_rules": {rule: rules.get(rule, {}) for rule, _ in RULES},
+        "conversion_relation_edges": dict(sorted(edges.items(), key=lambda kv: -kv[1])),
+    }
+    return {
+        "title": "DataCite",
+        "license": "CC0-1.0",
+        "source": "https://datafiles.datacite.org/",
+        "version": "2026-10 faithful rebuild (Public Data Files 2023, 2024, 2025; PID Links 2023, May 2025)",
+        "publisher": {"name": "rete"},
+        "canonical_url": RETE_URL,
+        "cite_as": "DataCite (2023-2025). DataCite Public Data File. https://datafiles.datacite.org/",
+        "keywords": ["DataCite", "DOI", "PID graph", "research data", "software", "citations", "provenance"],
+        "description": desc,
+        "extra": extra,
+        "example_queries": queries,
+    }
+
+
+def rete_fileobject(tally, sha256=None, size=None):
+    rules, _ = summarize(tally)
+    extra = {}
+    if sha256:  # Croissant wants an md5/sha256 on every FileObject
+        extra["sha256"] = sha256
+    if size:
+        extra["contentSize"] = f"{size} B"
+    return {**extra, "@type": "cr:FileObject", "@id": "datacite.rete", "name": "datacite.rete",
+            "contentUrl": RETE_URL, "encodingFormat": "application/vnd.rete",
+            "description": "The metadata files (one record per DOI, newest snapshot wins, "
+                           "provenance in dcite:fromSnapshot) and both PID Links files as one RDF "
+                           "graph in the rete format. Conversion rules R1-R14 and their counts are "
+                           "in the file's Dataset Card and in datacite.tally.json. Totals: "
+                           + ", ".join(f"{r} " + "/".join(f"{k}={v}" for k, v in sorted(rules.get(r, {}).items()))
+                                       for r, _ in RULES if rules.get(r))}
+
+
 def main():
-    with open(os.path.join(OUT,"schema.json"),"w",encoding="utf-8") as f:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--out", default=OUT)
+    ap.add_argument("--tally", help="the converter's JSON report (parquet_to_nt.py emit --report)")
+    ap.add_argument("--card", default=CARD)
+    ap.add_argument("--rete-sha256", help="sha256 of the built datacite.rete (Croissant FileObject)")
+    ap.add_argument("--rete-bytes", type=int, help="its size in bytes")
+    a = ap.parse_args()
+    tally = json.load(open(a.tally, encoding="utf-8")) if a.tally else None
+    with open(os.path.join(a.out,"schema.json"),"w",encoding="utf-8") as f:
         json.dump(json_schema(),f,indent=2,ensure_ascii=False)
-    with open(os.path.join(OUT,"croissant.jsonld"),"w",encoding="utf-8") as f:
-        json.dump(croissant(),f,indent=2,ensure_ascii=False)
+    cr = croissant()
+    if tally:
+        cr["distribution"].append(rete_fileobject(tally, a.rete_sha256, a.rete_bytes))
+    with open(os.path.join(a.out,"croissant.jsonld"),"w",encoding="utf-8") as f:
+        json.dump(cr,f,indent=2,ensure_ascii=False)
     print("schema.json: 2 $defs (metadata 51 / pid_link 18); croissant:",
-          len(RS_COLS),"FileSets +",len(RS_COLS),"RecordSets")
+          len(RS_COLS),"FileSets +",len(RS_COLS),"RecordSets" + (" + datacite.rete" if tally else ""))
+    if tally:
+        os.makedirs(os.path.dirname(a.card), exist_ok=True)
+        with open(a.card, "w", encoding="utf-8") as f:
+            json.dump(rete_card(tally), f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        print("card:", a.card)
 
 
 if __name__ == "__main__":
