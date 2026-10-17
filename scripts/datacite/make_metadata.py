@@ -375,9 +375,14 @@ def rete_card(tally):
     }
 
 
-def rete_fileobject(tally):
+def rete_fileobject(tally, sha256=None, size=None):
     rules, _ = summarize(tally)
-    return {"@type": "cr:FileObject", "@id": "datacite.rete", "name": "datacite.rete",
+    extra = {}
+    if sha256:  # Croissant wants an md5/sha256 on every FileObject
+        extra["sha256"] = sha256
+    if size:
+        extra["contentSize"] = f"{size} B"
+    return {**extra, "@type": "cr:FileObject", "@id": "datacite.rete", "name": "datacite.rete",
             "contentUrl": RETE_URL, "encodingFormat": "application/vnd.rete",
             "description": "The metadata files (one record per DOI, newest snapshot wins, "
                            "provenance in dcite:fromSnapshot) and both PID Links files as one RDF "
@@ -392,13 +397,15 @@ def main():
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--tally", help="the converter's JSON report (parquet_to_nt.py emit --report)")
     ap.add_argument("--card", default=CARD)
+    ap.add_argument("--rete-sha256", help="sha256 of the built datacite.rete (Croissant FileObject)")
+    ap.add_argument("--rete-bytes", type=int, help="its size in bytes")
     a = ap.parse_args()
     tally = json.load(open(a.tally, encoding="utf-8")) if a.tally else None
     with open(os.path.join(a.out,"schema.json"),"w",encoding="utf-8") as f:
         json.dump(json_schema(),f,indent=2,ensure_ascii=False)
     cr = croissant()
     if tally:
-        cr["distribution"].append(rete_fileobject(tally))
+        cr["distribution"].append(rete_fileobject(tally, a.rete_sha256, a.rete_bytes))
     with open(os.path.join(a.out,"croissant.jsonld"),"w",encoding="utf-8") as f:
         json.dump(cr,f,indent=2,ensure_ascii=False)
     print("schema.json: 2 $defs (metadata 51 / pid_link 18); croissant:",
