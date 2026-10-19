@@ -129,3 +129,25 @@ fn sparql_memory_budget_never_changes_the_answer() {
         assert_eq!(run(lazy, budget), eager, "lazy={lazy} budget={budget:?}");
     }
 }
+
+/// `COUNT(DISTINCT …)` spills past an eighth of the budget and stays exact:
+/// the tiniest budget and an unlimited one count the same.
+#[test]
+fn count_distinct_is_exact_at_any_budget() {
+    let fixture = common::fixture();
+    let q = "SELECT (COUNT(DISTINCT ?s) AS ?a) (COUNT(DISTINCT ?o) AS ?b) WHERE { ?s ?p ?o }";
+    let run = |budget: &str| -> String {
+        let out = common::rete()
+            .arg("sparql")
+            .arg(&fixture.rete)
+            .arg(q)
+            .args(["--memory-budget-mb", budget])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let unlimited = run("0");
+    assert!(unlimited.contains("?a="), "{unlimited}");
+    assert_eq!(run("1"), unlimited);
+}

@@ -7,6 +7,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **`COUNT(DISTINCT …)` is bounded and exact.** It kept every distinct value
+  in an ordered set (about 40 bytes each), so `COUNT(DISTINCT ?r)` over the
+  610 M PID relations of DataCite ran out of memory at 16 GB. Distinct values
+  are now a sorted, deduplicated buffer of dictionary ids (8 bytes each); past
+  an eighth of the memory budget (512 MiB by default, `Rete::spill_threshold`)
+  it is written to `TMPDIR` as sorted delta-encoded runs and counted by
+  merging them. That query now returns 609,765,497 (the card's count of
+  `dcite:PidRelation`) in 47 s at 1.5 GB peak RSS, and the ten
+  `COUNT(DISTINCT ?s)` invariant checks drop from 3.5–5.3 GB to 1.3–1.5 GB,
+  with identical answers. A resident open spills at the same threshold when
+  the command has a budget (`rete sparql` always does); the browser engine
+  never spills.
 - **Join order and join method follow the data's size.** Without a resident
   pyramid (every lazy open, every file built with `--memory-budget-mb`) the
   planner ordered patterns by how many constants they had and pushed
