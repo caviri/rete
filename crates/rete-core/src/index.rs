@@ -1352,6 +1352,48 @@ impl GraphIndex {
             .map(move |abc| perm.back(abc))
     }
 
+    /// A planner estimate of how many triples match `pattern`, read off the
+    /// tile directories alone — no tile is fetched or decoded, so it costs the
+    /// same on a lazy 50 GB file as on a resident one. `total` is the number
+    /// of triples the index holds (an upper bound is fine).
+    ///
+    /// For every carried permutation that leads with a bound component, the
+    /// routed tiles the synopsis admits are counted; a tile holds about
+    /// `total / tiles` triples, and the routed run is charged half a tile less
+    /// than its length, since a key rarely starts and ends on tile boundaries.
+    /// The smallest figure wins, so `?s a :Rare` (a few tiles of OPS) beats
+    /// `?s :p ?o` (every tile of `:p` in PSO). Its resolution is one tile:
+    /// patterns inside one tile tie, which is all a join order needs. A
+    /// pattern with no bound component estimates `total`; one the synopsis
+    /// rules out estimates 0.
+    pub(crate) fn estimate_matches(&self, pattern: Pattern, total: u64) -> f64 {
+        let mut best = total as f64;
+        for perm in self.perms.iter() {
+            let [pa, pb, pc] = perm.order_pattern(pattern);
+            if pa.is_none() {
+                continue;
+            }
+            let si = perm.section_index();
+            let tiles = &self.sections[si];
+            if tiles.is_empty() {
+                return 0.0;
+            }
+            let per_tile = total as f64 / tiles.len() as f64;
+            let (start, end) = self.tile_span(si, pa);
+            let admitted = tiles[start..end]
+                .iter()
+                .filter(|t| t.syn_admits(pb, pc))
+                .count();
+            let est = if admitted == 0 {
+                0.0
+            } else {
+                (admitted as f64 - 0.5) * per_tile
+            };
+            best = best.min(est);
+        }
+        best
+    }
+
     /// The tile index span a scan must visit: every tile when the leading
     /// component is unbound, else the run of tiles whose leading-id ranges
     /// cover it. Tile ranges are ascending; consecutive tiles may SHARE a
@@ -1405,6 +1447,41 @@ mod tests {
             .collect();
         v.sort_unstable();
         v
+    }
+
+    /// The tile-directory estimate orders patterns the way their true sizes
+    /// do, never fetches anything, and is exact at its extremes: unbound is the
+    /// total, a key no tile can hold is zero.
+    #[test]
+    fn tile_estimates_rank_patterns_by_size() {
+        // Predicate 1 on every subject, predicate 2 on a few; object 50 is a
+        // "class" with 4000 instances, object 60 one with 3.
+        let mut b = GraphIndexBuilder::new().with_tile_budget(256);
+        let mut n = 0u64;
+        for s in 0..4000u32 {
+            b.push((s, 1, 50));
+            b.push((s, 3, 1000 + s));
+            n += 2;
+            if s % 1000 == 0 {
+                b.push((s, 2, 60));
+                n += 1;
+            }
+        }
+        let idx = b.build();
+        let est = |p: Pattern| idx.estimate_matches(p, n);
+        assert_eq!(est((None, None, None)), n as f64);
+        assert!(est((None, Some(2), None)) < est((None, Some(1), None)));
+        assert!(est((None, None, Some(60))) < est((None, None, Some(50))));
+        assert!(est((Some(7), None, None)) < est((None, Some(3), None)));
+        // A big predicate spans many tiles; the rare one fits in at most one.
+        let per_tile = n as f64 / idx.tile_sections()[0].len() as f64;
+        assert!(est((None, Some(2), None)) <= 1.5 * per_tile);
+        assert!(est((None, Some(1), None)) > 10.0 * per_tile);
+        // A leading id beyond every tile's range is provably absent.
+        assert_eq!(est((Some(99_999), None, None)), 0.0);
+        // An empty index estimates nothing for a bound pattern.
+        let empty = GraphIndexBuilder::new().build();
+        assert_eq!(empty.estimate_matches((Some(1), None, None), 0), 0.0);
     }
 
     #[test]

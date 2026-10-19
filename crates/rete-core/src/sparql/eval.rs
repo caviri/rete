@@ -609,6 +609,16 @@ fn inst_named(ctx: &Ctx, n: &NamedNodePattern, b: &Row) -> Option<String> {
 /// other stage streams, so the slice's demand reaches the index scan.
 pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding>) {
     let ctx = query_ctx(rete, sel);
+    let raw = select_rows(&ctx, sel);
+    (sel.project.clone(), resolve_rows(&ctx, sel, raw))
+}
+
+/// [`run_select`] up to, not including, term resolution: the projected,
+/// sliced rows in `ctx`'s slot space. A subquery lands these in the outer
+/// query directly — dictionary ids stay ids — instead of resolving every
+/// value to a string and canonicalizing it back.
+fn select_rows(ctx: &Ctx, sel: &Select) -> Vec<Row> {
+    let rete = ctx.rete;
     // A pure LIMIT/OFFSET (no ORDER BY/DISTINCT/aggregate/HAVING, which all
     // consume their input fully) bounds how many rows the pipeline will pull â€”
     // joins below may switch to index probing. BIND only adds columns.
@@ -628,8 +638,8 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
     let mut merged = None;
     let active = active_index(rete, sel, &mut merged);
     let nf = sel.from_named.as_deref();
-    let source = eval_plan_iter(&ctx, active, nf, &sel.plan);
-    finish_select(&ctx, active, sel, source)
+    let source = eval_plan_iter(ctx, active, nf, &sel.plan);
+    finish_select_rows(ctx, active, sel, source)
 }
 
 /// Apply a SELECT's solution modifiers â€” aggregation, BIND, HAVING, ORDER BY,
@@ -643,6 +653,17 @@ fn finish_select<'a, 'q>(
     sel: &'q Select,
     source: RowIter<'q>,
 ) -> (Vec<String>, Vec<Binding>) {
+    let raw = finish_select_rows(ctx, active, sel, source);
+    (sel.project.clone(), resolve_rows(ctx, sel, raw))
+}
+
+/// [`finish_select`]'s modifier pipeline, ending at the sliced rows.
+fn finish_select_rows<'a, 'q>(
+    ctx: &'q Ctx<'a>,
+    active: &'q GraphIndex,
+    sel: &'q Select,
+    source: RowIter<'q>,
+) -> Vec<Row> {
     // Source rows: aggregation is blocking; everything else streams.
     let mut source: RowIter<'q> = match &sel.group {
         Some(g) => Box::new(aggregate(ctx, source, g).into_iter()),
@@ -712,9 +733,20 @@ fn finish_select<'a, 'q>(
     // (coalesced) range reads instead of one fetch per distinct output term,
     // which over a remote file is the difference between a few requests and
     // hundreds. Then resolve only the surviving rows' projected values.
-    let raw: Vec<Row> = source
+    source
         .skip(sel.offset)
         .take(sel.limit.unwrap_or(usize::MAX))
+        .collect()
+}
+
+/// Resolve a SELECT's sliced rows to named-term bindings: the projected
+/// variables (every bound slot for `SELECT *`), with the dictionary chunks the
+/// page needs faulted in one batch first.
+fn resolve_rows(ctx: &Ctx, sel: &Select, raw: Vec<Row>) -> Vec<Binding> {
+    let proj_slots: Vec<usize> = sel
+        .project
+        .iter()
+        .filter_map(|v| ctx.slots.slot(v))
         .collect();
     if sel.project.is_empty() {
         ctx.resolver
@@ -725,8 +757,7 @@ fn finish_select<'a, 'q>(
                 .flat_map(|r| proj_slots.iter().filter_map(|&slot| r[slot].as_ref())),
         );
     }
-    let rows: Vec<Binding> = raw
-        .into_iter()
+    raw.into_iter()
         .map(|row| {
             if sel.project.is_empty() {
                 row_to_binding(ctx, &row)
@@ -742,9 +773,7 @@ fn finish_select<'a, 'q>(
                 b
             }
         })
-        .collect();
-
-    (sel.project.clone(), rows)
+        .collect()
 }
 
 /// One community's subject membership: the VALUES rows that restrict a star's
@@ -1190,9 +1219,35 @@ pub(crate) fn eval_plan_iter<'q>(
         }
         // A nested SELECT: evaluate it independently, then surface each of its
         // projected solutions as an outer row (only the projected vars are set).
+        //
+        // The subquery runs in its own slot space; its rows move across by
+        // variable name, values untouched. Both sides share one dictionary and
+        // hold canonical values, so this is exactly the string round trip it
+        // replaces (resolve every value, canonicalize it back) without paying
+        // for it: a five-million-row `{ SELECT ?s WHERE { ?s a :Software } }`
+        // held every subject IRI as a string to do that.
         Plan::Subquery(sub) => {
-            let (_vars, bindings) = run_select(ctx.rete, sub);
-            Box::new(bindings_to_rows(ctx, bindings).into_iter())
+            let sub_ctx = query_ctx(ctx.rete, sub);
+            let raw = select_rows(&sub_ctx, sub);
+            let map: Vec<(usize, usize)> = if sub.project.is_empty() {
+                (0..sub_ctx.slots.len())
+                    .filter_map(|i| Some((i, ctx.slots.slot(sub_ctx.slots.name(i))?)))
+                    .collect()
+            } else {
+                sub.project
+                    .iter()
+                    .filter_map(|v| Some((sub_ctx.slots.slot(v)?, ctx.slots.slot(v)?)))
+                    .collect()
+            };
+            Box::new(raw.into_iter().map(move |r| {
+                let mut row = ctx.slots.empty_row();
+                for &(i, o) in &map {
+                    if let Some(v) = &r[i] {
+                        row[o] = Some(v.clone());
+                    }
+                }
+                row
+            }))
         }
         // SPARQL 1.1 federated query: ship the block's SPARQL text to the
         // endpoint through the host-injected client, land the returned
@@ -1852,7 +1907,7 @@ fn join_iter<'q>(
                     && crate::bgp::bgp_min_scan_bytes(ctx, index, patterns)
                         .is_none_or(|n| n >= crate::bgp::FAT_SCAN_BYTES));
             if probe {
-                return match ProbePlan::new(ctx, patterns, &lcert) {
+                return match ProbePlan::new(ctx, index, patterns, &lcert) {
                     Some(plan) => {
                         // Fat-gate path (no small demand bound): the left side
                         // is the small one by construction — materialize it and
