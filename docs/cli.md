@@ -340,7 +340,9 @@ named-graph count, pyramid levels, and top predicates. Notes the label-index and
 
 ### `rete verify <file>`
 Recompute the blake3 content hash and compare to the header. Exits non-zero with
-`FAILED — content hash mismatch` on corruption/truncation.
+`FAILED — content hash mismatch` on corruption/truncation. The hashed sections
+are streamed in 8 MiB reads, so verifying a 49 GB file needs megabytes, not
+49 GB (it used to read the whole file into memory).
 
 ### `rete search <file> [<prefix>] [--contains <word>…] [--contains-prefix P] [--limit N] [--json]`
 Two modes.
@@ -786,7 +788,7 @@ Evaluate a Basic Graph Pattern. Patterns are separated by ` . `, terms by spaces
 rete bgp data.rete "?x <http://ex/knows> ?y . ?y <http://ex/knows> ?z"
 ```
 
-### `rete sparql <file> "<query>" [--json] [--entail]`
+### `rete sparql <file> "<query>" [--json] [--entail] [--memory-budget-mb N]`
 Run SPARQL: `SELECT` / `ASK` / `CONSTRUCT` / `DESCRIBE`. With `--json`, emit
 standard SPARQL Results JSON (for `SELECT`/`ASK`). See [SPARQL support](sparql.md).
 
@@ -827,12 +829,27 @@ rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE 
 rete sparql data.rete "SELECT ?o WHERE { ?o a <…/Aves> }" --entail    # ontology-aware
 ```
 
-**Memory & I/O.** Local files above 1 GiB open through the same lazy range
-reader the `-url` commands use (threshold: `RETE_LOCAL_LAZY_ABOVE_MB`, block
-size: `RETE_BLOCK_KB`, cache capped at 256 MiB), and aggregation streams
-through per-group accumulators — a `COUNT` over a 9.83 B-triple file runs in a
-2 GiB container ([benchmark](BENCHMARK.md)). Preview a query's byte cost with
-`rete cost`, and see the exact ranges a query read with `rete why`.
+**Memory & I/O.** A local file larger than a quarter of the memory budget
+(1 GiB at the default) opens through the same lazy range reader the `-url`
+commands use (threshold override: `RETE_LOCAL_LAZY_ABOVE_MB`, block size:
+`RETE_BLOCK_KB`), and aggregation streams through per-group accumulators.
+Preview a query's byte cost with `rete cost`, and see the exact ranges a query
+read with `rete why`.
+
+**`--memory-budget-mb N`** (default 4096; `0` = unlimited) bounds what the
+lazy reader keeps resident: the decoded dictionary chunks, the decoded index
+tiles with their group directories, and the raw file blocks, split as for
+`rete export` (see "What `--memory-budget-mb N` bounds" below). Least recently
+used entries are evicted and re-read on demand, so the budget changes memory
+and speed, never the answer. Two per-query memos (decoded terms, parsed
+numbers) are capped at 64 MiB each on top. What the budget does **not** cover
+is the query's own working state: hash-join build sides, `GROUP BY` groups,
+`DISTINCT` sets and an unbounded `ORDER BY`, which grow with the data the query
+asks for (see [Memory budget](sparql.md#memory-budget)). Measured on the 49 GB
+DataCite file (9.53 B triples): `GROUP BY ?p` over the whole graph went from an
+out-of-memory kill at 16 GB to 876 s at 1.1 GB peak RSS, and a `CONTAINS` count
+over every title from 15.1 GB to 4.0 GB (the default budget, filled by the
+title dictionary chunks).
 
 ### `rete serve <file> [--bind addr] [--token t] [--journal path]`
 Serve one `.rete` — or a [manifest](manifest.md) of segments (`.json`), whose
@@ -1271,13 +1288,14 @@ bound term is unknown, the index is skipped entirely and the result is empty.
 rete query-url https://host/data.rete --object '<http://ex/Dave>'
 ```
 
-### `rete sparql-url <url> "<query>" [--json]`
+### `rete sparql-url <url> "<query>" [--json] [--entail] [--memory-budget-mb N]`
 Run a full SPARQL query over HTTP with **lazy tile faulting** (tiled
 files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
 query's scans and probes touch them, so a selective query reads O(touched
 tiles) rather than the whole index. A range failure mid-query is reported as
-an error, never as silently fewer rows.
+an error, never as silently fewer rows. `--memory-budget-mb` bounds the
+block, dictionary and tile caches exactly as for `rete sparql`.
 
 ```sh
 rete sparql-url https://host/data.rete \

@@ -968,6 +968,14 @@ enum Command {
         /// the raw data with no materialization (opt-in; off = exact-match).
         #[arg(long)]
         entail: bool,
+        /// Memory budget in MiB for reading the file (default 4096; 0 =
+        /// unlimited): bounds the dictionary chunk cache, the index tile cache
+        /// and the raw block cache of a lazily-opened file, which a file goes
+        /// to once it is larger than a quarter of the budget. Query operators
+        /// (hash tables, groups, DISTINCT sets) are not part of it. See
+        /// "Memory budget" in docs/sparql.md.
+        #[arg(long = "memory-budget-mb")]
+        memory_budget_mb: Option<u64>,
     },
     /// Serve a `.rete` as a live SPARQL 1.1 Protocol endpoint — queries AND
     /// SPARQL Update. The base file is never mutated: updates append to a
@@ -1074,6 +1082,13 @@ enum Command {
         /// while reading only the bytes the rewritten query touches.
         #[arg(long)]
         entail: bool,
+        /// Memory budget in MiB for reading the remote file (default 4096; 0 =
+        /// unlimited): bounds the dictionary chunk cache, the index tile cache
+        /// and the raw block cache of a lazily-opened file, Query operators
+        /// (hash tables, groups, DISTINCT sets) are not part of it. See
+        /// "Memory budget" in docs/sparql.md.
+        #[arg(long = "memory-budget-mb")]
+        memory_budget_mb: Option<u64>,
     },
     /// Explain a triple-pattern result over a **remote** `.rete` (HTTP range):
     /// which permutation, section, and byte ranges answer it — fetching only the
@@ -1600,7 +1615,8 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             query,
             json,
             entail,
-        } => commands::query::sparql(&file, &query, json, entail),
+            memory_budget_mb,
+        } => commands::query::sparql(&file, &query, json, entail, memory_budget_mb),
         Command::Serve {
             file,
             bind,
@@ -1625,7 +1641,8 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             query,
             json,
             entail,
-        } => commands::url::sparql_url(&url, &query, json, entail),
+            memory_budget_mb,
+        } => commands::url::sparql_url(&url, &query, json, entail, memory_budget_mb),
         Command::WhyUrl {
             url,
             subject,

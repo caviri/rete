@@ -438,6 +438,16 @@ const DICT_COALESCE_GAP: u64 = 64 * 1024;
 /// rather than OOM. See [`split_memory_budget`].
 pub const DEFAULT_EXPORT_BUDGET_MB: u64 = 4096;
 
+/// The default memory budget, in MiB, of a lazily-opened file — the bound on
+/// its dictionary chunk cache, index tile cache and raw block cache, split as
+/// [`split_memory_budget`] describes. `rete sparql --memory-budget-mb` (and
+/// the other query commands) default to it too, and so does every client that
+/// opens through [`Rete::open_ranged_lazy`] (Python, R, Java, the relay), so a
+/// long-lived session no longer grows with every tile a query ever touched.
+/// The same figure as [`DEFAULT_EXPORT_BUDGET_MB`]: one number governs reading
+/// a big file whatever the command.
+pub const DEFAULT_QUERY_BUDGET_MB: u64 = DEFAULT_EXPORT_BUDGET_MB;
+
 /// The lowest byte cap the dictionary chunk cache is ever given, whatever the
 /// budget. It only has to guarantee forward progress and hold a handful of
 /// chunks (a single front-coded run can dwarf the 64 KiB chunk budget — a
@@ -2289,6 +2299,54 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     Ok(hash_of_sections(&header, bytes)? == header.content_hash)
 }
 
+/// [`verify`] over a [`RangeReader`](crate::reader::RangeReader), streaming:
+/// the hashed sections are read in bounded slices and folded into one BLAKE3
+/// state, so peak memory is one slice, not the file. The same sections, in
+/// the same order, as `hash_of_sections`; on a 49 GB file the in-memory form
+/// needs 49 GB.
+pub fn verify_ranged(reader: &dyn crate::reader::RangeReader) -> Result<bool, FileError> {
+    /// Read size per step: large enough that a local or remote read is
+    /// throughput-bound, small enough to be negligible next to any budget.
+    const SLICE: u64 = 8 << 20;
+    let len = reader.len();
+    if len < HEADER_LEN as u64 {
+        return Err(FileError::Container("file shorter than its header"));
+    }
+    let header = Header::from_bytes(&reader.read_at(0, HEADER_LEN as u64)?)?;
+    let mut parts: Vec<(u64, u64)> = Vec::with_capacity(6);
+    if header.metadata_len > 0 {
+        parts.push((header.metadata_offset, header.metadata_len));
+    }
+    parts.push((header.dictionary_offset, header.dictionary_len));
+    parts.push((header.root_dir_offset, header.root_dir_len));
+    if header.pyramid_meta_len > 0 {
+        parts.push((header.pyramid_meta_offset, header.pyramid_meta_len));
+    }
+    if header.text_index_len > 0 {
+        parts.push((header.text_index_offset, header.text_index_len));
+    }
+    if header.named_graphs_len > 0 {
+        parts.push((header.named_graphs_offset, header.named_graphs_len));
+    }
+    let mut h = blake3::Hasher::new();
+    for (off, n) in parts {
+        // Offsets come straight from the header: reject an overrun (or an
+        // overflowing sum) before reading, as `hash_of_sections` does.
+        if off.checked_add(n).is_none_or(|end| end > len) {
+            return Err(FileError::Container("section overruns buffer"));
+        }
+        let mut at = off;
+        while at < off + n {
+            let take = (off + n - at).min(SLICE);
+            h.update(&reader.read_at(at, take)?);
+            at += take;
+        }
+    }
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&h.finalize().as_bytes()[..16]);
+    Ok(out == header.content_hash)
+}
+
 /// Faults the pyramid meta in on first access. `None` = the fetch failed.
 type PyramidLoader = Box<dyn Fn() -> Option<PyramidMeta> + Send + Sync>;
 
@@ -4048,7 +4106,7 @@ impl Rete {
             NamedGraphsSlot::Resident(Vec::new())
         };
 
-        Ok(Self {
+        let rete = Self {
             header,
             dict,
             index,
@@ -4060,7 +4118,19 @@ impl Rete {
             metadata: Vec::new(),
             service_client: None,
             service_error: std::sync::Mutex::new(None),
-        })
+        };
+        // A lazy open is the path for files too big to read whole, and the
+        // one a long-lived session (relay, Python/R/Java clients, `rete serve`)
+        // keeps resident across queries. Unbounded, its dictionary and tile
+        // caches grow with everything any query ever touched: a GROUP BY over
+        // a 9.5-billion-triple file ran a 16 GB container out of memory. Cap
+        // them by default; a caller that wants another figure (or unlimited)
+        // calls `set_memory_budget` again. Not on wasm32, whose 4 GiB address
+        // space makes the default meaningless and whose callers bound their own
+        // range budgets.
+        #[cfg(not(target_arch = "wasm32"))]
+        rete.set_memory_budget(Some(DEFAULT_QUERY_BUDGET_MB << 20));
+        Ok(rete)
     }
 
     /// Did any lazy fetch (index tile or dictionary chunk) fail since this
@@ -6678,6 +6748,10 @@ mod tests {
             "hash must be populated"
         );
         assert!(verify(&bytes).unwrap(), "freshly built file verifies");
+        assert!(
+            verify_ranged(&crate::reader::SliceReader::new(&bytes)).unwrap(),
+            "the streaming verify agrees"
+        );
 
         // Same data builds an identical hash (deterministic).
         assert_eq!(
@@ -6690,6 +6764,11 @@ mod tests {
         let last = tampered.len() - 5; // inside payload, before footer magic
         tampered[last] ^= 0xff;
         assert!(!verify(&tampered).unwrap());
+        assert!(!verify_ranged(&crate::reader::SliceReader::new(&tampered)).unwrap());
+        // A truncated file is an error, never a pass.
+        let short = &bytes[..bytes.len() / 2];
+        assert!(verify_ranged(&crate::reader::SliceReader::new(short)).is_err());
+        assert!(verify_ranged(&crate::reader::SliceReader::new(&bytes[..10])).is_err());
     }
 
     /// Build the standard 3-triple image with an opaque metadata payload.

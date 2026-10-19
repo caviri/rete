@@ -888,7 +888,9 @@ named-graph count, pyramid levels, and top predicates. Notes the label-index and
 <strong>text-index</strong> sizes when the file carries them.</p>
 <h3 id="rete-verify-file"><code>rete verify &lt;file&gt;</code></h3>
 <p>Recompute the blake3 content hash and compare to the header. Exits non-zero with
-<code>FAILED — content hash mismatch</code> on corruption/truncation.</p>
+<code>FAILED — content hash mismatch</code> on corruption/truncation. The hashed sections
+are streamed in 8 MiB reads, so verifying a 49 GB file needs megabytes, not
+49 GB (it used to read the whole file into memory).</p>
 <h3 id="rete-search-file-prefix---contains-word---contains-prefix-p---limit-n---json"><code>rete search &lt;file&gt; [&lt;prefix&gt;] [--contains &lt;word&gt;…] [--contains-prefix P] [--limit N] [--json]</code></h3>
 <p>Two modes.</p>
 <p><strong>Label prefix</strong> (default) — the subjects whose label starts with <code>prefix</code>
@@ -1259,7 +1261,7 @@ range.</p>
 <code>?name</code> is a variable (terms may not contain spaces).</p>
 <pre><code class="language-sh">rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
 </code></pre>
-<h3 id="rete-sparql-file-query---json---entail"><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json] [--entail]</code></h3>
+<h3 id="rete-sparql-file-query---json---entail---memory-budget-mb-n"><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json] [--entail] [--memory-budget-mb N]</code></h3>
 <p>Run SPARQL: <code>SELECT</code> / <code>ASK</code> / <code>CONSTRUCT</code> / <code>DESCRIBE</code>. With <code>--json</code>, emit
 standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
 <p><code>--entail</code> turns on <strong>OWL 2 QL reasoning</strong>: the query is rewritten so the answer
@@ -1292,12 +1294,26 @@ instead. See <a href="sparql.html#union-default-graph">Union default graph</a>.<
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
-<p><strong>Memory &amp; I/O.</strong> Local files above 1 GiB open through the same lazy range
-reader the <code>-url</code> commands use (threshold: <code>RETE_LOCAL_LAZY_ABOVE_MB</code>, block
-size: <code>RETE_BLOCK_KB</code>, cache capped at 256 MiB), and aggregation streams
-through per-group accumulators — a <code>COUNT</code> over a 9.83 B-triple file runs in a
-2 GiB container (<a href="BENCHMARK.html">benchmark</a>). Preview a query's byte cost with
-<code>rete cost</code>, and see the exact ranges a query read with <code>rete why</code>.</p>
+<p><strong>Memory &amp; I/O.</strong> A local file larger than a quarter of the memory budget
+(1 GiB at the default) opens through the same lazy range reader the <code>-url</code>
+commands use (threshold override: <code>RETE_LOCAL_LAZY_ABOVE_MB</code>, block size:
+<code>RETE_BLOCK_KB</code>), and aggregation streams through per-group accumulators.
+Preview a query's byte cost with <code>rete cost</code>, and see the exact ranges a query
+read with <code>rete why</code>.</p>
+<p><strong><code>--memory-budget-mb N</code></strong> (default 4096; <code>0</code> = unlimited) bounds what the
+lazy reader keeps resident: the decoded dictionary chunks, the decoded index
+tiles with their group directories, and the raw file blocks, split as for
+<code>rete export</code> (see "What <code>--memory-budget-mb N</code> bounds" below). Least recently
+used entries are evicted and re-read on demand, so the budget changes memory
+and speed, never the answer. Two per-query memos (decoded terms, parsed
+numbers) are capped at 64 MiB each on top. What the budget does <strong>not</strong> cover
+is the query's own working state: hash-join build sides, <code>GROUP BY</code> groups,
+<code>DISTINCT</code> sets and an unbounded <code>ORDER BY</code>, which grow with the data the query
+asks for (see <a href="sparql.html#memory-budget">Memory budget</a>). Measured on the 49 GB
+DataCite file (9.53 B triples): <code>GROUP BY ?p</code> over the whole graph went from an
+out-of-memory kill at 16 GB to 876 s at 1.1 GB peak RSS, and a <code>CONTAINS</code> count
+over every title from 15.1 GB to 4.0 GB (the default budget, filled by the
+title dictionary chunks).</p>
 <h3 id="rete-serve-file---bind-addr---token-t---journal-path"><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
 <p>Serve one <code>.rete</code> — or a <a href="manifest.html">manifest</a> of segments (<code>.json</code>), whose
 visible fold becomes the served state — as a live <strong>SPARQL 1.1 Protocol
@@ -1654,13 +1670,14 @@ permutation payload rather than the whole index container. If a
 bound term is unknown, the index is skipped entirely and the result is empty.</p>
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
-<h3 id="rete-sparql-url-url-query---json"><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json]</code></h3>
+<h3 id="rete-sparql-url-url-query---json---entail---memory-budget-mb-n"><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json] [--entail] [--memory-budget-mb N]</code></h3>
 <p>Run a full SPARQL query over HTTP with <strong>lazy tile faulting</strong> (tiled
 files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
 query's scans and probes touch them, so a selective query reads O(touched
 tiles) rather than the whole index. A range failure mid-query is reported as
-an error, never as silently fewer rows.</p>
+an error, never as silently fewer rows. <code>--memory-budget-mb</code> bounds the
+block, dictionary and tile caches exactly as for <code>rete sparql</code>.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
 </code></pre>

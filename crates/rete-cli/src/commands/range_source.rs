@@ -24,6 +24,41 @@ fn lazy_threshold_bytes() -> u64 {
         .unwrap_or(DEFAULT_LAZY_ABOVE_BYTES)
 }
 
+/// The byte budget a query command runs under, from its `--memory-budget-mb`:
+/// omitted = [`rete_core::DEFAULT_QUERY_BUDGET_MB`], `0` = unlimited (`None`).
+pub(crate) fn query_budget(mb: Option<u64>) -> Option<u64> {
+    match mb.unwrap_or(rete_core::DEFAULT_QUERY_BUDGET_MB) {
+        0 => None,
+        mb => Some(mb.saturating_mul(1 << 20)),
+    }
+}
+
+/// [`open_local`] under an explicit memory budget (`None` = unlimited).
+///
+/// An eager open holds the file image, its decoded dictionary and every index
+/// permutation — about three to four times the file — and none of that can be
+/// evicted. So a file goes lazy once a quarter of the budget no longer covers
+/// it (1 GiB at the 4096 MiB default, the long-standing threshold), and the lazy
+/// open's caches are capped to the budget. `RETE_LOCAL_LAZY_ABOVE_MB` still
+/// overrides the threshold.
+pub(crate) fn open_local_budget(path: &str, budget: Option<u64>) -> anyhow::Result<Rete> {
+    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let threshold = match std::env::var("RETE_LOCAL_LAZY_ABOVE_MB") {
+        Ok(_) => lazy_threshold_bytes(),
+        Err(_) => budget.map_or(DEFAULT_LAZY_ABOVE_BYTES, |b| b / 4),
+    };
+    if std::env::var("RETE_OPEN_DEBUG").is_ok() {
+        eprintln!(
+            "[open_local_budget] {path}: len={len} threshold={threshold} -> {}",
+            if len > threshold { "LAZY" } else { "EAGER" }
+        );
+    }
+    if len <= threshold {
+        return Ok(Rete::open(&std::fs::read(path)?)?);
+    }
+    open_local_lazy(path, len, budget)
+}
+
 /// Open a local `.rete`, reading it whole only when that is actually cheaper.
 ///
 /// `Rete::open` takes a full file image and decodes every dictionary chunk up

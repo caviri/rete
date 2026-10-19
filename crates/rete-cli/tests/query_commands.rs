@@ -93,3 +93,39 @@ fn cypher_and_federation_keep_standard_sparql_results_json() {
     assert!(federated["results"]["bindings"].is_array());
     assert!(federated.get("schemaVersion").is_none());
 }
+
+/// `--memory-budget-mb` changes how much the reader may keep resident, never
+/// the answer: the same query over the eager open, a lazy open at the default
+/// budget, a lazy open under a tiny budget and an unlimited one all agree.
+#[test]
+fn sparql_memory_budget_never_changes_the_answer() {
+    let fixture = common::fixture();
+    let q = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o";
+    let run = |lazy: bool, budget: Option<&str>| -> String {
+        let mut cmd = common::rete();
+        cmd.arg("sparql").arg(&fixture.rete).arg(q);
+        if let Some(b) = budget {
+            cmd.args(["--memory-budget-mb", b]);
+        }
+        if lazy {
+            cmd.env("RETE_LOCAL_LAZY_ABOVE_MB", "0");
+        }
+        let out = cmd.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let eager = run(false, None);
+    assert!(eager.contains("example.test/bob"), "{eager}");
+    for (lazy, budget) in [
+        (true, None),
+        (true, Some("1")),
+        (true, Some("0")),
+        (false, Some("1")),
+    ] {
+        assert_eq!(run(lazy, budget), eager, "lazy={lazy} budget={budget:?}");
+    }
+}

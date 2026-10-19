@@ -72,14 +72,20 @@ pub fn alloc_footprint(n: u64) -> u64 {
 /// per-run offset table. Evicted as a unit; handed out behind an `Arc` so it
 /// outlives its map slot (see the module docs).
 ///
-/// Index tiles never populate `runs` — their derived group directory stays a
-/// per-`Tile` `OnceLock` — so the field costs one unset word there.
+/// An index tile's derived group directory lives here too (`dir`), so it is
+/// evicted with the tile it indexes: it used to be a per-`Tile` `OnceLock` in
+/// the always-resident tile directory, and a probe-heavy query that touched a
+/// million tiles kept a million directories — often larger than the tiles —
+/// whatever the cache cap. Dictionary chunks never populate `dir`, tiles never
+/// populate `runs`; each costs one unset word on the other.
 pub struct CacheEntry {
     body: Arc<[u8]>,
     /// A dictionary chunk's per-run byte offsets, relative to `body`. Computed
     /// once on first lookup (via [`runs`](CacheEntry::runs)) and cached here so
     /// it is evicted together with the body it indexes.
     runs: OnceLock<Arc<[usize]>>,
+    /// An index tile's a-group directory (see [`group_dir`](CacheEntry::group_dir)).
+    dir: OnceLock<crate::triples::GroupDirectory>,
 }
 
 impl CacheEntry {
@@ -107,6 +113,22 @@ impl CacheEntry {
             return &[];
         }
         &self.runs.get_or_init(|| Arc::from(compute(&self.body)))[..]
+    }
+
+    /// This tile's a-group directory, building it with `compute` on first call.
+    /// The `bool` is true when this call built it — the caller then charges its
+    /// size to the cache ([`ChunkCache::charge_extra`]).
+    #[inline]
+    pub fn group_dir(
+        &self,
+        compute: impl FnOnce() -> crate::triples::GroupDirectory,
+    ) -> (&crate::triples::GroupDirectory, bool) {
+        let mut built = false;
+        let d = self.dir.get_or_init(|| {
+            built = true;
+            compute()
+        });
+        (d, built)
     }
 
     /// Bytes this entry charges against the cap: what the allocator really
@@ -261,6 +283,7 @@ impl ChunkCache {
         let entry = Arc::new(CacheEntry {
             body,
             runs: OnceLock::new(),
+            dir: OnceLock::new(),
         });
         let charge = entry.charge();
         inner.next_seq += 1;
@@ -276,6 +299,23 @@ impl ChunkCache {
         inner.resident_bytes += charge;
         self.evict_to_cap(&mut inner);
         entry
+    }
+
+    /// Charge `extra` more bytes to `key`'s slot — for state derived from a
+    /// body after it was inserted (a tile's group directory) — then evict down
+    /// to the cap. A no-op if the slot no longer holds `entry` (it was evicted,
+    /// or replaced): that state then dies with the last handle to it.
+    pub fn charge_extra(&self, key: CacheKey, entry: &Arc<CacheEntry>, extra: u64) {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(slot) = inner.map.get_mut(&key) else {
+            return;
+        };
+        if !Arc::ptr_eq(&slot.entry, entry) {
+            return;
+        }
+        slot.charge += extra;
+        inner.resident_bytes += extra;
+        self.evict_to_cap(&mut inner);
     }
 
     /// Get `key`, or fault it in through `fetch` (called **off-lock**) and cache
@@ -336,6 +376,30 @@ mod tests {
 
     fn charge_of(n: u64) -> u64 {
         alloc_footprint(n + ARC_HEADER) + ENTRY_OVERHEAD
+    }
+
+    #[test]
+    fn derived_state_is_charged_and_evicted_with_its_body() {
+        let one = charge_of(1000);
+        let cache = ChunkCache::new(2 * one + 10);
+        let a = cache.insert((0, 1), body(1000, 1));
+        let b = cache.insert((0, 2), body(1000, 2));
+        assert_eq!(cache.stats().resident_bytes, 2 * one);
+        // Building `b`'s directory and charging it pushes the total over the
+        // cap: the least-recently-used entry (`a`) goes.
+        let (dir, built) = b.group_dir(crate::triples::GroupDirectory::empty_for_tests);
+        assert!(built && dir.is_empty());
+        let (_, again) = b.group_dir(|| unreachable!("built once"));
+        assert!(!again);
+        cache.charge_extra((0, 2), &b, 100);
+        let st = cache.stats();
+        assert_eq!(st.entries, 1);
+        assert_eq!(st.resident_bytes, one + 100);
+        assert!(cache.get((0, 1)).is_none() && cache.get((0, 2)).is_some());
+        // A handle whose slot is gone (or holds another entry) charges nothing.
+        cache.charge_extra((0, 1), &a, 1 << 20);
+        cache.charge_extra((0, 2), &a, 1 << 20);
+        assert_eq!(cache.stats().resident_bytes, one + 100);
     }
 
     #[test]
