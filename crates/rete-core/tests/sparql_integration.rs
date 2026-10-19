@@ -1274,3 +1274,83 @@ fn contains_pushdown_matches_scan() {
         );
     }
 }
+
+/// Property paths keep SPARQL's bag multiplicities (SPARQL 1.1 §9.3, §18.4):
+/// an alternative `a|b` is the `Union` of its branches and a sequence `a/b`
+/// is a `Join` through a hidden variable, so both can repeat a solution. The
+/// arbitrary-length forms and the negated property set are sets. The data
+/// and the first two queries are the spec's own §9.3 example.
+#[test]
+fn property_paths_keep_bag_multiplicities() {
+    let int5 = format!("\"5\"^^{XSD_INT}");
+    let raw: Vec<(String, String, String)> = [
+        ("order", "item", "z1"),
+        ("order", "item", "z2"),
+        ("a", "cites", "t"),
+        ("a", "references", "t"),
+        ("b", "cites", "t"),
+    ]
+    .iter()
+    .map(|(s, p, o)| (iri(s), iri(p), iri(o)))
+    .chain([
+        (iri("z1"), iri("price"), int5.clone()),
+        (iri("z2"), iri("price"), int5.clone()),
+    ])
+    .collect();
+    let refs: Vec<(&str, &str, &str)> = raw
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let rows = |q: &str| eval_sparql(&rete, &format!("{PREFIX}{q}")).unwrap().1;
+
+    // §9.3: the sequence repeats ?s once per intermediate item.
+    assert_eq!(rows("SELECT * WHERE { ?s ex:item/ex:price ?x }").len(), 2);
+    let total = rows("SELECT (SUM(?x) AS ?total) WHERE { ex:order ex:item/ex:price ?x }");
+    assert_eq!(total[0]["total"], format!("\"10\"^^{XSD_INT}"));
+
+    // The alternative is a union: `a` reaches t through both predicates.
+    let s = col(
+        &rete,
+        "SELECT ?s WHERE { ?s (ex:cites|ex:references) ex:t }",
+        "s",
+    );
+    assert_eq!(s, vec![iri("a"), iri("a"), iri("b")]);
+    let s = col(
+        &rete,
+        "SELECT ?s WHERE { ex:t ^(ex:cites|ex:references) ?s }",
+        "s",
+    );
+    assert_eq!(s, vec![iri("a"), iri("a"), iri("b")]);
+    let n = rows("SELECT (COUNT(*) AS ?n) WHERE { ?s (ex:cites|ex:references) ex:t }");
+    assert_eq!(n[0]["n"], format!("\"3\"^^{XSD_INT}"));
+    // ... both endpoints bound: one empty solution per branch that holds.
+    assert_eq!(
+        rows("SELECT * WHERE { ex:a (ex:cites|ex:references) ex:t }").len(),
+        2
+    );
+    // ... and DISTINCT still removes the repeat.
+    let s = col(
+        &rete,
+        "SELECT DISTINCT ?s WHERE { ?s (ex:cites|ex:references) ex:t }",
+        "s",
+    );
+    assert_eq!(s, vec![iri("a"), iri("b")]);
+
+    // Connectivity forms count each reachable node once (§9.4).
+    let s = col(
+        &rete,
+        "SELECT ?s WHERE { ?s (ex:cites|ex:references)+ ex:t }",
+        "s",
+    );
+    assert_eq!(s, vec![iri("a"), iri("b")]);
+    let s = col(
+        &rete,
+        "SELECT ?s WHERE { ?s (ex:cites|ex:references)? ex:t }",
+        "s",
+    );
+    assert_eq!(s, vec![iri("a"), iri("b"), iri("t")]);
+    // The negated property set is a set too: `a` has two qualifying edges to t.
+    let s = col(&rete, "SELECT ?s WHERE { ?s !(ex:item) ex:t }", "s");
+    assert_eq!(s, vec![iri("a"), iri("b")]);
+}
