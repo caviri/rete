@@ -707,11 +707,20 @@ are evicted and re-read when touched again, so the budget trades speed for
 memory and never changes an answer. The per-query term and number memos are
 capped at 64 MiB each. The browser engine is not capped: its 32-bit heap is
 smaller than the default, and its callers bound their own range budgets.</p>
-<p>The budget does not cover the query's own working state, which follows from
-what the query asks for: the build side of a hash join, <code>GROUP BY</code> groups,
-<code>DISTINCT</code> and <code>COUNT(DISTINCT …)</code> sets, and an <code>ORDER BY</code> without <code>LIMIT</code>.
-A <code>GROUP BY</code> with a few hundred groups over billions of rows stays small; a
-<code>COUNT(DISTINCT ?x)</code> over hundreds of millions of values does not.</p>
+<p><code>COUNT(DISTINCT …)</code> is bounded by the same figure: its distinct values are
+kept as a sorted, deduplicated buffer of dictionary ids (8 bytes each), and
+past an eighth of the budget (512 MiB by default) the buffer is written to the
+temporary directory (<code>TMPDIR</code>) as a sorted, delta-encoded run; the count is
+then a merge of the runs. It is exact at any budget. On DataCite,
+<code>COUNT(DISTINCT ?r)</code> over the 610 M <code>dcite:PidRelation</code>s ran out of memory at
+16 GB; it now returns 609,765,497 in 47 s at 1.5 GB peak RSS. A resident
+(eager) open spills at the same threshold when the command was given a budget
+(<code>rete sparql</code> always is); the browser engine never spills.</p>
+<p>The budget does not cover the rest of the query's own working state, which
+follows from what the query asks for: the build side of a hash join,
+<code>GROUP BY</code> groups, <code>SELECT DISTINCT</code> sets, and an <code>ORDER BY</code> without <code>LIMIT</code>.
+A <code>GROUP BY</code> with a few hundred groups over billions of rows stays small; one
+with hundreds of millions of groups does not.</p>
 <h3 id="community-split-evaluation">Community-split evaluation</h3>
 <p>The engine can also evaluate a SELECT with a <strong>split-where-sound,
 global-where-not</strong> strategy that always returns exactly the whole-graph

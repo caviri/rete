@@ -1306,10 +1306,12 @@ tiles with their group directories, and the raw file blocks, split as for
 <code>rete export</code> (see "What <code>--memory-budget-mb N</code> bounds" below). Least recently
 used entries are evicted and re-read on demand, so the budget changes memory
 and speed, never the answer. Two per-query memos (decoded terms, parsed
-numbers) are capped at 64 MiB each on top. What the budget does <strong>not</strong> cover
-is the query's own working state: hash-join build sides, <code>GROUP BY</code> groups,
-<code>DISTINCT</code> sets and an unbounded <code>ORDER BY</code>, which grow with the data the query
-asks for (see <a href="sparql.html#memory-budget">Memory budget</a>). Measured on the 49 GB
+numbers) are capped at 64 MiB each on top, and <code>COUNT(DISTINCT …)</code> keeps at
+most an eighth of the budget in memory, spilling sorted runs to <code>TMPDIR</code> past
+it (exact either way). What the budget does <strong>not</strong> cover is the rest of the
+query's own working state: hash-join build sides, <code>GROUP BY</code> groups,
+<code>SELECT DISTINCT</code> sets and an unbounded <code>ORDER BY</code>, which grow with the data
+the query asks for (see <a href="sparql.html#memory-budget">Memory budget</a>). Measured on the 49 GB
 DataCite file (9.53 B triples): <code>GROUP BY ?p</code> over the whole graph went from an
 out-of-memory kill at 16 GB to 876 s at 1.1 GB peak RSS, and a <code>CONTAINS</code> count
 over every title from 15.1 GB to 4.0 GB (the default budget, filled by the
