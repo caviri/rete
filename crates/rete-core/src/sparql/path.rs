@@ -163,6 +163,54 @@ fn reach_from(
     }
 }
 
+/// Nodes reachable from `start` along `ast`, each with the **number of
+/// solutions** SPARQL gives that pair — the bag semantics of SPARQL 1.1
+/// §18.4. A predicate step is a triple pattern (one solution per matching
+/// triple); an alternative `a|b` is a `Union` of its branches, so a pair both
+/// branches reach counts twice; a sequence `a/b` is a `Join` through a fresh
+/// variable projected away, so it counts every intermediate node (§9.3: "can
+/// lead to duplicates"). The arbitrary-length forms `*`, `+`, `?` and the
+/// negated property set are defined as sets — connectivity, not a count of the
+/// ways to connect — so they contribute 1 per reachable node, through
+/// [`reach_from`].
+fn reach_counted(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    ast: &PathAst,
+    start: u32,
+    cache: &mut AdjCache,
+) -> std::collections::BTreeMap<u32, u64> {
+    use std::collections::BTreeMap;
+    let mut out: BTreeMap<u32, u64> = BTreeMap::new();
+    match ast {
+        PathAst::Pred(p, rev) => {
+            for n in successors(ctx, index, cache, p, *rev, start) {
+                *out.entry(n).or_default() += 1;
+            }
+        }
+        PathAst::Alt(a, b) => {
+            out = reach_counted(ctx, index, a, start, cache);
+            for (n, c) in reach_counted(ctx, index, b, start, cache) {
+                *out.entry(n).or_default() += c;
+            }
+        }
+        PathAst::Seq(a, b) => {
+            for (m, c) in reach_counted(ctx, index, a, start, cache) {
+                for (n, d) in reach_counted(ctx, index, b, m, cache) {
+                    *out.entry(n).or_default() += c * d;
+                }
+            }
+        }
+        PathAst::Rep(inner, Rep::One) => out = reach_counted(ctx, index, inner, start, cache),
+        PathAst::Rep(..) | PathAst::NegatedSet(..) => {
+            for n in reach_from(ctx, index, ast, start, cache) {
+                out.insert(n, 1);
+            }
+        }
+    }
+    out
+}
+
 /// Build a solution row binding the subject/object endpoints (consistently for
 /// a repeated variable like `?x <path> ?x`).
 fn bind_pair(ctx: &Ctx, subj: &PatternTerm, obj: &PatternTerm, a: u32, b: u32) -> Option<Row> {
@@ -249,14 +297,14 @@ pub(super) fn eval_path(
                 PatternTerm::Const(o) => Some(dict.node_of_term(o)),
                 _ => None,
             };
-            for e in reach_from(ctx, index, ast, sn, &mut cache) {
+            for (e, n) in reach_counted(ctx, index, ast, sn, &mut cache) {
                 if let Some(on) = obj_node {
                     if on != Some(e) {
                         continue;
                     }
                 }
                 if let Some(b) = bind_pair(ctx, subj, obj, sn, e) {
-                    out.push(b);
+                    push_n(&mut out, b, n);
                 }
             }
         }
@@ -271,27 +319,36 @@ pub(super) fn eval_path(
                 return out;
             };
             let rev = reverse(ast.clone());
-            for s in reach_from(ctx, index, &rev, on, &mut cache) {
+            for (s, n) in reach_counted(ctx, index, &rev, on, &mut cache) {
                 if let Some(b) = bind_pair(ctx, subj, obj, s, on) {
-                    out.push(b);
+                    push_n(&mut out, b, n);
                 }
             }
         }
         // Both unbound: enumerate from every node (inherently expensive).
         (PatternTerm::Var(_), PatternTerm::Var(_)) => {
             for start in 0..dict.node_count() {
-                for e in reach_from(ctx, index, ast, start, &mut cache) {
+                for (e, n) in reach_counted(ctx, index, ast, start, &mut cache) {
                     if let Some(b) = bind_pair(ctx, subj, obj, start, e) {
-                        out.push(b);
+                        push_n(&mut out, b, n);
                     }
                 }
             }
         }
     }
 
+    // Sorted for a stable order. Not deduplicated: equal rows are the path's
+    // multiplicities (see `reach_counted`), which SPARQL keeps.
     out.sort();
-    out.dedup();
     out
+}
+
+/// Push `n` copies of `row`.
+fn push_n(out: &mut Vec<Row>, row: Row, n: u64) {
+    for _ in 1..n {
+        out.push(row.clone());
+    }
+    out.push(row);
 }
 
 #[cfg(test)]
