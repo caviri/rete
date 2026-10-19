@@ -672,6 +672,23 @@ resolved to strings only at projection. It is still not a <em>cost-based</em> pl
 join order is a selectivity heuristic — and the benchmark page separates
 correctness coverage from latency and calls out the shapes where Oxigraph still
 wins.</p>
+<h3 id="memory-budget">Memory budget</h3>
+<p>A file opened lazily — every <code>-url</code> command, a local file larger than a
+quarter of the budget, and every client that opens through the ranged reader
+(Python, R, Java, the relay) — keeps three caches: decoded dictionary chunks,
+decoded index tiles (with the per-tile group directories that point lookups
+build) and raw file blocks. They are capped by one memory budget, <strong>4096 MiB by
+default</strong> (<code>rete sparql --memory-budget-mb N</code>, <code>0</code> = unlimited; a client that
+wants another figure calls <code>set_memory_budget</code>). Least recently used entries
+are evicted and re-read when touched again, so the budget trades speed for
+memory and never changes an answer. The per-query term and number memos are
+capped at 64 MiB each. The browser engine is not capped: its 32-bit heap is
+smaller than the default, and its callers bound their own range budgets.</p>
+<p>The budget does not cover the query's own working state, which follows from
+what the query asks for: the build side of a hash join, <code>GROUP BY</code> groups,
+<code>DISTINCT</code> and <code>COUNT(DISTINCT …)</code> sets, and an <code>ORDER BY</code> without <code>LIMIT</code>.
+A <code>GROUP BY</code> with a few hundred groups over billions of rows stays small; a
+<code>COUNT(DISTINCT ?x)</code> over hundreds of millions of values does not.</p>
 <h3 id="community-split-evaluation">Community-split evaluation</h3>
 <p>The engine can also evaluate a SELECT with a <strong>split-where-sound,
 global-where-not</strong> strategy that always returns exactly the whole-graph
