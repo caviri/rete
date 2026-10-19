@@ -145,7 +145,11 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
     // Join the patterns most-constrained-first (and keeping the join connected),
     // so intermediate relations stay small. Pure reordering: the hash join is
     // order-independent, so the result is unchanged.
-    let order = selectivity_order(ctx, &lowered);
+    let order = selectivity_order(ctx, index, &lowered);
+    // What a full scan of each pattern would produce (its own constants only),
+    // from the tile directory: the probe-vs-scan decision below compares it
+    // with the running result.
+    let scan_est = tile_estimates(ctx, index, &lowered, &std::collections::HashSet::new());
     let mut rows: Vec<Row> = vec![ctx.slots.empty_row()];
     let mut bound: Vec<usize> = Vec::new();
     let mut merged: [bool; 2] = [false, false];
@@ -185,15 +189,20 @@ pub(crate) fn eval_bgp_rows(ctx: &Ctx, index: &GraphIndex, patterns: &[TriplePat
         // sequential fetches, while scanning a selectively-bound pattern is a few
         // coalesced reads — so remotely we only probe a broad (whole-predicate)
         // pattern, or a tiny prefix, and never a large one.
+        //
+        // Whatever the reader, probe when the scan would be far larger than
+        // the rows asking about it: 517 `?s a :Service` rows must not scan
+        // and materialize all 109 M `publicationYear` triples to keep 517.
         let do_probe = !bound.is_empty()
             && shares_bound
             && !rows.is_empty()
-            && if index.is_remote() {
-                rows.len() <= remote_probe_max(index)
-                    && (rows.len() <= REMOTE_PROBE_MIN || !pattern_is_selective(&t))
-            } else {
-                rows.len() <= BGP_PROBE_THRESHOLD
-            };
+            && (probe_beats_scan(rows.len(), scan_est[idx])
+                || if index.is_remote() {
+                    rows.len() <= remote_probe_max(index)
+                        && (rows.len() <= REMOTE_PROBE_MIN || !pattern_is_selective(&t))
+                } else {
+                    rows.len() <= BGP_PROBE_THRESHOLD
+                });
         if do_probe {
             let taken = std::mem::take(&mut rows);
             // Over a lazy reader each probe is a byte-range round trip, and they run
@@ -370,6 +379,108 @@ fn try_merge_join(
 /// prefix already pinned ?x to a few dozen rows); a *moderately* large prefix
 /// keeps the one-pass scan + hash join, which beats thousands of probes.
 const BGP_PROBE_THRESHOLD: usize = 512;
+
+/// A pattern whose estimated scan is below this many triples is never worth
+/// planning around: scanning it is cheap whatever the other side holds. Keeps
+/// every small graph (the W3C suite, the playground datasets) on the joins it
+/// always used.
+const PROBE_SCAN_FLOOR: f64 = 65_536.0;
+
+/// Probe instead of scanning once the scan is at least this many times larger
+/// than the rows that would probe it. A probe is a tile-directory binary search
+/// plus a group lookup in an (often cached) tile; a scan pays per triple, and
+/// on the hash-join path also materializes every one of them.
+const PROBE_RATIO: f64 = 16.0;
+
+/// Is probing `rows` bound rows cheaper than scanning a pattern estimated at
+/// `scan_est` triples?
+fn probe_beats_scan(rows: usize, scan_est: f64) -> bool {
+    scan_est >= limits().probe_floor && (rows as f64) * PROBE_RATIO <= scan_est
+}
+
+/// The planner's size thresholds, gathered so tests can shrink them and drive
+/// every join path over a graph small enough to check by hand.
+#[derive(Clone, Copy)]
+struct PlanLimits {
+    probe_floor: f64,
+    stream_seed: f64,
+    hash_build: f64,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_LIMITS: std::cell::Cell<Option<PlanLimits>> = const { std::cell::Cell::new(None) };
+}
+
+fn limits() -> PlanLimits {
+    #[cfg(test)]
+    if let Some(l) = TEST_LIMITS.with(|c| c.get()) {
+        return l;
+    }
+    PlanLimits {
+        probe_floor: PROBE_SCAN_FLOOR,
+        stream_seed: STREAM_SEED_ROWS,
+        hash_build: HASH_BUILD_ROWS,
+    }
+}
+
+/// A BGP whose most selective pattern is estimated above this many matches is
+/// **streamed** rather than joined into a materialized prefix
+/// ([`BgpSolutions`]): every later pattern is then joined per row (probe) or
+/// against a small materialized pattern (hash), so resident memory no longer
+/// follows the largest pattern. `?s dcite:doi ?d . ?s dcite:fromSnapshot ?x`
+/// materialized 109 M rows before joining and ran a 16 GB container out of
+/// memory.
+const STREAM_SEED_ROWS: f64 = (1u64 << 21) as f64;
+
+/// On the streaming path, a later pattern estimated at no more than this many
+/// matches is scanned once into a hash table; a larger one is probed per row.
+const HASH_BUILD_ROWS: f64 = (1u64 << 20) as f64;
+
+/// Tile-directory cardinality estimates ([`GraphIndex::estimate_matches`]) for
+/// each lowered pattern. A variable an outer seed row binds is a constant at
+/// run time but unknown now: it scales the estimate by the same default
+/// selectivities [`pattern_estimates`] falls back to. An unsatisfiable
+/// constant estimates 0.
+fn tile_estimates(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+    seed: &std::collections::HashSet<usize>,
+) -> Vec<f64> {
+    const SEL_SUBJECT: f64 = 0.001;
+    const SEL_OBJECT: f64 = 0.02;
+    const SEL_PREDICATE: f64 = 0.05;
+    let dict = ctx.rete.dictionary();
+    let total = ctx.rete.header().quad_count;
+    let seeded = |x: &SlotTerm| matches!(x, SlotTerm::Var(v) if seed.contains(v));
+    lowered
+        .iter()
+        .map(|t| {
+            let (Some(s), Some(p), Some(o)) = (
+                const_subject(&t.0, dict),
+                const_predicate(&t.1),
+                const_object(&t.2, dict),
+            ) else {
+                return 0.0;
+            };
+            let mut est = index.estimate_matches((s, p, o), total);
+            if est == 0.0 {
+                return 0.0;
+            }
+            if seeded(&t.0) {
+                est *= SEL_SUBJECT;
+            }
+            if seeded(&t.1) {
+                est *= SEL_PREDICATE;
+            }
+            if seeded(&t.2) {
+                est *= SEL_OBJECT;
+            }
+            est.max(1.0)
+        })
+        .collect()
+}
 
 /// Remote (lazy) probe bounds. Over HTTP byte-range reads, a per-row probe is a
 /// network round-trip, so we probe far more reluctantly than in memory: only when
@@ -690,8 +801,12 @@ pub(crate) const FAT_SCAN_BYTES: u64 = 2 << 20;
 /// stay small. Cardinality comes from [`pattern_estimates`]; with no summary it
 /// falls back to a most-constants-first heuristic. Pure reordering — `hash_join`
 /// is order-independent, so the result multiset is unchanged.
-fn selectivity_order(ctx: &Ctx, lowered: &[(SlotTerm, SlotTerm, SlotTerm)]) -> Vec<usize> {
-    selectivity_order_seeded(ctx, lowered, &std::collections::HashSet::new())
+fn selectivity_order(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+) -> Vec<usize> {
+    selectivity_order_seeded(ctx, index, lowered, &std::collections::HashSet::new())
 }
 
 /// [`selectivity_order`] with a set of slots already bound by an outer seed
@@ -699,10 +814,21 @@ fn selectivity_order(ctx: &Ctx, lowered: &[(SlotTerm, SlotTerm, SlotTerm)]) -> V
 /// fallback, as constants for selectivity).
 fn selectivity_order_seeded(
     ctx: &Ctx,
+    index: &GraphIndex,
     lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
     seed: &std::collections::HashSet<usize>,
 ) -> Vec<usize> {
-    let estimates = pattern_estimates(ctx, lowered, seed);
+    // Exact per-predicate statistics when the pyramid is resident; otherwise
+    // (the lazy path, and files built without a pyramid) the tile-directory
+    // estimate, which needs no fetch. That one also counts a class's own
+    // instances (`?s a :C` routes to the tiles of `:C`), so the
+    // class-enumeration rule below, a stand-in for exactly that missing
+    // number, applies only to the pyramid figures, whose `rdf:type`
+    // selectivity is an average over classes.
+    let (estimates, per_class) = match pattern_estimates(ctx, lowered, seed) {
+        Some(e) => (Some(e), false),
+        None => (Some(tile_estimates(ctx, index, lowered, seed)), true),
+    };
     let consts = |t: &(SlotTerm, SlotTerm, SlotTerm)| {
         [&t.0, &t.1, &t.2]
             .into_iter()
@@ -740,7 +866,8 @@ fn selectivity_order_seeded(
     let type_pid = ctx.rete.dictionary().predicate_id(crate::file::RDF_TYPE);
     let is_class_enum = |i: usize, bound: &std::collections::HashSet<usize>| -> bool {
         let t = &lowered[i];
-        type_pid.is_some_and(|tp| matches!(t.1, SlotTerm::Pred(p) if p == tp))
+        !per_class
+            && type_pid.is_some_and(|tp| matches!(t.1, SlotTerm::Pred(p) if p == tp))
             && matches!(t.2, SlotTerm::Node(_))
             && matches!(t.0, SlotTerm::Var(v) if !bound.contains(&v))
     };
@@ -841,6 +968,100 @@ pub(crate) struct BgpSolutions<'q> {
 }
 
 impl<'q> BgpSolutions<'q> {
+    /// Yield `rows` as complete solutions (no prefix merge).
+    fn passthrough(rows: Box<dyn Iterator<Item = Row> + 'q>) -> Self {
+        BgpSolutions {
+            scan: Some(rows),
+            prefix: Vec::new(),
+            buckets: HashMap::new(),
+            shared: Vec::new(),
+            cartesian: false,
+            seed_only: true,
+            cur_scan: None,
+            matches: Vec::new(),
+            mi: 0,
+        }
+    }
+
+    /// The fully streaming join, for a BGP whose most selective pattern is
+    /// itself large ([`STREAM_SEED_ROWS`]). Nothing proportional to it is ever
+    /// held: the seed pattern streams from its index cursor (or, when the next
+    /// pattern is just as large and shares its subject variable, both stream
+    /// through a merge join), and each later pattern joins per row — through
+    /// a hash table when the pattern is small ([`HASH_BUILD_ROWS`]), by an
+    /// index probe otherwise. Same solution multiset as the materializing
+    /// path; only the row order differs.
+    fn streaming(
+        ctx: &'q Ctx<'q>,
+        index: &'q GraphIndex,
+        lowered: &[(SlotTerm, SlotTerm, SlotTerm)],
+        order: &[usize],
+        est: &[f64],
+    ) -> Self {
+        let (mut stream, mut bound, skip): (Box<dyn Iterator<Item = Row> + 'q>, Vec<usize>, usize) =
+            match (est[order[1]] > limits().stream_seed)
+                .then(|| merge_stream(ctx, index, lowered[order[0]], lowered[order[1]]))
+                .flatten()
+            {
+                Some((m, slots)) => (m, slots, 2),
+                None => {
+                    let t = lowered[order[0]];
+                    let Some(scan) = scan_rows(ctx, index, t) else {
+                        return Self::empty();
+                    };
+                    (Box::new(scan), pattern_slots(&t), 1)
+                }
+            };
+        for &i in &order[skip..] {
+            let t = lowered[i];
+            let slots = pattern_slots(&t);
+            let shared: Vec<usize> = slots
+                .iter()
+                .copied()
+                .filter(|s| bound.contains(s))
+                .collect();
+            if !shared.is_empty() && est[i] > limits().hash_build {
+                stream = Box::new(stream.flat_map(move |base| probe_rows(ctx, index, t, base)));
+            } else {
+                // Small (or unconnected) pattern: scan it once into a table
+                // keyed on the shared slots and join every streamed row to it.
+                let Some((rel, _)) = pattern_rows(ctx, index, &t) else {
+                    return Self::empty();
+                };
+                let mut table: HashMap<Vec<Val>, Vec<Row>> = HashMap::new();
+                for r in rel {
+                    let key: Vec<Val> = shared.iter().map(|&s| r[s].clone().unwrap()).collect();
+                    table.entry(key).or_default().push(r);
+                }
+                let fill = slots.clone();
+                stream = Box::new(stream.flat_map(move |base| {
+                    let key: Vec<Val> = shared.iter().map(|&s| base[s].clone().unwrap()).collect();
+                    let out: Vec<Row> = table
+                        .get(&key)
+                        .map(|rs| {
+                            rs.iter()
+                                .map(|r| {
+                                    let mut row = base.clone();
+                                    for &s in &fill {
+                                        row[s] = r[s].clone();
+                                    }
+                                    row
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    out.into_iter()
+                }));
+            }
+            for s in slots {
+                if !bound.contains(&s) {
+                    bound.push(s);
+                }
+            }
+        }
+        Self::passthrough(stream)
+    }
+
     /// An iterator that yields nothing (an unsatisfiable BGP).
     fn empty() -> Self {
         BgpSolutions {
@@ -877,7 +1098,13 @@ impl<'q> BgpSolutions<'q> {
         };
         // Join all but the *last* (least selective) pattern eagerly into the
         // prefix; a single pattern leaves the seed row as the prefix.
-        let order = selectivity_order(ctx, &lowered);
+        let order = selectivity_order(ctx, index, &lowered);
+        let scan_est = tile_estimates(ctx, index, &lowered, &std::collections::HashSet::new());
+        // Even the most selective pattern is big: materializing it as the
+        // prefix would hold every one of its rows. Stream the whole join.
+        if order.len() >= 2 && scan_est[order[0]] > limits().stream_seed {
+            return Self::streaming(ctx, index, &lowered, &order, &scan_est);
+        }
         let (&last_i, prefix_is) = order.split_last().unwrap();
         let prefix_pats: Vec<TriplePattern> =
             prefix_is.iter().map(|&i| patterns[i].clone()).collect();
@@ -886,11 +1113,6 @@ impl<'q> BgpSolutions<'q> {
             return Self::empty();
         }
 
-        // Stream the last pattern with the lazy index cursor.
-        let Some(scan) = scan_rows(ctx, index, lowered[last_i]) else {
-            return Self::empty();
-        };
-
         // Hash-join key = slots shared by the prefix and the last pattern (BGP
         // rows bind every slot of their pattern set, so the prefix's bound set
         // can be read off its first row).
@@ -898,6 +1120,25 @@ impl<'q> BgpSolutions<'q> {
             .into_iter()
             .filter(|&s| prefix[0][s].is_some())
             .collect();
+
+        // A few prefix rows against a big last pattern: look each one up
+        // instead of scanning the pattern. `?r :relationSubject <doi> . ?r ?p
+        // ?o` has four prefix rows and a last pattern that is the whole graph.
+        if !shared.is_empty() && probe_beats_scan(prefix.len(), scan_est[last_i]) {
+            let t = lowered[last_i];
+            if index.is_remote() {
+                prefetch_rows_for(ctx, index, t, &prefix);
+            }
+            let stream = prefix
+                .into_iter()
+                .flat_map(move |base| probe_rows(ctx, index, t, base));
+            return Self::passthrough(Box::new(stream));
+        }
+
+        // Stream the last pattern with the lazy index cursor.
+        let Some(scan) = scan_rows(ctx, index, lowered[last_i]) else {
+            return Self::empty();
+        };
         let cartesian = shared.is_empty();
         // A single-pattern BGP joins against the all-unbound seed: scanned rows
         // are already complete solutions.
@@ -958,6 +1199,144 @@ impl Iterator for BgpSolutions<'_> {
             }
             self.mi = 0;
             self.cur_scan = Some(s);
+        }
+    }
+}
+
+/// Batch-fault the tiles that probing `t` from each of `rows` will route to
+/// (remote readers only; see [`GraphIndex::prefetch_probe_tiles`]).
+fn prefetch_rows_for(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    t: (SlotTerm, SlotTerm, SlotTerm),
+    rows: &[Row],
+) {
+    let pats: Vec<Pattern> = rows
+        .iter()
+        .filter_map(|base| {
+            match (
+                probe_subject(ctx, &t.0, base),
+                probe_predicate(ctx, &t.1, base),
+                probe_object(ctx, &t.2, base),
+            ) {
+                (Some(s), Some(p), Some(o)) => Some((s, p, o)),
+                _ => None,
+            }
+        })
+        .collect();
+    index.prefetch_probe_tiles(&pats);
+}
+
+/// A **streaming** merge join of two patterns that share exactly one variable,
+/// in the subject position of both: each side streams from a permutation
+/// sorted on subject ([`GraphIndex::scan_iter_sorted_on`]) and only the
+/// current subject's rows are held. Restricted to the subject column because a
+/// subject's rows are its out-edges, a small run; an object run (every
+/// instance of a class) can be the whole pattern. `None` when the shape does
+/// not qualify; the caller then streams the first pattern alone.
+#[allow(clippy::type_complexity)]
+fn merge_stream<'q>(
+    ctx: &'q Ctx<'q>,
+    index: &'q GraphIndex,
+    ta: (SlotTerm, SlotTerm, SlotTerm),
+    tb: (SlotTerm, SlotTerm, SlotTerm),
+) -> Option<(Box<dyn Iterator<Item = Row> + 'q>, Vec<usize>)> {
+    let sa = pattern_slots(&ta);
+    let sb = pattern_slots(&tb);
+    let shared: Vec<usize> = sa.iter().copied().filter(|s| sb.contains(s)).collect();
+    let [v] = shared[..] else {
+        return None;
+    };
+    if !matches!(ta.0, SlotTerm::Var(i) if i == v) || !matches!(tb.0, SlotTerm::Var(i) if i == v) {
+        return None;
+    }
+    let dict = ctx.rete.dictionary();
+    let lower = |t: &(SlotTerm, SlotTerm, SlotTerm)| -> Option<Pattern> {
+        Some((
+            const_subject(&t.0, dict)?,
+            const_predicate(&t.1)?,
+            const_object(&t.2, dict)?,
+        ))
+    };
+    let side = |t: (SlotTerm, SlotTerm, SlotTerm)| -> Option<KeyedRows<'q>> {
+        let it = index.scan_iter_sorted_on(lower(&t)?, 0)?;
+        let keyed: Box<dyn Iterator<Item = (u32, Row)> + 'q> =
+            Box::new(it.filter_map(move |tri| triple_row(ctx, &t, tri).map(|r| (tri.0, r))));
+        Some(keyed.peekable())
+    };
+    let a = side(ta)?;
+    let b = side(tb)?;
+    let mut slots = sa;
+    for s in sb {
+        if !slots.contains(&s) {
+            slots.push(s);
+        }
+    }
+    Some((
+        Box::new(MergeStream {
+            a,
+            b,
+            ra: Vec::new(),
+            rb: Vec::new(),
+            i: 0,
+            j: 0,
+        }),
+        slots,
+    ))
+}
+
+type KeyedRows<'q> = std::iter::Peekable<Box<dyn Iterator<Item = (u32, Row)> + 'q>>;
+
+/// The two-pointer merge behind [`merge_stream`]: `ra`/`rb` hold the current
+/// equal-key runs and `(i, j)` walks their cross product lazily.
+struct MergeStream<'q> {
+    a: KeyedRows<'q>,
+    b: KeyedRows<'q>,
+    ra: Vec<Row>,
+    rb: Vec<Row>,
+    i: usize,
+    j: usize,
+}
+
+impl Iterator for MergeStream<'_> {
+    type Item = Row;
+
+    fn next(&mut self) -> Option<Row> {
+        loop {
+            while self.i < self.ra.len() {
+                if self.j < self.rb.len() {
+                    let j = self.j;
+                    self.j += 1;
+                    if let Some(m) = crate::row::merge_rows(&self.ra[self.i], &self.rb[j]) {
+                        return Some(m);
+                    }
+                } else {
+                    self.i += 1;
+                    self.j = 0;
+                }
+            }
+            let ka = self.a.peek()?.0;
+            let kb = self.b.peek()?.0;
+            match ka.cmp(&kb) {
+                std::cmp::Ordering::Less => {
+                    self.a.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    self.b.next();
+                }
+                std::cmp::Ordering::Equal => {
+                    self.ra.clear();
+                    self.rb.clear();
+                    while let Some((_, r)) = self.a.next_if(|(k, _)| *k == ka) {
+                        self.ra.push(r);
+                    }
+                    while let Some((_, r)) = self.b.next_if(|(k, _)| *k == ka) {
+                        self.rb.push(r);
+                    }
+                    self.i = 0;
+                    self.j = 0;
+                }
+            }
         }
     }
 }
@@ -1072,14 +1451,19 @@ impl ProbePlan {
     /// Lower and order `patterns` for probing from rows that bind (at least)
     /// the slots in `seed_mask`. `None` = a constant term is unknown, making
     /// the BGP unsatisfiable for every seed.
-    pub(crate) fn new(ctx: &Ctx, patterns: &[TriplePattern], seed_mask: &[bool]) -> Option<Self> {
+    pub(crate) fn new(
+        ctx: &Ctx,
+        index: &GraphIndex,
+        patterns: &[TriplePattern],
+        seed_mask: &[bool],
+    ) -> Option<Self> {
         let lowered = lower(patterns, ctx)?;
         let seed: std::collections::HashSet<usize> = seed_mask
             .iter()
             .enumerate()
             .filter_map(|(i, b)| b.then_some(i))
             .collect();
-        let order = selectivity_order_seeded(ctx, &lowered, &seed);
+        let order = selectivity_order_seeded(ctx, index, &lowered, &seed);
         Some(ProbePlan {
             pats: order.into_iter().map(|i| lowered[i]).collect(),
         })
@@ -1103,7 +1487,7 @@ impl<'q> ProbeJoin<'q> {
         index: &'q GraphIndex,
         patterns: &[TriplePattern],
     ) -> Option<Self> {
-        let plan = ProbePlan::new(ctx, patterns, &vec![false; ctx.slots.len()])?;
+        let plan = ProbePlan::new(ctx, index, patterns, &vec![false; ctx.slots.len()])?;
         Some(Self::from_plan(ctx, index, &plan, ctx.slots.empty_row()))
     }
 
@@ -1286,6 +1670,111 @@ mod tests {
             s: PatternTerm::parse(s),
             p: PatternTerm::parse(p),
             o: PatternTerm::parse(o),
+        }
+    }
+
+    /// Every join path the planner can pick — materialized prefix, probed last
+    /// pattern, streamed seed with hashed or probed later patterns, streaming
+    /// merge join — returns the same solution multiset. The thresholds are
+    /// shrunk so a 400-triple graph takes each path.
+    #[test]
+    fn every_join_path_returns_the_same_solutions() {
+        let mut owned: Vec<(String, String, String)> = Vec::new();
+        let mut x: u64 = 7;
+        let mut next = |m: u64| {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (x >> 33) % m
+        };
+        for i in 0..60 {
+            let s = format!("s{i}");
+            owned.push((s.clone(), "a".into(), format!("C{}", next(3))));
+            for p in 0..4 {
+                for _ in 0..next(3) {
+                    owned.push((s.clone(), format!("p{p}"), format!("s{}", next(60))));
+                }
+            }
+        }
+        let triples: Vec<(&str, &str, &str)> = owned
+            .iter()
+            .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+            .collect();
+        let bytes = rete_from(&triples);
+        let rete = Rete::open(&bytes).unwrap();
+        let queries: Vec<Vec<TriplePattern>> = vec![
+            vec![pat("?s", "p0", "?a"), pat("?s", "p1", "?b")],
+            vec![pat("?s", "a", "C1"), pat("?s", "p0", "?a")],
+            vec![pat("?s", "p0", "?a"), pat("?a", "p2", "?b")],
+            vec![pat("s5", "p0", "?a"), pat("?a", "?p", "?o")],
+            vec![pat("?s", "p0", "?x"), pat("?s", "p1", "?x")],
+            vec![
+                pat("?s", "p3", "?o"),
+                pat("?o", "a", "C0"),
+                pat("?s", "p1", "?z"),
+            ],
+            vec![
+                pat("?s", "p0", "?a"),
+                pat("?s", "p1", "?b"),
+                pat("?b", "p2", "?c"),
+            ],
+        ];
+        let run = |limits: Option<PlanLimits>| -> Vec<Vec<Vec<(String, String)>>> {
+            TEST_LIMITS.with(|c| c.set(limits));
+            let out = queries
+                .iter()
+                .map(|q| {
+                    let mut slots = crate::row::Slots::new();
+                    collect_pattern_slots(q, &mut slots);
+                    let ctx = Ctx::new(&rete, slots);
+                    let mut rows: Vec<Vec<(String, String)>> =
+                        BgpSolutions::new(&ctx, rete.default_index(), q)
+                            .map(|r| row_to_binding(&ctx, &r).into_iter().collect())
+                            .collect();
+                    rows.sort();
+                    rows
+                })
+                .collect();
+            TEST_LIMITS.with(|c| c.set(None));
+            out
+        };
+        let reference = run(None);
+        assert!(reference.iter().all(|r| !r.is_empty()), "{reference:?}");
+        for (name, l) in [
+            (
+                "probe everything",
+                PlanLimits {
+                    probe_floor: 0.0,
+                    stream_seed: f64::MAX,
+                    hash_build: f64::MAX,
+                },
+            ),
+            (
+                "stream + hash",
+                PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: 0.0,
+                    hash_build: f64::MAX,
+                },
+            ),
+            (
+                "stream + probe",
+                PlanLimits {
+                    probe_floor: f64::MAX,
+                    stream_seed: 0.0,
+                    hash_build: 0.0,
+                },
+            ),
+            (
+                "stream, all paths",
+                PlanLimits {
+                    probe_floor: 0.0,
+                    stream_seed: 0.0,
+                    hash_build: 30.0,
+                },
+            ),
+        ] {
+            assert_eq!(run(Some(l)), reference, "{name}");
         }
     }
 

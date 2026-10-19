@@ -7,6 +7,25 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Join order and join method follow the data's size.** Without a resident
+  pyramid (every lazy open, every file built with `--memory-budget-mb`) the
+  planner ordered patterns by how many constants they had and pushed
+  `?s a :Class` to the end, so on DataCite `?s a dcite:Service ;
+  dcite:publicationYear ?y` started from the 109 M years and ran out of memory
+  at 16 GB, although there are 517 services. The planner now estimates each
+  pattern from the tile directory (tiles routed × triples per tile; no read,
+  and per class), looks a pattern up per row when the rows found so far are
+  at least 16 times fewer than the pattern (a bound subject becomes an SPO
+  range read), streams the whole join when even the most selective pattern is
+  large (per-row lookups, small patterns hashed, two large subject-sharing
+  patterns merge-joined), and lands sub-select rows as dictionary ids instead
+  of strings. On DataCite: the class × predicate joins run in 1.1–56 s within
+  4.5 GB (were out of memory), `?r dcite:relationSubject <doi> . ?r ?p ?o` in
+  0.9 s (was out of memory, then 968 s), the bound-subject chains `e_join_a`/
+  `e_join_b` in 0.9 s (were 32 and 54 s), `?s dcite:doi ?d . ?s
+  dcite:fromSnapshot ?x` in 17 s at 1.1 GB (was out of memory). Results are
+  unchanged, except that a `LIMIT` without `ORDER BY` may return a different
+  (equally valid) page.
 - **`rete sparql` and every lazily-opened file now run under a memory
   budget.** The dictionary chunk cache, the index tile cache and the raw block
   cache of a lazy open were unbounded on every query path (only `rete export`

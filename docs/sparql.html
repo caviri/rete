@@ -668,10 +668,33 @@ bare <code>COUNT(*)</code> is a single counter, and a <code>GROUP BY</code> over
 container (numbers on the <a href="BENCHMARK.html">benchmark page</a>). What still
 materializes its input: a no-<code>LIMIT</code> <code>ORDER BY</code>, and a multi-graph <code>FROM</code> (a
 single <code>FROM &lt;g&gt;</code> borrows that graph's index without copying). Terms are
-resolved to strings only at projection. It is still not a <em>cost-based</em> planner —
-join order is a selectivity heuristic — and the benchmark page separates
-correctness coverage from latency and calls out the shapes where Oxigraph still
-wins.</p>
+resolved to strings only at projection.</p>
+<p><strong>Join order and join method.</strong> A basic graph pattern is joined most selective
+pattern first, keeping the join connected. The size of each pattern comes from
+the pyramid's exact per-predicate statistics when the pyramid is resident, and
+otherwise from the index's tile directory, which every file has and which a
+lazy open already holds: the number of tiles a pattern routes to, times the
+average triples per tile. That second figure needs no read and counts a class's
+own instances, so on a 9.53 B-triple file <code>?s a :Service ; :publicationYear ?y</code> starts from the 517 services, not from the 109 M years. Then, per pattern:</p>
+<ul>
+<li>when the rows found so far are few next to the pattern (at least 16 times
+fewer, and the pattern above 65,536 triples), each row <strong>looks the pattern
+up</strong> in the index instead of scanning it — a bound subject becomes an SPO
+range read, so <code>&lt;doi&gt; :p ?r . ?r ?q ?o</code> reads the handful of <code>?r</code> rows and
+never the whole graph;</li>
+<li>when even the most selective pattern is large (above about two million
+matches), the join <strong>streams</strong>: that pattern is read from its index cursor
+and every later pattern is joined per row, through a hash table when it is
+small and by lookup otherwise; two large patterns that share their subject
+variable stream through a merge join. Nothing proportional to the large
+pattern is held;</li>
+<li>otherwise the small side is materialized and hash-joined, as before.</li>
+</ul>
+<p>A sub-select's rows enter the outer query as dictionary ids, never resolved to
+strings in between. It is still not a cost-based optimizer over the whole
+algebra (only within a basic graph pattern), and the benchmark page separates
+correctness coverage from latency and calls out the shapes where Oxigraph
+still wins.</p>
 <h3 id="memory-budget">Memory budget</h3>
 <p>A file opened lazily — every <code>-url</code> command, a local file larger than a
 quarter of the budget, and every client that opens through the ranged reader
