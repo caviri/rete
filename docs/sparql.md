@@ -121,11 +121,21 @@ memory and never changes an answer. The per-query term and number memos are
 capped at 64 MiB each. The browser engine is not capped: its 32-bit heap is
 smaller than the default, and its callers bound their own range budgets.
 
-The budget does not cover the query's own working state, which follows from
-what the query asks for: the build side of a hash join, `GROUP BY` groups,
-`DISTINCT` and `COUNT(DISTINCT …)` sets, and an `ORDER BY` without `LIMIT`.
-A `GROUP BY` with a few hundred groups over billions of rows stays small; a
-`COUNT(DISTINCT ?x)` over hundreds of millions of values does not.
+`COUNT(DISTINCT …)` is bounded by the same figure: its distinct values are
+kept as a sorted, deduplicated buffer of dictionary ids (8 bytes each), and
+past an eighth of the budget (512 MiB by default) the buffer is written to the
+temporary directory (`TMPDIR`) as a sorted, delta-encoded run; the count is
+then a merge of the runs. It is exact at any budget. On DataCite,
+`COUNT(DISTINCT ?r)` over the 610 M `dcite:PidRelation`s ran out of memory at
+16 GB; it now returns 609,765,497 in 47 s at 1.5 GB peak RSS. A resident
+(eager) open spills at the same threshold when the command was given a budget
+(`rete sparql` always is); the browser engine never spills.
+
+The budget does not cover the rest of the query's own working state, which
+follows from what the query asks for: the build side of a hash join,
+`GROUP BY` groups, `SELECT DISTINCT` sets, and an `ORDER BY` without `LIMIT`.
+A `GROUP BY` with a few hundred groups over billions of rows stays small; one
+with hundreds of millions of groups does not.
 
 ### Community-split evaluation
 

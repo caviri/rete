@@ -54,7 +54,11 @@ pub(crate) fn open_local_budget(path: &str, budget: Option<u64>) -> anyhow::Resu
         );
     }
     if len <= threshold {
-        return Ok(Rete::open(&std::fs::read(path)?)?);
+        let rete = Rete::open(&std::fs::read(path)?)?;
+        // A resident open has no evictable caches to cap, but a query's
+        // `COUNT(DISTINCT …)` still spills past the budget's share.
+        rete.set_spill_threshold(budget.map(rete_core::spill_threshold_for));
+        return Ok(rete);
     }
     open_local_lazy(path, len, budget)
 }

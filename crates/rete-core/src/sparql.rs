@@ -16,6 +16,7 @@ use crate::file::Rete;
 
 mod aggregate;
 mod diag;
+mod distinct;
 mod eval;
 mod expr;
 mod lower;
