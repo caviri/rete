@@ -2299,10 +2299,11 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     Ok(hash_of_sections(&header, bytes)? == header.content_hash)
 }
 
-/// [`verify`] over a [`RangeReader`], streaming: the hashed sections are read
-/// in bounded slices and folded into one BLAKE3 state, so peak memory is one
-/// slice, not the file. The same sections, in the same order, as
-/// [`hash_of_sections`] — on a 49 GB file the in-memory form needs 49 GB.
+/// [`verify`] over a [`RangeReader`](crate::reader::RangeReader), streaming:
+/// the hashed sections are read in bounded slices and folded into one BLAKE3
+/// state, so peak memory is one slice, not the file. The same sections, in
+/// the same order, as `hash_of_sections`; on a 49 GB file the in-memory form
+/// needs 49 GB.
 pub fn verify_ranged(reader: &dyn crate::reader::RangeReader) -> Result<bool, FileError> {
     /// Read size per step: large enough that a local or remote read is
     /// throughput-bound, small enough to be negligible next to any budget.
