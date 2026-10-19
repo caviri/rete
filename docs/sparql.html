@@ -641,6 +641,14 @@ distance — are covered by a focused set of GeoSPARQL functions; see
 <h2 id="property-paths">Property paths</h2>
 <p>Property paths are evaluated goal-directed from a bound endpoint and support
 <code>p+</code>, <code>p*</code>, <code>p?</code>, reverse <code>^p</code>, sequence <code>a/b</code>, and alternative <code>a|b</code>.</p>
+<h3 id="duplicates">Duplicates</h3>
+<p>Paths follow SPARQL 1.1's bag semantics (§9.3, §18.4). An alternative <code>a|b</code> is
+the union of its branches, so a pair that both branches connect is returned
+twice: with <code>:x :cites :t</code> and <code>:x :references :t</code>, <code>?s (:cites|:references) :t</code> returns <code>:x</code> twice. A sequence <code>a/b</code> is a join through a hidden variable,
+so it returns a pair once per intermediate node. The connectivity operators
+<code>*</code>, <code>+</code> and <code>?</code>, and a negated property set <code>!(…)</code>, return each reachable
+node once, however many ways it is reached. Use <code>SELECT DISTINCT</code> (or
+<code>COUNT(DISTINCT …)</code>) to count nodes rather than paths.</p>
 <h3 id="zero-length-semantics">Zero-length semantics</h3>
 <p><code>*</code> and <code>?</code> include the zero-length path (a node reaches itself); <code>+</code> does not.
 This holds in every binding direction:</p>
