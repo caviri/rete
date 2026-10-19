@@ -7,6 +7,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Fixed
 
+- **Property-path alternatives keep SPARQL's duplicates.** `?s (:a|:b) ?o`
+  is the union of the two branches (SPARQL 1.1 §18.4), so a pair both
+  predicates connect is two solutions; rete evaluated every path as a set and
+  returned it once. A sequence nested inside an alternative (`(:a/:b)|:c`) was
+  deduplicated the same way. Both now keep their multiplicities; `*`, `+`,
+  `?` and negated property sets stay sets, as the spec defines them. On
+  DataCite `?s (dcite:cites|dcite:references) <doi>` now counts 8,929 — the
+  1,218 `cites` plus 7,711 `references` of the equivalent `UNION` — instead of
+  8,897 (32 records state both). Use `SELECT DISTINCT` to count nodes rather
+  than paths.
 - **`COUNT(DISTINCT …)` is bounded and exact.** It kept every distinct value
   in an ordered set (about 40 bytes each), so `COUNT(DISTINCT ?r)` over the
   610 M PID relations of DataCite ran out of memory at 16 GB. Distinct values
