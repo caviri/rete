@@ -448,6 +448,13 @@ pub const DEFAULT_EXPORT_BUDGET_MB: u64 = 4096;
 /// a big file whatever the command.
 pub const DEFAULT_QUERY_BUDGET_MB: u64 = DEFAULT_EXPORT_BUDGET_MB;
 
+/// The [`Rete::spill_threshold`] a memory budget implies: an eighth of it. A
+/// spilling `COUNT(DISTINCT …)` buffer can briefly occupy about twice its
+/// threshold while it sorts, so this keeps it within a quarter of the budget.
+pub fn spill_threshold_for(budget: u64) -> u64 {
+    budget / 8
+}
+
 /// The lowest byte cap the dictionary chunk cache is ever given, whatever the
 /// budget. It only has to guarantee forward progress and hold a handful of
 /// chunks (a single front-coded run can dwarf the 64 KiB chunk budget — a
@@ -3058,6 +3065,9 @@ pub struct Rete {
     /// pipeline is infallible (the same contract as lazy tile fetches), so the
     /// failure is recorded here and taken by the top-level eval entry points.
     service_error: std::sync::Mutex<Option<String>>,
+    /// Bytes a query's `COUNT(DISTINCT …)` set may hold before it spills to
+    /// disk — see [`Rete::spill_threshold`].
+    spill_threshold: std::sync::atomic::AtomicU64,
 }
 
 impl Rete {
@@ -3138,6 +3148,7 @@ impl Rete {
             metadata,
             service_client: None,
             service_error: std::sync::Mutex::new(None),
+            spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
         })
     }
 
@@ -4028,6 +4039,7 @@ impl Rete {
             metadata: Vec::new(),
             service_client: None,
             service_error: std::sync::Mutex::new(None),
+            spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
         })
     }
 
@@ -4118,6 +4130,7 @@ impl Rete {
             metadata: Vec::new(),
             service_client: None,
             service_error: std::sync::Mutex::new(None),
+            spill_threshold: std::sync::atomic::AtomicU64::new(u64::MAX),
         };
         // A lazy open is the path for files too big to read whole, and the
         // one a long-lived session (relay, Python/R/Java clients, `rete serve`)
@@ -4188,6 +4201,7 @@ impl Rete {
     /// heap), for `RETE_OPEN_DEBUG` logging.
     pub fn set_memory_budget(&self, budget: Option<u64>) -> MemoryBudget {
         let total = budget.unwrap_or(u64::MAX);
+        self.set_spill_threshold(budget.map(spill_threshold_for));
         let mut split = split_memory_budget(total);
         let fixed = if total == u64::MAX {
             0
@@ -4224,6 +4238,27 @@ impl Rete {
             );
         }
         split
+    }
+
+    /// How many bytes a query's `COUNT(DISTINCT …)` keeps in memory before it
+    /// writes sorted runs to the temporary directory (`TMPDIR`) and counts by
+    /// merging them; the count is exact either way. `u64::MAX` (the default of
+    /// an eager open) never spills. [`set_memory_budget`](Self::set_memory_budget)
+    /// sets it to an eighth of the budget, so a lazy open spills past 512 MiB
+    /// by default.
+    pub fn spill_threshold(&self) -> u64 {
+        self.spill_threshold
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Set [`spill_threshold`](Self::spill_threshold) without touching the
+    /// caches — for an eager (resident) open, whose caches cannot be capped.
+    /// `None` = never spill.
+    pub fn set_spill_threshold(&self, bytes: Option<u64>) {
+        self.spill_threshold.store(
+            bytes.unwrap_or(u64::MAX),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// The dictionary chunk cache's observability counters (decoded chunks and

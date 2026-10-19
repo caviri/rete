@@ -11,11 +11,12 @@
 //! (`COUNT(DISTINCT)`, `GROUP_CONCAT`) hold per-group state, and only proportional
 //! to their distinct/concatenated values.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use crate::row::{Ctx, Row, Val};
 
+use super::distinct::DistinctSet;
 use super::{as_number, fmt_num_typed, lexical, Agg, GroupSpec};
 
 /// A single aggregate's running state — updated per row, finalized once per group.
@@ -51,7 +52,9 @@ enum Accum {
         slot: Option<usize>,
         distinct: bool,
         n: u64,
-        seen: BTreeSet<Val>,
+        /// `COUNT(DISTINCT …)`: bounded in memory, spills sorted runs past the
+        /// file's [`spill_threshold`](crate::Rete::spill_threshold).
+        seen: DistinctSet,
     },
     Sum {
         slot: Option<usize>,
@@ -96,7 +99,7 @@ impl Accum {
                 slot: slot(v),
                 distinct: *d,
                 n: 0,
-                seen: BTreeSet::new(),
+                seen: DistinctSet::new(ctx.rete.spill_threshold()),
             },
             Agg::Sum(v) => Accum::Sum {
                 slot: slot(v),
@@ -148,7 +151,7 @@ impl Accum {
             } => {
                 if let Some(v) = slot.and_then(|s| row[s].as_ref()) {
                     if *distinct {
-                        seen.insert(v.clone());
+                        seen.insert(v);
                     } else {
                         *n += 1;
                     }
@@ -274,7 +277,7 @@ impl Accum {
                     return Some(fmt_num_typed(0.0)); // COUNT of an out-of-scope var is 0
                 }
                 let c = if distinct {
-                    seen.len() as f64
+                    seen.count() as f64
                 } else {
                     n as f64
                 };
