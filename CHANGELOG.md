@@ -22,8 +22,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   and could outgrow the tiles. The per-query term and number memos are capped
   at 64 MiB each. A local file goes to the lazy reader once it is larger than
   a quarter of the budget (1 GiB at the default, as before). Answers are
-  unchanged; see "Memory budget" in `docs/sparql.md` for what the budget does
-  not cover.
+  unchanged (75 DataCite QA queries, 36 queries on three smaller files and
+  the W3C suite compared). On DataCite, `GROUP BY ?p` now completes (876 s,
+  1.1 GB peak RSS), the `CONTAINS` count peaks at 4.0 GB instead of 15.1 GB,
+  and `?r dcite:relationSubject <doi> . ?r ?p ?o` completes in 1.1 GB, though
+  it still scans the whole graph until the join planner is fixed. See "Memory
+  budget" in `docs/sparql.md` for what the budget does not cover.
 - **`rete verify` streams.** It read the whole file into memory, so a 49 GB
   file could not be verified in a capped container; it now hashes the sections
   in 8 MiB reads (`rete_core::verify_ranged`).

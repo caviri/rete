@@ -1310,9 +1310,10 @@ numbers) are capped at 64 MiB each on top. What the budget does <strong>not</str
 is the query's own working state: hash-join build sides, <code>GROUP BY</code> groups,
 <code>DISTINCT</code> sets and an unbounded <code>ORDER BY</code>, which grow with the data the query
 asks for (see <a href="sparql.html#memory-budget">Memory budget</a>). Measured on the 49 GB
-DataCite file (9.53 B triples), <code>GROUP BY ?p</code> over the whole graph went from an
-out-of-memory kill at 16 GB to a bounded run, and a <code>CONTAINS</code> scan over every
-title from 15.1 GB to about 1 GB.</p>
+DataCite file (9.53 B triples): <code>GROUP BY ?p</code> over the whole graph went from an
+out-of-memory kill at 16 GB to 876 s at 1.1 GB peak RSS, and a <code>CONTAINS</code> count
+over every title from 15.1 GB to 4.0 GB (the default budget, filled by the
+title dictionary chunks).</p>
 <h3 id="rete-serve-file---bind-addr---token-t---journal-path"><code>rete serve &lt;file&gt; [--bind addr] [--token t] [--journal path]</code></h3>
 <p>Serve one <code>.rete</code> — or a <a href="manifest.html">manifest</a> of segments (<code>.json</code>), whose
 visible fold becomes the served state — as a live <strong>SPARQL 1.1 Protocol
