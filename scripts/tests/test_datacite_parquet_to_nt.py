@@ -347,7 +347,7 @@ class FundersR3R4(unittest.TestCase):
         for iri, n in zip(fb, names):
             self.assertTrue(parses(iri), iri)
             self.assertEqual(iri, DOI + "10.17638/00008533/funder/" + conv.name_key(n))
-        got = {str(tr.object.value) for tr in triples if tr.predicate.value.endswith("#agentName")}
+        got = {str(tr.object.value) for tr in triples if tr.predicate.value.endswith("#funderName")}
         self.assertEqual(got, set(names))  # names kept verbatim, never truncated
 
     def test_placeholder_and_unusable(self):
@@ -366,6 +366,169 @@ class FundersR3R4(unittest.TestCase):
             {"funderName": "Other", "funderIdentifier": "\n\t\t0000 0001 2162 673X", "funderIdentifierType": "ISNI"}])
         raw = sorted(str(tr.object.value) for tr in triples if tr.predicate.value.endswith("#rawIdentifier"))
         self.assertEqual(raw, ["\n\t\t0000 0001 2162 673X", "grid.512915.b"])
+
+    def test_names_stay_on_the_record_scoped_funding_reference_r16(self):
+        """F3: a shared funder IRI never carries one record's name (DFG's IRI was named
+        "Bundesministerium für Bildung und Forschung (BMBF)" by one record)."""
+        fb, triples, t, _ = self.funders([
+            {"funderName": "Bundesministerium f�r Bildung und Forschung (BMBF)",
+             "funderIdentifier": "https://doi.org/10.13039/501100001659",
+             "funderIdentifierType": "Crossref Funder ID"},
+            {"funderName": "Capes\t", "funderIdentifier": "https://doi.org/10.13039/501100002322/funder%20id",
+             "funderIdentifierType": "Crossref Funder ID"}])
+        self.assertEqual(fb, [DOI + "10.13039/501100001659", DOI + "10.13039/501100002322"])
+        about_funder = [tr for tr in triples if str(tr.subject.value) in fb]
+        self.assertEqual({tr.predicate.value for tr in about_funder}, {conv.RDF_TYPE})
+        refs = {str(tr.subject.value): tr for tr in triples if tr.predicate.value == conv.D + "funder"}
+        self.assertEqual(sorted(refs), [DOI + "10.17638/00008533/funding/1", DOI + "10.17638/00008533/funding/2"])
+        names = {str(tr.subject.value): tr.object.value for tr in triples
+                 if tr.predicate.value == conv.D + "funderName"}
+        self.assertEqual(names[DOI + "10.17638/00008533/funding/1"],
+                         "Bundesministerium f�r Bildung und Forschung (BMBF)")
+        self.assertEqual(counts(t, "R16"), {"funding_reference": 2})
+        self.assertEqual(counts(t, "R15"), {"rescued.funder.funder_id_inside": 1})
+
+    def test_placeholder_funder_ids_are_not_minted_r15(self):
+        """F2: real values (H5): `10.13039/funder%20id` (LSE) and a number glued to text."""
+        fb, triples, t, _ = self.funders([
+            {"funderName": "London School of Economics and Political Science (LSE)",
+             "funderIdentifier": "https://doi.org/10.13039/funder%20id", "funderIdentifierType": "Crossref Funder ID"},
+            {"funderName": "Engineering and Physical Sciences Research Council",
+             "funderIdentifier": "https://doi.org/10.13039/501100000266l%20sciences%20research%20council",
+             "funderIdentifierType": "Crossref Funder ID"},
+            {"funderName": "Helmholtz-Zentrum Potsdam - Deutsches GeoForschungsZentrum GFZ",
+             "funderIdentifier": "https://doi.org/10.13039/501100010956%20%20",
+             "funderIdentifierType": "Crossref Funder ID"}])
+        self.assertTrue(fb[0].startswith(DOI + "10.17638/00008533/funder/"))
+        self.assertTrue(fb[1].startswith(DOI + "10.17638/00008533/funder/"))
+        self.assertEqual(fb[2], DOI + "10.13039/501100010956")
+        self.assertFalse(any("funder%20id" in str(tr.subject.value) + str(tr.object.value)
+                             for tr in triples if tr.predicate.value != conv.D + "rawIdentifier"))
+        raw = sorted(str(tr.object.value) for tr in triples if tr.predicate.value.endswith("#rawIdentifier"))
+        self.assertEqual(raw, ["https://doi.org/10.13039/501100000266l%20sciences%20research%20council",
+                               "https://doi.org/10.13039/funder%20id"])
+        self.assertEqual(counts(t, "R15"), {"funder.not_a_funder_id.kept_as_text": 2,
+                                            "rescued.funder.funder_id_inside": 1})
+
+
+class FunderDoisR15(unittest.TestCase):
+    """Real PID Links objects under 10.13039/ (dev/datacite-defect-hunt H3/H5)."""
+
+    def test_link_objects(self):
+        cases = {
+            "10.13039/http://dx.doi.org/10.13039/501100001809": DOI + "10.13039/501100001809",
+            "10.13039/%22https://doi.org/10.13039/501100003562": DOI + "10.13039/501100003562",
+            "10.13039/501100002569%22": DOI + "10.13039/501100002569",
+            "10.13039/100000002%22": DOI + "10.13039/100000002",
+            "10.13039/501100000613/funder%2520id": DOI + "10.13039/501100000613",
+            "10.13039/501100001809": DOI + "10.13039/501100001809",
+            "10.13039/#": None, "10.13039/funder%2520id": None, "10.13039/xx": None,
+            "10.13039/n/a": None, "10.13039/error:": None,
+            "10.13039/501100000266l%2520sciences%2520research%2520council": None,
+        }
+        for raw, want in cases.items():
+            x, t = ctx()
+            self.assertEqual(conv.pid_iri(raw, x, "obj"), want, raw)
+            c = counts(t, "R15")
+            self.assertEqual(c, {"dropped.obj.not_a_funder_id": 1} if want is None else
+                             ({} if raw == "10.13039/501100001809" else {"rescued.link_obj.funder_id_inside": 1}),
+                             raw)
+
+    def test_two_funder_ids_are_not_chosen_between(self):
+        self.assertEqual(conv.norm_doi("10.13039/501100000780;10.13039/501100000781"),
+                         (None, "not_a_funder_id"))
+
+
+class IdentityR0(unittest.TestCase):
+    """F1 and its siblings: the record's own DOI is the registered string, nothing else."""
+    NBSP_INSIDE = "10.18454/\u00a0pmi.2016.5.712"   # registered (api.datacite.org 200)
+    PLAIN = "10.18454/pmi.2016.5.712"                # a DIFFERENT registered DOI
+    NBSP_END = "10.13147/soe.2018.013\u00a0"         # registered; without the NBSP: 404
+    SPACE_INSIDE = "10.3929/ethz-a- 005859270"       # registered (ETH)
+
+    def subject(self, doi):
+        out, triples, t = run_meta(record(doi=doi))
+        return triples[0].subject.value, triples, t
+
+    def test_f1_two_registered_dois_two_records(self):
+        a, _, _ = self.subject(self.PLAIN)
+        b, triples, t = self.subject(self.NBSP_INSIDE)
+        self.assertNotEqual(a, b)
+        self.assertEqual(b, DOI + self.NBSP_INSIDE)
+        self.assertEqual(counts(t, "R1"), {})  # no rescue applied to a record's own DOI
+        self.assertEqual(counts(t, "R0"), {"record.nonstandard_doi_kept_as_registered": 1})
+        doi_lit = [tr.object.value for tr in triples if tr.predicate.value == conv.D + "doi"]
+        self.assertEqual(doi_lit, [self.NBSP_INSIDE])
+
+    def test_trailing_nbsp_is_part_of_the_registered_doi(self):
+        s, _, _ = self.subject(self.NBSP_END)
+        self.assertEqual(s, DOI + self.NBSP_END)
+        self.assertTrue(parses(s))
+
+    def test_inner_ascii_space_is_encoded_not_dropped(self):
+        s, _, _ = self.subject(self.SPACE_INSIDE)
+        self.assertEqual(s, DOI + "10.3929/ethz-a-%20005859270")
+
+    def test_record_iri_is_the_one_identity(self):
+        for raw in (self.PLAIN, self.NBSP_INSIDE, self.NBSP_END, self.SPACE_INSIDE,
+                    " 10.5281/ZENODO.1\n", "10.6092/2240-7715/2014.2.%p"):
+            self.assertEqual(self.subject(raw)[0], conv.record_iri(raw), raw)
+        self.assertEqual(conv.doi_key(" 10.5281/ZENODO.1\n"), "10.5281/zenodo.1")
+        self.assertEqual(conv.doi_key(self.NBSP_END), self.NBSP_END)  # only ASCII whitespace trimmed
+
+    def test_pointers_to_registered_exceptions_land_on_their_record(self):
+        reg = frozenset({self.NBSP_INSIDE, self.NBSP_END, self.SPACE_INSIDE})
+        # without the exception list R1 would rewrite them (that was F1 for the record)
+        self.assertEqual(conv.norm_doi(self.NBSP_INSIDE, registered=frozenset())[0], self.PLAIN)
+        self.assertIsNone(conv.norm_doi(self.SPACE_INSIDE, registered=frozenset())[0])
+        for doi in reg:
+            self.assertEqual(conv.norm_doi(doi, registered=reg), (doi, "clean"))
+        old = conv.REGISTERED_EXCEPTIONS
+        conv.REGISTERED_EXCEPTIONS = reg
+        try:
+            x, _ = ctx()
+            for doi in reg:
+                self.assertEqual(conv.pid_iri(doi, x, "subj"), conv.record_iri(doi))
+            rels = [{"relatedIdentifier": self.NBSP_INSIDE, "relatedIdentifierType": "DOI",
+                     "relationType": "IsVariantFormOf"}]
+            _, triples, _ = run_meta(record(doi=self.PLAIN, related_identifiers_json=json.dumps(rels)))
+            o = [str(tr.object.value) for tr in triples if tr.predicate.value == conv.D + "isVariantFormOf"]
+            self.assertEqual(o, [DOI + self.NBSP_INSIDE])
+        finally:
+            conv.REGISTERED_EXCEPTIONS = old
+
+    def test_percent_escaped_dois_are_kept_as_written_r17(self):
+        reg = "10.18716/nmrshiftdb2/60004113/mrc_methanol-d4%20%28cd3od%29"  # resolves only as written
+        s, _, t = self.subject(reg)
+        self.assertEqual(s, DOI + reg)
+        self.assertEqual(counts(t, "R17"), {"record_doi.pct_encoded_doi.kept_verbatim": 1})
+        x, t = ctx()
+        v = "10.1016/s0020-7519%252899%252900141-1"  # H3: 15,704 such link values
+        self.assertEqual(conv.pid_iri(v, x, "obj"), DOI + v)
+        self.assertEqual(counts(t, "R17"), {"link_obj.pct_encoded_doi.kept_verbatim.double": 1})
+
+    def test_functional_guard_counts_nothing_on_a_full_record(self):
+        _, _, t = run_meta(record(title="T", publisher="P", url="https://x.org", publication_year=2020,
+                                  created="2020-01-01T00:00:00Z", updated="2021-01-01T00:00:00Z"))
+        self.assertEqual(counts(t, "guard"), {})
+
+    @unittest.skipUnless(importlib.util.find_spec("duckdb"), "duckdb not installed")
+    def test_plan_key_sql_equals_doi_key_and_collisions_refuse(self):
+        import duckdb
+        con = duckdb.connect()
+        vals = [self.PLAIN, self.NBSP_INSIDE, self.NBSP_END, self.SPACE_INSIDE, " 10.5281/zenodo.1\t",
+                "10.1/x\u2003", "\u00a010.1/y"]
+        for v in vals:
+            k = con.execute(f"SELECT {conv.PLAN_KEY_SQL} FROM (SELECT ? AS doi)", [v]).fetchone()[0]
+            self.assertEqual(k, conv.doi_key(v), repr(v))
+        src = "SELECT * FROM (VALUES " + ", ".join(f"('{v}')" for v in vals) + ") t(doi)"
+        stats = {}
+        exc = conv.check_identity(con, src, stats)
+        self.assertIn(self.NBSP_INSIDE, exc)
+        self.assertEqual(stats["identity_iri_collisions"], 0)
+        bad = "SELECT * FROM (VALUES ('10.1/a b'), ('10.1/a%20b')) t(doi)"
+        with self.assertRaises(conv.PlanError):
+            conv.check_identity(duckdb.connect(), bad, {})
 
 
 class RecordFields(unittest.TestCase):
@@ -436,6 +599,31 @@ class RecordFields(unittest.TestCase):
         ror = [str(tr.object.value) for tr in triples if tr.predicate.value.endswith("#rorId")]
         self.assertEqual(ror, ["https://ror.org/02b5d8509"])
 
+    def test_shared_orcid_agent_carries_no_record_statements_r19(self):
+        """H6: 0000-0002-1825-0097 (ORCID's documentation example) is given 180 names by
+        2025 records; the shared orcid.org IRI must not collect them."""
+        def creator(name, aff):
+            return [{"name": name, "nameIdentifiers": [{"nameIdentifier": "https://orcid.org/0000-0002-1825-0097",
+                                                        "nameIdentifierScheme": "ORCID"}],
+                     "affiliation": [{"name": aff, "affiliationIdentifier": "https://ror.org/02b5d8509",
+                                      "affiliationIdentifierScheme": "ROR"}]}]
+        seen = []
+        for doi, name, aff in (("10.5281/zenodo.1", "Carberry, Josiah", "Brown University"),
+                               ("10.5281/zenodo.2", "Müller, Anna", "Universität Bern")):
+            _, triples, t = run_meta(record(doi=doi, creators_json=json.dumps(creator(name, aff))))
+            seen += triples
+            self.assertEqual(counts(t, "R19"), {"creator.orcid_agent": 1})
+        orcid = "https://orcid.org/0000-0002-1825-0097"
+        on_agent = {tr.predicate.value for tr in seen if str(tr.subject.value) == orcid}
+        self.assertEqual(on_agent, {conv.RDF_TYPE, conv.D + "orcid"})
+        names = {(str(tr.subject.value), tr.object.value) for tr in seen
+                 if tr.predicate.value == conv.D + "creatorName"}
+        self.assertEqual(names, {(DOI + "10.5281/zenodo.1/creator/1", "Carberry, Josiah"),
+                                 (DOI + "10.5281/zenodo.2/creator/1", "Müller, Anna")})
+        affs = {str(tr.subject.value) for tr in seen if tr.predicate.value in
+                (conv.D + "affiliationName", conv.D + "rorId")}
+        self.assertEqual(affs, {DOI + "10.5281/zenodo.1/creator/1", DOI + "10.5281/zenodo.2/creator/1"})
+
     def test_related_identifiers_r1_r7_r8(self):
         rels = [
             {"relatedIdentifier": "https://doi.org/10.3133/SIR20195095", "relatedIdentifierType": "DOI",
@@ -479,6 +667,14 @@ class RelationVocabularyR7(unittest.TestCase):
         for rt in conv.DATACITE_46_RELATIONS + ["is-review-of", "is-authored-at", "is-funded-by"]:
             self.assertIn(f"dcite:{conv.rel_concept(rt)} a dcite:RelationType", ttl, rt)
 
+    def test_ontology_nt_is_the_ttl_and_declares_the_new_terms(self):
+        nt = (SCRIPT.parent / "datacite-ontology.nt").read_bytes()
+        self.assertEqual(nt, conv.ontology_nt(str(SCRIPT.parent / "datacite.ttl")))
+        ttl = (SCRIPT.parent / "datacite.ttl").read_text(encoding="utf-8")
+        for term in ("FundingReference", "hasFundingReference", "funder", "funderName", "creatorName"):
+            self.assertRegex(ttl, rf"(?m)^dcite:{term} a owl:", term)
+        self.assertIn('owl:versionInfo "1.2.0', ttl)
+
     def test_concept_names(self):
         self.assertEqual(conv.rel_concept("is-supplement-to"), "rel-isSupplementTo")
         self.assertEqual(conv.rel_concept("IsSupplementTo"), "rel-isSupplementTo")
@@ -489,7 +685,7 @@ class LinkEvents(unittest.TestCase):
     def link(self, **kw):
         r = {"subj_id": "10.1002/2013jb010164", "obj_id": "10.1130/0016-7606(1970)81[1625:sbszod]2.0.co;2",
              "relation_type": "references", "source_id": "crossref",
-             "occurred_at": "2013-11-01T00:00:00.000Z"}
+             "occurred_at": "2013-11-01T00:00:00.000Z", "uuid": "0003a7c5-3f1e-4a52-9f0e-2b8c0c9f3e11"}
         r.update(kw)
         x, t = ctx()
         out = []
@@ -517,10 +713,104 @@ class LinkEvents(unittest.TestCase):
         rel = [tr.object.value for tr in triples if tr.predicate.value.endswith("#relationType")]
         self.assertEqual(rel, [conv.D + "rel-isReviewOf"])
 
+    def test_one_pid_relation_per_event_r18(self):
+        """Same subject, relation and object, asserted by two sources at two times: the
+        #306 build put both on one node (2 assertedBy, 2 occurredAt, unpaired)."""
+        a, _ = self.link(source_id="datacite-crossref", occurred_at="2021-03-01T00:00:00.000Z",
+                         uuid="0003a7c5-3f1e-4a52-9f0e-2b8c0c9f3e11")
+        b, t = self.link(source_id="crossref", occurred_at="2023-06-05T10:00:00.000Z",
+                         uuid="7F0B1D2E-0000-4000-8000-00000000AB12")
+        nodes = {str(tr.subject.value) for tr in a + b if tr.predicate.value == conv.D + "assertedBy"}
+        self.assertEqual(nodes, {conv.EVENTB + "0003a7c5-3f1e-4a52-9f0e-2b8c0c9f3e11",
+                                 conv.EVENTB + "7f0b1d2e-0000-4000-8000-00000000ab12"})
+        for trs in (a, b):
+            per = {}
+            for tr in trs:
+                if str(tr.subject.value).startswith(conv.EVENTB):
+                    per[tr.predicate.value] = per.get(tr.predicate.value, 0) + 1
+            self.assertTrue(all(n == 1 for n in per.values()), per)
+        self.assertEqual(counts(t, "R18"), {"pid_relation": 1})
+
+    def test_case_variant_url_objects_are_two_events(self):
+        a, _ = self.link(obj_id="https://zenodo.org/record/ABC", uuid="11111111-1111-4111-8111-111111111111")
+        b, _ = self.link(obj_id="https://zenodo.org/record/abc", uuid="22222222-2222-4222-8222-222222222222")
+        objs = {(str(tr.subject.value), str(tr.object.value)) for tr in a + b
+                if tr.predicate.value == conv.D + "relationObject"}
+        self.assertEqual(len(objs), 2)
+        self.assertEqual(len({s for s, _ in objs}), 2)
+
+    @unittest.skipUnless(importlib.util.find_spec("duckdb"), "duckdb not installed")
+    def test_link_plan_one_event_per_uuid_newest_wins(self):
+        import duckdb
+        import tempfile
+        u = ["0003a7c5-3f1e-4a52-9f0e-2b8c0c9f3e11", "7f0b1d2e-0000-4000-8000-00000000ab12",
+             "11111111-1111-4111-8111-111111111111"]
+        with tempfile.TemporaryDirectory() as root:
+            con = duckdb.connect()
+
+            def write(st, uuids):
+                os.makedirs(os.path.join(root, f"parquet-links-{st}"))
+                vals = ", ".join(f"('{x}')" for x in uuids)
+                con.execute(f"COPY (SELECT * FROM (VALUES {vals}) t(uuid)) TO "
+                            f"'{root}/parquet-links-{st}/part-00000.parquet' (FORMAT parquet)")
+            write("2023", [u[0], u[1]])
+            write("may2025", [u[1], u[2]])
+            stats = conv.build_link_plan(con, root, os.path.join(root, "plan.parquet"), parts=2)
+            self.assertEqual((stats["link_events_kept_2023"], stats["link_events_superseded_2023"],
+                              stats["link_events_distinct"]), (1, 1, 3))
+            kept = con.execute(f"SELECT r FROM read_parquet('{root}/plan.parquet{conv.LINK_PLAN_SUFFIX}')").fetchall()
+            self.assertEqual(kept, [(0,)])  # the 2023 row of u[0]; u[1] comes from May 2025
+        with tempfile.TemporaryDirectory() as root:
+            con = duckdb.connect()
+            os.makedirs(os.path.join(root, "parquet-links-may2025"))
+            con.execute(f"COPY (SELECT * FROM (VALUES ('{u[0]}'), ('{u[0]}')) t(uuid)) TO "
+                        f"'{root}/parquet-links-may2025/part-00000.parquet' (FORMAT parquet)")
+            with self.assertRaises(conv.PlanError):
+                conv.build_link_plan(con, root, os.path.join(root, "plan.parquet"), parts=2)
+
+    def test_event_without_uuid_keeps_its_edge_and_is_counted(self):
+        triples, t = self.link(uuid=None)
+        self.assertEqual(len(triples), 1)
+        self.assertEqual(counts(t, "R18"), {"dropped.pid_relation.no_uuid": 1})
+
     def test_dropped_endpoint_drops_the_whole_event_and_counts_it(self):
         triples, t = self.link(obj_id="doesnotexistyet")
         self.assertEqual(triples, [])
         self.assertEqual(counts(t, "links"), {"dropped.event": 1})
+
+
+class BuildGuard(unittest.TestCase):
+    """guard.py refuses the build on the defects the hunt found (F1: two records on one IRI)."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("dc_guard", SCRIPT.parent / "guard.py")
+        self.g = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.g)
+        self.plan = {"dois": 3, "records_from_2025": 3, "link_events_distinct": 2}
+        self.tally = {"counts": {
+            "meta-2025": {"R9": {"records.from_2025": 3}, "input": {"rows": 3}},
+            "links-may2025": {"R18": {"pid_relation": 2}, "input": {"rows": 2}},
+            "all": {"guard": {"records_emitted": 3, "record_iris_distinct": 3}}},
+            "examples": {}, "registered_exceptions": []}
+
+    def test_clean_passes(self):
+        self.assertEqual(self.g.check(self.plan, [], self.tally)[0], [])
+
+    def test_f1_shape_fails(self):
+        t = json.loads(json.dumps(self.tally))
+        t["counts"]["all"]["guard"].update(record_iris_distinct=2, record_iri_emitted_twice=1)
+        t["counts"]["meta-2025"]["guard"] = {"functional_violation.updated": 1}
+        fails = self.g.check(self.plan, [], t)[0]
+        self.assertTrue(any("emitted twice" in f for f in fails))
+        self.assertTrue(any("updated more than once" in f for f in fails))
+        self.assertTrue(any("record IRIs" in f for f in fails))
+
+    def test_events_must_reconcile_and_card_must_match(self):
+        t = json.loads(json.dumps(self.tally))
+        t["counts"]["links-may2025"]["R18"]["pid_relation"] = 1
+        fails = self.g.check(self.plan, [], t, card={"title": "stale"})[0]
+        self.assertTrue(any("PidRelations" in f for f in fails))
+        self.assertTrue(any("Dataset Card" in f for f in fails))
 
 
 class Literals(unittest.TestCase):

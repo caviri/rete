@@ -227,9 +227,10 @@ OLD_PROPS = {"cites", "isCitedBy", "references", "isReferencedBy", "isSupplement
              "hasPart", "isDerivedFrom", "isSourceOf", "isIdenticalTo", "isRelatedTo",
              "isAuthoredBy"}
 RULES = [  # (rule, one line on what it does) -- kept in step with parquet_to_nt.py's docstring
-    ("R1", "One DOI normaliser for related identifiers, funder ids and link endpoints: strip doi.org / dx.doi.org URL prefixes, `doi:`, `doi/`, `org/`, a leading `%20` / `%7C%5D`, spaces inside the `10.NNNN` prefix. Lower-case (DOIs are case-insensitive)."),
+    ("R0", "One identity per DOI: the registered string, ASCII whitespace trimmed, lower-cased; nothing else (an NBSP inside or at the end of a registered DOI is part of it). The plan, the record's IRI and every pointer to it use this key; a record's own DOI never goes through R1. The build refuses to run if two registered DOIs would mint one IRI."),
+    ("R1", "One DOI normaliser for related identifiers, funder ids and link endpoints: strip doi.org / dx.doi.org URL prefixes, `doi:`, `doi/`, `org/`, a leading `%20` / `%7C%5D`, spaces inside the `10.NNNN` prefix. Lower-case (DOIs are case-insensitive). A value that is a registered DOI is that DOI, untouched."),
     ("R2", "Percent-encode what RFC 3987 forbids (`[ ]`, a second `#`, a stray `%`, U+FFFD, C1, private-use, noncharacters) exactly as `rete export --sanitize-iris` does; a valid IRI never moves. Every IRI is then checked by oxiri (pyoxigraph); one it still rejects is dropped."),
-    ("R3", "Funder IRI: ROR (check digits must pass) > Crossref Funder ID (`10.13039/…`, also a bare Funder Registry number) > a record-scoped IRI `<doi>/funder/<sha1(NFC(name))[:16]>`. The name is always kept as `dcite:agentName`, never truncated."),
+    ("R3", "Funder IRI: ROR (check digits must pass) > Crossref Funder ID (`10.13039/…`, also a bare Funder Registry number) > a record-scoped IRI `<doi>/funder/<sha1(NFC(name))[:16]>`."),
     ("R4", "A funder name that is empty or `#PLACEHOLDER_PARENT_METADATA_VALUE#` is not a name; a reference with neither a name nor a usable id is dropped."),
     ("R5", "A link endpoint with no scheme is rescued by R1 or dropped (with its whole event); a URL the IRI parser rejects is dropped."),
     ("R6", "`hdl:` -> `https://hdl.handle.net/`. An `https://orcid.org/` IRI is minted only when the ISO 7064 mod 11-2 check digit passes (16 digits without hyphens are re-hyphenated); a creator's failing value is kept as `dcite:rawIdentifier`, a link URL that fails is kept verbatim."),
@@ -241,6 +242,11 @@ RULES = [  # (rule, one line on what it does) -- kept in step with parquet_to_nt
     ("R12", "`landingPage` is typed `xsd:anyURI` only when it parses as an IRI; otherwise it is kept as a plain string."),
     ("R13", "Literals are written as DataCite has them: no trimming, no Unicode normalisation, no mojibake repair (U+FFFD and double-encoded UTF-8 are upstream). C0 controls are written as N-Triples `\\u` escapes, not removed."),
     ("R14", "`rorId` only when the ROR check digits pass; otherwise the value is kept as `dcite:rawIdentifier`."),
+    ("R15", "Under `10.13039/` (the Funder Registry) a DOI is `10.13039/<digits>`. A value that names exactly one Funder Registry number (`10.13039/http://dx.doi.org/10.13039/501100001809`, `10.13039/501100002569\"`) is that Funder ID; a placeholder (`10.13039/#`, `funder%20id`, `xx`) is not minted: kept as `dcite:rawIdentifier` in metadata, its event dropped in the PID links."),
+    ("R16", "Every fundingReference is a record-scoped `dcite:FundingReference` (`<doi>/funding/<n>`) carrying what that record says: `dcite:funderName` and any id not minted. The funder IRI, shared by every record that names it, carries no name, so one record's name is never asserted of another's funder."),
+    ("R17", "A DOI written with percent-escapes (`%28`, or double-encoded `%2528` as in `10.1016/s0020-7519%252899%252900141-1`) is kept as written and counted, never decoded: DataCite registers DOIs with literal escapes (`10.18716/nmrshiftdb2/60004113/mrc_methanol-d4%20%28cd3od%29` resolves only as written), so decoding is not lossless. Such a value does not join the unescaped DOI."),
+    ("R18", "A PID Links event is its `uuid`: one `dcite:PidRelation` `<https://api.datacite.org/events/{uuid}>` per event, with exactly one subject, object, type, source and time. An event in both files is taken from May 2025 (as R9). The build refuses a missing or repeated uuid."),
+    ("R19", "What a record says about a creator (name as `dcite:creatorName`, affiliations, ROR, ids not minted) is on its record-scoped `dcite:AgentRole` (`<doi>/creator/<n>`); an `https://orcid.org/` agent, shared by every record naming that ORCID, carries only `dcite:orcid`."),
 ]
 
 
@@ -310,8 +316,9 @@ def rete_card(tally):
         "",
         "## What is in it",
         "",
-        "- One `dcite:Resource` per DOI at `https://doi.org/{doi}`, typed by its resourceTypeGeneral (all 32 DataCite 4.6 values), with title, publisher, publication year, dates, version, language, landing page, usage metrics (2024+), subjects, reified creators (`dcite:AgentRole` held by an `https://orcid.org/` agent when the ORCID is valid), funders (`dcite:fundedBy`) and DOI-typed related identifiers as typed edges.",
-        "- The PID Graph: every event is a direct typed edge **and** a `dcite:PidRelation` with `relationSubject`, `relationObject`, its exact `relationType`, `assertedBy` (the source) and `occurredAt`. Events from both PID Links files are kept; an event present in both collapses into one `dcite:PidRelation`.",
+        "- One `dcite:Resource` per DOI at `https://doi.org/{doi}`, typed by its resourceTypeGeneral (all 32 DataCite 4.6 values), with title, publisher, publication year, dates, version, language, landing page, usage metrics (2024+), subjects, reified creators (a `dcite:AgentRole` with the name and affiliations the record gives, held by an `https://orcid.org/` agent when the ORCID is valid), funders (`dcite:fundedBy`) and DOI-typed related identifiers as typed edges.",
+        "- The PID Graph: every event is a direct typed edge **and** a `dcite:PidRelation` `<https://api.datacite.org/events/{uuid}>` with one `relationSubject`, `relationObject`, exact `relationType`, `assertedBy` (the source) and `occurredAt`. Events from both PID Links files are kept; an event (uuid) present in both is taken once, from May 2025.",
+        "- Funding: `dcite:fundedBy` links a record to its funder (ROR, Crossref Funder ID, or a record-scoped IRI when the record gives no usable id); what the record says about the funder (`dcite:funderName`, an id not minted) sits on its `dcite:FundingReference`, never on the shared funder IRI.",
         "- Works key by DOI and people by ORCID, so the graph joins crossref, opencitations, openaire, dblp, zenodo and orcid by IRI.",
         "",
         "## One record per DOI, and where it came from",
@@ -333,7 +340,8 @@ def rete_card(tally):
         "For R9 and R10, *Dropped* counts metadata **rows** not converted because a newer row of the same DOI was (no DOI is lost); for R7, *Rescued* counts relation edges that use a property this build added.",
         "",
         f"R7 in numbers: {_n(new_edges)} relation edges now use one of the properties added in this build (they were dropped, or for links folded into `isRelatedTo`, before); {_n(outside)} link events carry a type outside the DataCite 4.6 vocabulary and are `dcite:isRelatedTo` with their exact type on the `dcite:PidRelation`.",
-        f"R3 routes: {_n(f3.get('funder.ror', 0))} ROR, {_n(f3.get('funder.doi', 0))} Crossref Funder ID / DOI, {_n(f3.get('funder.name_minted', 0))} name-minted.",
+        f"R3 routes: {_n(f3.get('funder.ror', 0))} ROR, {_n(f3.get('funder.doi', 0))} Crossref Funder ID / DOI, {_n(f3.get('funder.name_minted', 0))} name-minted; {_n(info.get('R16', {}).get('funding_reference', 0))} funding references. R18: {_n(info.get('R18', {}).get('pid_relation', 0))} PidRelations, one per event; {_n(plan.get('link_events_superseded_2023', 0))} 2023 events are the same uuid as a May 2025 event. R19: {_n(info.get('R19', {}).get('creator.orcid_agent', 0))} creator roles held by an orcid.org agent, {_n(info.get('R19', {}).get('creator.record_local_agent', 0))} by a record-local one.",
+        f"R0: {_n(plan.get('identity_checked_non_ascii_or_escaped_dois', 0))} DOIs that are not plain ASCII were re-keyed and checked: no two registered DOIs share an IRI; {_n(plan.get('registered_exceptions', 0))} registered DOIs that R1 would have rewritten keep their own IRI (e.g. `10.18454/<NBSP>pmi.2016.5.712` is not `10.18454/pmi.2016.5.712`).",
         "",
         "The full per-file tally, with examples of every rescued, kept and dropped shape, is `datacite.tally.json` beside this file.",
         "",
@@ -343,17 +351,17 @@ def rete_card(tally):
         "",
         "## Build",
         "",
-        "`parquet_to_nt.py emit | rete build - --strict --memory-budget-mb`, so the build refuses any IRI the N-Triples grammar or RFC 3987 rejects; every emitted statement was also parsed by Oxigraph 0.5.11 before the build. Ontology `dcite:` 1.1.0 (`https://w3id.org/rete/datacite#`, OWL 2 QL-safe) travels in the file. No pyramid at this scale: keep queries selective.",
+        "`parquet_to_nt.py emit | rete build - --strict --memory-budget-mb`, so the build refuses any IRI the N-Triples grammar or RFC 3987 rejects; every emitted statement was also parsed by Oxigraph 0.5.11 before the build. Ontology `dcite:` 1.2.0 (`https://w3id.org/rete/datacite#`, OWL 2 QL-safe) travels in the file. No pyramid at this scale: keep queries selective.",
     ]
     queries = [
         "# Research-output cards straight from the DOI registry\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?doi ?title ?year ?publisher ?type WHERE {\n  ?doi dcite:title ?title ;\n       dcite:publicationYear ?year ;\n       dcite:publisherName ?publisher ;\n       dcite:resourceType ?type .\n}\nLIMIT 25",
         "# Records whose DOI exists only in the 2023 snapshot\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?doi ?title WHERE {\n  ?doi dcite:fromSnapshot dcite:snapshot-2023 ;\n       dcite:title ?title .\n}\nLIMIT 25",
         "# The PID Graph: what a work points at, and why\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?from ?type ?to ?assertedBy WHERE {\n  ?rel a dcite:PidRelation ;\n       dcite:relationSubject ?from ;\n       dcite:relationType ?type ;\n       dcite:relationObject ?to .\n  OPTIONAL { ?rel dcite:assertedBy ?assertedBy }\n}\nLIMIT 25",
-        "# Funders of one record, joined to Crossref Funder IDs by IRI\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?funder ?name WHERE {\n  <https://doi.org/10.17638/00008533> dcite:fundedBy ?funder .\n  OPTIONAL { ?funder dcite:agentName ?name }\n}",
+        "# Funders of one record as the record names them, joined to Crossref Funder IDs / ROR by IRI\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?funder ?name WHERE {\n  <https://doi.org/10.17638/00008533> dcite:hasFundingReference ?ref .\n  ?ref dcite:funder ?funder .\n  OPTIONAL { ?ref dcite:funderName ?name }\n}",
     ]
     # `extra` may nest two container levels at most (rete refuses deeper card fields)
     extra = {
-        "conversion": {"converter": "scripts/datacite/parquet_to_nt.py", "ontology_version": "1.1.0",
+        "conversion": {"converter": "scripts/datacite/parquet_to_nt.py", "ontology_version": "1.2.0",
                        "statements_emitted": trip, "tally_file": "datacite.tally.json"},
         "conversion_records_by_snapshot": recs,
         "conversion_plan": plan,
@@ -386,7 +394,7 @@ def rete_fileobject(tally, sha256=None, size=None):
             "contentUrl": RETE_URL, "encodingFormat": "application/vnd.rete",
             "description": "The metadata files (one record per DOI, newest snapshot wins, "
                            "provenance in dcite:fromSnapshot) and both PID Links files as one RDF "
-                           "graph in the rete format. Conversion rules R1-R14 and their counts are "
+                           "graph in the rete format. Conversion rules R0-R18 and their counts are "
                            "in the file's Dataset Card and in datacite.tally.json. Totals: "
                            + ", ".join(f"{r} " + "/".join(f"{k}={v}" for k, v in sorted(rules.get(r, {}).items()))
                                        for r, _ in RULES if rules.get(r))}

@@ -39,7 +39,7 @@ dcite: a owl:Ontology ;
         axioms, no property chains) so rete's lazy query-rewriting reasoner can use it."""@en ;
     dcterms:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
     rdfs:seeAlso <https://schema.datacite.org/> ;
-    owl:versionInfo "1.1.0 (2026-10-16): full DataCite 4.6 relationType and resourceTypeGeneral vocabularies, dcite:fromSnapshot, raw-value properties" .
+    owl:versionInfo "1.2.0 (2026-10-19): dcite:FundingReference (hasFundingReference, funder, funderName) and dcite:creatorName / affiliationName / rorId on dcite:AgentRole, so names stay with the record that states them; one dcite:PidRelation per PID Links event (uuid). 1.1.0 (2026-10-16): full DataCite 4.6 relationType and resourceTypeGeneral vocabularies, dcite:fromSnapshot, raw-value properties" .
 
 #################################################################
 #  Core classes
@@ -67,6 +67,13 @@ dcite:Funder a owl:Class ;
     rdfs:comment "A funding organization referenced by a resource (a fundingReference funderName / funderIdentifier, e.g. a Crossref Funder ID)."@en ;
     rdfs:subClassOf frapo:FundingAgency , foaf:Organization .
 
+dcite:FundingReference a owl:Class ;
+    rdfs:label "Funding reference"@en ;
+    rdfs:comment "One fundingReference of one record (<doi>/funding/<n>): what that record says about a funder (dcite:funderName, an identifier not minted as dcite:rawIdentifier) and the funder IRI it points at (dcite:funder). The statements stay on the reference because a ROR or Funder ID IRI is shared by every record that names it, and one record's name for it is not a fact about the others."@en ;
+    rdfs:subClassOf frapo:Funding ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty dcite:funder ;
+                      owl:someValuesFrom dcite:Funder ] .
+
 dcite:Identifier a owl:Class ;
     rdfs:label "Identifier"@en ;
     rdfs:comment "A persistent identifier (DOI, URL, ISSN, handle, …) of a resource or agent, when the datatype shortcut is not enough."@en ;
@@ -74,7 +81,7 @@ dcite:Identifier a owl:Class ;
 
 dcite:PidRelation a owl:Class ;
     rdfs:label "PID relation"@en ;
-    rdfs:comment "A reified relationship event from the DataCite PID Graph ('PID Links' tables): a typed, provenance-bearing edge between a subject and an object PID, with the asserting source and timestamps. Reifying it keeps provenance (source_id) and time that a bare triple would lose."@en ;
+    rdfs:comment "A reified relationship event from the DataCite PID Graph ('PID Links' tables): a typed, provenance-bearing edge between a subject and an object PID, with the asserting source and timestamp. One PidRelation is one event, identified by its PID Links uuid as <https://api.datacite.org/events/{uuid}>: it has exactly one relationSubject, relationObject, relationType, assertedBy and occurredAt. Reifying it keeps provenance (source_id) and time that a bare triple would lose."@en ;
     rdfs:subClassOf prov:Activity ;
     rdfs:subClassOf [ a owl:Restriction ; owl:onProperty dcite:relationObject ;
                       owl:someValuesFrom dcite:Resource ] .
@@ -248,6 +255,14 @@ dcite:creator a owl:ObjectProperty ; rdfs:label "creator"@en ;
     rdfs:domain dcite:Resource ; rdfs:range dcite:Agent ; rdfs:subPropertyOf dcterms:creator .
 dcite:fundedBy a owl:ObjectProperty ; rdfs:label "funded by"@en ;
     rdfs:domain dcite:Resource ; rdfs:range dcite:Funder ; rdfs:subPropertyOf frapo:hasFundingAgency .
+dcite:hasFundingReference a owl:ObjectProperty ; rdfs:label "has funding reference"@en ;
+    rdfs:domain dcite:Resource ; rdfs:range dcite:FundingReference .
+dcite:funder a owl:ObjectProperty ; rdfs:label "funder"@en ;
+    rdfs:comment "The funder a funding reference names (ROR, Crossref Funder ID, or a record-scoped IRI when the record gives no usable identifier)."@en ;
+    rdfs:domain dcite:FundingReference ; rdfs:range dcite:Funder .
+dcite:funderName a owl:DatatypeProperty ; rdfs:label "funder name"@en ;
+    rdfs:comment "fundingReference.funderName exactly as the record gives it."@en ;
+    rdfs:domain dcite:FundingReference ; rdfs:range xsd:string .
 dcite:hasIdentifier a owl:ObjectProperty ; rdfs:label "has identifier"@en ;
     owl:equivalentProperty datacite:hasIdentifier .
 dcite:publishedBy a owl:ObjectProperty ; rdfs:label "published by"@en ;
@@ -293,12 +308,16 @@ dcite:viewCount a owl:DatatypeProperty ; rdfs:label "view count"@en ; rdfs:domai
 dcite:downloadCount a owl:DatatypeProperty ; rdfs:label "download count"@en ; rdfs:domain dcite:Resource ; rdfs:range xsd:integer .
 
 # agents & identifiers
-dcite:agentName a owl:DatatypeProperty ; rdfs:label "agent name"@en ; rdfs:domain dcite:Agent ; rdfs:range xsd:string ; rdfs:subPropertyOf foaf:name .
+dcite:agentName a owl:DatatypeProperty ; rdfs:label "agent name"@en ; rdfs:domain dcite:Agent ; rdfs:range xsd:string ; rdfs:subPropertyOf foaf:name ;
+    rdfs:comment "Not emitted since 1.2.0: a name is what one record states, so it is dcite:creatorName on the record's dcite:AgentRole or dcite:funderName on its dcite:FundingReference, never on an identifier (ORCID, ROR, Funder ID) other records share."@en .
+dcite:creatorName a owl:DatatypeProperty ; rdfs:label "creator name"@en ;
+    rdfs:comment "creators.name exactly as the record gives it, on that record's dcite:AgentRole."@en ;
+    rdfs:domain dcite:AgentRole ; rdfs:range xsd:string .
 dcite:orcid a owl:DatatypeProperty ; rdfs:label "ORCID iD"@en ;
     rdfs:comment "ORCID iD of a creator/contributor (nameIdentifier with scheme ORCID). Join key to the ORCID dataset."@en ;
     rdfs:domain dcite:Agent ; rdfs:range xsd:string .
-dcite:affiliationName a owl:DatatypeProperty ; rdfs:label "affiliation name"@en ; rdfs:domain dcite:Agent ; rdfs:range xsd:string .
-dcite:rorId a owl:DatatypeProperty ; rdfs:label "ROR id"@en ; rdfs:domain dcite:Agent ; rdfs:range xsd:anyURI .
+dcite:affiliationName a owl:DatatypeProperty ; rdfs:label "affiliation name"@en ; rdfs:comment "An affiliation the record states for the creator, on that record's dcite:AgentRole (1.2.0; on the dcite:Agent before)."@en ; rdfs:domain dcite:AgentRole ; rdfs:range xsd:string .
+dcite:rorId a owl:DatatypeProperty ; rdfs:label "ROR id"@en ; rdfs:comment "The ROR of an affiliation the record states, on that record's dcite:AgentRole (1.2.0)."@en ; rdfs:domain dcite:AgentRole ; rdfs:range xsd:anyURI .
 dcite:identifierValue a owl:DatatypeProperty ; rdfs:label "identifier value"@en ; rdfs:domain dcite:Identifier ; rdfs:range xsd:string .
 
 # values kept as text because the converter will not type or mint them (faithful, not cleaned)

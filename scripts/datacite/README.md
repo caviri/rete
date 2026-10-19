@@ -175,16 +175,37 @@ row). Every record says where it came from:
 
 so "only what the 2025 file says" is one triple pattern. A record from 2024 or
 2023 is a DOI absent from every later file. The PID Links files are an event
-log, not snapshots of one record, so both are converted; an event present in both
-collapses into the same `dcite:PidRelation`.
+log, not snapshots of one record, so both are converted; an event is its `uuid`
+(R18), and one present in both files is taken once, from May 2025.
+
+### One identity, checked (R0 and the guards)
+
+A DOI is the string DataCite registered, with ASCII whitespace trimmed and
+lower-cased — nothing more. `10.18454/\u00a0pmi.2016.5.712` and
+`10.18454/pmi.2016.5.712` are two registered DOIs (both resolve), and
+`10.13147/soe.2018.013\u00a0` resolves while `10.13147/soe.2018.013` does not, so
+neither an NBSP nor any other rescue is ever applied to a record's own DOI. The
+plan keys records with the same function (`doi_key` in Python, `PLAN_KEY_SQL` in
+DuckDB) and refuses to run if the two disagree on any DOI, or if two registered DOIs
+would mint the same subject IRI. Registered DOIs that the R1 rescues would rewrite
+are listed by the plan and passed to `emit`, so a related identifier or link that
+names one of them lands on its record.
+
+`build_rete.sh` then refuses the build (it leaves `datacite.rete.part`) unless
+`guard.py` finds: no record stating a single-valued property twice, no record IRI
+emitted twice (every record IRI is written to `OUT/guard/` and counted by DuckDB),
+records per snapshot equal to the plan, one `dcite:PidRelation` per kept event, and
+an embedded Dataset Card identical to the card this build's tally produces. The
+hunts behind these rules are re-runnable scripts in `dev/datacite-defect-hunt/`.
 
 ### Rules
 
 | # | Rule |
 |---|---|
-| R1 | One DOI normaliser for related identifiers, funder ids and link endpoints: trim, lower-case, strip `https?://(dx.\|www.)?doi.org/`, `doi:`, `doi/`, `org/`, a leading `%20` / `%7C%5D`, spaces inside the `10.NNNN/` prefix; a doi.org URL path's `%2F` is the `/` it encodes. Result must match `10.\d{4,9}/\S+`. |
+| R0 | One identity per DOI: the registered string, ASCII whitespace trimmed, lower-cased. Plan, record IRI and pointers share it; a record's own DOI never goes through R1. The plan refuses Python/DuckDB key disagreements and IRI collisions between registered DOIs. |
+| R1 | One DOI normaliser for related identifiers, funder ids and link endpoints (a value that is a registered DOI is that DOI, untouched): trim, lower-case, strip `https?://(dx.\|www.)?doi.org/`, `doi:`, `doi/`, `org/`, a leading `%20` / `%7C%5D`, spaces inside the `10.NNNN/` prefix; a doi.org URL path's `%2F` is the `/` it encodes. Result must match `10.\d{4,9}/\S+`. |
 | R2 | Percent-encode what RFC 3987 forbids — `[ ]`, a second `#`, a `%` without two hex digits, controls, U+FFFD, private-use and noncharacters — byte for byte, exactly as `rete export --sanitize-iris` (`crates/rete-core/src/iri.rs`) does, so an IRI that was valid never moves and a SICI DOI joins the sanitized Crossref/OpenAIRE dumps. Then pyoxigraph decides; an IRI it still rejects is dropped. |
-| R3 | Funder IRI: ROR (check digits must pass; a bare id typed ROR, or one id inside a malformed ror.org URL) > Crossref Funder ID (any DOI after R1; a Funder Registry number `100…`/`5011…` typed `Crossref Funder ID`, bare or as a doi.org path, gets its `10.13039/` prefix) > `<record>/funder/<sha1(NFC(name))[:16]>`. The name is always `dcite:agentName`, never truncated; an id not minted is `dcite:rawIdentifier` + `dcite:rawIdentifierScheme`. |
+| R3 | Funder IRI: ROR (check digits must pass; a bare id typed ROR, or one id inside a malformed ror.org URL) > Crossref Funder ID (any DOI after R1; a Funder Registry number `100…`/`5011…` typed `Crossref Funder ID`, bare or as a doi.org path, gets its `10.13039/` prefix) > `<record>/funder/<sha1(NFC(name))[:16]>`. The name (never truncated) and an id not minted (`dcite:rawIdentifier` + `dcite:rawIdentifierScheme`) are on the reference (R16). |
 | R4 | An empty or `#PLACEHOLDER_PARENT_METADATA_VALUE#` funder name is no name; a reference with neither name nor usable id is dropped. |
 | R5 | A link endpoint without a scheme is rescued by R1 or dropped with its event; heuristic-only values (`1007/s10584…`, `0.1109/…`, `journal.pone.0199499`) are dropped. A doi.org URL whose path is not a DOI is kept as the URL it is. |
 | R6 | `hdl:x` → `https://hdl.handle.net/x`. `https://orcid.org/` is minted only when the ISO 7064 mod 11-2 check digit passes (16 digits without hyphens are re-hyphenated, a lower-case `x` upper-cased). A creator's failing ORCID becomes `dcite:rawIdentifier` on a record-local agent; a failing ORCID *URL* in the PID Links is kept verbatim (it is the source's IRI, not one we mint). |
@@ -196,6 +217,10 @@ collapses into the same `dcite:PidRelation`.
 | R12 | `landingPage` is `xsd:anyURI` only if it parses as an IRI, else a plain string. |
 | R13 | Literals are not repaired. |
 | R14 | `rorId` only when the ROR check digits pass (written as `https://ror.org/<id>`); otherwise `dcite:rawIdentifier`. |
+| R15 | Under `10.13039/` (the Funder Registry) a DOI is `10.13039/<digits>`. A value naming exactly one Funder Registry number (`10.13039/http://dx.doi.org/10.13039/501100001809`, `10.13039/501100002569"`) is that Funder ID; a placeholder (`10.13039/#`, `funder%20id`, `xx`, a number glued to text) is not minted: `dcite:rawIdentifier` in metadata, event dropped in the links. |
+| R16 | Each fundingReference is a record-scoped `dcite:FundingReference` (`<doi>/funding/<n>`, `dcite:hasFundingReference`) with `dcite:funder`, `dcite:funderName` and any id not minted. The shared funder IRI carries no name: before, DFG's Funder ID was also named "BMBF" and "European Commission" by other records. `dcite:fundedBy` stays as the shortcut. |
+| R18 | A PID Links event is its `uuid`: one `dcite:PidRelation` `<https://api.datacite.org/events/{uuid}>` with exactly one subject, object, type, source and time. Before, events with the same subject, type and object shared one node: 3.66 M nodes held 8.83 M events, 6.38 M nodes had two `occurredAt` and 0.76 M two `assertedBy`, unpaired. |
+| R19 | A creator's name (`dcite:creatorName`), affiliations, ROR and ids not minted are on the record's `dcite:AgentRole`; an `https://orcid.org/` agent carries only `dcite:orcid` (one ORCID collected 2,442 names from 2025 records alone). |
 
 ### Counts (2026-10 build)
 
