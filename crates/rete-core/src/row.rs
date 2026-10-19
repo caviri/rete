@@ -72,16 +72,35 @@ impl Slots {
     }
 }
 
+/// Byte cap of each of the resolver's per-query memos (decoded terms, parsed
+/// numbers). The memos exist so a term repeated across rows decodes once; a
+/// query that touches each of a hundred million distinct literals once gains
+/// nothing from keeping them all, and that retention — not the dictionary
+/// cache — was most of a 15 GB peak on a whole-predicate FILTER scan. When a
+/// memo reaches the cap it is cleared and refills: answers never change.
+pub(crate) const MEMO_CAP_BYTES: usize = 64 << 20;
+
+/// Per-entry bookkeeping charged on top of a memoized string's bytes: the
+/// hash-map slot, the `Rc` header and allocator rounding (approximate).
+const MEMO_ENTRY_OVERHEAD: usize = 64;
+
 /// Per-query memoized term resolution over the file's dictionary.
 pub(crate) struct Resolver<'a> {
     dict: &'a Dictionary,
-    /// tagged id → term string (None = id unknown / corrupt file).
+    /// tagged id → term string (None = id unknown / corrupt file). Bounded:
+    /// see [`MEMO_CAP_BYTES`].
     terms: RefCell<HashMap<i64, Option<Rc<str>>>>,
+    /// Approximate heap held by `terms` (key + entry + string bytes).
+    terms_bytes: std::cell::Cell<usize>,
     /// predicate-tagged id → canonical tagged id (node id when the term is
     /// also a node, else itself).
     canon_pred: RefCell<HashMap<i64, i64>>,
     /// value → parsed number (memoized `as_number`).
     nums: RefCell<HashMap<Val, Option<f64>>>,
+    /// Approximate heap held by `nums`.
+    nums_bytes: std::cell::Cell<usize>,
+    /// Byte cap of each memo ([`MEMO_CAP_BYTES`]; tests lower it).
+    memo_cap: usize,
     /// `(flags, pattern)` → compiled matcher. REGEX in a FILTER runs per row;
     /// compiling per row dominates the match, and a metacharacter-free pattern
     /// doesn't need the regex engine at all.
@@ -163,8 +182,11 @@ impl<'a> Resolver<'a> {
         Resolver {
             dict,
             terms: RefCell::new(HashMap::new()),
+            terms_bytes: std::cell::Cell::new(0),
             canon_pred: RefCell::new(HashMap::new()),
             nums: RefCell::new(HashMap::new()),
+            nums_bytes: std::cell::Cell::new(0),
+            memo_cap: MEMO_CAP_BYTES,
             regexes: RefCell::new(HashMap::new()),
         }
     }
@@ -267,7 +289,18 @@ impl<'a> Resolver<'a> {
         } else {
             self.dict.predicate_term((-id - 1) as u32).map(Rc::from)
         };
-        self.terms.borrow_mut().insert(id, t.clone());
+        let add = MEMO_ENTRY_OVERHEAD + t.as_ref().map_or(0, |t| t.len());
+        let mut map = self.terms.borrow_mut();
+        // A scan that resolves every literal of a big predicate (a FILTER over
+        // all titles) would otherwise keep every term it ever decoded: 15 GB on
+        // DataCite. Past the cap the memo starts over — it is only a cache, so
+        // dropping it costs re-decodes, never a different answer.
+        if self.terms_bytes.get() + add > self.memo_cap {
+            map.clear();
+            self.terms_bytes.set(0);
+        }
+        map.insert(id, t.clone());
+        self.terms_bytes.set(self.terms_bytes.get() + add);
         t
     }
 
@@ -332,7 +365,18 @@ impl<'a> Resolver<'a> {
             .str_of(v)
             .as_deref()
             .and_then(crate::sparql::term_number);
-        self.nums.borrow_mut().insert(v.clone(), n);
+        let add = MEMO_ENTRY_OVERHEAD
+            + match v {
+                Val::Str(s) => s.len(),
+                Val::Id(_) => 0,
+            };
+        let mut map = self.nums.borrow_mut();
+        if self.nums_bytes.get() + add > self.memo_cap {
+            map.clear();
+            self.nums_bytes.set(0);
+        }
+        map.insert(v.clone(), n);
+        self.nums_bytes.set(self.nums_bytes.get() + add);
         n
     }
 }
@@ -466,6 +510,41 @@ mod tests {
         assert_eq!(merge_rows(&a, &conflict), None);
         assert_eq!(bound_mask(&[a, b], 3), vec![true, true, false]);
         assert_eq!(bound_mask(&[], 0), Vec::<bool>::new());
+    }
+
+    #[test]
+    fn resolver_memos_are_bounded_and_answers_survive_a_reset() {
+        let rete = fixture();
+        let dict = rete.dictionary();
+        let mut resolver = Resolver::new(dict);
+        // Room for about two entries: the third forces a reset.
+        resolver.memo_cap = 2 * MEMO_ENTRY_OVERHEAD + 20;
+        let ids: Vec<i64> = ["<s>", "<shared>", "<other>"]
+            .iter()
+            .map(|t| dict.node_of_term(t).unwrap() as i64)
+            .collect();
+        for &id in &ids {
+            assert!(resolver.term(id).is_some());
+            assert!(resolver.terms_bytes.get() <= resolver.memo_cap);
+        }
+        assert!(resolver.terms.borrow().len() < ids.len(), "memo was reset");
+        // Every id still resolves to the same term after the reset.
+        for &id in &ids {
+            assert_eq!(resolver.term(id), dict.node_term(id as u32).map(Rc::from));
+        }
+        let n = dict
+            .node_of_term("\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>")
+            .unwrap() as i64;
+        for _ in 0..4 {
+            assert_eq!(resolver.num(&Val::Id(n)), Some(42.0));
+            assert_eq!(
+                resolver.num(&Val::Str(Rc::from(
+                    "\"7\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+                ))),
+                Some(7.0)
+            );
+            assert!(resolver.nums_bytes.get() <= resolver.memo_cap);
+        }
     }
 
     #[test]

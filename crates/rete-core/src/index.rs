@@ -13,7 +13,7 @@
 //! independently, so a ranged reader can fetch just the tiles a query needs.
 //! v0.1 single-block sections are still read (one tile per permutation).
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::chunk_cache::{CacheEntry, ChunkCache};
 use crate::triples::{GroupDirectory, Triple, TripleBlock, TripleBlockBuilder};
@@ -75,7 +75,6 @@ pub struct Tile {
     /// afterward, and for a remote tile whose body faults in through the loader.
     /// The long-lived retention is the cache, not this field.
     staged: Option<Vec<u8>>,
-    dir: OnceLock<GroupDirectory>,
 }
 
 impl Tile {
@@ -87,7 +86,6 @@ impl Tile {
             syn: None,
             len,
             staged: Some(bytes),
-            dir: OnceLock::new(),
         }
     }
 
@@ -98,7 +96,6 @@ impl Tile {
             syn,
             len: 0,
             staged: None,
-            dir: OnceLock::new(),
         }
     }
 
@@ -745,19 +742,12 @@ impl GraphIndex {
             .map(|s| s.capacity() as u64)
             .sum::<u64>()
             * std::mem::size_of::<Tile>() as u64;
-        let dirs: u64 = self
-            .sections
-            .iter()
-            .flatten()
-            .filter_map(|t| t.dir.get())
-            .map(|d| d.heap_bytes())
-            .sum();
         let ranges = if self.loader.is_some() {
             2 * 24 * tiles
         } else {
             0
         };
-        caps + dirs + ranges
+        caps + ranges
     }
 
     /// A **remote** index: only the tile directories (leading-id ranges per
@@ -935,6 +925,28 @@ impl GraphIndex {
             },
             None => Some(self.cache.insert(key, Arc::from(Vec::new()))),
         }
+    }
+
+    /// Tile `(section, tile)`'s a-group directory, held in its cache entry and
+    /// built from `block` (that entry's parsed body) on first use. Its bytes
+    /// are charged to the tile cache when built, so a capped cache bounds the
+    /// directories too, and they are evicted with their tile.
+    fn tile_dir<'e>(
+        &self,
+        section: usize,
+        tile: usize,
+        entry: &'e Arc<CacheEntry>,
+        block: &TripleBlock<'_>,
+    ) -> &'e GroupDirectory {
+        let (dir, built) = entry.group_dir(|| block.group_directory());
+        if built {
+            self.cache.charge_extra(
+                (section as u8, tile as u32),
+                entry,
+                dir.heap_bytes() + std::mem::size_of::<GroupDirectory>() as u64,
+            );
+        }
+        dir
     }
 
     /// The tile's decompressed block image as a shared handle, for the file
@@ -1202,7 +1214,6 @@ impl GraphIndex {
                 self.prefetch_span(si, ti, (ti + window).min(end));
                 window = window.saturating_mul(2).min(PREFETCH_WINDOW_MAX);
             }
-            let tile = &self.sections[si][ti];
             let entry = self.tile_entry(si, ti);
             let mut resume_at: Option<u32> = None;
             if let Some(block) = entry
@@ -1215,14 +1226,14 @@ impl GraphIndex {
                     // inside a tile, only across tiles (a mega-group split), so
                     // there is nothing finer to resume at than the tile.
                     Some(a) => {
-                        let dir = tile.dir.get_or_init(|| block.group_directory());
+                        let dir = self.tile_dir(si, ti, entry.as_ref().unwrap(), &block);
                         block.scan_from(dir, a, pb, pc)
                     }
                     // Fresh tile: no directory needed, so a straight drain never
                     // pays for one.
                     None if from_a == 0 => block.scan(None, pb, pc),
                     None => {
-                        let dir = tile.dir.get_or_init(|| block.group_directory());
+                        let dir = self.tile_dir(si, ti, entry.as_ref().unwrap(), &block);
                         block.scan_resume(dir, from_a, pb, pc)
                     }
                 };
@@ -1317,7 +1328,6 @@ impl GraphIndex {
                     self.prefetch_span(si, ti, (ti + w).min(end));
                     window.set(w.saturating_mul(2).min(PREFETCH_WINDOW_MAX));
                 }
-                let tile = &self.sections[si][ti];
                 // Decode the tile once and materialize its matching rows into an
                 // owned `Vec`, so the borrowed block/cursor never outlives the
                 // tile's cache handle (an `Arc` dropped at the end of this
@@ -1329,7 +1339,7 @@ impl GraphIndex {
                         .filter(|b| b.zone().may_contain(pa, pb, pc))
                         .map(|b| match pa {
                             Some(a) => {
-                                let dir = tile.dir.get_or_init(|| b.group_directory());
+                                let dir = self.tile_dir(si, ti, &entry, &b);
                                 b.scan_from(dir, a, pb, pc).collect()
                             }
                             None => b.scan(pa, pb, pc).collect(),

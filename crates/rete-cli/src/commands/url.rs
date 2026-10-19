@@ -253,7 +253,14 @@ pub(crate) fn query_url(
 /// when the query's scans and probes actually touch them. A selective query
 /// reads O(touched tiles), not the whole index. (Pre-tiling v0.1 files fall
 /// back to fetching the index whole.)
-pub(crate) fn sparql_url(url: &str, query: &str, json: bool, entail: bool) -> anyhow::Result<()> {
+pub(crate) fn sparql_url(
+    url: &str,
+    query: &str,
+    json: bool,
+    entail: bool,
+    memory_budget_mb: Option<u64>,
+) -> anyhow::Result<()> {
+    let budget = super::range_source::query_budget(memory_budget_mb);
     // `reader` always counts the PHYSICAL HTTP fetches. A read-through block
     // cache (client-side; works over any single-range backend incl. S3) sits
     // above it, so a query's scattered range reads coalesce into a few aligned
@@ -273,11 +280,16 @@ pub(crate) fn sparql_url(url: &str, query: &str, json: bool, entail: bool) -> an
     let mut rete = if block == 0 {
         Rete::open_ranged_lazy(reader.clone())?
     } else {
-        Rete::open_ranged_lazy(std::sync::Arc::new(BlockCacheReader::new(
-            reader.clone(),
-            block,
-        )))?
+        let mut bc = BlockCacheReader::new(reader.clone(), block);
+        let block_cap = rete_core::split_memory_budget(budget.unwrap_or(u64::MAX)).block_cache;
+        if block_cap != u64::MAX {
+            bc = bc.with_cache_cap(block_cap);
+        }
+        Rete::open_ranged_lazy(std::sync::Arc::new(bc))?
     };
+    // The dictionary and tile caches follow `--memory-budget-mb` (the lazy open
+    // applied the default; this re-applies an explicit figure or unlimited).
+    rete.set_memory_budget(budget);
     // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     let opts = rete_core::QueryOpts {

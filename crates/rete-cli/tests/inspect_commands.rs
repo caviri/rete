@@ -341,3 +341,25 @@ fn summary_schema_search_and_repyramid_paths_are_covered() {
         .assert()
         .success();
 }
+
+/// `rete verify` streams the file: a flipped payload byte and a truncated file
+/// both fail (non-zero exit), the intact file passes.
+#[test]
+fn verify_streams_and_rejects_tampering_and_truncation() {
+    let fixture = common::fixture();
+    let bytes = std::fs::read(&fixture.rete).unwrap();
+    let tampered = fixture.path("tampered.rete");
+    let mut t = bytes.clone();
+    let at = t.len() - 5;
+    t[at] ^= 0xff;
+    std::fs::write(&tampered, &t).unwrap();
+    common::rete()
+        .arg("verify")
+        .arg(&tampered)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("content hash mismatch"));
+    let short = fixture.path("short.rete");
+    std::fs::write(&short, &bytes[..bytes.len() / 2]).unwrap();
+    common::rete().arg("verify").arg(&short).assert().failure();
+}

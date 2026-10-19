@@ -5,6 +5,29 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rete sparql` and every lazily-opened file now run under a memory
+  budget.** The dictionary chunk cache, the index tile cache and the raw block
+  cache of a lazy open were unbounded on every query path (only `rete export`
+  capped them), so a whole-graph scan kept everything it touched: on the 49 GB,
+  9.53 B-triple DataCite file `GROUP BY ?p` was killed at 16 GB and a
+  `CONTAINS` over every title peaked at 15.1 GB. `rete sparql` and
+  `rete sparql-url` take `--memory-budget-mb N` (default 4096, `0` =
+  unlimited) with the same split as `rete export`, and
+  `Rete::open_ranged_lazy` applies the 4096 MiB default itself, so the Python,
+  R and Java clients and the relay are bounded too (not the browser engine).
+  The per-tile group directories that point lookups build now live in the tile
+  cache and are evicted with their tile; they used to stay resident forever
+  and could outgrow the tiles. The per-query term and number memos are capped
+  at 64 MiB each. A local file goes to the lazy reader once it is larger than
+  a quarter of the budget (1 GiB at the default, as before). Answers are
+  unchanged; see "Memory budget" in `docs/sparql.md` for what the budget does
+  not cover.
+- **`rete verify` streams.** It read the whole file into memory, so a 49 GB
+  file could not be verified in a capped container; it now hashes the sections
+  in 8 MiB reads (`rete_core::verify_ranged`).
+
 ## [0.3.5] - 2026-10-16
 
 **Where 0.3.5 is published: every channel.** crates.io (`rete-core`,

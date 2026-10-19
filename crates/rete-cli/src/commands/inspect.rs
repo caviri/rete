@@ -296,9 +296,12 @@ pub(crate) fn graphs(file: &str) -> anyhow::Result<()> {
 
 /// Verify a file's content hash (detects corruption/truncation). Exits non-zero
 /// on mismatch.
+///
+/// Streams the hashed sections through a positional reader, so memory stays at
+/// one read slice whatever the file size (it used to read the whole file).
 pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    if rete_core::verify(&bytes)? {
+    let reader = LocalRangeReader::open(file)?;
+    if rete_core::verify_ranged(&reader)? {
         println!("OK — content hash matches");
         Ok(())
     } else {

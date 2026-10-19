@@ -6,7 +6,7 @@
 use rete_core::{eval_bgp, ByteRange, PatternTerm, TriplePattern, TripleProvenance};
 use serde_json::json;
 
-use crate::commands::range_source::open_local;
+use crate::commands::range_source::{open_local, open_local_budget, query_budget};
 use crate::commands::render::{print_query_output, print_query_output_warned};
 use crate::cypher;
 
@@ -180,8 +180,17 @@ pub(crate) fn bgp(file: &str, query: &str) -> anyhow::Result<()> {
 }
 
 /// Run a SPARQL query (SELECT / ASK / CONSTRUCT) against a local file.
-pub(crate) fn sparql(file: &str, query: &str, json: bool, entail: bool) -> anyhow::Result<()> {
-    let mut rete = open_local(file)?;
+///
+/// `memory_budget_mb` bounds the lazy open's dictionary, tile and block caches
+/// (see [`query_budget`]); a small file still opens whole.
+pub(crate) fn sparql(
+    file: &str,
+    query: &str,
+    json: bool,
+    entail: bool,
+    memory_budget_mb: Option<u64>,
+) -> anyhow::Result<()> {
+    let mut rete = open_local_budget(file, query_budget(memory_budget_mb))?;
     // SERVICE blocks federate to remote SPARQL endpoints over HTTP.
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
     let opts = rete_core::QueryOpts {

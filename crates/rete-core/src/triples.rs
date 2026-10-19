@@ -400,6 +400,14 @@ impl GroupDirectory {
     pub fn heap_bytes(&self) -> u64 {
         (self.entries.capacity() * std::mem::size_of::<DirEntry>()) as u64
     }
+
+    /// An empty directory, for cache tests that need one without a block.
+    #[cfg(test)]
+    pub(crate) fn empty_for_tests() -> Self {
+        GroupDirectory {
+            entries: Vec::new(),
+        }
+    }
 }
 
 /// One a-group: its leading id, the byte offset of its first b-group header
