@@ -704,13 +704,15 @@ Ontop-over-DuckDB VKG on the equivalent Parquet — same queries, same HTTP-rang
 hosting — measuring bytes fetched, latency, and which graph operations (pyramid /
 reachability / SHACL / coherence) the VKG can't answer cheaply.</p>
 <h2 id="a-real-world-graph-a-wikidata-biology-slice">A real-world graph: a Wikidata biology slice</h2>
-<p>For a genuinely large, real dataset, <code>scripts/fetch_wikidata_bio.py</code> pulls a
+<p>The dataset pipelines on this page (<code>data/scripts/...</code>) live in the private <code>caviri/rete-datasets</code> repository, which a rete checkout clones at <code>data/scripts/</code>;
+commands are written from the rete root.</p>
+<p>For a genuinely large, real dataset, <code>data/scripts/standalone/fetch_wikidata_bio.py</code> pulls a
 life-sciences slice from the <a href="https://query.wikidata.org">Wikidata Query Service</a>:
 genes, the proteins they encode, the diseases they associate with, drugs that
 treat those diseases, and a disease subclass hierarchy — one connected graph,
 every entity labelled in English. It runs a handful of bounded <code>CONSTRUCT</code>
 queries (each well under the WDQS timeout) and merges them as N-Triples.</p>
-<pre><code class="language-sh">uv run python scripts/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
+<pre><code class="language-sh">uv run python data/scripts/standalone/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
 rete build data/wikidata-bio.nt -o bio.rete
 rete stats bio.rete        # ~40k triples, ~27k terms, hundreds of communities
 </code></pre>
@@ -724,13 +726,13 @@ the script is tracked, the bytes are regenerated on demand). Be a good WDQS
 citizen: it is rate-limited, so fetch a slice, not a firehose.</p>
 <h2 id="real-wikidata-at-gigabyte-scale-parquet">Real Wikidata at gigabyte scale (Parquet)</h2>
 <p>The Query Service is for slices, not bulk. For a genuinely large, real
-linked-data graph, <code>scripts/wikidata_parquet_to_nt.py</code> reads the full Wikidata
+linked-data graph, <code>data/scripts/standalone/wikidata_parquet_to_nt.py</code> reads the full Wikidata
 "truthy" dump from the
 <a href="https://huggingface.co/datasets/piebro/wikidata-extraction"><code>piebro/wikidata-extraction</code></a>
 Parquet conversion on Hugging Face (~80 partitions, <code>subject/predicate/object/ language</code> columns) with DuckDB — <code>httpfs</code> streams the remote files, so a bounded
 slice needs no full download — and writes N-Triples.</p>
 <pre><code class="language-sh">pip install --break-system-packages duckdb
-uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
+uv run python data/scripts/standalone/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
 rete build data/wd.nt -o wd.rete
 </code></pre>
 <p>The source Parquet drops literal datatypes, so the converter <strong>recovers them</strong>

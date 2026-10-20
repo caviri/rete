@@ -40,7 +40,9 @@ __pycache__/
 .claude/settings.local.json
 
 
-# Generated datasets (regenerate with scripts/fetch_opencitations.py).
+# Generated datasets (regenerate with scripts/fetch_opencitations.py) and the dataset
+# pipelines: data/scripts/ is a clone of the private caviri/rete-datasets repo.
+# Pipelines are versioned there and must never ship with the code.
 # Ignore the *contents* (not the dir itself) so the catalog README can be re-included.
 /data/*
 !/data/README.md

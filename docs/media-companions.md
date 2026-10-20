@@ -108,9 +108,10 @@ by the existing datasets.
 | streamable 3D | `prop:mesh` | a hosted `.glb` URL |
 | turntable spin | `prop:spinVideo` / `prop:spinGif` | a hosted `…-spin/<id>.{webm,gif}` URL |
 
-`scripts/bioexplora_to_nt.py` and `scripts/smithsonian3d_to_nt.py` are the worked
+`data/scripts/standalone/bioexplora_to_nt.py` and `data/scripts/standalone/smithsonian3d_to_nt.py` are the worked
 examples (specimens → `prop:image` + `geo:asWKT`; 3D models → `prop:mesh` +
-`prop:spinVideo`/`prop:spinGif`).
+`prop:spinVideo`/`prop:spinGif`). Those dataset pipelines, and the `Dockerfile.gltf` /
+`Dockerfile.blender` images below, live (in the private `caviri/rete-datasets` repository, which a rete checkout clones at `data/scripts/`).
 
 ## SQL companions (the Explore tab)
 
@@ -140,13 +141,13 @@ Source meshes are usually too big to stream (20–50 MB). Compress with
 20–50 MB → ~0.5–1 MB), run inside the `rete-gltf` node image:
 
 ```bash
-docker build -f scripts/Dockerfile.gltf -t rete-gltf .
+docker build -f data/scripts/standalone/Dockerfile.gltf -t rete-gltf .
 docker run --rm -v "$PWD":/work -w /work rete-gltf \
   gltf-transform optimize in.glb out.glb --compress draco --texture-compress webp
 ```
 
 Upload the compressed `.glb` (below) and emit `prop:mesh` with its URL.
-`scripts/bioexplora_sketchfab.sh` is the end-to-end worked example:
+`data/scripts/standalone/bioexplora_sketchfab.sh` is the end-to-end worked example:
 Sketchfab Data API → download each downloadable `.glb` → Draco+WebP compress →
 upload → write a `uid → mesh-url` TSV that `bioexplora_to_nt.py` reads.
 
@@ -158,11 +159,11 @@ OptiX/CUDA GPU) in the `rete-blender` image (the official Blender 3.6 LTS tarbal
 — it ships the glTF/Draco importer and bundled numpy):
 
 ```bash
-docker build -f scripts/Dockerfile.blender -t rete-blender .
+docker build -f data/scripts/standalone/Dockerfile.blender -t rete-blender .
 # batch over a "id<TAB>glb_url" TSV; GPU + a mounted OptiX kernel cache:
 docker run --rm --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -e BLENDER_GPU=1 \
   -v "$PWD":/work -v "$PWD/data/.blendercache":/root/.cache -w /work rete-blender \
-  sh scripts/render_turntables.sh data/<ds>/mesh_list.tsv data/<ds>/turntables
+  sh data/scripts/standalone/render_turntables.sh data/<ds>/mesh_list.tsv data/<ds>/turntables
 ```
 
 `render_turntables.sh` loops the TSV → `glb_to_spin.sh` (per model) →

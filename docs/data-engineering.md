@@ -118,7 +118,10 @@ reachability / SHACL / coherence) the VKG can't answer cheaply.
 
 ## A real-world graph: a Wikidata biology slice
 
-For a genuinely large, real dataset, `scripts/fetch_wikidata_bio.py` pulls a
+The dataset pipelines on this page (`data/scripts/...`) live in the private `caviri/rete-datasets` repository, which a rete checkout clones at `data/scripts/`;
+commands are written from the rete root.
+
+For a genuinely large, real dataset, `data/scripts/standalone/fetch_wikidata_bio.py` pulls a
 life-sciences slice from the [Wikidata Query Service](https://query.wikidata.org):
 genes, the proteins they encode, the diseases they associate with, drugs that
 treat those diseases, and a disease subclass hierarchy — one connected graph,
@@ -126,7 +129,7 @@ every entity labelled in English. It runs a handful of bounded `CONSTRUCT`
 queries (each well under the WDQS timeout) and merges them as N-Triples.
 
 ```sh
-uv run python scripts/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
+uv run python data/scripts/standalone/fetch_wikidata_bio.py --limit 4000 -o data/wikidata-bio.nt
 rete build data/wikidata-bio.nt -o bio.rete
 rete stats bio.rete        # ~40k triples, ~27k terms, hundreds of communities
 ```
@@ -143,7 +146,7 @@ citizen: it is rate-limited, so fetch a slice, not a firehose.
 ## Real Wikidata at gigabyte scale (Parquet)
 
 The Query Service is for slices, not bulk. For a genuinely large, real
-linked-data graph, `scripts/wikidata_parquet_to_nt.py` reads the full Wikidata
+linked-data graph, `data/scripts/standalone/wikidata_parquet_to_nt.py` reads the full Wikidata
 "truthy" dump from the
 [`piebro/wikidata-extraction`](https://huggingface.co/datasets/piebro/wikidata-extraction)
 Parquet conversion on Hugging Face (~80 partitions, `subject/predicate/object/
@@ -152,7 +155,7 @@ slice needs no full download — and writes N-Triples.
 
 ```sh
 pip install --break-system-packages duckdb
-uv run python scripts/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
+uv run python data/scripts/standalone/wikidata_parquet_to_nt.py --limit 12000000 -o data/wd.nt  # ~1 GB
 rete build data/wd.nt -o wd.rete
 ```
 

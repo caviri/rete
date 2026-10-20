@@ -42,7 +42,8 @@ caviri/rete`).
 - **`make_companions.py`** — NT → a `triples` table in Parquet/DuckDB/SQLite.
 - **`upload_bucket.sh`** — `hf buckets cp/sync` to the playground bucket.
 
-The skills also point at the many **existing** converters in `scripts/` (e.g.
+The skills also point at the many **existing** converters in the private
+`caviri/rete-datasets` repo, cloned at `data/scripts/` (e.g.
 `geoboundaries_to_nt.py`, `bioexplora_to_nt.py`, `wikidata_parquet_to_nt.py`) as
 worked examples per source type — see `rete-from-graph/reference/sources.md`.
 

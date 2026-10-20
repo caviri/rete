@@ -141,12 +141,13 @@ whatever your query binds to `?wkt`.
     `[startYear,endYear]`). Each active layer gets a **histogram track** beneath the
     timeline — like a clip in a video editor — showing *when* its data is
     concentrated, with a playhead. Every theme is reproducible from one
-    query/recipe each — see `scripts/fetch_wikidata_themes.sh` (Wikidata, instant
-    `emit` + interval `emiti`), `scripts/fetch_dbpedia_themes.sh` (DBpedia),
-    `scripts/fetch_ohm.sh` + `scripts/ohm_overpass_to_nt.py` (OpenHistoricalMap),
-    `scripts/fetch_atlas_extra.sh` (Nomisma / FactGrid / Getty TGN SPARQL), and
-    `scripts/fetch_dumps_extra.sh` + `scripts/{theographic,samian}_to_nt.py`
-    (the GitHub-dump providers). Because a layer *is* a SPARQL query, the **＋**
+    query/recipe each — see `data/scripts/standalone/fetch_wikidata_themes.sh` (Wikidata, instant
+    `emit` + interval `emiti`), `data/scripts/standalone/fetch_dbpedia_themes.sh` (DBpedia),
+    `data/scripts/standalone/fetch_ohm.sh` + `data/scripts/standalone/ohm_overpass_to_nt.py` (OpenHistoricalMap),
+    `data/scripts/standalone/fetch_atlas_extra.sh` (Nomisma / FactGrid / Getty TGN SPARQL), and
+    `data/scripts/standalone/fetch_dumps_extra.sh` + `data/scripts/standalone/{theographic,samian}_to_nt.py`
+    (the GitHub-dump providers; these pipelines live in the private `caviri/rete-datasets` repository, which a rete checkout clones at `data/scripts/`).
+    Because a layer *is* a SPARQL query, the **＋**
     button lets you **author your own** — name it, pick a colour and instant/interval
     kind, point it at the embedded borders (offline) or any bucket `.rete`, and write
     the `SELECT … ?wkt`. The layer list is scrollable and **drag-to-reorder** (which
@@ -204,7 +205,7 @@ remote `lazy`/`cached` modes point at the same file served by HTTP range:
 
 ```sh
 # 1. the embedded dataset (simplified to an in-browser-sized ~1.5 MB file)
-python3 scripts/geo_to_rete.py basemaps \
+python3 data/scripts/standalone/geo_to_rete.py basemaps \
   --years bc2000,bc500,bc323,500,1000,1279,1492,1600,1715,1815,1880,1900,1914,1938,1945,1960,1994,2010 \
   --prec 3 --min-bbox 0.12 --max-per-year 130 -o dev/geo/history.nt
 rete build dev/geo/history.nt -o web/history.rete

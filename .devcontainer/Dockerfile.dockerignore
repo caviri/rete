@@ -6,6 +6,6 @@
 #
 # BuildKit prefers `<dockerfile>.dockerignore` over the context's root
 # .dockerignore, so this applies to THIS Dockerfile only and leaves the other
-# builds that legitimately need a full context (scripts/Dockerfile.gltf,
-# scripts/Dockerfile.blender, …) alone.
+# builds that legitimately need a full context (the dataset images in data/scripts/,
+# e.g. standalone/Dockerfile.gltf and standalone/Dockerfile.blender) alone.
 **

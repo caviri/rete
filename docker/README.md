@@ -149,8 +149,9 @@ pick `all`, `dev`, `relay` or `cli`.
 
 ### Build context
 
-There is deliberately no root `.dockerignore`, because `scripts/Dockerfile.gltf`,
-`scripts/Dockerfile.blender` and friends legitimately build from a full context.
+There is deliberately no root `.dockerignore`, because the dataset images
+(`Dockerfile.gltf`, `Dockerfile.blender` and friends, in the private `caviri/rete-datasets`
+repo cloned at `data/scripts/`) legitimately build from the full rete context.
 Instead each image that wants a narrow context ships its own
 `<dockerfile>.dockerignore`, which BuildKit prefers over the context's root file:
 
