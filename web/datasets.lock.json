@@ -3,6 +3,14 @@
   "generatedFrom": "release-1.0.0-rc1",
   "datasets": [
     {
+      "key": "datacite",
+      "url": "https://data.graphplaza.com/datacite/datacite.rete",
+      "formatVersion": 5,
+      "contentHash": "f11b1a0bf7a7801e523b5dec1c362d18",
+      "size": 63114816583,
+      "cardUrl": "https://data.graphplaza.com/datacite/datacite.rete"
+    },
+    {
       "key": "davidrumsey",
       "url": "https://data.graphplaza.com/davidrumsey/davidrumsey.rete",
       "formatVersion": 5,
