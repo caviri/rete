@@ -18,12 +18,13 @@
     "provenance"
   ],
   "description": [
-    "The **DataCite Public Data Files** (CC0) as one range-queryable graph: **109,263,993 DOI records**, one per DOI, and the **PID Graph** (760,802,549 relation events from the 2023 and May 2025 PID Links files), reified as provenance-bearing `dcite:PidRelation`s. Converted by `scripts/datacite/parquet_to_nt.py`; the converter wrote 11,731,454,390 statements.",
+    "The **DataCite Public Data Files** (CC0) as one range-queryable graph: **109,263,993 DOI records**, one per DOI, and the **PID Graph** (613,426,534 relation events from the 2023 and May 2025 PID Links files), reified as provenance-bearing `dcite:PidRelation`s. Converted by `scripts/datacite/parquet_to_nt.py`; the converter wrote 10,961,620,937 statements.",
     "",
     "## What is in it",
     "",
-    "- One `dcite:Resource` per DOI at `https://doi.org/{doi}`, typed by its resourceTypeGeneral (all 32 DataCite 4.6 values), with title, publisher, publication year, dates, version, language, landing page, usage metrics (2024+), subjects, reified creators (`dcite:AgentRole` held by an `https://orcid.org/` agent when the ORCID is valid), funders (`dcite:fundedBy`) and DOI-typed related identifiers as typed edges.",
-    "- The PID Graph: every event is a direct typed edge **and** a `dcite:PidRelation` with `relationSubject`, `relationObject`, its exact `relationType`, `assertedBy` (the source) and `occurredAt`. Events from both PID Links files are kept; an event present in both collapses into one `dcite:PidRelation`.",
+    "- One `dcite:Resource` per DOI at `https://doi.org/{doi}`, typed by its resourceTypeGeneral (all 32 DataCite 4.6 values), with title, publisher, publication year, dates, version, language, landing page, usage metrics (2024+), subjects, reified creators (a `dcite:AgentRole` with the name and affiliations the record gives, held by an `https://orcid.org/` agent when the ORCID is valid), funders (`dcite:fundedBy`) and DOI-typed related identifiers as typed edges.",
+    "- The PID Graph: every event is a direct typed edge **and** a `dcite:PidRelation` `<{subject}/event/{uuid}>` with one `relationSubject`, `relationObject`, exact `relationType`, `assertedBy` (the source) and `occurredAt`. Events from both PID Links files are kept; an event (uuid) present in both is taken once, from May 2025.",
+    "- Funding: `dcite:fundedBy` links a record to its funder (ROR, Crossref Funder ID, or a record-scoped IRI when the record gives no usable id); what the record says about the funder (`dcite:funderName`, an id not minted) sits on its `dcite:FundingReference`, never on the shared funder IRI.",
     "- Works key by DOI and people by ORCID, so the graph joins crossref, opencitations, openaire, dblp, zenodo and orcid by IRI.",
     "",
     "## One record per DOI, and where it came from",
@@ -34,7 +35,7 @@
     "- `dcite:snapshot-2024`: 308,793 records whose DOI is not in the 2025 file",
     "- `dcite:snapshot-2023`: 486,297 records whose DOI is in neither later file",
     "",
-    "Filter with `?r dcite:fromSnapshot dcite:snapshot-2025` for the 2025 state only. The 2026-07 build emitted every row of all three files, so a DOI present in several years carried several titles, creators and relation sets at once; that is gone.",
+    "Filter with `?r dcite:fromSnapshot dcite:snapshot-2025` for the 2025 state only.",
     "",
     "## Conversion rules and what each did",
     "",
@@ -42,25 +43,32 @@
     "",
     "| Rule | What it does | Rescued | Encoded | Kept as text | Dropped |",
     "|---|---|---:|---:|---:|---:|",
-    "| R1 | One DOI normaliser for related identifiers, funder ids and link endpoints: strip doi.org / dx.doi.org URL prefixes, `doi:`, `doi/`, `org/`, a leading `%20` / `%7C%5D`, spaces inside the `10.NNNN` prefix. Lower-case (DOIs are case-insensitive). | 173,978,334 | 0 | 83 | 0 |",
-    "| R2 | Percent-encode what RFC 3987 forbids (`[ ]`, a second `#`, a stray `%`, U+FFFD, C1, private-use, noncharacters) exactly as `rete export --sanitize-iris` does; a valid IRI never moves. Every IRI is then checked by oxiri (pyoxigraph); one it still rejects is dropped. | 0 | 302,503 | 0 | 0 |",
-    "| R3 | Funder IRI: ROR (check digits must pass) > Crossref Funder ID (`10.13039/…`, also a bare Funder Registry number) > a record-scoped IRI `<doi>/funder/<sha1(NFC(name))[:16]>`. The name is always kept as `dcite:agentName`, never truncated. | 13 | 0 | 200,193 | 0 |",
-    "| R4 | A funder name that is empty or `#PLACEHOLDER_PARENT_METADATA_VALUE#` is not a name; a reference with neither a name nor a usable id is dropped. | 0 | 0 | 0 | 20 |",
-    "| R5 | A link endpoint with no scheme is rescued by R1 or dropped (with its whole event); a URL the IRI parser rejects is dropped. | 84 | 0 | 0 | 460 |",
-    "| R6 | `hdl:` -> `https://hdl.handle.net/`. An `https://orcid.org/` IRI is minted only when the ISO 7064 mod 11-2 check digit passes (16 digits without hyphens are re-hyphenated); a creator's failing value is kept as `dcite:rawIdentifier`, a link URL that fails is kept verbatim. | 14,666 | 0 | 14,944 | 0 |",
-    "| R7 | All 38 DataCite 4.6 relationType values have their own property, for metadata and PID links alike; `is-funded-by` is `dcite:fundedBy`, `is-authored-at` / `is-affiliated-with` have their own properties; any other link type is `dcite:isRelatedTo` and keeps its exact type on the reified `dcite:PidRelation`. | 28,884,493 | 0 | 0 | 0 |",
-    "| R8 | A DOI-typed related identifier with no DOI after R1 is dropped; a DOI inside other text is taken only when exactly one stands there, not glued to other characters. | 0 | 0 | 0 | 1,204,136 |",
-    "| R9 | One record per DOI: the 2025 file wins, else 2024, else 2023; `dcite:fromSnapshot` names the file each record came from. | 0 | 0 | 0 | 124,087,770 |",
+    "| R0 | One identity per DOI: the registered string, ASCII whitespace trimmed, lower-cased, nothing else. Plan, record IRI and pointers share it; a record's own DOI never goes through R1. The build refuses two registered DOIs on one IRI. | 0 | 0 | 6 | 0 |",
+    "| R1 | One DOI normaliser for related identifiers, funder ids and link endpoints: strip doi.org URL prefixes, `doi:`, `doi/`, `org/`, a leading `%20` / `%7C%5D`, spaces in the `10.NNNN` prefix; lower-case. A registered DOI is left untouched. | 173,978,232 | 0 | 42 | 0 |",
+    "| R2 | Percent-encode what RFC 3987 forbids (`[ ]`, a second `#`, a stray `%`, U+FFFD, C1, private-use) as `rete export --sanitize-iris` does; oxiri then checks every IRI and one it rejects is dropped. | 0 | 212,554 | 0 | 0 |",
+    "| R3 | Funder IRI: ROR (check digits must pass) > Crossref Funder ID (also a bare Funder Registry number) > a record-scoped `<doi>/funder/<sha1(name)>`. | 13 | 0 | 200,193 | 0 |",
+    "| R4 | An empty or `#PLACEHOLDER_PARENT_METADATA_VALUE#` funder name is no name; a reference with neither name nor usable id is dropped. | 0 | 0 | 0 | 20 |",
+    "| R5 | A link endpoint with no scheme is rescued by R1 or dropped with its event; a URL the IRI parser rejects is dropped. | 48 | 0 | 0 | 247 |",
+    "| R6 | `hdl:` -> `https://hdl.handle.net/`. `https://orcid.org/` only when the mod 11-2 check digit passes; a creator's failing ORCID is `dcite:rawIdentifier`, a failing link URL is kept verbatim. | 14,666 | 0 | 14,544 | 0 |",
+    "| R7 | All 38 DataCite 4.6 relationType values have their own property for metadata and links; `is-funded-by` is `dcite:fundedBy`; other link types are `dcite:isRelatedTo` with the exact type on the PidRelation. | 20,048,535 | 0 | 0 | 0 |",
+    "| R8 | A DOI-typed related identifier with no DOI after R1 is dropped; an embedded DOI is taken only when exactly one stands there, delimited. | 0 | 0 | 0 | 1,204,136 |",
+    "| R9 | One record per DOI: 2025 wins, else 2024, else 2023; `dcite:fromSnapshot` names the file. | 0 | 0 | 0 | 124,087,770 |",
     "| R10 | Within one file, the row with the latest `updated` wins. | 0 | 0 | 0 | 731 |",
-    "| R11 | `occurredAt` `0000-01-01` (DataCite's 'unknown') is not emitted. A publicationYear outside 1000-2027 is kept as `dcite:publicationYearText`, not typed `xsd:gYear`. | 0 | 0 | 271,014 | 27,894 |",
-    "| R12 | `landingPage` is typed `xsd:anyURI` only when it parses as an IRI; otherwise it is kept as a plain string. | 0 | 0 | 10,624 | 0 |",
-    "| R13 | Literals are written as DataCite has them: no trimming, no Unicode normalisation, no mojibake repair (U+FFFD and double-encoded UTF-8 are upstream). C0 controls are written as N-Triples `\\u` escapes, not removed. | 0 | 0 | 0 | 0 |",
-    "| R14 | `rorId` only when the ROR check digits pass; otherwise the value is kept as `dcite:rawIdentifier`. | 51,705 | 0 | 8,438 | 0 |",
+    "| R11 | `occurredAt` `0000-01-01` is not emitted. A publicationYear outside 1000-2027 is `dcite:publicationYearText`. | 0 | 0 | 271,014 | 13,947 |",
+    "| R12 | `landingPage` is `xsd:anyURI` only when it parses as an IRI, else a plain string. | 0 | 0 | 10,624 | 0 |",
+    "| R13 | Literals as DataCite has them: no trimming, normalisation or mojibake repair; C0 controls written as `\\u` escapes. | 0 | 0 | 0 | 0 |",
+    "| R14 | `rorId` only when the ROR check digits pass; otherwise `dcite:rawIdentifier`. | 51,705 | 0 | 8,438 | 0 |",
+    "| R15 | Under `10.13039/` a DOI is `10.13039/<digits>`: a value naming exactly one Funder Registry number (`10.13039/http://dx.doi.org/10.13039/501100001809`) is that id; a placeholder (`#`, `funder%20id`) is not minted. | 431 | 0 | 11 | 129 |",
+    "| R16 | Each fundingReference is a record-scoped `dcite:FundingReference` with `dcite:funder` and `dcite:funderName`; the shared funder IRI carries no name. | 0 | 0 | 0 | 0 |",
+    "| R17 | A DOI written with `%XX` escapes (or double-encoded `%25XX`) is kept as written and counted, never decoded: DataCite registers DOIs with literal escapes. | 0 | 0 | 393,842 | 0 |",
+    "| R18 | One `dcite:PidRelation` per PID Links event, `<{subject}/event/{uuid}>`, with one subject, object, type, source and time; an event in both files is taken from May 2025. | 0 | 0 | 0 | 0 |",
+    "| R19 | A creator's name (`dcite:creatorName`), affiliations, ROR and unminted ids are on the record's `dcite:AgentRole`; an orcid.org agent carries only `dcite:orcid`. | 0 | 0 | 0 | 0 |",
     "",
     "For R9 and R10, *Dropped* counts metadata **rows** not converted because a newer row of the same DOI was (no DOI is lost); for R7, *Rescued* counts relation edges that use a property this build added.",
     "",
-    "R7 in numbers: 28,884,493 relation edges now use one of the properties added in this build (they were dropped, or for links folded into `isRelatedTo`, before); 96,221 link events carry a type outside the DataCite 4.6 vocabulary and are `dcite:isRelatedTo` with their exact type on the `dcite:PidRelation`.",
-    "R3 routes: 770,898 ROR, 85,070,425 Crossref Funder ID / DOI, 1,420,042 name-minted.",
+    "R7 in numbers: 20,048,535 relation edges now use one of the properties added in this build (they were dropped, or for links folded into `isRelatedTo`, before); 48,111 link events carry a type outside the DataCite 4.6 vocabulary and are `dcite:isRelatedTo` with their exact type on the `dcite:PidRelation`.",
+    "R3 routes: 770,898 ROR, 85,070,414 Crossref Funder ID / DOI, 1,420,053 name-minted; 87,261,365 funding references. R18: 613,426,158 PidRelations, one per event; 147,376,015 2023 events are the same uuid as a May 2025 event. R19: 107,568,498 creator roles held by an orcid.org agent, 275,686,388 by a record-local one.",
+    "R0: 28,574 DOIs that are not plain ASCII were re-keyed and checked: no two registered DOIs share an IRI; 6 registered DOIs that R1 would rewrite keep their own IRI.",
     "",
     "The full per-file tally, with examples of every rescued, kept and dropped shape, is `datacite.tally.json` beside this file.",
     "",
@@ -70,13 +78,13 @@
     "",
     "## Build",
     "",
-    "`parquet_to_nt.py emit | rete build - --strict --memory-budget-mb`, so the build refuses any IRI the N-Triples grammar or RFC 3987 rejects; every emitted statement was also parsed by Oxigraph 0.5.11 before the build. Ontology `dcite:` 1.1.0 (`https://w3id.org/rete/datacite#`, OWL 2 QL-safe) travels in the file. No pyramid at this scale: keep queries selective."
+    "`parquet_to_nt.py emit | rete build - --strict --memory-budget-mb`, so the build refuses any IRI the N-Triples grammar or RFC 3987 rejects; every emitted statement was also parsed by Oxigraph 0.5.11 before the build. Ontology `dcite:` 1.2.0 (`https://w3id.org/rete/datacite#`, OWL 2 QL-safe) travels in the file. No pyramid at this scale: keep queries selective."
   ],
   "extra": {
     "conversion": {
       "converter": "scripts/datacite/parquet_to_nt.py",
-      "ontology_version": "1.1.0",
-      "statements_emitted": 11731454390,
+      "ontology_version": "1.2.0",
+      "statements_emitted": 10961620937,
       "tally_file": "datacite.tally.json"
     },
     "conversion_records_by_snapshot": {
@@ -86,9 +94,18 @@
     },
     "conversion_plan": {
       "dois": 109263993,
+      "identity_checked_non_ascii_or_escaped_dois": 28574,
+      "identity_iri_collisions": 0,
+      "link_events_2023": 167844248,
+      "link_events_distinct": 613426534,
+      "link_events_kept_2023": 20468233,
+      "link_events_kept_may2025": 592958301,
+      "link_events_may2025": 592958301,
+      "link_events_superseded_2023": 147376015,
       "records_from_2023": 486297,
       "records_from_2024": 308793,
       "records_from_2025": 108468903,
+      "registered_exceptions": 6,
       "rows_not_emitted_2023": 52376986,
       "rows_not_emitted_2024": 71710784,
       "rows_not_emitted_2025": 3,
@@ -100,12 +117,15 @@
       "within_year_duplicate_rows_2025": 6
     },
     "conversion_rules": {
+      "R0": {
+        "kept": 6
+      },
       "R1": {
-        "kept": 83,
-        "rescued": 173978334
+        "kept": 42,
+        "rescued": 173978232
       },
       "R2": {
-        "encoded": 302503
+        "encoded": 212554
       },
       "R3": {
         "kept": 200193,
@@ -115,15 +135,15 @@
         "dropped": 20
       },
       "R5": {
-        "dropped": 460,
-        "rescued": 84
+        "dropped": 247,
+        "rescued": 48
       },
       "R6": {
-        "kept": 14944,
+        "kept": 14544,
         "rescued": 14666
       },
       "R7": {
-        "rescued": 28884493
+        "rescued": 20048535
       },
       "R8": {
         "dropped": 1204136,
@@ -136,7 +156,7 @@
         "dropped": 731
       },
       "R11": {
-        "dropped": 27894,
+        "dropped": 13947,
         "kept": 271014
       },
       "R12": {
@@ -146,29 +166,40 @@
       "R14": {
         "rescued": 51705,
         "kept": 8438
-      }
+      },
+      "R15": {
+        "dropped": 129,
+        "rescued": 431,
+        "kept": 11
+      },
+      "R16": {},
+      "R17": {
+        "kept": 393842
+      },
+      "R18": {},
+      "R19": {}
     },
     "conversion_relation_edges": {
       "isDerivedFrom": 866577380,
       "references": 104510838,
-      "isAuthoredBy": 29875172,
+      "isAuthoredBy": 19756659,
       "isVersionOf": 7106740,
       "isPartOf": 6903698,
       "hasVersion": 5592587,
       "hasPart": 4009670,
       "isSupplementTo": 3831646,
-      "fundedBy": 3316702,
       "isIdenticalTo": 2412166,
+      "fundedBy": 1837089,
       "cites": 1799897,
-      "isAuthoredAt": 1550191,
       "isCitedBy": 1536364,
       "isPreviousVersionOf": 1464464,
+      "isAuthoredAt": 1375713,
       "isDocumentedBy": 587205,
       "isNewVersionOf": 565101,
       "isSourceOf": 422372,
       "continues": 385755,
       "isContinuedBy": 373009,
-      "isAffiliatedWith": 226474,
+      "isAffiliatedWith": 191904,
       "isVariantFormOf": 171563,
       "isReferencedBy": 63488,
       "isCompiledBy": 59182,
@@ -197,6 +228,6 @@
     "# Research-output cards straight from the DOI registry\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?doi ?title ?year ?publisher ?type WHERE {\n  ?doi dcite:title ?title ;\n       dcite:publicationYear ?year ;\n       dcite:publisherName ?publisher ;\n       dcite:resourceType ?type .\n}\nLIMIT 25",
     "# Records whose DOI exists only in the 2023 snapshot\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?doi ?title WHERE {\n  ?doi dcite:fromSnapshot dcite:snapshot-2023 ;\n       dcite:title ?title .\n}\nLIMIT 25",
     "# The PID Graph: what a work points at, and why\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?from ?type ?to ?assertedBy WHERE {\n  ?rel a dcite:PidRelation ;\n       dcite:relationSubject ?from ;\n       dcite:relationType ?type ;\n       dcite:relationObject ?to .\n  OPTIONAL { ?rel dcite:assertedBy ?assertedBy }\n}\nLIMIT 25",
-    "# Funders of one record, joined to Crossref Funder IDs by IRI\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?funder ?name WHERE {\n  <https://doi.org/10.17638/00008533> dcite:fundedBy ?funder .\n  OPTIONAL { ?funder dcite:agentName ?name }\n}"
+    "# Funders of one record as the record names them, joined to Crossref Funder IDs / ROR by IRI\nPREFIX dcite: <https://w3id.org/rete/datacite#>\nSELECT ?funder ?name WHERE {\n  <https://doi.org/10.17638/00008533> dcite:hasFundingReference ?ref .\n  ?ref dcite:funder ?funder .\n  OPTIONAL { ?ref dcite:funderName ?name }\n}"
   ]
 }

@@ -17889,7 +17889,7 @@
    "index": 0,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) | 178 range req · 293.6 MB of 48.58 GB fetched (incl. opening the file) · 168.1 MB cached this session · 64073 ms",
+   "qmeta": "25 row(s) | 164 range req · 274.5 MB of 58.78 GB fetched (incl. opening the file) · 153.5 MB cached this session · 54875 ms",
    "count": 25,
    "unit": "row",
    "columns": [
@@ -17917,55 +17917,165 @@
    "rows": [
     [
      {
-      "text": "https://doi.org/10.17632/bwnpr7v7ff",
+      "text": "https://doi.org/10.23656/25045520/012018/0152",
       "media": false
      },
      {
-      "text": "Literature Review on Gender Empowerment Measures",
+      "text": "Skill Premium Divergence: The Roles of Trade, Capital and Demographics",
       "media": false
      },
      {
-      "text": "2022",
+      "text": "2018",
       "media": false
      },
      {
-      "text": "Mendeley",
+      "text": "Eesti Pank",
       "media": false
      },
      {
-      "text": "Dataset",
+      "text": "",
       "media": false
      }
     ],
     [
      {
-      "text": "https://doi.org/10.17632/bwnpr7v7ff.1",
+      "text": "https://doi.org/10.23656/25045520/022018/0153",
       "media": false
      },
      {
-      "text": "Literature Review on Gender Empowerment Measures",
+      "text": "Structural vector autoregression with time varying transition probabilities: identifying uncertainty shocks...",
       "media": false
      },
      {
-      "text": "2022",
+      "text": "2018",
       "media": false
      },
      {
-      "text": "Mendeley",
+      "text": "Eesti Pank",
       "media": false
      },
      {
-      "text": "Dataset",
+      "text": "",
       "media": false
      }
     ],
     [
      {
-      "text": "https://doi.org/10.7274/jd472v27987",
+      "text": "https://doi.org/10.23656/25045520/052020/0178",
       "media": false
      },
      {
-      "text": "Cómo continuar con la investigación en Centroamérica ante el Cierre de Espacios Académicos",
+      "text": "Macroeconomic Expectations: News Sentiment Analysis",
+      "media": false
+     },
+     {
+      "text": "2020",
+      "media": false
+     },
+     {
+      "text": "Eesti Pank",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.23656/25045520/42017/0142",
+      "media": false
+     },
+     {
+      "text": "The financial fragility of Estonian households: Evidence from stress tests on the HFCS microdata",
+      "media": false
+     },
+     {
+      "text": "2017",
+      "media": false
+     },
+     {
+      "text": "Eesti Pank",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.5682/9786065913325",
+      "media": false
+     },
+     {
+      "text": "Violenta si sclavie moderna",
+      "media": false
+     },
+     {
+      "text": "2012",
+      "media": false
+     },
+     {
+      "text": "Editura Universitara",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.5682/9786065913530",
+      "media": false
+     },
+     {
+      "text": "Introducere in studiul dreptului si statului",
+      "media": false
+     },
+     {
+      "text": "2012",
+      "media": false
+     },
+     {
+      "text": "Editura Universitara",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.5682/9786065913974",
+      "media": false
+     },
+     {
+      "text": "Structuri de date. Variante de implementare in C",
+      "media": false
+     },
+     {
+      "text": "2012",
+      "media": false
+     },
+     {
+      "text": "Editura Universitara",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.13023/dsd.2023.10",
+      "media": false
+     },
+     {
+      "text": "Generative AI in the Student Research Process: Lessons from the ACRL Framework for Information Literacy",
       "media": false
      },
      {
@@ -17973,128 +18083,18 @@
       "media": false
      },
      {
-      "text": "University of Notre Dame",
+      "text": "University of Kentucky Libraries",
       "media": false
      },
      {
-      "text": "CreativeWork",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.48448/sfj4-6a84",
-      "media": false
-     },
-     {
-      "text": "Impact of Trajectory Generation Methods on Viewer Perception of Robot Approaching Group Behaviors",
-      "media": false
-     },
-     {
-      "text": "2020",
-      "media": false
-     },
-     {
-      "text": "Underline Science Inc.",
-      "media": false
-     },
-     {
-      "text": "Conference talk",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.17615/emj4-te33",
-      "media": false
-     },
-     {
-      "text": "A FRAMEWORK FOR REDUCING THE ADVERSE EFFECTS OF EXTREME HEAT AMONG MATERNAL CHILD HEALTH HOME VISITATI...",
-      "media": false
-     },
-     {
-      "text": "2020",
-      "media": false
-     },
-     {
-      "text": "The University of North Carolina at Chapel Hill University Libraries",
-      "media": false
-     },
-     {
-      "text": "Masters Paper",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.17615/m5zm-xh92",
-      "media": false
-     },
-     {
-      "text": "ASSOCIATION BETWEEN ACUTE CERVICOVESTIBULAR SYMPTOMS AND PERSISTENT CONCUSSION SYMPTOMS AND HEALTH RELAT...",
-      "media": false
-     },
-     {
-      "text": "2022",
-      "media": false
-     },
-     {
-      "text": "The University of North Carolina at Chapel Hill University Libraries",
-      "media": false
-     },
-     {
-      "text": "Masters Thesis",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.21985/n2-dwcv-2y29",
-      "media": false
-     },
-     {
-      "text": "Do Clothes Make the Man?: Sartorial Rhetoric in the Writings of Thirteenth- to Seventeenth-Century Drukp...",
-      "media": false
-     },
-     {
-      "text": "2025",
-      "media": false
-     },
-     {
-      "text": "Unknown",
-      "media": false
-     },
-     {
-      "text": "Dissertation",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.21985/n2-pemq-5538",
-      "media": false
-     },
-     {
-      "text": "Do Clothes Make the Man?: Sartorial Rhetoric in the Writings of Thirteenth- to Seventeenth-Century Drukp...",
-      "media": false
-     },
-     {
-      "text": "2025",
-      "media": false
-     },
-     {
-      "text": "Unknown",
-      "media": false
-     },
-     {
-      "text": "Dissertation",
+      "text": "",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 64101
+   "elapsedMs": 54900
   },
   "datacite:1": {
    "id": "datacite:1",
@@ -18117,7 +18117,7 @@
    "index": 2,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) | 177 range req · 387.7 MB of 48.58 GB fetched (incl. opening the file) · 136.6 MB cached this session · 72037 ms",
+   "qmeta": "25 row(s) | 16 range req · 10.0 MB of 58.78 GB fetched · 163.5 MB cached this session · 4445 ms",
    "count": 25,
    "unit": "row",
    "columns": [
@@ -18153,7 +18153,7 @@
       "media": false
      },
      {
-      "text": "https://doi.org/10.1007/s11999-012-2436-y",
+      "text": "https://doi.org/10.1016/j.jhsa.2017.07.021",
       "media": false
      },
      {
@@ -18175,7 +18175,51 @@
       "media": false
      },
      {
-      "text": "https://doi.org/10.1007/s11999-013-3100-x",
+      "text": "https://doi.org/10.2106/jbjs.20.00420",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#source-crossref",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/amaguidesnewsletters.2022.janfeb01",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#rel-references",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1097/corr.0000000000001727",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#source-crossref",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/amaguidesnewsletters.2022.janfeb01",
+      "media": false
+     },
+     {
+      "text": "https://w3id.org/rete/datacite#rel-references",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1097/corr.0000000000001520",
       "media": false
      },
      {
@@ -18219,7 +18263,7 @@
       "media": false
      },
      {
-      "text": "https://doi.org/10.1007/s11999.0000000000000089",
+      "text": "https://doi.org/10.2106/jbjs.i.01344",
       "media": false
      },
      {
@@ -18241,7 +18285,7 @@
       "media": false
      },
      {
-      "text": "https://doi.org/10.1016/j.jhsa.2007.03.009",
+      "text": "https://doi.org/10.2106/jbjs.l.00479",
       "media": false
      },
      {
@@ -18263,51 +18307,7 @@
       "media": false
      },
      {
-      "text": "https://doi.org/10.1016/j.jhsa.2017.07.021",
-      "media": false
-     },
-     {
-      "text": "https://w3id.org/rete/datacite#source-crossref",
-      "media": false
-     },
-     {
-      "text": "",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1001/amaguidesnewsletters.2022.janfeb01",
-      "media": false
-     },
-     {
-      "text": "https://w3id.org/rete/datacite#rel-references",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1016/j.jor.2021.07.013",
-      "media": false
-     },
-     {
-      "text": "https://w3id.org/rete/datacite#source-crossref",
-      "media": false
-     },
-     {
-      "text": "",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1001/amaguidesnewsletters.2022.janfeb01",
-      "media": false
-     },
-     {
-      "text": "https://w3id.org/rete/datacite#rel-references",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1016/s0140-6736(21)00846-1",
+      "text": "https://doi.org/10.1097/corr.0000000000002052",
       "media": false
      },
      {
@@ -18322,7 +18322,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 72219
+   "elapsedMs": 4471
   },
   "datacite:3": {
    "id": "datacite:3",
@@ -18330,8 +18330,8 @@
    "index": 3,
    "view": "table",
    "ok": true,
-   "qmeta": "30 row(s) | 99 range req · 187.1 MB of 48.58 GB fetched (incl. opening the file) · 187.1 MB cached this session · 260137 ms",
-   "count": 30,
+   "qmeta": "47 row(s) | 48 range req · 62.0 MB of 58.78 GB fetched · 225.5 MB cached this session · 193204 ms",
+   "count": 47,
    "unit": "row",
    "columns": [
     {
@@ -18350,7 +18350,7 @@
       "media": false
      },
      {
-      "text": "609765739",
+      "text": "613426158",
       "media": false
      }
     ],
@@ -18360,7 +18360,7 @@
       "media": false
      },
      {
-      "text": "383615827",
+      "text": "383254886",
       "media": false
      }
     ],
@@ -18370,7 +18370,17 @@
       "media": false
      },
      {
-      "text": "278928955",
+      "text": "277266725",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/datacite#FundingReference",
+      "media": false
+     },
+     {
+      "text": "87261365",
       "media": false
      }
     ],
@@ -18380,7 +18390,7 @@
       "media": false
      },
      {
-      "text": "56665614",
+      "text": "56663180",
       "media": false
      }
     ],
@@ -18390,7 +18400,7 @@
       "media": false
      },
      {
-      "text": "16612008",
+      "text": "16186085",
       "media": false
      }
     ],
@@ -18400,7 +18410,7 @@
       "media": false
      },
      {
-      "text": "15439638",
+      "text": "15428936",
       "media": false
      }
     ],
@@ -18410,24 +18420,14 @@
       "media": false
      },
      {
-      "text": "8758783",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://w3id.org/rete/datacite#Resource",
-      "media": false
-     },
-     {
-      "text": "2650025",
+      "text": "8757554",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 265890
+   "elapsedMs": 193217
   },
   "davidrumsey:0": {
    "id": "davidrumsey:0",

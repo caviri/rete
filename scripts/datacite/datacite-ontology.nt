@@ -3,7 +3,7 @@
 <https://w3id.org/rete/datacite#> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
 <https://w3id.org/rete/datacite#> <http://www.w3.org/2000/01/rdf-schema#comment> "A domain ontology for the DataCite Public Data Files: DOI-identified\n        research outputs (datasets, software, text, images, physical objects, …), their\n        creators, funders and identifiers, and — crucially — the rich relation network\n        between them (Cites, IsSupplementTo, IsVersionOf, IsPartOf, IsDerivedFrom,\n        IsIdenticalTo, …) that also forms the standalone 'PID Links' edge tables.\n\n        Designed for interoperability: research outputs align to schema.org, DCAT and\n        FaBiO; the relation vocabulary aligns to CiTO (citations), Dublin Core and PAV\n        (versioning) and PROV-O (derivation); identifiers to the SPAR DataCite ontology;\n        funding to FRAPO; agents to FOAF/PRO. The PID Links event is reified as a\n        provenance-bearing dcite:PidRelation.\n\n        Kept within OWL 2 QL (domain/range, subClass/subProperty, inverseOf and\n        existential superclass restrictions only — no functional/transitive/cardinality\n        axioms, no property chains) so rete's lazy query-rewriting reasoner can use it."@en .
 <https://w3id.org/rete/datacite#> <http://www.w3.org/2000/01/rdf-schema#seeAlso> <https://schema.datacite.org/> .
-<https://w3id.org/rete/datacite#> <http://www.w3.org/2002/07/owl#versionInfo> "1.1.0 (2026-10-16): full DataCite 4.6 relationType and resourceTypeGeneral vocabularies, dcite:fromSnapshot, raw-value properties" .
+<https://w3id.org/rete/datacite#> <http://www.w3.org/2002/07/owl#versionInfo> "1.2.0 (2026-10-19): dcite:FundingReference (hasFundingReference, funder, funderName) and dcite:creatorName / affiliationName / rorId on dcite:AgentRole, so names stay with the record that states them; one dcite:PidRelation per PID Links event (uuid). 1.1.0 (2026-10-16): full DataCite 4.6 relationType and resourceTypeGeneral vocabularies, dcite:fromSnapshot, raw-value properties" .
 <https://w3id.org/rete/datacite#Agent> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://w3id.org/rete/datacite#Agent> <http://www.w3.org/2000/01/rdf-schema#comment> "A creator or contributor of a resource (person or organization), often carrying an ORCID or ROR identifier."@en .
 <https://w3id.org/rete/datacite#Agent> <http://www.w3.org/2000/01/rdf-schema#label> "Agent"@en .
@@ -13,7 +13,7 @@
 <https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#comment> "The reified role an agent plays for a resource (creator/contributor with a DataCite contributorType) and its ordering."@en .
 <https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#label> "Agent role"@en .
 <https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://purl.org/spar/pro/RoleInTime> .
-<https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:cd101ebfc3d6e3ce196c01fbed66818b .
+<https://w3id.org/rete/datacite#AgentRole> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r0 .
 <https://w3id.org/rete/datacite#Audiovisual> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://w3id.org/rete/datacite#Audiovisual> <http://www.w3.org/2000/01/rdf-schema#label> "Audiovisual"@en .
 <https://w3id.org/rete/datacite#Audiovisual> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
@@ -65,6 +65,11 @@
 <https://w3id.org/rete/datacite#Funder> <http://www.w3.org/2000/01/rdf-schema#label> "Funder"@en .
 <https://w3id.org/rete/datacite#Funder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://purl.org/cerif/frapo/FundingAgency> .
 <https://w3id.org/rete/datacite#Funder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://xmlns.com/foaf/0.1/Organization> .
+<https://w3id.org/rete/datacite#FundingReference> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://w3id.org/rete/datacite#FundingReference> <http://www.w3.org/2000/01/rdf-schema#comment> "One fundingReference of one record (<doi>/funding/<n>): what that record says about a funder (dcite:funderName, an identifier not minted as dcite:rawIdentifier) and the funder IRI it points at (dcite:funder). The statements stay on the reference because a ROR or Funder ID IRI is shared by every record that names it, and one record's name for it is not a fact about the others."@en .
+<https://w3id.org/rete/datacite#FundingReference> <http://www.w3.org/2000/01/rdf-schema#label> "Funding reference"@en .
+<https://w3id.org/rete/datacite#FundingReference> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://purl.org/cerif/frapo/Funding> .
+<https://w3id.org/rete/datacite#FundingReference> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r1 .
 <https://w3id.org/rete/datacite#Identifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://w3id.org/rete/datacite#Identifier> <http://www.w3.org/2000/01/rdf-schema#comment> "A persistent identifier (DOI, URL, ISSN, handle, …) of a resource or agent, when the datatype shortcut is not enough."@en .
 <https://w3id.org/rete/datacite#Identifier> <http://www.w3.org/2000/01/rdf-schema#label> "Identifier"@en .
@@ -106,10 +111,10 @@
 <https://w3id.org/rete/datacite#PhysicalObject> <http://www.w3.org/2000/01/rdf-schema#label> "Physical object"@en .
 <https://w3id.org/rete/datacite#PhysicalObject> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
 <https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
-<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#comment> "A reified relationship event from the DataCite PID Graph ('PID Links' tables): a typed, provenance-bearing edge between a subject and an object PID, with the asserting source and timestamps. Reifying it keeps provenance (source_id) and time that a bare triple would lose."@en .
+<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#comment> "A reified relationship event from the DataCite PID Graph ('PID Links' tables): a typed, provenance-bearing edge between a subject and an object PID, with the asserting source and timestamp. One PidRelation is one event, identified by its PID Links uuid, minted under its subject as <{subject}/event/{uuid}>: it has exactly one relationSubject, relationObject, relationType, assertedBy and occurredAt. Reifying it keeps provenance (source_id) and time that a bare triple would lose."@en .
 <https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#label> "PID relation"@en .
 <https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/ns/prov#Activity> .
-<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:b6e0a7773efc15d9294d0f88bdd6def2 .
+<https://w3id.org/rete/datacite#PidRelation> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r2 .
 <https://w3id.org/rete/datacite#Preprint> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://w3id.org/rete/datacite#Preprint> <http://www.w3.org/2000/01/rdf-schema#label> "Preprint"@en .
 <https://w3id.org/rete/datacite#Preprint> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
@@ -159,10 +164,12 @@
 <https://w3id.org/rete/datacite#Workflow> <http://www.w3.org/2000/01/rdf-schema#label> "Workflow"@en .
 <https://w3id.org/rete/datacite#Workflow> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://w3id.org/rete/datacite#Resource> .
 <https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
-<https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/2000/01/rdf-schema#comment> "An affiliation the record states for the creator, on that record's dcite:AgentRole (1.2.0; on the dcite:Agent before)."@en .
+<https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#AgentRole> .
 <https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/2000/01/rdf-schema#label> "affiliation name"@en .
 <https://w3id.org/rete/datacite#affiliationName> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://w3id.org/rete/datacite#agentName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#agentName> <http://www.w3.org/2000/01/rdf-schema#comment> "Not emitted since 1.2.0: a name is what one record states, so it is dcite:creatorName on the record's dcite:AgentRole or dcite:funderName on its dcite:FundingReference, never on an identifier (ORCID, ROR, Funder ID) other records share."@en .
 <https://w3id.org/rete/datacite#agentName> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Agent> .
 <https://w3id.org/rete/datacite#agentName> <http://www.w3.org/2000/01/rdf-schema#label> "agent name"@en .
 <https://w3id.org/rete/datacite#agentName> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
@@ -215,6 +222,11 @@
 <https://w3id.org/rete/datacite#creator> <http://www.w3.org/2000/01/rdf-schema#label> "creator"@en .
 <https://w3id.org/rete/datacite#creator> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Agent> .
 <https://w3id.org/rete/datacite#creator> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/dc/terms/creator> .
+<https://w3id.org/rete/datacite#creatorName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#creatorName> <http://www.w3.org/2000/01/rdf-schema#comment> "creators.name exactly as the record gives it, on that record's dcite:AgentRole."@en .
+<https://w3id.org/rete/datacite#creatorName> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#AgentRole> .
+<https://w3id.org/rete/datacite#creatorName> <http://www.w3.org/2000/01/rdf-schema#label> "creator name"@en .
+<https://w3id.org/rete/datacite#creatorName> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://w3id.org/rete/datacite#describes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://w3id.org/rete/datacite#describes> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
 <https://w3id.org/rete/datacite#describes> <http://www.w3.org/2000/01/rdf-schema#label> "describes"@en .
@@ -246,12 +258,26 @@
 <https://w3id.org/rete/datacite#fundedBy> <http://www.w3.org/2000/01/rdf-schema#label> "funded by"@en .
 <https://w3id.org/rete/datacite#fundedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Funder> .
 <https://w3id.org/rete/datacite#fundedBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/cerif/frapo/hasFundingAgency> .
+<https://w3id.org/rete/datacite#funder> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#funder> <http://www.w3.org/2000/01/rdf-schema#comment> "The funder a funding reference names (ROR, Crossref Funder ID, or a record-scoped IRI when the record gives no usable identifier)."@en .
+<https://w3id.org/rete/datacite#funder> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#FundingReference> .
+<https://w3id.org/rete/datacite#funder> <http://www.w3.org/2000/01/rdf-schema#label> "funder"@en .
+<https://w3id.org/rete/datacite#funder> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Funder> .
+<https://w3id.org/rete/datacite#funderName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://w3id.org/rete/datacite#funderName> <http://www.w3.org/2000/01/rdf-schema#comment> "fundingReference.funderName exactly as the record gives it."@en .
+<https://w3id.org/rete/datacite#funderName> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#FundingReference> .
+<https://w3id.org/rete/datacite#funderName> <http://www.w3.org/2000/01/rdf-schema#label> "funder name"@en .
+<https://w3id.org/rete/datacite#funderName> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
 <https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2000/01/rdf-schema#label> "has contributor"@en .
 <https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#AgentRole> .
 <https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/pro/isDocumentContextFor> .
 <https://w3id.org/rete/datacite#hasContributor> <http://www.w3.org/2002/07/owl#inverseOf> <https://w3id.org/rete/datacite#isRoleIn> .
+<https://w3id.org/rete/datacite#hasFundingReference> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://w3id.org/rete/datacite#hasFundingReference> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
+<https://w3id.org/rete/datacite#hasFundingReference> <http://www.w3.org/2000/01/rdf-schema#label> "has funding reference"@en .
+<https://w3id.org/rete/datacite#hasFundingReference> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#FundingReference> .
 <https://w3id.org/rete/datacite#hasIdentifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://w3id.org/rete/datacite#hasIdentifier> <http://www.w3.org/2000/01/rdf-schema#label> "has identifier"@en .
 <https://w3id.org/rete/datacite#hasIdentifier> <http://www.w3.org/2002/07/owl#equivalentProperty> <http://purl.org/spar/datacite/hasIdentifier> .
@@ -676,7 +702,8 @@
 <https://w3id.org/rete/datacite#reviews> <http://www.w3.org/2000/01/rdf-schema#range> <https://w3id.org/rete/datacite#Resource> .
 <https://w3id.org/rete/datacite#reviews> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <http://purl.org/spar/cito/reviews> .
 <https://w3id.org/rete/datacite#rorId> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
-<https://w3id.org/rete/datacite#rorId> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Agent> .
+<https://w3id.org/rete/datacite#rorId> <http://www.w3.org/2000/01/rdf-schema#comment> "The ROR of an affiliation the record states, on that record's dcite:AgentRole (1.2.0)."@en .
+<https://w3id.org/rete/datacite#rorId> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#AgentRole> .
 <https://w3id.org/rete/datacite#rorId> <http://www.w3.org/2000/01/rdf-schema#label> "ROR id"@en .
 <https://w3id.org/rete/datacite#rorId> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#anyURI> .
 <https://w3id.org/rete/datacite#schemaVersion> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
@@ -728,9 +755,12 @@
 <https://w3id.org/rete/datacite#viewCount> <http://www.w3.org/2000/01/rdf-schema#domain> <https://w3id.org/rete/datacite#Resource> .
 <https://w3id.org/rete/datacite#viewCount> <http://www.w3.org/2000/01/rdf-schema#label> "view count"@en .
 <https://w3id.org/rete/datacite#viewCount> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#integer> .
-_:b6e0a7773efc15d9294d0f88bdd6def2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
-_:b6e0a7773efc15d9294d0f88bdd6def2 <http://www.w3.org/2002/07/owl#onProperty> <https://w3id.org/rete/datacite#relationObject> .
-_:b6e0a7773efc15d9294d0f88bdd6def2 <http://www.w3.org/2002/07/owl#someValuesFrom> <https://w3id.org/rete/datacite#Resource> .
-_:cd101ebfc3d6e3ce196c01fbed66818b <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
-_:cd101ebfc3d6e3ce196c01fbed66818b <http://www.w3.org/2002/07/owl#onProperty> <https://w3id.org/rete/datacite#isRoleIn> .
-_:cd101ebfc3d6e3ce196c01fbed66818b <http://www.w3.org/2002/07/owl#someValuesFrom> <https://w3id.org/rete/datacite#Resource> .
+_:r0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:r0 <http://www.w3.org/2002/07/owl#onProperty> <https://w3id.org/rete/datacite#isRoleIn> .
+_:r0 <http://www.w3.org/2002/07/owl#someValuesFrom> <https://w3id.org/rete/datacite#Resource> .
+_:r1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:r1 <http://www.w3.org/2002/07/owl#onProperty> <https://w3id.org/rete/datacite#funder> .
+_:r1 <http://www.w3.org/2002/07/owl#someValuesFrom> <https://w3id.org/rete/datacite#Funder> .
+_:r2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:r2 <http://www.w3.org/2002/07/owl#onProperty> <https://w3id.org/rete/datacite#relationObject> .
+_:r2 <http://www.w3.org/2002/07/owl#someValuesFrom> <https://w3id.org/rete/datacite#Resource> .
