@@ -24,7 +24,8 @@ source ──▶ N-Triples/N-Quads ──▶ rete validate ──▶ rete build 
 ## 1. Identify the source and get the RDF
 
 Match the source to a recipe in **[reference/sources.md](reference/sources.md)** —
-it has a concrete recipe + the existing repo script to model on for each of:
+it has a concrete recipe + an existing pipeline to model on for each of (`data/scripts/...`
+paths are rete's dataset pipelines, in the private `caviri/rete-datasets` repo):
 
 | Source kind | Path to N-Triples |
 |---|---|
@@ -32,10 +33,10 @@ it has a concrete recipe + the existing repo script to model on for each of:
 | OWL/XML (not RDF/XML) | `scripts/owl_to_nt.py` (owlready2) |
 | SPARQL endpoint | `scripts/sparql_to_nt.py` (paginated CONSTRUCT/SELECT) |
 | Wikibase / Wikidata slice | SPARQL or the truthy dump → NT |
-| GeoJSON / shapefiles | hand-written WKT emitter → GeoSPARQL (see `scripts/geoboundaries_to_nt.py`) |
-| Tabular / CSV / Parquet | a per-row triple emitter (see `scripts/*_to_nt.py`) |
-| GBIF Darwin-Core archive | DwC-A → NT (see `scripts/bioexplora_to_nt.py`) |
-| TEI / TEITOK corpus | XML → NT (see `scripts/postscriptum_to_nt.py`) |
+| GeoJSON / shapefiles | hand-written WKT emitter → GeoSPARQL (see `data/scripts/standalone/geoboundaries_to_nt.py`) |
+| Tabular / CSV / Parquet | a per-row triple emitter (see `data/scripts/standalone/*_to_nt.py`) |
+| GBIF Darwin-Core archive | DwC-A → NT (see `data/scripts/standalone/bioexplora_to_nt.py`) |
+| TEI / TEITOK corpus | XML → NT (see `data/scripts/standalone/postscriptum_to_nt.py`) |
 | JSON API | per-entity harvest → NT |
 
 Write converters as **streaming N-Triples emitters** (one `<s> <p> <o> .` line at a
@@ -102,7 +103,7 @@ A monolithic build holds the dictionary + index in RAM. If it OOMs:
    — named graphs build fine) or you need parallel per-part builds: split by
    subject into ~1–2 GB
    N-Triples shards, build each with `--no-pyramid`, and ship a folder +
-   manifest (federation). See `scripts/build_databnf_shards.sh` and
+   manifest (federation). See `data/scripts/standalone/build_databnf_shards.sh` and
    **[reference/build.md](reference/build.md)**.
 
 ## 5. Verify

@@ -745,12 +745,13 @@ locally, and dotted on the map in its own colour, filtered to the scrub year
 <code>[startYear,endYear]</code>). Each active layer gets a <strong>histogram track</strong> beneath the
 timeline — like a clip in a video editor — showing <em>when</em> its data is
 concentrated, with a playhead. Every theme is reproducible from one
-query/recipe each — see <code>scripts/fetch_wikidata_themes.sh</code> (Wikidata, instant
-<code>emit</code> + interval <code>emiti</code>), <code>scripts/fetch_dbpedia_themes.sh</code> (DBpedia),
-<code>scripts/fetch_ohm.sh</code> + <code>scripts/ohm_overpass_to_nt.py</code> (OpenHistoricalMap),
-<code>scripts/fetch_atlas_extra.sh</code> (Nomisma / FactGrid / Getty TGN SPARQL), and
-<code>scripts/fetch_dumps_extra.sh</code> + <code>scripts/{theographic,samian}_to_nt.py</code>
-(the GitHub-dump providers). Because a layer <em>is</em> a SPARQL query, the <strong>＋</strong>
+query/recipe each — see <code>data/scripts/standalone/fetch_wikidata_themes.sh</code> (Wikidata, instant
+<code>emit</code> + interval <code>emiti</code>), <code>data/scripts/standalone/fetch_dbpedia_themes.sh</code> (DBpedia),
+<code>data/scripts/standalone/fetch_ohm.sh</code> + <code>data/scripts/standalone/ohm_overpass_to_nt.py</code> (OpenHistoricalMap),
+<code>data/scripts/standalone/fetch_atlas_extra.sh</code> (Nomisma / FactGrid / Getty TGN SPARQL), and
+<code>data/scripts/standalone/fetch_dumps_extra.sh</code> + <code>data/scripts/standalone/{theographic,samian}_to_nt.py</code>
+(the GitHub-dump providers; these pipelines live in the private <code>caviri/rete-datasets</code> repository, which a rete checkout clones at <code>data/scripts/</code>).
+Because a layer <em>is</em> a SPARQL query, the <strong>＋</strong>
 button lets you <strong>author your own</strong> — name it, pick a colour and instant/interval
 kind, point it at the embedded borders (offline) or any bucket <code>.rete</code>, and write
 the <code>SELECT … ?wkt</code>. The layer list is scrollable and <strong>drag-to-reorder</strong> (which
@@ -798,7 +799,7 @@ the lazy HTTP-range reader).</p>
 <code>.rete</code> into a template (the same offline-only pattern as the playground); the
 remote <code>lazy</code>/<code>cached</code> modes point at the same file served by HTTP range:</p>
 <pre><code class="language-sh"># 1. the embedded dataset (simplified to an in-browser-sized ~1.5 MB file)
-python3 scripts/geo_to_rete.py basemaps \
+python3 data/scripts/standalone/geo_to_rete.py basemaps \
   --years bc2000,bc500,bc323,500,1000,1279,1492,1600,1715,1815,1880,1900,1914,1938,1945,1960,1994,2010 \
   --prec 3 --min-bbox 0.12 --max-per-year 130 -o dev/geo/history.nt
 rete build dev/geo/history.nt -o web/history.rete

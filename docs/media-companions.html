@@ -707,9 +707,10 @@ by the existing datasets.</p>
 <tr><td>streamable 3D</td><td><code>prop:mesh</code></td><td>a hosted <code>.glb</code> URL</td></tr>
 <tr><td>turntable spin</td><td><code>prop:spinVideo</code> / <code>prop:spinGif</code></td><td>a hosted <code>…-spin/&lt;id&gt;.{webm,gif}</code> URL</td></tr>
 </tbody></table>
-<p><code>scripts/bioexplora_to_nt.py</code> and <code>scripts/smithsonian3d_to_nt.py</code> are the worked
+<p><code>data/scripts/standalone/bioexplora_to_nt.py</code> and <code>data/scripts/standalone/smithsonian3d_to_nt.py</code> are the worked
 examples (specimens → <code>prop:image</code> + <code>geo:asWKT</code>; 3D models → <code>prop:mesh</code> +
-<code>prop:spinVideo</code>/<code>prop:spinGif</code>).</p>
+<code>prop:spinVideo</code>/<code>prop:spinGif</code>). Those dataset pipelines, and the <code>Dockerfile.gltf</code> /
+<code>Dockerfile.blender</code> images below, live (in the private <code>caviri/rete-datasets</code> repository, which a rete checkout clones at <code>data/scripts/</code>).</p>
 <h2 id="sql-companions-the-explore-tab">SQL companions (the Explore tab)</h2>
 <p>The playground's <strong>Explore</strong> tab queries the <em>same data</em> through DuckDB-WASM and
 SQLite-WASM, side by side with the rete engine — both fetch lazily over HTTP
@@ -729,12 +730,12 @@ For a richer one-wide-table-per-class layout, use
 <p>Source meshes are usually too big to stream (20–50 MB). Compress with
 <code>gltf-transform optimize</code> (Draco geometry + WebP textures, ~40× smaller, e.g.
 20–50 MB → ~0.5–1 MB), run inside the <code>rete-gltf</code> node image:</p>
-<pre><code class="language-bash">docker build -f scripts/Dockerfile.gltf -t rete-gltf .
+<pre><code class="language-bash">docker build -f data/scripts/standalone/Dockerfile.gltf -t rete-gltf .
 docker run --rm -v "$PWD":/work -w /work rete-gltf \
   gltf-transform optimize in.glb out.glb --compress draco --texture-compress webp
 </code></pre>
 <p>Upload the compressed <code>.glb</code> (below) and emit <code>prop:mesh</code> with its URL.
-<code>scripts/bioexplora_sketchfab.sh</code> is the end-to-end worked example:
+<code>data/scripts/standalone/bioexplora_sketchfab.sh</code> is the end-to-end worked example:
 Sketchfab Data API → download each downloadable <code>.glb</code> → Draco+WebP compress →
 upload → write a <code>uid → mesh-url</code> TSV that <code>bioexplora_to_nt.py</code> reads.</p>
 <h3 id="turntable-spin-previews">Turntable spin previews</h3>
@@ -742,11 +743,11 @@ upload → write a <code>uid → mesh-url</code> TSV that <code>bioexplora_to_nt
 needs no WebGL on the client. Render it with headless Blender (Cycles on
 OptiX/CUDA GPU) in the <code>rete-blender</code> image (the official Blender 3.6 LTS tarball
 — it ships the glTF/Draco importer and bundled numpy):</p>
-<pre><code class="language-bash">docker build -f scripts/Dockerfile.blender -t rete-blender .
+<pre><code class="language-bash">docker build -f data/scripts/standalone/Dockerfile.blender -t rete-blender .
 # batch over a "id&lt;TAB&gt;glb_url" TSV; GPU + a mounted OptiX kernel cache:
 docker run --rm --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -e BLENDER_GPU=1 \
   -v "$PWD":/work -v "$PWD/data/.blendercache":/root/.cache -w /work rete-blender \
-  sh scripts/render_turntables.sh data/&lt;ds&gt;/mesh_list.tsv data/&lt;ds&gt;/turntables
+  sh data/scripts/standalone/render_turntables.sh data/&lt;ds&gt;/mesh_list.tsv data/&lt;ds&gt;/turntables
 </code></pre>
 <p><code>render_turntables.sh</code> loops the TSV → <code>glb_to_spin.sh</code> (per model) →
 <code>blender_turntable.py</code> (the Blender script: import, centre, frame a camera, spin

@@ -1,7 +1,8 @@
 # `data/` — rete dataset catalog (internal)
 
 Everything under `data/` is **gitignored and regenerable** — the *source recipes*
-(`scripts/`) are tracked, the built artifacts are not. This file is the exception
+are versioned in the private `caviri/rete-datasets` repository, cloned here as
+`data/scripts/` (its own git repo, ignored by rete); the built artifacts are not versioned. This file is the exception
 (`!/data/README.md` in `.gitignore`) and documents what each dataset is, its
 technical shape, how it's built and served, and the kind of questions it answers.
 
@@ -16,7 +17,7 @@ Two consumers:
 
 ```
 source (SPARQL CONSTRUCT | REST/WFS | dump | generator)
-   └─ scripts/fetch_*.sh / *_to_nt.py / *_gen.py  ──▶  data/**/<key>.{nt,ttl}   (atlas GeoSPARQL shape or a plain graph)
+   └─ data/scripts/standalone/fetch_*.sh / *_to_nt.py  ──▶  data/**/<key>.{nt,ttl}   (atlas GeoSPARQL shape or a plain graph)
         └─ rete build <file> -o <key>.rete         (run in Docker: rust:1.92-bookworm, target/release/rete is a Linux ELF)
              ├─ atlas overlay  ──▶  skills/rete-publish/scripts/upload_bucket.sh <file> <key>/<key>.rete
              │                       served at https://data.graphplaza.com/<key>/<key>.rete
@@ -56,30 +57,30 @@ Served from `…/data/atlas/themes/<key>.rete`. Counts are approximate (cap = `L
 ### Borders & base layers
 | key | what | shape | source / license | script |
 |---|---|---|---|---|
-| `history` (embedded) | world territorial borders, 18 era snapshots 2000 BCE–2010 CE | instant polygons | aourednik/historical-basemaps, GPL-3.0 | `scripts/geo_to_rete.py basemaps` |
-| `battles`,`sites`,`states` | battles / archaeological sites / historical-state capitals | instant | Wikidata CC0 | `scripts/fetch_wikidata_events.sh` |
-| `pleiades` | 35k ancient places, `[startYear,endYear]` | interval | Pleiades, CC-BY | `scripts/geo_to_rete.py pleiades` |
+| `history` (embedded) | world territorial borders, 18 era snapshots 2000 BCE–2010 CE | instant polygons | aourednik/historical-basemaps, GPL-3.0 | `data/scripts/standalone/geo_to_rete.py basemaps` |
+| `battles`,`sites`,`states` | battles / archaeological sites / historical-state capitals | instant | Wikidata CC0 | `data/scripts/standalone/fetch_wikidata_events.sh` |
+| `pleiades` | 35k ancient places, `[startYear,endYear]` | interval | Pleiades, CC-BY | `data/scripts/standalone/geo_to_rete.py pleiades` |
 
-### Wikidata themes — 67 (`scripts/fetch_wikidata_themes.sh`, CC0)
+### Wikidata themes — 67 (`data/scripts/standalone/fetch_wikidata_themes.sh`, CC0)
 Two emit functions: `emit` (INSTANT events, `ex:year` from P585) and `emiti` (INTERVAL
 structures/institutions/polities, `ex:startYear` from P571 inception, `ex:endYear` from
 `COALESCE(P576 dissolved, P3999 closure, P582 end, 2100)`).
 - **Events (instant):** military-operations, sieges, earthquakes, disasters, floods, meteorite-falls, volcanic-eruptions, nuclear-explosions, assassinations, treaties, epidemics, shipwrecks, massacres, explosions, aviation-accidents, rail-accidents, tsunamis, wildfires, coups, revolutions, terrorist-attacks, expeditions, landslides.
 - **Structures/institutions/polities (interval):** castles, fortifications, lighthouses, cathedrals, monasteries, abbeys, palaces, forts, universities, world-heritage-sites, pyramids, polities, bridges, dams, museums, mines, stadiums, libraries, prisons, mosques, synagogues, temples, towers, theatres, observatories, railway-stations, amphitheatres, aqueducts, canals, windmills, botanical-gardens, megaliths, churches, hospitals, cemeteries, gardens, city-gates, power-stations, factories, breweries, shipyards, airports, monuments, memorials.
-- `THEMES="castles polities" scripts/fetch_wikidata_themes.sh` fetches a subset.
+- `THEMES="castles polities" data/scripts/standalone/fetch_wikidata_themes.sh` fetches a subset.
 
 ### Other providers
 | key(s) | what | shape | source / license | script |
 |---|---|---|---|---|
-| `dbpedia-conflicts`, `dbpedia-power` | conflicts (instant) / power plants (interval) | mixed | DBpedia, CC-BY-SA | `scripts/fetch_dbpedia_themes.sh` |
-| `ohm` | OpenHistoricalMap features, dated by `start_date`/`end_date`; **real geometry** | interval (Point/Line/Polygon) | OSM/OHM, CC0 | `scripts/fetch_ohm.sh` + `ohm_overpass_to_nt.py` |
-| `nomisma` | ~10k ancient coin types at their mints | interval | Nomisma.org, CC-BY | `scripts/fetch_atlas_extra.sh` |
-| `factgrid` | ~4.7k geolocated dated places & events | interval | FactGrid, CC0 | `scripts/fetch_atlas_extra.sh` |
-| `getty-tgn` | ~4.5k historical places (name-usage spans) | interval | Getty TGN, ODC-By | `scripts/fetch_atlas_extra.sh` (POST-from-file; endpoint flaky) |
-| `theographic-bible` | 355 biblical events located + dated | instant | Theographic, CC-BY-SA | `scripts/fetch_dumps_extra.sh` + `theographic_to_nt.py` |
-| `samian-ware` | ~3k Roman terra-sigillata potters at production centres | interval | RGZM Samian LOD, DPPL | `scripts/fetch_dumps_extra.sh` + `samian_to_nt.py` |
+| `dbpedia-conflicts`, `dbpedia-power` | conflicts (instant) / power plants (interval) | mixed | DBpedia, CC-BY-SA | `data/scripts/standalone/fetch_dbpedia_themes.sh` |
+| `ohm` | OpenHistoricalMap features, dated by `start_date`/`end_date`; **real geometry** | interval (Point/Line/Polygon) | OSM/OHM, CC0 | `data/scripts/standalone/fetch_ohm.sh` + `ohm_overpass_to_nt.py` |
+| `nomisma` | ~10k ancient coin types at their mints | interval | Nomisma.org, CC-BY | `data/scripts/standalone/fetch_atlas_extra.sh` |
+| `factgrid` | ~4.7k geolocated dated places & events | interval | FactGrid, CC0 | `data/scripts/standalone/fetch_atlas_extra.sh` |
+| `getty-tgn` | ~4.5k historical places (name-usage spans) | interval | Getty TGN, ODC-By | `data/scripts/standalone/fetch_atlas_extra.sh` (POST-from-file; endpoint flaky) |
+| `theographic-bible` | 355 biblical events located + dated | instant | Theographic, CC-BY-SA | `data/scripts/standalone/fetch_dumps_extra.sh` + `theographic_to_nt.py` |
+| `samian-ware` | ~3k Roman terra-sigillata potters at production centres | interval | RGZM Samian LOD, DPPL | `data/scripts/standalone/fetch_dumps_extra.sh` + `samian_to_nt.py` |
 
-### Antarctica — 5 layers (`scripts/fetch_antarctica.sh`)
+### Antarctica — 5 layers (`data/scripts/standalone/fetch_antarctica.sh`)
 | key | what | n | shape | source / license |
 |---|---|---|---|---|
 | `antarctic-claims` | 7 territorial-claim longitude sectors + Peter I Island + Marie Byrd gap | 9 | interval Polygon/MultiPolygon | synthetic facts (`antarctic_claims.py`) |
@@ -141,8 +142,8 @@ dataset, under `examples`). Embedded unless noted. The first 7 are the originals
 | `orkg` | research papers → contributions | 37k | ORKG, CC-BY | embed |
 | `getty-ulan` | artist teacher→pupil lineage | 376k | Getty ULAN, ODC-By | remote-lazy |
 
-Reproduce: `scripts/fetch_playground_kgs.sh` (linked-jazz/nomisma/mimotext/mmm/getty-ulan),
-`scripts/fetch_openalex_astrocytes.py`, and the `antarctic-expeditions` CONSTRUCT.
+Reproduce: `data/scripts/standalone/fetch_playground_kgs.sh` (linked-jazz/nomisma/mimotext/mmm/getty-ulan),
+`data/scripts/standalone/fetch_openalex_astrocytes.py`, and the `antarctic-expeditions` CONSTRUCT.
 factgrid-illuminati/theographic-graph/monarch/opencitations/orkg were fetched via the
 `ingest-deferred-and-academic` research workflow (recipes there).
 
@@ -180,7 +181,7 @@ Database of Manuscripts, U. Penn), [Bibale](http://bibale.irht.cnrs.fr/) (IRHT-C
 and [Medieval Manuscripts in Oxford Libraries](https://medieval.bodleian.ox.ac.uk/)
 (Bodleian). Source: Zenodo [DOI 10.5281/zenodo.4019643](https://doi.org/10.5281/zenodo.4019643)
 (v2.1.0, 2020-09-08), **CC BY-NC 4.0**. One command builds everything:
-`scripts/fetch_mmm_full.sh` (steps: `fetch` | `build` | `export` | `tables`).
+`data/scripts/standalone/fetch_mmm_full.sh` (steps: `fetch` | `build` | `export` | `tables`).
 
 ### Pipeline & artifacts (all under `data/mmm/`, gitignored & regenerable)
 ```
@@ -188,7 +189,7 @@ Zenodo mmm_data_v2.1.0.zip (66.5 MB, md5 2f97635f…)
   └─ unzip → mmm_{sdbm,bibale,bodley,places}.ttl + mmm-schema.ttl       (~1.3 GB; sdbm.ttl alone is 1.19 GB)
        └─ rete build … --no-pyramid --card   →  mmm-full.rete           (77 MB · 23,349,356 triples · 5.15M terms)
             ├─ rete export                    →  mmm-full.nt             (3.1 GB · lossless N-Triples)
-            │    └─ scripts/mmm_to_tables.py  →  tables/*.parquet        (43 per-rdf:type tables + _untyped + _manifest · 164 MB)
+            │    └─ data/scripts/standalone/mmm_to_tables.py  →  tables/*.parquet        (43 per-rdf:type tables + _untyped + _manifest · 164 MB)
             │                                    mmm-tables.duckdb       (44 entity tables, one per class)
             └─ (RDF/XML cidoc-crm.rdf / frbroo.rdf ontologies are TBox-only — not ingested)
 ```
@@ -213,7 +214,7 @@ Zenodo mmm_data_v2.1.0.zip (66.5 MB, md5 2f97635f…)
 http://erlangen-crm.org/current/`, `frbroo = http://erlangen-crm.org/efrbroo/`,
 `mmms = http://ldf.fi/schema/mmm/`.
 
-### Related tables — `scripts/mmm_to_tables.py` (lossless)
+### Related tables — `data/scripts/standalone/mmm_to_tables.py` (lossless)
 The MMM-shaped sibling of `rdf_to_entity_tables.py`: reads the graph's N-Triples export
 and emits **one Parquet table per `rdf:type`** — the class's top-24 properties as named
 `LIST` columns (manuscripts get `source`, `P51_has_former_or_current_owner`,

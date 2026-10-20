@@ -93,10 +93,11 @@ SELECT ?territory ?km WHERE {
 [**aourednik/historical-basemaps**](https://github.com/aourednik/historical-basemaps)
 (GPL-3.0) — world territorial borders at snapshots from 323 BCE to 1994 CE. Each
 border polygon becomes a `geo:wktLiteral`, the snapshot year an `xsd:integer`,
-geometry simplified to ~1 km for an in-browser-sized file. Build it with:
+geometry simplified to ~1 km for an in-browser-sized file. Build it with the converter
+from the private `caviri/rete-datasets` repository, which a rete checkout clones at `data/scripts/`:
 
 ```sh
-python3 scripts/geo_to_rete.py basemaps \
+python3 data/scripts/standalone/geo_to_rete.py basemaps \
   --years bc323,1000,1492,1815,1914,1945,1994 --prec 2 --min-bbox 0.3 \
   --max-per-year 90 -o history.nt
 rete build history.nt -o web/history.rete

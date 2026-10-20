@@ -69,11 +69,11 @@ section). Escalating levers:
    with `--no-pyramid` in parallel, and ship a folder + a JSON manifest. The
    dictionary law: cross-shard joins are term-level (string) joins, so shard by
    **subject/entity** to keep star-queries inside one shard. Model:
-   `scripts/build_databnf_shards.sh`, `scripts/build_biblissima_shards.sh`.
+   `data/scripts/standalone/build_databnf_shards.sh`, `data/scripts/standalone/build_biblissima_shards.sh`.
 
 ### External-build playbook (billion-triple single file)
 
-Hard-won operational rules — model `scripts/orcid/build_single_rete.sh`:
+Hard-won operational rules — model `data/scripts/orcid/build_single_rete.sh`:
 
 - **Two robust phases, never one host pipeline.** Emit the N-Triples to a file on
   the spill drive first (~10× faster than piping into an attached container),
