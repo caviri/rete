@@ -721,12 +721,13 @@ class LinkEvents(unittest.TestCase):
         b, t = self.link(source_id="crossref", occurred_at="2023-06-05T10:00:00.000Z",
                          uuid="7F0B1D2E-0000-4000-8000-00000000AB12")
         nodes = {str(tr.subject.value) for tr in a + b if tr.predicate.value == conv.D + "assertedBy"}
-        self.assertEqual(nodes, {conv.EVENTB + "0003a7c5-3f1e-4a52-9f0e-2b8c0c9f3e11",
-                                 conv.EVENTB + "7f0b1d2e-0000-4000-8000-00000000ab12"})
+        ev = DOI + "10.1002/2013jb010164/event/"
+        self.assertEqual(nodes, {ev + "0003a7c5-3f1e-4a52-9f0e-2b8c0c9f3e11",
+                                 ev + "7f0b1d2e-0000-4000-8000-00000000ab12"})
         for trs in (a, b):
             per = {}
             for tr in trs:
-                if str(tr.subject.value).startswith(conv.EVENTB):
+                if "/event/" in str(tr.subject.value):
                     per[tr.predicate.value] = per.get(tr.predicate.value, 0) + 1
             self.assertTrue(all(n == 1 for n in per.values()), per)
         self.assertEqual(counts(t, "R18"), {"pid_relation": 1})

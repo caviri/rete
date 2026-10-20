@@ -245,7 +245,7 @@ RULES = [  # (rule, one line on what it does) -- kept in step with parquet_to_nt
     ("R15", "Under `10.13039/` a DOI is `10.13039/<digits>`: a value naming exactly one Funder Registry number (`10.13039/http://dx.doi.org/10.13039/501100001809`) is that id; a placeholder (`#`, `funder%20id`) is not minted."),
     ("R16", "Each fundingReference is a record-scoped `dcite:FundingReference` with `dcite:funder` and `dcite:funderName`; the shared funder IRI carries no name."),
     ("R17", "A DOI written with `%XX` escapes (or double-encoded `%25XX`) is kept as written and counted, never decoded: DataCite registers DOIs with literal escapes."),
-    ("R18", "One `dcite:PidRelation` per PID Links event, `<https://api.datacite.org/events/{uuid}>`, with one subject, object, type, source and time; an event in both files is taken from May 2025."),
+    ("R18", "One `dcite:PidRelation` per PID Links event, `<{subject}/event/{uuid}>`, with one subject, object, type, source and time; an event in both files is taken from May 2025."),
     ("R19", "A creator's name (`dcite:creatorName`), affiliations, ROR and unminted ids are on the record's `dcite:AgentRole`; an orcid.org agent carries only `dcite:orcid`."),
 ]
 
@@ -317,7 +317,7 @@ def rete_card(tally):
         "## What is in it",
         "",
         "- One `dcite:Resource` per DOI at `https://doi.org/{doi}`, typed by its resourceTypeGeneral (all 32 DataCite 4.6 values), with title, publisher, publication year, dates, version, language, landing page, usage metrics (2024+), subjects, reified creators (a `dcite:AgentRole` with the name and affiliations the record gives, held by an `https://orcid.org/` agent when the ORCID is valid), funders (`dcite:fundedBy`) and DOI-typed related identifiers as typed edges.",
-        "- The PID Graph: every event is a direct typed edge **and** a `dcite:PidRelation` `<https://api.datacite.org/events/{uuid}>` with one `relationSubject`, `relationObject`, exact `relationType`, `assertedBy` (the source) and `occurredAt`. Events from both PID Links files are kept; an event (uuid) present in both is taken once, from May 2025.",
+        "- The PID Graph: every event is a direct typed edge **and** a `dcite:PidRelation` `<{subject}/event/{uuid}>` with one `relationSubject`, `relationObject`, exact `relationType`, `assertedBy` (the source) and `occurredAt`. Events from both PID Links files are kept; an event (uuid) present in both is taken once, from May 2025.",
         "- Funding: `dcite:fundedBy` links a record to its funder (ROR, Crossref Funder ID, or a record-scoped IRI when the record gives no usable id); what the record says about the funder (`dcite:funderName`, an id not minted) sits on its `dcite:FundingReference`, never on the shared funder IRI.",
         "- Works key by DOI and people by ORCID, so the graph joins crossref, opencitations, openaire, dblp, zenodo and orcid by IRI.",
         "",

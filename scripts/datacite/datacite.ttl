@@ -81,7 +81,7 @@ dcite:Identifier a owl:Class ;
 
 dcite:PidRelation a owl:Class ;
     rdfs:label "PID relation"@en ;
-    rdfs:comment "A reified relationship event from the DataCite PID Graph ('PID Links' tables): a typed, provenance-bearing edge between a subject and an object PID, with the asserting source and timestamp. One PidRelation is one event, identified by its PID Links uuid as <https://api.datacite.org/events/{uuid}>: it has exactly one relationSubject, relationObject, relationType, assertedBy and occurredAt. Reifying it keeps provenance (source_id) and time that a bare triple would lose."@en ;
+    rdfs:comment "A reified relationship event from the DataCite PID Graph ('PID Links' tables): a typed, provenance-bearing edge between a subject and an object PID, with the asserting source and timestamp. One PidRelation is one event, identified by its PID Links uuid, minted under its subject as <{subject}/event/{uuid}>: it has exactly one relationSubject, relationObject, relationType, assertedBy and occurredAt. Reifying it keeps provenance (source_id) and time that a bare triple would lose."@en ;
     rdfs:subClassOf prov:Activity ;
     rdfs:subClassOf [ a owl:Restriction ; owl:onProperty dcite:relationObject ;
                       owl:someValuesFrom dcite:Resource ] .

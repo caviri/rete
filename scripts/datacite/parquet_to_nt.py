@@ -59,7 +59,7 @@ dev/datacite-defect-hunt/):
       record's funderName; shared funder IRIs carry no name.
   R17 A DOI carrying %XX (or double-encoded %25XX) is kept as written and counted:
       DataCite registers DOIs with literal escapes, so decoding is not lossless.
-  R18 One dcite:PidRelation per PID Links event, <https://api.datacite.org/events/{uuid}>;
+  R18 One dcite:PidRelation per PID Links event, <{subject IRI}/event/{uuid}>;
       an event in both files is taken from the newer one.
   R19 A creator's name, affiliations and unminted ids are on the record's AgentRole;
       an orcid.org agent carries only dcite:orcid.
@@ -91,7 +91,6 @@ DOIB = "https://doi.org/"
 ORCIDB = "https://orcid.org/"
 RORB = "https://ror.org/"
 HDLB = "https://hdl.handle.net/"
-EVENTB = "https://api.datacite.org/events/"  # a PID Links event, by its uuid (R18)
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 DCT_SUBJECT = "http://purl.org/dc/terms/subject"
 XSD = "http://www.w3.org/2001/XMLSchema#"
@@ -900,7 +899,13 @@ def emit_link(out, r, x):
     if not _UUID_RE.match(uid):
         x.count("R18", "dropped.pid_relation.no_uuid", example=uid)
         return
-    R = f"<{EVENTB}{uid}>"
+    # Minted under the subject, not as https://api.datacite.org/events/{uuid}: 613 M random
+    # uuids as one IRI block scatter the term ids, and the six permutations compressed 2.3x
+    # worse (95 GB file instead of ~55 GB; measured on a 154 M-triple sample).
+    rel_iri = x.mint(f"{subj}/event/{uid}", "R2", "pid_relation")
+    if rel_iri is None:
+        return
+    R = f"<{rel_iri}>"
     x.count("R18", "pid_relation")
     ap(f"{R} <{RDF_TYPE}> <{D}PidRelation> .\n")
     ap(f"{R} <{D}relationSubject> <{subj}> .\n")
@@ -1032,7 +1037,7 @@ _UUID_SQL = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 def build_link_plan(con, root, out_path, parts=8):
     """R18: a PID Links event is its `uuid`. Every event becomes one dcite:PidRelation
-    `<EVENTB><uuid>`; an event present in both files (same uuid) is taken from the newer
+    `<subject>/event/<uuid>`; an event present in both files (same uuid) is taken from the newer
     file, as R9 does for records. GUARD: uuids must be uuid-shaped and unique within each
     file (PlanError otherwise). Writes the rows of the older file(s) to keep. Work is
     split into `parts` hash partitions of the uuid so it fits the memory limit."""
