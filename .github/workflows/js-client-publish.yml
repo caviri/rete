@@ -1,9 +1,23 @@
 name: JS client publish
 
-# Release pipeline only: build + test + npm publish on `js-v*` tags.
-# npm's trusted publisher for `rete-graph` points at THIS filename — renaming
-# the file breaks publishing until the npmjs.com form is updated. Day-to-day
-# testing lives in js-test.yml.
+# Release pipeline only: build + test + npm publish on `js-v*` tags, through
+# npm TRUSTED PUBLISHING (GitHub OIDC). No npm token exists anywhere — not in
+# this file, not in the repository or the `npm` environment's secrets: the npm
+# CLI trades this job's OIDC identity for a short-lived publish token, and the
+# registry signs a provenance statement for the run. Every version since 0.2.0
+# went out this way (the registry records `_npmUser` "GitHub Actions
+# <npm-oidc-no-reply@github.com>"; 0.1.0 was the one manual bootstrap), the
+# same model as crates.io (release.yml) and PyPI (python-client-publish.yml).
+#
+# npm's trusted publisher for `rete-graph` names THIS filename and the `npm`
+# environment; renaming either breaks publishing until the npmjs.com entry is
+# updated (package → Settings → Trusted publishing). Day-to-day testing lives
+# in js-test.yml.
+#
+# Two jobs, like the PyPI workflow: `build` makes and checks the tarball and
+# runs on tags and on workflow_dispatch (a dry run from any branch); `publish`
+# uploads THAT tarball and runs only for a pushed `js-v*` tag. Before this
+# split, a manual dispatch from any branch ran `npm publish`.
 on:
   push:
     tags: ["js-v*"]
@@ -13,19 +27,20 @@ permissions:
   contents: read
 
 jobs:
-  publish:
-    name: build + test + publish to npm
+  build:
+    name: build + test + pack
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The npm trusted publisher is scoped to this environment; add required
-    # reviewers to it in GitHub → Settings → Environments for a manual
-    # approval gate before anything reaches the registry.
-    environment: npm
-    permissions:
-      contents: read
-      id-token: write # OIDC for npm trusted publishing (+ provenance)
     steps:
       - uses: actions/checkout@v6
+      - name: The tag must name the package version
+        if: startsWith(github.ref, 'refs/tags/js-v')
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("clients/js/package.json"))["version"])')
+          test "$GITHUB_REF_NAME" = "js-v$version" || {
+            echo "tag $GITHUB_REF_NAME does not match clients/js/package.json version $version" >&2
+            exit 1
+          }
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -33,14 +48,70 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: "https://registry.npmjs.org"
-      # Trusted publishing needs a recent npm CLI.
-      - run: npm install -g npm@latest
       - name: Build the wasm engine from the checked-out crates
         run: bash clients/js/build-wasm.sh
-      - name: Build, test, publish
+      - name: Build, test, pack
         working-directory: clients/js
         run: |
           npm ci --no-audit --no-fund
           npm test
-          npm publish
+          npm pack
+          ls -l rete-graph-*.tgz
+      # The tarball as the registry would take it, without uploading (this job
+      # holds no credentials and no id-token permission). npm >= 11 also
+      # refuses a version the registry already has, so on a tag this fails
+      # before the publish job starts; on a dispatch from main the version is
+      # usually published already, which is why it is tag-only.
+      - name: Validate the tarball against the registry (npm publish --dry-run)
+        if: startsWith(github.ref, 'refs/tags/js-v')
+        working-directory: clients/js
+        run: npm publish --dry-run ./rete-graph-*.tgz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-tarball
+          path: clients/js/rete-graph-*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: publish to npm (trusted publishing)
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/js-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The trusted publisher is scoped to this environment. Restrict it to
+    # `js-v*` tags in GitHub → Settings → Environments → npm (as `crates-io`
+    # admits `v*` only), and add required reviewers there for a manual gate.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # the OIDC identity npm trusts; nothing else authenticates
+    steps:
+      # registry-url only writes the .npmrc npm's own example uses; with no
+      # token configured its NODE_AUTH_TOKEN is a placeholder, and npm replaces
+      # it with the OIDC-issued token before publishing.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs npm >= 11.5.1. Pinned to the major that
+      # published 0.3.6 rather than `latest`, so a new npm major never lands
+      # in the middle of a release unannounced.
+      - name: npm with trusted-publishing support
+        run: |
+          npm install -g npm@12
+          v=$(npm --version)
+          node -e 'const [a, b, c] = process.argv[1].split(".").map(Number);
+            process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$v" || {
+            echo "npm $v cannot do trusted publishing (needs >= 11.5.1)" >&2
+            exit 1
+          }
+          echo "npm $v"
+      - uses: actions/download-artifact@v7
+        with:
+          name: npm-tarball
+          path: dist
+      # --provenance is what trusted publishing does anyway; saying it makes a
+      # publish that cannot attest fail instead of shipping unattested.
+      - name: Publish the tested tarball
+        run: npm publish ./dist/rete-graph-*.tgz --provenance --access public

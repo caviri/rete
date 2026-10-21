@@ -753,6 +753,28 @@ Every client also exposes the engine version it embeds — <code>rete_graph .__e
 install support feature X?", since the binding's own version tracks the binding.</p>
 <p>Clients release from their own tags (<code>py-v0.3.0</code>, <code>js-v0.3.0</code>), not the <code>v*</code>
 release tag.</p>
+<h3 id="registry-credentials">Registry credentials</h3>
+<p>No registry token is stored anywhere: the repository and its environments
+hold no secrets, and every registry trusts a workflow identity instead
+(GitHub OIDC, "trusted publishing"):</p>
+<table><thead><tr><th>registry</th><th>workflow / job</th><th>environment</th><th>how it authenticates</th></tr></thead><tbody>
+<tr><td>crates.io</td><td><code>release.yml</code> / <code>protected crates.io publishing</code></td><td><code>crates-io</code> (<code>v*</code> tags only)</td><td><code>rust-lang/crates-io-auth-action</code> trades OIDC for a short-lived token, revoked after the job</td></tr>
+<tr><td>PyPI</td><td><code>python-client-publish.yml</code> / <code>publish to PyPI</code></td><td><code>pypi</code></td><td><code>uv publish --trusted-publishing always</code> (no attestations uploaded)</td></tr>
+<tr><td>npm</td><td><code>js-client-publish.yml</code> / <code>publish to npm</code></td><td><code>npm</code></td><td>the npm CLI (≥ 11.5.1) trades OIDC for a short-lived token; <code>--provenance</code> signs the build</td></tr>
+</tbody></table>
+<p>Each registry's trusted-publisher entry names the workflow <strong>file</strong> (and the
+environment), so renaming either breaks that channel until the entry on the
+registry is updated. The npm job publishes only the tarball the <code>build</code> job
+tested, and only for a pushed <code>js-v*</code> tag; a <code>workflow_dispatch</code> run is a dry
+run (<a href="clients-dev.html#releasing-to-npm">details</a>).</p>
+<p>npm is phasing out granular tokens that bypass 2FA: they lost account and
+package-management actions in July 2026, and from January 2027 they can only
+stage a publish for a maintainer to approve. That is the notice
+<code>npm publish</code> prints in the 0.3.6 log. It does not apply to trusted
+publishing, which is what published 0.3.6. With no token in use, the package's
+<em>Publishing access</em> on npmjs.com can be set to "Require two-factor
+authentication and disallow tokens"; trusted publishing keeps working under
+that setting.</p>
 <h3 id="cutting-a-version">Cutting a version</h3>
 <p><code>scripts/sync_versions.py --set X.Y.Z</code> stamps the workspace, the exact
 <code>rete-core</code> pins the publishable crates carry, and every client manifest.
