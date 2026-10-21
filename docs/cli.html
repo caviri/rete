@@ -1261,7 +1261,7 @@ range.</p>
 <code>?name</code> is a variable (terms may not contain spaces).</p>
 <pre><code class="language-sh">rete bgp data.rete "?x &lt;http://ex/knows&gt; ?y . ?y &lt;http://ex/knows&gt; ?z"
 </code></pre>
-<h3 id="rete-sparql-file-query---json---entail---memory-budget-mb-n"><code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json] [--entail] [--memory-budget-mb N]</code></h3>
+<h3 id="rete-sparql-file-query----query-file-path---json---entail---memory-budget-mb-n"><code>rete sparql &lt;file&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--json] [--entail] [--memory-budget-mb N]</code></h3>
 <p>Run SPARQL: <code>SELECT</code> / <code>ASK</code> / <code>CONSTRUCT</code> / <code>DESCRIBE</code>. With <code>--json</code>, emit
 standard SPARQL Results JSON (for <code>SELECT</code>/<code>ASK</code>). See <a href="sparql.html">SPARQL support</a>.</p>
 <p><code>--entail</code> turns on <strong>OWL 2 QL reasoning</strong>: the query is rewritten so the answer
@@ -1294,6 +1294,21 @@ instead. See <a href="sparql.html#union-default-graph">Union default graph</a>.<
 <pre><code class="language-sh">rete sparql data.rete "PREFIX e: &lt;http://ex/&gt; SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a &lt;…/Aves&gt; }" --entail    # ontology-aware
 </code></pre>
+<p><strong>Long queries: <code>--query-file &lt;path&gt;</code>.</strong> The operating system caps a command
+line: one argument may be at most 128 KiB on Linux, and the whole line 32,767
+characters on Windows. A query with a <code>VALUES</code> block of a few thousand IRIs
+crosses either and fails before rete starts (<code>Argument list too long</code>, or a
+command line too long). Put the query in a file instead, or pipe it in with
+<code>-</code>:</p>
+<pre><code class="language-sh">rete sparql data.rete --query-file lookup.rq --json
+generate_query | rete sparql data.rete --query-file - --json
+</code></pre>
+<p>Every command that takes a query takes <code>--query-file</code> too: <code>sparql</code>,
+<code>sparql-url</code>, <code>federate</code> (in place of <code>--query</code>), <code>cost</code>, <code>progressive</code>,
+<code>cypher</code> and <code>manifest query</code>. It is an alternative to the query argument,
+never an addition: giving both, or neither, is a usage error (exit 2). The
+file must be UTF-8 (a leading byte-order mark is ignored); a file that cannot
+be read, or holds only whitespace, is an error (exit 1).</p>
 <p><strong>Memory &amp; I/O.</strong> A local file larger than a quarter of the memory budget
 (1 GiB at the default) opens through the same lazy range reader the <code>-url</code>
 commands use (threshold override: <code>RETE_LOCAL_LAZY_ABOVE_MB</code>, block size:
@@ -1350,7 +1365,7 @@ curl -s --data-urlencode 'query=SELECT * WHERE { ?s ?p ?o } LIMIT 5' http://127.
 curl -s --data-urlencode 'update=INSERT DATA { &lt;http://ex/n1&gt; &lt;http://ex/note&gt; "hello" }' http://127.0.0.1:7878/sparql
 curl -sO http://127.0.0.1:7878/snapshot.rete   # the updated companion .rete
 </code></pre>
-<h3 id="rete-cost-file-or-url-query---json---explain"><code>rete cost &lt;file-or-url&gt; "&lt;query&gt;" [--json] [--explain]</code></h3>
+<h3 id="rete-cost-file-or-url-query----query-file-path---json---explain"><code>rete cost &lt;file-or-url&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--json] [--explain]</code></h3>
 <p>Preview the byte/range-request cost of a SPARQL query without evaluating it.
 The report parses the query, lists the concrete predicates that can drive
 summary-based routing, and compares three access paths:</p>
@@ -1408,7 +1423,7 @@ are marked <code>requires_index</code>.</p>
 <code>sparql-url</code>. Treat this as a deployment/debugging preview: it reports the
 current SPARQL engine's range budget, the summary budget, and the exact routed
 single-pattern budget when the query shape allows it.</p>
-<h3 id="rete-progressive-file-or-url-query---json"><code>rete progressive &lt;file-or-url&gt; "&lt;query&gt;" [--json]</code></h3>
+<h3 id="rete-progressive-file-or-url-query----query-file-path---json"><code>rete progressive &lt;file-or-url&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--json]</code></h3>
 <p>Run the first summary-only progressive query path. This command answers only
 the exact shapes that can be proven from the pyramid summary without opening
 the triple index:</p>
@@ -1428,7 +1443,7 @@ describing the summary stage, exactness, predicate when one is fixed, bytes
 fetched, request count, and <code>reads_index: false</code>. Other query shapes fail
 clearly; use <code>rete sparql</code> for full-index evaluation or <code>rete cost --explain</code> to
 inspect why a query is not summary-answerable yet.</p>
-<h3 id="rete-cypher-file-query---base-iri---json"><code>rete cypher &lt;file&gt; "&lt;query&gt;" [--base &lt;iri&gt;] [--json]</code></h3>
+<h3 id="rete-cypher-file-query----query-file-path---base-iri---json"><code>rete cypher &lt;file&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--base &lt;iri&gt;] [--json]</code></h3>
 <p>Run a read-only <strong>Cypher subset</strong> (a prototype). The query is translated to an
 equivalent SPARQL <code>SELECT</code> and evaluated by the same engine — no second query
 engine. Supports <code>MATCH … [WHERE …] RETURN … [LIMIT n]</code>: node patterns
@@ -1672,7 +1687,7 @@ permutation payload rather than the whole index container. If a
 bound term is unknown, the index is skipped entirely and the result is empty.</p>
 <pre><code class="language-sh">rete query-url https://host/data.rete --object '&lt;http://ex/Dave&gt;'
 </code></pre>
-<h3 id="rete-sparql-url-url-query---json---entail---memory-budget-mb-n"><code>rete sparql-url &lt;url&gt; "&lt;query&gt;" [--json] [--entail] [--memory-budget-mb N]</code></h3>
+<h3 id="rete-sparql-url-url-query----query-file-path---json---entail---memory-budget-mb-n"><code>rete sparql-url &lt;url&gt; ("&lt;query&gt;" | --query-file &lt;path&gt;) [--json] [--entail] [--memory-budget-mb N]</code></h3>
 <p>Run a full SPARQL query over HTTP with <strong>lazy tile faulting</strong> (tiled
 files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
@@ -1682,9 +1697,10 @@ an error, never as silently fewer rows. <code>--memory-budget-mb</code> bounds t
 block, dictionary and tile caches exactly as for <code>rete sparql</code>.</p>
 <pre><code class="language-sh">rete sparql-url https://host/data.rete \
   "PREFIX e: &lt;http://ex/&gt; SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
+rete sparql-url https://host/data.rete --query-file lookup.rq   # a long query
 </code></pre>
 <h2 id="federation">Federation</h2>
-<h3 id="rete-federate-sources---query-sparql---json---no-route"><code>rete federate &lt;sources…&gt; --query "&lt;SPARQL&gt;" [--json] [--no-route]</code></h3>
+<h3 id="rete-federate-sources---query-sparql----query-file-path---json---no-route"><code>rete federate &lt;sources…&gt; (--query "&lt;SPARQL&gt;" | --query-file &lt;path&gt;) [--json] [--no-route]</code></h3>
 <p>Run one SPARQL query across several <code>.rete</code> <strong>sources</strong> — local file paths and/or
 <code>http(s)://</code> URLs, mixed — and merge the results at the <strong>term (string) level</strong>:
 <code>SELECT</code> rows are unioned + deduped, <code>ASK</code> is OR'd across sources, <code>CONSTRUCT</code>
@@ -1701,6 +1717,7 @@ OpenCitations multi-shard example.</p>
 <pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE { ?citing &lt;http://purl.org/spar/cito/cites&gt;
                                           &lt;https://doi.org/10.1038/s41586-021-03819-2&gt; } LIMIT 5'
+rete federate shard-*.rete --query-file lookup.rq --json    # the query from a file
 </code></pre>
 <h3 id="rete-manifest-initaddstatusquerysealcompact"><code>rete manifest &lt;init|add|status|query|seal|compact&gt;</code></h3>
 <p>Manage a <strong>writable logical graph</strong> as an ordered log of immutable <code>.rete</code>
@@ -1712,7 +1729,7 @@ and fold it back into a single <code>.rete</code>. <code>rete serve</code> accep
 <a href="manifest.html">Writable graphs — manifest &amp; WAL</a>.</p>
 <pre><code class="language-sh">rete manifest init   g.rete-manifest.json base.rete
 rete manifest add    g.rete-manifest.json --adds delta.rete [--dels tomb.rete]
-rete manifest query  g.rete-manifest.json "SELECT … WHERE { … }"
+rete manifest query  g.rete-manifest.json "SELECT … WHERE { … }"   # or --query-file q.rq
 rete manifest status g.rete-manifest.json --count
 rete manifest seal   g.rete-manifest.json     # journal → segments (stop serve first)
 rete manifest compact g.rete-manifest.json    # the whole log → ONE fresh .rete

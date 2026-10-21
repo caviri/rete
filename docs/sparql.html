@@ -616,7 +616,10 @@ algebra (<code>Bgp</code>/<code>Join</code>/<code>Union</code>/<code>Minus</code
 only for final bindings.</p>
 <p>Run via the CLI (<code>rete sparql &lt;file&gt; "&lt;query&gt;" [--json]</code>) or in the browser
 (<code>query</code> in <code>rete-wasm</code> for any query form; <code>query_sparql</code> is the older
-SELECT-only wrapper).</p>
+SELECT-only wrapper). A query too long for the command line — a large
+<code>VALUES</code> block passes the 128 KiB a Linux argument may hold, or Windows'
+32,767-character command line — goes in a file: <code>rete sparql &lt;file&gt; --query-file q.rq</code>, or <code>--query-file -</code> to read standard input (every CLI
+command that takes a query accepts it; see <a href="cli.html">the CLI</a>).</p>
 <p>Spatial queries over <code>geo:wktLiteral</code> geometry — point-in-polygon, intersection,
 distance — are covered by a focused set of GeoSPARQL functions; see
 <a href="geosparql.html">GeoSPARQL (geometry + time)</a>.</p>

@@ -53,6 +53,25 @@ fn remote_commands_use_a_local_range_server() {
             .arg("--json"),
     );
     assert!(sparql["results"]["bindings"].is_array());
+    // The same query from a file and from standard input.
+    let qfile = fixture.write("select.rq", SELECT);
+    let from_file = common::json(
+        common::rete()
+            .arg("sparql-url")
+            .arg(&url)
+            .arg("--query-file")
+            .arg(&qfile)
+            .arg("--json"),
+    );
+    assert_eq!(from_file, sparql);
+    let from_stdin = common::json(
+        common::rete()
+            .arg("sparql-url")
+            .arg(&url)
+            .args(["--query-file", "-", "--json"])
+            .write_stdin(SELECT),
+    );
+    assert_eq!(from_stdin, sparql);
 
     let cost = common::json(
         common::rete()

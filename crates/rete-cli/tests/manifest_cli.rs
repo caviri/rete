@@ -83,6 +83,21 @@ fn query_joins_across_segments() {
         "n",
     );
     assert_eq!(names, ["Bob"]);
+    // The same query read from a file (`--query-file`).
+    let qfile = f.write(
+        "join.rq",
+        "SELECT ?n WHERE { <http://ex/a> <http://ex/knows> ?x . ?x <http://ex/name> ?n }",
+    );
+    let mut cmd = rete();
+    cmd.args(["manifest", "query"])
+        .arg(&manifest)
+        .arg("--query-file")
+        .arg(&qfile)
+        .arg("--json");
+    assert_eq!(
+        json(&mut cmd)["results"]["bindings"][0]["n"]["value"],
+        "Bob"
+    );
 
     let status = status_json(&manifest, true);
     assert_eq!(status["generation"], 2);

@@ -165,6 +165,12 @@ check "bgp"        "Alice|Bob"   -- "$B" bgp "$T/g.rete" "?x <http://ex/knows> ?
 check "sparql"     "Bob"         -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "sparql json" '"bindings"' -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y }" --json
 check "ask"        "true|boolean" -- "$B" sparql "$T/g.rete" "PREFIX e: <http://ex/> ASK { ?x e:knows ?y }"
+# A query too long for the command line goes in a file, or on stdin (`-`).
+printf '%s' "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }" > "$T/q.rq"
+check "sparql query-file" "Bob" -- "$B" sparql "$T/g.rete" --query-file "$T/q.rq"
+# shellcheck disable=SC2016  # $0/$1/$2 belong to the inner sh -c, not this shell
+check "sparql query-file stdin" "Bob" -- sh -c '"$0" sparql "$1" --query-file - < "$2"' "$B" "$T/g.rete" "$T/q.rq"
+check_code "query and query-file" 2 "cannot be used with" -- "$B" sparql "$T/g.rete" "ASK {}" --query-file "$T/q.rq"
 # A FILTER type error (CONTAINS on an IRI) is silently false — rows stay
 # spec-correct, and the warning goes to stderr, never into stdout or the rows.
 WQ='PREFIX e: <http://ex/> SELECT ?y WHERE { ?x e:knows ?y FILTER(CONTAINS(?y, "Bob")) }'

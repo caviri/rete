@@ -915,8 +915,13 @@ enum Command {
     Cost {
         /// Local `.rete` file path or http(s) URL.
         source: String,
-        /// The SPARQL query to parse and inspect. Omit with `--dump`.
+        /// The SPARQL query to parse and inspect. Omit with `--dump`, or pass
+        /// it with `--query-file`.
         query: Option<String>,
+        /// Read the query from this file instead (`-` = standard input): for a
+        /// query too long for the command line.
+        #[arg(long = "query-file", value_name = "PATH", conflicts_with_all = ["query", "dump"])]
+        query_file: Option<String>,
         /// Preview a **dump** instead of a query: what `rete export` (and the
         /// clients' streaming dump) will fetch for the filter below.
         #[arg(long)]
@@ -945,21 +950,42 @@ enum Command {
     ///
     /// This is the first progressive-query surface: it supports exact
     /// per-predicate `COUNT(*)` and `ASK` shapes from the pyramid summary.
+    #[command(
+        group(clap::ArgGroup::new("query_input").required(true)),
+        override_usage = "rete progressive [OPTIONS] <SOURCE> <QUERY>\n       \
+                          rete progressive [OPTIONS] --query-file <PATH> <SOURCE>"
+    )]
     Progressive {
         /// Local `.rete` file path or http(s) URL.
         source: String,
-        /// The SPARQL query to answer from the summary.
-        query: String,
+        /// The SPARQL query to answer from the summary (or `--query-file`).
+        #[arg(group = "query_input")]
+        query: Option<String>,
+        /// Read the query from this file instead (`-` = standard input): for a
+        /// query too long for the command line.
+        #[arg(long = "query-file", value_name = "PATH", group = "query_input")]
+        query_file: Option<String>,
         /// Emit SPARQL Results JSON plus progressive metadata.
         #[arg(long)]
         json: bool,
     },
     /// Run a SPARQL query (SELECT / ASK / CONSTRUCT).
+    #[command(
+        group(clap::ArgGroup::new("query_input").required(true)),
+        override_usage = "rete sparql [OPTIONS] <FILE> <QUERY>\n       \
+                          rete sparql [OPTIONS] --query-file <PATH> <FILE>"
+    )]
     Sparql {
         /// Path to the `.rete` file.
         file: String,
-        /// The SPARQL query.
-        query: String,
+        /// The SPARQL query (or `--query-file`).
+        #[arg(group = "query_input")]
+        query: Option<String>,
+        /// Read the query from this file instead (`-` = standard input): for a
+        /// query too long for the command line, which the OS caps (128 KiB
+        /// per argument on Linux, 32,767 characters in all on Windows).
+        #[arg(long = "query-file", value_name = "PATH", group = "query_input")]
+        query_file: Option<String>,
         /// Emit standard SPARQL Results JSON (SELECT/ASK).
         #[arg(long)]
         json: bool,
@@ -1004,11 +1030,21 @@ enum Command {
     /// names map to `<BASE + name>` (BASE defaults to `http://ex/`, set with
     /// `--base`). Example:
     /// `rete cypher deps.rete "MATCH (a)-[:dependsOn*]->(b) WHERE b = <http://ex/log4x> RETURN a"`.
+    #[command(
+        group(clap::ArgGroup::new("query_input").required(true)),
+        override_usage = "rete cypher [OPTIONS] <FILE> <QUERY>\n       \
+                          rete cypher [OPTIONS] --query-file <PATH> <FILE>"
+    )]
     Cypher {
         /// Path to the `.rete` file.
         file: String,
-        /// The Cypher query.
-        query: String,
+        /// The Cypher query (or `--query-file`).
+        #[arg(group = "query_input")]
+        query: Option<String>,
+        /// Read the query from this file instead (`-` = standard input): for a
+        /// query too long for the command line.
+        #[arg(long = "query-file", value_name = "PATH", group = "query_input")]
+        query_file: Option<String>,
         /// Base IRI for bare names (default `http://ex/`).
         #[arg(long, default_value = cypher::DEFAULT_BASE)]
         base: String,
@@ -1055,13 +1091,18 @@ enum Command {
     /// Aggregates (COUNT/GROUP BY) and LIMIT are evaluated PER SOURCE then
     /// unioned, so a federated COUNT(*) returns per-source counts, not a global
     /// sum — reduce client-side. See `docs/federation.md`.
+    #[command(group(clap::ArgGroup::new("query_input").required(true)))]
     Federate {
         /// `.rete` sources: local file paths and/or `http(s)://` URLs (≥1).
         #[arg(required = true, num_args = 1..)]
         sources: Vec<String>,
-        /// The SPARQL query (SELECT / ASK / CONSTRUCT).
-        #[arg(long)]
-        query: String,
+        /// The SPARQL query (SELECT / ASK / CONSTRUCT), or `--query-file`.
+        #[arg(long, group = "query_input")]
+        query: Option<String>,
+        /// Read the query from this file instead (`-` = standard input): for a
+        /// query too long for the command line.
+        #[arg(long = "query-file", value_name = "PATH", group = "query_input")]
+        query_file: Option<String>,
         /// Emit standard SPARQL Results JSON (SELECT/ASK).
         #[arg(long)]
         json: bool,
@@ -1070,11 +1111,22 @@ enum Command {
         no_route: bool,
     },
     /// Run a SPARQL query over HTTP, range-fetching the file (no full download).
+    #[command(
+        group(clap::ArgGroup::new("query_input").required(true)),
+        override_usage = "rete sparql-url [OPTIONS] <URL> <QUERY>\n       \
+                          rete sparql-url [OPTIONS] --query-file <PATH> <URL>"
+    )]
     SparqlUrl {
         /// http(s):// URL of a `.rete` file (host must honor Range requests).
         url: String,
-        /// The SPARQL query.
-        query: String,
+        /// The SPARQL query (or `--query-file`).
+        #[arg(group = "query_input")]
+        query: Option<String>,
+        /// Read the query from this file instead (`-` = standard input): for a
+        /// query too long for the command line, which the OS caps (128 KiB
+        /// per argument on Linux, 32,767 characters in all on Windows).
+        #[arg(long = "query-file", value_name = "PATH", group = "query_input")]
+        query_file: Option<String>,
         /// Emit standard SPARQL Results JSON (SELECT/ASK).
         #[arg(long)]
         json: bool,
@@ -1155,11 +1207,21 @@ enum ManifestCommand {
     },
     /// Run SPARQL over the fold as ONE graph: joins across segments resolve
     /// (pattern-level, unlike `federate`'s per-source UNION).
+    #[command(
+        group(clap::ArgGroup::new("query_input").required(true)),
+        override_usage = "rete manifest query [OPTIONS] <MANIFEST> <QUERY>\n       \
+                          rete manifest query [OPTIONS] --query-file <PATH> <MANIFEST>"
+    )]
     Query {
         /// Path to the manifest.
         manifest: String,
-        /// The SPARQL query (SELECT / ASK / CONSTRUCT).
-        query: String,
+        /// The SPARQL query (SELECT / ASK / CONSTRUCT), or `--query-file`.
+        #[arg(group = "query_input")]
+        query: Option<String>,
+        /// Read the query from this file instead (`-` = standard input): for a
+        /// query too long for the command line.
+        #[arg(long = "query-file", value_name = "PATH", group = "query_input")]
+        query_file: Option<String>,
         /// Emit standard SPARQL Results JSON (SELECT/ASK).
         #[arg(long)]
         json: bool,
@@ -1577,6 +1639,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Cost {
             source,
             query,
+            query_file,
             dump,
             graph,
             subject,
@@ -1597,26 +1660,36 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                     json,
                 )
             } else {
-                let query = query.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "`rete cost` needs a SPARQL query, or `--dump` to preview a dump"
-                    )
-                })?;
+                let query = commands::query_text::read_optional(query, query_file.as_deref())?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "`rete cost` needs a SPARQL query (an argument or --query-file), \
+                             or `--dump` to preview a dump"
+                        )
+                    })?;
                 commands::cost::cost(&source, &query, json, explain)
             }
         }
         Command::Progressive {
             source,
             query,
+            query_file,
             json,
-        } => commands::progressive::progressive(&source, &query, json),
+        } => {
+            let query = commands::query_text::read(query, query_file.as_deref())?;
+            commands::progressive::progressive(&source, &query, json)
+        }
         Command::Sparql {
             file,
             query,
+            query_file,
             json,
             entail,
             memory_budget_mb,
-        } => commands::query::sparql(&file, &query, json, entail, memory_budget_mb),
+        } => {
+            let query = commands::query_text::read(query, query_file.as_deref())?;
+            commands::query::sparql(&file, &query, json, entail, memory_budget_mb)
+        }
         Command::Serve {
             file,
             bind,
@@ -1626,9 +1699,13 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Cypher {
             file,
             query,
+            query_file,
             base,
             json,
-        } => commands::query::cypher_cmd(&file, &query, &base, json),
+        } => {
+            let query = commands::query_text::read(query, query_file.as_deref())?;
+            commands::query::cypher_cmd(&file, &query, &base, json)
+        }
         Command::SummaryUrl { url } => commands::url::summary_url(&url),
         Command::QueryUrl {
             url,
@@ -1639,10 +1716,14 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::SparqlUrl {
             url,
             query,
+            query_file,
             json,
             entail,
             memory_budget_mb,
-        } => commands::url::sparql_url(&url, &query, json, entail, memory_budget_mb),
+        } => {
+            let query = commands::query_text::read(query, query_file.as_deref())?;
+            commands::url::sparql_url(&url, &query, json, entail, memory_budget_mb)
+        }
         Command::WhyUrl {
             url,
             subject,
@@ -1653,9 +1734,13 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Federate {
             sources,
             query,
+            query_file,
             json,
             no_route,
-        } => commands::federate::federate(&sources, &query, json, !no_route),
+        } => {
+            let query = commands::query_text::read(query, query_file.as_deref())?;
+            commands::federate::federate(&sources, &query, json, !no_route)
+        }
         Command::Manifest { command } => match command {
             ManifestCommand::Init {
                 manifest,
@@ -1675,9 +1760,13 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             ManifestCommand::Query {
                 manifest,
                 query,
+                query_file,
                 json,
                 entail,
-            } => commands::manifest::query(&manifest, &query, json, entail),
+            } => {
+                let query = commands::query_text::read(query, query_file.as_deref())?;
+                commands::manifest::query(&manifest, &query, json, entail)
+            }
             ManifestCommand::Seal {
                 manifest,
                 journal,
