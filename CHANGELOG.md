@@ -176,10 +176,14 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   starters (`MIN`/`MAX`) and one bounding box change and 15 histogram
   starters change order, all over values that are not of one comparable
   type — strings that hold numbers, ill-typed years, IRIs mixed with numbers
-  (IRIs now sort first, §15.1); and two histogram starters (`vidy`,
-  `wikidata-xxl` shard 3) that panicked with "comparison function does not
-  correctly implement a total order" now answer. Cards are written at build
-  time, so a published card changes only when its file is rebuilt.
+  (IRIs now sort first, §15.1); and three histogram starters (`vidy`,
+  `bne`, `wikidata-xxl` shard 3) that panicked with "comparison function
+  does not correctly implement a total order" now answer. 409 of the 457
+  answer exactly as before; 5 could not be compared within a 900 s / 8 GB
+  limit on either binary (`gharchive`, `deps-dev`, the federated
+  `openaire-2021`; the two `openaire-2021` ones answer the same on the
+  shard that holds their data). Cards are written at build time, so a
+  published card changes only when its file is rebuilt.
 
 ## [0.3.6] - 2026-10-21
 
