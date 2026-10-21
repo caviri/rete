@@ -5,6 +5,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Claude Desktop extension downloads from GitHub releases.** Every `v*`
+  release attaches the bundle as `rete-<version>.mcpb` and, same bytes, as
+  `rete.mcpb`, both in `SHA256SUMS` and both attested, so
+  `https://github.com/caviri/rete/releases/latest/download/rete.mcpb` always
+  serves the Latest release's build. The README, `docs/agents.md` and
+  `clients/mcpb/README.md` link there. `clients/mcpb/publish.sh`, the manual
+  R2 upload, is removed and is no longer a release step; the objects under
+  `https://data.graphplaza.com/mcpb/` are left in place, frozen at 0.3.5, so
+  existing links keep working.
+
 ### Fixed
 
 - **Property-path alternatives keep SPARQL's duplicates.** `?s (:a|:b) ?o`

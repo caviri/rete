@@ -204,10 +204,19 @@ jobs:
           mkdir -p dist
           npx --yes @anthropic-ai/mcpb@2 pack clients/mcpb/build \
             "dist/rete-${{ needs.meta.outputs.version }}.mcpb"
+      # The version-less copy is the public download link: GitHub serves
+      # releases/latest/download/rete.mcpb from whichever release is Latest, so
+      # the README and docs never need a version bump. Same bytes as the pinned
+      # file, so SHA256SUMS lists both under one digest and the attestation
+      # below covers both.
+      - name: Add the version-less rete.mcpb for the latest-release link
+        run: cp "dist/rete-${{ needs.meta.outputs.version }}.mcpb" dist/rete.mcpb
       - uses: actions/upload-artifact@v7
         with:
           name: rete-mcpb
-          path: dist/rete-${{ needs.meta.outputs.version }}.mcpb
+          path: |
+            dist/rete-${{ needs.meta.outputs.version }}.mcpb
+            dist/rete.mcpb
           if-no-files-found: error
 
   blender:
@@ -296,7 +305,8 @@ jobs:
             dist/*.mcpb
             dist/SHA256SUMS
       # The SBOM describes the Rust dependency graph, so it binds to the native
-      # archives only. The two extensions carry build provenance instead: the
+      # archives only. The two extensions carry build provenance instead (both
+      # .mcpb names, rete-<version>.mcpb and rete.mcpb, via the step above): the
       # .mcpb ships the wasm engine and the Blender .zip ships Python wheels,
       # neither of which this dependency graph describes.
       - name: Bind the CycloneDX SBOM to every native release archive

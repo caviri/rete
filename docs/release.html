@@ -667,9 +667,16 @@ further install step. See the <a href="blender.html">Blender guide</a>.</li>
 double-click, or drag it into Claude Desktop. It carries the same engine
 compiled to wasm, so one file installs on macOS, Windows and Linux; it queries
 your own <code>.rete</code> files offline and the published catalogue over HTTP Range.
-See the <a href="agents.html">agentic interfaces guide</a>.</li>
+See the <a href="agents.html">agentic interfaces guide</a>. The same bytes are attached a
+second time as <code>rete.mcpb</code>, so
+<code>https://github.com/caviri/rete/releases/latest/download/rete.mcpb</code> always
+serves the Latest release's bundle; that is the link the README and docs
+advertise. This is the bundle's only publication channel: the R2 copies
+under <code>data.graphplaza.com/mcpb/</code> were uploaded by hand through 0.3.5 and
+are frozen there.</li>
 </ul>
-<p><code>SHA256SUMS</code> covers every archive, the WASM bundle, and both extensions. A
+<p><code>SHA256SUMS</code> covers every archive, the WASM bundle, and both extensions (the
+<code>.mcpb</code> under both names). A
 CycloneDX JSON SBOM and GitHub artifact attestations are published with the
 release; the SBOM describes the Rust dependency graph and is bound to the
 native and WASM archives, while the extension carries build provenance only.</p>

@@ -59,14 +59,21 @@ file's header, so it answers for every published file.
 
 ## Install
 
-**⬇ <https://data.graphplaza.com/mcpb/rete.mcpb>** — the current build, always
-at that URL (pinned versions sit beside it as `rete-<version>.mcpb`).
+**⬇ <https://github.com/caviri/rete/releases/latest/download/rete.mcpb>** —
+the current build, always at that URL: it is an asset of whichever GitHub
+release is Latest.
 
-Every tagged release also attaches `rete-<version>.mcpb` to the
-[releases page](https://github.com/caviri/rete/releases), where the workflow
-builds it, runs the stdio suite against it, validates the manifest, and
-publishes it with a SHA-256 checksum and build provenance — take that copy to
-verify before installing.
+Every tagged release attaches the bundle twice, same bytes: `rete.mcpb` (what
+that link serves) and the pinned `rete-<version>.mcpb`, for example
+<https://github.com/caviri/rete/releases/download/v0.3.6/rete-0.3.6.mcpb>.
+The release workflow builds it, runs the stdio suite against it, validates the
+manifest, and publishes both names in `SHA256SUMS` with build provenance, so
+you can verify before installing:
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify rete.mcpb --repo caviri/rete
+```
 
 Then double-click it, or drag it into Claude Desktop, or Settings → Extensions
 → Advanced settings → Install Extension…
@@ -104,25 +111,17 @@ listed with their shard URLs and a note, since they are not one file.
 
 ## Publish it
 
-The download link above is an R2 object, and `publish.sh` is what writes it:
+There is no manual step: a `v*` tag publishes the bundle. The `Claude Desktop
+extension` job of `.github/workflows/release.yml` packs
+`rete-<version>.mcpb`, copies it to `rete.mcpb`, and the release job uploads
+both, checksums them in `SHA256SUMS` and attests them. Once that release is
+published as Latest, `releases/latest/download/rete.mcpb` serves it.
 
-```sh
-./publish.sh            # build, then upload
-./publish.sh --no-build # upload the rete.mcpb already here
-./publish.sh --dry-run  # print the object keys, upload nothing
-```
-
-It writes the same bytes to two keys — `mcpb/rete-<version>.mcpb` first, then
-the floating `mcpb/rete.mcpb` — so a reader following the floating pointer
-always finds the pinned build already beside it. The version comes from the
-*built* `build/manifest.json`, which `build.mjs` stamps from the workspace
-`Cargo.toml`, so a published pin cannot disagree with the file's contents.
-
-Credentials are the repository's usual R2 set (`ACCESS_KEY_ID`,
-`SECRET_ACCESS_KEY`, `S3_API_ENDPOINT`, optional `RETE_BUCKET`); the upload
-itself goes through `skills/rete-publish/scripts/upload_bucket.sh`, in a
-container like everything else. The tagged-release artifact on GitHub is
-produced separately by `.github/workflows/release.yml` and is unaffected.
+The bundle used to be uploaded by hand to R2 (`clients/mcpb/publish.sh`,
+removed in 0.3.6). Those objects stay where they were, frozen at 0.3.5, so old
+links keep working but no longer move:
+`https://data.graphplaza.com/mcpb/rete.mcpb` (0.3.5) and the pinned
+`https://data.graphplaza.com/mcpb/rete-<version>.mcpb` builds up to 0.3.5.
 
 ## Test
 
