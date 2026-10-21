@@ -65,6 +65,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   like `crates-io`. The trusted-publisher entries on PyPI and npm are
   unchanged: they name the workflow files and environments, which keep their
   names. See `docs/release.md`.
+- **The Pyodide 0.29 wheel ships with the GitHub release; a release has no
+  manual step left.** `python-client-publish.yml` attaches the two
+  `pyemscripten_*` wheels and the copy retagged `pyodide_2025_0_wasm32` for
+  Pyodide 0.29 (whose installer predates PEP 783 and cannot use the PyPI
+  wheels) to the tag's GitHub release, waiting for release.yml's draft the way
+  the File Explorer builders do. `scripts/publish_pyodide_wheel.sh`, which
+  uploaded the retagged copy to `data.graphplaza.com/wheels/` by hand after
+  each release, is gone, and so is the versioned URL `sync_versions.py`
+  stamped into `docs/python.md`. The bucket copies stay, frozen at 0.3.6.
+  GitHub serves release assets without CORS headers, so a notebook cannot
+  install one by URL: `docs/python.md` now says to download the wheel, upload
+  it into JupyterLite and `%pip install emfs:./<file>.whl`. The new assets are
+  not in `SHA256SUMS` or the attestations (`docs/release.md`).
 - **crates.io publishing needs no manual approval.** The `crates-io` GitHub
   environment no longer has a required reviewer: a `v*` tag publishes the
   crates as soon as the release is assembled. It still admits `v*` tags only,

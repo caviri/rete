@@ -71,7 +71,7 @@ docker run --rm -v "$PWD":/io -w /io/clients/python python:3.12-slim bash -c \
 | Workflow | Trigger | Does |
 |---|---|---|
 | `python-test.yml` | PR / push touching `clients/python/**` or `crates/rete-core/**` | fmt + clippy, build wheel, pytest (incl. the live R2 remote smoke) — **never publishes** |
-| `python-client-publish.yml` | the `v*` release tag (publishes); `workflow_dispatch` (dry run) | test, the four native wheels (`python-wheels.yml`), the two Pyodide wheels and the sdist, then the PyPI upload on a tag only |
+| `python-client-publish.yml` | the `v*` release tag (publishes); `workflow_dispatch` (dry run) | test, the four native wheels (`python-wheels.yml`), the two Pyodide wheels and the sdist, then on a tag only the PyPI upload and the Pyodide wheels (plus the copy retagged for Pyodide 0.29) into the GitHub release |
 
 Merging to main can never publish; releasing is always the deliberate tag.
 

@@ -397,6 +397,10 @@ procedure and what each workflow does). There are no client tags any more:
   move their publish jobs into reusable workflows: the registries' trusted
   publishers are bound to those names (PyPI rejects reusable workflows; npm
   checks the calling workflow).
+- Nothing after the tag is manual. The Pyodide 0.29 wheel (retagged
+  `pyodide_2025_0_wasm32`, which PyPI refuses) is a GitHub release asset
+  uploaded by `python-client-publish.yml`; the hand-uploaded copies under
+  `data.graphplaza.com/wheels/` are frozen at 0.3.6.
 - Push a tag only when a release was asked for. Published versions cannot be
   replaced on any registry.
 

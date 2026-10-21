@@ -125,12 +125,6 @@ TARGETS = [
     ),
 ]
 
-# The Pyodide/JupyterLite fallback wheel is served from our own bucket, so its
-# URL embeds the version. `piplite.install("rete-graph")` resolves from PyPI and
-# needs no pin, but this documented fallback rots silently otherwise.
-WHEEL_DOC = "docs/python.md"
-WHEEL_RE = re.compile(r"(rete_graph-)(\d+\.\d+\.\d+)(-cp\d+-abi3-[a-z0-9_]+\.whl)")
-
 ENGINE_RE = re.compile(r'(?ms)^\[workspace\.package\].*?^version = "([^"]+)"')
 
 # The workspace members that depend on rete-core pin it exactly, so a published
@@ -196,20 +190,7 @@ def _stamp(version: str) -> int:
         _edit(path, pattern, version)
         print(f"  wrote {label:32} {version}")
 
-    # The documented Pyodide fallback URL must promise the new version BEFORE
-    # `publish_pyodide_wheel.sh` runs — that script refuses to upload anything
-    # whose version disagrees with what docs/python.md advertises. So the URL is
-    # briefly a 404, from this commit until the wheel reaches the bucket.
-    wheel_path = ROOT / WHEEL_DOC
-    if wheel_path.exists():
-        text = wheel_path.read_text(encoding="utf-8")
-        new_text = WHEEL_RE.sub(lambda m: m.group(1) + version + m.group(3), text)
-        if new_text != text:
-            wheel_path.write_text(new_text, encoding="utf-8")
-            print(f"  wrote {'pyodide wheel url':32} {version}  (404 until uploaded)")
-
     print("\nnow run --check to confirm every channel names the same version")
-    print("the Pyodide URL resolves only after scripts/publish_pyodide_wheel.sh")
     return 0
 
 
@@ -253,24 +234,6 @@ def _check(engine: str, writing: bool) -> list[str]:
             print(f"  wrote {label:32} {current} -> {engine}")
         else:
             problems.append(f"{rel}: {label} is {current}, engine is {engine}")
-
-    # Pyodide fallback wheel URL in the docs.
-    wheel_path = ROOT / WHEEL_DOC
-    if wheel_path.exists():
-        text = wheel_path.read_text(encoding="utf-8")
-        for pin in sorted({m.group(2) for m in WHEEL_RE.finditer(text)}):
-            if pin == engine:
-                print(f"  ok    {'pyodide wheel url':32} {pin}")
-            elif writing:
-                text = WHEEL_RE.sub(lambda m: m.group(1) + engine + m.group(3), text)
-                wheel_path.write_text(text, encoding="utf-8")
-                print(f"  wrote {'pyodide wheel url':32} {pin} -> {engine}")
-            else:
-                problems.append(
-                    f"{WHEEL_DOC}: Pyodide fallback wheel URL pins {pin}, engine is "
-                    f"{engine} — the wheel must also be uploaded to the bucket for "
-                    f"that URL to resolve"
-                )
     return problems
 
 
@@ -306,7 +269,7 @@ def main() -> int:
         "--set",
         metavar="VERSION",
         help="cut a release: stamp VERSION on the workspace, the rete-core pins, "
-        "every client, the PyPI floors, the Binder pin and the Pyodide URL",
+        "every client, the PyPI floors and the Binder pin",
     )
     args = parser.parse_args()
 

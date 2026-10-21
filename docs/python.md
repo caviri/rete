@@ -272,10 +272,31 @@ g = rete.open("https://data.graphplaza.com/boe/boe.rete")
 g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 ```
 
-(On the older Pyodide 0.29, whose installer predates the PEP 783 wheel-tag
-spelling PyPI requires, install the byte-identical retagged wheel by URL
-instead: `%pip install
-https://data.graphplaza.com/wheels/rete_graph-0.3.6-cp39-abi3-pyodide_2025_0_wasm32.whl`.)
+**On the older Pyodide 0.29** (Python 3.13), whose installer predates the
+PEP 783 wheel-tag spelling PyPI requires, `%pip install rete-graph` finds no
+wheel. Each [GitHub release](https://github.com/caviri/rete/releases/latest)
+after 0.3.6 carries the same build retagged for it,
+`rete_graph-<version>-cp39-abi3-pyodide_2025_0_wasm32.whl`:
+
+1. download that file from the release page;
+2. in JupyterLite, upload it with the file browser into the folder of your
+   notebook;
+3. install it from the notebook's filesystem:
+
+```python
+%pip install emfs:./rete_graph-<version>-cp39-abi3-pyodide_2025_0_wasm32.whl
+```
+
+The `emfs:` prefix makes the installer read the kernel's filesystem; a bare
+`./rete_graph-….whl` is fetched as a URL and fails. In any other Pyodide 0.29
+runtime (marimo's WASM notebooks, plain Pyodide), write the file to the
+in-browser filesystem and run
+`await micropip.install("emfs:/path/to/rete_graph-….whl")`. Installing by the
+release download URL does not work: GitHub serves release assets without CORS
+headers, so the browser blocks the request. Versions up to 0.3.6 stay
+installable by URL from our own CORS-enabled bucket, e.g. `%pip install
+https://data.graphplaza.com/wheels/rete_graph-0.3.6-cp39-abi3-pyodide_2025_0_wasm32.whl`;
+nothing newer is uploaded there.
 
 Under the hood, remote reads use synchronous `XMLHttpRequest` range requests —
 allowed only in **web workers**, which is where JupyterLite and marimo run
