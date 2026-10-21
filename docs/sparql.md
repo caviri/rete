@@ -8,7 +8,11 @@ only for final bindings.
 
 Run via the CLI (`rete sparql <file> "<query>" [--json]`) or in the browser
 (`query` in `rete-wasm` for any query form; `query_sparql` is the older
-SELECT-only wrapper).
+SELECT-only wrapper). A query too long for the command line — a large
+`VALUES` block passes the 128 KiB a Linux argument may hold, or Windows'
+32,767-character command line — goes in a file: `rete sparql <file>
+--query-file q.rq`, or `--query-file -` to read standard input (every CLI
+command that takes a query accepts it; see [the CLI](cli.html)).
 
 Spatial queries over `geo:wktLiteral` geometry — point-in-polygon, intersection,
 distance — are covered by a focused set of GeoSPARQL functions; see

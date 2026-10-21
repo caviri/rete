@@ -5,6 +5,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Added
+
+- **`--query-file <path>` on every CLI command that takes a query**, with
+  `-` reading standard input: `sparql`, `sparql-url`, `federate` (in place of
+  `--query`), `cost`, `progressive`, `cypher` and `manifest query`. The query
+  used to be a command-line argument only, which the OS caps (128 KiB per
+  argument on Linux, a 32,767-character command line on Windows), so a query
+  with a large `VALUES` block failed before rete ran (OpenAIRE QA, E5). The
+  file and the argument are mutually exclusive, and one of them is required:
+  both or neither is a usage error (exit 2). The file must be UTF-8 (a
+  leading byte-order mark is skipped); an unreadable or blank one is an error
+  (exit 1). See `docs/cli.md`.
+
 ### Security
 
 - **PyO3 0.30.1 in the Python client** (was 0.23.5), fixing RUSTSEC-2025-0020

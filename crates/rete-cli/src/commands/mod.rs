@@ -21,6 +21,7 @@ pub(crate) mod memtrace;
 pub(crate) mod merge;
 pub(crate) mod progressive;
 pub(crate) mod query;
+pub(crate) mod query_text;
 pub(crate) mod range_source;
 pub(crate) mod reach;
 pub(crate) mod reason;

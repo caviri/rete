@@ -151,3 +151,173 @@ fn count_distinct_is_exact_at_any_budget() {
     assert!(unlimited.contains("?a="), "{unlimited}");
     assert_eq!(run("1"), unlimited);
 }
+
+/// `--query-file <path>` (`-` = standard input) feeds every query command, so a
+/// query too long for the command line still runs: Linux caps one argument at
+/// 128 KiB and Windows the whole command line at 32,767 characters, and a
+/// VALUES block of a few thousand IRIs crosses both (OpenAIRE QA, E5).
+#[test]
+fn query_file_and_stdin_feed_every_query_command() {
+    let fixture = common::fixture();
+    let inline = common::json(
+        common::rete()
+            .arg("sparql")
+            .arg(&fixture.rete)
+            .arg(SELECT)
+            .arg("--json"),
+    );
+    let qfile = fixture.write("select.rq", SELECT);
+    let from_file = common::json(
+        common::rete()
+            .arg("sparql")
+            .arg(&fixture.rete)
+            .arg("--query-file")
+            .arg(&qfile)
+            .arg("--json"),
+    );
+    assert_eq!(from_file, inline);
+    let from_stdin = common::json(
+        common::rete()
+            .arg("sparql")
+            .arg(&fixture.rete)
+            .args(["--query-file", "-", "--json"])
+            .write_stdin(SELECT),
+    );
+    assert_eq!(from_stdin, inline);
+
+    // A 20,000-IRI VALUES block, ~0.6 MB: far past one argument's limit.
+    let values: Vec<String> = (0..20_000)
+        .map(|i| format!("<http://example.test/p{i}>"))
+        .chain(["<http://example.test/alice>".to_string()])
+        .collect();
+    let big = format!(
+        "SELECT ?s ?o WHERE {{ VALUES ?s {{ {} }} ?s <http://example.test/knows> ?o }}",
+        values.join(" ")
+    );
+    assert!(big.len() > 128 * 1024);
+    let bigfile = fixture.write("big.rq", &big);
+    let rows = common::json(
+        common::rete()
+            .arg("sparql")
+            .arg(&fixture.rete)
+            .arg("--query-file")
+            .arg(&bigfile)
+            .arg("--json"),
+    );
+    let bindings = rows["results"]["bindings"].as_array().unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0]["o"]["value"], "http://example.test/bob");
+
+    // The other query commands take it too.
+    let federated = common::json(
+        common::rete()
+            .arg("federate")
+            .arg(&fixture.rete)
+            .arg("--query-file")
+            .arg(&qfile)
+            .arg("--json"),
+    );
+    assert_eq!(federated["results"], inline["results"]);
+    let cost = common::json(
+        common::rete()
+            .arg("cost")
+            .arg(&fixture.rete)
+            .arg("--query-file")
+            .arg(&qfile)
+            .arg("--json"),
+    );
+    assert_eq!(cost["schemaVersion"], 1);
+    let with_pyramid = fixture.path("pyramid.rete");
+    common::build(&fixture.source, &with_pyramid, &[]);
+    let count = fixture.write("count.rq", "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }");
+    let progressive = common::json(
+        common::rete()
+            .arg("progressive")
+            .arg(&with_pyramid)
+            .arg("--query-file")
+            .arg(&count)
+            .arg("--json"),
+    );
+    assert_eq!(progressive["schemaVersion"], 1);
+    let cypher = fixture.write("q.cypher", "MATCH (s) RETURN s LIMIT 1");
+    let cypher = common::json(
+        common::rete()
+            .arg("cypher")
+            .arg(&fixture.rete)
+            .arg("--query-file")
+            .arg(&cypher)
+            .arg("--json"),
+    );
+    assert!(cypher["results"]["bindings"].is_array());
+}
+
+#[test]
+fn query_file_is_exclusive_and_required_and_reports_bad_files() {
+    let fixture = common::fixture();
+    let qfile = fixture.write("select.rq", SELECT);
+    // Both the argument and the file: a usage error (exit 2).
+    common::rete()
+        .arg("sparql")
+        .arg(&fixture.rete)
+        .arg(SELECT)
+        .arg("--query-file")
+        .arg(&qfile)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
+    common::rete()
+        .arg("federate")
+        .arg(&fixture.rete)
+        .args(["--query", SELECT])
+        .arg("--query-file")
+        .arg(&qfile)
+        .assert()
+        .code(2);
+    // Neither: a usage error naming the missing argument.
+    common::rete()
+        .arg("sparql")
+        .arg(&fixture.rete)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--query-file"));
+    common::rete()
+        .arg("federate")
+        .arg(&fixture.rete)
+        .assert()
+        .code(2);
+    // `cost --dump` previews a dump: a query file makes no sense there.
+    common::rete()
+        .arg("cost")
+        .arg(&fixture.rete)
+        .arg("--dump")
+        .arg("--query-file")
+        .arg(&qfile)
+        .assert()
+        .code(2);
+    // A file that cannot be read, or holds no query: a runtime error (exit 1).
+    common::rete()
+        .arg("sparql")
+        .arg(&fixture.rete)
+        .arg("--query-file")
+        .arg(fixture.path("missing.rq"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("cannot read --query-file"));
+    let empty = fixture.write("empty.rq", "\n");
+    common::rete()
+        .arg("sparql")
+        .arg(&fixture.rete)
+        .arg("--query-file")
+        .arg(&empty)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("is empty"));
+    common::rete()
+        .arg("sparql")
+        .arg(&fixture.rete)
+        .args(["--query-file", "-"])
+        .write_stdin("")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("standard input is empty"));
+}

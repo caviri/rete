@@ -788,7 +788,7 @@ Evaluate a Basic Graph Pattern. Patterns are separated by ` . `, terms by spaces
 rete bgp data.rete "?x <http://ex/knows> ?y . ?y <http://ex/knows> ?z"
 ```
 
-### `rete sparql <file> "<query>" [--json] [--entail] [--memory-budget-mb N]`
+### `rete sparql <file> ("<query>" | --query-file <path>) [--json] [--entail] [--memory-budget-mb N]`
 Run SPARQL: `SELECT` / `ASK` / `CONSTRUCT` / `DESCRIBE`. With `--json`, emit
 standard SPARQL Results JSON (for `SELECT`/`ASK`). See [SPARQL support](sparql.md).
 
@@ -828,6 +828,25 @@ instead. See [Union default graph](sparql.md#union-default-graph).
 rete sparql data.rete "PREFIX e: <http://ex/> SELECT ?p (COUNT(?f) AS ?n) WHERE { ?p e:knows ?f } GROUP BY ?p"
 rete sparql data.rete "SELECT ?o WHERE { ?o a <…/Aves> }" --entail    # ontology-aware
 ```
+
+**Long queries: `--query-file <path>`.** The operating system caps a command
+line: one argument may be at most 128 KiB on Linux, and the whole line 32,767
+characters on Windows. A query with a `VALUES` block of a few thousand IRIs
+crosses either and fails before rete starts (`Argument list too long`, or a
+command line too long). Put the query in a file instead, or pipe it in with
+`-`:
+
+```sh
+rete sparql data.rete --query-file lookup.rq --json
+generate_query | rete sparql data.rete --query-file - --json
+```
+
+Every command that takes a query takes `--query-file` too: `sparql`,
+`sparql-url`, `federate` (in place of `--query`), `cost`, `progressive`,
+`cypher` and `manifest query`. It is an alternative to the query argument,
+never an addition: giving both, or neither, is a usage error (exit 2). The
+file must be UTF-8 (a leading byte-order mark is ignored); a file that cannot
+be read, or holds only whitespace, is an error (exit 1).
 
 **Memory & I/O.** A local file larger than a quarter of the memory budget
 (1 GiB at the default) opens through the same lazy range reader the `-url`
@@ -889,7 +908,7 @@ curl -s --data-urlencode 'update=INSERT DATA { <http://ex/n1> <http://ex/note> "
 curl -sO http://127.0.0.1:7878/snapshot.rete   # the updated companion .rete
 ```
 
-### `rete cost <file-or-url> "<query>" [--json] [--explain]`
+### `rete cost <file-or-url> ("<query>" | --query-file <path>) [--json] [--explain]`
 Preview the byte/range-request cost of a SPARQL query without evaluating it.
 The report parses the query, lists the concrete predicates that can drive
 summary-based routing, and compares three access paths:
@@ -958,7 +977,7 @@ For HTTP(S), the host must honor `Range` requests, just like `query-url` and
 current SPARQL engine's range budget, the summary budget, and the exact routed
 single-pattern budget when the query shape allows it.
 
-### `rete progressive <file-or-url> "<query>" [--json]`
+### `rete progressive <file-or-url> ("<query>" | --query-file <path>) [--json]`
 Run the first summary-only progressive query path. This command answers only
 the exact shapes that can be proven from the pyramid summary without opening
 the triple index:
@@ -981,7 +1000,7 @@ fetched, request count, and `reads_index: false`. Other query shapes fail
 clearly; use `rete sparql` for full-index evaluation or `rete cost --explain` to
 inspect why a query is not summary-answerable yet.
 
-### `rete cypher <file> "<query>" [--base <iri>] [--json]`
+### `rete cypher <file> ("<query>" | --query-file <path>) [--base <iri>] [--json]`
 Run a read-only **Cypher subset** (a prototype). The query is translated to an
 equivalent SPARQL `SELECT` and evaluated by the same engine — no second query
 engine. Supports `MATCH … [WHERE …] RETURN … [LIMIT n]`: node patterns
@@ -1290,7 +1309,7 @@ bound term is unknown, the index is skipped entirely and the result is empty.
 rete query-url https://host/data.rete --object '<http://ex/Dave>'
 ```
 
-### `rete sparql-url <url> "<query>" [--json] [--entail] [--memory-budget-mb N]`
+### `rete sparql-url <url> ("<query>" | --query-file <path>) [--json] [--entail] [--memory-budget-mb N]`
 Run a full SPARQL query over HTTP with **lazy tile faulting** (tiled
 files): the open fetches the header, dictionary, pyramid, and the index's
 small tile directories; index tiles are then range-fetched only when the
@@ -1302,11 +1321,12 @@ block, dictionary and tile caches exactly as for `rete sparql`.
 ```sh
 rete sparql-url https://host/data.rete \
   "PREFIX e: <http://ex/> SELECT ?d WHERE { ?d e:dependsOn+ e:log4x }"
+rete sparql-url https://host/data.rete --query-file lookup.rq   # a long query
 ```
 
 ## Federation
 
-### `rete federate <sources…> --query "<SPARQL>" [--json] [--no-route]`
+### `rete federate <sources…> (--query "<SPARQL>" | --query-file <path>) [--json] [--no-route]`
 Run one SPARQL query across several `.rete` **sources** — local file paths and/or
 `http(s)://` URLs, mixed — and merge the results at the **term (string) level**:
 `SELECT` rows are unioned + deduped, `ASK` is OR'd across sources, `CONSTRUCT`
@@ -1326,6 +1346,7 @@ OpenCitations multi-shard example.
 rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \
   --query 'SELECT ?citing WHERE { ?citing <http://purl.org/spar/cito/cites>
                                           <https://doi.org/10.1038/s41586-021-03819-2> } LIMIT 5'
+rete federate shard-*.rete --query-file lookup.rq --json    # the query from a file
 ```
 
 ### `rete manifest <init|add|status|query|seal|compact>`
@@ -1340,7 +1361,7 @@ and fold it back into a single `.rete`. `rete serve` accepts a manifest, and
 ```sh
 rete manifest init   g.rete-manifest.json base.rete
 rete manifest add    g.rete-manifest.json --adds delta.rete [--dels tomb.rete]
-rete manifest query  g.rete-manifest.json "SELECT … WHERE { … }"
+rete manifest query  g.rete-manifest.json "SELECT … WHERE { … }"   # or --query-file q.rq
 rete manifest status g.rete-manifest.json --count
 rete manifest seal   g.rete-manifest.json     # journal → segments (stop serve first)
 rete manifest compact g.rete-manifest.json    # the whole log → ONE fresh .rete
