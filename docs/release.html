@@ -663,10 +663,11 @@ that happened to match.</p>
 <tr><td><code>docker-publish.yml</code></td><td>builds <code>rete-relay</code> (on the two Linux wheels it builds from the tagged commit; the build fails unless the image carries rete-graph X.Y.Z), <code>rete-cli</code> and <code>rete-dev</code> for amd64 and arm64, and pushes them to ghcr.io as <code>X.Y.Z</code>, <code>X.Y</code> and <code>latest</code></td></tr>
 </tbody></table>
 <p>None of them waits for another, except the File Explorer builders and the
-Pyodide wheel upload, which wait for the draft. PyPI, npm, crates.io and GHCR are therefore published in whatever order
-the runners finish; a channel that fails (a crates.io audit advisory, a flaky
-runner) is re-run on its own, and the versions already on the other
-registries cannot be replaced, so fix forward rather than re-tagging.</p>
+Pyodide wheel upload, which wait for the draft. PyPI, npm, crates.io and GHCR
+are therefore published in whatever order the runners finish; a channel that
+fails (a crates.io audit advisory, a flaky runner) is re-run on its own, and
+the versions already on the other registries cannot be replaced, so fix
+forward rather than re-tagging.</p>
 <p><code>workflow_dispatch</code> on any of them, from any branch, is a dry run: everything
 is built and tested, the version check runs against the workspace version, and
 nothing is published. <code>docker-publish.yml</code> is the exception: a manual run
