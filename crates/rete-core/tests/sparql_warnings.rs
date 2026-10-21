@@ -585,6 +585,22 @@ fn comparisons_report_only_where_the_engine_errors() {
     );
     assert_eq!(n, 0);
     assert_eq!(keys(&w), vec![key("IN", 0, "string-vs-number")]);
+    // An ill-typed literal (a three-digit xsd:gYear) compares with nothing,
+    // and the hint says why rather than suggesting a cast.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?y WHERE { VALUES ?y { "170"^^<http://www.w3.org/2001/XMLSchema#gYear> } FILTER(?y > "1450"^^<http://www.w3.org/2001/XMLSchema#gYear>) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key(">", 0, "incomparable")]);
+    assert!(
+        w1.message
+            .contains("compared an invalid xsd:gYear literal with xsd:gYear"),
+        "{}",
+        w1.message
+    );
+    assert!(w1.hint.contains("ill-typed"), "{}", w1.hint);
 
     // A nested error is reported once, by the function that raised it, not
     // again by the comparison it propagates through.

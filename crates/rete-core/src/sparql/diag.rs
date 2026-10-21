@@ -656,6 +656,10 @@ impl Entry {
                 "a string is never compared as a number; cast it first, e.g. \
                  xsd:integer(?x) or xsd:decimal(?x), or compare the text of both sides \
                  with STR()"
+            } else if self.detail.contains("an invalid ") {
+                "a value whose text is not valid for its datatype (an ill-typed literal, \
+                 such as a year of fewer than four digits typed xsd:gYear) compares with \
+                 nothing; fix the data, or compare the text of both sides with STR()"
             } else {
                 "SPARQL orders only two numbers, two strings (with the same language tag), \
                  two booleans or two date/time values of one type, and = cannot tell two \
