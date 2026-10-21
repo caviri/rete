@@ -5,6 +5,14 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **crates.io publishing needs no manual approval.** The `crates-io` GitHub
+  environment no longer has a required reviewer: a `v*` tag publishes the
+  crates as soon as the release is assembled. It still admits `v*` tags only,
+  authenticates through trusted publishing, and stops on the publish-time
+  `cargo audit` / `cargo deny` gate (`docs/release.md`).
+
 ## [0.3.6] - 2026-10-21
 
 **Where 0.3.6 is published: every channel.** crates.io (`rete-core`,
