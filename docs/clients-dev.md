@@ -39,7 +39,8 @@ Design invariants worth keeping:
 - The method surface **mirrors the wasm client** (`crates/rete-wasm`) — same
   JSON envelopes, same lazy-open pipeline (counting reader → block cache →
   `open_ranged_lazy`), same incomplete-fetch-is-an-error contract.
-- Every engine call runs inside `Python::allow_threads`; the HTTP reader's
+- Every engine call runs inside `Python::detach` (PyO3 ≥ 0.26's name for
+  `allow_threads`: the GIL is released); the HTTP reader's
   16-way `read_many` matches the CLI and the browser fetch pool.
 - The engine emits N-Triples tokens (`<iri>`); the pure-Python layer converts
   them to clean values everywhere (`Term`, `schema()`, `graph_names()`,

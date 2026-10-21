@@ -5,6 +5,43 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Security
+
+- **PyO3 0.30.1 in the Python client** (was 0.23.5), fixing RUSTSEC-2025-0020
+  (possible buffer overflow in `PyString::from_object`) and RUSTSEC-2026-0177
+  (missing `Sync` bound on `PyCFunction::new_closure` closures) in the PyPI
+  and Pyodide wheels. The Python API is unchanged: same functions, same
+  signatures, same 61 tests, abi3 wheels still cover CPython ≥ 3.9, and the
+  module keeps declaring that it uses the GIL. Both Pyodide wheels (0.29 and
+  314) build and answer queries.
+- **The Claude Desktop extension's MCP SDK is 1.32.1** (was 1.29.0), with
+  `qs`, `proxy-addr`, `fast-uri`, `ip-address`, `hono` and
+  `@hono/node-server` moved to patched releases: 32 npm advisories in the
+  extension's runtime dependency set, one critical (`proxy-addr` IP spoofing).
+  The bundled server actually carried the SDK and `fast-uri` (through `ajv`);
+  the rest belong to HTTP transports the stdio server does not bundle. The
+  update is a lockfile refresh within the existing version ranges; the
+  extension's stdio smoke suite passes and the bundle still runs on Node 18.
+- **`fuzz/Cargo.lock` refreshed.** It still recorded `rete-core` 0.3.2 with
+  `ruzstd` 0.7.3 (RUSTSEC-2026-0344, decompression bomb); cargo re-resolved it
+  on every fuzz run, so the harness built the current engine, but the
+  committed file described a dependency set nobody built.
+- **Every lockfile is audited, in CI and nightly.** `cargo audit` used to see
+  the workspace lockfile only. `scripts/audit_lockfiles.py` now audits the
+  workspace, Python, R, Java (resolved fresh), File Explorer and fuzz
+  lockfiles and, with `npm audit --omit=dev`, the npm packages that ship,
+  against a single exception list, `lockfile-audit.toml`: each exception names
+  one advisory and the lockfiles it applies to, with a reason and a review date
+  at most a quarter away. Unlisted lockfiles, stale or expired exceptions and
+  lockfiles out of step with their manifests fail the run. CI's `security` job
+  runs it on lockfile and manifest changes and on the nightly schedule, and the
+  crates.io publish gate (`scripts/publish_crates.sh`) runs the same script on
+  the workspace lockfile instead of its own copy of the ignore list. The
+  accepted exceptions: the two quick-xml findings (blocked on Oxigraph, as
+  before), `paste` (unmaintained) in the R client, and the File Explorer's
+  Linux GTK backend crates and `unic-*` tables (informational; the app ships
+  for macOS and Windows only). See `docs/release.md#dependency-audit`.
+
 ### Changed
 
 - **crates.io publishing needs no manual approval.** The `crates-io` GitHub

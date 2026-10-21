@@ -5,11 +5,14 @@ on:
     branches: [main, "release-*"]
   pull_request:
   workflow_dispatch:
-  # Nightly: the live-R2 browser gate against main, and nothing else (see the
-  # `browser` job). The path filter below decides which PRs pay for live R2,
-  # and a filter can miss an input; the published datasets can also change
-  # under a green main with no commit at all. A nightly run bounds either kind
-  # of rot to a day. The last one went six weeks.
+  # Nightly: the live-R2 browser gate against main (see the `browser` job) and
+  # the dependency audit (see `security`). The path filter below decides which
+  # PRs pay for live R2, and a filter can miss an input; the published datasets
+  # can also change under a green main with no commit at all. A nightly run
+  # bounds either kind of rot to a day. The last one went six weeks. Advisories
+  # are the same kind of rot: they are published against lockfiles nobody
+  # touched (0.3.5's crates.io publish was blocked by two that appeared the day
+  # after its tag), so the audit runs here too, not only when a lockfile changes.
   schedule:
     - cron: "17 3 * * *"
 
@@ -45,6 +48,7 @@ jobs:
       scholar: ${{ steps.filter.outputs.scholar }}
       shell: ${{ steps.filter.outputs.shell }}
       browser_live: ${{ steps.filter.outputs.browser_live }}
+      audit: ${{ steps.filter.outputs.audit }}
     steps:
       - uses: actions/checkout@v6
       # Not on the nightly: it runs a fixed job set (image, wasm, browser) and
@@ -186,6 +190,33 @@ jobs:
               #   - the checks themselves, and the job that runs them.
               - 'tests/gate/**'
               - '.github/workflows/ci.yml'
+            audit:
+              # Everything the dependency audit (`security`) reads. The Rust
+              # filter above covers only the workspace; the Python, R, Java,
+              # desktop and fuzz lockfiles and the shipped npm packages matched
+              # no filter of this workflow, which is how two pyo3 advisories sat
+              # in the PyPI wheels' lockfile with nothing looking. Every
+              # lockfile and manifest is listed by glob, not by name, so a NEW
+              # one triggers the job too, and the job fails until
+              # lockfile-audit.toml says how to audit it.
+              - '**/Cargo.lock'
+              - '**/Cargo.toml'
+              - '**/package-lock.json'
+              # Only the audited packages' manifests: docs/ carries generated
+              # JupyterLite package.json files that are no dependency set.
+              - 'clients/js/package.json'
+              - 'clients/mcpb/package.json'
+              - 'web/playground-src/cm6/package.json'
+              - 'lockfile-audit.toml'
+              - 'deny.toml'
+              - 'scripts/audit_lockfiles.py'
+              - 'scripts/tests/test_audit_lockfiles.py'
+              - 'scripts/release_check.sh'
+              - 'scripts/publish_crates.sh'
+              - 'scripts/tests/test_publish_crates.sh'
+              # The pinned cargo-audit / cargo-deny versions live here.
+              - '.devcontainer/**'
+              - '.github/workflows/ci.yml'
 
   image:
     name: pinned development image
@@ -196,7 +227,8 @@ jobs:
       needs.changes.outputs.rust == 'true' ||
       needs.changes.outputs.wasm == 'true' ||
       needs.changes.outputs.docs == 'true' ||
-      needs.changes.outputs.scholar == 'true'
+      needs.changes.outputs.scholar == 'true' ||
+      needs.changes.outputs.audit == 'true'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
@@ -362,8 +394,18 @@ jobs:
 
   security:
     name: security
+    # Every lockfile in the repository, not only the workspace's: see
+    # lockfile-audit.toml for the list and the only accepted exceptions, and
+    # scripts/audit_lockfiles.py for the rules. Also nightly (the schedule
+    # above), because new advisories land on lockfiles no commit touched.
+    # scripts/publish_crates.sh runs the same script on the workspace lockfile
+    # before anything reaches crates.io, so the two gates cannot disagree.
     needs: [changes, image]
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      needs.changes.outputs.rust == 'true' ||
+      needs.changes.outputs.audit == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -373,9 +415,11 @@ jobs:
           name: ${{ env.RETE_DEV_ARTIFACT }}
           path: /tmp
       - run: docker load --input /tmp/rete-dev.tar
-      - name: Audit advisories, licenses, bans, and sources
+      - name: Audit every lockfile, then licenses, bans, and sources
+        # CI is passed in so the audit treats a missing git (which would skip
+        # its "is every lockfile listed?" check) as a failure, not a warning.
         run: |
-          docker run --rm --user root \
+          docker run --rm --user root -e CI \
             -e CARGO_HOME=/usr/local/cargo -e RUSTUP_HOME=/usr/local/rustup \
             -v "$PWD:/work" -w /work "${{ needs.image.outputs.tag }}" \
             sh -lc 'git config --global --add safe.directory /work && bash scripts/release_check.sh security'

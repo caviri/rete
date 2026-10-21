@@ -34,11 +34,15 @@ quality() {
 }
 
 security() {
-  # These are the only accepted development exceptions. The crates.io publish
-  # preflight deliberately runs cargo audit again without --ignore.
-  cargo audit --deny warnings \
-    --ignore RUSTSEC-2026-0194 \
-    --ignore RUSTSEC-2026-0195
+  # Every lockfile in the repository (workspace, Python, R, Java wasm, desktop
+  # explorer, fuzz harness, and the npm packages that ship), against the one
+  # exception list in lockfile-audit.toml. Its policy tests run first: they
+  # need no network and fail faster than an advisory fetch.
+  python3 -m unittest scripts/tests/test_audit_lockfiles.py
+  # The crates.io preflight runs the same audit; its harness proves that an
+  # unexcepted advisory stops publication before any crate is uploaded.
+  sh scripts/tests/test_publish_crates.sh
+  python3 scripts/audit_lockfiles.py
   cargo deny check advisories bans licenses sources
 }
 

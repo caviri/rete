@@ -1,0 +1,175 @@
+# Which lockfiles the dependency audit covers, and the ONLY advisories it lets
+# through. Read by scripts/audit_lockfiles.py, which CI's `security` job runs on
+# every change to a lockfile or manifest and on the nightly schedule, and which
+# `scripts/publish_crates.sh` runs (for the workspace lockfile) before anything
+# reaches crates.io. There is no other list: deny.toml's [advisories] ignore must
+# equal the exceptions that name "." and the script fails when they differ.
+#
+# The rules the script enforces, so this file cannot rot quietly:
+#   - every tracked Cargo.lock / package-lock.json appears below, audited or
+#     skipped with a reason; a new one fails the run until it is listed;
+#   - every finding (vulnerability, unmaintained, unsound, yanked, notice) fails
+#     unless an [[exception]] names its id AND the lockfile it was found in —
+#     there are no blanket or wildcard ignores, and a yanked crate cannot be
+#     excepted at all (update the lockfile);
+#   - an exception that no longer matches a finding fails ("stale": delete it);
+#   - an exception past its `review_by` date fails: re-check whether a fix has
+#     shipped, then either remove the exception or renew it with a new date and,
+#     if anything changed, a new reason. Renewals are at most a quarter apart.
+
+# ---------------------------------------------------------------------------
+# Cargo projects. `path` is the directory holding Cargo.toml.
+# `lockfile = "generated"` marks a project that commits no Cargo.lock because
+# its build resolves fresh every time; the audit resolves it fresh too (exactly
+# what the next build would ship) and deletes the generated file afterwards.
+# ---------------------------------------------------------------------------
+
+[[cargo]]
+path = "."
+ships = "crates.io (rete-core, rete-graph, rete-cli, rete-wasm), the CLI archives and images, the browser engine, the npm client's wasm"
+
+[[cargo]]
+path = "clients/python"
+ships = "the PyPI wheels and sdist of rete-graph, and the Pyodide wheels"
+
+[[cargo]]
+path = "clients/r/src/rust"
+ships = "the R package's compiled library"
+
+[[cargo]]
+path = "clients/java/ffi"
+lockfile = "generated"
+ships = "rete_ffi.wasm inside the Java client JAR"
+
+[[cargo]]
+path = "clients/tauri/src-tauri"
+ships = "the Rete File Explorer installers (macOS and Windows only, desktop-release.yml)"
+
+[[cargo]]
+path = "fuzz"
+ships = "nothing (the cargo-fuzz harness), audited so its lockfile stays honest"
+
+# ---------------------------------------------------------------------------
+# npm packages, audited with `npm audit --omit=dev`: only what ships. Build and
+# test tooling (devDependencies) is out of scope here.
+# ---------------------------------------------------------------------------
+
+[[npm]]
+path = "clients/js"
+ships = "the npm package rete-graph (no runtime dependencies today; this keeps it that way knowingly)"
+
+[[npm]]
+path = "clients/mcpb"
+ships = "the Claude Desktop extension (rete.mcpb), whose server bundles @modelcontextprotocol/sdk and zod"
+
+[[npm]]
+path = "web/playground-src/cm6"
+ships = "the CodeMirror bundle inlined into docs/playground.html"
+
+[[npm]]
+path = "tests/gate"
+skip = "test harness only (the browser regression gate); its Playwright pin decides which Chromium the gate measures and moves deliberately"
+
+[[npm]]
+path = "experiments/graph-map"
+skip = "experiment, ships nothing"
+
+# ---------------------------------------------------------------------------
+# Exceptions. `lockfiles` lists project paths from above, never a wildcard.
+# ---------------------------------------------------------------------------
+
+[[exception]]
+id = "RUSTSEC-2026-0194"
+crate = "quick-xml"
+lockfiles = [".", "clients/python", "clients/r/src/rust", "clients/java/ffi", "clients/tauri/src-tauri", "fuzz"]
+reason = """
+quick-xml 0.37.5: quadratic duplicate-attribute scan, fixed in 0.41. Every
+published oxrdfxml and sparesults (latest checked: oxrdfxml 0.2.5 and
+sparesults 0.3.5, 2026-10-18) still requires quick-xml ^0.37, so the fix is
+unreachable from rete-core. Availability only: the exposure is a caller feeding
+untrusted RDF/XML to a build; no confidentiality or integrity impact.
+Remove when Oxigraph ships a quick-xml >= 0.41 bump."""
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2026-0195"
+crate = "quick-xml"
+lockfiles = [".", "clients/python", "clients/r/src/rust", "clients/java/ffi", "clients/tauri/src-tauri", "fuzz"]
+reason = """
+quick-xml 0.37.5: unbounded namespace-declaration allocation in NsReader, fixed
+in 0.41. Same blocker and same exposure as RUSTSEC-2026-0194."""
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2024-0436"
+crate = "paste"
+lockfiles = ["clients/r/src/rust"]
+reason = """
+paste is unmaintained (informational, no vulnerability, no patched release).
+It is a proc-macro, so it runs at compile time only and none of it is in the
+built R library. It arrives through extendr-api, which the R client pins to the
+0.8 line for rextendr's generated plumbing; the newest extendr-api (0.9.0) still
+depends on it, so no upgrade removes it."""
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2024-0370"
+crate = "proc-macro-error"
+lockfiles = ["clients/tauri/src-tauri"]
+reason = """
+Unmaintained (informational). A compile-time proc-macro pulled by glib-macros
+and gtk3-macros 0.18, i.e. Tauri's Linux (GTK 3 / WebKitGTK) backend. The
+explorer is built and shipped for macOS and Windows only, where that backend is
+not compiled. Goes away when Tauri leaves gtk3-rs."""
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2024-0429"
+crate = "glib"
+lockfiles = ["clients/tauri/src-tauri"]
+reason = """
+Unsound VariantStrIter iterator impls in glib 0.18 (fixed in 0.20). glib 0.18 is
+pinned by Tauri 2's Linux backend (webkit2gtk / gtk 0.18), which the explorer
+does not build: its installers are macOS and Windows only, so no glib code
+ships. Goes away when Tauri leaves gtk3-rs."""
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2025-0075"
+crate = "unic-char-range"
+lockfiles = ["clients/tauri/src-tauri"]
+reason = """
+Unmaintained (informational), one of the five unic-* crates urlpattern 0.3 pulls
+in through tauri-utils 2.9. tauri-utils 2.10 moved to urlpattern 0.6, which
+drops them all (`cargo update -p tauri-utils` in clients/tauri/src-tauri). Not
+taken here because nothing in PR CI builds the explorer for the platforms it
+ships on (macOS, Windows): take it together with a desktop build."""
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2025-0080"
+crate = "unic-common"
+lockfiles = ["clients/tauri/src-tauri"]
+reason = "Unmaintained (informational); see RUSTSEC-2025-0075, same origin and same fix."
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2025-0081"
+crate = "unic-char-property"
+lockfiles = ["clients/tauri/src-tauri"]
+reason = "Unmaintained (informational); see RUSTSEC-2025-0075, same origin and same fix."
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2025-0098"
+crate = "unic-ucd-version"
+lockfiles = ["clients/tauri/src-tauri"]
+reason = "Unmaintained (informational); see RUSTSEC-2025-0075, same origin and same fix."
+review_by = 2027-01-21
+
+[[exception]]
+id = "RUSTSEC-2025-0100"
+crate = "unic-ucd-ident"
+lockfiles = ["clients/tauri/src-tauri"]
+reason = "Unmaintained (informational); see RUSTSEC-2025-0075, same origin and same fix."
+review_by = 2027-01-21
