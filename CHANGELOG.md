@@ -5,6 +5,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Security
+
+- **`rustls-webpki` 0.103.16 and `webpki-roots` 1.0.10** (were 0.103.15 and
+  1.0.7–1.0.9 across the workspace, Python, R and File Explorer lockfiles),
+  fixing RUSTSEC-2026-0382 (certificate verification could accept distrusted
+  intermediates) and RUSTSEC-2026-0381 (the bundled roots trusted distrusted
+  emSign intermediates) in the TLS stack behind remote reads over HTTPS. The
+  browser engine does not link either crate.
+
 ### Changed
 
 - **The Claude Desktop extension downloads from GitHub releases.** Every `v*`
@@ -94,6 +103,10 @@ GitHub release with its native archives, browser bundle, Blender add-on and
 the Claude Desktop extension on the bucket (`rete-0.3.5.mcpb` and the
 `rete.mcpb` link), the Pyodide fallback wheel, and the desktop File Explorer
 installers.
+
+**Not published to crates.io:** the publish-time security gate blocked it on
+RUSTSEC-2026-0381/0382 (advisories published after the tag), fixed in 0.3.6.
+crates.io goes from 0.3.4 to 0.3.6.
 
 What 0.3.5 changes on top of 0.3.4:
 
