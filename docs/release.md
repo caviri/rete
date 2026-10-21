@@ -21,7 +21,7 @@ release:
 | 2 | `release.yml` / `draft GitHub release` | extracts the `## [X.Y.Z]` section of `CHANGELOG.md` (the job **fails** if it is missing or empty) and creates a **draft** release named `Rete X.Y.Z`, or reuses the one the tag already has |
 | 3 | `desktop-release.yml` / `resolve release` | never creates a `v*` release: it waits (up to 20 min) for step 2's draft and hands its id to the macOS and Windows builders, which upload the installers into it |
 | 4 | `release.yml` / `checksums, SBOM, attestations, and GitHub release` | uploads the archives, WASM bundle, extensions, `SHA256SUMS` and SBOM with `--clobber`, then publishes the draft |
-| 5 | `release.yml` / `protected crates.io publishing` | waits for the `crates-io` environment approval, publishes, and attaches the receipt |
+| 5 | `release.yml` / `protected crates.io publishing` | runs in the `crates-io` environment (`v*` tags only, no reviewer), re-runs the `cargo audit`/`cargo deny` gate, publishes through trusted publishing, and attaches the receipt |
 
 On publish, only a semver prerelease (`-rc.1`, `-alpha`, `-beta.2`) is marked
 prerelease. A final version, 0.x included, is a normal release and becomes
@@ -113,8 +113,14 @@ docs.rs pages.
 
 After bootstrap, configure trusted publishers for all three crates with owner
 `caviri`, repository `rete`, workflow `release.yml`, and environment
-`crates-io`. Configure that GitHub environment with required approval and only
-protected `v*` tags; it must contain no crates.io secret. Run the release
+`crates-io`. That GitHub environment admits deployments from `v*` tags only
+and has no required reviewer, so a release tag publishes to crates.io without a
+manual step (up to 0.3.6 it needed a one-time approval per run). What guards
+publication is the tag-only deployment policy, crates.io trusted publishing
+(a short-lived OIDC token; the environment holds no crates.io secret), and the
+strict `cargo audit` / `cargo deny` gate in `scripts/publish_crates.sh`, which
+refuses any advisory other than the two quick-xml exceptions listed under
+Known limitations. Run the release
 workflow manually against the `v0.3.0` tag with `verify_crates_io_auth=true`.
 This requests and automatically revokes a short-lived OIDC token, validates the
 tag and package preflight, and makes no publish call. Later release tags publish
