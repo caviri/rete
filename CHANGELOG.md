@@ -5,6 +5,48 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-10-21
+
+**Where 0.3.6 is published: every channel.** crates.io (`rete-core`,
+`rete-graph`, `rete-cli`, `rete-wasm`), PyPI and npm (`rete-graph`), the
+GitHub release with its native archives, browser bundle, Blender add-on and
+the Claude Desktop extension (`rete-0.3.6.mcpb`, and `rete.mcpb` behind the
+`releases/latest/download/rete.mcpb` link), the container images on GHCR
+(`rete-cli`, `rete-relay`, `rete-dev`), the Pyodide fallback wheel, and the
+desktop File Explorer installers. The extension is no longer uploaded to the
+bucket; the copies there stay at 0.3.5.
+
+What 0.3.6 changes on top of 0.3.5:
+
+- **Behaviour change: property-path alternatives and sequences keep their
+  duplicates.** `?s (:a|:b) ?o` and a sequence inside an alternative now
+  return one solution per matching path, as SPARQL 1.1 §18.4 defines them,
+  where 0.3.5 returned each pair once. Counts over such paths can go up
+  (DataCite: 8,897 → 8,929 for `?s (dcite:cites|dcite:references) <doi>`);
+  add `DISTINCT` to count nodes rather than paths. `*`, `+`, `?` and
+  negated property sets are unchanged. Details below.
+- **SPARQL runs under a memory budget.** `rete sparql` and `rete sparql-url`
+  take `--memory-budget-mb` (default 4096, `0` = unlimited), and
+  `Rete::open_ranged_lazy` applies the same default, so the Python, R and
+  Java clients and the relay are bounded too. `rete verify` streams the file
+  instead of reading it whole.
+- **Join planning follows the data's size.** Lazy opens estimate each
+  pattern from the tile directory and pick the join order and method from
+  it; DataCite queries that ran out of memory at 16 GB now answer in seconds.
+- **`COUNT(DISTINCT …)` is exact and bounded,** spilling sorted runs to
+  `TMPDIR` past the budget.
+- **The Claude Desktop extension downloads from GitHub releases**
+  (`https://github.com/caviri/rete/releases/latest/download/rete.mcpb`).
+- **Security: the TLS certificate checks are patched.** `rustls-webpki`
+  0.103.16 (RUSTSEC-2026-0382) and `webpki-roots` 1.0.10
+  (RUSTSEC-2026-0381). These advisories are what kept 0.3.5 off crates.io,
+  which goes from 0.3.4 straight to 0.3.6. Details below.
+
+Repository-only changes in this release, with no effect on the published
+packages: the DataCite converter keeps one identity per registered DOI and
+guards its build (#312), and the dataset pipelines under `scripts/` moved to
+a separate dataset repository (#313).
+
 ### Security
 
 - **`rustls-webpki` 0.103.16 and `webpki-roots` 1.0.10** (were 0.103.15 and
