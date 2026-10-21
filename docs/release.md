@@ -118,13 +118,47 @@ and has no required reviewer, so a release tag publishes to crates.io without a
 manual step (up to 0.3.6 it needed a one-time approval per run). What guards
 publication is the tag-only deployment policy, crates.io trusted publishing
 (a short-lived OIDC token; the environment holds no crates.io secret), and the
-strict `cargo audit` / `cargo deny` gate in `scripts/publish_crates.sh`, which
-refuses any advisory other than the two quick-xml exceptions listed under
-Known limitations. Run the release
+strict audit gate in `scripts/publish_crates.sh` — the
+[dependency audit](#dependency-audit) on the workspace lockfile, then
+`cargo deny` — which refuses any advisory other than the two quick-xml
+exceptions listed under Known limitations. Run the release
 workflow manually against the `v0.3.0` tag with `verify_crates_io_auth=true`.
 This requests and automatically revokes a short-lived OIDC token, validates the
 tag and package preflight, and makes no publish call. Later release tags publish
 in dependency order through the same protected job.
+
+## Dependency audit
+
+Every lockfile in the repository is audited, not only the workspace's:
+`scripts/audit_lockfiles.py` runs `cargo audit` on the workspace, the Python
+wheels (PyPI and Pyodide), the R package, the Java client's wasm (resolved
+fresh, as its build does), the desktop File Explorer and the fuzz harness, and
+`npm audit --omit=dev` on the npm packages that ship (`rete-graph`, the Claude
+Desktop extension, the playground's CodeMirror bundle). The list, and the only
+advisories it lets through, live in `lockfile-audit.toml`:
+
+- every finding (vulnerability, unmaintained, unsound, yanked, notice) fails
+  unless an exception names its id **and** the lockfile it was found in, with a
+  reason and a `review_by` date at most a quarter away; there are no blanket
+  ignores, and a yanked crate cannot be excepted;
+- an exception that no longer matches anything fails (delete it), and one past
+  its review date fails until it is re-checked and renewed or removed;
+- a tracked lockfile the file does not list fails, and so does a committed
+  `Cargo.lock` whose path crates disagree with their manifests (a lockfile
+  cargo would rewrite is not the one being built);
+- `deny.toml`'s advisory ignores must equal the exceptions for the workspace.
+
+CI's `security` job runs it on any change to a lockfile, manifest or the audit
+itself, and **nightly**, because advisories are published against lockfiles
+nobody touched — 0.3.5's crates.io publish was blocked by two that appeared the
+day after its tag. `scripts/publish_crates.sh` runs the same script on the
+workspace lockfile (`--only .`), so the publish gate and CI cannot disagree; a
+red nightly `security` is the warning that the next `v*` tag would be refused.
+Run it before tagging:
+
+```sh
+docker compose run --rm dev bash scripts/release_check.sh security
+```
 
 ## Language clients
 
@@ -224,12 +258,19 @@ rete sparql graph.rete 'SELECT * WHERE { ?s ?p ?o } LIMIT 1'
 - Federation unions results from independent files and does not resolve general
   joins spanning files.
 - The RDF/XML parser resolves `quick-xml 0.37.5` through upstream Oxigraph:
-  every published `oxrdfxml`, including the current 0.2.3, requires
-  `quick-xml ^0.37`, so the patched 0.41 line is unreachable from here.
-  RUSTSEC-2026-0194 and RUSTSEC-2026-0195 are consequently carried as documented
-  exceptions in `deny.toml` and in the publish preflight. Both are
+  every published `oxrdfxml` and `sparesults`, including oxrdfxml 0.2.5 and
+  sparesults 0.3.5 (2026-10-18), requires `quick-xml ^0.37`, so the patched
+  0.41 line is unreachable from here. RUSTSEC-2026-0194 and RUSTSEC-2026-0195
+  are consequently carried as documented exceptions in `lockfile-audit.toml`
+  (mirrored in `deny.toml`) for every lockfile that embeds the engine. Both are
   availability-only denial-of-service findings whose exposure is a caller
   parsing untrusted RDF/XML; neither affects confidentiality or integrity. Both
   exceptions are removed as soon as Oxigraph ships a `quick-xml >= 0.41` bump.
+  The other accepted exceptions are informational notices with no shipped
+  exposure: `paste` (unmaintained, a compile-time macro of the R client's
+  extendr) and the File Explorer's GTK-backend crates (`glib`,
+  `proc-macro-error`, Linux-only, while the app ships for macOS and Windows)
+  plus the `unic-*` tables of `urlpattern` 0.3; `lockfile-audit.toml` gives the
+  reason and the review date of each.
 
 Full changes are in the [changelog](https://github.com/caviri/rete/blob/main/CHANGELOG.md).

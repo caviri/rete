@@ -252,14 +252,14 @@ impl RangeReader for HttpRangeReader {
 /// A reader backed by a Python object exposing `read_at(offset, length) ->
 /// bytes` and a length (a `len()` method, or `__len__`). Each call re-acquires
 /// the GIL, which is safe here: the engine only calls readers from inside
-/// `allow_threads` sections, where the GIL is free to take.
+/// `detach` sections, where the GIL is free to take.
 pub struct PyRangeReader {
-    obj: PyObject,
+    obj: Py<PyAny>,
     len: u64,
 }
 
 impl PyRangeReader {
-    pub fn new(py: Python<'_>, obj: PyObject) -> PyResult<Self> {
+    pub fn new(py: Python<'_>, obj: Py<PyAny>) -> PyResult<Self> {
         let bound = obj.bind(py);
         let len: u64 = match bound.call_method0("len") {
             Ok(v) => v.extract()?,
@@ -275,7 +275,7 @@ impl RangeReader for PyRangeReader {
     }
 
     fn read_at(&self, offset: u64, len: u64) -> io::Result<Vec<u8>> {
-        let buf: Vec<u8> = Python::with_gil(|py| {
+        let buf: Vec<u8> = Python::attach(|py| {
             self.obj
                 .bind(py)
                 .call_method1("read_at", (offset, len))?

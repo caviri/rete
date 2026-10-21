@@ -4,8 +4,9 @@
 //! (`crates/rete-wasm`); results use the same JSON envelope, parsed into
 //! Python values by the pure-Python `rete_graph` wrapper package.
 //!
-//! Every potentially slow call runs inside `Python::allow_threads`, so remote
-//! range fetches (which fan out over a thread pool) never hold the GIL.
+//! Every potentially slow call runs inside `Python::detach` (PyO3's name for
+//! the old `allow_threads` since 0.26), so remote range fetches (which fan out
+//! over a thread pool) never hold the GIL.
 
 mod readers;
 
@@ -167,7 +168,7 @@ impl Graph {
     ) -> PyResult<String> {
         self.fresh_verdict();
         let out = py
-            .allow_threads(|| -> Result<String, String> {
+            .detach(|| -> Result<String, String> {
                 let shapes = ShaclShapes::parse_turtle(shapes_turtle).map_err(|e| e.to_string())?;
                 let report = match graph {
                     None => validate_shacl(&ReteGraph::new(&self.rete), &shapes),
@@ -190,10 +191,10 @@ impl Graph {
     #[pyo3(signature = (query, *, reason=false))]
     fn query(&self, py: Python<'_>, query: &str, reason: bool) -> PyResult<String> {
         self.fresh_verdict();
-        // Evaluation stays on this thread (allow_threads only releases the GIL),
+        // Evaluation stays on this thread (detach only releases the GIL),
         // which is what the engine's thread-local diagnostics need.
         let (out, warnings) = py
-            .allow_threads(|| {
+            .detach(|| {
                 let opts = QueryOpts {
                     reason,
                     ..QueryOpts::default()
@@ -251,7 +252,7 @@ impl Graph {
         object: Option<&str>,
     ) -> PyResult<DumpBatch> {
         self.fresh_verdict();
-        let out = py.allow_threads(|| {
+        let out = py.detach(|| {
             self.rete
                 .query_batch(graph, subject, predicate, object, cursor, max_quads.max(1))
         });
@@ -287,7 +288,7 @@ impl Graph {
     /// `[(label, subject), ...]`.
     #[pyo3(signature = (prefix, limit=20))]
     fn prefix_search(&self, py: Python<'_>, prefix: &str, limit: usize) -> Vec<(String, String)> {
-        py.allow_threads(|| self.rete.prefix_search(prefix, limit))
+        py.detach(|| self.rete.prefix_search(prefix, limit))
     }
 
     /// Full-text word / CONTAINS search over the file's TEXT_INDEX section
@@ -300,7 +301,7 @@ impl Graph {
         contains_prefix: Option<String>,
         limit: usize,
     ) -> Vec<String> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let refs: Vec<&str> = words.iter().map(String::as_str).collect();
             self.rete
                 .text_search(&refs, contains_prefix.as_deref(), limit)
@@ -311,7 +312,7 @@ impl Graph {
     /// `{"classes": [[iri, count], ...], "relations": [[sClass, pred, oClass, count], ...]}`.
     fn schema(&self, py: Python<'_>) -> PyResult<String> {
         let (classes, relations) =
-            py.allow_threads(|| (schema_classes(&self.rete), schema_summary(&self.rete)));
+            py.detach(|| (schema_classes(&self.rete), schema_summary(&self.rete)));
         serde_json::to_string(&serde_json::json!({
             "schemaVersion": JSON_SCHEMA_VERSION,
             "classes": classes,
@@ -349,7 +350,7 @@ impl Graph {
     fn card(&self, py: Python<'_>) -> PyResult<Option<String>> {
         if let Some(reader) = &self.reader {
             let bytes = py
-                .allow_threads(|| rete_core::read_metadata_ranged(reader.as_ref()))
+                .detach(|| rete_core::read_metadata_ranged(reader.as_ref()))
                 .map_err(runtime_err)?;
             return Ok(bytes.map(|b| String::from_utf8_lossy(&b).into_owned()));
         }
@@ -391,7 +392,7 @@ impl Graph {
 /// Open a local `.rete` file lazily (positional reads; no whole-file load).
 #[pyfunction]
 fn open_path(py: Python<'_>, path: String) -> PyResult<Graph> {
-    py.allow_threads(|| {
+    py.detach(|| {
         let reader = LocalRangeReader::open(&path).map_err(runtime_err)?;
         open_lazy(AnyReader::Local(reader))
     })
@@ -410,7 +411,7 @@ fn open_url(
 ) -> PyResult<Graph> {
     let headers: Vec<(String, String)> =
         headers.map(|h| h.into_iter().collect()).unwrap_or_default();
-    py.allow_threads(|| {
+    py.detach(|| {
         let reader = HttpRangeReader::open(&url, headers).map_err(runtime_err)?;
         open_lazy(AnyReader::Http(reader))
     })
@@ -419,7 +420,7 @@ fn open_url(
 /// Open a `.rete` image held in memory (eager: sections decode now).
 #[pyfunction]
 fn open_bytes(py: Python<'_>, data: Vec<u8>) -> PyResult<Graph> {
-    py.allow_threads(|| {
+    py.detach(|| {
         #[allow(unused_mut)]
         let mut rete = Rete::open(&data).map_err(runtime_err)?;
         #[cfg(not(target_os = "emscripten"))]
@@ -436,9 +437,9 @@ fn open_bytes(py: Python<'_>, data: Vec<u8>) -> PyResult<Graph> {
 /// length (`len()` method or `__len__`). Backed by fsspec, this reaches any
 /// authenticated store (S3, GCS, Azure) with zero code here.
 #[pyfunction]
-fn open_reader(py: Python<'_>, obj: PyObject) -> PyResult<Graph> {
+fn open_reader(py: Python<'_>, obj: Py<PyAny>) -> PyResult<Graph> {
     let reader = PyRangeReader::new(py, obj)?;
-    py.allow_threads(|| open_lazy(AnyReader::Py(reader)))
+    py.detach(|| open_lazy(AnyReader::Py(reader)))
 }
 
 /// The `quoted_triple_syntax` argument: `"rdf-star"` (or `""`, the default) or
@@ -488,7 +489,7 @@ fn build(
     format: &str,
     quoted_triple_syntax: &str,
 ) -> PyResult<Py<PyBytes>> {
-    let bytes = py.allow_threads(|| -> PyResult<Vec<u8>> {
+    let bytes = py.detach(|| -> PyResult<Vec<u8>> {
         let quads = parse_source(&text, format, quoted_triple_syntax)?;
         if quads.is_empty() {
             return Err(PyValueError::new_err(
@@ -618,7 +619,7 @@ fn build_dataset(
     } else {
         None
     };
-    let (bytes, stats) = py.allow_threads(|| -> PyResult<_> {
+    let (bytes, stats) = py.detach(|| -> PyResult<_> {
         let mut quads = Vec::new();
         for (text, format, syntax) in &sources {
             quads.extend(parse_source(text, format, syntax)?);
@@ -672,7 +673,11 @@ fn build_dataset(
     Ok((PyBytes::new(py, &bytes).unbind(), stats_json))
 }
 
-#[pymodule]
+// `gil_used = true` keeps the module's declared GIL contract what it was before
+// PyO3 0.28 flipped the default to "free-threading safe". The abi3 wheels do not
+// load on a free-threaded interpreter anyway; declaring support there is its own
+// decision, not a side effect of a dependency bump.
+#[pymodule(gil_used = true)]
 fn _rete(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Graph>()?;
     m.add_function(wrap_pyfunction!(open_path, m)?)?;

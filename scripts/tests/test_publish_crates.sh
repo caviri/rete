@@ -22,6 +22,7 @@ checksum_for() {
     rete-core) printf '%064d\n' 1 ;;
     rete-cli) printf '%064d\n' 2 ;;
     rete-wasm) printf '%064d\n' 3 ;;
+    rete-graph) printf '%064d\n' 4 ;;
     *) echo "unknown package: $1" >&2; exit 1 ;;
   esac
 }
@@ -65,6 +66,7 @@ case "$command_name" in
         cat <<JSON
 {"packages":[
   {"name":"rete-core","version":"$FAKE_VERSION","dependencies":[]},
+  {"name":"rete-graph","version":"$FAKE_VERSION","dependencies":[{"name":"rete-core","req":"=$FAKE_VERSION"}]},
   {"name":"rete-cli","version":"$FAKE_VERSION","dependencies":[{"name":"rete-core","req":"=$FAKE_VERSION"}]},
   {"name":"rete-wasm","version":"$FAKE_VERSION","dependencies":[{"name":"rete-core","req":"=$FAKE_VERSION"}]}
 ]}
@@ -105,7 +107,16 @@ JSON
         name=${spec%@*}
         grep -q "^$name " "$FAKE_STATE"
         ;;
-      audit|deny|install|check)
+      audit)
+        # scripts/audit_lockfiles.py reads the JSON report. FAKE_AUDIT_FINDING
+        # plants an advisory that lockfile-audit.toml does not except.
+        if [ "${FAKE_AUDIT_FINDING:-0}" = 1 ]; then
+          echo '{"vulnerabilities":{"list":[{"advisory":{"id":"RUSTSEC-0000-0000","title":"planted"},"package":{"name":"planted","version":"1.0.0"}}]},"warnings":{}}'
+        else
+          echo '{"vulnerabilities":{"list":[]},"warnings":{}}'
+        fi
+        ;;
+      deny|install|check)
         ;;
       *)
         echo "unexpected cargo invocation: $subcommand $*" >&2
@@ -155,6 +166,7 @@ JSON
     file=${1:?missing checksum file}
     case "$file" in
       *rete-core*) name=rete-core ;;
+      *rete-graph*) name=rete-graph ;;
       *rete-cli*) name=rete-cli ;;
       *rete-wasm*) name=rete-wasm ;;
       *)
@@ -247,10 +259,15 @@ CARGO_REGISTRY_TOKEN=test-token
 export CARGO_REGISTRY_TOKEN
 if run_publish --bootstrap 1.0.0-rc.1 > "$case_dir/output" 2>&1; then
   actual=$(sed -n 's/^PUBLISHED //p' "$FAKE_LOG" | tr '\n' ' ' | sed 's/ $//')
-  if [ "$actual" = "rete-core rete-cli rete-wasm" ]; then
-    pass "publishes core, CLI, and WASM in dependency order"
+  if [ "$actual" = "rete-core rete-graph rete-cli rete-wasm" ]; then
+    pass "publishes core, graph, CLI, and WASM in dependency order"
   else
     fail "publication order was '$actual'"
+  fi
+  if grep -q '^cargo audit .*--json --file .*/Cargo\.lock$' "$FAKE_LOG"; then
+    pass "the lockfile-audit gate audits the workspace lockfile"
+  else
+    fail "the lockfile-audit gate never ran cargo audit on Cargo.lock"
   fi
   if [ -f target/release/crates-io-receipt.json ] && \
       ! grep -q 'test-token' target/release/crates-io-receipt.json; then
@@ -268,7 +285,7 @@ CARGO_REGISTRY_TOKEN=oidc-token
 export CARGO_REGISTRY_TOKEN
 if run_publish --trusted 1.0.0-rc.2 > "$case_dir/output" 2>&1; then
   actual=$(sed -n 's/^PUBLISHED //p' "$FAKE_LOG" | tr '\n' ' ' | sed 's/ $//')
-  if [ "$actual" = "rete-cli rete-wasm" ]; then
+  if [ "$actual" = "rete-graph rete-cli rete-wasm" ]; then
     pass "trusted publishing resumes after an existing core crate"
   else
     fail "trusted resume published '$actual'"
@@ -276,6 +293,22 @@ if run_publish --trusted 1.0.0-rc.2 > "$case_dir/output" 2>&1; then
 else
   fail "trusted resume succeeds: $(tail -1 "$case_dir/output")"
 fi
+
+prepare_case unexcepted_advisory 1.0.0-rc.2
+FAKE_AUDIT_FINDING=1
+export FAKE_AUDIT_FINDING
+CARGO_REGISTRY_TOKEN=oidc-token
+export CARGO_REGISTRY_TOKEN
+if run_publish --trusted 1.0.0-rc.2 > "$case_dir/output" 2>&1; then
+  fail "an advisory with no exception stops publication"
+elif grep -q '^PUBLISHED ' "$FAKE_LOG"; then
+  fail "an advisory with no exception still let a crate through"
+elif grep -q 'RUSTSEC-0000-0000' "$case_dir/output"; then
+  pass "an advisory with no exception stops publication"
+else
+  fail "publication stopped, but not on the planted advisory: $(tail -1 "$case_dir/output")"
+fi
+unset FAKE_AUDIT_FINDING
 
 prepare_case checksum_mismatch 1.0.0-rc.2
 printf 'rete-core %064d\n' 9 > "$FAKE_STATE"

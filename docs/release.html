@@ -707,13 +707,43 @@ and has no required reviewer, so a release tag publishes to crates.io without a
 manual step (up to 0.3.6 it needed a one-time approval per run). What guards
 publication is the tag-only deployment policy, crates.io trusted publishing
 (a short-lived OIDC token; the environment holds no crates.io secret), and the
-strict <code>cargo audit</code> / <code>cargo deny</code> gate in <code>scripts/publish_crates.sh</code>, which
-refuses any advisory other than the two quick-xml exceptions listed under
-Known limitations. Run the release
+strict audit gate in <code>scripts/publish_crates.sh</code> — the
+<a href="#dependency-audit">dependency audit</a> on the workspace lockfile, then
+<code>cargo deny</code> — which refuses any advisory other than the two quick-xml
+exceptions listed under Known limitations. Run the release
 workflow manually against the <code>v0.3.0</code> tag with <code>verify_crates_io_auth=true</code>.
 This requests and automatically revokes a short-lived OIDC token, validates the
 tag and package preflight, and makes no publish call. Later release tags publish
 in dependency order through the same protected job.</p>
+<h2 id="dependency-audit">Dependency audit</h2>
+<p>Every lockfile in the repository is audited, not only the workspace's:
+<code>scripts/audit_lockfiles.py</code> runs <code>cargo audit</code> on the workspace, the Python
+wheels (PyPI and Pyodide), the R package, the Java client's wasm (resolved
+fresh, as its build does), the desktop File Explorer and the fuzz harness, and
+<code>npm audit --omit=dev</code> on the npm packages that ship (<code>rete-graph</code>, the Claude
+Desktop extension, the playground's CodeMirror bundle). The list, and the only
+advisories it lets through, live in <code>lockfile-audit.toml</code>:</p>
+<ul>
+<li>every finding (vulnerability, unmaintained, unsound, yanked, notice) fails
+unless an exception names its id <strong>and</strong> the lockfile it was found in, with a
+reason and a <code>review_by</code> date at most a quarter away; there are no blanket
+ignores, and a yanked crate cannot be excepted;</li>
+<li>an exception that no longer matches anything fails (delete it), and one past
+its review date fails until it is re-checked and renewed or removed;</li>
+<li>a tracked lockfile the file does not list fails, and so does a committed
+<code>Cargo.lock</code> whose path crates disagree with their manifests (a lockfile
+cargo would rewrite is not the one being built);</li>
+<li><code>deny.toml</code>'s advisory ignores must equal the exceptions for the workspace.</li>
+</ul>
+<p>CI's <code>security</code> job runs it on any change to a lockfile, manifest or the audit
+itself, and <strong>nightly</strong>, because advisories are published against lockfiles
+nobody touched — 0.3.5's crates.io publish was blocked by two that appeared the
+day after its tag. <code>scripts/publish_crates.sh</code> runs the same script on the
+workspace lockfile (<code>--only .</code>), so the publish gate and CI cannot disagree; a
+red nightly <code>security</code> is the warning that the next <code>v*</code> tag would be refused.
+Run it before tagging:</p>
+<pre><code class="language-sh">docker compose run --rm dev bash scripts/release_check.sh security
+</code></pre>
 <h2 id="language-clients">Language clients</h2>
 <p>Client versions track the engine's <code>MAJOR.MINOR</code>: <code>rete-graph</code> 0.3.x on PyPI and
 npm, the R package, and the Java client (<code>io.github.caviri:rete-*</code>), all embed
@@ -787,13 +817,20 @@ require cross-origin isolation.</li>
 <li>Federation unions results from independent files and does not resolve general
 joins spanning files.</li>
 <li>The RDF/XML parser resolves <code>quick-xml 0.37.5</code> through upstream Oxigraph:
-every published <code>oxrdfxml</code>, including the current 0.2.3, requires
-<code>quick-xml ^0.37</code>, so the patched 0.41 line is unreachable from here.
-RUSTSEC-2026-0194 and RUSTSEC-2026-0195 are consequently carried as documented
-exceptions in <code>deny.toml</code> and in the publish preflight. Both are
+every published <code>oxrdfxml</code> and <code>sparesults</code>, including oxrdfxml 0.2.5 and
+sparesults 0.3.5 (2026-10-18), requires <code>quick-xml ^0.37</code>, so the patched
+0.41 line is unreachable from here. RUSTSEC-2026-0194 and RUSTSEC-2026-0195
+are consequently carried as documented exceptions in <code>lockfile-audit.toml</code>
+(mirrored in <code>deny.toml</code>) for every lockfile that embeds the engine. Both are
 availability-only denial-of-service findings whose exposure is a caller
 parsing untrusted RDF/XML; neither affects confidentiality or integrity. Both
-exceptions are removed as soon as Oxigraph ships a <code>quick-xml &gt;= 0.41</code> bump.</li>
+exceptions are removed as soon as Oxigraph ships a <code>quick-xml &gt;= 0.41</code> bump.
+The other accepted exceptions are informational notices with no shipped
+exposure: <code>paste</code> (unmaintained, a compile-time macro of the R client's
+extendr) and the File Explorer's GTK-backend crates (<code>glib</code>,
+<code>proc-macro-error</code>, Linux-only, while the app ships for macOS and Windows)
+plus the <code>unic-*</code> tables of <code>urlpattern</code> 0.3; <code>lockfile-audit.toml</code> gives the
+reason and the review date of each.</li>
 </ul>
 <p>Full changes are in the <a href="https://github.com/caviri/rete/blob/main/CHANGELOG.html">changelog</a>.</p>
 

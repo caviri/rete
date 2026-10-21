@@ -2,12 +2,13 @@
 all-features = true
 
 [advisories]
-# Temporary exceptions. oxrdfxml 0.1.7/0.2.3 pins quick-xml 0.37.5; remove both
-# entries as soon as the Oxigraph RDF/XML crates publish a release that accepts
-# quick-xml >=0.41. Both findings are availability-only DoS reachable through
-# untrusted RDF/XML input. scripts/publish_crates.sh carries the same two
-# --ignore flags and the full rationale; keep the two lists in step, and note
-# that no other advisory is exempt anywhere.
+# Temporary exceptions. Every published oxrdfxml/sparesults still requires
+# quick-xml ^0.37; remove both entries as soon as Oxigraph publishes a release
+# that accepts quick-xml >=0.41. Both findings are availability-only DoS
+# reachable through untrusted RDF/XML input. The rationale, review date and the
+# exceptions of every other lockfile live in lockfile-audit.toml, the one list;
+# scripts/audit_lockfiles.py fails when this ignore list stops matching that
+# file's exceptions for the workspace lockfile (".").
 ignore = [
   { id = "RUSTSEC-2026-0194", reason = "Blocked on a crates.io oxrdfxml release using quick-xml >=0.41" },
   { id = "RUSTSEC-2026-0195", reason = "Blocked on a crates.io oxrdfxml release using quick-xml >=0.41" },
