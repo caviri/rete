@@ -96,6 +96,78 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   and does not apply to that path. `docs/release.md` now lists how each
   registry authenticates.
 
+### Fixed
+
+- **SPARQL: comparisons go by datatype, not by what a string looks like.
+  This changes query results.** rete compared any two terms numerically when
+  both texts parsed as numbers and by their token text otherwise. So the
+  plain strings `"01" = "1"`, `"1.0" = "1"`, `"1e3" = "1000"` and
+  `"inf" = "Infinity"` were true, `"NaN" = "NaN"` was false (`"NaN"` read as
+  a float NaN), `?year > 2000` compared a string year with a number, and
+  `ORDER BY` put literals before IRIs and a string after the longer strings
+  it prefixes (`"Retired and archived"` before `"Retired"`). Found by the
+  OpenAIRE output QA (`e_nan_cmp.rq`). Now, as SPARQL 1.1 §17.3 maps each
+  operator by the operands' datatypes:
+  - `=` / `!=` / `IN`: numbers by value with type promotion
+    (`"1"^^xsd:integer = "1.0"^^xsd:decimal`, `"01"^^xsd:integer = 1`;
+    integers and decimals exactly, a NaN equal to nothing); simple literals
+    and `xsd:string` by code point; booleans, the XSD date/time types and
+    durations by value; language-tagged literals by text and tag, tags
+    case-insensitively (`"a"@EN = "a"@en`). A string never equals a number.
+    Two different literals of a datatype rete does not know, or ill-typed
+    ones (`"abc"^^xsd:integer`), are a type error (RDFterm-equal), as is a
+    zoned and an unzoned date/time less than 14 hours apart.
+  - `<` `>` `<=` `>=`: defined for the same pairs; anything else (a string
+    and a number, two IRIs) is a type error, which drops the row in a
+    FILTER. A NaN compares false.
+  - `ORDER BY`, `MIN`, `MAX`: unbound, blank nodes, IRIs, literals, quoted
+    triples (§15.1); among literals text first (strings, tagged and unknown
+    literals together, by text), then numbers by value, booleans, date/time
+    values and durations. It is now a total order.
+  - `SUM`, `AVG`, `+ - * /`, `ABS` / `CEIL` / `FLOOR` / `ROUND` and the
+    `SUBSTR` positions take numeric-typed literals only: a string is a type
+    error whatever its text, and the derived types (`xsd:int`, …) now count.
+
+  **Check queries that compare strings with numbers.** `FILTER(?year > 2000)`
+  over string years now returns nothing; cast (`xsd:integer(?year) > 2000`)
+  or compare text on both sides. The query warnings say so:
+  `incomparable` (a type error: the operator is not defined for the pair) and
+  a `string-vs-number` hint for an `=` that is false only because a string's
+  text spells the number (`"2020" = 2020`). The Claude Desktop extension
+  words the new kind. `sameTerm`, joins, `DISTINCT` and `GROUP BY` are
+  unchanged: they compare terms, not values.
+
+  W3C SPARQL 1.1: 239 / 312, unchanged. SPARQL 1.0 suite (not gated, CI
+  harness): 111 → 121, newly passing `open-world` `date-2`, `date-3`,
+  `open-cmp-01/02`, `open-eq-04/06/08/10/11/12`; none newly failing. A new
+  Oxigraph differential (`comparison_matrix_agrees_with_oxigraph`, 30
+  queries, every value compared whole) agrees; where Oxigraph departs from
+  the spec rete follows the spec (`NaN < 1` false, `false < true` true,
+  `<a> <= <a>` an error, the zoned/unzoned date pair an error), listed in
+  `docs/sparql.md#compare`.
+
+  Measured on the same files with the old and the new binary: the DataCite
+  QA battery, 64 of 64 answers unchanged. The OpenAIRE output QA, 192
+  queries: four answers change — the repro, two self-joins that counted 7
+  agents named "Nan" as different from themselves, and one dataset titled
+  "nan" — and `a_years` changes order on three shards, because years of
+  fewer than four digits are not valid `xsd:gYear`s and now sort as text,
+  before the valid years. Published queries (276 playground examples and
+  181 dataset-card starter queries, run on the live files): one example
+  broke and is fixed — the `bcul` "Treasures" example filtered
+  `FILTER(?date > 1450)` on `xsd:gYear` dates and now compares
+  `"1450"^^xsd:gYear`, with the same 50 rows; 3 examples' `ORDER BY …
+  LIMIT` window and 9 examples' order move because strings sort by their
+  text rather than their N-Triples token (a string before its own
+  extensions, an embedded `"` by its code point); 11 temporal-extent card
+  starters (`MIN`/`MAX`) and one bounding box change and 15 histogram
+  starters change order, all over values that are not of one comparable
+  type — strings that hold numbers, ill-typed years, IRIs mixed with numbers
+  (IRIs now sort first, §15.1); and two histogram starters (`vidy`,
+  `wikidata-xxl` shard 3) that panicked with "comparison function does not
+  correctly implement a total order" now answer. Cards are written at build
+  time, so a published card changes only when its file is rebuilt.
+
 ## [0.3.6] - 2026-10-21
 
 **Where 0.3.6 is published: every channel.** crates.io (`rete-core`,
