@@ -1,9 +1,10 @@
 name: Python client publish
 
 # Release pipeline only: wheels + sdist + PyPI publish on the `v*` release tag,
-# the one tag that releases every channel (docs/release.md). Until 0.3.6 the
-# Python client had its own `py-v*` tags; those stay in the repository as
-# history and no longer trigger anything.
+# the one tag that releases every channel (docs/release.md), plus the Pyodide
+# wheels as assets of that tag's GitHub release. Until 0.3.6 the Python client
+# had its own `py-v*` tags; those stay in the repository as history and no
+# longer trigger anything.
 #
 # PyPI's trusted publisher for `rete-graph` points at THIS filename
 # (python-client-publish.yml) + the `pypi` environment — renaming either breaks
@@ -117,12 +118,12 @@ jobs:
       # Pyodide 0.29's installer predates PEP 783, which renamed the platform
       # tag `pyodide_*` -> `pyemscripten_*`. It therefore cannot resolve the
       # wheel PyPI now requires, so docs/python.md points those users at a
-      # retagged copy on our own bucket. Same compiled artifact, old spelling.
+      # retagged copy attached to the GitHub release (`release-assets` below).
+      # Same compiled artifact, old spelling.
       #
       # This MUST stay out of `dist`: the publish job uploads that directory to
-      # PyPI, which rejects the legacy tag. Hence a separate artifact, and a
-      # separate manual upload step (no R2 credentials exist in Actions) —
-      # see scripts/publish_pyodide_wheel.sh and the release runbook.
+      # PyPI, which rejects the legacy tag. Hence a separate artifact, which
+      # the `wheel-*` pattern of the publish job does not match.
       - name: Retag the 2025 ABI wheel for pre-PEP-783 installers
         run: |
           set -eu
@@ -153,6 +154,58 @@ jobs:
           name: pyodide-legacy-wheel
           path: dist-legacy
           if-no-files-found: error
+
+  # The three Pyodide wheels are also assets of the tag's GitHub release: the
+  # two pyemscripten_* wheels PyPI gets, and the legacy-tagged copy PyPI
+  # refuses, which is where Pyodide 0.29 users download it (docs/python.md).
+  # Through 0.3.6 that copy went to our bucket by hand; those copies stay
+  # there, frozen. release.yml owns the release. Like desktop-release.yml,
+  # this job never creates one: it waits for release.yml's draft and uploads
+  # into it. A draft and a published release both take assets, and
+  # `--clobber` makes a re-run safe. It does not wait for PyPI, nor PyPI for it.
+  #
+  # These files are not in release.yml's SHA256SUMS or attestations, which
+  # cover what that workflow builds; GitHub records a sha256 digest for every
+  # release asset, and PyPI lists the digests of the two it hosts.
+  #
+  # workflow_dispatch checks the set and uploads nothing.
+  release-assets:
+    name: Pyodide wheels into the GitHub release
+    needs: wheel-pyodide
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheel-pyodide
+          path: pyodide
+      - uses: actions/download-artifact@v7
+        with:
+          name: pyodide-legacy-wheel
+          path: pyodide
+      # The test job already matched the tag to every channel's version, so
+      # the client's own version is the tag's on a release and the branch's
+      # on a dry run.
+      - name: The set is this version's three Pyodide wheels
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("clients/python/pyproject.toml", "rb"))["project"]["version"])')
+          ls -l pyodide
+          for tag in pyemscripten_2025_0_wasm32 pyemscripten_2026_0_wasm32 pyodide_2025_0_wasm32; do
+            test -f "pyodide/rete_graph-$version-cp39-abi3-$tag.whl" ||
+              { echo "missing rete_graph-$version-cp39-abi3-$tag.whl" >&2; exit 1; }
+          done
+          test "$(find pyodide -type f | wc -l)" -eq 3 || { echo "expected exactly 3 files" >&2; exit 1; }
+      - name: Upload into the tag's release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 scripts/github_release.py wait "$GITHUB_REF_NAME" --timeout 1200 --interval 20
+          gh release upload "$GITHUB_REF_NAME" pyodide/*.whl --clobber
 
   sdist:
     name: sdist

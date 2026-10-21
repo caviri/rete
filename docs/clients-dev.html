@@ -666,7 +666,7 @@ docker run --rm -v "$PWD":/io -w /io/clients/python python:3.12-slim bash -c \
 <h2 id="ci-two-workflows-deliberately-separate">CI: two workflows, deliberately separate</h2>
 <table><thead><tr><th>Workflow</th><th>Trigger</th><th>Does</th></tr></thead><tbody>
 <tr><td><code>python-test.yml</code></td><td>PR / push touching <code>clients/python/**</code> or <code>crates/rete-core/**</code></td><td>fmt + clippy, build wheel, pytest (incl. the live R2 remote smoke) — <strong>never publishes</strong></td></tr>
-<tr><td><code>python-client-publish.yml</code></td><td>the <code>v*</code> release tag (publishes); <code>workflow_dispatch</code> (dry run)</td><td>test, the four native wheels (<code>python-wheels.yml</code>), the two Pyodide wheels and the sdist, then the PyPI upload on a tag only</td></tr>
+<tr><td><code>python-client-publish.yml</code></td><td>the <code>v*</code> release tag (publishes); <code>workflow_dispatch</code> (dry run)</td><td>test, the four native wheels (<code>python-wheels.yml</code>), the two Pyodide wheels and the sdist, then on a tag only the PyPI upload and the Pyodide wheels (plus the copy retagged for Pyodide 0.29) into the GitHub release</td></tr>
 </tbody></table>
 <p>Merging to main can never publish; releasing is always the deliberate tag.</p>
 <p>The four native wheels are built by the reusable <code>python-wheels.yml</code>, which

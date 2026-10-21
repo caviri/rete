@@ -818,9 +818,28 @@ import rete_graph as rete
 g = rete.open("https://data.graphplaza.com/boe/boe.rete")
 g.query("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5")
 </code></pre>
-<p>(On the older Pyodide 0.29, whose installer predates the PEP 783 wheel-tag
-spelling PyPI requires, install the byte-identical retagged wheel by URL
-instead: <code>%pip install https://data.graphplaza.com/wheels/rete_graph-0.3.6-cp39-abi3-pyodide_2025_0_wasm32.whl</code>.)</p>
+<p><strong>On the older Pyodide 0.29</strong> (Python 3.13), whose installer predates the
+PEP 783 wheel-tag spelling PyPI requires, <code>%pip install rete-graph</code> finds no
+wheel. Each <a href="https://github.com/caviri/rete/releases/latest">GitHub release</a>
+after 0.3.6 carries the same build retagged for it,
+<code>rete_graph-&lt;version&gt;-cp39-abi3-pyodide_2025_0_wasm32.whl</code>:</p>
+<ol>
+<li>download that file from the release page;</li>
+<li>in JupyterLite, upload it with the file browser into the folder of your
+notebook;</li>
+<li>install it from the notebook's filesystem:</li>
+</ol>
+<pre><code class="language-python">%pip install emfs:./rete_graph-&lt;version&gt;-cp39-abi3-pyodide_2025_0_wasm32.whl
+</code></pre>
+<p>The <code>emfs:</code> prefix makes the installer read the kernel's filesystem; a bare
+<code>./rete_graph-….whl</code> is fetched as a URL and fails. In any other Pyodide 0.29
+runtime (marimo's WASM notebooks, plain Pyodide), write the file to the
+in-browser filesystem and run
+<code>await micropip.install("emfs:/path/to/rete_graph-….whl")</code>. Installing by the
+release download URL does not work: GitHub serves release assets without CORS
+headers, so the browser blocks the request. Versions up to 0.3.6 stay
+installable by URL from our own CORS-enabled bucket, e.g. <code>%pip install https://data.graphplaza.com/wheels/rete_graph-0.3.6-cp39-abi3-pyodide_2025_0_wasm32.whl</code>;
+nothing newer is uploaded there.</p>
 <p>Under the hood, remote reads use synchronous <code>XMLHttpRequest</code> range requests —
 allowed only in <strong>web workers</strong>, which is where JupyterLite and marimo run
 their kernels, so it just works there. The file's host must send CORS headers

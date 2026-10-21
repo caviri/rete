@@ -27,10 +27,9 @@ all its assets, the container images, and the File Explorer installers.
    `docker compose run --rm dev bash scripts/release_check.sh security`.
 2. **Merge it** (squash) once CI is green.
 3. **Push the tag** on the merge commit:
-   `git tag vX.Y.Z <merge-sha> && git push origin vX.Y.Z`.
-4. **One manual step** remains: upload the Pyodide fallback wheel to the
-   bucket with `scripts/publish_pyodide_wheel.sh` once the PyPI workflow has
-   finished ([why](#the-pyodide-fallback-wheel)).
+   `git tag vX.Y.Z <merge-sha> && git push origin vX.Y.Z`. Nothing after it
+   is manual: the Pyodide 0.29 wheel, which used to be uploaded to our bucket
+   by hand, is now a release asset ([why](#the-pyodide-fallback-wheel)).
 
 Until 0.3.6 the clients released from their own `py-v*` and `js-v*` tags, and
 the `v*` tag had to wait for PyPI and for a second "raise the PyPI floors" PR,
@@ -58,15 +57,16 @@ that happened to match.
 | `desktop-release.yml` / `resolve release` | never creates a `v*` release: it waits (up to 20 min) for the draft and hands its id to the macOS and Windows builders, which upload the File Explorer installers into it |
 | `release.yml` / `checksums, SBOM, attestations, and GitHub release` | uploads the archives, WASM bundle, extensions, `SHA256SUMS` and SBOM with `--clobber`, then publishes the draft |
 | `release.yml` / `protected crates.io publishing` | runs in the `crates-io` environment (`v*` tags only, no reviewer), re-runs the `cargo audit`/`cargo deny` gate, publishes through trusted publishing, and attaches the receipt |
-| `python-client-publish.yml` | tests the binding, builds the four native wheels (`python-wheels.yml`), the two Pyodide wheels and the sdist, then publishes them to PyPI in the `pypi` environment (`v*` tags only); also leaves the legacy-tagged Pyodide wheel as an artifact for the bucket |
+| `python-client-publish.yml` | tests the binding, builds the four native wheels (`python-wheels.yml`), the two Pyodide wheels and the sdist, then publishes them to PyPI in the `pypi` environment (`v*` tags only); its `Pyodide wheels into the GitHub release` job waits (up to 20 min) for the draft, like the File Explorer builders, and uploads the two Pyodide wheels plus the legacy-tagged copy for Pyodide 0.29 |
 | `js-client-publish.yml` | builds the wasm engine, tests and packs `rete-graph`, runs `npm publish --dry-run`, then publishes that tarball with provenance in the `npm` environment (`v*` tags only) |
 | `docker-publish.yml` | builds `rete-relay` (on the two Linux wheels it builds from the tagged commit; the build fails unless the image carries rete-graph X.Y.Z), `rete-cli` and `rete-dev` for amd64 and arm64, and pushes them to ghcr.io as `X.Y.Z`, `X.Y` and `latest` |
 
-None of them waits for another, except the File Explorer builders for the
-draft. PyPI, npm, crates.io and GHCR are therefore published in whatever order
-the runners finish; a channel that fails (a crates.io audit advisory, a flaky
-runner) is re-run on its own, and the versions already on the other
-registries cannot be replaced, so fix forward rather than re-tagging.
+None of them waits for another, except the File Explorer builders and the
+Pyodide wheel upload, which wait for the draft. PyPI, npm, crates.io and GHCR
+are therefore published in whatever order the runners finish; a channel that
+fails (a crates.io audit advisory, a flaky runner) is re-run on its own, and
+the versions already on the other registries cannot be replaced, so fix
+forward rather than re-tagging.
 
 `workflow_dispatch` on any of them, from any branch, is a dry run: everything
 is built and tested, the version check runs against the workspace version, and
@@ -107,7 +107,7 @@ The release also provides native archives for:
 Each archive includes `rete`, Bash/Zsh/Fish/PowerShell completions, `rete(1)`,
 README, license, and changelog.
 
-Three more artifacts ship alongside them:
+More artifacts ship alongside them:
 
 - `rete-<version>-wasm.tar.gz` — the browser/WASM bundle.
 - `rete-blender-<version>.zip` — the **Blender add-on**, which turns a SPARQL
@@ -128,12 +128,20 @@ Three more artifacts ship alongside them:
   advertise. This is the bundle's only publication channel: the R2 copies
   under `data.graphplaza.com/mcpb/` were uploaded by hand through 0.3.5 and
   are frozen there.
+- `rete_graph-<version>-cp39-abi3-{pyemscripten_2025_0,pyemscripten_2026_0,pyodide_2025_0}_wasm32.whl`
+  — the **browser Python (Pyodide) wheels**: the two on PyPI and the copy
+  retagged for Pyodide 0.29, which is published nowhere else
+  ([why](#the-pyodide-fallback-wheel)). From the release after 0.3.6.
 
 `SHA256SUMS` covers every archive, the WASM bundle, and both extensions (the
 `.mcpb` under both names). A
 CycloneDX JSON SBOM and GitHub artifact attestations are published with the
 release; the SBOM describes the Rust dependency graph and is bound to the
 native and WASM archives, while the extension carries build provenance only.
+The Pyodide wheels come from `python-client-publish.yml`, not from the
+workflow that writes `SHA256SUMS`, so they are in neither the checksums nor the
+attestations; GitHub shows each release asset's sha256 digest, and PyPI lists
+the digests of the two it hosts.
 
 ## Crates.io publication runbook
 
@@ -268,7 +276,6 @@ names the version:
 | every client manifest: Python, npm, R, Java | |
 | the PyPI floors: `clients/relay/requirements.txt`, `clients/blender/{build.sh,Dockerfile}` | a release builds the relay image and the Blender add-on from the wheels of its own run, so a floor may name a version PyPI does not serve yet; only a plain local `docker build` or the HF Space resolves it from PyPI, after the release |
 | the Binder pin in `binder/requirements.txt` | mybinder.org resolves it from PyPI at launch, so a Binder launch from `main` fails between the merge and the tag's PyPI upload (about half an hour); nothing in CI reads it |
-| the Pyodide fallback URL in `docs/python.md` | `publish_pyodide_wheel.sh` refuses to upload a wheel whose version disagrees with the docs, so the doc has to promise it first — the URL 404s until that upload |
 
 Up to 0.3.6 the floors and the Binder pin waited for a second PR
 (`--set-published`, now removed), because the relay and Blender builds
@@ -286,23 +293,22 @@ and commit the artifacts, or the parity gate rejects the release PR.
 `%pip install rete-graph` resolves from PyPI and needs no pin. But Pyodide
 0.29's installer predates PEP 783, which renamed the wheel platform tag
 `pyodide_*` to `pyemscripten_*`, so it cannot see the wheel PyPI now requires.
-`docs/python.md` points those users at a retagged copy on our own bucket.
+Those users need the same build retagged with the old spelling,
+`rete_graph-X.Y.Z-cp39-abi3-pyodide_2025_0_wasm32.whl`.
 
-The PyPI workflow builds that copy for every `v*` tag and uploads it as the
-`pyodide-legacy-wheel` artifact — kept out of `dist`, which goes to PyPI and
-would reject the legacy tag. Actually publishing it is a separate step, the one
-manual step of a release, because the repository holds no R2 credentials in
-Actions (and no secrets at all):
+The PyPI workflow builds that copy for every `v*` tag as the
+`pyodide-legacy-wheel` artifact, kept out of `dist` because PyPI would reject
+the legacy tag. Its `Pyodide wheels into the GitHub release` job then attaches
+it to the tag's release, together with the two `pyemscripten_*` wheels PyPI
+gets. `docs/python.md` tells Pyodide 0.29 users to download it from there,
+upload it into JupyterLite and `%pip install emfs:./<file>.whl`: GitHub serves
+release assets without CORS headers, so a notebook cannot install one by its
+URL.
 
-```sh
-scripts/publish_pyodide_wheel.sh   # after the v<version> python-client-publish run
-```
-
-It pulls the artifact from that tag's run, refuses anything whose version or
-platform tag disagrees with what `docs/python.md` promises, uploads it to
-`wheels/`, and verifies the documented URL returns 200 with a plausible body.
-`sync_versions.py --check` keeps that URL's version honest; only this step makes
-it resolve.
+Through 0.3.6 the copy was uploaded by hand to
+`https://data.graphplaza.com/wheels/` (a CORS-enabled bucket, so it installs by
+URL), the one manual step a release had. Those copies stay there, frozen at
+0.3.6; nothing newer is uploaded.
 
 ## Compatibility statement
 

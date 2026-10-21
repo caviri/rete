@@ -632,10 +632,9 @@ example). Run the publish gate before merging:
 <code>docker compose run --rm dev bash scripts/release_check.sh security</code>.</li>
 <li><strong>Merge it</strong> (squash) once CI is green.</li>
 <li><strong>Push the tag</strong> on the merge commit:
-<code>git tag vX.Y.Z &lt;merge-sha&gt; &amp;&amp; git push origin vX.Y.Z</code>.</li>
-<li><strong>One manual step</strong> remains: upload the Pyodide fallback wheel to the
-bucket with <code>scripts/publish_pyodide_wheel.sh</code> once the PyPI workflow has
-finished (<a href="#the-pyodide-fallback-wheel">why</a>).</li>
+<code>git tag vX.Y.Z &lt;merge-sha&gt; &amp;&amp; git push origin vX.Y.Z</code>. Nothing after it
+is manual: the Pyodide 0.29 wheel, which used to be uploaded to our bucket
+by hand, is now a release asset (<a href="#the-pyodide-fallback-wheel">why</a>).</li>
 </ol>
 <p>Until 0.3.6 the clients released from their own <code>py-v*</code> and <code>js-v*</code> tags, and
 the <code>v*</code> tag had to wait for PyPI and for a second "raise the PyPI floors" PR,
@@ -659,15 +658,16 @@ that happened to match.</p>
 <tr><td><code>desktop-release.yml</code> / <code>resolve release</code></td><td>never creates a <code>v*</code> release: it waits (up to 20 min) for the draft and hands its id to the macOS and Windows builders, which upload the File Explorer installers into it</td></tr>
 <tr><td><code>release.yml</code> / <code>checksums, SBOM, attestations, and GitHub release</code></td><td>uploads the archives, WASM bundle, extensions, <code>SHA256SUMS</code> and SBOM with <code>--clobber</code>, then publishes the draft</td></tr>
 <tr><td><code>release.yml</code> / <code>protected crates.io publishing</code></td><td>runs in the <code>crates-io</code> environment (<code>v*</code> tags only, no reviewer), re-runs the <code>cargo audit</code>/<code>cargo deny</code> gate, publishes through trusted publishing, and attaches the receipt</td></tr>
-<tr><td><code>python-client-publish.yml</code></td><td>tests the binding, builds the four native wheels (<code>python-wheels.yml</code>), the two Pyodide wheels and the sdist, then publishes them to PyPI in the <code>pypi</code> environment (<code>v*</code> tags only); also leaves the legacy-tagged Pyodide wheel as an artifact for the bucket</td></tr>
+<tr><td><code>python-client-publish.yml</code></td><td>tests the binding, builds the four native wheels (<code>python-wheels.yml</code>), the two Pyodide wheels and the sdist, then publishes them to PyPI in the <code>pypi</code> environment (<code>v*</code> tags only); its <code>Pyodide wheels into the GitHub release</code> job waits (up to 20 min) for the draft, like the File Explorer builders, and uploads the two Pyodide wheels plus the legacy-tagged copy for Pyodide 0.29</td></tr>
 <tr><td><code>js-client-publish.yml</code></td><td>builds the wasm engine, tests and packs <code>rete-graph</code>, runs <code>npm publish --dry-run</code>, then publishes that tarball with provenance in the <code>npm</code> environment (<code>v*</code> tags only)</td></tr>
 <tr><td><code>docker-publish.yml</code></td><td>builds <code>rete-relay</code> (on the two Linux wheels it builds from the tagged commit; the build fails unless the image carries rete-graph X.Y.Z), <code>rete-cli</code> and <code>rete-dev</code> for amd64 and arm64, and pushes them to ghcr.io as <code>X.Y.Z</code>, <code>X.Y</code> and <code>latest</code></td></tr>
 </tbody></table>
-<p>None of them waits for another, except the File Explorer builders for the
-draft. PyPI, npm, crates.io and GHCR are therefore published in whatever order
-the runners finish; a channel that fails (a crates.io audit advisory, a flaky
-runner) is re-run on its own, and the versions already on the other
-registries cannot be replaced, so fix forward rather than re-tagging.</p>
+<p>None of them waits for another, except the File Explorer builders and the
+Pyodide wheel upload, which wait for the draft. PyPI, npm, crates.io and GHCR
+are therefore published in whatever order the runners finish; a channel that
+fails (a crates.io audit advisory, a flaky runner) is re-run on its own, and
+the versions already on the other registries cannot be replaced, so fix
+forward rather than re-tagging.</p>
 <p><code>workflow_dispatch</code> on any of them, from any branch, is a dry run: everything
 is built and tested, the version check runs against the workspace version, and
 nothing is published. <code>docker-publish.yml</code> is the exception: a manual run
@@ -699,7 +699,7 @@ hand. <code>workflow_dispatch</code> runs of <code>release.yml</code> never touc
 </ul>
 <p>Each archive includes <code>rete</code>, Bash/Zsh/Fish/PowerShell completions, <code>rete(1)</code>,
 README, license, and changelog.</p>
-<p>Three more artifacts ship alongside them:</p>
+<p>More artifacts ship alongside them:</p>
 <ul>
 <li><code>rete-&lt;version&gt;-wasm.tar.gz</code> — the browser/WASM bundle.</li>
 <li><code>rete-blender-&lt;version&gt;.zip</code> — the <strong>Blender add-on</strong>, which turns a SPARQL
@@ -720,12 +720,20 @@ serves the Latest release's bundle; that is the link the README and docs
 advertise. This is the bundle's only publication channel: the R2 copies
 under <code>data.graphplaza.com/mcpb/</code> were uploaded by hand through 0.3.5 and
 are frozen there.</li>
+<li><code>rete_graph-&lt;version&gt;-cp39-abi3-{pyemscripten_2025_0,pyemscripten_2026_0,pyodide_2025_0}_wasm32.whl</code>
+— the <strong>browser Python (Pyodide) wheels</strong>: the two on PyPI and the copy
+retagged for Pyodide 0.29, which is published nowhere else
+(<a href="#the-pyodide-fallback-wheel">why</a>). From the release after 0.3.6.</li>
 </ul>
 <p><code>SHA256SUMS</code> covers every archive, the WASM bundle, and both extensions (the
 <code>.mcpb</code> under both names). A
 CycloneDX JSON SBOM and GitHub artifact attestations are published with the
 release; the SBOM describes the Rust dependency graph and is bound to the
-native and WASM archives, while the extension carries build provenance only.</p>
+native and WASM archives, while the extension carries build provenance only.
+The Pyodide wheels come from <code>python-client-publish.yml</code>, not from the
+workflow that writes <code>SHA256SUMS</code>, so they are in neither the checksums nor the
+attestations; GitHub shows each release asset's sha256 digest, and PyPI lists
+the digests of the two it hosts.</p>
 <h2 id="cratesio-publication-runbook">Crates.io publication runbook</h2>
 <p>crates.io can only attach a trusted publisher to a crate that already exists, so
 this first publication is a one-time manual bootstrap; every later tag publishes
@@ -838,7 +846,6 @@ names the version:</p>
 <tr><td>every client manifest: Python, npm, R, Java</td><td></td></tr>
 <tr><td>the PyPI floors: <code>clients/relay/requirements.txt</code>, <code>clients/blender/{build.sh,Dockerfile}</code></td><td>a release builds the relay image and the Blender add-on from the wheels of its own run, so a floor may name a version PyPI does not serve yet; only a plain local <code>docker build</code> or the HF Space resolves it from PyPI, after the release</td></tr>
 <tr><td>the Binder pin in <code>binder/requirements.txt</code></td><td>mybinder.org resolves it from PyPI at launch, so a Binder launch from <code>main</code> fails between the merge and the tag's PyPI upload (about half an hour); nothing in CI reads it</td></tr>
-<tr><td>the Pyodide fallback URL in <code>docs/python.md</code></td><td><code>publish_pyodide_wheel.sh</code> refuses to upload a wheel whose version disagrees with the docs, so the doc has to promise it first — the URL 404s until that upload</td></tr>
 </tbody></table>
 <p>Up to 0.3.6 the floors and the Binder pin waited for a second PR
 (<code>--set-published</code>, now removed), because the relay and Blender builds
@@ -853,19 +860,20 @@ and commit the artifacts, or the parity gate rejects the release PR.</p>
 <p><code>%pip install rete-graph</code> resolves from PyPI and needs no pin. But Pyodide
 0.29's installer predates PEP 783, which renamed the wheel platform tag
 <code>pyodide_*</code> to <code>pyemscripten_*</code>, so it cannot see the wheel PyPI now requires.
-<code>docs/python.md</code> points those users at a retagged copy on our own bucket.</p>
-<p>The PyPI workflow builds that copy for every <code>v*</code> tag and uploads it as the
-<code>pyodide-legacy-wheel</code> artifact — kept out of <code>dist</code>, which goes to PyPI and
-would reject the legacy tag. Actually publishing it is a separate step, the one
-manual step of a release, because the repository holds no R2 credentials in
-Actions (and no secrets at all):</p>
-<pre><code class="language-sh">scripts/publish_pyodide_wheel.sh   # after the v&lt;version&gt; python-client-publish run
-</code></pre>
-<p>It pulls the artifact from that tag's run, refuses anything whose version or
-platform tag disagrees with what <code>docs/python.md</code> promises, uploads it to
-<code>wheels/</code>, and verifies the documented URL returns 200 with a plausible body.
-<code>sync_versions.py --check</code> keeps that URL's version honest; only this step makes
-it resolve.</p>
+Those users need the same build retagged with the old spelling,
+<code>rete_graph-X.Y.Z-cp39-abi3-pyodide_2025_0_wasm32.whl</code>.</p>
+<p>The PyPI workflow builds that copy for every <code>v*</code> tag as the
+<code>pyodide-legacy-wheel</code> artifact, kept out of <code>dist</code> because PyPI would reject
+the legacy tag. Its <code>Pyodide wheels into the GitHub release</code> job then attaches
+it to the tag's release, together with the two <code>pyemscripten_*</code> wheels PyPI
+gets. <code>docs/python.md</code> tells Pyodide 0.29 users to download it from there,
+upload it into JupyterLite and <code>%pip install emfs:./&lt;file&gt;.whl</code>: GitHub serves
+release assets without CORS headers, so a notebook cannot install one by its
+URL.</p>
+<p>Through 0.3.6 the copy was uploaded by hand to
+<code>https://data.graphplaza.com/wheels/</code> (a CORS-enabled bucket, so it installs by
+URL), the one manual step a release had. Those copies stay there, frozen at
+0.3.6; nothing newer is uploaded.</p>
 <h2 id="compatibility-statement">Compatibility statement</h2>
 <p>The experimental generations <code>0x01</code>–<code>0x04</code> that predate this release are not
 readable: rebuild those datasets from their source RDF with the 0.3 toolchain,
