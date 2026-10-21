@@ -22,6 +22,7 @@ mod expr;
 mod lower;
 mod path;
 mod ql;
+mod value;
 
 pub use diag::{warnings_json, QueryWarning, WarningSeverity};
 use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
@@ -453,34 +454,15 @@ fn lexical(token: &str) -> String {
     crate::terms::literal_lexical(token).unwrap_or_else(|| token.to_string())
 }
 
-/// Numeric value of a term: the lexical part of a literal (`"30"^^...` → 30) or
-/// a bare numeric token, else `None`. (`term_number` is the crate-visible name
-/// used by the row resolver's memoized parse.)
+/// Numeric value of a term for SUM / AVG: a literal of a numeric datatype with
+/// a valid lexical form, else `None` — `"30"^^xsd:int` is 30, the string
+/// `"30"` is not a number (§18.5.1.3 folds `op:numeric-add`). The crate-visible
+/// name used by the row resolver's memoized parse.
 pub(crate) fn term_number(s: &str) -> Option<f64> {
-    as_number(s)
+    value::numeric(s)
 }
 
 use crate::terms::as_number;
-
-/// Compare two term values numerically when both are numbers, else lexically.
-fn compare(op: Op, a: &str, b: &str) -> bool {
-    use std::cmp::Ordering;
-    let ord = match (as_number(a), as_number(b)) {
-        (Some(x), Some(y)) => match x.partial_cmp(&y) {
-            Some(o) => o,
-            None => return false, // NaN
-        },
-        _ => a.cmp(b),
-    };
-    match op {
-        Op::Eq => ord == Ordering::Equal,
-        Op::Ne => ord != Ordering::Equal,
-        Op::Lt => ord == Ordering::Less,
-        Op::Le => ord != Ordering::Greater,
-        Op::Gt => ord == Ordering::Greater,
-        Op::Ge => ord != Ordering::Less,
-    }
-}
 
 /// The result of evaluating any SPARQL query form.
 #[derive(Debug, Clone)]

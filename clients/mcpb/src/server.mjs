@@ -145,6 +145,11 @@ function warningLine(size, warnings) {
         const kind = ARG_KIND[w.argKind] ?? w.argKind;
         const times = w.count === 1 ? "1 row" : `${w.count} rows`;
         if (w.argKind === "division-by-zero") return `${w.function} divided by zero (${times}) — ${w.hint}`;
+        // About the pair of operands, not one argument: `"2001" > 2000`.
+        if (w.argKind === "incomparable") {
+          const eg = w.sample ? `, e.g. ${w.sample}` : "";
+          return `${w.function} compared two values SPARQL cannot compare (${times}${eg}) — ${w.hint}`;
+        }
         return `${w.function} received ${kind} as ${position(w)} (${times}) — ${w.hint}`;
       })
       .join("; ");

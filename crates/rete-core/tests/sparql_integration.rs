@@ -1354,3 +1354,151 @@ fn property_paths_keep_bag_multiplicities() {
     let s = col(&rete, "SELECT ?s WHERE { ?s !(ex:item) ex:t }", "s");
     assert_eq!(s, vec![iri("a"), iri("b")]);
 }
+
+/// SPARQL 1.1 §17.3: `=`, `<`, IN, ORDER BY, MIN / MAX and SUM read a term by
+/// its datatype, never by what its text looks like. The data mirrors the DAWG
+/// `expr-equals` / `open-world` fixtures (typed numbers in several spellings, a
+/// plain "1", an unknown datatype, tagged strings, zoned and unzoned dates) and
+/// the OpenAIRE QA repro (`"01" = "1"` was true, `"NaN" = "NaN"` false).
+#[test]
+fn comparisons_follow_the_operand_datatypes() {
+    const XSD: &str = "http://www.w3.org/2001/XMLSchema#";
+    let typed = |lex: &str, dt: &str| format!("\"{lex}\"^^<{XSD}{dt}>");
+    let raw: Vec<(&str, String)> = vec![
+        ("xi1", typed("1", "integer")),
+        ("xi2", typed("01", "integer")),
+        ("xd1", typed("1.0e0", "double")),
+        ("xd2", typed("1.0", "decimal")),
+        ("xp1", "\"1\"".into()),
+        ("xp2", "\"01\"".into()),
+        ("xs1", typed("1", "string")),
+        ("xt1", "\"1\"^^<http://ex/myType>".into()),
+        ("xt2", "\"zzz\"^^<http://ex/myType>".into()),
+        ("xl1", "\"a\"@EN".into()),
+        ("xl2", "\"a\"@en".into()),
+        ("xn1", "\"NaN\"".into()),
+        ("xn2", typed("NaN", "double")),
+        ("xu", "<http://ex/z>".into()),
+        ("dz", typed("2006-08-23Z", "date")),
+        ("dl", typed("2006-08-23", "date")),
+        ("do", typed("2001-01-01", "date")),
+        ("y4", typed("1999", "gYear")),
+        ("y3", typed("820", "gYear")),
+    ];
+    let t: Vec<(String, String, String)> = raw
+        .iter()
+        .map(|(s, o)| (iri(s), iri("p"), o.clone()))
+        .collect();
+    let refs: Vec<(&str, &str, &str)> = t
+        .iter()
+        .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+        .collect();
+    let rete = Rete::open(&build(&refs)).unwrap();
+    let subjects = |filter: &str| -> Vec<String> {
+        let q = format!("PREFIX xsd: <{XSD}> SELECT ?s WHERE {{ ?s ex:p ?v FILTER({filter}) }}");
+        col(&rete, &q, "s")
+            .into_iter()
+            .map(|s| {
+                s.trim_start_matches("<http://ex/")
+                    .trim_end_matches('>')
+                    .to_string()
+            })
+            .collect()
+    };
+
+    // A number equals the numbers of that value in any spelling and type —
+    // never the string "1", the xsd:string "1" or an unknown datatype's "1".
+    assert_eq!(subjects("?v = 1"), ["xd1", "xd2", "xi1", "xi2"]);
+    // `!=` is `!(=)`: true for the strings and the IRI, an error (dropped) for
+    // the unknown-datatype literals, false for the equal numbers.
+    assert_eq!(
+        subjects("?v != 1"),
+        ["dl", "do", "dz", "xl1", "xl2", "xn1", "xn2", "xp1", "xp2", "xs1", "xu", "y4"]
+    );
+    // A string equals a string by code point: "01" is not "1".
+    assert_eq!(subjects("?v = \"1\""), ["xp1", "xs1"]);
+    assert_eq!(subjects("?v = \"01\""), ["xp2"]);
+    // "NaN" the string equals itself; NaN the double equals nothing.
+    assert_eq!(
+        subjects("?v = ?v && isLiteral(?v) && STR(?v) = \"NaN\""),
+        ["xn1"]
+    );
+    assert_eq!(subjects("?v != ?v"), ["xn2"]);
+    // Two literals of an unknown datatype: equal when the same term, else an
+    // error under both `=` and `!=` (RDFterm-equal, §17.4.1.7).
+    let t = "\"zzz\"^^<http://ex/myType>";
+    assert_eq!(subjects(&format!("?v = {t}")), ["xt2"]);
+    assert!(!subjects(&format!("?v != {t}")).contains(&"xt1".to_string()));
+    // Language tags compare case-insensitively.
+    assert_eq!(subjects("?v = \"a\"@en"), ["xl1", "xl2"]);
+    // `<` between a string and a number is a type error: no row.
+    assert_eq!(
+        subjects("?v < 2 && isLiteral(?v) && datatype(?v) = xsd:string"),
+        Vec::<String>::new()
+    );
+    assert_eq!(subjects("?v < 2"), ["xd1", "xd2", "xi1", "xi2"]);
+    // IN is a chain of `=`.
+    assert_eq!(
+        subjects("?v IN (1, \"01\")"),
+        ["xd1", "xd2", "xi1", "xi2", "xp2"]
+    );
+    // A zoned and an unzoned date less than 14 h apart: neither = nor != holds
+    // (DAWG open-world/date-1, date-2); far apart they are simply unequal.
+    assert_eq!(subjects("?v = \"2006-08-23\"^^xsd:date"), ["dl"]);
+    let ne = subjects("?v != \"2006-08-23\"^^xsd:date");
+    assert!(!ne.contains(&"dz".to_string()), "{ne:?}");
+    assert!(ne.contains(&"do".to_string()), "{ne:?}");
+    // More than 14 h apart, a zoned and an unzoned date are ordered (date-3).
+    assert_eq!(subjects("?v > \"2006-08-22\"^^xsd:date"), ["dl", "dz"]);
+    // "820"^^xsd:gYear is ill-typed (XSD years have four digits): no order.
+    assert_eq!(subjects("?v < \"2000\"^^xsd:gYear"), ["y4"]);
+
+    // ORDER BY: blank nodes, IRIs, then literals; strings by code point.
+    let ordered = |q: &str| -> Vec<String> {
+        eval_sparql(&rete, &format!("{PREFIX}PREFIX xsd: <{XSD}> {q}"))
+            .unwrap()
+            .1
+            .iter()
+            .filter_map(|b| b.get("v").cloned())
+            .collect()
+    };
+    let v = ordered(
+        "SELECT ?v WHERE { { VALUES ?v { \"9\" <http://ex/a> \"10\" } } UNION { BIND(BNODE() AS ?v) } } ORDER BY ?v",
+    );
+    assert_eq!(v[1..], ["<http://ex/a>", "\"10\"", "\"9\""]);
+    assert!(v[0].starts_with("_:"));
+    // Numbers by value; an ill-typed year sorts with text, before valid years.
+    let v = ordered("SELECT ?v WHERE { VALUES ?v { \"1999\"^^xsd:gYear \"820\"^^xsd:gYear \"2000\"^^xsd:gYear } } ORDER BY DESC(?v)");
+    assert_eq!(
+        v,
+        [
+            typed("2000", "gYear"),
+            typed("1999", "gYear"),
+            typed("820", "gYear")
+        ]
+    );
+    // MIN / MAX order like ORDER BY: over strings, "10" < "9".
+    let mm = eval_sparql(
+        &rete,
+        "SELECT (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) WHERE { VALUES ?v { \"9\" \"10\" } }",
+    )
+    .unwrap()
+    .1;
+    assert_eq!(mm[0]["lo"], "\"10\"");
+    assert_eq!(mm[0]["hi"], "\"9\"");
+    // SUM takes numbers: a string makes it an error (unbound), whatever its text.
+    let sum = eval_sparql(
+        &rete,
+        "SELECT (SUM(?v) AS ?s) WHERE { VALUES ?v { \"1\" \"2\" } }",
+    )
+    .unwrap()
+    .1;
+    assert!(!sum[0].contains_key("s"));
+    let sum = eval_sparql(
+        &rete,
+        "SELECT (SUM(?v) AS ?s) WHERE { VALUES ?v { 1 2.5 } }",
+    )
+    .unwrap()
+    .1;
+    assert_eq!(sum[0]["s"], typed("3.5", "decimal"));
+}

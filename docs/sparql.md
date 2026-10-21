@@ -485,6 +485,65 @@ outside FILTER too: `BIND(CONTAINS(?label, "x") AS ?hit)` binds an
 for a literal of a numeric datatype with a valid lexical form, so it is false
 for the string `"10"`.
 
+## Comparisons and ordering {#compare}
+
+`=`, `!=`, `<`, `>`, `<=`, `>=`, `IN` / `NOT IN`, `ORDER BY`, `MIN` / `MAX`,
+`SUM` / `AVG`, arithmetic and the numeric functions read a term by its
+**datatype**, as SPARQL 1.1 §17.3 maps each operator to an XPath function.
+What a string's text looks like never matters: a string is not a number.
+
+| Operands | `=` / `!=` | `<` `>` `<=` `>=` |
+|---|---|---|
+| two numbers (`xsd:integer`, `decimal`, `float`, `double` and the types derived from them, such as `xsd:int`) | by value, with type promotion: `1 = 1.0` and `"01"^^xsd:integer = 1` are true; integers and decimals compare exactly; a `NaN` equals nothing, itself included; `-0 = 0` | by value; any comparison with `NaN` is false |
+| two strings (simple literals or `xsd:string`) | by code point: `"01" = "1"`, `"1.0" = "1"`, `"1e3" = "1000"` and `"inf" = "Infinity"` are **false**; `"NaN" = "NaN"` is true | by code point, so `"10" < "9"` |
+| two language-tagged literals | same text and same tag (tags compare case-insensitively: `"a"@en = "a"@EN`) | when the tags match; otherwise a type error |
+| two `xsd:boolean`s | by value (`"1"^^xsd:boolean = true`) | `false < true` |
+| two `xsd:dateTime`s, or two of another date/time type (`date`, `time`, `gYear`, `gYearMonth`, `gMonth`, `gDay`, `gMonthDay`) | by value, timezones applied: `"2020-01-01T00:00:00Z" = "2020-01-01T01:00:00+01:00"`. A value with a timezone and one without less than 14 hours apart cannot be decided without an implicit timezone, which rete does not assume: a type error | by value; the same pair is a type error |
+| two durations (`xsd:duration`, `dayTimeDuration`, `yearMonthDuration`) | by value: `PT60M = PT1H`, `P1Y = P12M` | by value where XSD orders them (`P1M` vs `P30D` is a type error) |
+| an IRI or blank node and anything | equal only to the same term | a type error |
+| two different literals of a datatype rete does not know, or of a known one with an invalid text (`"abc"^^xsd:integer`) | a type error (RDFterm-equal, §17.4.1.7); the same term is equal to itself | a type error |
+| two literals of different known kinds (a string and a number, a date and a boolean) | `=` is false, `!=` true | a type error |
+
+`IN` is a chain of `=`. `sameTerm` is term identity, with no value
+comparison: `sameTerm(1, 1.0)` is false.
+
+`ORDER BY` puts no value first, then blank nodes, IRIs, literals and quoted
+triples (§15.1). Among literals: first text — simple, `xsd:string`,
+language-tagged literals, literals of an unknown datatype and ill-typed values
+such as `"820"^^xsd:gYear` (XSD wants four digits), together by text, then
+datatype, then tag, so labels with and without a tag sort alphabetically
+together — then numbers by value (a `NaN` after every number), booleans,
+date/time values and durations. Within one kind this is the `<` above. The
+order between kinds is implementation-defined in SPARQL; rete's puts text
+first so that a stray string or an ill-typed date never tops an `ORDER BY
+DESC(…)` or a `MAX`. `MIN` / `MAX` use the same order (§18.5.1.5-6).
+
+`SUM`, `AVG`, `+ - * /` and `ABS` / `CEIL` / `FLOOR` / `ROUND` take numbers:
+a string is a type error there, whatever its text. When your data holds
+numbers as strings, cast them — `xsd:integer(?year) > 2000`,
+`SUM(xsd:decimal(?amount))` — or compare them as text on both sides,
+`?year > "2000"` (fine for same-length years, wrong for `"999"`).
+
+Through 0.3.6 rete compared any two terms numerically when both texts parsed
+as numbers and by their token text otherwise, so `"01" = "1"`, `"1e3" = "1000"`
+and `"inf" = "Infinity"` were true, `"NaN" = "NaN"` was false, `?x < 5`
+compared strings with numbers, and `ORDER BY` put literals before IRIs. The
+[CHANGELOG](https://github.com/caviri/rete/blob/main/CHANGELOG.md) lists this
+as a result-changing fix. An `=` that is false only because a string's text
+spells the number it is compared with (`"2020" = 2020`) is reported as a hint,
+and a comparison with no defined operator as a type error; see
+[warnings](#warnings).
+
+Where rete differs from Oxigraph 0.5, because the spec says otherwise:
+`NaN < 1` is false (Oxigraph: an error), `NaN <= NaN` is false and
+`<a> <= <a>` a type error (Oxigraph: true, from its identity shortcut),
+`false < true` is true (Oxigraph: an error), and a zoned and an unzoned
+date/time less than 14 hours apart are a type error under `=` (Oxigraph:
+false; the W3C test `open-world/date-2` requires the error). Language tags:
+rete keeps a tag as the data spells it, so `sameTerm`, joins and `DISTINCT`
+see `"a"@EN` and `"a"@en` as different terms, while `=` treats them as equal;
+Oxigraph lower-cases tags when it loads data.
+
 ## Type errors and query warnings {#warnings}
 
 The string functions (`CONTAINS`, `STRSTARTS`, `STRENDS`, `STRBEFORE`,
@@ -503,8 +562,10 @@ as Oxigraph and Jena do, so these queries return no rows:
 | `FILTER(REGEX(?s, "geneva"))`, `?s` an IRI | 0 | same: `REGEX(STR(?s), "geneva")` |
 | `FILTER(CONTAINS(?label, "Geneva"@fr))`, `?label` is `@en` | 0 | the arguments are *incompatible* (§17.4.3): a tagged needle must carry the haystack's tag. Use `STR()` on both |
 | `FILTER(CONTAINS(?label, "geneva"))`, label `"Geneva …"` | 0 | not an error: matching is case-sensitive. Use `LCASE(?label)` or `REGEX(?label, "geneva", "i")` |
-| `FILTER(ABS(?note) > 0)`, `?note` the string `"a note"` | 0 | `ABS` / `CEIL` / `FLOOR` / `ROUND` need a number (rete accepts any literal whose text parses as one) |
+| `FILTER(ABS(?note) > 0)`, `?note` the string `"12"` | 0 | `ABS` / `CEIL` / `FLOOR` / `ROUND` need a number, and a string is not one whatever its text: `ABS(xsd:decimal(?note))` |
 | `FILTER(?label + 1 > 0)`, `?label` a string | 0 | `+ - * /` take numeric-typed literals only: cast first, `xsd:decimal(?label)` |
+| `FILTER(?year > 2000)`, `?year` the string `"2001"` | 0 | `<` is not defined between a string and a number (§17.3): `xsd:integer(?year) > 2000` |
+| `FILTER(?year = 2001)`, `?year` the string `"2001"` | 0 | not an error: a string never equals a number, so `=` is false. Reported as a hint |
 | `BIND(?n / 0 AS ?r)` | 1, `?r` unbound | division by zero is an error |
 | `OPTIONAL { ?s ex:age ?a } FILTER(?a > 18)` | rows without an age dropped | a comparison (or `IN`) with an unbound operand is an error |
 | `FILTER(LANG(?s) = "en")`, `?s` an IRI | 0 | `LANG` / `DATATYPE` take a literal |
@@ -528,8 +589,8 @@ out when there is nothing to report. Each entry has these fields:
 |---|---|
 | `severity` | `type-error` (an error was raised and absorbed) or `hint` (a suggestion; nothing went wrong) |
 | `function` | the SPARQL function, e.g. `CONTAINS`, or for an operator its spelling: `+` `-` `*` `/`, `=` `!=` `<` `<=` `>` `>=`, `IN` |
-| `argument` | 1-based argument position; for an operator 1 is the left operand, 2 the right |
-| `argKind` | `iri`, `blank-node`, `quoted-triple`, `numeric`, `typed-literal`, `string`, `language-tagged`, `invalid-number` (a numeric datatype whose text is not a number), `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`, `division-by-zero` (argument 2 of `/`), or `case-sensitive` for the hint |
+| `argument` | 1-based argument position; for an operator 1 is the left operand, 2 the right; 0 when the warning is about the pair (`incomparable`, `string-vs-number`) |
+| `argKind` | `iri`, `blank-node`, `quoted-triple`, `numeric`, `typed-literal`, `string`, `language-tagged`, `invalid-number` (a numeric datatype whose text is not a number), `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`, `division-by-zero` (argument 2 of `/`), `incomparable` (a comparison whose two operands no operator is defined for), or, for the hints, `case-sensitive` and `string-vs-number` |
 | `count` | how many evaluations raised it. A row is evaluated only when it reaches the expression, and LIMIT / ASK stop early, so this is not a count of the data |
 | `sample` | the first offending value, cut to 80 characters |
 | `hint` | what to change, e.g. `wrap it in STR() to match the IRI's text` |
@@ -543,12 +604,15 @@ Notes:
   `IN`. Such a variable usually comes from an `OPTIONAL` that did not match,
   or is misspelled. An error inside a nested call (`CONTAINS(LCASE(?s), …)`,
   `STRLEN(?s) > 3`) is reported once, by the inner function.
-- **Comparisons** are reported only where rete already raises an error,
-  which today is an operand that is itself an error (most often unbound).
-  rete compares any two bound terms, numerically when both parse as numbers
-  and lexically otherwise, so `"10" = 10` is true and `?year > "abc"` is
-  silently lexical. Where that differs from the spec it is a semantics
-  question, deliberately not changed by the warnings.
+- **Comparisons** (`=` … `>=`, `IN`) report an operand that is itself an
+  error (most often unbound) and, as `incomparable`, a pair §17.3 defines no
+  operator for: a string and a number under `<`, an IRI under `<`, two
+  different literals of an unknown datatype under `=`. The message names the
+  two kinds (`compared a string with xsd:integer`). An `=` / `!=` / `IN`
+  between a string and a number whose value the string's text spells
+  (`"2020" = 2020`, false) is reported as a `string-vs-number` **hint**, since
+  nothing went wrong but the answer reads as one; see
+  [Comparisons and ordering](#compare).
 - **Division by zero** is an error for every numeric type in rete, as it
   is for `xsd:integer` and `xsd:decimal` in the spec (for `xsd:double` the
   spec gives `INF`).

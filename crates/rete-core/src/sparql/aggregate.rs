@@ -17,7 +17,8 @@ use std::rc::Rc;
 use crate::row::{Ctx, Row, Val};
 
 use super::distinct::DistinctSet;
-use super::{as_number, fmt_num_typed, lexical, Agg, GroupSpec};
+use super::value::OrderKey;
+use super::{fmt_num_typed, lexical, Agg, GroupSpec};
 
 /// A single aggregate's running state — updated per row, finalized once per group.
 /// Slot is resolved once at construction; `None` = the variable isn't in scope.
@@ -85,7 +86,7 @@ enum Accum {
     MinMax {
         slot: Option<usize>,
         want_min: bool,
-        best: Option<Rc<str>>,
+        best: Option<OrderKey>,
         err: bool,
     },
 }
@@ -246,14 +247,19 @@ impl Accum {
                     }
                     return;
                 };
+                // The ORDER BY order (§18.5.1.5-6): numbers by value, strings by
+                // code point — "10" < "9" — never a string read as a number.
+                let t = OrderKey::new(t);
                 let take = match best.as_ref() {
                     None => true,
-                    Some(cur) => match (as_number(&t), as_number(cur)) {
-                        (Some(a), Some(b)) if *want_min => a < b,
-                        (Some(a), Some(b)) => a > b,
-                        _ if *want_min => t < *cur,
-                        _ => t > *cur,
-                    },
+                    Some(cur) => {
+                        let o = t.cmp(cur);
+                        if *want_min {
+                            o == std::cmp::Ordering::Less
+                        } else {
+                            o == std::cmp::Ordering::Greater
+                        }
+                    }
                 };
                 if take {
                     *best = Some(t);
@@ -306,7 +312,7 @@ impl Accum {
                 // A simple literal (no datatype or language tag); empty group → "".
                 (!err).then(|| crate::terms::make_literal(&parts.join(&sep), None, None))
             }
-            Accum::MinMax { best, .. } => best.map(|t| t.to_string()),
+            Accum::MinMax { best, .. } => best.map(|k| k.token.to_string()),
         }
     }
 }

@@ -127,8 +127,10 @@ pub struct QueryWarning {
     /// What the argument was: `iri`, `blank-node`, `quoted-triple`, `numeric`,
     /// `typed-literal`, `string`, `language-tagged`, `invalid-number`,
     /// `language-mismatch`, `unbound`, `invalid-regex`, `not-a-datetime`,
-    /// `division-by-zero` (argument 2 of `/`), or `case-sensitive` for the
-    /// hint.
+    /// `division-by-zero` (argument 2 of `/`), `incomparable` (a comparison
+    /// whose two operands no operator is defined for; argument 0), or, for the
+    /// hints, `case-sensitive` and `string-vs-number` (an `=` / `!=` / `IN`
+    /// that found a string unequal to the number its text spells; argument 0).
     pub kind: String,
     /// How many evaluations raised this error (an evaluation is one row reaching
     /// the expression; LIMIT / ASK stop early, so this is not a data count).
@@ -164,6 +166,13 @@ pub(crate) enum ArgKind {
     InvalidNumber,
     /// The divisor of `/` was zero.
     DivByZero,
+    /// A comparison's two operands are a pair §17.3 defines no operator for
+    /// (a string and a number under `<`, two IRIs under `<`, two different
+    /// literals of an unknown datatype under `=`). Not argument-specific.
+    Incomparable,
+    /// Not an error: `=` / `!=` / `IN` compared a string with a number whose
+    /// value the string's text spells (`"2020" = 2020`), which is false.
+    StringVsNumber,
 }
 
 impl ArgKind {
@@ -182,6 +191,8 @@ impl ArgKind {
             ArgKind::LangTagged => "language-tagged",
             ArgKind::InvalidNumber => "invalid-number",
             ArgKind::DivByZero => "division-by-zero",
+            ArgKind::Incomparable => "incomparable",
+            ArgKind::StringVsNumber => "string-vs-number",
         }
     }
 }
@@ -326,8 +337,8 @@ pub(crate) fn bad_datetime(func: Builtin, token: &str) {
 }
 
 /// A numeric function or an arithmetic operator got a term that is not a
-/// number (by the rule that site applies: arithmetic takes numeric-typed
-/// literals only, ABS / CEIL / FLOOR / ROUND any literal whose text parses).
+/// number: a literal of a numeric datatype with a valid lexical form is one,
+/// a string is not, whatever its text.
 #[cold]
 #[inline(never)]
 pub(crate) fn not_a_number(site: impl Into<Site>, pos: usize, token: &str) {
@@ -338,6 +349,64 @@ pub(crate) fn not_a_number(site: impl Into<Site>, pos: usize, token: &str) {
     record(site, pos, kind, || {
         (token.to_string(), detail_of_any(token))
     });
+}
+
+/// A comparison operator (`=` … `>=`, `IN`) got two operands §17.3 defines it
+/// for no pair of: a type error.
+#[cold]
+#[inline(never)]
+pub(crate) fn incomparable(site: Site, a: &str, b: &str) {
+    record(site, 0, ArgKind::Incomparable, || {
+        (
+            format!("{a} vs {b}"),
+            format!("{} vs {}", operand_kind(a), operand_kind(b)),
+        )
+    });
+}
+
+/// `=` / `!=` / `IN` compared a string with a number: unequal, as SPARQL says.
+/// Counted (as a hint, not an error) only when the string's text spells that
+/// number — `"2020" = 2020` — the case whose answer looks wrong to a reader.
+pub(crate) fn string_vs_number(site: Site, a: &str, b: &str) {
+    let (s, n) = if a.starts_with('"') && super::value::numeric(a).is_none() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let (Some(text), Some(num)) = (crate::terms::as_number(s), super::value::numeric(n)) else {
+        return;
+    };
+    if text == num {
+        record(site, 0, ArgKind::StringVsNumber, || {
+            (format!("{a} vs {b}"), String::new())
+        });
+    }
+}
+
+/// How an operand reads in a comparison warning: `a string`, `xsd:integer`, …
+fn operand_kind(token: &str) -> String {
+    use super::value::{classify, Class};
+    match classify(token) {
+        Class::Blank => "a blank node".into(),
+        Class::Iri => "an IRI".into(),
+        Class::Triple => "a quoted triple".into(),
+        Class::Str => "a string".into(),
+        Class::Lang => match crate::terms::lang_tag(token) {
+            Some(l) if !l.is_empty() => format!("a language-tagged literal (@{l})"),
+            _ => "a language-tagged literal".into(),
+        },
+        Class::Other => match crate::terms::literal_datatype(token) {
+            Some(dt) if super::value::compared_by_value(&dt) => {
+                format!("an invalid {} literal", short_dt(&dt))
+            }
+            Some(dt) => format!("a literal of datatype {}", short_dt(&dt)),
+            None => "a literal".into(),
+        },
+        _ => match crate::terms::literal_datatype(token) {
+            Some(dt) => short_dt(&dt),
+            None => "a number".into(),
+        },
+    }
 }
 
 /// `/` with a zero divisor (`token` is the divisor as written).
@@ -519,7 +588,11 @@ fn rows(n: u64) -> String {
 fn family_hint(family: Family, pos: usize, kind: ArgKind) -> Option<&'static str> {
     use ArgKind::*;
     Some(match (family, kind) {
-        (_, Unbound | InvalidRegex | NotDatetime | LangMismatch | DivByZero) => return None,
+        (
+            _,
+            Unbound | InvalidRegex | NotDatetime | LangMismatch | DivByZero | Incomparable
+            | StringVsNumber,
+        ) => return None,
         (Family::Numeric, StringLit) => {
             "a string is not a number; cast one that holds a number first, e.g. \
              xsd:decimal(?x), or restrict the variable with isNumeric()"
@@ -547,8 +620,74 @@ fn family_hint(family: Family, pos: usize, kind: ArgKind) -> Option<&'static str
     })
 }
 
+/// Is a comparison's `"<kind> vs <kind>"` detail a string against a number?
+fn string_and_number(detail: &str) -> bool {
+    let numeric = |k: &str| {
+        k.strip_prefix("xsd:")
+            .is_some_and(|l| is_numeric_datatype(&format!("http://www.w3.org/2001/XMLSchema#{l}")))
+            || k == "a number"
+    };
+    match detail.split_once(" vs ") {
+        Some((l, r)) => (l == "a string" && numeric(r)) || (numeric(l) && r == "a string"),
+        None => false,
+    }
+}
+
 impl Entry {
+    /// The two comparison kinds, which are about a pair of operands rather
+    /// than one argument.
+    fn into_comparison_warning(self) -> QueryWarning {
+        let name = self.site.name();
+        let n = rows(self.count);
+        let sample = (!self.sample.is_empty()).then(|| format!("; e.g. {}", self.sample));
+        let (severity, hint, message) = if self.kind == ArgKind::StringVsNumber {
+            let hint = "SPARQL never reads a string as a number; to compare values cast \
+                        the string, e.g. xsd:integer(?x) or xsd:decimal(?x), or to compare \
+                        text use STR() on the number"
+                .to_string();
+            let message = format!(
+                "Operator {name} compared a string with a number in {n} and found them \
+                 unequal although the string's text is that number{}. Hint: {hint}.",
+                sample.unwrap_or_default()
+            );
+            (WarningSeverity::Hint, hint, message)
+        } else {
+            let hint = if string_and_number(&self.detail) {
+                "a string is never compared as a number; cast it first, e.g. \
+                 xsd:integer(?x) or xsd:decimal(?x), or compare the text of both sides \
+                 with STR()"
+            } else {
+                "SPARQL orders only two numbers, two strings (with the same language tag), \
+                 two booleans or two date/time values of one type, and = cannot tell two \
+                 different literals of an unrecognised datatype apart; cast both sides to \
+                 one type, or compare their text with STR()"
+            }
+            .to_string();
+            let message = format!(
+                "Operator {name} compared {} in {n}: a SPARQL type error, which makes a \
+                 FILTER drop the row, even under ! (BIND leaves the variable unbound){}. \
+                 Hint: {hint}.",
+                self.detail.replacen(" vs ", " with ", 1),
+                sample.unwrap_or_default()
+            );
+            (WarningSeverity::TypeError, hint, message)
+        };
+        QueryWarning {
+            severity,
+            function: name.to_string(),
+            argument: 0,
+            kind: self.kind.as_str().to_string(),
+            count: self.count,
+            sample: (!self.sample.is_empty()).then_some(self.sample),
+            hint,
+            message,
+        }
+    }
+
     fn into_warning(self) -> QueryWarning {
+        if matches!(self.kind, ArgKind::Incomparable | ArgKind::StringVsNumber) {
+            return self.into_comparison_warning();
+        }
         let name = self.site.name();
         let arg = ordinal(self.site, self.pos);
         let n = rows(self.count);
@@ -625,6 +764,9 @@ impl Entry {
                 "guard the divisor, e.g. IF(?d != 0, ?n / ?d, 0), or FILTER(?d != 0) first"
                     .to_string(),
             ),
+            ArgKind::Incomparable | ArgKind::StringVsNumber => {
+                unreachable!("handled by into_comparison_warning")
+            }
         };
         let hint = match family_hint(self.site.family(), self.pos, self.kind) {
             Some(h) => h.to_string(),

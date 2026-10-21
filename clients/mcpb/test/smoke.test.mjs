@@ -133,6 +133,15 @@ test("a FILTER type error reaches the agent as a warning, not just 0 rows", asyn
   assert.equal(payload(cased).warnings[0].severity, "hint");
   assert.match(cased.content[1].text, /^0 rows\. Hint: .*case-sensitive/);
 
+  // A comparison with no defined operator (a string against a number) is a
+  // type error about the PAIR of operands, said as such.
+  const cmp = await ask(`${RDFS}SELECT ?s WHERE { ?s rdfs:label ?l FILTER(?l > 3) }`);
+  assert.equal(payload(cmp).count, 0);
+  assert.equal(payload(cmp).warnings[0].argKind, "incomparable");
+  assert.equal(payload(cmp).warnings[0].argument, 0);
+  assert.match(cmp.content[1].text, /> compared two values SPARQL cannot compare \(2 rows, e\.g\. /);
+  assert.match(cmp.content[1].text, /xsd:integer\(\?x\)/);
+
   // ASK goes through the same channel.
   const asked = await ask(`${RDFS}ASK { ?s rdfs:label ?l FILTER(STRSTARTS(?s, "https")) }`);
   assert.equal(payload(asked).boolean, false);
