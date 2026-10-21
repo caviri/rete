@@ -2,11 +2,11 @@
 //! `.rete` sources (local paths and/or http(s) URLs), with summary-based routing
 //! and a term-level merge of the per-source results.
 
-use rete_core::{eval_query, query_predicates, QueryOutput, Rete, SliceReader, SummaryView};
+use rete_core::{eval_query, query_predicates, QueryOutput, SummaryView};
 
-use crate::commands::range_source::open_local;
+use crate::commands::range_source::{open_local, query_budget, RangedSourceReader};
 use crate::commands::render::print_query_output;
-use crate::http::HttpRangeReader;
+use crate::commands::url::open_url_lazy;
 
 /// Is this source an `http(s)://` URL (vs. a local file path)?
 fn is_url(source: &str) -> bool {
@@ -19,14 +19,10 @@ fn is_url(source: &str) -> bool {
 pub(crate) fn source_predicates(
     source: &str,
 ) -> anyhow::Result<Option<std::collections::BTreeSet<String>>> {
-    let view = if is_url(source) {
-        let reader = HttpRangeReader::open(source)?;
-        SummaryView::open_ranged(&reader)?
-    } else {
-        let bytes = std::fs::read(source)?;
-        let reader = SliceReader::new(&bytes);
-        SummaryView::open_ranged(&reader)?
-    };
+    // Ranged for both: a local file is read by positional reads too, never
+    // slurped whole just to route.
+    let reader = RangedSourceReader::open(source)?;
+    let view = SummaryView::open_ranged(&reader)?;
     Ok(view.map(|v| {
         v.predicate_totals()
             .into_iter()
@@ -41,13 +37,25 @@ pub(crate) fn source_predicates(
 /// query.
 fn eval_source(source: &str, query: &str) -> anyhow::Result<QueryOutput> {
     let mut rete = if is_url(source) {
-        let reader = HttpRangeReader::open(source)?;
-        Rete::open_ranged(&reader)?
+        // The same lazy open as `sparql-url`: the eager `Rete::open_ranged`
+        // decodes the whole dictionary and index directory up front, which
+        // OOM-killed a 4 GiB container on a 55-63 GB source.
+        let budget = query_budget(None);
+        open_url_lazy(source, budget)?.0
     } else {
         open_local(source)?
     };
     rete.set_service_client(Box::new(super::service_http::HttpServiceClient));
-    eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))
+    let out = eval_query(&rete, query).map_err(|e| anyhow::anyhow!("{source}: {e}"))?;
+    // Lazy tile fetches fail out-of-band; a partial answer must be an error,
+    // never quietly fewer rows (same contract as `sparql-url`).
+    if rete.index_incomplete() {
+        anyhow::bail!(
+            "{source}: a range request failed while streaming index tiles; \
+             results would be incomplete — retry"
+        );
+    }
+    Ok(out)
 }
 
 /// `rete federate`: run one SPARQL query across several `.rete` sources (local
