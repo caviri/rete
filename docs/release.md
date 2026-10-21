@@ -72,9 +72,16 @@ Three more artifacts ship alongside them:
   double-click, or drag it into Claude Desktop. It carries the same engine
   compiled to wasm, so one file installs on macOS, Windows and Linux; it queries
   your own `.rete` files offline and the published catalogue over HTTP Range.
-  See the [agentic interfaces guide](agents.md).
+  See the [agentic interfaces guide](agents.md). The same bytes are attached a
+  second time as `rete.mcpb`, so
+  `https://github.com/caviri/rete/releases/latest/download/rete.mcpb` always
+  serves the Latest release's bundle; that is the link the README and docs
+  advertise. This is the bundle's only publication channel: the R2 copies
+  under `data.graphplaza.com/mcpb/` were uploaded by hand through 0.3.5 and
+  are frozen there.
 
-`SHA256SUMS` covers every archive, the WASM bundle, and both extensions. A
+`SHA256SUMS` covers every archive, the WASM bundle, and both extensions (the
+`.mcpb` under both names). A
 CycloneDX JSON SBOM and GitHub artifact attestations are published with the
 release; the SBOM describes the Rust dependency graph and is bound to the
 native and WASM archives, while the extension carries build provenance only.

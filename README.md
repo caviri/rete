@@ -24,7 +24,7 @@
   <a href="https://crates.io/crates/rete-cli"><img src="https://img.shields.io/crates/v/rete-cli?label=crates.io%20rete-cli&logo=rust&logoColor=white" alt="rete-cli on crates.io"></a>
   <a href="https://pypi.org/project/rete-graph/"><img src="https://img.shields.io/pypi/v/rete-graph?label=PyPI%20rete-graph&logo=pypi&logoColor=white" alt="rete-graph on PyPI"></a>
   <a href="https://www.npmjs.com/package/rete-graph"><img src="https://img.shields.io/npm/v/rete-graph?label=npm%20rete-graph&logo=npm&logoColor=white" alt="rete-graph on npm"></a>
-  <a href="https://data.graphplaza.com/mcpb/rete.mcpb"><img src="https://img.shields.io/badge/Claude%20Desktop-rete.mcpb-2b7a5b" alt="rete.mcpb — Claude Desktop extension"></a>
+  <a href="https://github.com/caviri/rete/releases/latest/download/rete.mcpb"><img src="https://img.shields.io/badge/Claude%20Desktop-rete.mcpb-2b7a5b" alt="rete.mcpb — Claude Desktop extension"></a>
 </p>
 
 <p align="center">
@@ -104,7 +104,7 @@ client versions track the engine's 0.3.x line):
 | **Java** | `mvn -f clients/java install` — **not published to Maven Central yet**, so there is no coordinate to depend on | pure JVM — the engine as wasm on Chicory, plus an RDF4J `Sail` binding · [readme](clients/java/README.md) |
 | **R** | `remotes::install_github("caviri/rete", subdir = "clients/r", build = FALSE)` (needs Rust) — **not on CRAN or R-universe** | R ≥ 4.2; SPARQL results as data frames · [docs](https://caviri.github.io/rete/r.html) |
 | **Browser, zero install** | [playground](https://caviri.github.io/rete/playground.html) · [SPARQL IDE](https://caviri.github.io/rete/yasgui.html) | query any `.rete` URL with no install at all |
-| **Claude Desktop** | [**⬇ rete.mcpb**](https://data.graphplaza.com/mcpb/rete.mcpb) — double-click it (or take the checksummed copy from [Releases](https://github.com/caviri/rete/releases)) | one-click [MCP Bundle](https://github.com/modelcontextprotocol/mcpb): the engine runs locally, so your own graphs stay on your machine and work offline · [docs](https://caviri.github.io/rete/agents.html) |
+| **Claude Desktop** | [**⬇ rete.mcpb**](https://github.com/caviri/rete/releases/latest/download/rete.mcpb) — double-click it (from the latest [release](https://github.com/caviri/rete/releases/latest), with `SHA256SUMS` and build provenance) | one-click [MCP Bundle](https://github.com/modelcontextprotocol/mcpb): the engine runs locally, so your own graphs stay on your machine and work offline · [docs](https://caviri.github.io/rete/agents.html) |
 | **Blender** | add-on zip from [Releases](https://github.com/caviri/rete/releases) | SPARQL results as 3D scenes; bundles the Python wheels · [docs](https://caviri.github.io/rete/blender.html) |
 | **Hosted gateway** | [`katospiegel-rete.hf.space`](https://katospiegel-rete.hf.space/) | no install: `/mcp` (agent tools), REST `/api`, and a W3C SPARQL 1.1 endpoint per dataset at `/sparql/{dataset}` |
 

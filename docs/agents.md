@@ -152,16 +152,17 @@ never loaded into memory.
 
 ### Try it now
 
-**⬇ [Download rete.mcpb](https://data.graphplaza.com/mcpb/rete.mcpb)** (1.6 MB)
+**⬇ [Download rete.mcpb](https://github.com/caviri/rete/releases/latest/download/rete.mcpb)** (1.6 MB)
 — then double-click it, or drag it into Claude Desktop.
 
-That link always serves the current build; a pinned copy of each version sits
-beside it (for example
-[`rete-0.3.3.mcpb`](https://data.graphplaza.com/mcpb/rete-0.3.3.mcpb)). Every
-tagged release additionally attaches `rete-<version>.mcpb` to the
-[releases page](https://github.com/caviri/rete/releases), built by the release
-workflow with a SHA-256 checksum and build provenance — take that copy if you
-want to verify what you are installing before you run it.
+That link always serves the build attached to the latest
+[GitHub release](https://github.com/caviri/rete/releases/latest). Each release
+also carries the same bytes under a pinned name (for example
+[`rete-0.3.6.mcpb`](https://github.com/caviri/rete/releases/download/v0.3.6/rete-0.3.6.mcpb)),
+built by the release workflow and listed in its `SHA256SUMS` with build
+provenance — check them if you want to verify what you are installing before
+you run it. (Builds up to 0.3.5 were also served from
+`data.graphplaza.com/mcpb/`; those links still work but stop at 0.3.5.)
 
 ```sh
 # or build it yourself — Docker only, no node needed
