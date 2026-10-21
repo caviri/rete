@@ -1019,6 +1019,56 @@ outside FILTER too: <code>BIND(CONTAINS(?label, "x") AS ?hit)</code> binds an
 <code>xsd:boolean</code>, or leaves <code>?hit</code> unbound on an error. <code>isNumeric</code> is true only
 for a literal of a numeric datatype with a valid lexical form, so it is false
 for the string <code>"10"</code>.</p>
+<h2 id="compare">Comparisons and ordering</h2>
+<p><code>=</code>, <code>!=</code>, <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>, <code>IN</code> / <code>NOT IN</code>, <code>ORDER BY</code>, <code>MIN</code> / <code>MAX</code>,
+<code>SUM</code> / <code>AVG</code>, arithmetic and the numeric functions read a term by its
+<strong>datatype</strong>, as SPARQL 1.1 §17.3 maps each operator to an XPath function.
+What a string's text looks like never matters: a string is not a number.</p>
+<table><thead><tr><th>Operands</th><th><code>=</code> / <code>!=</code></th><th><code>&lt;</code> <code>&gt;</code> <code>&lt;=</code> <code>&gt;=</code></th></tr></thead><tbody>
+<tr><td>two numbers (<code>xsd:integer</code>, <code>decimal</code>, <code>float</code>, <code>double</code> and the types derived from them, such as <code>xsd:int</code>)</td><td>by value, with type promotion: <code>1 = 1.0</code> and <code>"01"^^xsd:integer = 1</code> are true; integers and decimals compare exactly; a <code>NaN</code> equals nothing, itself included; <code>-0 = 0</code></td><td>by value; any comparison with <code>NaN</code> is false</td></tr>
+<tr><td>two strings (simple literals or <code>xsd:string</code>)</td><td>by code point: <code>"01" = "1"</code>, <code>"1.0" = "1"</code>, <code>"1e3" = "1000"</code> and <code>"inf" = "Infinity"</code> are <strong>false</strong>; <code>"NaN" = "NaN"</code> is true</td><td>by code point, so <code>"10" &lt; "9"</code></td></tr>
+<tr><td>two language-tagged literals</td><td>same text and same tag (tags compare case-insensitively: <code>"a"@en = "a"@EN</code>)</td><td>when the tags match; otherwise a type error</td></tr>
+<tr><td>two <code>xsd:boolean</code>s</td><td>by value (<code>"1"^^xsd:boolean = true</code>)</td><td><code>false &lt; true</code></td></tr>
+<tr><td>two <code>xsd:dateTime</code>s, or two of another date/time type (<code>date</code>, <code>time</code>, <code>gYear</code>, <code>gYearMonth</code>, <code>gMonth</code>, <code>gDay</code>, <code>gMonthDay</code>)</td><td>by value, timezones applied: <code>"2020-01-01T00:00:00Z" = "2020-01-01T01:00:00+01:00"</code>. A value with a timezone and one without less than 14 hours apart cannot be decided without an implicit timezone, which rete does not assume: a type error</td><td>by value; the same pair is a type error</td></tr>
+<tr><td>two durations (<code>xsd:duration</code>, <code>dayTimeDuration</code>, <code>yearMonthDuration</code>)</td><td>by value: <code>PT60M = PT1H</code>, <code>P1Y = P12M</code></td><td>by value where XSD orders them (<code>P1M</code> vs <code>P30D</code> is a type error)</td></tr>
+<tr><td>an IRI or blank node and anything</td><td>equal only to the same term</td><td>a type error</td></tr>
+<tr><td>two different literals of a datatype rete does not know, or of a known one with an invalid text (<code>"abc"^^xsd:integer</code>)</td><td>a type error (RDFterm-equal, §17.4.1.7); the same term is equal to itself</td><td>a type error</td></tr>
+<tr><td>two literals of different known kinds (a string and a number, a date and a boolean)</td><td><code>=</code> is false, <code>!=</code> true</td><td>a type error</td></tr>
+</tbody></table>
+<p><code>IN</code> is a chain of <code>=</code>. <code>sameTerm</code> is term identity, with no value
+comparison: <code>sameTerm(1, 1.0)</code> is false.</p>
+<p><code>ORDER BY</code> puts no value first, then blank nodes, IRIs, literals and quoted
+triples (§15.1). Among literals: first text — simple, <code>xsd:string</code>,
+language-tagged literals, literals of an unknown datatype and ill-typed values
+such as <code>"820"^^xsd:gYear</code> (XSD wants four digits), together by text, then
+datatype, then tag, so labels with and without a tag sort alphabetically
+together — then numbers by value (a <code>NaN</code> after every number), booleans,
+date/time values and durations. Within one kind this is the <code>&lt;</code> above. The
+order between kinds is implementation-defined in SPARQL; rete's puts text
+first so that a stray string or an ill-typed date never tops an <code>ORDER BY DESC(…)</code> or a <code>MAX</code>. <code>MIN</code> / <code>MAX</code> use the same order (§18.5.1.5-6).</p>
+<p><code>SUM</code>, <code>AVG</code>, <code>+ - * /</code> and <code>ABS</code> / <code>CEIL</code> / <code>FLOOR</code> / <code>ROUND</code> take numbers:
+a string is a type error there, whatever its text. When your data holds
+numbers as strings, cast them — <code>xsd:integer(?year) &gt; 2000</code>,
+<code>SUM(xsd:decimal(?amount))</code> — or compare them as text on both sides,
+<code>?year &gt; "2000"</code> (fine for same-length years, wrong for <code>"999"</code>).</p>
+<p>Through 0.3.6 rete compared any two terms numerically when both texts parsed
+as numbers and by their token text otherwise, so <code>"01" = "1"</code>, <code>"1e3" = "1000"</code>
+and <code>"inf" = "Infinity"</code> were true, <code>"NaN" = "NaN"</code> was false, <code>?x &lt; 5</code>
+compared strings with numbers, and <code>ORDER BY</code> put literals before IRIs. The
+<a href="https://github.com/caviri/rete/blob/main/CHANGELOG.html">CHANGELOG</a> lists this
+as a result-changing fix. An <code>=</code> that is false only because a string's text
+spells the number it is compared with (<code>"2020" = 2020</code>) is reported as a hint,
+and a comparison with no defined operator as a type error; see
+<a href="#warnings">warnings</a>.</p>
+<p>Where rete differs from Oxigraph 0.5, because the spec says otherwise:
+<code>NaN &lt; 1</code> is false (Oxigraph: an error), <code>NaN &lt;= NaN</code> is false and
+<code>&lt;a&gt; &lt;= &lt;a&gt;</code> a type error (Oxigraph: true, from its identity shortcut),
+<code>false &lt; true</code> is true (Oxigraph: an error), and a zoned and an unzoned
+date/time less than 14 hours apart are a type error under <code>=</code> (Oxigraph:
+false; the W3C test <code>open-world/date-2</code> requires the error). Language tags:
+rete keeps a tag as the data spells it, so <code>sameTerm</code>, joins and <code>DISTINCT</code>
+see <code>"a"@EN</code> and <code>"a"@en</code> as different terms, while <code>=</code> treats them as equal;
+Oxigraph lower-cases tags when it loads data.</p>
 <h2 id="warnings">Type errors and query warnings</h2>
 <p>The string functions (<code>CONTAINS</code>, <code>STRSTARTS</code>, <code>STRENDS</code>, <code>STRBEFORE</code>,
 <code>STRAFTER</code>, <code>REGEX</code>, <code>REPLACE</code>, <code>STRLEN</code>, <code>UCASE</code>, <code>LCASE</code>, <code>SUBSTR</code>, <code>CONCAT</code>,
@@ -1034,8 +1084,10 @@ as Oxigraph and Jena do, so these queries return no rows:</p>
 <tr><td><code>FILTER(REGEX(?s, "geneva"))</code>, <code>?s</code> an IRI</td><td>0</td><td>same: <code>REGEX(STR(?s), "geneva")</code></td></tr>
 <tr><td><code>FILTER(CONTAINS(?label, "Geneva"@fr))</code>, <code>?label</code> is <code>@en</code></td><td>0</td><td>the arguments are <em>incompatible</em> (§17.4.3): a tagged needle must carry the haystack's tag. Use <code>STR()</code> on both</td></tr>
 <tr><td><code>FILTER(CONTAINS(?label, "geneva"))</code>, label <code>"Geneva …"</code></td><td>0</td><td>not an error: matching is case-sensitive. Use <code>LCASE(?label)</code> or <code>REGEX(?label, "geneva", "i")</code></td></tr>
-<tr><td><code>FILTER(ABS(?note) &gt; 0)</code>, <code>?note</code> the string <code>"a note"</code></td><td>0</td><td><code>ABS</code> / <code>CEIL</code> / <code>FLOOR</code> / <code>ROUND</code> need a number (rete accepts any literal whose text parses as one)</td></tr>
+<tr><td><code>FILTER(ABS(?note) &gt; 0)</code>, <code>?note</code> the string <code>"12"</code></td><td>0</td><td><code>ABS</code> / <code>CEIL</code> / <code>FLOOR</code> / <code>ROUND</code> need a number, and a string is not one whatever its text: <code>ABS(xsd:decimal(?note))</code></td></tr>
 <tr><td><code>FILTER(?label + 1 &gt; 0)</code>, <code>?label</code> a string</td><td>0</td><td><code>+ - * /</code> take numeric-typed literals only: cast first, <code>xsd:decimal(?label)</code></td></tr>
+<tr><td><code>FILTER(?year &gt; 2000)</code>, <code>?year</code> the string <code>"2001"</code></td><td>0</td><td><code>&lt;</code> is not defined between a string and a number (§17.3): <code>xsd:integer(?year) &gt; 2000</code></td></tr>
+<tr><td><code>FILTER(?year = 2001)</code>, <code>?year</code> the string <code>"2001"</code></td><td>0</td><td>not an error: a string never equals a number, so <code>=</code> is false. Reported as a hint</td></tr>
 <tr><td><code>BIND(?n / 0 AS ?r)</code></td><td>1, <code>?r</code> unbound</td><td>division by zero is an error</td></tr>
 <tr><td><code>OPTIONAL { ?s ex:age ?a } FILTER(?a &gt; 18)</code></td><td>rows without an age dropped</td><td>a comparison (or <code>IN</code>) with an unbound operand is an error</td></tr>
 <tr><td><code>FILTER(LANG(?s) = "en")</code>, <code>?s</code> an IRI</td><td>0</td><td><code>LANG</code> / <code>DATATYPE</code> take a literal</td></tr>
@@ -1054,8 +1106,8 @@ out when there is nothing to report. Each entry has these fields:</p>
 <table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
 <tr><td><code>severity</code></td><td><code>type-error</code> (an error was raised and absorbed) or <code>hint</code> (a suggestion; nothing went wrong)</td></tr>
 <tr><td><code>function</code></td><td>the SPARQL function, e.g. <code>CONTAINS</code>, or for an operator its spelling: <code>+</code> <code>-</code> <code>*</code> <code>/</code>, <code>=</code> <code>!=</code> <code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code>, <code>IN</code></td></tr>
-<tr><td><code>argument</code></td><td>1-based argument position; for an operator 1 is the left operand, 2 the right</td></tr>
-<tr><td><code>argKind</code></td><td><code>iri</code>, <code>blank-node</code>, <code>quoted-triple</code>, <code>numeric</code>, <code>typed-literal</code>, <code>string</code>, <code>language-tagged</code>, <code>invalid-number</code> (a numeric datatype whose text is not a number), <code>language-mismatch</code>, <code>unbound</code>, <code>invalid-regex</code>, <code>not-a-datetime</code>, <code>division-by-zero</code> (argument 2 of <code>/</code>), or <code>case-sensitive</code> for the hint</td></tr>
+<tr><td><code>argument</code></td><td>1-based argument position; for an operator 1 is the left operand, 2 the right; 0 when the warning is about the pair (<code>incomparable</code>, <code>string-vs-number</code>)</td></tr>
+<tr><td><code>argKind</code></td><td><code>iri</code>, <code>blank-node</code>, <code>quoted-triple</code>, <code>numeric</code>, <code>typed-literal</code>, <code>string</code>, <code>language-tagged</code>, <code>invalid-number</code> (a numeric datatype whose text is not a number), <code>language-mismatch</code>, <code>unbound</code>, <code>invalid-regex</code>, <code>not-a-datetime</code>, <code>division-by-zero</code> (argument 2 of <code>/</code>), <code>incomparable</code> (a comparison whose two operands no operator is defined for), or, for the hints, <code>case-sensitive</code> and <code>string-vs-number</code></td></tr>
 <tr><td><code>count</code></td><td>how many evaluations raised it. A row is evaluated only when it reaches the expression, and LIMIT / ASK stop early, so this is not a count of the data</td></tr>
 <tr><td><code>sample</code></td><td>the first offending value, cut to 80 characters</td></tr>
 <tr><td><code>hint</code></td><td>what to change, e.g. <code>wrap it in STR() to match the IRI's text</code></td></tr>
@@ -1069,12 +1121,15 @@ out when there is nothing to report. Each entry has these fields:</p>
 <code>IN</code>. Such a variable usually comes from an <code>OPTIONAL</code> that did not match,
 or is misspelled. An error inside a nested call (<code>CONTAINS(LCASE(?s), …)</code>,
 <code>STRLEN(?s) &gt; 3</code>) is reported once, by the inner function.</li>
-<li><strong>Comparisons</strong> are reported only where rete already raises an error,
-which today is an operand that is itself an error (most often unbound).
-rete compares any two bound terms, numerically when both parse as numbers
-and lexically otherwise, so <code>"10" = 10</code> is true and <code>?year &gt; "abc"</code> is
-silently lexical. Where that differs from the spec it is a semantics
-question, deliberately not changed by the warnings.</li>
+<li><strong>Comparisons</strong> (<code>=</code> … <code>&gt;=</code>, <code>IN</code>) report an operand that is itself an
+error (most often unbound) and, as <code>incomparable</code>, a pair §17.3 defines no
+operator for: a string and a number under <code>&lt;</code>, an IRI under <code>&lt;</code>, two
+different literals of an unknown datatype under <code>=</code>. The message names the
+two kinds (<code>compared a string with xsd:integer</code>). An <code>=</code> / <code>!=</code> / <code>IN</code>
+between a string and a number whose value the string's text spells
+(<code>"2020" = 2020</code>, false) is reported as a <code>string-vs-number</code> <strong>hint</strong>, since
+nothing went wrong but the answer reads as one; see
+<a href="#compare">Comparisons and ordering</a>.</li>
 <li><strong>Division by zero</strong> is an error for every numeric type in rete, as it
 is for <code>xsd:integer</code> and <code>xsd:decimal</code> in the spec (for <code>xsd:double</code> the
 spec gives <code>INF</code>).</li>
