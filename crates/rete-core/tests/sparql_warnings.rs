@@ -466,12 +466,23 @@ fn numeric_functions_and_arithmetic_report_non_numbers() {
         r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(ABS(?y) > 0) }"#,
         r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(ROUND(?y / 2) = 786) }"#,
         r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(-?y < 0) }"#,
-        // ABS takes any literal whose text parses: a numeric string is fine.
-        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(ABS("12") = 12) }"#,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(ABS(xsd:integer("12")) = 12) }"#,
     ] {
-        let (n, w) = run(&rete, q);
+        let q = format!("PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> {q}");
+        let (n, w) = run(&rete, &q);
         assert_eq!((n, w.len()), (1, 0), "{q}: {w:#?}");
     }
+
+    // ABS takes a number, and a string is not one whatever its text (it used
+    // to read any literal whose text parsed).
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(ABS("12") = 12) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key("ABS", 1, "string")]);
+    assert!(w1.hint.contains("xsd:decimal(?x)"), "{}", w1.hint);
 }
 
 #[test]
@@ -508,17 +519,88 @@ fn comparisons_report_only_where_the_engine_errors() {
     );
     assert_eq!(keys(&w), vec![key("IN", 1, "unbound")]);
 
-    // The engine compares any two BOUND terms (numerically when both parse,
-    // else lexically), so none of these errors and none warns. Whether they
-    // should is a semantics question this change does not touch.
-    for q in [
+    // §17.3 defines `<` for neither a number and a string nor an IRI and a
+    // literal: type errors, reported for the pair (argument 0).
+    let (n, w) = run(
+        &rete,
         r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(?y > "abc") }"#,
-        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER("1572" = ?y) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key(">", 0, "incomparable")]);
+    assert_eq!(w1.severity, WarningSeverity::TypeError);
+    assert!(
+        w1.message.starts_with(
+            "Operator > compared xsd:integer with a string in 1 row: a SPARQL type error"
+        ),
+        "{}",
+        w1.message
+    );
+    assert!(w1.hint.contains("xsd:integer(?x)"), "{}", w1.hint);
+    let (n, w) = run(
+        &rete,
         r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(?s < ?l) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key("<", 0, "incomparable")]);
+    assert!(
+        w1.message
+            .contains("compared an IRI with a language-tagged literal (@en)"),
+        "{}",
+        w1.message
+    );
+    assert!(w1.hint.contains("STR()"), "{}", w1.hint);
+
+    // `=` between a string and a number is false, not an error — and when the
+    // string's text IS that number the answer reads as wrong, so a hint says
+    // why (it used to be true).
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER("1572" = ?y) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key("=", 0, "string-vs-number")]);
+    assert_eq!(w1.severity, WarningSeverity::Hint);
+    assert!(
+        w1.message.starts_with(
+            "Operator = compared a string with a number in 1 row and found them unequal"
+        ),
+        "{}",
+        w1.message
+    );
+    // … but not when the text is another number, nor for a string vs a string.
+    for q in [
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER("1573" != ?y) }"#,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/note> ?n FILTER(?n != "x") }"#,
     ] {
-        let (_, w) = run(&rete, q);
-        assert!(w.is_empty(), "{q}: {w:#?}");
+        let (n, w) = run(&rete, q);
+        assert_eq!((n, w.len()), (1, 0), "{q}: {w:#?}");
     }
+    // IN reports through `=`.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(?y IN ("1572", 1)) }"#,
+    );
+    assert_eq!(n, 0);
+    assert_eq!(keys(&w), vec![key("IN", 0, "string-vs-number")]);
+    // An ill-typed literal (a three-digit xsd:gYear) compares with nothing,
+    // and the hint says why rather than suggesting a cast.
+    let (n, w) = run(
+        &rete,
+        r#"SELECT ?y WHERE { VALUES ?y { "170"^^<http://www.w3.org/2001/XMLSchema#gYear> } FILTER(?y > "1450"^^<http://www.w3.org/2001/XMLSchema#gYear>) }"#,
+    );
+    assert_eq!(n, 0);
+    let w1 = one(&w);
+    assert_eq!(keys(&w), vec![key(">", 0, "incomparable")]);
+    assert!(
+        w1.message
+            .contains("compared an invalid xsd:gYear literal with xsd:gYear"),
+        "{}",
+        w1.message
+    );
+    assert!(w1.hint.contains("ill-typed"), "{}", w1.hint);
 
     // A nested error is reported once, by the function that raised it, not
     // again by the comparison it propagates through.
@@ -577,7 +659,7 @@ fn lang_datatype_and_constructors_report_misuse() {
     for q in [
         r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(LANG(?l) = "en") }"#,
         r#"SELECT ?s WHERE { ?s <http://ex.org/year> ?y FILTER(DATATYPE(?y) = <http://www.w3.org/2001/XMLSchema#integer>) }"#,
-        r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(STRDT(STR(?l), <http://ex.org/t>) != "") }"#,
+        r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(DATATYPE(STRDT(STR(?l), <http://ex.org/t>)) = <http://ex.org/t>) }"#,
         r#"SELECT ?s WHERE { ?s rdfs:label ?l FILTER(LANG(STRLANG(STR(?l), "fr")) = "fr") }"#,
     ] {
         let (n, w) = run(&rete, q);

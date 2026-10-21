@@ -19,6 +19,7 @@
 
 use std::rc::Rc;
 
+use super::value;
 use super::*;
 use crate::index::GraphIndex;
 use crate::row::{Ctx, Row};
@@ -91,8 +92,9 @@ impl FExpr {
             FExpr::Not(e) => e.ebv3(ctx, b).map(|v| !v),
             FExpr::And(l, r) => logical_and(l.ebv3(ctx, b), || r.ebv3(ctx, b)),
             FExpr::Or(l, r) => logical_or(l.ebv3(ctx, b), || r.ebv3(ctx, b)),
-            // A comparison errors only when an operand does (the engine
-            // compares any two bound terms); an unbound variable is reported.
+            // A comparison errors when an operand does, and when §17.3 defines
+            // no operator for the pair (a string and a number under `<`, two
+            // different literals of an unknown datatype under `=`, …).
             FExpr::Compare(op, l, r) => {
                 let Some(a) = l.value(ctx, b) else {
                     missing_operand(diag::Site::compare(*op), 1, l);
@@ -102,7 +104,7 @@ impl FExpr {
                     missing_operand(diag::Site::compare(*op), 2, r);
                     return None;
                 };
-                Some(compare(*op, &a, &c))
+                compare_terms(diag::Site::compare(*op), *op, &a, &c)
             }
             FExpr::In(e, list) => {
                 let Some(lhs) = e.value(ctx, b) else {
@@ -223,18 +225,41 @@ fn logical_or(l: Option<bool>, r: impl FnOnce() -> Option<bool>) -> Option<bool>
 }
 
 /// `lhs IN (list)` per §17.4.1.9: `true` as soon as a member compares equal;
-/// otherwise an error if any member failed to evaluate, else `false`. (NOT IN
-/// lowers to `!(… IN …)`, which §17.4.1.10 states is equivalent.)
+/// otherwise an error if any member failed to evaluate or to compare (`=`
+/// raising a type error), else `false`. (NOT IN lowers to `!(… IN …)`, which
+/// §17.4.1.10 states is equivalent.)
 fn in_list(lhs: &str, list: &[FExpr], ctx: &Ctx, b: &Row) -> Option<bool> {
     let mut errored = false;
     for x in list {
-        match x.value(ctx, b) {
-            Some(m) if compare(Op::Eq, lhs, &m) => return Some(true),
-            Some(_) => {}
+        match x
+            .value(ctx, b)
+            .and_then(|m| compare_terms(diag::Site::Op("IN"), Op::Eq, lhs, &m))
+        {
+            Some(true) => return Some(true),
+            Some(false) => {}
             None => errored = true,
         }
     }
     (!errored).then_some(false)
+}
+
+/// `a op b` in the §17.3 value space ([`value::compare`]): `None` is a type
+/// error, which is also counted for the query's warnings, as is an `=` / `!=`
+/// between a string and a number whose text is that number (`"2020" = 2020` is
+/// false: the answer most likely to surprise).
+fn compare_terms(site: diag::Site, op: Op, a: &str, b: &str) -> Option<bool> {
+    if let Some(v) = value::compare_identical(op, a, b) {
+        return v;
+    }
+    let (ca, cb) = (value::classify(a), value::classify(b));
+    let r = value::compare_classified(op, a, &ca, b, &cb);
+    match (&r, &ca, &cb) {
+        (None, ..) => diag::incomparable(site, a, b),
+        (Some(_), value::Class::Str, value::Class::Num(_))
+        | (Some(_), value::Class::Num(_), value::Class::Str) => diag::string_vs_number(site, a, b),
+        _ => {}
+    }
+    r
 }
 
 /// The builtins [`func_bool`] evaluates — the ones whose result *is* a
@@ -287,11 +312,11 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
         v
     };
     // The numeric value of argument 1 for ABS / CEIL / FLOOR / ROUND, reporting
-    // a term that is not one (by the lenient rule these have always used: any
-    // literal whose text parses as a number).
+    // a term that is not one: a literal of a numeric datatype (fn:abs and the
+    // others take a numeric; a string is a type error, whatever its text).
     let n0 = || {
         let a = arg(0)?;
-        let n = as_number(&a);
+        let n = value::numeric(&a);
         if n.is_none() {
             diag::not_a_number(f, 1, &a);
         }
@@ -377,11 +402,12 @@ fn func_value(f: Builtin, args: &[FExpr], ctx: &Ctx, b: &Row) -> Option<Rc<str>>
             let a = a0()?;
             let lang = string_arg_of(f, 0, &a)?;
             let chars: Vec<char> = lex(&a).chars().collect();
-            let start = as_number(&args.get(1)?.value(ctx, b)?)?.max(1.0) as usize - 1;
+            // The start and length are numbers (a string is a type error).
+            let start = value::numeric(&args.get(1)?.value(ctx, b)?)?.max(1.0) as usize - 1;
             let it = chars.iter().skip(start);
             let out: String = match args.get(2) {
                 Some(lenarg) => it
-                    .take(as_number(&lenarg.value(ctx, b)?)?.max(0.0) as usize)
+                    .take(value::numeric(&lenarg.value(ctx, b)?)?.max(0.0) as usize)
                     .collect(),
                 None => it.collect(),
             };
@@ -796,7 +822,7 @@ fn term_ebv(token: &str) -> Option<bool> {
             "true" | "1"
         )),
         Some(dt) if is_numeric_ebv_dt(dt) => {
-            Some(as_number(token).is_some_and(|n| n != 0.0 && !n.is_nan()))
+            Some(value::numeric(token).is_some_and(|n| n != 0.0 && !n.is_nan()))
         }
         Some(XSD_STRING) => Some(!crate::terms::lexical(token).is_empty()),
         _ => None,
@@ -880,15 +906,12 @@ fn uuid_v4() -> String {
     )
 }
 
-/// Numeric value of a term for **arithmetic** (`+ - * /`): only numeric-typed
-/// literals count; a string (or other non-numeric) literal is a type error
-/// (`None`). This is stricter than the lenient [`as_number`] used for ordering
-/// and REGEX flags, which parses any literal's lexical form.
+/// Numeric value of a term for **arithmetic** (`+ - * /`): a literal of a
+/// numeric datatype — `xsd:integer`, `decimal`, `float`, `double` or one
+/// derived from them, such as `xsd:int` — with a valid lexical form; a string
+/// (or other non-numeric) literal is a type error (`None`).
 fn arith_number(token: &str) -> Option<f64> {
-    match datatype_iri(token) {
-        Some(dt) => is_numeric_dt(Some(&dt)).then(|| as_number(token)).flatten(),
-        None => as_number(token),
-    }
+    value::numeric(token)
 }
 
 /// The XSD numeric datatype IRIs accepted as a numeric *source* for a cast.
@@ -916,21 +939,10 @@ fn is_decimal_lexical(s: &str) -> bool {
     (!int.is_empty() || !frac.is_empty()) && digits(int) && digits(frac)
 }
 
-/// Parse an XSD double/float lexical form to `f64` (handling `INF`/`-INF`/`NaN`).
+/// Parse an XSD double/float lexical form to `f64` (handling `INF`/`-INF`/`NaN`,
+/// rejecting the `inf` / `infinity` / `nan` spellings Rust would accept).
 fn parse_xsd_double(s: &str) -> Option<f64> {
-    match s {
-        "INF" | "+INF" => Some(f64::INFINITY),
-        "-INF" => Some(f64::NEG_INFINITY),
-        "NaN" => Some(f64::NAN),
-        // Reject the lowercase spellings Rust would otherwise accept.
-        _ if s.eq_ignore_ascii_case("inf")
-            || s.eq_ignore_ascii_case("nan")
-            || s.eq_ignore_ascii_case("infinity") =>
-        {
-            None
-        }
-        _ => s.parse::<f64>().ok(),
-    }
+    value::xsd_double(s)
 }
 
 /// XSD constructor casts (`xsd:integer(x)`, …). String sources are validated
@@ -1288,20 +1300,21 @@ fn lang_matches(tag: &str, range: &str) -> bool {
     tag == range || tag.starts_with(&format!("{range}-"))
 }
 
-/// A precomputed ORDER BY sort key: unbound (`None`) sorts before bound values;
-/// bound values compare numerically when both are numbers, else lexically. The
-/// numeric value is parsed once at construction so comparisons never re-parse
-/// (same ordering as a numeric-or-lexical compare with unbound sorting first).
+/// A precomputed ORDER BY sort key: unbound (`None`, also an expression that
+/// errored) sorts before every bound value (§15.1); bound values in the
+/// [`value::order_cmp`] order — blank nodes, IRIs, literals (numbers by value,
+/// strings by code point, …). Each key is classified once at construction so a
+/// comparison never re-parses.
 pub(super) enum SortKey {
     Unbound,
-    Bound(Option<f64>, Rc<str>),
+    Bound(value::OrderKey),
 }
 
 impl SortKey {
     pub(super) fn of(v: Option<Rc<str>>) -> Self {
         match v {
             None => SortKey::Unbound,
-            Some(s) => SortKey::Bound(as_number(&s), s),
+            Some(s) => SortKey::Bound(value::OrderKey::new(s)),
         }
     }
 
@@ -1311,10 +1324,7 @@ impl SortKey {
             (SortKey::Unbound, SortKey::Unbound) => Ordering::Equal,
             (SortKey::Unbound, _) => Ordering::Less,
             (_, SortKey::Unbound) => Ordering::Greater,
-            (SortKey::Bound(na, sa), SortKey::Bound(nb, sb)) => match (na, nb) {
-                (Some(x), Some(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
-                _ => sa.cmp(sb),
-            },
+            (SortKey::Bound(a), SortKey::Bound(b)) => a.cmp(b),
         }
     }
 }
@@ -1467,7 +1477,8 @@ mod tests {
         assert_eq!(unbound.cmp(&one), std::cmp::Ordering::Less);
         assert_eq!(one.cmp(&unbound), std::cmp::Ordering::Greater);
         assert_eq!(one.cmp(&two), std::cmp::Ordering::Less);
-        assert_eq!(text.cmp(&two), std::cmp::Ordering::Greater);
+        // Text sorts before numbers (ORDER BY between kinds, value::order_cmp).
+        assert_eq!(text.cmp(&two), std::cmp::Ordering::Less);
     }
 
     /// SPARQL 1.1 §17.2 / §17.3 / §17.4.1: an error is a value of its own that
@@ -1948,11 +1959,22 @@ mod tests {
         assert_eq!(term_ebv(&lit("true", &format!("{XSD}boolean"))), Some(true));
         assert_eq!(term_ebv(&lit("0", &format!("{XSD}integer"))), Some(false));
         assert_eq!(term_ebv("<iri>"), None);
-        assert!(compare(Op::Eq, "2", "2.0"));
-        assert!(compare(Op::Ne, "a", "b"));
-        assert!(compare(Op::Le, "a", "b"));
-        assert!(compare(Op::Gt, "3", "2"));
-        assert!(compare(Op::Ge, "3", "3"));
+        let cmp = |op: Op, a: &str, b: &str| compare_terms(diag::Site::compare(op), op, a, b);
+        let int = |x: &str| lit(x, &format!("{XSD}integer"));
+        // The bare numbers the lowering itself produces (unary minus's `0`).
+        assert_eq!(cmp(Op::Eq, "2", "2.0"), Some(true));
+        assert_eq!(cmp(Op::Ne, "\"a\"", "\"b\""), Some(true));
+        assert_eq!(cmp(Op::Le, "\"a\"", "\"b\""), Some(true));
+        assert_eq!(cmp(Op::Gt, &int("3"), &int("2")), Some(true));
+        assert_eq!(cmp(Op::Ge, &int("3"), &int("3")), Some(true));
+        assert_eq!(
+            cmp(Op::Eq, &int("2"), &lit("2.0", &format!("{XSD}decimal"))),
+            Some(true)
+        );
+        // A string is not a number: unequal under `=`, a type error under `<`.
+        assert_eq!(cmp(Op::Eq, "\"2\"", &int("2")), Some(false));
+        assert_eq!(cmp(Op::Lt, "\"2\"", &int("3")), None);
+        assert_eq!(cmp(Op::Eq, "\"01\"", "\"1\""), Some(false));
         assert!(lang_matches("en-US", "en"));
         assert!(!lang_matches("english", "en"));
     }

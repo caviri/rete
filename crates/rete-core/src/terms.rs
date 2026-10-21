@@ -134,6 +134,21 @@ pub fn lexical(token: &TermToken) -> Cow<'_, str> {
     }
 }
 
+/// A literal term split into its **still-escaped** body and its suffix
+/// (`"a\"b"^^<dt>` → `(a\"b, ^^<dt>)`), or `None` if `token` is not a literal.
+/// Borrowing and allocation-free: callers that need the value unescape the body
+/// only when it contains a backslash.
+pub(crate) fn literal_parts(token: &TermToken) -> Option<(&str, &str)> {
+    if !is_literal(token) {
+        return None;
+    }
+    let close = closing_quote(token);
+    Some((
+        token.get(1..close).unwrap_or(""),
+        token.get(close + 1..).unwrap_or(""),
+    ))
+}
+
 /// The part of a literal term after its closing quote (`"x"^^<dt>` → `^^<dt>`,
 /// `"x"@en` → `@en`, `"x"` → ``), or `None` if `token` is not a literal.
 fn literal_suffix(token: &TermToken) -> Option<&str> {
@@ -191,6 +206,14 @@ pub fn lang_dir(token: &TermToken) -> Option<String> {
 
 /// Numeric value of a term: the lexical part of a literal parsed as `f64`
 /// (`"30"^^<…int>` → `30.0`) or a bare numeric token, else `None`.
+///
+/// **Lenient, and not what SPARQL compares with.** Any literal whose text
+/// parses counts — a plain string `"30"`, or `"1e3"^^xsd:integer` — which is
+/// right for a quick numeric read of a value but wrong for the SPARQL
+/// operators: there a string is never a number (`"01" = "1"` is false), only
+/// a literal of a numeric datatype with a valid lexical form is. The engine's
+/// `=`, `<`, `IN`, ORDER BY, MIN/MAX, SUM/AVG and arithmetic use the
+/// datatype-aware value space in `sparql::value` instead.
 ///
 /// The literal's lexical value is taken through the escape-aware
 /// [`literal_lexical`] — closing quote located correctly, body unescaped, any

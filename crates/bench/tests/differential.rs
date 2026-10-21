@@ -281,3 +281,232 @@ fn paths_and_aggregates_agree_with_oxigraph() {
     ];
     check(&rete, &store, queries);
 }
+
+/// rete's solutions with every term kept whole (datatype and language tag
+/// included), in projection order, one `var=term` list per row, sorted unless
+/// `ordered`. Unbound variables are left out, so a type error (unbound) and a
+/// value never look alike.
+fn rete_terms(rete: &Rete, q: &str, ordered: bool) -> Vec<String> {
+    let (vars, sols) = match eval_sparql(rete, q) {
+        Ok(r) => r,
+        Err(e) => return vec![format!("RETE_ERR: {e}")],
+    };
+    let mut out: Vec<String> = sols
+        .iter()
+        .map(|b| {
+            vars.iter()
+                .filter_map(|v| b.get(v).map(|t| format!("{v}={t}")))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    if !ordered {
+        out.sort();
+    }
+    out
+}
+
+/// Oxigraph's solutions in the same whole-term form.
+fn oxi_terms(store: &Store, q: &str, ordered: bool) -> Vec<String> {
+    let ev = match SparqlEvaluator::new().parse_query(q) {
+        Ok(e) => e,
+        Err(e) => return vec![format!("OXI_PARSE_ERR: {e}")],
+    };
+    let QueryResults::Solutions(sols) = ev.on_store(store).execute().unwrap() else {
+        return vec!["OXI_NOT_SOLUTIONS".to_string()];
+    };
+    let vars: Vec<String> = sols
+        .variables()
+        .iter()
+        .map(|v| v.as_str().to_string())
+        .collect();
+    let mut out = Vec::new();
+    for s in sols {
+        let s = s.unwrap();
+        out.push(
+            vars.iter()
+                .filter_map(|v| s.get(v.as_str()).map(|t| format!("{v}={t}")))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+    if !ordered {
+        out.sort();
+    }
+    out
+}
+
+/// `=`, `!=`, `<`, `<=`, `>`, `>=`, `IN`, ORDER BY, MIN / MAX and SUM / AVG
+/// over the operand matrix of SPARQL 1.1 §17.3: simple literals vs
+/// `xsd:string` vs the numeric types vs language-tagged literals vs unknown
+/// datatypes, with NaN, INF, -0, leading zeros and exponents. Every value is
+/// compared WHOLE (datatype included) and an error stays an unbound variable,
+/// so this is an exact agreement check, not the lexical one above.
+///
+/// Where Oxigraph departs from the spec the pair is kept out of the columns
+/// it gets wrong (and pinned by `rete-core`'s `sparql::value` unit tests
+/// instead): Oxigraph makes `NaN < 1` an error (op:numeric-less-than says
+/// false); `NaN <= NaN`, `<a> <= <a>` and `"x"^^ex:t <= "x"^^ex:t` true (the
+/// first is false, the others type errors); `false < true` an error
+/// (op:boolean-less-than says true); and a zoned and an unzoned date/time less
+/// than 14 hours apart unequal, where the DAWG test `open-world/date-2`
+/// requires an error (no implicit timezone, so the answer is indeterminate).
+#[test]
+fn comparison_matrix_agrees_with_oxigraph() {
+    // Canonical lexical forms only in the DATA: Oxigraph stores numbers by
+    // value (`"-3"^^xsd:int` comes back as `"-3"^^xsd:integer`, `"2.5E0"` as
+    // `"2.5"`), rete keeps the term as written. Non-canonical forms are
+    // exercised in the VALUES matrix, whose terms are never echoed.
+    let nt = format!(
+        r#"<http://ex/s1> <http://ex/label> "a"@EN .
+<http://ex/s2> <http://ex/label> "a"@en .
+<http://ex/s3> <http://ex/label> "a" .
+<http://ex/s4> <http://ex/label> "b"@fr .
+<http://ex/s1> <http://ex/v> "10" .
+<http://ex/s2> <http://ex/v> "9" .
+<http://ex/s3> <http://ex/v> "NaN" .
+<http://ex/s4> <http://ex/v> "01" .
+<http://ex/s1> <http://ex/n> "10"^^<{XSD}integer> .
+<http://ex/s2> <http://ex/n> "9.5"^^<{XSD}decimal> .
+<http://ex/s3> <http://ex/n> "2.5"^^<{XSD}double> .
+<http://ex/s4> <http://ex/n> "-3"^^<{XSD}integer> .
+<http://ex/s1> <http://ex/d> "2020-01-02"^^<{XSD}date> .
+<http://ex/s2> <http://ex/d> "2019-12-31"^^<{XSD}date> .
+<http://ex/s3> <http://ex/d> "2020-01-01"^^<{XSD}date> .
+"#
+    );
+    let quads = ingest::parse_statements(&nt, "nt").expect("parse NT");
+    let (image, _) = ingest::assemble_dataset(quads, &[]);
+    let rete = Rete::open(&image).expect("rete open");
+    let store = Store::new().unwrap();
+    store
+        .load_from_reader(RdfFormat::NTriples, nt.as_bytes())
+        .unwrap();
+
+    let p = format!("PREFIX xsd: <{XSD}> PREFIX ex: <http://ex/> ");
+    // Pairs compared under every operator.
+    let all = r#"
+        ("s01" "Nan" "Nan") ("s02" "NaN" "NaN") ("s03" "nan" "nan") ("s04" "1.0" "1")
+        ("s05" "01" "1") ("s06" "inf" "Infinity") ("s07" "abc" "abc") ("s08" "1e3" "1000")
+        ("s09" "a" "b") ("s10" "10" "9") ("s11" "" "") ("s12" "x" "x"^^xsd:string)
+        ("s13" "01"^^xsd:string "1")
+        ("n01" 1 1.0) ("n02" 1 "01"^^xsd:integer) ("n03" 1 1e0) ("n04" "1"^^xsd:int 1)
+        ("n05" 1e3 1000) ("n06" "-0"^^xsd:double "0"^^xsd:double) ("n07" "-0"^^xsd:integer 0.0)
+        ("n08" "INF"^^xsd:double "INF"^^xsd:float) ("n09" "-INF"^^xsd:double "INF"^^xsd:double)
+        ("n10" 9007199254740993 9007199254740992) ("n11" "0.1"^^xsd:float "0.1"^^xsd:double)
+        ("n12" "0.5"^^xsd:float 0.5e0) ("n13" 1 1.5) ("n14" 2 1.5e0) ("n15" 0.30 0.3)
+        ("n16" "+1"^^xsd:unsignedByte 1) ("n17" "1e3"^^xsd:double 999.9)
+        ("x01" "1" 1) ("x02" "1" 1.0) ("x03" 1 "1"@en) ("x04" "1" <http://ex/1>)
+        ("x05" "true"^^xsd:boolean "true")
+        ("l01" "a"@en "a"@en) ("l02" "a"@en "a"@fr) ("l03" "a"@en "a") ("l04" "a"@en "b"@en)
+        ("l05" "b"@en "a"@en)
+        ("u02" "a"^^ex:t "b"^^ex:t) ("u03" "a"^^ex:t "a")
+        ("u04" "a"^^ex:t <http://ex/a>) ("u05" "a"^^ex:t 1)
+        ("u07" "abc"^^xsd:integer 1)
+        ("u08" "1e3"^^xsd:integer 1000) ("u09" "a"^^ex:t "a"@en)
+        ("i01" <http://ex/a> <http://ex/b>) ("i02" <http://ex/a> "http://ex/a")
+        ("t01" "2020-01-01T00:00:00Z"^^xsd:dateTime "2020-01-01T01:00:00+01:00"^^xsd:dateTime)
+        ("t03" "2020-01-01T00:00:00Z"^^xsd:dateTime "2020-01-02T15:00:00"^^xsd:dateTime)
+        ("t04" "2020-01-01T00:00:00.50Z"^^xsd:dateTime "2020-01-01T00:00:00.5Z"^^xsd:dateTime)
+        ("t05" "2019-12-31"^^xsd:date "2020-01-01"^^xsd:date) ("t06" "2020"^^xsd:gYear "2021"^^xsd:gYear)
+        ("t07" "2020-01-01T00:00:00"^^xsd:dateTime "2020-01-01"^^xsd:date)
+        ("t08" "PT60M"^^xsd:duration "PT1H"^^xsd:duration)
+        ("t09" "P1M"^^xsd:duration "P30D"^^xsd:duration)
+        ("t10" "P1M"^^xsd:duration "P32D"^^xsd:duration)
+        ("t11" "P1D"^^xsd:dayTimeDuration "PT24H"^^xsd:dayTimeDuration)
+        ("t12" "2020-01-01T00:00:00"^^xsd:dateTime "2020")
+    "#;
+    // Pairs whose ORDER Oxigraph gets differently from the spec: `=` / `!=` only.
+    let eq_only = r#"
+        ("e01" "NaN"^^xsd:double "NaN"^^xsd:double) ("e02" "NaN"^^xsd:double 1)
+        ("e03" "NaN"^^xsd:float "NaN"^^xsd:double) ("e04" <http://ex/a> <http://ex/a>)
+        ("e05" "true"^^xsd:boolean "1"^^xsd:boolean) ("e06" "false"^^xsd:boolean "true"^^xsd:boolean)
+        ("e07" "a"^^ex:t "a"^^ex:t) ("e08" "abc"^^xsd:integer "abc"^^xsd:integer)
+    "#;
+    let queries: Vec<(String, bool)> = vec![
+        (
+            format!(
+                "{p}SELECT ?id ?eq ?ne ?lt ?le ?gt ?ge WHERE {{ VALUES (?id ?a ?b) {{ {all} }} \
+                 BIND(?a = ?b AS ?eq) BIND(?a != ?b AS ?ne) BIND(?a < ?b AS ?lt) \
+                 BIND(?a <= ?b AS ?le) BIND(?a > ?b AS ?gt) BIND(?a >= ?b AS ?ge) }}"
+            ),
+            false,
+        ),
+        (
+            format!(
+                "{p}SELECT ?id ?eq ?ne WHERE {{ VALUES (?id ?a ?b) {{ {eq_only} }} \
+                 BIND(?a = ?b AS ?eq) BIND(?a != ?b AS ?ne) }}"
+            ),
+            false,
+        ),
+        // FILTER drops false and error alike; `!` drops only false.
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:v ?v FILTER(?v = \"10\") }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:v ?v FILTER(?v = 10) }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:v ?v FILTER(?v != ?v) }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:v ?v FILTER(?v > 5) }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:v ?v FILTER(!(?v > 5)) }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:v ?v FILTER(?v > \"5\") }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:n ?n FILTER(?n > 5) }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:n ?n FILTER(?n = \"10\") }}"), false),
+        (
+            format!("{p}SELECT ?s WHERE {{ ?s ex:d ?d FILTER(?d >= \"2020-01-01\"^^xsd:date) }}"),
+            false,
+        ),
+        // Language tags compare case-insensitively (Oxigraph lower-cases on load).
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:label ?l FILTER(?l = \"a\"@en) }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:label ?l FILTER(?l != \"a\"@en) }}"), false),
+        // IN / NOT IN use `=`.
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:v ?v FILTER(?v IN (10, \"9\")) }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:v ?v FILTER(?v NOT IN (10, \"9\")) }}"), false),
+        (format!("{p}SELECT ?s WHERE {{ ?s ex:n ?n FILTER(?n IN (\"10\", 9.5)) }}"), false),
+        // ORDER BY within one kind (between kinds the order is
+        // implementation-defined, §15.1): strings by code point, numbers by
+        // value, dates by value, labels with and without tags interleaved.
+        (format!("{p}SELECT ?v WHERE {{ ?s ex:v ?v }} ORDER BY ?v"), true),
+        (format!("{p}SELECT ?v WHERE {{ ?s ex:v ?v }} ORDER BY DESC(?v)"), true),
+        (format!("{p}SELECT ?n WHERE {{ ?s ex:n ?n }} ORDER BY ?n"), true),
+        (format!("{p}SELECT ?d WHERE {{ ?s ex:d ?d }} ORDER BY DESC(?d)"), true),
+        (
+            format!("{p}SELECT ?x WHERE {{ VALUES ?x {{ \"b\" \"a\"@en \"c\"@fr \"a\" }} }} ORDER BY ?x"),
+            true,
+        ),
+        (
+            format!("{p}SELECT ?x WHERE {{ VALUES ?x {{ \"z\" <http://ex/b> <http://ex/a> }} }} ORDER BY ?x"),
+            true,
+        ),
+        // MIN / MAX follow ORDER BY; SUM / AVG take numbers only.
+        (format!("{p}SELECT (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) WHERE {{ ?s ex:v ?v }}"), false),
+        (format!("{p}SELECT (MIN(?n) AS ?lo) (MAX(?n) AS ?hi) WHERE {{ ?s ex:n ?n }}"), false),
+        (format!("{p}SELECT (MIN(?d) AS ?lo) (MAX(?d) AS ?hi) WHERE {{ ?s ex:d ?d }}"), false),
+        (format!("{p}SELECT (SUM(?v) AS ?sum) WHERE {{ ?s ex:v ?v }}"), false),
+        (
+            format!("{p}SELECT (AVG(?v) AS ?avg) WHERE {{ ?s ex:v ?v FILTER(?v != \"NaN\") }}"),
+            false,
+        ),
+        // Numeric functions and arithmetic take numbers only.
+        (format!("{p}SELECT ?s (ABS(?v) AS ?a) WHERE {{ ?s ex:v ?v }}"), false),
+        (format!("{p}SELECT ?s (?v + 1 AS ?a) WHERE {{ ?s ex:v ?v }}"), false),
+        (format!("{p}SELECT ?s (STR(?n + 1) AS ?a) WHERE {{ ?s ex:n ?n }}"), false),
+    ];
+    let mut failures = Vec::new();
+    for (q, ordered) in &queries {
+        let r = rete_terms(&rete, q, *ordered);
+        let o = oxi_terms(&store, q, *ordered);
+        if r != o {
+            let rs: std::collections::BTreeSet<_> = r.iter().collect();
+            let os: std::collections::BTreeSet<_> = o.iter().collect();
+            let only_r: Vec<_> = rs.difference(&os).collect();
+            let only_o: Vec<_> = os.difference(&rs).collect();
+            failures.push(format!(
+                "MISMATCH\n  q: {q}\n  rete only: {only_r:?}\n  oxi only:  {only_o:?}\n  rete: {r:?}\n  oxi:  {o:?}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} queries disagreed with Oxigraph:\n{}",
+        failures.len(),
+        queries.len(),
+        failures.join("\n")
+    );
+}
