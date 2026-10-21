@@ -69,13 +69,14 @@
   </div>
   <div class="q"><h2>The query</h2>PREFIX schema: &lt;http://schema.org/&gt;
 PREFIX b: &lt;https://data.bcu-lausanne.ch/&gt;
+PREFIX xsd: &lt;http://www.w3.org/2001/XMLSchema#&gt;
 SELECT ?title ?date ?lib WHERE {
   ?w a schema:Book ;
      schema:name ?title ;
      schema:startDate ?date ;
      b:heldAt ?h .
   ?h schema:name ?lib .
-  FILTER(?date &gt; 1450)
+  FILTER(?date &gt; &quot;1450&quot;^^xsd:gYear)
 } ORDER BY ?date LIMIT 50</div>
   <p class="alt" style="margin-top:20px">
     <a href="../playground.html">rete playground</a> ·
