@@ -55,6 +55,20 @@ on:
         required: false
         type: number
         default: 60
+      wheels:
+        description: >-
+          Artifact name pattern (e.g. wheel-linux-*) of rete-graph wheels built
+          earlier in this run. They are downloaded and passed as the `wheels`
+          build context, which replaces the Dockerfile's empty `wheels` stage.
+          Empty passes nothing.
+        required: false
+        type: string
+        default: ""
+      build-args:
+        description: Newline-separated KEY=VALUE build arguments.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -95,6 +109,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Wheels uploaded by an earlier job of this same run (a reusable
+      # workflow's jobs belong to the caller's run, so its artifacts are here).
+      - name: Fetch the engine wheelhouse built in this run
+        if: inputs.wheels != ''
+        uses: actions/download-artifact@v7
+        with:
+          pattern: ${{ inputs.wheels }}
+          path: ${{ runner.temp }}/wheels
+          merge-multiple: true
+
       - name: Substitute {arch} into the cache specs
         id: cache
         shell: bash
@@ -115,6 +139,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: ${{ steps.cache.outputs.from }}
           cache-to: ${{ steps.cache.outputs.to }}
+          build-contexts: ${{ inputs.wheels != '' && format('wheels={0}/wheels', runner.temp) || '' }}
+          build-args: ${{ inputs.build-args }}
           # Attestations turn each per-arch push into a nested image index, which
           # leaves `unknown/unknown` entries in the merged manifest list. The
           # workspace SBOM comes from release.yml's cyclonedx job instead.

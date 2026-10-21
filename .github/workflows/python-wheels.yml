@@ -1,0 +1,95 @@
+name: Python wheels (reusable)
+
+# The native `rete-graph` wheels, built ONE way for every workflow that needs
+# them in the same run:
+#
+#   python-client-publish.yml  all four platforms, uploaded to PyPI
+#   release.yml                all four, bundled into the Blender add-on
+#   docker-publish.yml         the two Linux ones, installed into rete-relay
+#   relay-test.yml             Linux x86-64, installed into the image it tests
+#
+# Before a `v*` tag released everything, the relay image and the Blender
+# add-on downloaded these wheels from PyPI at build time, so the release tag
+# could only be pushed after a separate PyPI tag had published them and a
+# second PR had raised the PyPI floors. Building them here, from the commit
+# being released, removes that ordering: nothing in a release waits for, or
+# silently falls back to, a registry.
+#
+# Each artifact is named `wheel-<platform>`: the PyPI workflow downloads
+# `wheel-*` (these plus its Pyodide wheels and sdist), the others pick what
+# they need. A reusable workflow's artifacts belong to the calling run.
+#
+# This file holds no credentials and asks for none; publishing stays in
+# python-client-publish.yml, the file PyPI's trusted publisher names.
+on:
+  workflow_call:
+    inputs:
+      platforms:
+        description: >-
+          Space-separated subset of linux-x86_64, linux-aarch64, windows-x64,
+          macos-universal2. Empty builds all four.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: select wheel platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - id: select
+        shell: python
+        env:
+          WANT: ${{ inputs.platforms }}
+        run: |
+          import json, os
+
+          # Wheels are abi3-py39: one artifact per platform covers CPython >= 3.9.
+          # ring's pregenerated ARM assembly needs a newer cross-assembler than
+          # manylinux2014 ships (`#error "ARM assembler must define
+          # __ARM_ARCH"`); the 2_28 image's toolchain defines it. Floor is
+          # glibc 2.28 (Debian 10+ / Ubuntu 20.04+), fine for aarch64.
+          platforms = [
+              {"name": "linux-x86_64", "runner": "ubuntu-latest", "target": "x86_64", "manylinux": "auto"},
+              {"name": "linux-aarch64", "runner": "ubuntu-latest", "target": "aarch64", "manylinux": "2_28"},
+              {"name": "windows-x64", "runner": "windows-latest", "target": "x64", "manylinux": ""},
+              {"name": "macos-universal2", "runner": "macos-latest", "target": "universal2-apple-darwin", "manylinux": ""},
+          ]
+          want = os.environ["WANT"].split()
+          unknown = sorted(set(want) - {p["name"] for p in platforms})
+          if unknown:
+              raise SystemExit(f"unknown wheel platform(s): {', '.join(unknown)}")
+          chosen = [p for p in platforms if not want or p["name"] in want]
+          print("building:", ", ".join(p["name"] for p in chosen))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"matrix={json.dumps(chosen)}\n")
+
+  wheel:
+    name: wheel ${{ matrix.platform.name }}
+    needs: plan
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 45
+    strategy:
+      # One platform failing must not cancel the others' wheels.
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist -m clients/python/Cargo.toml
+          manylinux: ${{ matrix.platform.manylinux || 'auto' }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.platform.name }}
+          path: dist
+          if-no-files-found: error

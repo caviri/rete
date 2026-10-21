@@ -1,6 +1,17 @@
 # HTTP Range storage gateway (project-agnostic) — Docker SDK. Serves /data with
 # Range + CORS on port 7860. Theme the landing page by shipping a branding.json
 # (optional — without it the gateway shows a neutral page).
+
+# The engine wheelhouse, EMPTY unless the build supplies one. A plain
+# `docker build` (and the Hugging Face Space) installs rete-graph from PyPI. A
+# release, and relay-test.yml, pass the wheels they built from the same commit:
+#   docker build --build-context wheels=<dir with rete_graph-*.whl> \
+#                --build-arg RETE_GRAPH_VERSION=X.Y.Z clients/relay
+# A named build context replaces the stage of the same name, so the engine then
+# comes from that directory and pip is not allowed to look anywhere else for it.
+# That is what lets a release build this image before PyPI has the version.
+FROM scratch AS wheels
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -8,7 +19,22 @@ WORKDIR /app
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends graphviz \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# RETE_GRAPH_VERSION, when given, is the engine version the image must carry:
+# the build fails rather than ship any other, e.g. a PyPI wheel that won over a
+# missing or older local one.
+ARG RETE_GRAPH_VERSION=
+RUN --mount=type=bind,from=wheels,target=/wheels \
+    set -eu; \
+    if ls /wheels/rete_graph-*.whl >/dev/null 2>&1; then \
+        echo "rete-graph from the build's wheelhouse, not PyPI:"; ls /wheels; \
+        pip install --no-cache-dir --no-index --find-links /wheels rete-graph; \
+    fi; \
+    pip install --no-cache-dir -r requirements.txt; \
+    installed=$(python -c 'import importlib.metadata as m; print(m.version("rete-graph"))'); \
+    echo "rete-graph $installed installed"; \
+    if [ -n "$RETE_GRAPH_VERSION" ] && [ "$installed" != "$RETE_GRAPH_VERSION" ]; then \
+        echo "expected rete-graph $RETE_GRAPH_VERSION, got $installed" >&2; exit 1; \
+    fi
 COPY app.py rete_service.py rete_api.py rete_mcp.py rete_sparql.py rete_media.py rete_author.py rete_qlint.py rete_ask.py catalog.json branding.json ./
 
 # HF persistent storage (and any mounted bucket) lives at /data.

@@ -12,8 +12,11 @@ name: Publish container images
 #   ghcr.io/caviri/rete-relay   the gateway from clients/relay/ — HTTP Range + CORS
 #                               over /data, the `/api` SPARQL plane and the
 #                               `/mcp` MCP server. Same image the live Space
-#                               runs; the engine comes from the published
-#                               `rete-graph` wheel, so this rebuilds in minutes.
+#                               runs. The engine is the `rete-graph` wheel this
+#                               run builds from the tagged commit (job
+#                               `relay-wheels`), not one fetched from PyPI, so
+#                               the image never waits for the PyPI upload the
+#                               same tag starts in python-client-publish.yml.
 #   ghcr.io/caviri/rete-cli     just the `rete` binary on distroless (~50 MB),
 #                               for `rete build` / `rete serve` in CI or on a
 #                               server without dragging a toolchain along.
@@ -39,6 +42,7 @@ on:
       - "clients/relay/**"
       - "docker/**"
       - ".github/workflows/docker-*.yml"
+      - ".github/workflows/python-wheels.yml"
   workflow_dispatch:
     inputs:
       images:
@@ -65,6 +69,7 @@ jobs:
       relay: ${{ steps.select.outputs.relay }}
       cli: ${{ steps.select.outputs.cli }}
       dev-tag: ${{ steps.select.outputs.dev-tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
 
@@ -83,7 +88,20 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match workspace version $workspace"
             exit 1
           fi
+          # The check every workflow the tag starts makes on this commit: every
+          # client, pin and floor names the version, or nothing publishes.
+          python3 scripts/sync_versions.py --check-tag "$GITHUB_REF_NAME"
           echo "publishing images for version $workspace"
+
+      # The engine version the relay image must carry: the Dockerfile fails the
+      # build if the installed rete-graph is anything else.
+      - name: Engine version for the relay image
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' clients/python/pyproject.toml | head -1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Select images
         id: select
@@ -140,9 +158,21 @@ jobs:
       # ~8 cargo-install-from-source tools; a cold arm64 build is not quick.
       timeout-minutes: 120
 
+  # The two Linux wheels the relay image installs (amd64 and arm64), built by
+  # the reusable workflow python-client-publish.yml uses for PyPI, from this
+  # commit. Until 0.3.6 the image pip-installed the engine from PyPI, so a `v*`
+  # tag had to wait for a separate `py-v*` upload and a floors PR.
+  relay-wheels:
+    name: rete-graph wheels for the relay
+    needs: plan
+    if: needs.plan.outputs.relay == 'true'
+    uses: ./.github/workflows/python-wheels.yml
+    with:
+      platforms: linux-x86_64 linux-aarch64
+
   relay:
     name: rete-relay
-    needs: plan
+    needs: [plan, relay-wheels]
     if: needs.plan.outputs.relay == 'true'
     permissions:
       contents: read
@@ -157,6 +187,8 @@ jobs:
         the /api SPARQL plane and the /mcp MCP server. Port 7860, data in /data.
       cache-from: type=gha,scope=rete-relay-{arch}
       cache-to: type=gha,mode=max,scope=rete-relay-{arch}
+      wheels: wheel-linux-*
+      build-args: RETE_GRAPH_VERSION=${{ needs.plan.outputs.version }}
       timeout-minutes: 30
 
   cli:
@@ -178,11 +210,22 @@ jobs:
       cache-to: type=gha,mode=max,scope=rete-cli-{arch}
       timeout-minutes: 45
 
+  # The relay is verified the way a release builds it: with the engine wheel
+  # built from this PR's commit, so a release PR whose floor names a version
+  # PyPI does not have yet still builds.
+  verify-wheels:
+    name: rete-graph wheel for the relay check
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/python-wheels.yml
+    with:
+      platforms: linux-x86_64
+
   # The toolchain image is left out of the PR check on purpose: ci.yml already
   # builds .devcontainer/Dockerfile on every PR that touches it, and doing it
   # twice would add ~40 minutes for no extra signal.
   verify:
     name: verify ${{ matrix.image }} builds (no push)
+    needs: verify-wheels
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -195,6 +238,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v4
+      - name: Fetch the engine wheel built in this run
+        if: matrix.image == 'relay'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: wheel-linux-*
+          path: ${{ runner.temp }}/wheels
+          merge-multiple: true
+      - name: Engine version for the relay image
+        id: version
+        if: matrix.image == 'relay'
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' clients/python/pyproject.toml | head -1)
+          echo "build-args=RETE_GRAPH_VERSION=$version" >> "$GITHUB_OUTPUT"
       - name: Build for amd64 only
         uses: docker/build-push-action@v7
         with:
@@ -203,3 +259,5 @@ jobs:
           platforms: linux/amd64
           push: false
           cache-from: type=gha,scope=rete-${{ matrix.image }}-amd64
+          build-contexts: ${{ matrix.image == 'relay' && format('wheels={0}/wheels', runner.temp) || '' }}
+          build-args: ${{ steps.version.outputs.build-args }}

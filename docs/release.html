@@ -616,16 +616,62 @@ release body is generated from that section, not from this page.</p>
 <p>Rete is deliberately 0.x. The on-disk format is already stable generation 1,
 but the 0.3 line proves the packaging, the docs.rs builds, <code>cargo install rete-cli</code>, and the release automation against the real registries before any
 version has to honour a compatibility promise.</p>
-<h2 id="how-a-v-tag-becomes-a-github-release">How a <code>v*</code> tag becomes a GitHub release</h2>
-<p>Two workflows build for every <code>v*</code> tag, and exactly one of them creates the
-release:</p>
-<table><thead><tr><th>step</th><th>workflow / job</th><th>what it does</th></tr></thead><tbody>
-<tr><td>1</td><td><code>release.yml</code> / <code>release identity</code></td><td>checks the tag equals <code>v</code> + the <code>[workspace.package]</code> version</td></tr>
-<tr><td>2</td><td><code>release.yml</code> / <code>draft GitHub release</code></td><td>extracts the <code>## [X.Y.Z]</code> section of <code>CHANGELOG.md</code> (the job <strong>fails</strong> if it is missing or empty) and creates a <strong>draft</strong> release named <code>Rete X.Y.Z</code>, or reuses the one the tag already has</td></tr>
-<tr><td>3</td><td><code>desktop-release.yml</code> / <code>resolve release</code></td><td>never creates a <code>v*</code> release: it waits (up to 20 min) for step 2's draft and hands its id to the macOS and Windows builders, which upload the installers into it</td></tr>
-<tr><td>4</td><td><code>release.yml</code> / <code>checksums, SBOM, attestations, and GitHub release</code></td><td>uploads the archives, WASM bundle, extensions, <code>SHA256SUMS</code> and SBOM with <code>--clobber</code>, then publishes the draft</td></tr>
-<tr><td>5</td><td><code>release.yml</code> / <code>protected crates.io publishing</code></td><td>runs in the <code>crates-io</code> environment (<code>v*</code> tags only, no reviewer), re-runs the <code>cargo audit</code>/<code>cargo deny</code> gate, publishes through trusted publishing, and attaches the receipt</td></tr>
+<h2 id="release-procedure">Release procedure</h2>
+<p>One tag releases every channel: crates.io, PyPI, npm, the GitHub release with
+all its assets, the container images, and the File Explorer installers.</p>
+<ol>
+<li><strong>One release PR.</strong> <code>python3 scripts/sync_versions.py --set X.Y.Z</code> stamps
+the version on the workspace, the <code>rete-core</code> pins, every client, the PyPI
+floors and the Binder pin (see <a href="#cutting-a-version">Cutting a version</a>).
+The same PR carries what <code>--set</code> does not own: the lockfiles cargo and npm
+rewrite, <code>codemeta.json</code>, the File Explorer's <code>tauri.conf.json</code>, the
+browser artifacts (<code>scripts/build_wasm.sh</code>; the engine version is compiled
+in), the regenerated docs, and the <code>Unreleased</code> entries of <code>CHANGELOG.md</code>
+moved under <code>## [X.Y.Z] - date</code> (the 0.3.6 cut, #315, is a complete
+example). Run the publish gate before merging:
+<code>docker compose run --rm dev bash scripts/release_check.sh security</code>.</li>
+<li><strong>Merge it</strong> (squash) once CI is green.</li>
+<li><strong>Push the tag</strong> on the merge commit:
+<code>git tag vX.Y.Z &lt;merge-sha&gt; &amp;&amp; git push origin vX.Y.Z</code>.</li>
+<li><strong>One manual step</strong> remains: upload the Pyodide fallback wheel to the
+bucket with <code>scripts/publish_pyodide_wheel.sh</code> once the PyPI workflow has
+finished (<a href="#the-pyodide-fallback-wheel">why</a>).</li>
+</ol>
+<p>Until 0.3.6 the clients released from their own <code>py-v*</code> and <code>js-v*</code> tags, and
+the <code>v*</code> tag had to wait for PyPI and for a second "raise the PyPI floors" PR,
+because the relay image and the Blender add-on installed <code>rete-graph</code> from
+PyPI while they were built. Both are now built from wheels compiled in the
+same run, so nothing in a release waits for a registry and no tag order
+exists. The old <code>py-v*</code>/<code>js-v*</code> tags stay in the repository as history; they
+trigger nothing.</p>
+<h2 id="what-the-v-tag-runs">What the <code>v*</code> tag runs</h2>
+<p>Five workflows start on the tag, independently. Each one first runs
+<code>scripts/sync_versions.py --check-tag vX.Y.Z</code> on the tagged commit: the tag
+must be <code>v</code> + the workspace version <strong>and</strong> every channel must name that
+version. They all check the same thing on the same commit, so a mis-stamped
+tag stops every channel before any publishes, instead of shipping the ones
+that happened to match.</p>
+<table><thead><tr><th>workflow / job</th><th>what it does</th></tr></thead><tbody>
+<tr><td><code>release.yml</code> / <code>release identity</code></td><td>checks the tag equals <code>v</code> + the <code>[workspace.package]</code> version, then <code>--check-tag</code></td></tr>
+<tr><td><code>release.yml</code> / <code>draft GitHub release</code></td><td>extracts the <code>## [X.Y.Z]</code> section of <code>CHANGELOG.md</code> (the job <strong>fails</strong> if it is missing or empty) and creates a <strong>draft</strong> release named <code>Rete X.Y.Z</code>, or reuses the one the tag already has</td></tr>
+<tr><td><code>release.yml</code> / native targets, <code>browser WASM bundle</code>, <code>Claude Desktop extension</code></td><td>build the six native archives, the wasm bundle and the <code>.mcpb</code> (<code>rete-X.Y.Z.mcpb</code> and <code>rete.mcpb</code>)</td></tr>
+<tr><td><code>release.yml</code> / <code>rete-graph wheels</code> → <code>Blender add-on</code></td><td>builds the four native <code>rete-graph</code> wheels from the tagged commit (<code>python-wheels.yml</code>), tests the add-on against them, and bundles exactly those wheels into <code>rete-blender-X.Y.Z.zip</code></td></tr>
+<tr><td><code>desktop-release.yml</code> / <code>resolve release</code></td><td>never creates a <code>v*</code> release: it waits (up to 20 min) for the draft and hands its id to the macOS and Windows builders, which upload the File Explorer installers into it</td></tr>
+<tr><td><code>release.yml</code> / <code>checksums, SBOM, attestations, and GitHub release</code></td><td>uploads the archives, WASM bundle, extensions, <code>SHA256SUMS</code> and SBOM with <code>--clobber</code>, then publishes the draft</td></tr>
+<tr><td><code>release.yml</code> / <code>protected crates.io publishing</code></td><td>runs in the <code>crates-io</code> environment (<code>v*</code> tags only, no reviewer), re-runs the <code>cargo audit</code>/<code>cargo deny</code> gate, publishes through trusted publishing, and attaches the receipt</td></tr>
+<tr><td><code>python-client-publish.yml</code></td><td>tests the binding, builds the four native wheels (<code>python-wheels.yml</code>), the two Pyodide wheels and the sdist, then publishes them to PyPI in the <code>pypi</code> environment (<code>v*</code> tags only); also leaves the legacy-tagged Pyodide wheel as an artifact for the bucket</td></tr>
+<tr><td><code>js-client-publish.yml</code></td><td>builds the wasm engine, tests and packs <code>rete-graph</code>, runs <code>npm publish --dry-run</code>, then publishes that tarball with provenance in the <code>npm</code> environment (<code>v*</code> tags only)</td></tr>
+<tr><td><code>docker-publish.yml</code></td><td>builds <code>rete-relay</code> (on the two Linux wheels it builds from the tagged commit; the build fails unless the image carries rete-graph X.Y.Z), <code>rete-cli</code> and <code>rete-dev</code> for amd64 and arm64, and pushes them to ghcr.io as <code>X.Y.Z</code>, <code>X.Y</code> and <code>latest</code></td></tr>
 </tbody></table>
+<p>None of them waits for another, except the File Explorer builders for the
+draft. PyPI, npm, crates.io and GHCR are therefore published in whatever order
+the runners finish; a channel that fails (a crates.io audit advisory, a flaky
+runner) is re-run on its own, and the versions already on the other
+registries cannot be replaced, so fix forward rather than re-tagging.</p>
+<p><code>workflow_dispatch</code> on any of them, from any branch, is a dry run: everything
+is built and tested, the version check runs against the workspace version, and
+nothing is published (<code>docker-publish.yml</code> is the exception: a manual run
+pushes images, so dry-run the relay with <code>relay-test.yml</code> instead).</p>
 <p>On publish, only a semver prerelease (<code>-rc.1</code>, <code>-alpha</code>, <code>-beta.2</code>) is marked
 prerelease. A final version, 0.x included, is a normal release and becomes
 <strong>Latest</strong> unless a newer final <code>v*</code> release already exists (so a backport
@@ -640,8 +686,6 @@ release, the jobs stop and name them rather than guess: delete the extras by
 hand. <code>workflow_dispatch</code> runs of <code>release.yml</code> never touch a GitHub release.</p>
 <p>All of that logic lives in <code>scripts/github_release.py</code>, tested against a fake
 <code>gh</code> by <code>python3 -m unittest scripts/tests/test_github_release.py</code>.</p>
-<p>Before tagging, therefore: move the <code>Unreleased</code> entries under a
-<code>## [X.Y.Z] - date</code> heading in <code>CHANGELOG.md</code>.</p>
 <h2 id="install-and-artifacts">Install and artifacts</h2>
 <pre><code class="language-sh">cargo install rete-cli --locked
 </code></pre>
@@ -745,28 +789,37 @@ Run it before tagging:</p>
 <pre><code class="language-sh">docker compose run --rm dev bash scripts/release_check.sh security
 </code></pre>
 <h2 id="language-clients">Language clients</h2>
-<p>Client versions track the engine's <code>MAJOR.MINOR</code>: <code>rete-graph</code> 0.3.x on PyPI and
-npm, the R package, and the Java client (<code>io.github.caviri:rete-*</code>), all embed
-engine 0.3.x. The patch component moves independently, so a binding-only fix ships as 0.3.1 without an engine release.
-<code>scripts/sync_versions.py --check</code> enforces this in CI; <code>--write</code> realigns.
-Every client also exposes the engine version it embeds — <code>rete_graph .__engine_version__</code> in Python — which is the reliable answer to "does my
-install support feature X?", since the binding's own version tracks the binding.</p>
-<p>Clients release from their own tags (<code>py-v0.3.0</code>, <code>js-v0.3.0</code>), not the <code>v*</code>
-release tag.</p>
+<p>Every client carries the engine's version exactly: <code>rete-graph</code> X.Y.Z on PyPI
+and npm, the R package and the Java client (<code>io.github.caviri:rete-*</code>) all
+embed engine X.Y.Z, because one <code>v*</code> tag releases them all. A binding-only fix
+is therefore a full release (crates.io gets the unchanged crates under the new
+version too); until 0.3.6 the clients had their own tags and only had to share
+the engine's <code>MAJOR.MINOR</code>. <code>scripts/sync_versions.py --check</code> enforces the
+single version in CI, <code>--check-tag</code> is what the release workflows run, and
+<code>--write</code> realigns every channel on the workspace version. Every client also
+exposes the engine version it embeds — <code>rete_graph.__engine_version__</code> in
+Python.</p>
 <h3 id="registry-credentials">Registry credentials</h3>
 <p>No registry token is stored anywhere: the repository and its environments
 hold no secrets, and every registry trusts a workflow identity instead
 (GitHub OIDC, "trusted publishing"):</p>
 <table><thead><tr><th>registry</th><th>workflow / job</th><th>environment</th><th>how it authenticates</th></tr></thead><tbody>
 <tr><td>crates.io</td><td><code>release.yml</code> / <code>protected crates.io publishing</code></td><td><code>crates-io</code> (<code>v*</code> tags only)</td><td><code>rust-lang/crates-io-auth-action</code> trades OIDC for a short-lived token, revoked after the job</td></tr>
-<tr><td>PyPI</td><td><code>python-client-publish.yml</code> / <code>publish to PyPI</code></td><td><code>pypi</code></td><td><code>uv publish --trusted-publishing always</code> (no attestations uploaded)</td></tr>
-<tr><td>npm</td><td><code>js-client-publish.yml</code> / <code>publish to npm</code></td><td><code>npm</code></td><td>the npm CLI (≥ 11.5.1) trades OIDC for a short-lived token; <code>--provenance</code> signs the build</td></tr>
+<tr><td>PyPI</td><td><code>python-client-publish.yml</code> / <code>publish to PyPI</code></td><td><code>pypi</code> (<code>v*</code> tags only)</td><td><code>uv publish --trusted-publishing always</code> (no attestations uploaded)</td></tr>
+<tr><td>npm</td><td><code>js-client-publish.yml</code> / <code>publish to npm</code></td><td><code>npm</code> (<code>v*</code> tags only)</td><td>the npm CLI (≥ 11.5.1) trades OIDC for a short-lived token; <code>--provenance</code> signs the build</td></tr>
 </tbody></table>
+<p>None of the three environments has a required reviewer: the tag is the
+approval. What guards them is the tag-only deployment policy, the short-lived
+OIDC token and, for crates.io, the audit gate.</p>
 <p>Each registry's trusted-publisher entry names the workflow <strong>file</strong> (and the
 environment), so renaming either breaks that channel until the entry on the
-registry is updated. The npm job publishes only the tarball the <code>build</code> job
-tested, and only for a pushed <code>js-v*</code> tag; a <code>workflow_dispatch</code> run is a dry
-run (<a href="clients-dev.html#releasing-to-npm">details</a>).</p>
+registry is updated. That is also why PyPI and npm publish from workflows of
+their own, started by the same tag, rather than from jobs <code>release.yml</code> calls:
+PyPI does not accept a reusable workflow as a trusted publisher, and npm checks
+the <em>calling</em> workflow's filename, which would be <code>release.yml</code>. The npm job
+publishes only the tarball the <code>build</code> job tested, and only for a pushed <code>v*</code>
+tag; a <code>workflow_dispatch</code> run is a dry run
+(<a href="clients-dev.html#releasing-to-npm">details</a>).</p>
 <p>npm is phasing out granular tokens that bypass 2FA: they lost account and
 package-management actions in July 2026, and from January 2027 they can only
 stage a publish for a maintainer to approve. That is the notice
@@ -776,18 +829,21 @@ publishing, which is what published 0.3.6. With no token in use, the package's
 authentication and disallow tokens"; trusted publishing keeps working under
 that setting.</p>
 <h3 id="cutting-a-version">Cutting a version</h3>
-<p><code>scripts/sync_versions.py --set X.Y.Z</code> stamps the workspace, the exact
-<code>rete-core</code> pins the publishable crates carry, and every client manifest.
-<code>--write</code> will not do this: it only repairs <code>MAJOR.MINOR</code> drift (it writes
-<code>{minor}.0</code>), so it is a no-op for the patch bump that <em>is</em> the release.</p>
-<p>Two groups deliberately lag the bump, because they name a version a registry
-must already serve:</p>
-<table><thead><tr><th>what</th><th>when</th><th>why</th></tr></thead><tbody>
-<tr><td>the three PyPI floors — <code>clients/relay/requirements.txt</code>, <code>clients/blender/{build.sh,Dockerfile}</code></td><td><strong>after</strong> the wheel is on PyPI, via <code>--set-published X.Y.Z</code></td><td>they <code>pip install rete-graph</code> at image-build time; bumping them early fails every image build with <code>Could not find a version that satisfies rete-graph&gt;=X.Y.Z</code></td></tr>
-<tr><td>the Pyodide fallback URL in <code>docs/python.md</code></td><td><strong>with</strong> the bump (<code>--set</code> does it)</td><td><code>publish_pyodide_wheel.sh</code> refuses to upload a wheel whose version disagrees with the docs, so the doc has to promise it first — the URL 404s until that upload</td></tr>
+<p><code>scripts/sync_versions.py --set X.Y.Z</code> stamps, in one commit, everything that
+names the version:</p>
+<table><thead><tr><th>what</th><th>note</th></tr></thead><tbody>
+<tr><td>the workspace and the exact <code>rete-core</code> pins the publishable crates carry</td><td></td></tr>
+<tr><td>every client manifest: Python, npm, R, Java</td><td></td></tr>
+<tr><td>the PyPI floors: <code>clients/relay/requirements.txt</code>, <code>clients/blender/{build.sh,Dockerfile}</code></td><td>a release builds the relay image and the Blender add-on from the wheels of its own run, so a floor may name a version PyPI does not serve yet; only a plain local <code>docker build</code> or the HF Space resolves it from PyPI, after the release</td></tr>
+<tr><td>the Binder pin in <code>binder/requirements.txt</code></td><td>mybinder.org resolves it from PyPI at launch, so a Binder launch from <code>main</code> fails between the merge and the tag's PyPI upload (about half an hour); nothing in CI reads it</td></tr>
+<tr><td>the Pyodide fallback URL in <code>docs/python.md</code></td><td><code>publish_pyodide_wheel.sh</code> refuses to upload a wheel whose version disagrees with the docs, so the doc has to promise it first — the URL 404s until that upload</td></tr>
 </tbody></table>
-<p><code>--check</code> keeps passing while the floors lag, because the lockstep contract
-compares <code>MAJOR.MINOR</code> only.</p>
+<p>Up to 0.3.6 the floors and the Binder pin waited for a second PR
+(<code>--set-published</code>, now removed), because the relay and Blender builds
+installed <code>rete-graph</code> from PyPI and failed on a floor PyPI could not satisfy.
+CI no longer depends on PyPI for them either: <code>relay-test.yml</code> and
+<code>docker-publish.yml</code>'s PR check build the relay image on a wheel compiled from
+the PR's own commit.</p>
 <p>Also note the engine version is compiled into the wasm (<code>rete_core::VERSION</code>),
 so a bump changes the shipped browser binaries: rerun <code>scripts/build_wasm.sh</code>
 and commit the artifacts, or the parity gate rejects the release PR.</p>
@@ -796,11 +852,12 @@ and commit the artifacts, or the parity gate rejects the release PR.</p>
 0.29's installer predates PEP 783, which renamed the wheel platform tag
 <code>pyodide_*</code> to <code>pyemscripten_*</code>, so it cannot see the wheel PyPI now requires.
 <code>docs/python.md</code> points those users at a retagged copy on our own bucket.</p>
-<p>The publish workflow builds that copy for every <code>py-v*</code> tag and uploads it as
-the <code>pyodide-legacy-wheel</code> artifact — kept out of <code>dist</code>, which goes to PyPI and
-would reject the legacy tag. Actually publishing it is a separate step, because
-the repository has no R2 credentials in Actions:</p>
-<pre><code class="language-sh">scripts/publish_pyodide_wheel.sh          # after the py-v&lt;version&gt; run finishes
+<p>The PyPI workflow builds that copy for every <code>v*</code> tag and uploads it as the
+<code>pyodide-legacy-wheel</code> artifact — kept out of <code>dist</code>, which goes to PyPI and
+would reject the legacy tag. Actually publishing it is a separate step, the one
+manual step of a release, because the repository holds no R2 credentials in
+Actions (and no secrets at all):</p>
+<pre><code class="language-sh">scripts/publish_pyodide_wheel.sh   # after the v&lt;version&gt; python-client-publish run
 </code></pre>
 <p>It pulls the artifact from that tag's run, refuses anything whose version or
 platform tag disagrees with what <code>docs/python.md</code> promises, uploads it to

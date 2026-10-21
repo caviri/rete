@@ -44,6 +44,27 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **One `vX.Y.Z` tag releases every channel.** The same tag that builds the
+  GitHub release and publishes the crates now also publishes `rete-graph` to
+  PyPI (`python-client-publish.yml`) and npm (`js-client-publish.yml`) and the
+  container images; the separate `py-v*` and `js-v*` tags are retired (the old
+  ones stay as history). The release no longer has a tag order: the relay
+  image and the Blender add-on used to `pip install rete-graph` from PyPI while
+  they were built, so `v*` had to wait for the `py-v*` upload and for a second
+  PR raising the PyPI floors. Both now use wheels built in their own run from
+  the tagged commit, by a new reusable `python-wheels.yml` that also builds the
+  PyPI wheels, and their builds fail unless the engine they carry is the tag's
+  version. `relay-test.yml` and the Docker PR check build the relay the same
+  way, on the PR's own wheel. A release is now one PR
+  (`scripts/sync_versions.py --set X.Y.Z` stamps the floors and the Binder pin
+  too; `--set-published` is gone), its merge, and the tag. Every workflow the
+  tag starts first runs `sync_versions.py --check-tag`, so a tag that does not
+  match every channel's version publishes nowhere, and `--check` now requires
+  every client to carry the engine version exactly rather than its
+  `MAJOR.MINOR`. The `pypi` and `npm` GitHub environments admit `v*` tags only,
+  like `crates-io`. The trusted-publisher entries on PyPI and npm are
+  unchanged: they name the workflow files and environments, which keep their
+  names. See `docs/release.md`.
 - **crates.io publishing needs no manual approval.** The `crates-io` GitHub
   environment no longer has a required reviewer: a `v*` tag publishes the
   crates as soon as the release is assembled. It still admits `v*` tags only,
@@ -52,7 +73,7 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 - **npm publishing is tag-only and publishes the tarball it tested.**
   `js-client-publish.yml` now has a `build` job (tag/version check, wasm build,
   tests, `npm pack`, `npm publish --dry-run` on tags) and a `publish` job that
-  uploads that tarball with `--provenance`, only for a pushed `js-v*` tag; a
+  uploads that tarball with `--provenance`, only for a pushed release tag; a
   manual `workflow_dispatch` run used to publish from whatever branch it was
   started on and is now a dry run. npm is pinned to the 12.x major with a
   check for the 11.5.1 trusted-publishing floor. Authentication is unchanged:

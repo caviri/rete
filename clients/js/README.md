@@ -164,4 +164,5 @@ npm install && npm test
 ```
 
 Releases are published to npm by `.github/workflows/js-client-publish.yml`
-on a `js-v*` tag. Docs: <https://caviri.github.io/rete/javascript.html>.
+on the `v*` tag that releases every rete channel.
+Docs: <https://caviri.github.io/rete/javascript.html>.

@@ -376,6 +376,30 @@ Before touching a `.rete` that is already published. Full lifecycle in
   datasets it deliberately pins to the whole catalog. Probe with `--key` when
   writing the lock, and diff the lock before committing it.
 
+## Releasing
+
+One `vX.Y.Z` tag releases every channel — crates.io, PyPI, npm, the GitHub
+release and its assets, the GHCR images, the File Explorer installers — so a
+release is one PR, its merge, and one tag (`docs/release.md` has the
+procedure and what each workflow does). There are no client tags any more:
+`py-v*` and `js-v*` are history and trigger nothing.
+
+- Cut with `python3 scripts/sync_versions.py --set X.Y.Z`. Every channel must
+  carry that exact version; `--check` fails otherwise, and every workflow the
+  tag starts runs `--check-tag` before it publishes anything.
+- Nothing in a release installs `rete-graph` from PyPI: the relay image and the
+  Blender add-on are built on wheels from the same run (`python-wheels.yml`),
+  so the floors move in the release PR and no tag waits for another. Keep it
+  that way: a new artifact that bundles the engine takes the wheels as a build
+  input, never from the registry.
+- Do not rename `python-client-publish.yml`, `js-client-publish.yml`,
+  `release.yml` or the `pypi` / `npm` / `crates-io` environments, and do not
+  move their publish jobs into reusable workflows: the registries' trusted
+  publishers are bound to those names (PyPI rejects reusable workflows; npm
+  checks the calling workflow).
+- Push a tag only when a release was asked for. Published versions cannot be
+  replaced on any registry.
+
 ## Commits
 
 In this repo, commit **without** the Claude `Co-Authored-By` trailer.

@@ -1,13 +1,23 @@
 name: Python client publish
 
-# Release pipeline only: wheels + sdist + PyPI publish on `py-v*` tags.
+# Release pipeline only: wheels + sdist + PyPI publish on the `v*` release tag,
+# the one tag that releases every channel (docs/release.md). Until 0.3.6 the
+# Python client had its own `py-v*` tags; those stay in the repository as
+# history and no longer trigger anything.
+#
 # PyPI's trusted publisher for `rete-graph` points at THIS filename
-# (python-client-publish.yml) + the `pypi` environment — renaming the file
-# breaks publishing until the PyPI form is updated. Day-to-day testing lives
-# in python-test.yml, paths-filtered to clients/python/ and the engine.
+# (python-client-publish.yml) + the `pypi` environment — renaming either breaks
+# publishing until the PyPI form is updated. It is also why this stays a
+# workflow of its own, triggered by the same tag as release.yml, instead of a
+# job release.yml calls: PyPI does not accept a reusable workflow as the
+# trusted publisher. The `pypi` environment admits `v*` tags only.
+#
+# workflow_dispatch is a dry run from any branch: test, every wheel, the sdist,
+# and no publish. Day-to-day testing lives in python-test.yml, paths-filtered
+# to clients/python/ and the engine.
 on:
   push:
-    tags: ["py-v*"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +33,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      # The same check release.yml, js-client-publish.yml and docker-publish.yml
+      # make, on the same commit: the tag must equal every channel's version.
+      # All four agree, so a mis-stamped tag stops every channel before any of
+      # them publishes, instead of shipping the ones that happened to match.
+      - name: The tag must name the version of every channel
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 scripts/sync_versions.py --check-tag "$GITHUB_REF_NAME"
+      - name: Every channel carries one version (dry run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: python3 scripts/sync_versions.py --check
       - uses: PyO3/maturin-action@v1
         with:
           command: build
@@ -35,38 +55,15 @@ jobs:
           uv pip install --python .venv/bin/python dist/*.whl pytest pandas rdflib
           .venv/bin/python -m pytest clients/python/tests -q
 
+  # The four native abi3 wheels (artifacts `wheel-<platform>`), from the
+  # reusable workflow release.yml and docker-publish.yml build theirs with, so
+  # the wheels on PyPI, in the Blender add-on and in the relay image come from
+  # one definition and one commit. Only the `publish` job below needs to live
+  # in this file for PyPI's trusted publisher; building elsewhere is fine.
   wheels:
-    name: wheel ${{ matrix.platform.name }}
-    # Wheels are abi3-py39: one artifact per platform covers CPython >= 3.9.
+    name: native wheels
     needs: test
-    if: startsWith(github.ref, 'refs/tags/py-v') || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: 45
-    strategy:
-      # One platform failing must not cancel the others' wheels.
-      fail-fast: false
-      matrix:
-        platform:
-          - { name: linux-x86_64, runner: ubuntu-latest, target: x86_64, manylinux: auto }
-          # ring's pregenerated ARM assembly needs a newer cross-assembler
-          # than manylinux2014 ships (`#error "ARM assembler must define
-          # __ARM_ARCH"`); the 2_28 image's toolchain defines it. Floor is
-          # glibc 2.28 (Debian 10+ / Ubuntu 20.04+) — fine for aarch64.
-          - { name: linux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: 2_28 }
-          - { name: windows-x64, runner: windows-latest, target: x64 }
-          - { name: macos-universal2, runner: macos-latest, target: universal2-apple-darwin }
-    steps:
-      - uses: actions/checkout@v6
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: build
-          target: ${{ matrix.platform.target }}
-          args: --release --out dist -m ${{ env.MANIFEST }}
-          manylinux: ${{ matrix.platform.manylinux || 'auto' }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: wheel-${{ matrix.platform.name }}
-          path: dist
+    uses: ./.github/workflows/python-wheels.yml
 
   wheel-pyodide:
     name: wheel pyodide (browser Python)
@@ -74,7 +71,6 @@ jobs:
     # WASM. Not abi3: one wheel per Pyodide ABI year, built by cibuildwheel
     # against the pinned emsdk. PyPI accepts the pyemscripten_* tags.
     needs: test
-    if: startsWith(github.ref, 'refs/tags/py-v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -133,8 +129,8 @@ jobs:
           mkdir -p dist-legacy
           # Depending on the cibuildwheel/pyodide-build version, the 0.29 target
           # may already emit the legacy spelling. Accept either and normalize.
-          legacy=$(ls dist/*pyodide_2025_0_wasm32.whl 2>/dev/null | head -1 || true)
-          modern=$(ls dist/*pyemscripten_2025_0_wasm32.whl 2>/dev/null | head -1 || true)
+          legacy=$(find dist -maxdepth 1 -name '*pyodide_2025_0_wasm32.whl' | head -1)
+          modern=$(find dist -maxdepth 1 -name '*pyemscripten_2025_0_wasm32.whl' | head -1)
           if [ -n "$legacy" ]; then
             echo "cp313 target already emits the legacy tag; copying as-is"
             cp "$legacy" dist-legacy/
@@ -161,7 +157,6 @@ jobs:
   sdist:
     name: sdist
     needs: test
-    if: startsWith(github.ref, 'refs/tags/py-v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -178,7 +173,7 @@ jobs:
   publish:
     name: publish to PyPI
     needs: [wheels, wheel-pyodide, sdist]
-    if: startsWith(github.ref, 'refs/tags/py-v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Trusted publishing (OIDC): configure this repo + workflow + environment
@@ -193,5 +188,15 @@ jobs:
           pattern: wheel-*
           path: dist
           merge-multiple: true
+      # Four native wheels, two Pyodide wheels and the sdist, every one of them
+      # the tag's version. PyPI never takes a version back, so a stray file is
+      # refused here rather than published.
+      - name: Upload set is exactly this version
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          ls -l dist
+          stray=$(find dist -type f ! -name "rete_graph-$version-*.whl" ! -name "rete_graph-$version.tar.gz")
+          test -z "$stray" || { echo "not version $version: $stray" >&2; exit 1; }
+          test "$(find dist -type f | wc -l)" -eq 7 || { echo "expected 7 files" >&2; exit 1; }
       - uses: astral-sh/setup-uv@v5
       - run: uv publish --trusted-publishing always dist/*

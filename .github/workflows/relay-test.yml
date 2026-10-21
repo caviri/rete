@@ -2,19 +2,27 @@ name: Relay tests
 
 # The relay (clients/relay, the HF Space gateway) had no tests: docker-publish's
 # PR `verify` job only proves its image BUILDS. This runs the test suite inside
-# that same image, so the code is exercised against the rete-graph wheel the
-# image resolves from PyPI, exactly as a Space rebuild would. Allow-listed to
-# the relay and this file; nothing else can change what it tests.
+# that same image, built the way a release builds it: with the rete-graph wheel
+# compiled from THIS commit (python-wheels.yml) as the image's wheelhouse, not
+# the wheel PyPI happens to serve. That is what lets a release PR, whose
+# `rete-graph>=` floor names a version PyPI does not have until the tag
+# publishes it, pass here; and it tests the relay against the engine it will
+# ship with. Allow-listed to the relay, the Python binding it imports, and the
+# workflows that build them.
 on:
   push:
     branches: [main]
     paths:
       - "clients/relay/**"
+      - "clients/python/**"
       - ".github/workflows/relay-test.yml"
+      - ".github/workflows/python-wheels.yml"
   pull_request:
     paths:
       - "clients/relay/**"
+      - "clients/python/**"
       - ".github/workflows/relay-test.yml"
+      - ".github/workflows/python-wheels.yml"
   workflow_dispatch:
 
 permissions:
@@ -25,21 +33,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  wheel:
+    name: rete-graph wheel (linux x86-64)
+    uses: ./.github/workflows/python-wheels.yml
+    with:
+      platforms: linux-x86_64
+
   test:
     name: pytest in the relay image
+    needs: wheel
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-      - name: Build the relay image (installs rete-graph from PyPI)
-        run: docker build -t rete-relay-test clients/relay
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheel-linux-x86_64
+          path: ${{ runner.temp }}/wheels
+      # The named context replaces the Dockerfile's empty `wheels` stage; the
+      # build installs the engine from it with --no-index and fails unless the
+      # installed version is the checked-out one.
+      - name: Build the relay image on this commit's engine wheel
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' clients/python/pyproject.toml | head -1)
+          docker build -t rete-relay-test \
+            --build-context wheels="$RUNNER_TEMP/wheels" \
+            --build-arg RETE_GRAPH_VERSION="$version" \
+            clients/relay
       - name: Run the test suite inside it
         # The checkout is mounted so the tests run the working-tree code; the
-        # image supplies Python, the pinned-floor wheel and the app's deps.
+        # image supplies Python, the engine wheel and the app's deps.
         run: |
           docker run --rm -v "$PWD/clients/relay:/src" -w /src rete-relay-test sh -c '
             set -e
             pip install --quiet --no-cache-dir --root-user-action=ignore -r requirements-test.txt
-            pip show rete-graph | head -2
+            python -c "import rete_graph; print(\"rete-graph\", rete_graph.__version__, \"engine\", rete_graph.__engine_version__)"
             python -m pytest tests -q -p no:cacheprovider
           '

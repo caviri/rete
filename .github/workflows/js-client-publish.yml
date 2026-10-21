@@ -1,8 +1,13 @@
 name: JS client publish
 
-# Release pipeline only: build + test + npm publish on `js-v*` tags, through
-# npm TRUSTED PUBLISHING (GitHub OIDC). No npm token exists anywhere — not in
-# this file, not in the repository or the `npm` environment's secrets: the npm
+# Release pipeline only: build + test + npm publish on the `v*` release tag,
+# the one tag that releases every channel (docs/release.md), through npm
+# TRUSTED PUBLISHING (GitHub OIDC). Until 0.3.6 the npm package had its own
+# `js-v*` tags; those stay in the repository as history and no longer trigger
+# anything.
+#
+# No npm token exists anywhere — not in this file, not in the repository or
+# the `npm` environment's secrets: the npm
 # CLI trades this job's OIDC identity for a short-lived publish token, and the
 # registry signs a provenance statement for the run. Every version since 0.2.0
 # went out this way (the registry records `_npmUser` "GitHub Actions
@@ -11,16 +16,19 @@ name: JS client publish
 #
 # npm's trusted publisher for `rete-graph` names THIS filename and the `npm`
 # environment; renaming either breaks publishing until the npmjs.com entry is
-# updated (package → Settings → Trusted publishing). Day-to-day testing lives
-# in js-test.yml.
+# updated (package → Settings → Trusted publishing). It is also why this stays
+# a workflow of its own, triggered by the same tag as release.yml, instead of a
+# job release.yml calls: npm validates the CALLING workflow's filename, so a
+# publish inside a reusable workflow would present as release.yml and be
+# refused. Day-to-day testing lives in js-test.yml.
 #
 # Two jobs, like the PyPI workflow: `build` makes and checks the tarball and
 # runs on tags and on workflow_dispatch (a dry run from any branch); `publish`
-# uploads THAT tarball and runs only for a pushed `js-v*` tag. Before this
+# uploads THAT tarball and runs only for a pushed `v*` tag. Before this
 # split, a manual dispatch from any branch ran `npm publish`.
 on:
   push:
-    tags: ["js-v*"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -33,14 +41,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: The tag must name the package version
-        if: startsWith(github.ref, 'refs/tags/js-v')
-        run: |
-          version=$(python3 -c 'import json; print(json.load(open("clients/js/package.json"))["version"])')
-          test "$GITHUB_REF_NAME" = "js-v$version" || {
-            echo "tag $GITHUB_REF_NAME does not match clients/js/package.json version $version" >&2
-            exit 1
-          }
+      # The tag must equal clients/js/package.json's version AND every other
+      # channel's: the same check, on the same commit, as release.yml,
+      # python-client-publish.yml and docker-publish.yml, so a mis-stamped tag
+      # stops all of them before any publishes.
+      - name: The tag must name the version of every channel
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 scripts/sync_versions.py --check-tag "$GITHUB_REF_NAME"
+      - name: Every channel carries one version (dry run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: python3 scripts/sync_versions.py --check
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -63,7 +73,7 @@ jobs:
       # before the publish job starts; on a dispatch from main the version is
       # usually published already, which is why it is tag-only.
       - name: Validate the tarball against the registry (npm publish --dry-run)
-        if: startsWith(github.ref, 'refs/tags/js-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         working-directory: clients/js
         run: npm publish --dry-run ./rete-graph-*.tgz
       - uses: actions/upload-artifact@v7
@@ -76,12 +86,12 @@ jobs:
   publish:
     name: publish to npm (trusted publishing)
     needs: build
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/js-v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The trusted publisher is scoped to this environment. Restrict it to
-    # `js-v*` tags in GitHub → Settings → Environments → npm (as `crates-io`
-    # admits `v*` only), and add required reviewers there for a manual gate.
+    # The trusted publisher is scoped to this environment, which admits `v*`
+    # tags only (like `crates-io` and `pypi`); add required reviewers there for
+    # a manual gate.
     environment: npm
     permissions:
       contents: read
