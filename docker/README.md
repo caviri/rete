@@ -145,7 +145,7 @@ with `docker buildx imagetools create`.
 | --- | --- |
 | Push a `v*` tag | All three images build and publish. The tag must match `[workspace.package] version` in `Cargo.toml` — the same check `scripts/package_release.sh` makes — and every channel's version (`scripts/sync_versions.py --check-tag`), or the run fails before building anything. `rete-relay` is built on the Linux `rete-graph` wheels the same run compiles. |
 | Pull request touching `.devcontainer/Dockerfile*`, `clients/relay/**`, `docker/**`, the docker workflows or `python-wheels.yml` | `rete-relay` (on a wheel built from the PR's commit) and `rete-cli` are built for amd64 only and thrown away. Nothing is pushed. |
-| Manual run | Publishes `all`, or just `dev` / `relay` / `cli`. |
+| Manual run | Publishes `all`, or just `dev` / `relay` / `cli`. With `dry-run` set, builds the same images for both architectures and pushes nothing. |
 | Ordinary push to `main` | Nothing. Images follow releases, not commits. |
 
 Native runners are the point. `rete-dev` installs about eight cargo tools from

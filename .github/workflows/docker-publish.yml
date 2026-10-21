@@ -50,6 +50,12 @@ on:
         type: choice
         default: all
         options: [all, dev, relay, cli]
+      dry-run:
+        description: >-
+          Build both architectures and push nothing (for the relay: on wheels
+          built in the run, exactly as a tag does).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -142,6 +148,7 @@ jobs:
       packages: write
     uses: ./.github/workflows/docker-image.yml
     with:
+      push: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry-run }}
       image: rete-dev
       context: .
       file: .devcontainer/Dockerfile
@@ -179,6 +186,7 @@ jobs:
       packages: write
     uses: ./.github/workflows/docker-image.yml
     with:
+      push: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry-run }}
       image: rete-relay
       context: clients/relay
       file: clients/relay/Dockerfile
@@ -200,6 +208,7 @@ jobs:
       packages: write
     uses: ./.github/workflows/docker-image.yml
     with:
+      push: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry-run }}
       image: rete-cli
       context: .
       file: docker/Dockerfile.cli

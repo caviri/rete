@@ -670,8 +670,10 @@ runner) is re-run on its own, and the versions already on the other
 registries cannot be replaced, so fix forward rather than re-tagging.</p>
 <p><code>workflow_dispatch</code> on any of them, from any branch, is a dry run: everything
 is built and tested, the version check runs against the workspace version, and
-nothing is published (<code>docker-publish.yml</code> is the exception: a manual run
-pushes images, so dry-run the relay with <code>relay-test.yml</code> instead).</p>
+nothing is published. <code>docker-publish.yml</code> is the exception: a manual run
+pushes images unless its <code>dry-run</code> input is set, which builds both
+architectures (the relay on wheels built in the run, as a tag does) and pushes
+nothing.</p>
 <p>On publish, only a semver prerelease (<code>-rc.1</code>, <code>-alpha</code>, <code>-beta.2</code>) is marked
 prerelease. A final version, 0.x included, is a normal release and becomes
 <strong>Latest</strong> unless a newer final <code>v*</code> release already exists (so a backport
