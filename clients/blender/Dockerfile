@@ -8,6 +8,15 @@
 # Test:   docker run --rm -v "$PWD":/work -w /work rete-blender \
 #             blender -b --factory-startup -noaudio \
 #                 --python clients/blender/tests/run_tests.py
+
+# The engine wheelhouse, EMPTY unless the build supplies one, in which case the
+# engine is installed from it and nowhere else (see the WITH_ENGINE step):
+#   docker build --build-context wheels=<dir with rete_graph-*.whl> \
+#                --build-arg RETE_GRAPH_VERSION=X.Y.Z -t rete-blender clients/blender
+# release.yml does exactly that with the wheels it built from the tagged commit,
+# so the add-on is tested against the engine it bundles, before PyPI has it.
+FROM scratch AS wheels
+
 FROM debian:bookworm-slim
 
 ARG BLENDER=4.5.9
@@ -31,11 +40,27 @@ RUN wget -q "https://download.blender.org/release/Blender${SERIES}/blender-${BLE
 # The add-on's own dependency, installed into Blender's bundled interpreter so
 # the source tests exercise the same import path a user's install produces.
 # Build with --build-arg WITH_ENGINE=0 to leave it out: that image proves the
-# packaged extension's bundled wheels really do install themselves.
+# packaged extension's bundled wheels really do install themselves. With no
+# wheelhouse the engine comes from PyPI; RETE_GRAPH_VERSION, when given, is the
+# version the image must end up with, or the build fails.
 ARG WITH_ENGINE=1
-RUN /opt/blender/*/python/bin/python3* -m ensurepip --upgrade && \
+ARG RETE_GRAPH_VERSION=
+RUN --mount=type=bind,from=wheels,target=/wheels \
+    /opt/blender/*/python/bin/python3* -m ensurepip --upgrade && \
     if [ "$WITH_ENGINE" = "1" ]; then \
-        /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir "rete-graph>=0.3.6"; \
+        if ls /wheels/rete_graph-*.whl >/dev/null 2>&1; then \
+            echo "rete-graph from the build's wheelhouse, not PyPI:" && ls /wheels && \
+            /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir \
+                --no-index --find-links /wheels rete-graph; \
+        else \
+            /opt/blender/*/python/bin/python3* -m pip install --no-cache-dir "rete-graph>=0.3.6"; \
+        fi && \
+        installed=$(/opt/blender/*/python/bin/python3* -c \
+            'import importlib.metadata as m; print(m.version("rete-graph"))') && \
+        echo "rete-graph $installed installed" && \
+        if [ -n "$RETE_GRAPH_VERSION" ] && [ "$installed" != "$RETE_GRAPH_VERSION" ]; then \
+            echo "expected rete-graph $RETE_GRAPH_VERSION, got $installed" >&2; exit 1; \
+        fi; \
     fi
 
 # ifcopenshell (IFC) and laspy[lazrs] (LAS/LAZ/COPC) exercise the CAD and

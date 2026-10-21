@@ -71,28 +71,41 @@ docker run --rm -v "$PWD":/io -w /io/clients/python python:3.12-slim bash -c \
 | Workflow | Trigger | Does |
 |---|---|---|
 | `python-test.yml` | PR / push touching `clients/python/**` or `crates/rete-core/**` | fmt + clippy, build wheel, pytest (incl. the live R2 remote smoke) — **never publishes** |
-| `python-client-publish.yml` | pushing a `py-v*` tag only | full wheel matrix + sdist, then PyPI upload |
+| `python-client-publish.yml` | the `v*` release tag (publishes); `workflow_dispatch` (dry run) | test, the four native wheels (`python-wheels.yml`), the two Pyodide wheels and the sdist, then the PyPI upload on a tag only |
 
 Merging to main can never publish; releasing is always the deliberate tag.
+
+The four native wheels are built by the reusable `python-wheels.yml`, which
+`release.yml` (the Blender add-on's bundled wheels), `docker-publish.yml` (the
+relay image's engine) and `relay-test.yml` call too. So every artifact that
+carries the engine is built from the commit being released or tested, and none
+of them installs `rete-graph` from PyPI while it is built.
 
 ## Releasing to PyPI
 
 Publishing uses **trusted publishing** (OIDC) — no tokens, no secrets. The
 registered publisher on PyPI: project `rete-graph`, owner `caviri`, repo
 `rete`, workflow `python-client-publish.yml`, environment `pypi`. Renaming
-that workflow file breaks publishing until the PyPI form is updated.
-`uv publish --trusted-publishing always` refuses to fall back to a password.
-It also uploads no PEP 740 attestations, so the PyPI files carry no provenance
-the way the npm package does (`pypa/gh-action-pypi-publish` would add them).
+that workflow file or the environment breaks publishing until the PyPI form is
+updated, and PyPI does not accept a reusable workflow as the publisher, which
+is why the upload stays in this workflow rather than in a job `release.yml`
+calls. `uv publish --trusted-publishing always` refuses to fall back to a
+password. It also uploads no PEP 740 attestations, so the PyPI files carry no
+provenance the way the npm package does (`pypa/gh-action-pypi-publish` would
+add them).
 
-Release procedure:
+There is no PyPI-only release: the `v*` tag that releases every channel
+([release procedure](release.md#release-procedure)) runs this workflow. It
+checks the tag against every channel's version first
+(`scripts/sync_versions.py --check-tag`), and before uploading, that the seven
+files (four native wheels, two Pyodide wheels, the sdist) are all that version.
+PyPI refuses to re-upload an existing version, so a forgotten bump fails
+cleanly. Until 0.3.6 the Python client released from its own `py-v*` tags.
 
-1. Bump `version` in `clients/python/pyproject.toml` (PyPI refuses to
-   re-upload an existing version, so a forgotten bump just fails cleanly).
-2. Commit, push, then `git tag py-vX.Y.Z && git push origin py-vX.Y.Z`.
-3. Watch the *Python client publish* run: test → 4 wheels + sdist → publish.
+A `workflow_dispatch` run from any branch is a dry run: everything is built and
+tested, nothing is uploaded.
 
-Hard-won build-matrix facts (already encoded in the workflow — keep them):
+Hard-won build-matrix facts (encoded in `python-wheels.yml` — keep them):
 
 - The **aarch64 wheel must build on `manylinux: 2_28`**: `ring`'s pregenerated
   ARM assembly rejects manylinux2014's old cross-assembler
@@ -102,8 +115,9 @@ Hard-won build-matrix facts (already encoded in the workflow — keep them):
 - Wheels are abi3 (`abi3-py39`): one wheel per platform covers every
   CPython ≥ 3.9 — no per-Python-version matrix.
 
-Optionally add required reviewers to the `pypi` GitHub environment to make
-every release pause for a manual approval.
+The `pypi` GitHub environment admits deployments from `v*` tags only, like
+`crates-io` and `npm`. Add required reviewers there to make every release
+pause for a manual approval.
 
 ## Runtime compatibility
 
@@ -197,7 +211,7 @@ artifact rejects newer-format files with `header: unsupported version`).
   becomes a global under classic-script semantics, so the bundle test loads
   it via `vm.runInThisContext`, not `import`.
 - CI: `js-test.yml` (paths-filtered: clients/js + rete-wasm + rete-core) and
-  `js-client-publish.yml` (`js-v*` tags only; see below).
+  `js-client-publish.yml` (the `v*` release tag only; see below).
 - Parity backlog vs Python: Dataset Card + embedded examples (needs a
   `card()` export in rete-wasm — an engine change, so the playground gate
   applies), custom headers, a Builder.
@@ -214,13 +228,16 @@ the one manual bootstrap.
 
 `js-client-publish.yml` has two jobs, like the PyPI workflow:
 
-- `build` checks that the tag equals `js-v` + `clients/js/package.json`'s
-  version, builds the wasm engine from the checked-out crates, runs the test
-  suite, packs the tarball and (on a tag) runs `npm publish --dry-run` against
-  it, which also refuses a version the registry already has. A
-  `workflow_dispatch` run stops here: a dry run from any branch.
-- `publish` runs only for a pushed `js-v*` tag, in the `npm` environment, with
-  `id-token: write`, and publishes **that** tarball with `--provenance`.
+- `build` checks the tag against every channel's version
+  (`scripts/sync_versions.py --check-tag`, so the tag must equal `v` +
+  `clients/js/package.json`'s version and every other channel's), builds the
+  wasm engine from the checked-out crates, runs the test suite, packs the
+  tarball and (on a tag) runs `npm publish --dry-run` against it, which also
+  refuses a version the registry already has. A `workflow_dispatch` run stops
+  here: a dry run from any branch.
+- `publish` runs only for a pushed `v*` tag, in the `npm` environment (which
+  admits `v*` tags only), with `id-token: write`, and publishes **that**
+  tarball with `--provenance`.
 
 The trusted publisher registered on npmjs.com (`rete-graph` → Settings →
 Trusted publishing): GitHub Actions, owner `caviri`, repository `rete`,
@@ -230,13 +247,14 @@ token to fall back on, the failure is an authentication error at the publish
 step, after the build succeeded, and a re-run of the job after fixing the entry
 publishes the same tarball. Inspect or change the entry from a 2FA-enabled
 login with `npm trust list rete-graph` / `npm trust github` (npm ≥ 11.15).
+npm validates the *calling* workflow's filename, so the publish job cannot
+move into a reusable workflow that `release.yml` calls; it stays here, started
+by the same tag.
 
-Release procedure:
-
-1. Bump the version (`scripts/sync_versions.py --set X.Y.Z` does every client).
-2. Commit, merge, then `git tag js-vX.Y.Z && git push origin js-vX.Y.Z`.
-3. Watch the *JS client publish* run: build → publish. `npm view rete-graph`
-   should list the version with `dist.attestations`.
+There is no npm-only release: the `v*` tag that releases every channel
+([release procedure](release.md#release-procedure)) runs this workflow. Until
+0.3.6 the npm package released from its own `js-v*` tags. After the tag,
+`npm view rete-graph` should list the version with `dist.attestations`.
 
 ## The R client
 

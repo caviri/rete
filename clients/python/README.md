@@ -185,4 +185,5 @@ Tests: `uv pip install pytest && pytest clients/python/tests`.
 
 Wheels are abi3 (`>= 3.9`): one wheel per platform covers every CPython.
 Releases are published to PyPI by
-`.github/workflows/python-client-publish.yml` on a `py-v*` tag.
+`.github/workflows/python-client-publish.yml` on the `v*` tag that releases
+every rete channel.

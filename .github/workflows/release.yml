@@ -1,5 +1,22 @@
 name: Release
 
+# The `v*` tag releases EVERY channel, and this is one of the workflows it
+# starts. The others are independent workflows on the same tag, kept separate
+# because their registries bind trusted publishing to a workflow file:
+#
+#   release.yml                native archives, wasm bundle, Claude Desktop
+#                              extension, Blender add-on, SBOM/attestations,
+#                              the GitHub release, then crates.io
+#   desktop-release.yml        File Explorer installers, into the same release
+#   python-client-publish.yml  PyPI (native + Pyodide wheels, sdist)
+#   js-client-publish.yml      npm
+#   docker-publish.yml         ghcr.io rete-relay, rete-cli, rete-dev
+#
+# Every one of them first checks the tag against every channel's version
+# (`scripts/sync_versions.py --check-tag`), so a mis-stamped tag stops them
+# all. None waits for another: the Blender add-on here and the relay image in
+# docker-publish.yml bundle rete-graph wheels built in their own run from the
+# tagged commit, never downloaded from PyPI. docs/release.md has the procedure.
 on:
   push:
     tags: ["v*"]
@@ -37,6 +54,15 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      # The check python-client-publish.yml, js-client-publish.yml and
+      # docker-publish.yml make on the same commit: every client, pin and floor
+      # names this version. A tag that fails it publishes nowhere.
+      - name: Every channel names the tag's version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 scripts/sync_versions.py --check-tag "$GITHUB_REF_NAME"
+      - name: Every channel names the workspace version (dry run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: python3 scripts/sync_versions.py --check
 
   # The ONE place a `v*` release is created. desktop-release.yml also builds
   # for every `v*` tag, and it used to create its own draft while this workflow
@@ -219,15 +245,44 @@ jobs:
             dist/rete.mcpb
           if-no-files-found: error
 
+  # The rete-graph wheels the Blender add-on bundles, built here from the
+  # tagged commit by the same reusable workflow that builds the PyPI upload.
+  # Until 0.3.6 the add-on downloaded them from PyPI, which is why the `v*` tag
+  # had to wait for a `py-v*` tag's upload and a floors PR.
+  python-wheels:
+    name: rete-graph wheels
+    needs: meta
+    uses: ./.github/workflows/python-wheels.yml
+
   blender:
     name: Blender add-on
-    needs: meta
+    needs: [meta, python-wheels]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: wheel-*
+          path: wheelhouse
+          merge-multiple: true
+      - name: The wheelhouse is this version, for all four platforms
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          ls -l wheelhouse
+          stray=$(find wheelhouse -type f ! -name "rete_graph-$VERSION-*.whl")
+          test -z "$stray" || { echo "not rete-graph $VERSION: $stray" >&2; exit 1; }
+          test "$(find wheelhouse -type f | wc -l)" -eq 4
+      # The engine the tests import comes from the same wheelhouse (a named
+      # build context replaces the Dockerfile's empty `wheels` stage), and the
+      # build fails unless it is this version.
       - name: Build the headless Blender image
-        run: docker build -t rete-blender clients/blender
+        run: >-
+          docker build -t rete-blender
+          --build-context wheels=wheelhouse
+          --build-arg RETE_GRAPH_VERSION=${{ needs.meta.outputs.version }}
+          clients/blender
       - name: Test the add-on offline (fixture graph built in memory)
         run: |
           docker run --rm -v "$PWD:/work" -w /work rete-blender \
@@ -244,6 +299,8 @@ jobs:
       - name: Package the extension, wheels bundled
         run: |
           docker run --rm -e RETE_ADDON_VERSION=${{ needs.meta.outputs.version }} \
+            -e RETE_GRAPH_VERSION=${{ needs.meta.outputs.version }} \
+            -e RETE_WHEEL_DIR=wheelhouse \
             -v "$PWD:/work" -w /work rete-blender sh clients/blender/build.sh
           mkdir -p dist
           # The container runs as root, so clients/blender/dist and the zip land

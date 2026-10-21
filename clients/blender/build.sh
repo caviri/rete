@@ -9,6 +9,9 @@
 #   RETE_WHEEL_DIR=clients/python/dist \
 #     sh clients/blender/build.sh            # use locally built wheels instead
 #
+# RETE_GRAPH_VERSION names the engine version to bundle (default: the version
+# below, which `scripts/sync_versions.py --set` stamps with every release).
+#
 # Repo convention: everything runs in a container.
 #   docker build -t rete-blender clients/blender
 #   docker run --rm -v "$PWD":/work -w /work rete-blender sh clients/blender/build.sh
@@ -42,8 +45,17 @@ PY
 fi
 
 if [ -n "${RETE_WHEEL_DIR:-}" ]; then
-    echo "Using local wheels from $RETE_WHEEL_DIR"
-    cp "$RETE_WHEEL_DIR"/rete_graph-*.whl "$WHEELS/"
+    # release.yml takes this path, with the wheels it built from the tagged
+    # commit: the add-on never waits for PyPI. Every wheel must be $VERSION, so
+    # a stale file in the directory cannot end up in the zip.
+    echo "Using local rete-graph $VERSION wheels from $RETE_WHEEL_DIR"
+    for wheel in "$RETE_WHEEL_DIR"/rete_graph-*.whl; do
+        [ -e "$wheel" ] || { echo "no rete_graph wheels in $RETE_WHEEL_DIR" >&2; exit 1; }
+        case "$(basename "$wheel")" in
+            "rete_graph-$VERSION-"*) cp "$wheel" "$WHEELS/" ;;
+            *) echo "refusing $wheel: not rete-graph $VERSION" >&2; exit 1 ;;
+        esac
+    done
 else
     echo "Downloading rete-graph $VERSION wheels from PyPI"
     # Straight from the release metadata rather than through pip: pip builds

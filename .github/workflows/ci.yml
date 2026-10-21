@@ -462,8 +462,8 @@ jobs:
           # diff on them was a silent no-op) and docs/rete_wasm.js/_bg.wasm
           # never existed. docs/engine is refreshed by build_wasm.sh now, so
           # the ESM copy the standalone docs pages import is guarded too.
-          GUARDED="docs/playground.html docs/engine docs/rete_wasm_async.js docs/rete_wasm_async.wasm"
-          if git diff --quiet -- $GUARDED; then
+          GUARDED=(docs/playground.html docs/engine docs/rete_wasm_async.js docs/rete_wasm_async.wasm)
+          if git diff --quiet -- "${GUARDED[@]}"; then
             echo "browser artifacts: byte-identical to this commit."
             exit 0
           fi
@@ -472,8 +472,8 @@ jobs:
           # artifacts, a wrong RETE_BUILD_STAMP, and a shared CARGO_TARGET_DIR.
           # Three agents lost a CI cycle to it in one day, each diagnosing a
           # different one. Name which happened.
-          git diff --stat -- $GUARDED
-          python3 -P scripts/wasm_parity_triage.py $GUARDED
+          git diff --stat -- "${GUARDED[@]}"
+          python3 -P scripts/wasm_parity_triage.py "${GUARDED[@]}"
           exit 1
       - name: Preserve exact browser build
         # always(): keep the rebuilt artifacts even when the parity diff

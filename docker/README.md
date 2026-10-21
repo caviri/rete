@@ -89,10 +89,18 @@ docker run --rm -p 7860:7860 -v "$PWD/data:/data" \
 `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is present in the environment; every
 other endpoint works without one.
 
-The relay installs the engine from the published `rete-graph` wheel on PyPI, so
-it tracks *released* clients, not the working tree. To exercise an unreleased
-engine change, build the wheel from `clients/python` and install it over the top
-in a derived image.
+The published relay image carries the `rete-graph` wheel its release built
+from the tagged commit, never one fetched from PyPI: `docker-publish.yml`
+builds the two Linux wheels in the same run and passes them as the `wheels`
+build context, and the build fails unless the image ends up with that version.
+A plain `docker build clients/relay` (and the Hugging Face Space) has no
+wheelhouse and installs the engine from PyPI instead. To build on an
+unreleased engine, hand it a wheel built from `clients/python`:
+
+```sh
+docker build --build-context wheels=clients/python/dist \
+  --build-arg RETE_GRAPH_VERSION=X.Y.Z -t rete-relay clients/relay
+```
 
 ## One-shot CLI — `rete-cli`
 
@@ -135,9 +143,9 @@ with `docker buildx imagetools create`.
 
 | Event | What happens |
 | --- | --- |
-| Push a `v*` tag | All three images build and publish. The tag must match `[workspace.package] version` in `Cargo.toml` — the same check `scripts/package_release.sh` makes — or the run fails before building anything. |
-| Pull request touching `.devcontainer/Dockerfile*`, `clients/relay/**`, `docker/**` or the docker workflows | `rete-relay` and `rete-cli` are built for amd64 only and thrown away. Nothing is pushed. |
-| Manual run | Publishes `all`, or just `dev` / `relay` / `cli`. |
+| Push a `v*` tag | All three images build and publish. The tag must match `[workspace.package] version` in `Cargo.toml` — the same check `scripts/package_release.sh` makes — and every channel's version (`scripts/sync_versions.py --check-tag`), or the run fails before building anything. `rete-relay` is built on the Linux `rete-graph` wheels the same run compiles. |
+| Pull request touching `.devcontainer/Dockerfile*`, `clients/relay/**`, `docker/**`, the docker workflows or `python-wheels.yml` | `rete-relay` (on a wheel built from the PR's commit) and `rete-cli` are built for amd64 only and thrown away. Nothing is pushed. |
+| Manual run | Publishes `all`, or just `dev` / `relay` / `cli`. With `dry-run` set, builds the same images for both architectures and pushes nothing. |
 | Ordinary push to `main` | Nothing. Images follow releases, not commits. |
 
 Native runners are the point. `rete-dev` installs about eight cargo tools from

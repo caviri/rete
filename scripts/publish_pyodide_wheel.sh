@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publish the legacy-tagged Pyodide wheel to the public bucket.
 #
-#   scripts/publish_pyodide_wheel.sh                 # fetch from the release run
+#   scripts/publish_pyodide_wheel.sh                 # fetch from the v<version> run
 #   scripts/publish_pyodide_wheel.sh path/to/*.whl   # use a local wheel
 #
 # Why this exists: `%pip install rete-graph` resolves from PyPI and needs no
@@ -33,10 +33,12 @@ wheel="${1:-}"
 if [ -z "$wheel" ]; then
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-  echo "== downloading the pyodide-legacy-wheel artifact from py-v$version =="
+  # The `v*` release tag runs python-client-publish.yml (until 0.3.6 a separate
+  # `py-v*` tag did); a tag push records the tag as the run's branch.
+  echo "== downloading the pyodide-legacy-wheel artifact from v$version =="
   run=$(gh run list --workflow=python-client-publish.yml \
-        --branch "py-v$version" --limit 1 --json databaseId --jq '.[0].databaseId')
-  test -n "$run" || { echo "no publish run found for tag py-v$version" >&2; exit 1; }
+        --branch "v$version" --limit 1 --json databaseId --jq '.[0].databaseId')
+  test -n "$run" || { echo "no publish run found for tag v$version" >&2; exit 1; }
   gh run download "$run" --name pyodide-legacy-wheel --dir "$tmp"
   # One wheel per run artifact, named by the build. A glob names it
   # directly; `ls | head -1` would have parsed the name back out.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep every language client's version tied to the engine version.
+"""Keep every channel's version equal to the engine version.
 
 The Rust workspace version (`[workspace.package] version` in the root
 Cargo.toml) is the single source of truth. Cargo cannot propagate it natively:
@@ -8,18 +8,22 @@ they can own their lockfiles and toolchains, and an excluded package may not use
 `version.workspace = true`. So we propagate it here instead, the same way
 `clients/mcpb/build.mjs` already reads the workspace version at build time.
 
-The contract is MAJOR.MINOR lockstep:
+The contract is ONE version:
 
-    client MAJOR.MINOR == engine MAJOR.MINOR
+    every client, pin and floor == the engine version, exactly
 
-so "same minor" always means "same engine generation", while each client keeps
-its own PATCH component for binding-only fixes (a Python typing fix ships as
-0.3.1 without forcing an engine release). `--check` fails when a client's
-MAJOR.MINOR has drifted; it deliberately does not care about PATCH.
+because one `vX.Y.Z` tag releases every channel at once (crates.io, PyPI, npm,
+the GitHub release, the container images; docs/release.md). Until 0.3.6 the
+clients released from their own `py-v*`/`js-v*` tags and only had to share the
+engine's MAJOR.MINOR, so a binding could ship a patch on its own. With a single
+tag there is no such thing as a client-only release, and a client that names
+another version is a tag the release workflows will refuse.
 
 Usage:
-    python3 scripts/sync_versions.py --check    # CI gate, no writes
-    python3 scripts/sync_versions.py --write    # realign drifted clients
+    python3 scripts/sync_versions.py --check             # CI gate, no writes
+    python3 scripts/sync_versions.py --check-tag v0.3.7  # release workflows
+    python3 scripts/sync_versions.py --set 0.3.7         # cut a release
+    python3 scripts/sync_versions.py --write             # realign to the engine
 """
 
 from __future__ import annotations
@@ -56,9 +60,10 @@ TARGETS = [
         re.compile(r"(?m)^Version: (.+)$"),
         "r package",
     ),
-    # The Blender add-on ships rete-graph wheels inside its zip; its default pin
-    # and the test-image floor must track the engine minor or the add-on quietly
-    # bundles a previous engine generation.
+    # The Blender add-on ships rete-graph wheels inside its zip. A release
+    # builds them in the same run (release.yml), so these two only matter for a
+    # local build that downloads from PyPI; they still move with every release
+    # so a local build never bundles a previous engine.
     (
         "clients/blender/build.sh",
         re.compile(r'(?m)^VERSION="\$\{RETE_GRAPH_VERSION:-([^}"]+)\}"'),
@@ -69,12 +74,23 @@ TARGETS = [
         re.compile(r'"rete-graph>=([0-9.]+)"'),
         "blender test-image floor",
     ),
-    # The HF Space installs the engine from PyPI at image build; a stale floor
-    # lets a Space rebuild silently resolve an old engine.
+    # The relay image installs the engine at build time: from the wheels a
+    # release builds in the same run, or, for the HF Space and a plain local
+    # `docker build`, from PyPI. A stale floor lets that PyPI path silently
+    # resolve an old engine.
     (
         "clients/relay/requirements.txt",
         re.compile(r"(?m)^rete-graph>=([0-9.]+)$"),
         "clients/relay wheel floor",
+    ),
+    # mybinder.org builds its image from this file at launch, from PyPI. It is
+    # the one consumer that resolves the new version from the registry, so a
+    # Binder launch from `main` fails for the half hour between the release PR
+    # merging and the tag's PyPI upload; nothing in CI or the release reads it.
+    (
+        "binder/requirements.txt",
+        re.compile(r"(?m)^rete-graph==([0-9.]+)$"),
+        "binder pin",
     ),
     # The Java client: a parent POM, two modules that name it as <parent>, and
     # the wasm FFI crate whose CARGO_PKG_VERSION is what `Rete.version()`
@@ -127,19 +143,7 @@ _CORE_PIN_FILES = [
     "crates/rete-wasm/Cargo.toml",
 ]
 
-# These three resolve `rete-graph` FROM PyPI at image-build time, so they must
-# never name a version the registry does not have yet. Bumping them in the same
-# commit as the workspace breaks every image build until the wheel is published
-# — which is exactly how the relay job failed on the 0.3.1 cut:
-#   ERROR: Could not find a version that satisfies rete-graph>=0.3.1
-# `--set` therefore leaves them alone; `--set-published` moves them once the
-# wheel is live. The lockstep contract still holds meanwhile, because `--check`
-# compares MAJOR.MINOR only and 0.3.0 satisfies a 0.3.1 engine.
-_PYPI_RESOLVED = {
-    "clients/blender/build.sh",
-    "clients/blender/Dockerfile",
-    "clients/relay/requirements.txt",
-}
+VERSION_FORMAT = re.compile(r"\d+\.\d+\.\d+")
 
 
 def engine_version() -> str:
@@ -148,14 +152,6 @@ def engine_version() -> str:
     if not match:
         sys.exit("could not read [workspace.package] version from Cargo.toml")
     return match.group(1)
-
-
-def minor_of(version: str) -> str:
-    """`0.3.1` -> `0.3`. Prerelease/build metadata is ignored for the compare."""
-    parts = version.split("+")[0].split("-")[0].split(".")
-    if len(parts) < 2:
-        sys.exit(f"unparseable version: {version!r}")
-    return ".".join(parts[:2])
 
 
 def _edit(path: pathlib.Path, pattern: re.Pattern, new: str) -> None:
@@ -170,13 +166,14 @@ def _edit(path: pathlib.Path, pattern: re.Pattern, new: str) -> None:
 def _stamp(version: str) -> int:
     """Stamp one exact version everywhere — the release cut.
 
-    `--write` deliberately only repairs MAJOR.MINOR drift (it writes `{minor}.0`),
-    because a client may legitimately carry its own PATCH. That makes it useless
-    for cutting 0.3.0 -> 0.3.1, where the patch IS the release. This reuses the
-    same anchored TARGETS regexes, so a reshuffled manifest still fails loudly
-    rather than getting the wrong field rewritten.
+    Every target moves, the PyPI floors and the Binder pin included. Up to
+    0.3.6 those waited for a second "raise the PyPI floors" PR, because the
+    relay image and the Blender add-on installed rete-graph FROM PyPI while the
+    release built them; a floor naming an unpublished version failed those
+    builds. A release now builds both from the wheels of its own run, so the
+    floors can name the version being released in the same commit.
     """
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+    if not VERSION_FORMAT.fullmatch(version):
         sys.exit(f"--set expects MAJOR.MINOR.PATCH, got {version!r}")
 
     print(f"stamping {version} on the workspace and every client")
@@ -196,9 +193,6 @@ def _stamp(version: str) -> int:
         path = ROOT / rel
         if not path.exists():
             sys.exit(f"{rel}: missing — cannot cut a release with a target gone")
-        if rel in _PYPI_RESOLVED:
-            print(f"  HELD  {label:32} (waits for PyPI — see --set-published)")
-            continue
         _edit(path, pattern, version)
         print(f"  wrote {label:32} {version}")
 
@@ -214,62 +208,18 @@ def _stamp(version: str) -> int:
             wheel_path.write_text(new_text, encoding="utf-8")
             print(f"  wrote {'pyodide wheel url':32} {version}  (404 until uploaded)")
 
-    print("\nnow run --check to confirm the lockstep contract still holds")
+    print("\nnow run --check to confirm every channel names the same version")
     print("the Pyodide URL resolves only after scripts/publish_pyodide_wheel.sh")
-    print(f"once rete-graph {version} is on PyPI: --set-published {version}")
     return 0
 
 
-def _stamp_published(version: str) -> int:
-    """Raise the PyPI-resolved floors — run this AFTER the wheel is published."""
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-        sys.exit(f"--set-published expects MAJOR.MINOR.PATCH, got {version!r}")
-
-    print(f"raising the PyPI floors to {version} (the wheel must already be live)")
-    for rel, pattern, label in TARGETS:
-        if rel not in _PYPI_RESOLVED:
-            continue
-        _edit(ROOT / rel, pattern, version)
-        print(f"  wrote {label:32} {version}")
-    return 0
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--check", action="store_true", help="report drift, write nothing")
-    mode.add_argument("--write", action="store_true", help="realign drifted clients")
-    mode.add_argument(
-        "--set",
-        metavar="VERSION",
-        help="cut a release: stamp VERSION on the workspace AND every client, "
-        "patch included (--write only repairs MAJOR.MINOR drift, so it is a "
-        "no-op for a patch bump). Leaves the PyPI-resolved floors behind",
-    )
-    mode.add_argument(
-        "--set-published",
-        metavar="VERSION",
-        help="raise the floors that install rete-graph FROM PyPI — run only "
-        "after the wheel is live, or every image build fails to resolve",
-    )
-    args = parser.parse_args()
-    writing = args.write
-
-    if args.set:
-        return _stamp(args.set)
-    if args.set_published:
-        return _stamp_published(args.set_published)
-
-    engine = engine_version()
-    target_minor = minor_of(engine)
-    print(f"engine (workspace): {engine}  [{target_minor}.x expected in clients]")
-
+def _check(engine: str, writing: bool) -> list[str]:
+    """Every channel against the engine version; returns the problems found."""
+    print(f"engine (workspace): {engine}  [every channel must name it exactly]")
     problems: list[str] = []
-    python_versions: dict[str, str] = {}
-    java_versions: dict[str, str] = {}
 
-    # These are `=` pins, not minor-lockstep: they must equal the engine exactly,
-    # or `cargo` refuses to resolve the workspace at all.
+    # These are `=` pins: they must equal the engine, or `cargo` refuses to
+    # resolve the workspace at all.
     for rel in _CORE_PIN_FILES:
         found = CORE_PIN_RE.search((ROOT / rel).read_text(encoding="utf-8"))
         if not found:
@@ -291,76 +241,89 @@ def main() -> int:
         if not path.exists():
             problems.append(f"{rel}: missing")
             continue
-        text = path.read_text(encoding="utf-8")
-        found = pattern.search(text)
+        found = pattern.search(path.read_text(encoding="utf-8"))
         if not found:
             problems.append(f"{rel}: no version field matched")
             continue
         current = found.group(1).strip()
-        if rel.startswith("clients/python/"):
-            python_versions[rel] = current
-        if rel.startswith("clients/java/"):
-            java_versions[rel] = current
-
-        if minor_of(current) == target_minor:
+        if current == engine:
             print(f"  ok    {label:32} {current}")
-            continue
-
-        if writing:
-            new = f"{target_minor}.0"
-            _edit(path, pattern, new)
-            print(f"  wrote {label:32} {current} -> {new}")
+        elif writing:
+            _edit(path, pattern, engine)
+            print(f"  wrote {label:32} {current} -> {engine}")
         else:
-            problems.append(
-                f"{rel}: {label} is {current}, expected {target_minor}.x "
-                f"(engine {engine})"
-            )
-
-    # The two Python files describe one package; they must agree exactly, not
-    # merely share a minor. This is the pairing the manifest comment asks for.
-    if len(set(python_versions.values())) > 1:
-        pairs = ", ".join(f"{k}={v}" for k, v in python_versions.items())
-        problems.append(f"python version split across files: {pairs}")
-    # Likewise Java: Maven refuses a module whose <parent> version is not the
-    # parent's, and the FFI crate's version is what the client reports.
-    if len(set(java_versions.values())) > 1:
-        pairs = ", ".join(f"{k}={v}" for k, v in java_versions.items())
-        problems.append(f"java version split across files: {pairs}")
+            problems.append(f"{rel}: {label} is {current}, engine is {engine}")
 
     # Pyodide fallback wheel URL in the docs.
     wheel_path = ROOT / WHEEL_DOC
     if wheel_path.exists():
         text = wheel_path.read_text(encoding="utf-8")
-        pinned = {m.group(2) for m in WHEEL_RE.finditer(text)}
-        py_version = python_versions.get("clients/python/pyproject.toml", engine)
-        expected = f"{target_minor}.0" if writing else py_version
-        for pin in sorted(pinned):
-            if minor_of(pin) == target_minor:
+        for pin in sorted({m.group(2) for m in WHEEL_RE.finditer(text)}):
+            if pin == engine:
                 print(f"  ok    {'pyodide wheel url':32} {pin}")
             elif writing:
-                text = WHEEL_RE.sub(lambda m: m.group(1) + expected + m.group(3), text)
+                text = WHEEL_RE.sub(lambda m: m.group(1) + engine + m.group(3), text)
                 wheel_path.write_text(text, encoding="utf-8")
-                print(f"  wrote {'pyodide wheel url':32} {pin} -> {expected}")
+                print(f"  wrote {'pyodide wheel url':32} {pin} -> {engine}")
             else:
                 problems.append(
-                    f"{WHEEL_DOC}: Pyodide fallback wheel URL pins {pin}, "
-                    f"expected {target_minor}.x — the wheel must also be "
-                    f"uploaded to the bucket for that URL to resolve"
+                    f"{WHEEL_DOC}: Pyodide fallback wheel URL pins {pin}, engine is "
+                    f"{engine} — the wheel must also be uploaded to the bucket for "
+                    f"that URL to resolve"
                 )
+    return problems
 
+
+def _report(problems: list[str]) -> int:
     if problems:
         print("\nversion drift:", file=sys.stderr)
         for problem in problems:
             print(f"  - {problem}", file=sys.stderr)
         print(
-            "\nrun `python3 scripts/sync_versions.py --write` to realign, then "
-            "review the diff.",
+            "\nrun `python3 scripts/sync_versions.py --set X.Y.Z` (or `--write` "
+            "to realign on the current engine version), then review the diff.",
             file=sys.stderr,
         )
         return 1
-
-    print("all clients match the engine minor line")
+    print("every channel names the engine version")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="report drift, write nothing")
+    mode.add_argument(
+        "--check-tag",
+        metavar="TAG",
+        help="what every release workflow runs on a tag: TAG must be "
+        "v<engine version> and every channel must name that version",
+    )
+    mode.add_argument(
+        "--write", action="store_true", help="realign every channel on the engine version"
+    )
+    mode.add_argument(
+        "--set",
+        metavar="VERSION",
+        help="cut a release: stamp VERSION on the workspace, the rete-core pins, "
+        "every client, the PyPI floors, the Binder pin and the Pyodide URL",
+    )
+    args = parser.parse_args()
+
+    if args.set:
+        return _stamp(args.set)
+
+    engine = engine_version()
+    if args.check_tag is not None:
+        if args.check_tag != f"v{engine}":
+            print(
+                f"tag {args.check_tag} does not name the workspace version "
+                f"{engine} (expected v{engine})",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"tag {args.check_tag} names the workspace version")
+    return _report(_check(engine, writing=args.write))
 
 
 if __name__ == "__main__":

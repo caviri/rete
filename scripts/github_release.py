@@ -86,7 +86,9 @@ def _key(version: str) -> tuple:
 def should_be_latest(version: str, releases: list[dict], tag: str) -> bool:
     """True when `version` is a final release no older than every other
     published final `v*` release. A backport such as v0.2.9 cut after v0.3.4
-    must not steal the badge; `explorer-v*`, `py-v*` and `js-v*` never count."""
+    must not steal the badge; `explorer-v*` and the historical `py-v*` /
+    `js-v*` client tags (retired after 0.3.6: one `v*` tag now releases every
+    channel) never count."""
     if is_prerelease(version):
         return False
     for release in releases:
