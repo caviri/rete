@@ -35,6 +35,7 @@ pub mod dict;
 pub mod dictionary;
 #[doc(hidden)]
 pub mod extbuild;
+pub mod federate;
 #[doc(hidden)]
 pub mod file;
 #[doc(hidden)]
@@ -145,6 +146,10 @@ pub mod card {
 /// Stable SPARQL, graph-pattern, federation, and result API.
 pub mod query {
     pub use crate::bgp::{Binding, PatternTerm, TriplePattern};
+    pub use crate::federate::{
+        federate, FederateError, FederatedOutput, FederationMerge, FederationSource, ReteSource,
+        SourceReport,
+    };
     pub use crate::file::TripleProvenance;
     pub use crate::results::{push_json_string, results_envelope_json};
     pub use crate::service::{
@@ -199,6 +204,10 @@ pub use block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE
 pub use dict::{DictSection, DictSectionBuilder};
 #[doc(hidden)]
 pub use dictionary::{Dictionary, DictionaryBuilder};
+pub use federate::{
+    federate, FederateError, FederatedOutput, FederationMerge, FederationSource, ReteSource,
+    SourceReport,
+};
 #[doc(hidden)]
 pub use file::{
     attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with,

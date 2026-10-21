@@ -1715,7 +1715,8 @@ fn generate_release_artifacts(output: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod federate_tests {
-    use crate::commands::federate::{source_predicates, MergeAcc};
+    use crate::commands::federate::source_predicates;
+    use rete_core::FederationMerge as MergeAcc;
     use rete_core::{
         build_pyramid_meta, eval_query, query_predicates, write_dataset, Binding,
         DictionaryBuilder, GraphIndexBuilder, QueryOutput, Rete, DEFAULT_TILE_BUDGET,
