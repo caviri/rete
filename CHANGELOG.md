@@ -49,6 +49,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   crates as soon as the release is assembled. It still admits `v*` tags only,
   authenticates through trusted publishing, and stops on the publish-time
   `cargo audit` / `cargo deny` gate (`docs/release.md`).
+- **npm publishing is tag-only and publishes the tarball it tested.**
+  `js-client-publish.yml` now has a `build` job (tag/version check, wasm build,
+  tests, `npm pack`, `npm publish --dry-run` on tags) and a `publish` job that
+  uploads that tarball with `--provenance`, only for a pushed `js-v*` tag; a
+  manual `workflow_dispatch` run used to publish from whatever branch it was
+  started on and is now a dry run. npm is pinned to the 12.x major with a
+  check for the 11.5.1 trusted-publishing floor. Authentication is unchanged:
+  `rete-graph` has been published through npm trusted publishing (GitHub
+  OIDC, no token) since 0.2.0; the "npm tokens that bypass 2FA are being
+  restricted" notice in the 0.3.6 log is npm's announcement to all publishers
+  and does not apply to that path. `docs/release.md` now lists how each
+  registry authenticates.
 
 ## [0.3.6] - 2026-10-21
 

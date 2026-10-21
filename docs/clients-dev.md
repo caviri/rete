@@ -81,6 +81,9 @@ Publishing uses **trusted publishing** (OIDC) — no tokens, no secrets. The
 registered publisher on PyPI: project `rete-graph`, owner `caviri`, repo
 `rete`, workflow `python-client-publish.yml`, environment `pypi`. Renaming
 that workflow file breaks publishing until the PyPI form is updated.
+`uv publish --trusted-publishing always` refuses to fall back to a password.
+It also uploads no PEP 740 attestations, so the PyPI files carry no provenance
+the way the npm package does (`pypa/gh-action-pypi-publish` would add them).
 
 Release procedure:
 
@@ -194,12 +197,46 @@ artifact rejects newer-format files with `header: unsupported version`).
   becomes a global under classic-script semantics, so the bundle test loads
   it via `vm.runInThisContext`, not `import`.
 - CI: `js-test.yml` (paths-filtered: clients/js + rete-wasm + rete-core) and
-  `js-client-publish.yml` (`js-v*` tags → npm publish via OIDC trusted
-  publishing; configure the publisher on npmjs.com → package → Settings →
-  Trusted Publisher: repo `caviri/rete`, workflow `js-client-publish.yml`).
+  `js-client-publish.yml` (`js-v*` tags only; see below).
 - Parity backlog vs Python: Dataset Card + embedded examples (needs a
   `card()` export in rete-wasm — an engine change, so the playground gate
   applies), custom headers, a Builder.
+
+### Releasing to npm
+
+Publishing uses npm **trusted publishing** (GitHub OIDC), like PyPI and
+crates.io: no npm token exists in the repository or its environments. The npm
+CLI (≥ 11.5.1; the workflow pins the 12.x major and checks the floor) trades
+the publish job's OIDC identity for a short-lived token, and every version
+carries a signed provenance statement. Every version since 0.2.0 was published
+this way (`npm view rete-graph _npmUser` shows "GitHub Actions"); 0.1.0 was
+the one manual bootstrap.
+
+`js-client-publish.yml` has two jobs, like the PyPI workflow:
+
+- `build` checks that the tag equals `js-v` + `clients/js/package.json`'s
+  version, builds the wasm engine from the checked-out crates, runs the test
+  suite, packs the tarball and (on a tag) runs `npm publish --dry-run` against
+  it, which also refuses a version the registry already has. A
+  `workflow_dispatch` run stops here: a dry run from any branch.
+- `publish` runs only for a pushed `js-v*` tag, in the `npm` environment, with
+  `id-token: write`, and publishes **that** tarball with `--provenance`.
+
+The trusted publisher registered on npmjs.com (`rete-graph` → Settings →
+Trusted publishing): GitHub Actions, owner `caviri`, repository `rete`,
+workflow `js-client-publish.yml`, environment `npm`. Renaming the workflow
+file or the environment breaks publishing until that entry is updated; with no
+token to fall back on, the failure is an authentication error at the publish
+step, after the build succeeded, and a re-run of the job after fixing the entry
+publishes the same tarball. Inspect or change the entry from a 2FA-enabled
+login with `npm trust list rete-graph` / `npm trust github` (npm ≥ 11.15).
+
+Release procedure:
+
+1. Bump the version (`scripts/sync_versions.py --set X.Y.Z` does every client).
+2. Commit, merge, then `git tag js-vX.Y.Z && git push origin js-vX.Y.Z`.
+3. Watch the *JS client publish* run: build → publish. `npm view rete-graph`
+   should list the version with `dist.attestations`.
 
 ## The R client
 

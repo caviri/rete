@@ -173,6 +173,33 @@ install support feature X?", since the binding's own version tracks the binding.
 Clients release from their own tags (`py-v0.3.0`, `js-v0.3.0`), not the `v*`
 release tag.
 
+### Registry credentials
+
+No registry token is stored anywhere: the repository and its environments
+hold no secrets, and every registry trusts a workflow identity instead
+(GitHub OIDC, "trusted publishing"):
+
+| registry | workflow / job | environment | how it authenticates |
+|---|---|---|---|
+| crates.io | `release.yml` / `protected crates.io publishing` | `crates-io` (`v*` tags only) | `rust-lang/crates-io-auth-action` trades OIDC for a short-lived token, revoked after the job |
+| PyPI | `python-client-publish.yml` / `publish to PyPI` | `pypi` | `uv publish --trusted-publishing always` (no attestations uploaded) |
+| npm | `js-client-publish.yml` / `publish to npm` | `npm` | the npm CLI (≥ 11.5.1) trades OIDC for a short-lived token; `--provenance` signs the build |
+
+Each registry's trusted-publisher entry names the workflow **file** (and the
+environment), so renaming either breaks that channel until the entry on the
+registry is updated. The npm job publishes only the tarball the `build` job
+tested, and only for a pushed `js-v*` tag; a `workflow_dispatch` run is a dry
+run ([details](clients-dev.md#releasing-to-npm)).
+
+npm is phasing out granular tokens that bypass 2FA: they lost account and
+package-management actions in July 2026, and from January 2027 they can only
+stage a publish for a maintainer to approve. That is the notice
+`npm publish` prints in the 0.3.6 log. It does not apply to trusted
+publishing, which is what published 0.3.6. With no token in use, the package's
+*Publishing access* on npmjs.com can be set to "Require two-factor
+authentication and disallow tokens"; trusted publishing keeps working under
+that setting.
+
 ### Cutting a version
 
 `scripts/sync_versions.py --set X.Y.Z` stamps the workspace, the exact

@@ -673,7 +673,10 @@ docker run --rm -v "$PWD":/io -w /io/clients/python python:3.12-slim bash -c \
 <p>Publishing uses <strong>trusted publishing</strong> (OIDC) — no tokens, no secrets. The
 registered publisher on PyPI: project <code>rete-graph</code>, owner <code>caviri</code>, repo
 <code>rete</code>, workflow <code>python-client-publish.yml</code>, environment <code>pypi</code>. Renaming
-that workflow file breaks publishing until the PyPI form is updated.</p>
+that workflow file breaks publishing until the PyPI form is updated.
+<code>uv publish --trusted-publishing always</code> refuses to fall back to a password.
+It also uploads no PEP 740 attestations, so the PyPI files carry no provenance
+the way the npm package does (<code>pypa/gh-action-pypi-publish</code> would add them).</p>
 <p>Release procedure:</p>
 <ol>
 <li>Bump <code>version</code> in <code>clients/python/pyproject.toml</code> (PyPI refuses to
@@ -780,13 +783,44 @@ test Range server runs in its own worker; and the IIFE's <code>var rete</code> o
 becomes a global under classic-script semantics, so the bundle test loads
 it via <code>vm.runInThisContext</code>, not <code>import</code>.</li>
 <li>CI: <code>js-test.yml</code> (paths-filtered: clients/js + rete-wasm + rete-core) and
-<code>js-client-publish.yml</code> (<code>js-v*</code> tags → npm publish via OIDC trusted
-publishing; configure the publisher on npmjs.com → package → Settings →
-Trusted Publisher: repo <code>caviri/rete</code>, workflow <code>js-client-publish.yml</code>).</li>
+<code>js-client-publish.yml</code> (<code>js-v*</code> tags only; see below).</li>
 <li>Parity backlog vs Python: Dataset Card + embedded examples (needs a
 <code>card()</code> export in rete-wasm — an engine change, so the playground gate
 applies), custom headers, a Builder.</li>
 </ul>
+<h3 id="releasing-to-npm">Releasing to npm</h3>
+<p>Publishing uses npm <strong>trusted publishing</strong> (GitHub OIDC), like PyPI and
+crates.io: no npm token exists in the repository or its environments. The npm
+CLI (≥ 11.5.1; the workflow pins the 12.x major and checks the floor) trades
+the publish job's OIDC identity for a short-lived token, and every version
+carries a signed provenance statement. Every version since 0.2.0 was published
+this way (<code>npm view rete-graph _npmUser</code> shows "GitHub Actions"); 0.1.0 was
+the one manual bootstrap.</p>
+<p><code>js-client-publish.yml</code> has two jobs, like the PyPI workflow:</p>
+<ul>
+<li><code>build</code> checks that the tag equals <code>js-v</code> + <code>clients/js/package.json</code>'s
+version, builds the wasm engine from the checked-out crates, runs the test
+suite, packs the tarball and (on a tag) runs <code>npm publish --dry-run</code> against
+it, which also refuses a version the registry already has. A
+<code>workflow_dispatch</code> run stops here: a dry run from any branch.</li>
+<li><code>publish</code> runs only for a pushed <code>js-v*</code> tag, in the <code>npm</code> environment, with
+<code>id-token: write</code>, and publishes <strong>that</strong> tarball with <code>--provenance</code>.</li>
+</ul>
+<p>The trusted publisher registered on npmjs.com (<code>rete-graph</code> → Settings →
+Trusted publishing): GitHub Actions, owner <code>caviri</code>, repository <code>rete</code>,
+workflow <code>js-client-publish.yml</code>, environment <code>npm</code>. Renaming the workflow
+file or the environment breaks publishing until that entry is updated; with no
+token to fall back on, the failure is an authentication error at the publish
+step, after the build succeeded, and a re-run of the job after fixing the entry
+publishes the same tarball. Inspect or change the entry from a 2FA-enabled
+login with <code>npm trust list rete-graph</code> / <code>npm trust github</code> (npm ≥ 11.15).</p>
+<p>Release procedure:</p>
+<ol>
+<li>Bump the version (<code>scripts/sync_versions.py --set X.Y.Z</code> does every client).</li>
+<li>Commit, merge, then <code>git tag js-vX.Y.Z &amp;&amp; git push origin js-vX.Y.Z</code>.</li>
+<li>Watch the <em>JS client publish</em> run: build → publish. <code>npm view rete-graph</code>
+should list the version with <code>dist.attestations</code>.</li>
+</ol>
 <h2 id="the-r-client">The R client</h2>
 <p><code>clients/r/</code> (package <code>rete</code>) binds <code>rete-core</code> with <strong>extendr</strong>, scaffolded
 by <code>rextendr::use_extendr()</code> in its CRAN-ready shape (<code>configure</code> +
