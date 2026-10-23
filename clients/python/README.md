@@ -168,6 +168,27 @@ class FsspecReader:
 g = rete.open(reader=FsspecReader("s3://my-bucket/data.rete", anon=False))
 ```
 
+### Federate over several graphs
+
+`rete.federate` runs one query over several graphs and unions the results.
+Sources are open `Graph`s or anything `rete.open` takes (paths, URLs).
+
+```python
+fed = rete.federate(
+    [rete.open("crossref.rete"), "https://data.graphplaza.com/datacite/datacite.rete"],
+    "SELECT ?title WHERE { ?w <http://www.w3.org/2000/01/rdf-schema#label> ?title }",
+)
+fed.result    # merged rows, shaped like Graph.query()
+fed.sources   # per source: name, pruned, contributed
+fed.warnings  # [] unless the query changes meaning per source
+```
+
+SELECT rows are deduplicated, ASK is an OR, CONSTRUCT triples are unioned.
+There are no joins across sources, and a source whose predicates cannot match
+the query is skipped (`route=False` turns that off). Aggregates, `LIMIT`,
+`OFFSET` and `ORDER BY` run per source, so over two or more sources each raises
+a `rete.FederationWarning` and is listed in `fed.warnings`.
+
 ## Building from source
 
 The package is a [maturin](https://maturin.rs) project; the repo convention is

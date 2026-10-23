@@ -20,7 +20,7 @@ use pyo3::types::PyBytes;
 use rete_core::{
     eval_query_with_warnings, results_envelope_json, schema_classes, schema_summary,
     validate_shacl, warnings_json, BlockCacheReader, CountingReader, DataGraph, QueryOpts,
-    RangeReader, Rete, ReteGraph, ShaclShapes, DEFAULT_BLOCK,
+    RangeReader, Rete, ReteGraph, ReteSource, ShaclShapes, DEFAULT_BLOCK,
 };
 #[cfg(not(target_os = "emscripten"))]
 use rete_core::{parse_sparql_json_results, Binding, ServiceClient};
@@ -673,6 +673,62 @@ fn build_dataset(
     Ok((PyBytes::new(py, &bytes).unbind(), stats_json))
 }
 
+/// Run one SPARQL query over several open graphs and merge the results (union
+/// federation; see `rete_core::federate`). Returns the usual JSON envelope plus
+/// a `federation` member: the per-source account and the semantic warnings.
+/// `names` label the graphs in that account and in errors.
+#[pyfunction]
+#[pyo3(signature = (graphs, names, query, *, route=true))]
+fn federate(
+    py: Python<'_>,
+    graphs: Vec<PyRef<'_, Graph>>,
+    names: Vec<String>,
+    query: &str,
+    route: bool,
+) -> PyResult<String> {
+    if graphs.len() != names.len() {
+        return Err(PyValueError::new_err("graphs and names differ in length"));
+    }
+    for g in &graphs {
+        g.fresh_verdict();
+    }
+    // Plain `&Rete`s cross `detach`; the `PyRef` guards themselves do not.
+    let retes: Vec<&Rete> = graphs.iter().map(|g| &g.rete).collect();
+    let got = py
+        .detach(|| {
+            let sources: Vec<ReteSource> = names
+                .iter()
+                .zip(&retes)
+                .map(|(n, r)| ReteSource::new(n, r))
+                .collect();
+            rete_core::federate(&sources, query, route, |_| {})
+        })
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    for g in &graphs {
+        g.incomplete_guard()?;
+    }
+    let sources: Vec<_> = got
+        .sources
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "name": s.name,
+                "pruned": s.pruned,
+                "contributed": s.contributed,
+                "routingError": s.routing_error,
+            })
+        })
+        .collect();
+    let warnings: Vec<_> = got
+        .warnings
+        .iter()
+        .map(|w| serde_json::json!({"kind": w.kind.as_str(), "message": w.message}))
+        .collect();
+    let federation = serde_json::json!({"sources": sources, "warnings": warnings});
+    let extra = format!(r#","schemaVersion":{JSON_SCHEMA_VERSION},"federation":{federation}"#);
+    Ok(results_envelope_json(&got.output, &extra))
+}
+
 // `gil_used = true` keeps the module's declared GIL contract what it was before
 // PyO3 0.28 flipped the default to "free-threading safe". The abi3 wheels do not
 // load on a free-threaded interpreter anyway; declaring support there is its own
@@ -685,6 +741,7 @@ fn _rete(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open_url, m)?)?;
     m.add_function(wrap_pyfunction!(open_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(open_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(federate, m)?)?;
     m.add_function(wrap_pyfunction!(build, m)?)?;
     m.add_function(wrap_pyfunction!(build_dataset, m)?)?;
     m.add_function(wrap_pyfunction!(rdf12_triple_term, m)?)?;
