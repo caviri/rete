@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 
 use crate::bgp::Binding;
 use crate::file::Rete;
-use crate::sparql::{eval_query, parse_select, query_predicates, QueryOutput};
+use crate::sparql::{eval_query, parse_select, query_predicates_and_form, QueryOutput};
 
 /// One source of a federated query.
 pub trait FederationSource {
@@ -220,7 +220,8 @@ pub fn federate<S: FederationSource>(
     route: bool,
     mut on_source: impl FnMut(&SourceReport),
 ) -> Result<FederatedOutput, FederateError> {
-    let query_preds = query_predicates(query).map_err(|e| FederateError::Query(e.to_string()))?;
+    let (query_preds, form) =
+        query_predicates_and_form(query).map_err(|e| FederateError::Query(e.to_string()))?;
 
     let mut merge = FederationMerge::default();
     let mut reports = Vec::with_capacity(sources.len());
@@ -254,6 +255,9 @@ pub fn federate<S: FederationSource>(
         on_source(&report);
         reports.push(report);
     }
+    // Every source pruned: no result told the merge its shape, and a false ASK
+    // or an empty CONSTRUCT must not come back as an empty SELECT.
+    merge.expect_form(form);
     // One source is exact: nothing is split, so nothing is per-source.
     let warnings = if sources.len() > 1 {
         federation_warnings(query)
@@ -292,6 +296,17 @@ enum OutKind {
 }
 
 impl FederationMerge {
+    /// Name the query form (`"ask"`, `"construct"`, anything else is SELECT)
+    /// for a merge that absorbed nothing, so an empty result keeps its shape.
+    /// No effect once a source has answered.
+    pub(crate) fn expect_form(&mut self, form: &str) {
+        self.kind.get_or_insert(match form {
+            "ask" => OutKind::Ask,
+            "construct" | "describe" => OutKind::Construct,
+            _ => OutKind::Select,
+        });
+    }
+
     /// Fold one source's result in; return how many *new* rows/triples it added
     /// (for ASK: 1 if it answered true, else 0).
     pub fn absorb(&mut self, out: QueryOutput) -> usize {
@@ -440,6 +455,19 @@ mod tests {
 
         let off = federate(&srcs, &q, false, |_| {}).unwrap();
         assert!(off.sources.iter().all(|s| !s.pruned));
+    }
+
+    #[test]
+    fn a_fully_pruned_query_keeps_its_shape() {
+        let a = build(&[("<http://a/1>", DATE, "\"2021\"")]);
+        let srcs = [ReteSource::new("a", &a)];
+        let ask = format!("ASK {{ ?s {CITES} ?o }}");
+        let got = federate(&srcs, &ask, true, |_| {}).unwrap();
+        assert!(got.sources[0].pruned);
+        assert!(matches!(got.output, QueryOutput::Ask(false)));
+        let con = format!("CONSTRUCT {{ ?s {CITES} ?o }} WHERE {{ ?s {CITES} ?o }}");
+        let got = federate(&srcs, &con, true, |_| {}).unwrap();
+        assert!(matches!(got.output, QueryOutput::Construct(ref t) if t.is_empty()));
     }
 
     #[test]
