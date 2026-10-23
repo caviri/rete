@@ -53664,7 +53664,7 @@
    "index": 0,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) · federated 8 source(s) · 1.82 GB ranged · 75205 ms",
+   "qmeta": "25 row(s) · federated 8 source(s) · 1.61 GB ranged · 59902 ms",
    "count": 25,
    "unit": "row",
    "columns": [],
@@ -53679,7 +53679,7 @@
       "media": false
      },
      {
-      "text": "186.9 MB · 98 req",
+      "text": "166.6 MB · 97 req",
       "media": false
      }
     ],
@@ -53693,7 +53693,7 @@
       "media": false
      },
      {
-      "text": "208.6 MB · 114 req",
+      "text": "183.0 MB · 116 req",
       "media": false
      }
     ],
@@ -53707,7 +53707,7 @@
       "media": false
      },
      {
-      "text": "225.0 MB · 138 req",
+      "text": "197.9 MB · 138 req",
       "media": false
      }
     ],
@@ -53721,7 +53721,7 @@
       "media": false
      },
      {
-      "text": "236.2 MB · 158 req",
+      "text": "207.8 MB · 158 req",
       "media": false
      }
     ],
@@ -53735,7 +53735,7 @@
       "media": false
      },
      {
-      "text": "270.4 MB · 204 req",
+      "text": "233.2 MB · 195 req",
       "media": false
      }
     ],
@@ -53749,7 +53749,7 @@
       "media": false
      },
      {
-      "text": "244.6 MB · 184 req",
+      "text": "217.1 MB · 185 req",
       "media": false
      }
     ],
@@ -53763,7 +53763,7 @@
       "media": false
      },
      {
-      "text": "246.9 MB · 195 req",
+      "text": "219.5 MB · 196 req",
       "media": false
      }
     ],
@@ -53777,14 +53777,14 @@
       "media": false
      },
      {
-      "text": "247.9 MB · 205 req",
+      "text": "221.6 MB · 206 req",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 75254
+   "elapsedMs": 59934
   },
   "openaire-2021:1": {
    "id": "openaire-2021:1",
@@ -53792,8 +53792,8 @@
    "index": 1,
    "view": "table",
    "ok": true,
-   "qmeta": "15 row(s) · federated 8 source(s) · 1.96 GB ranged · 454075 ms",
-   "count": 15,
+   "qmeta": "18 row(s) · federated 8 source(s) · 10.3 MB ranged · 111416 ms",
+   "count": 18,
    "unit": "row",
    "columns": [],
    "rows": [
@@ -53803,11 +53803,11 @@
       "media": false
      },
      {
-      "text": "3 row(s)",
+      "text": "4 row(s)",
       "media": false
      },
      {
-      "text": "325.4 MB · 127 req",
+      "text": "3.0 MB · 6 req",
       "media": false
      }
     ],
@@ -53817,11 +53817,11 @@
       "media": false
      },
      {
-      "text": "0 row(s)",
+      "text": "1 row(s)",
       "media": false
      },
      {
-      "text": "208.6 MB · 114 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ],
@@ -53835,7 +53835,7 @@
       "media": false
      },
      {
-      "text": "241.5 MB · 151 req",
+      "text": "2.5 MB · 5 req",
       "media": false
      }
     ],
@@ -53849,7 +53849,7 @@
       "media": false
      },
      {
-      "text": "243.2 MB · 167 req",
+      "text": "3.0 MB · 6 req",
       "media": false
      }
     ],
@@ -53859,11 +53859,11 @@
       "media": false
      },
      {
-      "text": "1 row(s)",
+      "text": "2 row(s)",
       "media": false
      },
      {
-      "text": "241.9 MB · 171 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ],
@@ -53877,7 +53877,7 @@
       "media": false
      },
      {
-      "text": "246.1 MB · 189 req",
+      "text": "1.0 MB · 4 req",
       "media": false
      }
     ],
@@ -53891,7 +53891,7 @@
       "media": false
      },
      {
-      "text": "247.4 MB · 197 req",
+      "text": "512.0 KB · 2 req",
       "media": false
      }
     ],
@@ -53905,14 +53905,14 @@
       "media": false
      },
      {
-      "text": "247.9 MB · 205 req",
+      "text": "256.0 KB · 1 req",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 453829
+   "elapsedMs": 111441
   },
   "openaire-2021:2": {
    "id": "openaire-2021:2",
@@ -53934,7 +53934,7 @@
    "index": 3,
    "view": "table",
    "ok": true,
-   "qmeta": "30 row(s) · federated 8 source(s) · 2.54 GB ranged · 80209 ms",
+   "qmeta": "30 row(s) · federated 8 source(s) · 15.0 MB ranged · 4434 ms",
    "count": 30,
    "unit": "row",
    "columns": [],
@@ -53949,7 +53949,7 @@
       "media": false
      },
      {
-      "text": "278.8 MB · 143 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ],
@@ -53963,7 +53963,7 @@
       "media": false
      },
      {
-      "text": "300.5 MB · 159 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ],
@@ -53977,7 +53977,7 @@
       "media": false
      },
      {
-      "text": "317.0 MB · 183 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ],
@@ -53991,7 +53991,7 @@
       "media": false
      },
      {
-      "text": "328.1 MB · 203 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ],
@@ -54005,7 +54005,7 @@
       "media": false
      },
      {
-      "text": "366.3 MB · 250 req",
+      "text": "15.0 MB · 22 req",
       "media": false
      }
     ],
@@ -54019,7 +54019,7 @@
       "media": false
      },
      {
-      "text": "336.5 MB · 229 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ],
@@ -54033,7 +54033,7 @@
       "media": false
      },
      {
-      "text": "338.8 MB · 240 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ],
@@ -54047,14 +54047,14 @@
       "media": false
      },
      {
-      "text": "339.9 MB · 250 req",
+      "text": "0 B · 0 req",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 80376
+   "elapsedMs": 4463
   },
   "openalex-astrocytes:0": {
    "id": "openalex-astrocytes:0",
