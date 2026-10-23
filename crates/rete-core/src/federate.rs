@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 
 use crate::bgp::Binding;
 use crate::file::Rete;
-use crate::sparql::{eval_query, query_predicates, QueryOutput};
+use crate::sparql::{eval_query, parse_select, query_predicates, QueryOutput};
 
 /// One source of a federated query.
 pub trait FederationSource {
@@ -92,6 +92,95 @@ pub struct FederatedOutput {
     pub output: QueryOutput,
     /// One entry per source, in source order.
     pub sources: Vec<SourceReport>,
+    /// Query features whose meaning changes when the query runs per source and
+    /// the rows are unioned. Empty with fewer than two sources, where the result
+    /// is exact.
+    pub warnings: Vec<FederationWarning>,
+}
+
+/// Which query feature a [`FederationWarning`] is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FederationWarningKind {
+    /// An aggregate or `GROUP BY`.
+    Aggregate,
+    /// `LIMIT`.
+    Limit,
+    /// `OFFSET`.
+    Offset,
+    /// `ORDER BY`.
+    OrderBy,
+}
+
+impl FederationWarningKind {
+    /// `"aggregate"`, `"limit"`, `"offset"` or `"order-by"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Aggregate => "aggregate",
+            Self::Limit => "limit",
+            Self::Offset => "offset",
+            Self::OrderBy => "order-by",
+        }
+    }
+}
+
+/// A query feature that is evaluated per source, so the merged result is not
+/// what the same query would return over one graph holding all the data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FederationWarning {
+    /// The feature concerned.
+    pub kind: FederationWarningKind,
+    /// One plain-language sentence saying what the caller gets instead.
+    pub message: String,
+}
+
+/// The [`FederationWarning`]s a query earns when run over two or more sources.
+///
+/// [`federate`] calls this for you. Call it directly when you evaluate the
+/// sources yourself and merge with [`FederationMerge`]. Only `SELECT` has any:
+/// `ASK` is exact under OR, and a `CONSTRUCT` is a union. A query that does not
+/// parse as a `SELECT` yields none.
+pub fn federation_warnings(query: &str) -> Vec<FederationWarning> {
+    let Ok(select) = parse_select(query) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut warn = |kind, message: &str| {
+        out.push(FederationWarning {
+            kind,
+            message: message.to_string(),
+        })
+    };
+    if select.group.is_some() {
+        warn(
+            FederationWarningKind::Aggregate,
+            "aggregates and GROUP BY run per source, so you get one set of groups per source \
+             (a COUNT(*) is one count per source, not a total); re-aggregate the rows, or \
+             query a single source",
+        );
+    }
+    if select.limit.is_some() {
+        warn(
+            FederationWarningKind::Limit,
+            "LIMIT applies to each source separately, so the merged result can hold more \
+             rows than the limit",
+        );
+    }
+    if select.offset > 0 {
+        warn(
+            FederationWarningKind::Offset,
+            "OFFSET skips rows within each source separately, not across the merged result",
+        );
+    }
+    if !select.order.is_empty() {
+        warn(
+            FederationWarningKind::OrderBy,
+            "ORDER BY sorts each source's rows; the merged result is in source order, \
+             not globally sorted",
+        );
+    }
+    out
 }
 
 /// A federated query failed.
@@ -165,9 +254,16 @@ pub fn federate<S: FederationSource>(
         on_source(&report);
         reports.push(report);
     }
+    // One source is exact: nothing is split, so nothing is per-source.
+    let warnings = if sources.len() > 1 {
+        federation_warnings(query)
+    } else {
+        Vec::new()
+    };
     Ok(FederatedOutput {
         output: merge.into_output(),
         sources: reports,
+        warnings,
     })
 }
 
@@ -390,6 +486,72 @@ mod tests {
             }
         );
         assert!(federate(&[ok], &q, false, |_| {}).is_ok());
+    }
+
+    fn kinds(w: &[FederationWarning]) -> Vec<FederationWarningKind> {
+        w.iter().map(|w| w.kind).collect()
+    }
+
+    #[test]
+    fn an_aggregate_over_two_sources_warns_and_stays_per_source() {
+        let (a, b) = two_shards();
+        let srcs = [ReteSource::new("a", &a), ReteSource::new("b", &b)];
+        let q = format!("SELECT (COUNT(*) AS ?n) WHERE {{ ?c {CITES} <http://target> }}");
+        let got = federate(&srcs, &q, true, |_| {}).unwrap();
+        assert_eq!(kinds(&got.warnings), [FederationWarningKind::Aggregate]);
+        assert!(got.warnings[0].message.contains("one count per source"));
+        // Both shards hold two citations, so the rows are 2 and 2 (deduped to 1
+        // row, "2"): the merge is not a total of 4. That is what the warning is for.
+        let QueryOutput::Select(_, rows) = got.output else {
+            panic!("expected SELECT")
+        };
+        assert!(rows.iter().all(|r| !r["n"].contains('4')), "rows: {rows:?}");
+    }
+
+    #[test]
+    fn limit_offset_and_order_by_each_warn() {
+        let (a, b) = two_shards();
+        let srcs = [ReteSource::new("a", &a), ReteSource::new("b", &b)];
+        let q = format!(
+            "SELECT ?c WHERE {{ ?c {CITES} <http://target> }} ORDER BY ?c LIMIT 1 OFFSET 1"
+        );
+        let got = federate(&srcs, &q, true, |_| {}).unwrap();
+        assert_eq!(
+            kinds(&got.warnings),
+            [
+                FederationWarningKind::Limit,
+                FederationWarningKind::Offset,
+                FederationWarningKind::OrderBy
+            ]
+        );
+    }
+
+    #[test]
+    fn plain_queries_and_single_sources_do_not_warn() {
+        let (a, b) = two_shards();
+        let two = [ReteSource::new("a", &a), ReteSource::new("b", &b)];
+        // DISTINCT is exact: the merge dedups. ASK and CONSTRUCT have none.
+        for q in [
+            format!("SELECT DISTINCT ?c WHERE {{ ?c {CITES} <http://target> }}"),
+            format!("ASK {{ ?c {CITES} <http://target> }}"),
+        ] {
+            assert!(federate(&two, &q, true, |_| {})
+                .unwrap()
+                .warnings
+                .is_empty());
+        }
+        // One source is exact even for an aggregate.
+        let one = [ReteSource::new("a", &a)];
+        let agg = format!("SELECT (COUNT(*) AS ?n) WHERE {{ ?c {CITES} <http://target> }}");
+        assert!(federate(&one, &agg, true, |_| {})
+            .unwrap()
+            .warnings
+            .is_empty());
+        // The standalone function does not know the source count; it still reports.
+        assert_eq!(
+            kinds(&federation_warnings(&agg)),
+            [FederationWarningKind::Aggregate]
+        );
     }
 
     #[test]

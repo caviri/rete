@@ -110,6 +110,10 @@ pub(crate) fn federate(
 
     print_query_output(&got.output, json);
 
+    for w in &got.warnings {
+        eprintln!("warning: federated {}: {}", w.kind.as_str(), w.message);
+    }
+
     let pruned: Vec<&str> = got
         .sources
         .iter()

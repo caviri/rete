@@ -147,8 +147,8 @@ pub mod card {
 pub mod query {
     pub use crate::bgp::{Binding, PatternTerm, TriplePattern};
     pub use crate::federate::{
-        federate, FederateError, FederatedOutput, FederationMerge, FederationSource, ReteSource,
-        SourceReport,
+        federate, federation_warnings, FederateError, FederatedOutput, FederationMerge,
+        FederationSource, FederationWarning, FederationWarningKind, ReteSource, SourceReport,
     };
     pub use crate::file::TripleProvenance;
     pub use crate::results::{push_json_string, results_envelope_json};
@@ -205,8 +205,8 @@ pub use dict::{DictSection, DictSectionBuilder};
 #[doc(hidden)]
 pub use dictionary::{Dictionary, DictionaryBuilder};
 pub use federate::{
-    federate, FederateError, FederatedOutput, FederationMerge, FederationSource, ReteSource,
-    SourceReport,
+    federate, federation_warnings, FederateError, FederatedOutput, FederationMerge,
+    FederationSource, FederationWarning, FederationWarningKind, ReteSource, SourceReport,
 };
 #[doc(hidden)]
 pub use file::{
