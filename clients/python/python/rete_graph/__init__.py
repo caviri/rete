@@ -22,6 +22,7 @@ import io
 import json
 import os
 import sys
+import warnings as _warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
@@ -31,7 +32,17 @@ __version__ = _rete.__version__
 #: Version of the Rust engine compiled into this wheel. Tracks `__version__`'s
 #: major.minor; the patch components move independently.
 __engine_version__ = _rete.__engine_version__
-__all__ = ["open", "build", "Builder", "Graph", "Term", "DEFAULT_GRAPH"]
+__all__ = [
+    "open",
+    "build",
+    "federate",
+    "Builder",
+    "Graph",
+    "Federation",
+    "FederationWarning",
+    "Term",
+    "DEFAULT_GRAPH",
+]
 
 
 class _DefaultGraph:
@@ -273,6 +284,21 @@ def _open_text_sink(dest: Any) -> Tuple[Any, Any]:
     return handle, handle.close
 
 
+def _decode(env: Dict[str, Any]) -> Union[List[Row], bool, List[Triple]]:
+    """A result envelope as Python values (see :meth:`Graph.query`)."""
+    kind = env.get("kind")
+    if kind == "select":
+        return [
+            {var: Term.parse(tok) for var, tok in row.items()}
+            for row in env["rows"]
+        ]
+    if kind == "ask":
+        return env["boolean"]
+    if kind == "construct":
+        return [tuple(Term.parse(t) for t in triple) for triple in env["triples"]]
+    raise ValueError(f"unexpected result kind: {kind!r}")
+
+
 class Graph:
     """A ``.rete`` graph opened for querying (local, remote, or in-memory)."""
 
@@ -291,18 +317,7 @@ class Graph:
         ``reason=True`` turns on OWL 2 QL entailment (computed by query
         rewriting over the file's ontology — no materialization).
         """
-        env = self.query_raw(query, reason=reason)
-        kind = env.get("kind")
-        if kind == "select":
-            return [
-                {var: Term.parse(tok) for var, tok in row.items()}
-                for row in env["rows"]
-            ]
-        if kind == "ask":
-            return env["boolean"]
-        if kind == "construct":
-            return [tuple(Term.parse(t) for t in triple) for triple in env["triples"]]
-        raise ValueError(f"unexpected result kind: {kind!r}")
+        return _decode(self.query_raw(query, reason=reason))
 
     def query_raw(self, query: str, *, reason: bool = False) -> Dict[str, Any]:
         """The engine's raw JSON result envelope, as a dict.
@@ -720,6 +735,61 @@ def open(
     if headers:
         raise TypeError("headers= only applies to http(s) sources")
     return Graph(_rete.open_path(path), path)
+
+
+class FederationWarning(UserWarning):
+    """A query feature whose meaning changes when it runs once per source.
+
+    Raised through :mod:`warnings` by :func:`federate` and also listed in
+    :attr:`Federation.warnings`.
+    """
+
+
+@dataclass
+class Federation:
+    """The outcome of :func:`federate`."""
+
+    #: The merged result, shaped like :meth:`Graph.query`.
+    result: Union[List[Row], bool, List[Triple]]
+    #: One dict per source, in order: ``name``, ``pruned``, ``contributed`` and
+    #: ``routingError`` (``None`` unless routing could not read its predicates).
+    sources: List[Dict[str, Any]]
+    #: Dicts with ``kind`` (``aggregate``, ``limit``, ``offset`` or
+    #: ``order-by``) and ``message``. Empty for one source or a plain query.
+    warnings: List[Dict[str, str]]
+
+
+def federate(
+    sources: "List[Union[Graph, str, os.PathLike[str]]]",
+    query: str,
+    *,
+    route: bool = True,
+) -> Federation:
+    """Run one SPARQL query over several graphs and union the results.
+
+    Each source is an open :class:`Graph` or anything :func:`open` takes (a path
+    or ``http(s)://`` URL, opened lazily and kept for the call). SELECT rows are
+    deduplicated across sources, ASK is true if any source says so, CONSTRUCT
+    triples are unioned. There are no joins across sources.
+
+    ``route=True`` skips a source whose predicates (read from its summary)
+    cannot match the query's.
+
+    Aggregates, ``LIMIT``, ``OFFSET`` and ``ORDER BY`` run per source, so over
+    two or more sources they do not mean what they mean over one graph. Each
+    earns a :class:`FederationWarning`. A failing source raises; no partial
+    result is returned.
+    """
+    graphs = [s if isinstance(s, Graph) else open(s) for s in sources]
+    env = json.loads(
+        _rete.federate(
+            [g._g for g in graphs], [g.source for g in graphs], query, route=route
+        )
+    )
+    fed = env["federation"]
+    for w in fed["warnings"]:
+        _warnings.warn(f"federated {w['kind']}: {w['message']}", FederationWarning, stacklevel=2)
+    return Federation(_decode(env), fed["sources"], fed["warnings"])
 
 
 # rdflib Datasets label their default graph with this IRI; when serialized to
