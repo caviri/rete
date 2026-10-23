@@ -1694,8 +1694,10 @@ predicates are disjoint from the query's; <code>--no-route</code> queries every 
 Per-source diagnostics and the queried/pruned tally go to stderr.</p>
 <p>This is <strong>union</strong> federation — correct for sharded data where each file
 independently yields complete rows. It does <strong>not</strong> do cross-file joins, and
-aggregates (<code>COUNT</code>/<code>GROUP BY</code>) and <code>LIMIT</code> are evaluated <strong>per source</strong> then
-unioned (a federated <code>COUNT(*)</code> returns per-source counts, not a global sum). See
+aggregates (<code>COUNT</code>/<code>GROUP BY</code>), <code>LIMIT</code>, <code>OFFSET</code> and <code>ORDER BY</code> are evaluated
+<strong>per source</strong> then unioned (a federated <code>COUNT(*)</code> returns per-source counts, not
+a global sum); each one the query uses prints a <code>warning: federated …</code> line on
+stderr when two or more sources are given. See
 <a href="federation.html">Federated queries</a> for the full model, limitations, and a real
 OpenCitations multi-shard example.</p>
 <pre><code class="language-sh">rete federate data/opencitations/cites-2021.rete data/opencitations/cites-2024.rete \

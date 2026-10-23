@@ -92,7 +92,21 @@ pub fn parse_select(query: &str) -> Result<Select, SparqlError> {
 /// Returns an empty set when the query pins no concrete predicate (e.g. every
 /// pattern uses a variable predicate) — callers should then query every source.
 pub fn query_predicates(query: &str) -> Result<std::collections::BTreeSet<String>, SparqlError> {
+    query_predicates_and_form(query).map(|(preds, _)| preds)
+}
+
+/// [`query_predicates`] plus the query form (`"select"`, `"ask"`, `"construct"`
+/// or `"describe"`), from one parse.
+pub(crate) fn query_predicates_and_form(
+    query: &str,
+) -> Result<(std::collections::BTreeSet<String>, &'static str), SparqlError> {
     let parsed = parse_query(query)?;
+    let form = match &parsed {
+        Query::Select { .. } => "select",
+        Query::Ask { .. } => "ask",
+        Query::Construct { .. } => "construct",
+        Query::Describe { .. } => "describe",
+    };
     let mut preds = std::collections::BTreeSet::new();
     let pattern = match &parsed {
         Query::Select { pattern, .. } => pattern,
@@ -101,7 +115,7 @@ pub fn query_predicates(query: &str) -> Result<std::collections::BTreeSet<String
         Query::Describe { pattern, .. } => pattern,
     };
     collect_pattern_predicates(pattern, &mut preds);
-    Ok(preds)
+    Ok((preds, form))
 }
 
 /// Walk a `GraphPattern`, adding every concrete predicate IRI to `out`.

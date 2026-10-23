@@ -25,6 +25,7 @@ mod ql;
 
 pub use diag::{warnings_json, QueryWarning, WarningSeverity};
 use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
+pub(crate) use lower::query_predicates_and_form;
 use lower::{lower_pattern, lower_select, parse_query};
 pub use lower::{parse_select, query_predicates};
 // Re-exported so the sibling modules' `use super::*` can reach the evaluator

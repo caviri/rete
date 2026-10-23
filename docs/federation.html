@@ -675,13 +675,17 @@ joined with a triple from file B (e.g. <code>?x</code> from one shard joined to 
 another) will <strong>not</strong> be found. Each shard is queried in isolation. Cross-file
 joins need a term-level federated BGP engine that ships intermediate bindings
 between sources — future work.</li>
-<li><strong>Aggregates and <code>LIMIT</code> are per source, then unioned.</strong> A federated
-<code>SELECT (COUNT(*) AS ?n)</code> returns <strong>one count per source</strong> (unioned), not a
-global sum and <code>LIMIT 5</code> over two shards can return up to <strong>10</strong> rows (5 from
-each). This keeps the prototype honest rather than silently wrong. Sum / cap
-client-side, or wait for a future <code>--reduce</code> that folds per-source aggregates.</li>
+<li><strong>Aggregates, <code>LIMIT</code>, <code>OFFSET</code> and <code>ORDER BY</code> are per source, then unioned.</strong> A
+federated <code>SELECT (COUNT(*) AS ?n)</code> returns <strong>one count per source</strong> (unioned),
+not a global sum, and <code>LIMIT 5</code> over two shards can return up to <strong>10</strong> rows (5
+from each). Sum / cap client-side, or wait for a future <code>--reduce</code> that folds
+per-source aggregates. With two or more sources, <code>rete federate</code> prints a
+<code>warning: federated &lt;aggregate|limit|offset|order-by&gt;: …</code> line on stderr for each
+of these the query uses, and the library API returns the same as
+<code>FederatedOutput::warnings</code> (<code>rete_core::federation_warnings(query)</code> when you
+merge the sources yourself). One source is exact and warns about nothing.</li>
 <li><strong><code>GROUP BY</code></strong> is likewise evaluated per source then unioned, so the same group
-key can appear once per shard.</li>
+key can appear once per shard (it earns the <code>aggregate</code> warning).</li>
 </ul>
 <h2 id="real-example--opencitations-sharded-by-citing-year">Real example — OpenCitations, sharded by citing year</h2>
 <p>The repo ships a real dataset: citations <strong>of the AlphaFold paper</strong>

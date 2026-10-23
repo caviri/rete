@@ -82,13 +82,17 @@ clear about what it does **not** do.
   another) will **not** be found. Each shard is queried in isolation. Cross-file
   joins need a term-level federated BGP engine that ships intermediate bindings
   between sources — future work.
-- **Aggregates and `LIMIT` are per source, then unioned.** A federated
-  `SELECT (COUNT(*) AS ?n)` returns **one count per source** (unioned), not a
-  global sum and `LIMIT 5` over two shards can return up to **10** rows (5 from
-  each). This keeps the prototype honest rather than silently wrong. Sum / cap
-  client-side, or wait for a future `--reduce` that folds per-source aggregates.
+- **Aggregates, `LIMIT`, `OFFSET` and `ORDER BY` are per source, then unioned.** A
+  federated `SELECT (COUNT(*) AS ?n)` returns **one count per source** (unioned),
+  not a global sum, and `LIMIT 5` over two shards can return up to **10** rows (5
+  from each). Sum / cap client-side, or wait for a future `--reduce` that folds
+  per-source aggregates. With two or more sources, `rete federate` prints a
+  `warning: federated <aggregate|limit|offset|order-by>: …` line on stderr for each
+  of these the query uses, and the library API returns the same as
+  `FederatedOutput::warnings` (`rete_core::federation_warnings(query)` when you
+  merge the sources yourself). One source is exact and warns about nothing.
 - **`GROUP BY`** is likewise evaluated per source then unioned, so the same group
-  key can appear once per shard.
+  key can appear once per shard (it earns the `aggregate` warning).
 
 ## Real example — OpenCitations, sharded by citing year
 

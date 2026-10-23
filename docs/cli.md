@@ -1317,8 +1317,10 @@ Per-source diagnostics and the queried/pruned tally go to stderr.
 
 This is **union** federation — correct for sharded data where each file
 independently yields complete rows. It does **not** do cross-file joins, and
-aggregates (`COUNT`/`GROUP BY`) and `LIMIT` are evaluated **per source** then
-unioned (a federated `COUNT(*)` returns per-source counts, not a global sum). See
+aggregates (`COUNT`/`GROUP BY`), `LIMIT`, `OFFSET` and `ORDER BY` are evaluated
+**per source** then unioned (a federated `COUNT(*)` returns per-source counts, not
+a global sum); each one the query uses prints a `warning: federated …` line on
+stderr when two or more sources are given. See
 [Federated queries](federation.md) for the full model, limitations, and a real
 OpenCitations multi-shard example.
 
