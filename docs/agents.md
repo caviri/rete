@@ -135,15 +135,31 @@ published catalog directly over HTTP Range with no server in between.
 The format makes this unusually easy. MCPB's own guidance notes that Python
 bundles cannot portably ship compiled dependencies and that binary bundles
 need a build per platform; the rete engine is Rust **already compiled to
-architecture-neutral wasm**, so the extension is a plain `node` bundle — one
-JS file plus one `.wasm`, 1.3 MB packed — that runs unchanged on macOS,
-Windows and Linux with the Node runtime Claude Desktop ships.
+architecture-neutral wasm**, so the extension is a plain `node` bundle — two
+JS files (the server and its query worker) plus one `.wasm` — that runs
+unchanged on macOS, Windows and Linux with the Node runtime Claude Desktop
+ships.
 
-Nine tools, mirroring the hosted server's read surface plus local authoring:
-`list_datasets`, `dataset_card`, `dataset_schema`, `example_queries`,
-`sparql_query`, `find_entities`, `describe_entity`, `validate_shacl`,
-`build_rete`. Every `dataset` argument takes a local file name, a catalog
-key, or an `https://` URL to any published `.rete`.
+Thirteen tools, mirroring the hosted server's read surface plus local
+authoring and query jobs: `list_datasets`, `dataset_card`, `dataset_schema`,
+`example_queries`, `sparql_query`, `start_query`, `query_status`,
+`query_result`, `cancel_query`, `find_entities`, `describe_entity`,
+`validate_shacl`, `build_rete`. Every `dataset` argument takes a local file
+name, a catalog key, or an `https://` URL to any published `.rete`.
+
+**Long queries do not time out.** Claude gives up on a tool call after 60 s,
+and a query that visits thousands of scattered entities in a large published
+graph (title and year for every work citing a paper, on the 60 GB Crossref
+graph) takes minutes: each separate place in the file is a network round trip.
+Every query therefore runs on a worker thread as a job. `sparql_query` waits
+up to 40 s; a query still running by then answers with its `job_id` and keeps
+going, `query_status` waits for it (45 s at most per call) and reports reads,
+bytes and elapsed time, and `cancel_query` stops it. Up to three jobs run at
+once, so a quick lookup never queues behind a slow one, and the server stays
+responsive throughout (the engine's synchronous range reads used to block it
+for the whole query). An answer shows 200 rows; `query_result` pages through
+the rest by cursor or writes all of them to a CSV/TSV/JSON/N-Triples file in a
+granted folder.
 
 The decisive property is that **local files are read lazily too** — the same
 byte-range path as a remote graph, via the JS client's `file://` reader — so

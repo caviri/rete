@@ -52,13 +52,17 @@ test("serves the declared tools", async (t) => {
   const names = tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
     "build_rete",
+    "cancel_query",
     "dataset_card",
     "dataset_schema",
     "describe_entity",
     "example_queries",
     "find_entities",
     "list_datasets",
+    "query_result",
+    "query_status",
     "sparql_query",
+    "start_query",
     "validate_shacl",
   ]);
 });

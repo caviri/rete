@@ -21,7 +21,7 @@ Every tool result carries `stats` — the bytes and requests actually read.
 MCPB's own guidance warns that Python bundles "cannot portably bundle compiled
 dependencies" and that binaries need a per-platform build. The rete engine is
 Rust **already compiled to architecture-neutral wasm**, so this is a plain
-`node` bundle — one JS file plus one `.wasm` — that runs unchanged on macOS,
+`node` bundle — two JS files plus one `.wasm` — that runs unchanged on macOS,
 Windows and Linux with the Node runtime Claude Desktop ships.
 
 ```
@@ -29,9 +29,10 @@ build/
   manifest.json
   icon.png
   server/
-    index.mjs              1.2 MB   server + MCP SDK + rete-graph client, bundled
-    rete_wasm_bg.wasm      3.1 MB   the engine
-    catalog.json           0.6 MB   published-dataset catalogue
+    index.mjs              1.3 MB   server + MCP SDK + rete-graph client, bundled
+    worker.mjs             0.1 MB   the query worker (rete-graph client), bundled
+    rete_wasm_bg.wasm      3.8 MB   the engine, loaded by each thread
+    catalog.json           0.8 MB   published-dataset catalogue
 ```
 
 No `node_modules` in the archive, no native modules, nothing to install.
@@ -44,7 +45,11 @@ No `node_modules` in the archive, no native modules, nothing to install.
 | `dataset_card` | The file's embedded self-description (2 small reads, any size) |
 | `dataset_schema` | Classes and relations with counts, from the baked pyramid |
 | `example_queries` | Runnable SPARQL the dataset ships with |
-| `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL. A FILTER type error (CONTAINS on an IRI, …) comes back as `warnings` plus a plain-language line |
+| `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL; waits up to 40 s, then answers with a `job_id` while the query keeps running. A FILTER type error (CONTAINS on an IRI, …) comes back as `warnings` plus a plain-language line |
+| `start_query` | The same, without waiting: a `job_id` at once |
+| `query_status` | Waits up to 45 s for a job; state, reads, bytes, elapsed; the first rows once done. No `job_id`: every job held |
+| `query_result` | A finished job's rows by cursor (up to 1000 a page), or all of them to a `.csv` / `.tsv` / `.json` / `.jsonl` / `.nt` file in a granted folder (`save_as`; never overwrites) |
+| `cancel_query` | Stops a job by terminating its worker |
 | `find_entities` | Label-prefix + full-text search → entity IRIs |
 | `describe_entity` | Every statement about one IRI, both directions |
 | `validate_shacl` | SHACL Core report; only the shapes' targets are read |
@@ -56,6 +61,33 @@ an `https://` URL to any published `.rete`. Local files win a name clash.
 `dataset_card` includes `signals.quoted_triples` — whether the graph holds quoted
 triples and the surfaces `rete export` can write them in — measured from the
 file's header, so it answers for every published file.
+
+### Long queries: jobs
+
+Claude gives up on a tool call after 60 s, and the engine's range reads are
+synchronous: a query run on the server's own thread blocked every other call
+until it finished, and one the client had abandoned could not be cancelled.
+So every query runs on a worker thread (`src/worker.mjs`, scheduled by
+`src/jobs.mjs`) as a job:
+
+- A call answers well inside the limit: with the result, or with the
+  `job_id` of a query that is still running and keeps running.
+- Up to three jobs run at once, each worker with its own engine and caches;
+  more wait in a queue. An idle worker is let go after ten minutes, a finished
+  job's rows after fifty newer jobs have finished.
+- Progress (reads, bytes) is counted while the query runs, through the
+  engine's `reteProgress` / `reteReadMany` hooks into counters shared with
+  the server.
+- `cancel_query`, or the client cancelling a `sparql_query` call, terminates
+  the worker mid-read. A `query_status` call that is cancelled only stops
+  waiting.
+- Workers key their open graphs by a stamp of the file (rebuild count, size,
+  mtime), so a local file rebuilt under the same name is never answered from
+  its old bytes.
+
+The server's instructions tell the model what a query costs (one round trip
+per scattered entity, so COUNT first), how to follow a job, and how to split a
+large extraction into a cheap key list plus `VALUES` batches.
 
 ## Install
 
@@ -88,8 +120,13 @@ Needs Docker only (no host node):
 
 ```sh
 ./build.sh          # assemble build/ and pack rete.mcpb
-./build.sh --test   # ... running the stdio smoke test first
+./build.sh --test   # ... running the stdio suites first
 ```
+
+CI runs the same suites (`test/smoke.test.mjs`, `test/jobs.test.mjs`) on every
+pull request that touches the extension, the JS client or the engine
+(`.github/workflows/mcpb-test.yml`), on Node 22 and on the Node 18 floor, and
+validates the manifest; the release job runs them again before packing.
 
 The bundle's version is stamped from the workspace `Cargo.toml` at build time —
 the extension *is* the engine, so it never carries a second version to keep in
