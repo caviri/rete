@@ -49,7 +49,9 @@ g.stats(); // { fileLength, bytes, requests } — a LIMIT query fetches KBs–MB
 
 Remote opens use synchronous XHR range reads, so they work:
 
-- **in Node** (≥18) — out of the box, via a built-in sync-fetch bridge;
+- **in Node** (≥18) — out of the box, via a built-in sync-fetch bridge, which
+  also fetches the engine's batched reads in parallel (16 at once; set
+  `globalThis.reteReadMany = null` before the first `open()` to opt out);
 - **in browser web workers** — where sync binary XHR is allowed (this is how
   the playground runs its queries).
 
