@@ -15043,7 +15043,7 @@
    "index": 0,
    "view": "table",
    "ok": true,
-   "qmeta": "25 row(s) | 40 range req · 22.0 MB of 57433.0 MB fetched · 89.5 MB cached this session · 50723 ms",
+   "qmeta": "25 row(s) | 139 range req · 224.6 MB of 61.85 GB fetched (incl. opening the file) · 123.3 MB cached this session · 40513 ms",
    "count": 25,
    "unit": "row",
    "columns": [
@@ -15079,248 +15079,248 @@
    "rows": [
     [
      {
-      "text": "10.1001/.387",
+      "text": "10.46756/001c.122600",
       "media": false
      },
      {
-      "text": "https://doi.org/10.1001/.387",
+      "text": "https://doi.org/10.46756/001c.122600",
       "media": false
      },
      {
-      "text": "In This Issue of Archives of Internal Medicine",
+      "text": "Food Hygiene Rating Scheme Audit of Display and Business Survey: 2023",
       "media": false
      },
      {
-      "text": "Archives of Internal Medicine",
+      "text": "FSA Research and Evidence",
       "media": false
      },
      {
-      "text": "2006",
+      "text": "1400",
       "media": false
      },
      {
-      "text": "American Medical Association (AMA)",
+      "text": "Food Standards Agency",
       "media": false
      },
      {
-      "text": "0003-9926",
+      "text": "3050-256X",
       "media": false
      }
     ],
     [
      {
-      "text": "10.1001/.389",
+      "text": "10.46756/001c.122703",
       "media": false
      },
      {
-      "text": "https://doi.org/10.1001/.389",
+      "text": "https://doi.org/10.46756/001c.122703",
       "media": false
      },
      {
-      "text": "Decision Making at the Fringe of Evidence: Take What You Can Get",
+      "text": "Food Hygiene Rating Scheme Audit of Display and Business Survey: 2023 Technical Report",
       "media": false
      },
      {
-      "text": "Archives of Internal Medicine",
+      "text": "FSA Research and Evidence",
       "media": false
      },
      {
-      "text": "2006",
+      "text": "1400",
       "media": false
      },
      {
-      "text": "American Medical Association (AMA)",
+      "text": "Food Standards Agency",
       "media": false
      },
      {
-      "text": "0003-9926",
+      "text": "3050-256X",
       "media": false
      }
     ],
     [
      {
-      "text": "10.1001/.391",
+      "text": "10.62810/jns.v7i4.124",
       "media": false
      },
      {
-      "text": "https://doi.org/10.1001/.391",
+      "text": "https://doi.org/10.62810/jns.v7i4.124",
       "media": false
      },
      {
-      "text": "Treatment of Excessive Anticoagulation With Phytonadione (Vitamin K): A Meta-analysis",
+      "text": "هوشمند‌ســـازی زراعت در افغانستان با استفاده از انترنت اشیاء: مشکلات و راه‌حـــل‌های آن",
       "media": false
      },
      {
-      "text": "Archives of Internal Medicine",
+      "text": "Journal of Natural Sciences – Kabul University",
       "media": false
      },
      {
-      "text": "2006",
+      "text": "1403",
       "media": false
      },
      {
-      "text": "American Medical Association (AMA)",
+      "text": "Kabul University",
       "media": false
      },
      {
-      "text": "0003-9926",
+      "text": "3078-6657",
       "media": false
      }
     ],
     [
      {
-      "text": "10.1001/.399",
+      "text": "10.62810/jns.v7i4.124",
       "media": false
      },
      {
-      "text": "https://doi.org/10.1001/.399",
+      "text": "https://doi.org/10.62810/jns.v7i4.124",
       "media": false
      },
      {
-      "text": "Esterified Estrogen and Conjugated Equine Estrogen and the Risk of Incident Myocardial Infarction and Stroke",
+      "text": "هوشمند‌ســـازی زراعت در افغانستان با استفاده از انترنت اشیاء: مشکلات و راه‌حـــل‌های آن",
       "media": false
      },
      {
-      "text": "Archives of Internal Medicine",
+      "text": "Journal of Natural Sciences – Kabul University",
       "media": false
      },
      {
-      "text": "2006",
+      "text": "1403",
       "media": false
      },
      {
-      "text": "American Medical Association (AMA)",
+      "text": "Kabul University",
       "media": false
      },
      {
-      "text": "0003-9926",
+      "text": "3078-6665",
       "media": false
      }
     ],
     [
      {
-      "text": "10.1001/.404",
+      "text": "10.62810/jns.v7i4.133",
       "media": false
      },
      {
-      "text": "https://doi.org/10.1001/.404",
+      "text": "https://doi.org/10.62810/jns.v7i4.133",
       "media": false
      },
      {
-      "text": "Clinical Trial Registration",
+      "text": "پر افغانستان د اقلیمي بدلون اغېزې: ننګونې او حل لارې",
       "media": false
      },
      {
-      "text": "Archives of Internal Medicine",
+      "text": "Journal of Natural Sciences – Kabul University",
       "media": false
      },
      {
-      "text": "2006",
+      "text": "1403",
       "media": false
      },
      {
-      "text": "American Medical Association (AMA)",
+      "text": "Kabul University",
       "media": false
      },
      {
-      "text": "0003-9926",
+      "text": "3078-6657",
       "media": false
      }
     ],
     [
      {
-      "text": "10.1001/.405",
+      "text": "10.62810/jns.v7i4.133",
       "media": false
      },
      {
-      "text": "https://doi.org/10.1001/.405",
+      "text": "https://doi.org/10.62810/jns.v7i4.133",
       "media": false
      },
      {
-      "text": "Neutropenia in Human Immunodeficiency Virus Infection: Data From the Women's Interagency HIV Study",
+      "text": "پر افغانستان د اقلیمي بدلون اغېزې: ننګونې او حل لارې",
       "media": false
      },
      {
-      "text": "Archives of Internal Medicine",
+      "text": "Journal of Natural Sciences – Kabul University",
       "media": false
      },
      {
-      "text": "2006",
+      "text": "1403",
       "media": false
      },
      {
-      "text": "American Medical Association (AMA)",
+      "text": "Kabul University",
       "media": false
      },
      {
-      "text": "0003-9926",
+      "text": "3078-6665",
       "media": false
      }
     ],
     [
      {
-      "text": "10.1001/.411",
+      "text": "10.62810/jns.v7i4.323",
       "media": false
      },
      {
-      "text": "https://doi.org/10.1001/.411",
+      "text": "https://doi.org/10.62810/jns.v7i4.323",
       "media": false
      },
      {
-      "text": "Cocoa Intake, Blood Pressure, and Cardiovascular Mortality: The Zutphen Elderly Study",
+      "text": "مطالعه‌ی اناتومی مقایسوی استخوان سینه در مرغ و مرغابی",
       "media": false
      },
      {
-      "text": "Archives of Internal Medicine",
+      "text": "Journal of Natural Sciences – Kabul University",
       "media": false
      },
      {
-      "text": "2006",
+      "text": "1403",
       "media": false
      },
      {
-      "text": "American Medical Association (AMA)",
+      "text": "Kabul University",
       "media": false
      },
      {
-      "text": "0003-9926",
+      "text": "3078-6657",
       "media": false
      }
     ],
     [
      {
-      "text": "10.1001/.424",
+      "text": "10.62810/jns.v7i4.323",
       "media": false
      },
      {
-      "text": "https://doi.org/10.1001/.424",
+      "text": "https://doi.org/10.62810/jns.v7i4.323",
       "media": false
      },
      {
-      "text": "Effect of Cholecalciferol Plus Calcium on Falling in Ambulatory Older Men and Women: A 3-Year Randomized Co...",
+      "text": "مطالعه‌ی اناتومی مقایسوی استخوان سینه در مرغ و مرغابی",
       "media": false
      },
      {
-      "text": "Archives of Internal Medicine",
+      "text": "Journal of Natural Sciences – Kabul University",
       "media": false
      },
      {
-      "text": "2006",
+      "text": "1403",
       "media": false
      },
      {
-      "text": "American Medical Association (AMA)",
+      "text": "Kabul University",
       "media": false
      },
      {
-      "text": "0003-9926",
+      "text": "3078-6665",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 50808
+   "elapsedMs": 40584
   },
   "crossref:1": {
    "id": "crossref:1",
@@ -15328,505 +15328,7 @@
    "index": 1,
    "view": "table",
    "ok": true,
-   "qmeta": "100 row(s) | 166 range req · 98.0 MB of 57433.0 MB fetched · 187.5 MB cached this session · 43131 ms",
-   "count": 100,
-   "unit": "row",
-   "columns": [
-    {
-     "label": "Citing work",
-     "var": "citing"
-    },
-    {
-     "label": "Title",
-     "var": "title"
-    },
-    {
-     "label": "Venue",
-     "var": "venue"
-    },
-    {
-     "label": "Year",
-     "var": "year"
-    },
-    {
-     "label": "Publisher",
-     "var": "publisher"
-    },
-    {
-     "label": "DOI",
-     "var": "doi"
-    }
-   ],
-   "rows": [
-    [
-     {
-      "text": "https://doi.org/10.1002/14356007.w22_w01",
-      "media": false
-     },
-     {
-      "text": "Quantum Materials",
-      "media": false
-     },
-     {
-      "text": "Ullmann's Encyclopedia of Industrial Chemistry",
-      "media": false
-     },
-     {
-      "text": "2023",
-      "media": false
-     },
-     {
-      "text": "Wiley",
-      "media": false
-     },
-     {
-      "text": "10.1002/14356007.w22_w01",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/9780470027318.a9776",
-      "media": false
-     },
-     {
-      "text": "Applications of Fluorescent Nanodiamond in Biology",
-      "media": false
-     },
-     {
-      "text": "Encyclopedia of Analytical Chemistry",
-      "media": false
-     },
-     {
-      "text": "2022",
-      "media": false
-     },
-     {
-      "text": "Wiley",
-      "media": false
-     },
-     {
-      "text": "10.1002/9780470027318.a9776",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/9780470034590.emrstm1521",
-      "media": false
-     },
-     {
-      "text": "Pulse Techniques for Quantum Information Processing",
-      "media": false
-     },
-     {
-      "text": "eMagRes",
-      "media": false
-     },
-     {
-      "text": "2016",
-      "media": false
-     },
-     {
-      "text": "John Wiley & Sons, Ltd",
-      "media": false
-     },
-     {
-      "text": "10.1002/9780470034590.emrstm1521",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/9781119477099.ch3",
-      "media": false
-     },
-     {
-      "text": "Color Centers in Diamond",
-      "media": false
-     },
-     {
-      "text": "Fluorescent Nanodiamonds",
-      "media": false
-     },
-     {
-      "text": "2018",
-      "media": false
-     },
-     {
-      "text": "Wiley",
-      "media": false
-     },
-     {
-      "text": "10.1002/9781119477099.ch3",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/adfm.201403653",
-      "media": false
-     },
-     {
-      "text": "Intratumoral Thermal Reading During Photo‐Thermal Therapy by Multifunctional Fluorescent Nanoparticles",
-      "media": false
-     },
-     {
-      "text": "Advanced Functional Materials",
-      "media": false
-     },
-     {
-      "text": "2014",
-      "media": false
-     },
-     {
-      "text": "Wiley",
-      "media": false
-     },
-     {
-      "text": "10.1002/adfm.201403653",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/adfm.201500176",
-      "media": false
-     },
-     {
-      "text": "Facile Fabrication of Robust Organic Counterion‐Induced Vesicles: Reversible Thermal Behavior for Optical T...",
-      "media": false
-     },
-     {
-      "text": "Advanced Functional Materials",
-      "media": false
-     },
-     {
-      "text": "2015",
-      "media": false
-     },
-     {
-      "text": "Wiley",
-      "media": false
-     },
-     {
-      "text": "10.1002/adfm.201500176",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/adfm.201702706",
-      "media": false
-     },
-     {
-      "text": "Conducting Polymer Based Visual‐Aided Smart Thermosensors on Arbitrary Substrates",
-      "media": false
-     },
-     {
-      "text": "Advanced Functional Materials",
-      "media": false
-     },
-     {
-      "text": "2017",
-      "media": false
-     },
-     {
-      "text": "Wiley",
-      "media": false
-     },
-     {
-      "text": "10.1002/adfm.201702706",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/adfm.201706286",
-      "media": false
-     },
-     {
-      "text": "Coordinating Thermogel for Stem Cell Spheroids and Their Cyto‐Effectiveness",
-      "media": false
-     },
-     {
-      "text": "Advanced Functional Materials",
-      "media": false
-     },
-     {
-      "text": "2018",
-      "media": false
-     },
-     {
-      "text": "Wiley",
-      "media": false
-     },
-     {
-      "text": "10.1002/adfm.201706286",
-      "media": false
-     }
-    ]
-   ],
-   "banner": "",
-   "error": "",
-   "elapsedMs": 43180
-  },
-  "crossref:2": {
-   "id": "crossref:2",
-   "dataset": "crossref",
-   "index": 2,
-   "view": "table",
-   "ok": true,
-   "qmeta": "50 row(s) | 83 range req · 48.5 MB of 57433.0 MB fetched · 236.0 MB cached this session · 20991 ms",
-   "count": 50,
-   "unit": "row",
-   "columns": [
-    {
-     "label": "Cited (hop 1)",
-     "var": "mid"
-    },
-    {
-     "label": "Its title",
-     "var": "midTitle"
-    },
-    {
-     "label": "Year",
-     "var": "midYear"
-    },
-    {
-     "label": "Cited by that (hop 2)",
-     "var": "far"
-    },
-    {
-     "label": "Its title",
-     "var": "farTitle"
-    },
-    {
-     "label": "Year",
-     "var": "farYear"
-    }
-   ],
-   "rows": [
-    [
-     {
-      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
-      "media": false
-     },
-     {
-      "text": "Epoxidation Catalysis by a Manganese Corrole and Isolation of an Oxomanganese(V) Corrole",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1002/(sici)1521-3757(19990517)111:10%3C1530::aid-ange1530%3E3.0.co;2-d",
-      "media": false
-     },
-     {
-      "text": "Erste direkte Synthese von Corrolen aus Pyrrol",
-      "media": false
-     },
-     {
-      "text": "1999",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
-      "media": false
-     },
-     {
-      "text": "Epoxidation Catalysis by a Manganese Corrole and Isolation of an Oxomanganese(V) Corrole",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1002/(sici)1521-3757(19990816)111:16%3C2536::aid-ange2536%3E3.0.co;2-0",
-      "media": false
-     },
-     {
-      "text": "N-substituierte Corrole: eine neue Klasse chiraler Liganden",
-      "media": false
-     },
-     {
-      "text": "1999",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
-      "media": false
-     },
-     {
-      "text": "Epoxidation Catalysis by a Manganese Corrole and Isolation of an Oxomanganese(V) Corrole",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1002/ange.19941060708",
-      "media": false
-     },
-     {
-      "text": "Metallocorrole mit formal vierwertigem Eisen",
-      "media": false
-     },
-     {
-      "text": "1994",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
-      "media": false
-     },
-     {
-      "text": "Epoxidation Catalysis by a Manganese Corrole and Isolation of an Oxomanganese(V) Corrole",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1002/ange.19971090410",
-      "media": false
-     },
-     {
-      "text": "Nickel‐ und Kupfercorrole: altbekannte Komplexe in neuem Licht",
-      "media": false
-     },
-     {
-      "text": "1997",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
-      "media": false
-     },
-     {
-      "text": "Epoxidation Catalysis by a Manganese Corrole and Isolation of an Oxomanganese(V) Corrole",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1002/jhet.5570330505",
-      "media": false
-     },
-     {
-      "text": "Novel porphyrinoid macrocycles and their metal complexes",
-      "media": false
-     },
-     {
-      "text": "1996",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
-      "media": false
-     },
-     {
-      "text": "Epoxidation Catalysis by a Manganese Corrole and Isolation of an Oxomanganese(V) Corrole",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1007/978-94-017-2247-6_1",
-      "media": false
-     },
-     {
-      "text": "General Overview on Oxidations Catalyzed by Metalloporphyrins",
-      "media": false
-     },
-     {
-      "text": "1994",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
-      "media": false
-     },
-     {
-      "text": "Epoxidation Catalysis by a Manganese Corrole and Isolation of an Oxomanganese(V) Corrole",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1007/bfb0111331",
-      "media": false
-     },
-     {
-      "text": "Metal complexes of corroles and other corrinoids",
-      "media": false
-     },
-     {
-      "text": "",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
-      "media": false
-     },
-     {
-      "text": "Epoxidation Catalysis by a Manganese Corrole and Isolation of an Oxomanganese(V) Corrole",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "https://doi.org/10.1016/s1381-1169(96)00258-0",
-      "media": false
-     },
-     {
-      "text": "Ozone as primary oxidant in iron(III) porphyrin catalyzed hydroxylation of hydrocarbons",
-      "media": false
-     },
-     {
-      "text": "1997",
-      "media": false
-     }
-    ]
-   ],
-   "banner": "",
-   "error": "",
-   "elapsedMs": 21016
-  },
-  "crossref:3": {
-   "id": "crossref:3",
-   "dataset": "crossref",
-   "index": 3,
-   "view": "table",
-   "ok": true,
-   "qmeta": "30 row(s) | 81 range req · 45.5 MB of 57433.0 MB fetched · 281.5 MB cached this session · 21888 ms",
+   "qmeta": "30 row(s) | 128 range req · 70.0 MB of 61.85 GB fetched · 193.3 MB cached this session · 31730 ms",
    "count": 30,
    "unit": "row",
    "columns": [
@@ -15835,24 +15337,28 @@
      "var": "work"
     },
     {
-     "label": "DOI",
-     "var": "doi"
-    },
-    {
      "label": "Title",
      "var": "title"
     },
     {
-     "label": "Year",
-     "var": "year"
+     "label": "Position",
+     "var": "position"
     },
     {
-     "label": "Venue",
-     "var": "venue"
+     "label": "Given name",
+     "var": "given"
     },
     {
-     "label": "Author ORCID",
+     "label": "Family name",
+     "var": "family"
+    },
+    {
+     "label": "ORCID",
      "var": "orcid"
+    },
+    {
+     "label": "Authenticated",
+     "var": "authenticated"
     }
    ],
    "rows": [
@@ -15862,23 +15368,27 @@
       "media": false
      },
      {
-      "text": "10.1007/s40995-017-0455-y",
-      "media": false
-     },
-     {
       "text": "Annihilator of Power Values of Generalized Derivations in Prime Rings",
       "media": false
      },
      {
-      "text": "2017",
+      "text": "1",
       "media": false
      },
      {
-      "text": "Iranian Journal of Science and Technology, Transactions A: Science",
+      "text": "Shuliang",
+      "media": false
+     },
+     {
+      "text": "Huang",
       "media": false
      },
      {
       "text": "https://orcid.org/0000-0000-0000-0001",
+      "media": false
+     },
+     {
+      "text": "false",
       "media": false
      }
     ],
@@ -15888,23 +15398,27 @@
       "media": false
      },
      {
-      "text": "10.1016/j.imr.2020.100432",
-      "media": false
-     },
-     {
       "text": "Transcendental Meditation for women affected by domestic violence: a pilot randomised, controlled trial stu...",
       "media": false
      },
      {
-      "text": "2020",
+      "text": "3",
       "media": false
      },
      {
-      "text": "Integrative Medicine Research",
+      "text": "Sandy",
+      "media": false
+     },
+     {
+      "text": "Nidich",
       "media": false
      },
      {
       "text": "https://orcid.org/0000-0000-0000-0001",
+      "media": false
+     },
+     {
+      "text": "false",
       "media": false
      }
     ],
@@ -15914,23 +15428,27 @@
       "media": false
      },
      {
-      "text": "10.1016/j.physletb.2025.139625",
-      "media": false
-     },
-     {
       "text": "Primordial black holes from first-order cosmological phase transitions",
       "media": false
      },
      {
-      "text": "2025",
+      "text": "2",
       "media": false
      },
      {
-      "text": "Physics Letters B",
+      "text": "Moritz",
+      "media": false
+     },
+     {
+      "text": "Breitbach",
       "media": false
      },
      {
       "text": "https://orcid.org/0000-0000-0000-0001",
+      "media": false
+     },
+     {
+      "text": "false",
       "media": false
      }
     ],
@@ -15940,23 +15458,117 @@
       "media": false
      },
      {
-      "text": "10.1051/ps/2019026",
-      "media": false
-     },
-     {
       "text": "Very fat geometric Galton-Watson trees",
       "media": false
      },
      {
-      "text": "2020",
+      "text": "2",
       "media": false
      },
      {
-      "text": "ESAIM: Probability and Statistics",
+      "text": "Aymen",
+      "media": false
+     },
+     {
+      "text": "Bouaziz",
       "media": false
      },
      {
       "text": "https://orcid.org/0000-0000-0000-0001",
+      "media": false
+     },
+     {
+      "text": "false",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1080/10618600.2023.2301097",
+      "media": false
+     },
+     {
+      "text": "Structural Discovery with Partial Ordering Information for Time-Dependent Data with Convergence Guarantees",
+      "media": false
+     },
+     {
+      "text": "2",
+      "media": false
+     },
+     {
+      "text": "Huitian",
+      "media": false
+     },
+     {
+      "text": "Lei",
+      "media": false
+     },
+     {
+      "text": "https://orcid.org/0000-0000-0000-0001",
+      "media": false
+     },
+     {
+      "text": "false",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1088/2631-8695/ae3056",
+      "media": false
+     },
+     {
+      "text": "Defect detection method of weld defect decoupling detection model based on multi-order cross-attention",
+      "media": false
+     },
+     {
+      "text": "5",
+      "media": false
+     },
+     {
+      "text": "Junlin",
+      "media": false
+     },
+     {
+      "text": "Wang",
+      "media": false
+     },
+     {
+      "text": "https://orcid.org/0000-0000-0000-0001",
+      "media": false
+     },
+     {
+      "text": "false",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1097/ans.0000000000000476",
+      "media": false
+     },
+     {
+      "text": "What Science Leaves Unsaid",
+      "media": false
+     },
+     {
+      "text": "1",
+      "media": false
+     },
+     {
+      "text": "Geraldine",
+      "media": false
+     },
+     {
+      "text": "Gorman",
+      "media": false
+     },
+     {
+      "text": "https://orcid.org/0000-0000-0000-0001",
+      "media": false
+     },
+     {
+      "text": "false",
       "media": false
      }
     ],
@@ -15966,117 +15578,43 @@
       "media": false
      },
      {
-      "text": "10.1097/md.0000000000040242",
-      "media": false
-     },
-     {
       "text": "Cronkhite-Canada syndrome: A case report and literature review",
       "media": false
      },
      {
-      "text": "2024",
+      "text": "8",
       "media": false
      },
      {
-      "text": "Medicine",
+      "text": "Jian",
       "media": false
      },
      {
-      "text": "https://orcid.org/0000-0000-0000-0001",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.12775/jehs.2024.69.55195",
-      "media": false
-     },
-     {
-      "text": "10.12775/jehs.2024.69.55195",
-      "media": false
-     },
-     {
-      "text": "Mental health in a post-pandemic perspective: economic and social costs",
-      "media": false
-     },
-     {
-      "text": "2024",
-      "media": false
-     },
-     {
-      "text": "Journal of Education, Health and Sport",
+      "text": "Gao",
       "media": false
      },
      {
       "text": "https://orcid.org/0000-0000-0000-0001",
       "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.12912/27197050/132094",
-      "media": false
      },
      {
-      "text": "10.12912/27197050/132094",
-      "media": false
-     },
-     {
-      "text": "Multifunctionality of Agriculture in the Reality of Globalization Crisis",
-      "media": false
-     },
-     {
-      "text": "2021",
-      "media": false
-     },
-     {
-      "text": "Ecological Engineering & Environmental Technology",
-      "media": false
-     },
-     {
-      "text": "https://orcid.org/0000-0000-0000-0001",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.12912/27197050/151631",
-      "media": false
-     },
-     {
-      "text": "10.12912/27197050/151631",
-      "media": false
-     },
-     {
-      "text": "Quantification and Evaluation of Water Erosion by RUSLE/GIS Approach in the Ykem Watershed (Western Morocco)",
-      "media": false
-     },
-     {
-      "text": "2022",
-      "media": false
-     },
-     {
-      "text": "Ecological Engineering & Environmental Technology",
-      "media": false
-     },
-     {
-      "text": "https://orcid.org/0000-0000-0000-0001",
+      "text": "false",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 21913
+   "elapsedMs": 31767
   },
-  "crossref:4": {
-   "id": "crossref:4",
+  "crossref:2": {
+   "id": "crossref:2",
    "dataset": "crossref",
-   "index": 4,
+   "index": 2,
    "view": "table",
    "ok": true,
-   "qmeta": "50 row(s) | 706 range req · 474.1 MB of 56.09 GB fetched (incl. opening the file) · 367.0 MB cached this session · 295861 ms",
-   "count": 50,
+   "qmeta": "30 row(s) | 50 range req · 29.5 MB of 61.85 GB fetched · 222.8 MB cached this session · 11604 ms",
+   "count": 30,
    "unit": "row",
    "columns": [
     {
@@ -16084,24 +15622,16 @@
      "var": "work"
     },
     {
-     "label": "DOI",
-     "var": "doi"
-    },
-    {
      "label": "Title",
      "var": "title"
     },
     {
-     "label": "Venue",
-     "var": "venue"
+     "label": "Funder (as deposited)",
+     "var": "funderName"
     },
     {
-     "label": "Year",
-     "var": "year"
-    },
-    {
-     "label": "Publisher",
-     "var": "publisher"
+     "label": "Award number",
+     "var": "award"
     }
    ],
    "rows": [
@@ -16111,23 +15641,15 @@
       "media": false
      },
      {
-      "text": "10.1002/(sici)1097-4628(19980124)67:4<597::aid-app2>3.0.co;2-l",
-      "media": false
-     },
-     {
       "text": "Preparation of macroporous, monodisperse, functionalized styrene–divinylbenzene copolymer beads: Effect of ...",
       "media": false
      },
      {
-      "text": "Journal of Applied Polymer Science",
+      "text": "National Institutes of Health",
       "media": false
      },
      {
-      "text": "1998",
-      "media": false
-     },
-     {
-      "text": "Wiley",
+      "text": "GM-44885",
       "media": false
      }
     ],
@@ -16137,23 +15659,15 @@
       "media": false
      },
      {
-      "text": "10.1002/1097-0061(200012)17:4<294::aid-yea54>3.0.co;2-5",
+      "text": "Distinct Requirements for Zebrafish Angiogenesis Revealed by aVEGF-AMorphant",
       "media": false
      },
      {
-      "text": "Distinct Requirements for Zebrafish Angiogenesis Revealed by a<i>VEGF-A</i>Morphant",
+      "text": "National Institutes of Health",
       "media": false
      },
      {
-      "text": "Yeast",
-      "media": false
-     },
-     {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "Hindawi Limited",
+      "text": "GM55877",
       "media": false
      }
     ],
@@ -16163,49 +15677,15 @@
       "media": false
      },
      {
-      "text": "10.1002/1097-0061(200012)17:4<302::aid-yea53>3.0.co;2-#",
-      "media": false
-     },
-     {
       "text": "Morphants: a new systematic vertebrate functional genomics approach",
       "media": false
      },
      {
-      "text": "Yeast",
+      "text": "National Institutes of Health",
       "media": false
      },
      {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "Hindawi Limited",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://doi.org/10.1002/1097-0142(19890515)63:10%3C1904::aid-cncr2820631006%3E3.0.co;2-w",
-      "media": false
-     },
-     {
-      "text": "10.1002/1097-0142(19890515)63:10<1904::aid-cncr2820631006>3.0.co;2-w",
-      "media": false
-     },
-     {
-      "text": "Maternal drug use and risk of childhood nonlymphoblastic leukemia among offspring. An epidemiologic investi...",
-      "media": false
-     },
-     {
-      "text": "Cancer",
-      "media": false
-     },
-     {
-      "text": "1989",
-      "media": false
-     },
-     {
-      "text": "Wiley",
+      "text": "GM55877",
       "media": false
      }
     ],
@@ -16215,23 +15695,15 @@
       "media": false
      },
      {
-      "text": "10.1002/1097-0215(200002)9999:9999<::aid-ijc1022>3.0.co;2-z",
-      "media": false
-     },
-     {
       "text": "Glycoprotein 90K/MAC-2BP interacts with galectin-1 and mediates galectin-1–induced cell aggregation",
       "media": false
      },
      {
-      "text": "International Journal of Cancer",
+      "text": "National Institutes of Health",
       "media": false
      },
      {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "Wiley",
+      "text": "RO1 AI-20958",
       "media": false
      }
     ],
@@ -16241,7 +15713,21 @@
       "media": false
      },
      {
-      "text": "10.1002/1097-0215(200002)9999:9999<::aid-ijc1023>3.0.co;2-w",
+      "text": "Aberrant expression of fibroblast growth factor receptor-1 in prostate epithelial cells allows induction of...",
+      "media": false
+     },
+     {
+      "text": "National Institutes of Health",
+      "media": false
+     },
+     {
+      "text": "CA23074",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/1097-0215(200002)9999:9999%3C::aid-ijc1023%3E3.0.co;2-w",
       "media": false
      },
      {
@@ -16249,15 +15735,11 @@
       "media": false
      },
      {
-      "text": "International Journal of Cancer",
+      "text": "National Institutes of Health",
       "media": false
      },
      {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "Wiley",
+      "text": "CA56666",
       "media": false
      }
     ],
@@ -16267,23 +15749,15 @@
       "media": false
      },
      {
-      "text": "10.1002/1097-0215(200002)9999:9999<::aid-ijc1026>3.0.co;2-n",
-      "media": false
-     },
-     {
       "text": "Molecular determinants of cell death induction following adenovirus-mediated gene transfer of wild-type p53...",
       "media": false
      },
      {
-      "text": "International Journal of Cancer",
+      "text": "National Institutes of Health",
       "media": false
      },
      {
-      "text": "2000",
-      "media": false
-     },
-     {
-      "text": "Wiley",
+      "text": "T32 CA67759-01",
       "media": false
      }
     ],
@@ -16293,30 +15767,412 @@
       "media": false
      },
      {
-      "text": "10.1002/1348-9585.12222",
-      "media": false
-     },
-     {
       "text": "Pesticide exposure and adverse health effects associated with farmwork in Northern Thailand",
       "media": false
      },
      {
-      "text": "Journal of Occupational Health",
+      "text": "NIH / NIEHS",
       "media": false
      },
      {
-      "text": "2021",
-      "media": false
-     },
-     {
-      "text": "Oxford University Press (OUP)",
+      "text": "P30 ES017885",
       "media": false
      }
     ]
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 296011
+   "elapsedMs": 11626
+  },
+  "crossref:3": {
+   "id": "crossref:3",
+   "dataset": "crossref",
+   "index": 3,
+   "view": "table",
+   "ok": true,
+   "qmeta": "30 row(s) | 35 range req · 21.5 MB of 61.85 GB fetched · 244.3 MB cached this session · 5650 ms",
+   "count": 30,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Retraction notice",
+     "var": "notice"
+    },
+    {
+     "label": "Retracted work",
+     "var": "retracted"
+    },
+    {
+     "label": "Its title",
+     "var": "title"
+    },
+    {
+     "label": "Date",
+     "var": "date"
+    },
+    {
+     "label": "Source",
+     "var": "source"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://doi.org/10.1001/archdermatol.2012.1796",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/archdermatol.2012.418",
+      "media": false
+     },
+     {
+      "text": "RETRACTED: Early Depth Assessment of Local Burns by Dermoscopy",
+      "media": false
+     },
+     {
+      "text": "2012-05-03",
+      "media": false
+     },
+     {
+      "text": "retraction-watch",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/archdermatol.2012.1796",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/archdermatol.2012.418",
+      "media": false
+     },
+     {
+      "text": "RETRACTED: Early Depth Assessment of Local Burns by Dermoscopy",
+      "media": false
+     },
+     {
+      "text": "2012-05-03",
+      "media": false
+     },
+     {
+      "text": "retraction-watch",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/jamainternmed.2016.3177",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/archinte.165.15.1737",
+      "media": false
+     },
+     {
+      "text": "RETRACTED: The Prevention of Hip Fracture With Risedronate and Ergocalciferol Plus Calcium Supplementation ...",
+      "media": false
+     },
+     {
+      "text": "2016-09-01",
+      "media": false
+     },
+     {
+      "text": "retraction-watch",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/jamainternmed.2016.3771",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/archinte.165.15.1743",
+      "media": false
+     },
+     {
+      "text": "RETRACTED: Risedronate Sodium Therapy for Prevention of Hip Fracture in Men 65 Years or Older After Stroke",
+      "media": false
+     },
+     {
+      "text": "2016-09-01",
+      "media": false
+     },
+     {
+      "text": "retraction-watch",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/archinte.166.16.1787-a",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/archinte.165.18.2142",
+      "media": false
+     },
+     {
+      "text": "The Relation Between Pulse Pressure and Cardiovascular Mortality in 12 763 Middle-aged Men From Various Par...",
+      "media": false
+     },
+     {
+      "text": "2006-09-18",
+      "media": false
+     },
+     {
+      "text": "retraction-watch",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/archinte.166.16.1787-a",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/archinte.165.18.2142",
+      "media": false
+     },
+     {
+      "text": "The Relation Between Pulse Pressure and Cardiovascular Mortality in 12 763 Middle-aged Men From Various Par...",
+      "media": false
+     },
+     {
+      "text": "2006-09-18",
+      "media": false
+     },
+     {
+      "text": "retraction-watch",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/jamainternmed.2018.5761",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/archinternmed.2012.1278",
+      "media": false
+     },
+     {
+      "text": "First Foods Most: After 18-Hour Fast, People Drawn to Starches First and Vegetables Last",
+      "media": false
+     },
+     {
+      "text": "2018-09-19",
+      "media": false
+     },
+     {
+      "text": "retraction-watch",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1001/archophthalmol.2012.1387",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/archopht.123.1.25",
+      "media": false
+     },
+     {
+      "text": "RETRACTED: A Randomized Clinical Trial of a Single Dose of Ramosetron for the Prevention of Vomiting After ...",
+      "media": false
+     },
+     {
+      "text": "2012-07-01",
+      "media": false
+     },
+     {
+      "text": "retraction-watch",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 5667
+  },
+  "crossref:4": {
+   "id": "crossref:4",
+   "dataset": "crossref",
+   "index": 4,
+   "view": "table",
+   "ok": true,
+   "qmeta": "25 row(s) | 67 range req · 38.0 MB of 61.85 GB fetched · 282.3 MB cached this session · 13945 ms",
+   "count": 25,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Preprint",
+     "var": "preprint"
+    },
+    {
+     "label": "Preprint title",
+     "var": "ptitle"
+    },
+    {
+     "label": "Published work",
+     "var": "work"
+    },
+    {
+     "label": "Its title",
+     "var": "title"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://doi.org/10.31235/osf.io/s7dmu",
+      "media": false
+     },
+     {
+      "text": "Estimates of excess deaths in Puerto Rico following Hurricane Maria",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/jama.2018.10929",
+      "media": false
+     },
+     {
+      "text": "Use of Death Counts From Vital Statistics to Calculate Excess Deaths in Puerto Rico Following Hurricane Maria",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/2020.06.12.20127944",
+      "media": false
+     },
+     {
+      "text": "Evaluation of SARS-CoV-2 in Breastmilk from 18 Infected Women",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/jama.2020.15580",
+      "media": false
+     },
+     {
+      "text": "Evaluation for SARS-CoV-2 in Breast Milk From 18 Infected Women",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.21203/rs.3.rs-153573/v1",
+      "media": false
+     },
+     {
+      "text": "Preprint Servers’ Policies, Submission Requirements, and Transparency in Reporting and Research Integrity R...",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/jama.2020.17195",
+      "media": false
+     },
+     {
+      "text": "Preprint Servers’ Policies, Submission Requirements, and Transparency in Reporting and Research Integrity R...",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/2020.11.16.20232397",
+      "media": false
+     },
+     {
+      "text": "Effect of Vitamin D 3 Supplementation vs Placebo on Hospital Length of Stay in Patients with Severe COVID-1...",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/jama.2020.26848",
+      "media": false
+     },
+     {
+      "text": "Effect of a Single High Dose of Vitamin D 3 on Hospital Length of Stay in Patients With Moderate to Severe ...",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/2020.03.03.20030593",
+      "media": false
+     },
+     {
+      "text": "Evolving Epidemiology and Impact of Non-pharmaceutical Interventions on the Outbreak of Coronavirus Disease...",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/jama.2020.6130",
+      "media": false
+     },
+     {
+      "text": "Association of Public Health Interventions With the Epidemiology of the COVID-19 Outbreak in Wuhan, China",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/2021.05.16.21257255",
+      "media": false
+     },
+     {
+      "text": "Long-term symptoms after SARS-CoV-2 infection in school children: population-based cohort with 6-months fol...",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/jama.2021.11880",
+      "media": false
+     },
+     {
+      "text": "Long-term Symptoms After SARS-CoV-2 Infection in Children and Adolescents",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/2021.07.06.21260038",
+      "media": false
+     },
+     {
+      "text": "Prevalence of SARS-CoV-2 Antibodies from a one-year National Serosurveillance of Kenyan Blood Transfusion D...",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/jama.2021.15265",
+      "media": false
+     },
+     {
+      "text": "Prevalence of SARS-CoV-2 Antibodies From a National Serosurveillance of Kenyan Blood Donors, January-March ...",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/2021.01.18.21249786",
+      "media": false
+     },
+     {
+      "text": "Emergence of a novel SARS-CoV-2 strain in Southern California, USA",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1001/jama.2021.1612",
+      "media": false
+     },
+     {
+      "text": "Emergence of a Novel SARS-CoV-2 Variant in Southern California",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 13964
   },
   "crossref:5": {
    "id": "crossref:5",
@@ -16324,8 +16180,8 @@
    "index": 5,
    "view": "table",
    "ok": true,
-   "qmeta": "29 row(s) | 37 range req · 19.5 MB of 57433.0 MB fetched · 87.0 MB cached this session · 45648 ms",
-   "count": 29,
+   "qmeta": "60 row(s) | 34 range req · 19.5 MB of 61.85 GB fetched · 301.8 MB cached this session · 7233 ms",
+   "count": 60,
    "unit": "row",
    "columns": [
     {
@@ -16337,7 +16193,7 @@
      "var": "label"
     },
     {
-     "label": "Superclass (aligned v...",
+     "label": "Superclass",
      "var": "super"
     },
     {
@@ -16352,15 +16208,11 @@
    "rows": [
     [
      {
-      "text": "https://w3id.org/rete/crossref#Agent",
+      "text": "https://w3id.org/rete/crossref#Affiliation",
       "media": false
      },
      {
-      "text": "Agent @en",
-      "media": false
-     },
-     {
-      "text": "http://www.w3.org/ns/prov#Agent",
+      "text": "Affiliation @en",
       "media": false
      },
      {
@@ -16368,43 +16220,25 @@
       "media": false
      },
      {
-      "text": "A person or organization that authored, edited, translated or chaired a work; may carry an ORCID (person) o... @en",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://w3id.org/rete/crossref#Agent",
-      "media": false
-     },
-     {
-      "text": "Agent @en",
-      "media": false
-     },
-     {
-      "text": "http://xmlns.com/foaf/0.1/Agent",
-      "media": false
-     },
-     {
       "text": "",
       "media": false
      },
      {
-      "text": "A person or organization that authored, edited, translated or chaired a work; may carry an ORCID (person) o... @en",
+      "text": "One affiliation of a contribution, as the record states it (name, ROR id, department, place, acronym). @en",
       "media": false
      }
     ],
     [
      {
-      "text": "https://w3id.org/rete/crossref#AssertionSource",
+      "text": "https://w3id.org/rete/crossref#Author",
       "media": false
      },
      {
-      "text": "DOI-assertion source @en",
+      "text": "Author @en",
       "media": false
      },
      {
-      "text": "http://www.w3.org/2004/02/skos/core#Concept",
+      "text": "https://w3id.org/rete/crossref#Contribution",
       "media": false
      },
      {
@@ -16430,7 +16264,29 @@
       "media": false
      },
      {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/crossref#Book",
+      "media": false
+     },
+     {
+      "text": "Book @en",
+      "media": false
+     },
+     {
       "text": "http://purl.org/spar/fabio/Book",
+      "media": false
+     },
+     {
+      "text": "",
       "media": false
      },
      {
@@ -16452,21 +16308,43 @@
       "media": false
      },
      {
+      "text": "",
+      "media": false
+     },
+     {
+      "text": "",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://w3id.org/rete/crossref#BookChapter",
+      "media": false
+     },
+     {
+      "text": "Book chapter @en",
+      "media": false
+     },
+     {
       "text": "http://purl.org/spar/fabio/BookChapter",
       "media": false
      },
      {
       "text": "",
       "media": false
+     },
+     {
+      "text": "",
+      "media": false
      }
     ],
     [
      {
-      "text": "https://w3id.org/rete/crossref#Component",
+      "text": "https://w3id.org/rete/crossref#BookPart",
       "media": false
      },
      {
-      "text": "Component @en",
+      "text": "Book part @en",
       "media": false
      },
      {
@@ -16478,39 +16356,17 @@
       "media": false
      },
      {
-      "text": "A component of a work (figure, table, supplementary file) with its own DOI. @en",
-      "media": false
-     }
-    ],
-    [
-     {
-      "text": "https://w3id.org/rete/crossref#Contribution",
-      "media": false
-     },
-     {
-      "text": "Contribution @en",
-      "media": false
-     },
-     {
-      "text": "http://purl.org/spar/pro/RoleInTime",
-      "media": false
-     },
-     {
       "text": "",
       "media": false
-     },
-     {
-      "text": "The reified role an agent plays for a work (author/editor/translator/chair) together with its sequence, mat... @en",
-      "media": false
      }
     ],
     [
      {
-      "text": "https://w3id.org/rete/crossref#Dataset",
+      "text": "https://w3id.org/rete/crossref#BookSection",
       "media": false
      },
      {
-      "text": "Dataset @en",
+      "text": "Book section @en",
       "media": false
      },
      {
@@ -16518,7 +16374,7 @@
       "media": false
      },
      {
-      "text": "https://schema.org/Dataset",
+      "text": "",
       "media": false
      },
      {
@@ -16529,7 +16385,7 @@
    ],
    "banner": "",
    "error": "",
-   "elapsedMs": 45696
+   "elapsedMs": 7252
   },
   "dance:0": {
    "id": "dance:0",
