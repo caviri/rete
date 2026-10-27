@@ -59,6 +59,7 @@ test("serves the declared tools", async (t) => {
     "example_queries",
     "find_entities",
     "list_datasets",
+    "load_rdf",
     "query_result",
     "query_status",
     "sparql_query",
