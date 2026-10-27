@@ -15037,6 +15037,430 @@
    "error": "",
    "elapsedMs": 8855
   },
+  "crossref-citations:0": {
+   "id": "crossref-citations:0",
+   "dataset": "crossref-citations",
+   "index": 0,
+   "view": "table",
+   "ok": true,
+   "qmeta": "50 row(s) · cross-source join · 80282 ms",
+   "count": 50,
+   "unit": "row",
+   "columns": [],
+   "rows": [
+    [
+     {
+      "text": "crossref-citations.rete · this dataset",
+      "media": false
+     },
+     {
+      "text": "?citing cx:cites <https://doi.org/10.1038/nature12373>",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "crossref.rete",
+      "media": false
+     },
+     {
+      "text": "?citing cx:containerTitle ?journal",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "crossref.rete",
+      "media": false
+     },
+     {
+      "text": "?citing cx:issuedYear ?year",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 80303
+  },
+  "crossref-citations:1": {
+   "id": "crossref-citations:1",
+   "dataset": "crossref-citations",
+   "index": 1,
+   "view": "table",
+   "ok": true,
+   "qmeta": "1 row(s) | 1 range req · 512.0 KB of 31.99 GB fetched · 24.7 MB cached this session · 231 ms",
+   "count": 1,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Citing works",
+     "var": "citers"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "1730",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 255
+  },
+  "crossref-citations:2": {
+   "id": "crossref-citations:2",
+   "dataset": "crossref-citations",
+   "index": 2,
+   "view": "table",
+   "ok": true,
+   "qmeta": "50 row(s) | 18 range req · 9.5 MB of 31.99 GB fetched · 34.2 MB cached this session · 3627 ms",
+   "count": 50,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Cited (hop 1)",
+     "var": "mid"
+    },
+    {
+     "label": "Cited by that (hop 2)",
+     "var": "far"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1002/(sici)1521-3757(19990517)111:10%3C1530::aid-ange1530%3E3.0.co;2-d",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1002/(sici)1521-3757(19990816)111:16%3C2536::aid-ange2536%3E3.0.co;2-0",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1002/ange.19941060708",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1002/ange.19971090410",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1002/jhet.5570330505",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/978-94-017-2247-6_1",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/bfb0111331",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/1521-3773(20001117)39:22%3C4045::aid-anie4045%3E3.0.co;2-p",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1016/s1381-1169(96)00258-0",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 3648
+  },
+  "crossref-citations:3": {
+   "id": "crossref-citations:3",
+   "dataset": "crossref-citations",
+   "index": 3,
+   "view": "table",
+   "ok": true,
+   "qmeta": "25 row(s) | 36 range req · 19.0 MB of 31.99 GB fetched · 53.2 MB cached this session · 8179 ms",
+   "count": 25,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Citing work",
+     "var": "citing"
+    },
+    {
+     "label": "Cited DOI (repaired)",
+     "var": "cited"
+    },
+    {
+     "label": "As deposited",
+     "var": "text"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://doi.org/10.1080/15538605.2014.853636",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1002/j.2161-1912.2001.tb00516.x",
+      "media": false
+     },
+     {
+      "text": "10. 1002/j.2161–1912.2001.tb00516.x",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1080/10910344.2014.863632",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/s00170-013-4861-9",
+      "media": false
+     },
+     {
+      "text": "10. 1007/s00170–013-4861–9",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1002/rcm.2861",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/s00217-005-1158-8",
+      "media": false
+     },
+     {
+      "text": "10. 1007/s00217‐005‐1158‐8",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1080/0092623x.2012.751073",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/s10508-009-9502-x",
+      "media": false
+     },
+     {
+      "text": "10. 1007/s10508-009-9502–x",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1080/0092623x.2014.889053",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/s10508-009-9502-x",
+      "media": false
+     },
+     {
+      "text": "10. 1007/s10508-009-9502–x",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1080/19419899.2013.774160",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/s10508-009-9502-x",
+      "media": false
+     },
+     {
+      "text": "10. 1007/s10508-009-9502–x",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1080/19419899.2013.774162",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/s10508-009-9502-x",
+      "media": false
+     },
+     {
+      "text": "10. 1007/s10508-009-9502–x",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1080/19419899.2013.774163",
+      "media": false
+     },
+     {
+      "text": "https://doi.org/10.1007/s10508-009-9502-x",
+      "media": false
+     },
+     {
+      "text": "10. 1007/s10508-009-9502–x",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 8199
+  },
+  "crossref-citations:4": {
+   "id": "crossref-citations:4",
+   "dataset": "crossref-citations",
+   "index": 4,
+   "view": "table",
+   "ok": true,
+   "qmeta": "25 row(s) | 9 range req · 5.0 MB of 31.99 GB fetched · 58.2 MB cached this session · 1815 ms",
+   "count": 25,
+   "unit": "row",
+   "columns": [
+    {
+     "label": "Citing work",
+     "var": "work"
+    },
+    {
+     "label": "Value as deposited",
+     "var": "text"
+    }
+   ],
+   "rows": [
+    [
+     {
+      "text": "https://doi.org/10.1177/1529100611414806",
+      "media": false
+     },
+     {
+      "text": "10. (1016/j.childyouth.2006.09.003",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1080/14786419.2010.536161",
+      "media": false
+     },
+     {
+      "text": "10. /j.bmc.2005.10.019",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1155/2013/390945",
+      "media": false
+     },
+     {
+      "text": "10. 007/ s11200-009-0015-9",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.26634/jmat.10.1.18003",
+      "media": false
+     },
+     {
+      "text": "10. 01 6/j.jppr.2020.04.003",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.5875/ausmt.v2i1.117",
+      "media": false
+     },
+     {
+      "text": "10. 038/27094",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/099747",
+      "media": false
+     },
+     {
+      "text": "10. 1 126/science.aan673 3",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/099747",
+      "media": false
+     },
+     {
+      "text": "10. 1 158/1078&ndash;0432.CCR-13&ndash;2648",
+      "media": false
+     }
+    ],
+    [
+     {
+      "text": "https://doi.org/10.1101/2020.07.01.182576",
+      "media": false
+     },
+     {
+      "text": "10. 1 158/1078&ndash;0432.CCR-13&ndash;2648",
+      "media": false
+     }
+    ]
+   ],
+   "banner": "",
+   "error": "",
+   "elapsedMs": 1833
+  },
   "crossref:0": {
    "id": "crossref:0",
    "dataset": "crossref",
