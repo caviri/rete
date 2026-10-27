@@ -174,10 +174,11 @@ SHACL, and a published graph over HTTP Range.
 ## Notes and limits
 
 - **stdout is protocol.** Diagnostics go to stderr; nothing else may print.
-- **One query at a time.** The engine's range reads are synchronous (sync XHR
-  semantics bridged over `worker_threads`), so a query blocks the server's
-  event loop for its duration. Fine for stdio MCP; if it ever bites, move the
-  graph into a worker thread.
+- **Queries run off the server's thread.** The engine's range reads are
+  synchronous (sync XHR semantics bridged over `worker_threads`), so every
+  SPARQL query runs in a worker (see *Long queries: jobs*). The other tools —
+  card, schema, examples, entity lookups, SHACL — are a few reads each and
+  still run on the server's own thread.
 - **Sandbox.** Local reads and writes are confined to the granted folders,
   compared on *real* paths so a symlink cannot escape.
 - **`build_rete` is in-wasm**, therefore uncompressed — for very large datasets
