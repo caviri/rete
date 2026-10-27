@@ -18,16 +18,16 @@ try {
   all = catalogCases("all");
   embedded = catalogCases("embedded");
 
-  // 637 -> 644 -> 651 -> 656 -> 664 -> 669 -> 676 -> 680 -> 681: this literal has to be raised by hand every time
+  // 637 -> 644 -> 651 -> 656 -> 664 -> 669 -> 676 -> 680 -> 681 -> 686: this literal has to be raised by hand every time
   // the catalog grows, and it silently went stale because the `browser` job was
   // SKIPPED on the PRs that grew it (#113 datacite/epfl-graph/opencitations,
   // #122 mirbase) and did not run on the pushes that grew it last (davidrumsey,
   // +7 queries and +1 dataset, landed while the `wasm` job was red so `browser`
   // never started; 681 is the davidrumsey spatial example, +1 query, which landed
-  // the same way). Keeping it is deliberate — it is the tripwire that makes a
-  // catalog change visible — but the number is only ever as fresh as the last
+  // the same way; 686 is crossref-citations, +5 queries and +1 dataset). Keeping it is deliberate — it is the
+  // tripwire that makes a catalog change visible — but the number is only ever as fresh as the last
   // run of this gate.
-  t.equal("allQueries", all.length, 681, "every catalog query must be in the exhaustive matrix");
+  t.equal("allQueries", all.length, 686, "every catalog query must be in the exhaustive matrix");
   t.equal("embeddedQueries", embedded.length, 69, "the deterministic tier must cover every embedded query");
   t.equal("uniqueCaseIds", new Set(all.map((entry) => entry.id)).size, all.length, "case ids must be unique");
   t.ok("everyCaseHasSparql", all.every((entry) => entry.query.trim()), "every case must carry executable SPARQL");
@@ -35,7 +35,7 @@ try {
 
   allGroups = catalogDatasetGroups("all");
   embeddedGroups = catalogDatasetGroups("embedded");
-  t.equal("allDatasets", allGroups.length, 100, "the exhaustive tier must cover every dataset");
+  t.equal("allDatasets", allGroups.length, 101, "the exhaustive tier must cover every dataset");
   t.equal("embeddedDatasets", embeddedGroups.length, 10, "the deterministic tier must cover every embedded dataset");
   t.deepEqual(
     "groupingOrder",
