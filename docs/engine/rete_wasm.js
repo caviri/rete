@@ -127,6 +127,37 @@ export class Graph {
         return this;
     }
     /**
+     * Plan running `query` as chunks split by the values of `var` — see
+     * `rete_core::partition_plan`. JSON `{var, form, keys_query,
+     * keys_from_where, offset, limit, dedupe}`, or an error saying why the
+     * split would change the answer.
+     * @param {string} query
+     * @param {string} _var
+     * @returns {string}
+     */
+    partition_plan(query, _var) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(_var, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.graph_partition_plan(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
      * See [`prefix_search`].
      * @param {string} prefix
      * @param {number} limit
@@ -284,6 +315,43 @@ export class Graph {
             return getStringFromWasm0(ptr3, len3);
         } finally {
             wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
+     * One chunk of a split query: the solutions whose `var` is one of `keys`
+     * (term tokens, as the plan's keys query returned them), without the
+     * query's top-level OFFSET/LIMIT. Same envelope as [`Graph::query`].
+     * @param {string} query
+     * @param {string} format
+     * @param {boolean} reason
+     * @param {string} _var
+     * @param {string[]} keys
+     * @returns {string}
+     */
+    query_partition(query, format, reason, _var, keys) {
+        let deferred6_0;
+        let deferred6_1;
+        try {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(_var, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len2 = WASM_VECTOR_LEN;
+            const ptr3 = passArrayJsValueToWasm0(keys, wasm.__wbindgen_malloc);
+            const len3 = WASM_VECTOR_LEN;
+            const ret = wasm.graph_query_partition(this.__wbg_ptr, ptr0, len0, ptr1, len1, reason, ptr2, len2, ptr3, len3);
+            var ptr5 = ret[0];
+            var len5 = ret[1];
+            if (ret[3]) {
+                ptr5 = 0; len5 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred6_0 = ptr5;
+            deferred6_1 = len5;
+            return getStringFromWasm0(ptr5, len5);
+        } finally {
+            wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
         }
     }
     /**
@@ -864,6 +932,35 @@ export class RemoteGraph {
         return this;
     }
     /**
+     * See [`Graph::partition_plan`]. Reads the dictionary entries of the
+     * query's constants and the resident tile directory — no tile data.
+     * @param {string} query
+     * @param {string} _var
+     * @returns {string}
+     */
+    partition_plan(query, _var) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(_var, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.remotegraph_partition_plan(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
      * See [`prefix_search`] — over the resident, cached remote handle. Faults the
      * pyramid (where the label index lives) on the first call, then serves the
      * search from memory.
@@ -983,6 +1080,41 @@ export class RemoteGraph {
             return getStringFromWasm0(ptr3, len3);
         } finally {
             wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
+     * See [`Graph::query_partition`].
+     * @param {string} query
+     * @param {string} format
+     * @param {boolean} reason
+     * @param {string} _var
+     * @param {string[]} keys
+     * @returns {string}
+     */
+    query_partition(query, format, reason, _var, keys) {
+        let deferred6_0;
+        let deferred6_1;
+        try {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(_var, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len2 = WASM_VECTOR_LEN;
+            const ptr3 = passArrayJsValueToWasm0(keys, wasm.__wbindgen_malloc);
+            const len3 = WASM_VECTOR_LEN;
+            const ret = wasm.remotegraph_query_partition(this.__wbg_ptr, ptr0, len0, ptr1, len1, reason, ptr2, len2, ptr3, len3);
+            var ptr5 = ret[0];
+            var len5 = ret[1];
+            if (ret[3]) {
+                ptr5 = 0; len5 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred6_0 = ptr5;
+            deferred6_1 = len5;
+            return getStringFromWasm0(ptr5, len5);
+        } finally {
+            wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
         }
     }
     /**
