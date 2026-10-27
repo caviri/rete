@@ -34,6 +34,20 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   whole descriptions when a filter narrows it to three graphs or fewer: the
   caveat that matters most for a large graph ("keep queries selective") sat
   past the 320-character cut.
+- **The Claude Desktop extension queries RDF shared in the chat.** Claude
+  Desktop does not hand chat attachments to an extension, so a `.ttl` the
+  user attached could not be queried at all — and the path the model sees for
+  an upload (`/mnt/user-data/uploads/…`) is in Claude's own sandbox, not on
+  the user's machine. The new `load_rdf` tool takes the file's text (Turtle,
+  TriG, N-Triples, N-Quads; syntax from the file's extension), builds it into
+  a graph held in memory, and every tool then takes it as dataset
+  `chat:<name>` — with no folder granted. A file too long for one call goes
+  in parts (`append`; a part that does not parse is refused and the graph
+  keeps the parts before it); `path` reads an RDF file the user saved in a
+  granted folder instead; `save_as` keeps the graph as a `.rete` there. The
+  instructions tell the model to convert CSV / JSON / RDF/XML / JSON-LD to
+  Turtle first, and to ask for a granted folder or a URL for a `.rete`, which
+  is binary and cannot travel through the chat.
 - **`mcpb-test.yml`: the extension's stdio suites run on pull requests.**
   They ran only in the release workflow, so a change to `clients/mcpb`
   reached a tag unchecked. The new workflow builds the engine, the JS client

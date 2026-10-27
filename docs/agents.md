@@ -140,12 +140,21 @@ JS files (the server and its query worker) plus one `.wasm` — that runs
 unchanged on macOS, Windows and Linux with the Node runtime Claude Desktop
 ships.
 
-Thirteen tools, mirroring the hosted server's read surface plus local
+Fourteen tools, mirroring the hosted server's read surface plus local
 authoring and query jobs: `list_datasets`, `dataset_card`, `dataset_schema`,
 `example_queries`, `sparql_query`, `start_query`, `query_status`,
 `query_result`, `cancel_query`, `find_entities`, `describe_entity`,
-`validate_shacl`, `build_rete`. Every `dataset` argument takes a local file
-name, a catalog key, or an `https://` URL to any published `.rete`.
+`validate_shacl`, `build_rete`, `load_rdf`. Every `dataset` argument takes a
+local file name, a catalog key, an `https://` URL to any published `.rete`,
+or `chat:<name>`.
+
+**Files shared in the chat.** Claude Desktop does not pass chat attachments
+to an extension. For RDF the user attaches or pastes (Turtle, TriG,
+N-Triples, N-Quads), the model sends the text to `load_rdf`, which builds a
+graph in memory, queryable by every tool as `chat:<name>` until the extension
+restarts — no granted folder needed. Long files go in several parts; `save_as`
+keeps the result as a `.rete` in a granted folder. A `.rete` itself is binary
+and cannot travel through the chat: put it in a granted folder or give its URL.
 
 **Long queries do not time out.** Claude gives up on a tool call after 60 s,
 and a query that visits thousands of scattered entities in a large published

@@ -726,12 +726,20 @@ architecture-neutral wasm</strong>, so the extension is a plain <code>node</code
 JS files (the server and its query worker) plus one <code>.wasm</code> — that runs
 unchanged on macOS, Windows and Linux with the Node runtime Claude Desktop
 ships.</p>
-<p>Thirteen tools, mirroring the hosted server's read surface plus local
+<p>Fourteen tools, mirroring the hosted server's read surface plus local
 authoring and query jobs: <code>list_datasets</code>, <code>dataset_card</code>, <code>dataset_schema</code>,
 <code>example_queries</code>, <code>sparql_query</code>, <code>start_query</code>, <code>query_status</code>,
 <code>query_result</code>, <code>cancel_query</code>, <code>find_entities</code>, <code>describe_entity</code>,
-<code>validate_shacl</code>, <code>build_rete</code>. Every <code>dataset</code> argument takes a local file
-name, a catalog key, or an <code>https://</code> URL to any published <code>.rete</code>.</p>
+<code>validate_shacl</code>, <code>build_rete</code>, <code>load_rdf</code>. Every <code>dataset</code> argument takes a
+local file name, a catalog key, an <code>https://</code> URL to any published <code>.rete</code>,
+or <code>chat:&lt;name&gt;</code>.</p>
+<p><strong>Files shared in the chat.</strong> Claude Desktop does not pass chat attachments
+to an extension. For RDF the user attaches or pastes (Turtle, TriG,
+N-Triples, N-Quads), the model sends the text to <code>load_rdf</code>, which builds a
+graph in memory, queryable by every tool as <code>chat:&lt;name&gt;</code> until the extension
+restarts — no granted folder needed. Long files go in several parts; <code>save_as</code>
+keeps the result as a <code>.rete</code> in a granted folder. A <code>.rete</code> itself is binary
+and cannot travel through the chat: put it in a granted folder or give its URL.</p>
 <p><strong>Long queries do not time out.</strong> Claude gives up on a tool call after 60 s,
 and a query that visits thousands of scattered entities in a large published
 graph (title and year for every work citing a paper, on the 60 GB Crossref

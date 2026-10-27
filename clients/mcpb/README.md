@@ -54,13 +54,36 @@ No `node_modules` in the archive, no native modules, nothing to install.
 | `describe_entity` | Every statement about one IRI, both directions |
 | `validate_shacl` | SHACL Core report; only the shapes' targets are read |
 | `build_rete` | RDF text (Turtle, TriG, N-Triples, N-Quads) → a new `.rete` in a granted folder, offline; `quoted_triple_syntax: "rdf12"` reads RDF 1.2 Turtle/TriG (default `rdf-star`, as `rete build`) |
+| `load_rdf` | RDF shared in the chat → a graph held in memory, `chat:<name>`, no folder needed; `append` adds a part, `path` reads a file in a granted folder, `save_as` keeps it as a `.rete` |
 
-Every `dataset` argument accepts a local file name or path, a catalogue key, or
-an `https://` URL to any published `.rete`. Local files win a name clash.
+Every `dataset` argument accepts a local file name or path, a catalogue key,
+an `https://` URL to any published `.rete`, or `chat:<name>`. Local files win
+a name clash.
 
 `dataset_card` includes `signals.quoted_triples` — whether the graph holds quoted
 triples and the surfaces `rete export` can write them in — measured from the
 file's header, so it answers for every published file.
+
+### Files shared in the chat
+
+Claude Desktop does not hand chat attachments to an extension, and the path
+the model sees for an upload (`/mnt/user-data/uploads/…`) is in Claude's own
+sandbox, not on this machine. So the model passes an attached or pasted RDF
+file's text to `load_rdf`:
+
+- It is built in-wasm into a graph held in memory, shared with the query
+  workers (one `SharedArrayBuffer`, no copy per job), until the extension
+  restarts. Nothing is written to disk unless `save_as` asks.
+- The syntax comes from the file's extension (`.ttl`, `.nt`, `.nq`, `.trig`;
+  otherwise Turtle). A file too long for one call goes in parts with
+  `append: true`; each part is added to the text already held and the whole
+  graph rebuilt, so the first part's prefixes carry over. A part that does not
+  parse is refused and the graph keeps the parts before it. Up to 32 MB of
+  text per graph.
+- Reloading a name without `append` replaces the graph; the workers key it by
+  a generation, so none answers from the old bytes.
+- CSV, JSON, RDF/XML and JSON-LD are the model's to convert to Turtle first; a
+  `.rete` is binary and has to come through a granted folder or a URL.
 
 ### Long queries: jobs
 
@@ -123,7 +146,8 @@ Needs Docker only (no host node):
 ./build.sh --test   # ... running the stdio suites first
 ```
 
-CI runs the same suites (`test/smoke.test.mjs`, `test/jobs.test.mjs`) on every
+CI runs the same suites (`test/smoke.test.mjs`, `test/jobs.test.mjs`,
+`test/chat.test.mjs`) on every
 pull request that touches the extension, the JS client or the engine
 (`.github/workflows/mcpb-test.yml`), on Node 22 and on the Node 18 floor, and
 validates the manifest; the release job runs them again before packing.
