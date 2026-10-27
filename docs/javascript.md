@@ -108,6 +108,26 @@ form, including ASK's boolean, and the row array is the same as before. The
 raw envelope carries the same list as `warnings` when it is non-empty. An
 empty result can also come with a case-sensitivity hint (`severity: "hint"`).
 
+### A long query in chunks: `partitionPlan()`
+
+Per-entity details for thousands of entities on a remote graph can run as
+many short queries, split by the values of one variable, each retried or
+resumed on its own ([the rule](sparql.md#partition)):
+
+```js
+const plan = g.partitionPlan(q, "?work");   // throws, saying why, if the split would change the answer
+const keys = g.queryRaw(plan.keys_query).rows.map((r) => r[plan.var]);
+let rows = [];
+for (let i = 0; i < keys.length; i += 200) {
+  const part = g.queryRaw(q, { partition: { var: plan.var, keys: keys.slice(i, i + 200) } });
+  rows.push(...part.rows);                  // CONSTRUCT: part.triples
+}
+// dedupe if plan.dedupe, then apply plan.offset / plan.limit — the chunks drop them
+```
+
+Each chunk's rows are term tokens, as in `queryRaw`. The Claude Desktop
+extension's `partition_by` does this with checkpoints on disk.
+
 ### RDF 1.2 and quoted triples
 
 The CLI's `--quoted-triple-syntax` vocabulary and defaults, in both directions.

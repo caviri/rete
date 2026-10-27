@@ -46,7 +46,7 @@ No `node_modules` in the archive, no native modules, nothing to install.
 | `dataset_schema` | Classes and relations with counts, from the baked pyramid |
 | `example_queries` | Runnable SPARQL the dataset ships with |
 | `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL; waits up to 40 s, then answers with a `job_id` while the query keeps running. A FILTER type error (CONTAINS on an IRI, …) comes back as `warnings` plus a plain-language line |
-| `start_query` | The same, without waiting: a `job_id` at once |
+| `start_query` | The same, without waiting: a `job_id` at once. Both take `partition_by`, which runs a long extraction in resumable chunks |
 | `query_status` | Waits up to 45 s for a job; state, reads, bytes, elapsed; the first rows once done. No `job_id`: every job held |
 | `query_result` | A finished job's rows by cursor (up to 1000 a page), or all of them to a `.csv` / `.tsv` / `.json` / `.jsonl` / `.nt` file in a granted folder (`save_as`; never overwrites) |
 | `cancel_query` | Stops a job by terminating its worker |
@@ -109,8 +109,40 @@ So every query runs on a worker thread (`src/worker.mjs`, scheduled by
   its old bytes.
 
 The server's instructions tell the model what a query costs (one round trip
-per scattered entity, so COUNT first), how to follow a job, and how to split a
-large extraction into a cheap key list plus `VALUES` batches.
+per scattered entity, so COUNT first), how to follow a job, and when and how
+to split a large extraction with `partition_by`.
+
+### Long extractions: `partition_by`
+
+A job that runs for many minutes is lost when Claude Desktop restarts or the
+query is cancelled. `partition_by: "?work"` on `sparql_query` / `start_query`
+runs it as many short queries instead (`src/partition.mjs`), driving the
+engine's split planner ([SPARQL docs](../../docs/sparql.md#partition)):
+
+1. **Plan** (a worker step): the engine refuses a split that would change the
+   answer, saying why, and writes the keys query from the cheapest constant
+   pattern on the variable. It also returns the graph's content hash.
+2. **Keys**: the variable's values, listed once (refused past 1,000,000, or
+   when they are blank nodes).
+3. **Chunks**: the query with a chunk's keys seeded as `VALUES`, two at once
+   (the third worker stays free for other queries). The first holds 25 keys;
+   later ones are sized from the engine time of earlier ones to take about 15 s,
+   up to 5,000. A chunk whose reads failed is sent again (twice); one that
+   crashed its worker is halved.
+4. **Merge**: chunks in key order, deduplicated when the plan says so, then
+   the query's OFFSET/LIMIT. A LIMIT stops starting chunks once the finished
+   ones hold enough rows.
+
+Every finished chunk is written to disk, under
+`<temp>/rete-mcpb/partitions/<hash of graph, query, variable, reason>/`
+(`RETE_MCPB_RUNS` moves it): `state.json`, `keys.json` and one
+`c<start>-<end>.json` per chunk, each written aside and renamed. Sending the
+same call again — after a cancel, a crash or a restart — resumes from them;
+a checkpoint made on other bytes (a rebuilt local file, a republished URL:
+the content hash differs) is discarded instead. A call identical to one still
+running joins it rather than starting a second copy. Checkpoints untouched for
+a week are deleted at startup. `query_status` reports the phase, keys and
+chunks done, rows so far, the chunk size and how many keys were resumed.
 
 ## Install
 
@@ -147,7 +179,7 @@ Needs Docker only (no host node):
 ```
 
 CI runs the same suites (`test/smoke.test.mjs`, `test/jobs.test.mjs`,
-`test/chat.test.mjs`) on every
+`test/chat.test.mjs`, `test/partition.test.mjs`) on every
 pull request that touches the extension, the JS client or the engine
 (`.github/workflows/mcpb-test.yml`), on Node 22 and on the Node 18 floor, and
 validates the manifest; the release job runs them again before packing.

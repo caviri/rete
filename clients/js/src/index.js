@@ -207,12 +207,33 @@ export class Graph {
    * The engine's raw JSON result envelope. Carries a `warnings` array when the
    * query raised type errors (see {@link Graph#lastWarnings}).
    */
-  queryRaw(query, { reason = false } = {}) {
+  queryRaw(query, { reason = false, partition } = {}) {
     this.#warnings = [];
-    const s = reason ? this.#g.query_reasoned(query, "json") : this.#g.query(query, "json");
+    const s = partition
+      ? this.#g.query_partition(query, "json", reason, partition.var, partition.keys)
+      : reason
+        ? this.#g.query_reasoned(query, "json")
+        : this.#g.query(query, "json");
     const env = JSON.parse(s);
     this.#warnings = env.warnings ?? [];
     return env;
+  }
+
+  /**
+   * Plan running `query` as chunks split by the values of `variable` (`?w`
+   * or `w`) — so a long extraction can go in short pieces, each retried or
+   * resumed on its own. Throws, saying why, when the chunks' answers together
+   * would not be the query's: ORDER BY, an aggregate not grouped by the
+   * variable, a variable some row leaves unbound, ASK, DESCRIBE.
+   *
+   * `{var, form, keys_query, keys_from_where, offset, limit, dedupe}`: run
+   * `keys_query` for the values, then each chunk of them with
+   * `queryRaw(query, {partition: {var, keys}})`. The chunks' rows in key
+   * order, deduplicated when `dedupe`, then sliced by `offset` / `limit`, are
+   * the query's rows.
+   */
+  partitionPlan(query, variable) {
+    return JSON.parse(this.#g.partition_plan(query, variable));
   }
 
   /**

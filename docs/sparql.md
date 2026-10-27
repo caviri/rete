@@ -172,6 +172,45 @@ variable subject — the strategy would add nothing) or under `FROM` / `FROM
 NAMED`. The playground's "Split by community" strategy uses this; natively
 the per-star, per-community partials are the seam for parallel evaluation.
 
+### Splitting a query by a variable {#partition}
+
+A long extraction — title, venue and year of every work citing a paper, over
+a remote graph where each scattered work is a network round trip — can run as
+many short queries instead of one long one, each finished, retried or resumed
+on its own. `partition_plan(query, var)` plans that and
+`eval_query_partitioned(query, opts, var, keys)` runs one chunk (JS:
+`g.partitionPlan(q, "?work")` and `g.queryRaw(q, { partition: { var, keys } })`;
+the Claude Desktop extension's `partition_by` drives both).
+
+- **Exact, or refused.** Every solution must bind the variable: then each
+  solution belongs to exactly one chunk, the one holding its value, and the
+  chunks' rows together are the query's rows. The plan is refused, with the
+  reason, for ASK and DESCRIBE, an `ORDER BY` (it needs every row at once), an
+  aggregate not grouped by the variable (it would be computed per chunk), a
+  variable a select expression computes, and a variable some solution may
+  leave unbound (matched only inside `OPTIONAL`, one side of a `UNION`, a
+  `BIND`, a `SERVICE`, or a sub-SELECT that does not project it).
+- **The keys.** The plan's `keys_query` lists the variable's values from the
+  one required triple pattern that binds it with constants alone
+  (`?work cx:cites <paper>`), the one whose tiles are smallest according to the
+  tile directory — so listing them is one range scan, where the query is a read
+  per entity. That is a superset of the values the solutions take; a key with
+  no solution makes an empty chunk. When no such pattern exists
+  (`keys_from_where`), the keys come from the whole WHERE clause and may cost
+  as much as the query.
+- **A chunk** is the query with its keys joined in as `VALUES` on the first
+  required pattern block that binds the variable, where the VALUES pushdown
+  turns each key into an index lookup, and without the query's top-level
+  `OFFSET` / `LIMIT`.
+- **Merging** is the caller's: the chunks' rows in key order, deduplicated when
+  the plan says `dedupe` (a `DISTINCT` that does not project the variable, and
+  every `CONSTRUCT`), then the plan's `offset` / `limit`. A `LIMIT` without
+  `ORDER BY` asks for any rows, so a caller may stop starting chunks once the
+  finished ones hold enough.
+- Keys are term tokens as the keys query returns them (`<https://…>`,
+  `"…"^^<…>`), matched against the dictionary as stored. A variable bound to
+  blank nodes cannot be split by: a blank node cannot be named in a chunk.
+
 ## Union default graph (⛁ All graphs) {#union-default-graph}
 
 Standard SPARQL scopes a pattern outside `GRAPH` to the **default graph**, and

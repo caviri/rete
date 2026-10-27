@@ -60,22 +60,28 @@ async function graphFor(key, target) {
 // counts opening it, as on the server's own graphs (statsOf).
 const lastStats = new WeakMap();
 
-parentPort.on("message", async ({ job, key, target, query, reason }) => {
+// op "query" runs a query — one chunk of a split one when `keys` is given;
+// op "plan" plans splitting it by `var` (partition.mjs), and says which bytes
+// it planned on, so a checkpoint is never resumed against another file.
+parentPort.on("message", async ({ job, key, target, op = "query", query, reason, var: variable, keys }) => {
   try {
     const graph = await graphFor(key, target);
     const before = lastStats.get(graph) ?? { bytes: 0, requests: 0 };
     const started = Date.now();
     // The raw envelope: rows stay as the engine's term tokens, the compact
     // form the server keeps and converts a page at a time.
-    const env = graph.queryRaw(query, { reason });
+    const result =
+      op === "plan"
+        ? { plan: graph.partitionPlan(query, variable), contentHash: graph.contentHash() }
+        : { env: graph.queryRaw(query, { reason, partition: keys && { var: variable, keys } }) };
     const ms = Date.now() - started;
     const after = graph.stats();
     if (after) lastStats.set(graph, after);
     parentPort.postMessage({
       job,
       ok: true,
-      env,
-      warnings: graph.lastWarnings(),
+      ...result,
+      warnings: op === "plan" ? [] : graph.lastWarnings(),
       ms,
       stats: after && {
         fileBytes: after.fileLength,

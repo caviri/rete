@@ -693,6 +693,21 @@ graph, and is <code>[]</code> when there is nothing to report. It works for ever
 form, including ASK's boolean, and the row array is the same as before. The
 raw envelope carries the same list as <code>warnings</code> when it is non-empty. An
 empty result can also come with a case-sensitivity hint (<code>severity: "hint"</code>).</p>
+<h3 id="a-long-query-in-chunks-partitionplan">A long query in chunks: <code>partitionPlan()</code></h3>
+<p>Per-entity details for thousands of entities on a remote graph can run as
+many short queries, split by the values of one variable, each retried or
+resumed on its own (<a href="sparql.html#partition">the rule</a>):</p>
+<pre><code class="language-js">const plan = g.partitionPlan(q, "?work");   // throws, saying why, if the split would change the answer
+const keys = g.queryRaw(plan.keys_query).rows.map((r) =&gt; r[plan.var]);
+let rows = [];
+for (let i = 0; i &lt; keys.length; i += 200) {
+  const part = g.queryRaw(q, { partition: { var: plan.var, keys: keys.slice(i, i + 200) } });
+  rows.push(...part.rows);                  // CONSTRUCT: part.triples
+}
+// dedupe if plan.dedupe, then apply plan.offset / plan.limit — the chunks drop them
+</code></pre>
+<p>Each chunk's rows are term tokens, as in <code>queryRaw</code>. The Claude Desktop
+extension's <code>partition_by</code> does this with checkpoints on disk.</p>
 <h3 id="rdf-12-and-quoted-triples">RDF 1.2 and quoted triples</h3>
 <p>The CLI's <code>--quoted-triple-syntax</code> vocabulary and defaults, in both directions.
 <code>build(text, "ttl" | "trig", { quotedTripleSyntax })</code> reads Turtle/TriG

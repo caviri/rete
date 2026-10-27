@@ -34,8 +34,13 @@ export class JobManager {
   /**
    * Queue a query. `key` names the graph for the workers' caches (it changes
    * when a local file's bytes may have); `target` is what open() takes.
+   *
+   * `op: "plan"` asks the engine to plan splitting the query by `var`
+   * instead of running it; `keys` runs one chunk of such a split. An
+   * `internal` job — a step of a partitioned query (partition.mjs) — is not
+   * listed, and is forgotten as soon as it ends.
    */
-  submit({ dataset, key, target, query, reason }) {
+  submit({ dataset, key, target, query, reason, op = "query", var: variable, keys, internal = false }) {
     let settle;
     const settled = new Promise((resolve) => (settle = resolve));
     const job = {
@@ -45,11 +50,17 @@ export class JobManager {
       target,
       query,
       reason,
+      op,
+      var: variable,
+      keys,
+      internal,
       state: "queued",
       createdAt: Date.now(),
       startedAt: null,
       endedAt: null,
       env: null, // the engine's result envelope, once done
+      plan: null, // op "plan": the engine's partition plan, once done
+      contentHash: null, // op "plan": the graph's content hash (null for bytes)
       warnings: [],
       ms: null,
       stats: null,
@@ -66,17 +77,51 @@ export class JobManager {
     return job;
   }
 
+  /**
+   * Hold a job that runs elsewhere — a partitioned query, whose `run` drives
+   * its own steps through submit() — so it is listed, waited on, cancelled
+   * and paged like any other. `run` answers progress() and cancel().
+   */
+  track(fields) {
+    let settle;
+    const settled = new Promise((resolve) => (settle = resolve));
+    const job = {
+      id: `q${++this.#seq}`,
+      state: "running",
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      endedAt: null,
+      env: null,
+      warnings: [],
+      ms: null,
+      stats: null,
+      error: null,
+      progress: null,
+      ...fields,
+      settle,
+      settled,
+    };
+    this.#jobs.set(job.id, job);
+    return job;
+  }
+
+  /** End a tracked job. */
+  finish(job, state) {
+    if (!TERMINAL.has(job.state)) this.#end(job, state);
+  }
+
   get(id) {
     return this.#jobs.get(String(id ?? "").trim());
   }
 
   /** Every job still held, newest first. */
   list() {
-    return [...this.#jobs.values()].reverse();
+    return [...this.#jobs.values()].filter((j) => !j.internal).reverse();
   }
 
   /** Reads and bytes this job has fetched so far. */
   progress(job) {
+    if (job.run && !job.progress) return job.run.progress();
     if (job.progress) return job.progress;
     if (!job.slot) return { reads: 0, bytes: 0 };
     const [reads, bytes] = this.#read(job.slot);
@@ -110,6 +155,10 @@ export class JobManager {
   /** Stop a job. A running one is stopped by terminating its worker mid-read. */
   cancel(job) {
     if (TERMINAL.has(job.state)) return job;
+    if (job.run) {
+      job.run.cancel(); // stops its steps, then ends it
+      return job;
+    }
     if (job.state === "queued") {
       this.#queue.splice(this.#queue.indexOf(job), 1);
     } else {
@@ -155,8 +204,11 @@ export class JobManager {
       job: job.id,
       key: job.key,
       target: job.target,
+      op: job.op,
       query: job.query,
       reason: job.reason,
+      var: job.var,
+      keys: job.keys,
     });
   }
 
@@ -182,7 +234,9 @@ export class JobManager {
     slot.job = null;
     slot.lastKey = job.key;
     if (msg.ok) {
-      job.env = msg.env;
+      job.env = msg.env ?? null;
+      job.plan = msg.plan ?? null;
+      job.contentHash = msg.contentHash ?? null;
       job.warnings = msg.warnings ?? [];
       job.ms = msg.ms;
       job.stats = msg.stats;
@@ -222,9 +276,11 @@ export class JobManager {
   #end(job, state) {
     job.state = state;
     job.endedAt = Date.now();
-    job.progress ??= { reads: 0, bytes: 0 };
+    job.progress ??= job.run ? job.run.progress() : { reads: 0, bytes: 0 };
     job.slot = null;
     job.settle();
+    // A step of a partitioned query is held by its run, not here.
+    if (job.internal) this.#jobs.delete(job.id);
     this.#trim();
   }
 

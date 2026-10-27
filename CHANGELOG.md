@@ -48,6 +48,26 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   instructions tell the model to convert CSV / JSON / RDF/XML / JSON-LD to
   Turtle first, and to ask for a granted folder or a URL for a `.rete`, which
   is binary and cannot travel through the chat.
+- **A long query can run as resumable chunks, split by one variable.** A job
+  that ran for many minutes was lost when Claude Desktop restarted or the
+  query was cancelled, and an agent splitting the work by hand into `VALUES`
+  batches had to keep track of the batches itself. The engine now plans the
+  split: `rete_core::partition_plan(rete, query, var)` refuses one that would
+  change the answer, saying why — ASK or DESCRIBE, ORDER BY, an aggregate not
+  grouped by the variable, a variable some solution may leave unbound — and
+  writes the keys query from the one constant pattern on the variable with
+  the smallest tiles (read off the tile directory). `eval_query_partitioned`
+  runs one chunk, its keys seeded as `VALUES` where the pushdown turns each
+  into an index lookup. Both are on the wasm graphs (`partition_plan`,
+  `query_partition`) and in the JS client (`Graph.partitionPlan()`,
+  `queryRaw(q, { partition: { var, keys } })`). The Claude Desktop extension
+  drives them with `partition_by` on `sparql_query` / `start_query`: keys
+  first, then chunks two at a time, each sized to take about 15 s, every
+  finished chunk written to disk. Sending the same call again after a cancel,
+  a crash or a restart carries on from the last finished chunk (a checkpoint
+  made on other bytes is discarded); an identical call joins a running one.
+  The instructions now say when to split and how to choose the variable.
+  `SparqlError` gains a `Partition` variant for the refusals.
 - **`mcpb-test.yml`: the extension's stdio suites run on pull requests.**
   They ran only in the release workflow, so a change to `clients/mcpb`
   reached a tag unchecked. The new workflow builds the engine, the JS client

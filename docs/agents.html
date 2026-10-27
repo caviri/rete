@@ -753,6 +753,15 @@ responsive throughout (the engine's synchronous range reads used to block it
 for the whole query). An answer shows 200 rows; <code>query_result</code> pages through
 the rest by cursor or writes all of them to a CSV/TSV/JSON/N-Triples file in a
 granted folder.</p>
+<p><strong>Long extractions resume.</strong> With <code>partition_by: "?work"</code>, <code>sparql_query</code> /
+<code>start_query</code> split the query by that variable (<a href="sparql.html#partition">the rule</a>):
+its values are listed first, from the query's cheapest constant pattern on it,
+then the query runs a few hundred values at a time, two chunks at once, each
+sized to take about 15 s. Every finished chunk is kept on disk, so after a
+cancel, a crash or a restart of Claude Desktop the same call carries on where
+it stopped, and a call identical to one still running joins it. A split that
+would change the answer (ORDER BY, an aggregate not grouped by the variable, a
+variable only bound inside OPTIONAL) is refused, saying why.</p>
 <p>The decisive property is that <strong>local files are read lazily too</strong> — the same
 byte-range path as a remote graph, via the JS client's <code>file://</code> reader — so
 a multi-gigabyte graph on disk answers a selective query in megabytes and is

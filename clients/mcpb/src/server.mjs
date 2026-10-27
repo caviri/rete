@@ -14,7 +14,8 @@
 import { createWriteStream } from "node:fs";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { once } from "node:events";
-import { basename, delimiter, dirname, extname, isAbsolute, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -24,6 +25,7 @@ import { Term, build } from "rete-graph";
 
 import { GraphStore, UsageError, formatOf } from "./graphs.mjs";
 import { JobManager } from "./jobs.mjs";
+import { PartitionRuns } from "./partition.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Stamped by build.mjs from the workspace Cargo.toml; the fallback only shows
@@ -126,12 +128,26 @@ Long queries and big results:
   .json, .jsonl; .nt for CONSTRUCT). Do not fold rows into one GROUP_CONCAT
   string to get around the page size.
 - start_query runs a query you already expect to be slow without waiting.
-- For thousands of entities with per-entity details on a large published graph:
-  first list the entities (every work citing a paper, every article of one
-  journal: one lookup, cheap even for thousands), then fetch the details in
-  batches of a few hundred, VALUES ?work { … } inside the query, one job per
-  batch. A batch that fails can simply be sent again; what it already read is
-  cached.
+- Per-entity details for thousands of entities on a large published graph
+  (title, venue and year of every work citing a paper; every article of one
+  journal with its authors): pass partition_by, the variable each row is
+  about — partition_by: "?work". The values of that variable are listed first
+  (one cheap lookup), then the query runs a few hundred of them at a time, two
+  chunks at once, and every finished chunk is kept on disk. query_status shows
+  the keys and chunks done. If it stops — cancelled, a crash, Claude restarted
+  — send the SAME call again: it carries on from the last finished chunk. A
+  call identical to one still running joins it rather than starting over.
+  Choosing the variable:
+    * the thing the rows are about, bound in EVERY row: matched in the main
+      pattern, not only inside OPTIONAL or one side of a UNION;
+    * no ORDER BY (sort the saved file afterwards), and an aggregate only when
+      grouped by that variable (GROUP BY ?work);
+    * keep the query's most specific constant pattern on it (?work cx:cites
+      <paper>, not only ?work a cx:Work): the values are listed from the
+      cheapest such pattern, and none at all means listing them costs as much
+      as the query (the plan says keys_from_where).
+  A query the split would change is refused, saying why. Hand the result over
+  with query_result(job_id, save_as: …).
 
 Every result carries \`stats\`: the bytes and requests actually read. Report
 them when the user asks how much data was touched — a good query over a huge
@@ -308,6 +324,7 @@ function jobStatus(job) {
       bytes_read: progress.bytes,
       rows: job.env && job.env.kind !== "ask" ? itemsOf(job).length : null,
     },
+    ...(job.partition ? { partition: { ...job.partition, chunks_running: job.run.running } } : {}),
     ...(job.error ? { error: job.error } : {}),
   };
 }
@@ -315,15 +332,25 @@ function jobStatus(job) {
 /** A job that has not finished yet: what it is doing, and what to call next. */
 function stillRunning(job) {
   const waiting = job.state === "queued";
+  const p = job.partition;
   return json({
     ...jobStatus(job),
-    note:
-      (waiting
-        ? "Waiting for a free worker: three queries are already running. "
-        : "Still running in the background; this call returned before the client's time limit. ") +
-      `Wait for it with query_status({job_id: "${job.id}"}), up to ${WAIT_MAX_S} s per call, and call ` +
-      "again until state is done. Do NOT send the query again: a second copy would compete with " +
-      `this one. cancel_query({job_id: "${job.id}"}) stops it.`,
+    note: p
+      ? `Running in chunks by ${p.by}: ` +
+        (p.keys === null
+          ? `${p.phase}. `
+          : `${p.keys_done} of ${p.keys} keys done (${p.chunks_done} chunks, ${p.rows} rows so far` +
+            (p.resumed_keys ? `; ${p.resumed_keys} keys resumed from an earlier run` : "") +
+            "). ") +
+        `Wait for it with query_status({job_id: "${job.id}"}), up to ${WAIT_MAX_S} s per call. Every ` +
+        "finished chunk is kept on disk: if this stops — cancelled, a crash, a restart — sending the same " +
+        "call again carries on from there."
+      : (waiting
+          ? "Waiting for a free worker: three queries are already running. "
+          : "Still running in the background; this call returned before the client's time limit. ") +
+        `Wait for it with query_status({job_id: "${job.id}"}), up to ${WAIT_MAX_S} s per call, and call ` +
+        "again until state is done. Do NOT send the query again: a second copy would compete with " +
+        `this one. cancel_query({job_id: "${job.id}"}) stops it.`,
   });
 }
 
@@ -335,7 +362,20 @@ function jobAnswer(job, offset = 0, limit = MAX_ROWS) {
   if (job.state === "failed") throw new Error(job.error);
   if (job.state === "cancelled") throw new UsageError(`query ${job.id} was cancelled`);
   const env = job.env;
-  const head = { dataset: job.dataset, job_id: job.id };
+  const head = {
+    dataset: job.dataset,
+    job_id: job.id,
+    ...(job.partition
+      ? {
+          partition: {
+            by: job.partition.by,
+            keys: job.partition.keys,
+            chunks: job.partition.chunks_done,
+            resumed_keys: job.partition.resumed_keys,
+          },
+        }
+      : {}),
+  };
   const tail = { ms: job.ms, stats: jobStats(job) };
   if (env.kind === "ask") {
     return withWarnings({ ...head, form: "ASK", boolean: env.boolean, ...tail }, `ASK = ${env.boolean}.`, job.warnings);
@@ -373,16 +413,24 @@ function jobAnswer(job, offset = 0, limit = MAX_ROWS) {
   );
 }
 
-/** Queue a query on a worker; the graph is resolved (and checked) here first. */
-async function submitQuery(name, query, reason) {
+/**
+ * Queue a query on a worker — or, with `partitionBy`, start (or join, or
+ * resume) running it in chunks. The graph is resolved (and checked) here first.
+ */
+async function submitQuery(name, query, reason, partitionBy) {
   const source = await store.resolve(name);
-  const job = jobs.submit({
+  const spec = {
     dataset: source.key,
     key: `${source.cacheKey}#${await store.stamp(source)}`,
     target: source.openTarget,
     query,
     reason,
-  });
+  };
+  if (partitionBy !== undefined) {
+    if (!partitionBy.trim()) throw new UsageError("partition_by needs a variable name, e.g. \"?work\"");
+    return runs.start({ ...spec, var: partitionBy.trim(), where: source.where });
+  }
+  const job = jobs.submit(spec);
   job.where = source.where;
   return job;
 }
@@ -501,6 +549,9 @@ async function loadCatalog() {
 const dirs = allowedDirs();
 const store = new GraphStore({ allowedDirs: dirs, catalog: await loadCatalog() });
 const jobs = new JobManager(new URL("./worker.mjs", import.meta.url));
+// Checkpoints of partitioned queries: in the system's temp folder, so they
+// survive a restart of Claude Desktop without writing into the user's folders.
+const runs = new PartitionRuns(jobs, process.env.RETE_MCPB_RUNS || join(tmpdir(), "rete-mcpb", "partitions"));
 
 const server = new McpServer(
   { name: "rete-graphs", version: VERSION },
@@ -508,6 +559,16 @@ const server = new McpServer(
 );
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };
+const partitionBy = z
+  .string()
+  .optional()
+  .describe(
+    'split the query into resumable chunks by this variable, e.g. "?work": its values are listed ' +
+      "first, then the query runs a few hundred of them at a time and every finished chunk is kept " +
+      "on disk — for per-entity details over thousands of entities. Re-sending the same call " +
+      "resumes after a stop. The variable must be bound in every row (not only inside OPTIONAL); " +
+      "no ORDER BY; aggregates only grouped by it",
+  );
 const dataset = z
   .string()
   .describe(
@@ -692,7 +753,7 @@ server.registerTool(
       "reason=true enables OWL 2 QL entailment (subclass/subproperty/domain/range) where the " +
       "graph carries an ontology. CONTAINS / STRSTARTS / REGEX need string arguments: use " +
       "STR(?iri) or STR(?number). FILTER type errors (silently false in SPARQL) come back as " +
-      "`warnings`.",
+      "`warnings`. partition_by runs a large extraction in resumable chunks.",
     inputSchema: {
       dataset,
       query: z.string().describe("the SPARQL query"),
@@ -703,16 +764,19 @@ server.registerTool(
         .max(WAIT_MAX_S)
         .optional()
         .describe(`how long to wait before answering with the job id instead (default ${WAIT_DEFAULT_S})`),
+      partition_by: partitionBy,
     },
     annotations: { ...READ_ONLY, openWorldHint: true },
   },
-  guard(async ({ dataset: name, query, reason = false, wait_seconds }, extra) => {
-    const job = await submitQuery(name, query, reason);
+  guard(async ({ dataset: name, query, reason = false, wait_seconds, partition_by }, extra) => {
+    const called = Date.now();
+    const job = await submitQuery(name, query, reason, partition_by);
     await jobs.wait(job, seconds(wait_seconds, WAIT_DEFAULT_S), extra?.signal);
     // The client cancelled THIS call (the user stopped it): stop the query
-    // too, so nothing keeps reading for an answer nobody will see. A wait that
-    // merely ran out of time leaves it running, to be collected by job id.
-    if (extra?.signal?.aborted) jobs.cancel(job);
+    // too, so nothing keeps reading for an answer nobody will see — unless
+    // the call only joined a split query that was already running. A wait
+    // that merely ran out of time leaves it running, to be collected by job id.
+    if (extra?.signal?.aborted && job.createdAt >= called) jobs.cancel(job);
     return jobs.isTerminal(job) ? jobAnswer(job) : stillRunning(job);
   }),
 );
@@ -726,19 +790,25 @@ server.registerTool(
       "query you expect to be slow (details for thousands of entities on a large published " +
       "graph) or to run up to three at the same time. Then query_status waits for it and " +
       "query_result pages through or saves its rows. Same query language and options as " +
-      "sparql_query.",
+      "sparql_query; with partition_by it runs in resumable chunks.",
     inputSchema: {
       dataset,
       query: z.string().describe("the SPARQL query"),
       reason: z.boolean().optional().describe("OWL 2 QL entailment by query rewriting (default false)"),
+      partition_by: partitionBy,
     },
     annotations: { ...READ_ONLY, idempotentHint: false, openWorldHint: true },
   },
-  guard(async ({ dataset: name, query, reason = false }) => {
-    const job = await submitQuery(name, query, reason);
+  guard(async ({ dataset: name, query, reason = false, partition_by }) => {
+    const called = Date.now();
+    const job = await submitQuery(name, query, reason, partition_by);
+    const joined = job.createdAt < called;
     return json({
       ...jobStatus(job),
-      note: `Running. query_status({job_id: "${job.id}"}) waits for it, up to ${WAIT_MAX_S} s per call.`,
+      note:
+        (joined ? `The same split query was already ${job.state === "done" ? "done" : "running"} as ${job.id}; ` +
+          "this call joined it rather than starting it twice. " : "Running. ") +
+        `query_status({job_id: "${job.id}"}) waits for it, up to ${WAIT_MAX_S} s per call.`,
     });
   }),
 );
@@ -819,7 +889,8 @@ server.registerTool(
     description:
       "Stop a queued or running query job. A running one is stopped mid-read by shutting its " +
       "worker down, so what it had read so far is not kept: a narrower or batched version sent " +
-      "afterwards starts cold.",
+      "afterwards starts cold. A query split with partition_by keeps its finished chunks on disk: " +
+      "sending the same call again resumes from them.",
     inputSchema: { job_id: z.string().describe("the job to stop") },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
