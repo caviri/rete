@@ -11,6 +11,14 @@
       "cardUrl": "https://data.graphplaza.com/crossref/crossref.rete"
     },
     {
+      "key": "crossref-citations",
+      "url": "https://data.graphplaza.com/crossref/crossref-citations.rete",
+      "formatVersion": 5,
+      "contentHash": "daaea6370f69cfd381b6670447eb56a4",
+      "size": 34343675161,
+      "cardUrl": "https://data.graphplaza.com/crossref/crossref-citations.rete"
+    },
+    {
       "key": "datacite",
       "url": "https://data.graphplaza.com/datacite/datacite.rete",
       "formatVersion": 5,
