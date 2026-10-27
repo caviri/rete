@@ -28,7 +28,7 @@ use super::{Plan, SparqlError};
 use crate::bgp::PatternTerm;
 use crate::file::Rete;
 
-/// How to run a query as chunks split by one variable — see [`plan`].
+/// How to run a query as chunks split by one variable: see [`crate::partition_plan`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PartitionPlan {
     /// The variable split on, without its `?`.
