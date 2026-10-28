@@ -171,7 +171,7 @@ fn the_keys_query_is_one_constant_pattern() {
     let rete = Rete::open(&bytes).unwrap();
     let q = format!("{P}SELECT ?w ?t WHERE {{ ?w :title ?t ; :cites :X }}");
     let plan = partition_plan(&rete, &q, "w").unwrap();
-    assert!(!plan.keys_from_where);
+    assert_eq!(plan.keys_from, "pattern");
     assert!(
         plan.keys_query.contains("<http://ex.org/cites>"),
         "{}",
@@ -187,7 +187,52 @@ fn the_keys_query_is_one_constant_pattern() {
          {{ SELECT ?w WHERE {{ ?w :cites :Y }} }} }}"
     );
     let plan = partition_plan(&rete, &q, "w").unwrap();
-    assert!(plan.keys_from_where, "{}", plan.keys_query);
+    assert_eq!(plan.keys_from, "where", "{}", plan.keys_query);
+}
+
+#[test]
+fn a_values_list_on_the_variable_is_the_keys() {
+    let bytes = graph();
+    let rete = Rete::open(&bytes).unwrap();
+    // A list of entities found elsewhere (another graph), the details asked
+    // here: the keys are the list, read from nowhere, and :w99 — not in this
+    // graph — is a key with an empty chunk.
+    for q in [
+        "SELECT ?w ?t ?y WHERE { VALUES ?w { :w0 :w3 :w6 :w7 :w99 } ?w :title ?t OPTIONAL { ?w :year ?y } }",
+        // At the end of the query, binding two variables per row.
+        "SELECT ?w ?c ?t WHERE { ?w :title ?t ; :cites ?c } VALUES (?w ?c) { (:w0 :X) (:w1 :Y) (:w3 :X) (:w3 :Y) }",
+    ] {
+        let q = format!("{P}{q}");
+        let plan = partition_plan(&rete, &q, "w").unwrap();
+        assert_eq!(plan.keys_from, "values", "{q}");
+        assert!(!plan.keys_query.contains("title"), "{}", plan.keys_query);
+        let whole = sorted(rows(eval_query(&rete, &q).unwrap()));
+        for size in [1, 2, 100] {
+            let (_, parts) = chunked(&rete, &q, "w", size);
+            assert_eq!(sorted(parts), whole, "{q} in chunks of {size}");
+        }
+    }
+    let q =
+        format!("{P}SELECT ?w ?t WHERE {{ VALUES ?w {{ :w0 :w3 :w6 :w7 :w99 }} ?w :title ?t }}");
+    assert_eq!(
+        keys(&rete, &partition_plan(&rete, &q, "w").unwrap()).len(),
+        5
+    );
+
+    // Keys from elsewhere that the list lacks still answer exactly: only the
+    // ones the list holds have rows.
+    let other = [
+        "<http://ex.org/w0>".to_string(),
+        "<http://ex.org/w1>".to_string(),
+    ];
+    let (out, _) = eval_query_partitioned(&rete, &q, QueryOpts::default(), "w", &other).unwrap();
+    assert_eq!(rows(out).len(), 1);
+
+    // An UNDEF in the list: not every row binds ?w, so the list is not the keys.
+    let q = format!(
+        "{P}SELECT ?w ?c WHERE {{ ?w :cites ?c }} VALUES (?w ?c) {{ (:w0 UNDEF) (UNDEF :Y) }}"
+    );
+    assert_ne!(partition_plan(&rete, &q, "w").unwrap().keys_from, "values");
 }
 
 #[test]

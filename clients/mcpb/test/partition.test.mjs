@@ -88,7 +88,7 @@ test("a split query is the whole query, and a new session resumes it from its ch
   );
   assert.deepEqual(sorted(split.rows), sorted(whole.rows));
   const chunks = Math.ceil(N / 2 / CHUNK);
-  assert.deepEqual(split.partition, { by: "?w", keys: N / 2, chunks, resumed_keys: 0 });
+  assert.deepEqual(split.partition, { by: "?w", keys: N / 2, chunks, resumed_keys: 0, keys_from: "pattern" });
 
   // The checkpoint: the plan, the keys, one file per chunk.
   const [run] = await readdir(fx.runs);
@@ -199,4 +199,50 @@ test("an identical call joins the running split; a cancelled one resumes when se
   assert.equal(again.count, N / 2);
   const state = JSON.parse(await readFile(join(fx.runs, (await readdir(fx.runs))[0], "state.json"), "utf8"));
   assert.equal(state.done.length, Math.ceil(N / 2 / CHUNK));
+});
+
+test("the values can come from a VALUES list, or from another job's rows", async (t) => {
+  const { call } = await connect(t, await fixture());
+  const run = async (args) =>
+    collect(call, payload(await call("sparql_query", { dataset: "works", partition_by: "?w", ...args })));
+
+  // A VALUES list in the query is the keys as it stands; a listed work the
+  // graph lacks just has no rows.
+  const listed = await run({
+    query: `${P}SELECT ?w ?t WHERE { VALUES ?w { <${EX}work/000> <${EX}work/002> <${EX}work/005> <${EX}work/nope> } ?w :title ?t }`,
+  });
+  assert.equal(listed.partition.keys_from, "values");
+  assert.equal(listed.partition.keys, 4);
+  assert.equal(listed.count, 3);
+
+  // Entities listed by one query (in the real case, on another graph), the
+  // details asked of a second one: keys_job hands the first job's rows over.
+  const cited = payload(
+    await call("sparql_query", { dataset: "works", query: `${P}SELECT ?w WHERE { ?w :cites :X } LIMIT 12` }),
+  );
+  // ?w :title ?t alone binds ?w with no constant: without keys_job its keys
+  // would come from the whole WHERE clause.
+  const details = await run({ query: `${P}SELECT ?w ?t WHERE { ?w :title ?t }`, keys_job: cited.job_id });
+  assert.equal(details.partition.keys_from, `job ${cited.job_id}`);
+  assert.equal(details.partition.keys, 12);
+  assert.equal(details.count, 12);
+  assert.deepEqual(details.rows.map((r) => r.w).sort(), cited.rows.map((r) => r.w).sort());
+
+  // The listing's only column serves whatever its name.
+  const renamed = payload(
+    await call("sparql_query", { dataset: "works", query: `${P}SELECT ?paper WHERE { ?paper :cites :X } LIMIT 3` }),
+  );
+  assert.equal((await run({ query: `${P}SELECT ?w ?t WHERE { ?w :title ?t }`, keys_job: renamed.job_id })).count, 3);
+
+  const refuse = async (args, why) => {
+    const result = await call("sparql_query", { dataset: "works", query: `${P}SELECT ?w ?t WHERE { ?w :title ?t }`, ...args });
+    assert.ok(result.isError, `expected a refusal for ${JSON.stringify(args)}`);
+    assert.match(result.content[0].text, why);
+  };
+  await refuse({ keys_job: cited.job_id }, /goes with partition_by/);
+  await refuse({ partition_by: "?w", keys_job: "q999" }, /no query q999/);
+  const two = payload(
+    await call("sparql_query", { dataset: "works", query: `${P}SELECT ?a ?b WHERE { ?a :cites ?b } LIMIT 2` }),
+  );
+  await refuse({ partition_by: "?w", keys_job: two.job_id }, /no \?w column/);
 });

@@ -190,18 +190,27 @@ the Claude Desktop extension's `partition_by` drives both).
   variable a select expression computes, and a variable some solution may
   leave unbound (matched only inside `OPTIONAL`, one side of a `UNION`, a
   `BIND`, a `SERVICE`, or a sub-SELECT that does not project it).
-- **The keys.** The plan's `keys_query` lists the variable's values from the
-  one required triple pattern that binds it with constants alone
-  (`?work cx:cites <paper>`), the one whose tiles are smallest according to the
-  tile directory — so listing them is one range scan, where the query is a read
-  per entity. That is a superset of the values the solutions take; a key with
-  no solution makes an empty chunk. When no such pattern exists
-  (`keys_from_where`), the keys come from the whole WHERE clause and may cost
-  as much as the query.
-- **A chunk** is the query with its keys joined in as `VALUES` on the first
-  required pattern block that binds the variable, where the VALUES pushdown
-  turns each key into an index lookup, and without the query's top-level
-  `OFFSET` / `LIMIT`.
+- **The keys.** The plan's `keys_query` lists the variable's values, and
+  `keys_from` says from where:
+  - `values`: a required `VALUES` list on the variable (bound in every row),
+    taken as it stands — the solutions can take no other value, and listing
+    them reads nothing. The shortest one when there are several.
+  - `pattern`: the one required triple pattern that binds it with constants
+    alone (`?work cx:cites <paper>`), the one whose tiles are smallest
+    according to the tile directory — one range scan, where the query is a
+    read per entity.
+  - `where`: the whole WHERE clause, when neither exists; listing them may
+    cost as much as the query.
+
+  Either way that is a superset of the values the solutions take; a key with
+  no solution makes an empty chunk. A caller may also run chunks for keys it
+  got elsewhere — the works a query listed in another graph: the chunks then
+  answer the query for those values only.
+- **A chunk** is the query without its top-level `OFFSET` / `LIMIT`, with its
+  keys either cutting the query's own `VALUES` list on the variable down to
+  them (when every key is in it as written), or joined in as `VALUES` on the
+  first required pattern block that binds the variable, where the VALUES
+  pushdown turns each key into an index lookup.
 - **Merging** is the caller's: the chunks' rows in key order, deduplicated when
   the plan says `dedupe` (a `DISTINCT` that does not project the variable, and
   every `CONSTRUCT`), then the plan's `offset` / `limit`. A `LIMIT` without

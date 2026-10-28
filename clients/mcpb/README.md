@@ -120,10 +120,14 @@ runs it as many short queries instead (`src/partition.mjs`), driving the
 engine's split planner ([SPARQL docs](../../docs/sparql.md#partition)):
 
 1. **Plan** (a worker step): the engine refuses a split that would change the
-   answer, saying why, and writes the keys query from the cheapest constant
-   pattern on the variable. It also returns the graph's content hash.
+   answer, saying why, and writes the keys query — from the query's own
+   `VALUES` list on the variable, else from the cheapest constant pattern on
+   it (`keys_from`). It also returns the graph's content hash.
 2. **Keys**: the variable's values, listed once (refused past 1,000,000, or
-   when they are blank nodes).
+   when they are blank nodes). With `keys_job: "<job_id>"` they are instead the
+   rows of an earlier job — its column named like the variable, or its only
+   column — such as the works a query listed in another graph; the query then
+   answers for those values only, and the model never copies them into it.
 3. **Chunks**: the query with a chunk's keys seeded as `VALUES`, two at once
    (the third worker stays free for other queries). The first holds 25 keys;
    later ones are sized from the engine time of earlier ones to take about 15 s,
@@ -134,7 +138,7 @@ engine's split planner ([SPARQL docs](../../docs/sparql.md#partition)):
    ones hold enough rows.
 
 Every finished chunk is written to disk, under
-`<temp>/rete-mcpb/partitions/<hash of graph, query, variable, reason>/`
+`<temp>/rete-mcpb/partitions/<hash of graph, query, variable, reason, keys_job's values>/`
 (`RETE_MCPB_RUNS` moves it): `state.json`, `keys.json` and one
 `c<start>-<end>.json` per chunk, each written aside and renamed. Sending the
 same call again — after a cancel, a crash or a restart — resumes from them;

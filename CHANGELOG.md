@@ -68,6 +68,17 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   made on other bytes is discarded); an identical call joins a running one.
   The instructions now say when to split and how to choose the variable.
   `SparqlError` gains a `Partition` variant for the refusals.
+- **A split takes its keys from a `VALUES` list, or from an earlier job.**
+  The citations of the Crossref graph moved to `crossref-citations.rete`, so
+  "title and year of every work citing a paper" lists the works in one graph
+  and asks the other for their details. With the works in a `VALUES ?work`
+  list, the plan now lists the keys from that list as it stands (`keys_from:
+  "values"`, no read) instead of evaluating the whole query once, and each
+  chunk cuts the list down to its own keys. In the Claude Desktop extension,
+  `keys_job: "<job_id>"` beside `partition_by` takes the keys from an earlier
+  job's rows — the listing on the other graph — so the model never copies
+  thousands of IRIs into a query. The plan's `keys_from_where` flag becomes
+  `keys_from` (`"values"`, `"pattern"` or `"where"`).
 - **`mcpb-test.yml`: the extension's stdio suites run on pull requests.**
   They ran only in the release workflow, so a change to `clients/mcpb`
   reached a tag unchecked. The new workflow builds the engine, the JS client

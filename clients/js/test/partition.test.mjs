@@ -57,8 +57,15 @@ function check(g) {
 
   // The keys come from the one constant pattern, not from the titles.
   const { plan, keys } = chunked(g, `${P}SELECT ?w ?t WHERE { ?w :title ?t ; :cites :X }`, "w", 7);
-  assert.equal(plan.keys_from_where, false);
+  assert.equal(plan.keys_from, "pattern");
   assert.match(plan.keys_query, /cites/);
+
+  // A VALUES list on the variable is the keys as it stands.
+  const listed = `${P}SELECT ?w ?t WHERE { VALUES ?w { :w0 :w2 :w5 :w404 } ?w :title ?t }`;
+  const fromList = chunked(g, listed, "w", 2);
+  assert.equal(fromList.plan.keys_from, "values");
+  assert.equal(fromList.keys.length, 4);
+  assert.deepEqual(sorted(fromList.rows), sorted(g.queryRaw(listed).rows));
   assert.equal(keys.length, 20);
 
   const limited = chunked(g, `${P}SELECT ?w WHERE { ?w :cites :X } LIMIT 4 OFFSET 3`, "w", 5);
