@@ -42,8 +42,12 @@ export interface PartitionPlan {
   form: "select" | "construct";
   /** `SELECT DISTINCT ?var …`: a superset of the values the variable takes. */
   keys_query: string;
-  /** No constant pattern binds the variable: the keys come from the whole WHERE clause. */
-  keys_from_where: boolean;
+  /**
+   * Where the keys query lists them from: the query's own `VALUES` list on the
+   * variable (no read), the cheapest constant pattern on it (one scan), or —
+   * when neither exists — the whole WHERE clause (as costly as the query).
+   */
+  keys_from: "values" | "pattern" | "where";
   /** The query's OFFSET/LIMIT, which the chunks drop: apply them once to the merged rows. */
   offset: number;
   limit: number | null;

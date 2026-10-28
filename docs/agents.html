@@ -761,7 +761,10 @@ sized to take about 15 s. Every finished chunk is kept on disk, so after a
 cancel, a crash or a restart of Claude Desktop the same call carries on where
 it stopped, and a call identical to one still running joins it. A split that
 would change the answer (ORDER BY, an aggregate not grouped by the variable, a
-variable only bound inside OPTIONAL) is refused, saying why.</p>
+variable only bound inside OPTIONAL) is refused, saying why. When the entities
+come from another graph — the works citing a paper are in <code>crossref-citations</code>,
+their titles in <code>crossref</code> — <code>keys_job</code> takes the values from the job that
+listed them, so the model never copies thousands of IRIs into a query.</p>
 <p>The decisive property is that <strong>local files are read lazily too</strong> — the same
 byte-range path as a remote graph, via the JS client's <code>file://</code> reader — so
 a multi-gigabyte graph on disk answers a selective query in megabytes and is

@@ -922,17 +922,13 @@ fn eval_partition_inner(
 ) -> Result<QueryOutput, SparqlError> {
     let parsed = parse_query(query)?;
     partition::check(&parsed, var)?;
-    let values = Plan::Values(
-        vec![var.to_string()],
-        keys.iter().map(|k| vec![Some(k.clone())]).collect(),
-    );
     // Seeded after reasoning, so the VALUES lands on the pattern block the
     // engine will actually scan.
     let chunk = |sel: Select| -> Select {
         let mut sel = maybe_reason(rete, apply_opts(sel, opts), opts.reason);
         sel.offset = 0;
         sel.limit = None;
-        sel.plan = partition::seed(sel.plan, var, values.clone());
+        sel.plan = partition::seed(sel.plan, var, keys);
         sel
     };
     match parsed {

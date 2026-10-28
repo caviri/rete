@@ -51,10 +51,14 @@ export class PartitionRuns {
    * The job running `spec` split by `spec.var`: the one already running — or
    * finished and still held — for the same query on the same bytes, or else a
    * new one, which resumes from the query's checkpoint when there is one.
+   * `spec.keys`, when given (the rows of an earlier job), are the values to
+   * run for instead of the plan's keys query; they are part of what makes two
+   * calls the same.
    */
   start(spec) {
+    const source = spec.keys ? createHash("sha256").update(JSON.stringify(spec.keys)).digest("hex") : null;
     const id = createHash("sha256")
-      .update(JSON.stringify([FORMAT, spec.key, spec.query, spec.var.replace(/^[?$]/, ""), Boolean(spec.reason)]))
+      .update(JSON.stringify([FORMAT, spec.key, spec.query, spec.var.replace(/^[?$]/, ""), Boolean(spec.reason), source]))
       .digest("hex")
       .slice(0, 32);
     const held = this.#held.get(id);
@@ -75,7 +79,7 @@ export class PartitionRuns {
         rows: 0,
         chunk_size: null,
         resumed_keys: 0,
-        keys_from_where: null,
+        keys_from: spec.keys ? `job ${spec.keysJob}` : null,
       },
     });
     job.run = new Run(this.#jobs, job, spec, join(this.#dir, id));
@@ -139,7 +143,7 @@ class Run {
       // whether a checkpoint was made on these very bytes.
       const planned = await this.step({ op: "plan", query: spec.query, var: spec.var });
       const plan = planned.plan;
-      info.keys_from_where = plan.keys_from_where;
+      info.keys_from ??= plan.keys_from;
       let state = await this.load();
       if (!state || state.contentHash !== planned.contentHash || JSON.stringify(state.plan) !== JSON.stringify(plan)) {
         await rm(this.dir, { recursive: true, force: true });
@@ -148,9 +152,12 @@ class Run {
       await mkdir(this.dir, { recursive: true });
 
       if (!state.keys) {
-        info.phase = "listing keys";
-        const listed = await this.step({ query: plan.keys_query });
-        const keys = listed.env.rows.map((row) => row[plan.var]).filter((k) => k !== undefined);
+        let keys = spec.keys;
+        if (!keys) {
+          info.phase = "listing keys";
+          const listed = await this.step({ query: plan.keys_query });
+          keys = listed.env.rows.map((row) => row[plan.var]).filter((k) => k !== undefined);
+        }
         if (keys.some((k) => k.startsWith("_:"))) {
           throw new Error(
             `?${plan.var} takes blank-node values, which cannot be named in a chunk — split by a ` +

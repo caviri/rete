@@ -7,19 +7,23 @@
 //! chunks' solutions together are the query's. [`plan`] checks that, refuses
 //! the solution modifiers a single chunk cannot apply (ORDER BY, an aggregate
 //! over more than one key), and writes the **keys query**: the variable's
-//! distinct values over the one required triple pattern that binds it with
-//! constants and is cheapest to scan. That is a superset of the values the
-//! solutions take — a key with no solution just makes an empty chunk — and
-//! listing it is one range scan, where the query itself may be one read per
-//! entity. [`seed`] then places a chunk's keys as `VALUES` on the first
-//! required pattern block that binds the variable, where the engine's VALUES
-//! pushdown turns each key into an index lookup.
+//! distinct values from a required `VALUES` list on it when the query has one,
+//! else over the one required triple pattern that binds it with constants and
+//! is cheapest to scan. That is a superset of the values the solutions take —
+//! a key with no solution just makes an empty chunk — and listing it reads
+//! nothing or one range scan, where the query itself may be one read per
+//! entity. [`seed`] then cuts the query's own `VALUES` list down to a chunk's
+//! keys, or places them as `VALUES` on the first required pattern block that
+//! binds the variable, where the engine's VALUES pushdown turns each key into
+//! an index lookup.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use serde::Serialize;
 use spargebra::algebra::GraphPattern;
-use spargebra::term::{NamedNodePattern, TermPattern, TriplePattern as SpTriplePattern, Variable};
+use spargebra::term::{
+    GroundTerm, NamedNodePattern, TermPattern, TriplePattern as SpTriplePattern, Variable,
+};
 use spargebra::Query;
 
 use super::eval::scan_estimate;
@@ -38,10 +42,12 @@ pub struct PartitionPlan {
     /// `SELECT DISTINCT ?var …`: every value the variable takes in a solution,
     /// and possibly more (a key with no solution makes an empty chunk).
     pub keys_query: String,
-    /// `true` when the keys come from the whole WHERE clause, because no
-    /// required triple pattern binds the variable with constants alone: then
-    /// listing them may cost as much as the query.
-    pub keys_from_where: bool,
+    /// Where the keys query lists them from: `"values"`, a required `VALUES`
+    /// list on the variable (no read); `"pattern"`, the cheapest required
+    /// triple pattern binding it with constants alone (one range scan);
+    /// `"where"`, the whole WHERE clause, when neither exists — then listing
+    /// them may cost as much as the query.
+    pub keys_from: &'static str,
     /// The query's top-level OFFSET and LIMIT. Each chunk drops them; they
     /// apply once, to the chunks' solutions taken in key order.
     pub offset: usize,
@@ -228,12 +234,21 @@ pub(super) fn plan(rete: &Rete, query: &str, var: &str) -> Result<PartitionPlan,
         .iter()
         .min_by_key(|tp| cost(tp).unwrap_or(u64::MAX))
         .copied();
-    let keys_from_where = best.is_none();
-    let body = match best {
-        Some(tp) => GraphPattern::Bgp {
-            patterns: vec![tp.clone()],
-        },
-        None => s.where_.clone(),
+    let (keys_from, body) = match (values_keys(s.where_, var), best) {
+        (Some(listed), _) => (
+            "values",
+            GraphPattern::Values {
+                variables: vec![v.clone()],
+                bindings: listed.into_iter().map(|t| vec![Some(t)]).collect(),
+            },
+        ),
+        (None, Some(tp)) => (
+            "pattern",
+            GraphPattern::Bgp {
+                patterns: vec![tp.clone()],
+            },
+        ),
+        (None, None) => ("where", s.where_.clone()),
     };
     let keys_query = Query::Select {
         dataset,
@@ -254,7 +269,7 @@ pub(super) fn plan(rete: &Rete, query: &str, var: &str) -> Result<PartitionPlan,
         var: var.to_string(),
         form: s.form,
         keys_query,
-        keys_from_where,
+        keys_from,
         offset: s.offset,
         limit: s.limit,
         dedupe: s.form == "construct" || (s.distinct && !projects_var),
@@ -396,6 +411,41 @@ fn core_patterns<'q>(p: &'q GraphPattern, var: &str, out: &mut Vec<&'q SpTripleP
     }
 }
 
+/// The values of `var` in a required `VALUES` list that binds it in every row
+/// (in order, without repeats): the solutions can take no other, so they are
+/// the keys, listed without a read. The shortest such list when there are
+/// several. Searched where [`core_patterns`] searches.
+fn values_keys(p: &GraphPattern, var: &str) -> Option<Vec<GroundTerm>> {
+    match p {
+        GraphPattern::Values {
+            variables,
+            bindings,
+        } => {
+            let i = variables.iter().position(|v| v.as_str() == var)?;
+            let mut seen = HashSet::new();
+            let mut out = Vec::new();
+            for row in bindings {
+                let term = row.get(i)?.as_ref()?; // an UNDEF: not every row binds it
+                if seen.insert(term.to_string()) {
+                    out.push(term.clone());
+                }
+            }
+            Some(out)
+        }
+        GraphPattern::Join { left, right } => {
+            match (values_keys(left, var), values_keys(right, var)) {
+                (Some(a), Some(b)) => Some(if a.len() <= b.len() { a } else { b }),
+                (a, b) => a.or(b),
+            }
+        }
+        GraphPattern::LeftJoin { left, .. }
+        | GraphPattern::Minus { left, .. }
+        | GraphPattern::Filter { inner: left, .. }
+        | GraphPattern::Extend { inner: left, .. } => values_keys(left, var),
+        _ => None,
+    }
+}
+
 /// A blank node in a pattern is an unnamed variable.
 fn has_blank(t: &TermPattern) -> bool {
     match t {
@@ -405,14 +455,61 @@ fn has_blank(t: &TermPattern) -> bool {
     }
 }
 
-/// `plan` with a chunk's keys seeded in: `Join(VALUES, bgp)` on the first
-/// required pattern block that mentions `var`, where the engine's VALUES
-/// pushdown substitutes each key into the scan; around the whole plan when no
-/// such block exists (still exact, as `var` is certain — just a hash join).
-pub(super) fn seed(plan: Plan, var: &str, values: Plan) -> Plan {
+/// `plan` with a chunk's `keys` seeded in. When the query has its own required
+/// `VALUES` list on `var`, that list is cut down to the keys — the chunk is
+/// then the query a caller would write for those keys alone. Otherwise
+/// `Join(VALUES, bgp)` on the first required pattern block that mentions
+/// `var`, where the engine's VALUES pushdown substitutes each key into the
+/// scan; around the whole plan when no such block exists (still exact, as
+/// `var` is certain — just a hash join).
+pub(super) fn seed(plan: Plan, var: &str, keys: &[String]) -> Plan {
+    if let Some(narrowed) = narrow_values(&plan, var, keys) {
+        return narrowed;
+    }
+    let values = Plan::Values(
+        vec![var.to_string()],
+        keys.iter().map(|k| vec![Some(k.clone())]).collect(),
+    );
     match seed_in(&plan, var, &values) {
         Some(seeded) => seeded,
         None => Plan::Join(Box::new(values), Box::new(plan)),
+    }
+}
+
+/// The first required `VALUES` list on `var`, keeping only the rows whose
+/// value is one of `keys`. Only when every key is found in it as written: a
+/// key spelled otherwise (a literal escaped differently from the list), or
+/// one the list lacks, leaves the seeding to [`seed_in`], which matches terms
+/// rather than text.
+fn narrow_values(plan: &Plan, var: &str, keys: &[String]) -> Option<Plan> {
+    match plan {
+        Plan::Values(vars, rows) => {
+            let i = vars.iter().position(|v| v == var)?;
+            let wanted: HashSet<&str> = keys.iter().map(String::as_str).collect();
+            let kept: Vec<Vec<Option<String>>> = rows
+                .iter()
+                .filter(|row| cell(row, i).is_some_and(|t| wanted.contains(t)))
+                .cloned()
+                .collect();
+            let found: HashSet<&str> = kept.iter().filter_map(|row| cell(row, i)).collect();
+            (found.len() == wanted.len()).then(|| Plan::Values(vars.clone(), kept))
+        }
+        Plan::Join(l, r) => match narrow_values(l, var, keys) {
+            Some(nl) => Some(Plan::Join(Box::new(nl), r.clone())),
+            None => narrow_values(r, var, keys).map(|nr| Plan::Join(l.clone(), Box::new(nr))),
+        },
+        Plan::LeftJoin(l, r, c) => {
+            narrow_values(l, var, keys).map(|nl| Plan::LeftJoin(Box::new(nl), r.clone(), c.clone()))
+        }
+        Plan::Minus(l, r) => {
+            narrow_values(l, var, keys).map(|nl| Plan::Minus(Box::new(nl), r.clone()))
+        }
+        Plan::Filter(e, inner) => {
+            narrow_values(inner, var, keys).map(|ni| Plan::Filter(e.clone(), Box::new(ni)))
+        }
+        Plan::Extend(v, e, inner) => narrow_values(inner, var, keys)
+            .map(|ni| Plan::Extend(v.clone(), e.clone(), Box::new(ni))),
+        _ => None,
     }
 }
 
@@ -442,4 +539,9 @@ fn seed_in(plan: &Plan, var: &str, values: &Plan) -> Option<Plan> {
         }
         _ => None,
     }
+}
+
+/// Row `row`'s value in column `i`, if bound.
+fn cell(row: &[Option<String>], i: usize) -> Option<&str> {
+    row.get(i).and_then(|t| t.as_deref())
 }

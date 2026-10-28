@@ -145,9 +145,17 @@ Long queries and big results:
     * keep the query's most specific constant pattern on it (?work cx:cites
       <paper>, not only ?work a cx:Work): the values are listed from the
       cheapest such pattern, and none at all means listing them costs as much
-      as the query (the plan says keys_from_where).
+      as the query (the partition status says keys_from: "where"). A VALUES
+      ?work { … } list in the query is used as the values as it stands.
   A query the split would change is refused, saying why. Hand the result over
   with query_result(job_id, save_as: …).
+- Entities found in ONE graph, details in ANOTHER (the works citing a paper
+  are in crossref-citations, their titles and years in crossref): first list
+  them with their own query on the first graph, then run the details query on
+  the second with partition_by: "?work" and keys_job: "<that job's id>". It
+  runs only for the listed values, without copying them into the query —
+  never paste thousands of IRIs into a VALUES block. The listing's column must
+  be named like the variable (or be its only column).
 
 Every result carries \`stats\`: the bytes and requests actually read. Report
 them when the user asks how much data was touched — a good query over a huge
@@ -372,6 +380,7 @@ function jobAnswer(job, offset = 0, limit = MAX_ROWS) {
             keys: job.partition.keys,
             chunks: job.partition.chunks_done,
             resumed_keys: job.partition.resumed_keys,
+            keys_from: job.partition.keys_from,
           },
         }
       : {}),
@@ -415,9 +424,13 @@ function jobAnswer(job, offset = 0, limit = MAX_ROWS) {
 
 /**
  * Queue a query on a worker — or, with `partitionBy`, start (or join, or
- * resume) running it in chunks. The graph is resolved (and checked) here first.
+ * resume) running it in chunks; `keysJob` names a finished job whose rows are
+ * the values to run for. The graph is resolved (and checked) here first.
  */
-async function submitQuery(name, query, reason, partitionBy) {
+async function submitQuery(name, query, reason, partitionBy, keysJob) {
+  if (keysJob !== undefined && partitionBy === undefined) {
+    throw new UsageError("keys_job goes with partition_by: the variable its values are for, e.g. \"?work\"");
+  }
   const source = await store.resolve(name);
   const spec = {
     dataset: source.key,
@@ -427,12 +440,37 @@ async function submitQuery(name, query, reason, partitionBy) {
     reason,
   };
   if (partitionBy !== undefined) {
-    if (!partitionBy.trim()) throw new UsageError("partition_by needs a variable name, e.g. \"?work\"");
-    return runs.start({ ...spec, var: partitionBy.trim(), where: source.where });
+    const variable = partitionBy.trim();
+    if (!variable) throw new UsageError("partition_by needs a variable name, e.g. \"?work\"");
+    const keys = keysJob === undefined ? undefined : keysOf(jobById(keysJob), variable.replace(/^[?$]/, ""));
+    return runs.start({ ...spec, var: variable, where: source.where, keys, keysJob });
   }
   const job = jobs.submit(spec);
   job.where = source.where;
   return job;
+}
+
+/**
+ * The values of `variable` in a finished SELECT's rows — its column of that
+ * name, or its only column — in order, without repeats.
+ */
+function keysOf(job, variable) {
+  if (!jobs.isTerminal(job)) {
+    throw new UsageError(`keys_job ${job.id} is still ${job.state}: wait for it with query_status first`);
+  }
+  if (job.state !== "done") throw new UsageError(`keys_job ${job.id} ${job.state}; it has no rows to take values from`);
+  if (job.env.kind !== "select") throw new UsageError(`keys_job ${job.id} is not a SELECT; its answer has no rows of values`);
+  const vars = job.env.vars ?? [];
+  const column = vars.includes(variable) ? variable : vars.length === 1 ? vars[0] : null;
+  if (!column) {
+    throw new UsageError(
+      `keys_job ${job.id} has no ?${variable} column (it has ${vars.map((v) => `?${v}`).join(", ")}): ` +
+        `name the listing's column ?${variable}, or select that one column`,
+    );
+  }
+  const keys = [...new Set(job.env.rows.map((row) => row[column]).filter((k) => k !== undefined))];
+  if (!keys.length) throw new UsageError(`keys_job ${job.id} lists no values of ?${column}`);
+  return keys;
 }
 
 function jobById(id) {
@@ -568,6 +606,14 @@ const partitionBy = z
       "on disk — for per-entity details over thousands of entities. Re-sending the same call " +
       "resumes after a stop. The variable must be bound in every row (not only inside OPTIONAL); " +
       "no ORDER BY; aggregates only grouped by it",
+  );
+const keysJob = z
+  .string()
+  .optional()
+  .describe(
+    "with partition_by: a finished job whose rows list the values to run for, e.g. the works found " +
+      "in another graph (its column named like the variable, or its only column). The query then " +
+      "runs only for those values, without copying them into it",
   );
 const dataset = z
   .string()
@@ -765,12 +811,13 @@ server.registerTool(
         .optional()
         .describe(`how long to wait before answering with the job id instead (default ${WAIT_DEFAULT_S})`),
       partition_by: partitionBy,
+      keys_job: keysJob,
     },
     annotations: { ...READ_ONLY, openWorldHint: true },
   },
-  guard(async ({ dataset: name, query, reason = false, wait_seconds, partition_by }, extra) => {
+  guard(async ({ dataset: name, query, reason = false, wait_seconds, partition_by, keys_job }, extra) => {
     const called = Date.now();
-    const job = await submitQuery(name, query, reason, partition_by);
+    const job = await submitQuery(name, query, reason, partition_by, keys_job);
     await jobs.wait(job, seconds(wait_seconds, WAIT_DEFAULT_S), extra?.signal);
     // The client cancelled THIS call (the user stopped it): stop the query
     // too, so nothing keeps reading for an answer nobody will see — unless
@@ -796,12 +843,13 @@ server.registerTool(
       query: z.string().describe("the SPARQL query"),
       reason: z.boolean().optional().describe("OWL 2 QL entailment by query rewriting (default false)"),
       partition_by: partitionBy,
+      keys_job: keysJob,
     },
     annotations: { ...READ_ONLY, idempotentHint: false, openWorldHint: true },
   },
-  guard(async ({ dataset: name, query, reason = false, partition_by }) => {
+  guard(async ({ dataset: name, query, reason = false, partition_by, keys_job }) => {
     const called = Date.now();
-    const job = await submitQuery(name, query, reason, partition_by);
+    const job = await submitQuery(name, query, reason, partition_by, keys_job);
     const joined = job.createdAt < called;
     return json({
       ...jobStatus(job),
