@@ -210,6 +210,20 @@ artifact rejects newer-format files with `header: unsupported version`).
   test Range server runs in its own worker; and the IIFE's `var rete` only
   becomes a global under classic-script semantics, so the bundle test loads
   it via `vm.runInThisContext`, not `import`.
+- **Batched reads on Node.** The same module installs
+  `globalThis.reteReadMany`, the engine's parallel-read hook (the playground
+  installs its own over a worker pool): one call carries a whole batch of
+  ranges, the fetch worker reads them concurrently (16 in flight, the fan-out
+  the reader then reports to the planner) into one `SharedArrayBuffer`, and the
+  caller blocks once. Any range that is not a 206 starting at the requested
+  offset fails the batch and the hook returns `null`, which sends the engine
+  back to its sequential, validated reads. It is installed only alongside the
+  bridge's own XHR — a caller-supplied XHR may carry auth the hook's fetch
+  would bypass — and `globalThis.reteReadMany = null` before the first
+  `open()` opts out. `test/parallel-reads.test.mjs` needs a fixture whose
+  needed reads are far apart: the engine merges reads within 64 KiB
+  (dictionary) / 4 KiB (tiles), and a batch of one range never reaches the
+  hook.
 - CI: `js-test.yml` (paths-filtered: clients/js + rete-wasm + rete-core) and
   `js-client-publish.yml` (the `v*` release tag only; see below).
 - Parity backlog vs Python: Dataset Card + embedded examples (needs a

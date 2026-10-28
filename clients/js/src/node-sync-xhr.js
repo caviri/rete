@@ -11,6 +11,13 @@
 // Content-Range). That makes a LOCAL `.rete` lazily queryable byte-range by
 // byte-range, exactly like a remote one — so a multi-gigabyte file on disk
 // never has to be read into memory to be queried.
+//
+// The same worker also serves the engine's parallel-read hook,
+// `globalThis.reteReadMany` (see `readMany` below). Sync XHR can only have one
+// request in flight, so without it every range of a batched read — the
+// dictionary terms a result decodes, the tiles a join is about to probe — is
+// its own blocking round trip. With it the whole batch is fetched at once and
+// the caller blocks once.
 import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
 
 const WORKER_SRC = `
@@ -62,7 +69,74 @@ function readFile(method, url, headers, result) {
   result.body = buf.buffer.slice(buf.byteOffset, buf.byteOffset + got);
 }
 
-parentPort.on("message", async ({ port, signal, method, url, headers, body }) => {
+// One batch for reteReadMany: every range read at once (at most \`fanout\` in
+// flight) and copied straight into the caller's shared buffer at its place in
+// the concatenation. A range that is not exactly what was asked for fails the
+// whole batch — the caller then returns null and the engine re-reads it one
+// range at a time, under its own validation.
+async function readMany({ url, offsets, lens, data, fanout }) {
+  const out = new Uint8Array(data);
+  const at = [];
+  let pos = 0;
+  for (const len of lens) {
+    at.push(pos);
+    pos += len;
+  }
+  if (url.startsWith("file:")) {
+    const fd = fdFor(fileURLToPath(url));
+    for (let i = 0; i < offsets.length; i++) {
+      let got = 0;
+      while (got < lens[i]) {
+        const n = fs.readSync(fd, out, at[i] + got, lens[i] - got, offsets[i] + got);
+        if (n <= 0) throw new Error("short read at offset " + offsets[i]);
+        got += n;
+      }
+    }
+    return;
+  }
+  let next = 0;
+  let failure = null;
+  // Each lane pulls the next range until the batch is done or one has failed;
+  // waiting for every lane (not just the first rejection) means nothing is
+  // still writing into the buffer once the caller is told the outcome.
+  const lane = async () => {
+    while (failure === null && next < offsets.length) {
+      const i = next++;
+      const offset = offsets[i];
+      const len = lens[i];
+      if (len === 0) continue;
+      try {
+        const resp = await fetch(url, { headers: { Range: "bytes=" + offset + "-" + (offset + len - 1) } });
+        const range = resp.headers.get("content-range") || "";
+        if (resp.status !== 206 || !range.startsWith("bytes " + offset + "-")) {
+          await resp.body?.cancel();
+          throw new Error("status " + resp.status + " (" + range + ") for offset " + offset);
+        }
+        const body = new Uint8Array(await resp.arrayBuffer());
+        if (body.length < len) throw new Error("short range at offset " + offset);
+        out.set(body.subarray(0, len), at[i]);
+      } catch (e) {
+        failure ??= e;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(fanout, offsets.length) }, lane));
+  if (failure) throw failure;
+}
+
+parentPort.on("message", async (msg) => {
+  if (msg.op === "many") {
+    let outcome = 1;
+    try {
+      await readMany(msg);
+    } catch {
+      outcome = 2;
+    }
+    Atomics.store(msg.signal, 0, outcome);
+    Atomics.notify(msg.signal, 0);
+    return;
+  }
+  const { port, signal, method, url, headers, body } = msg;
   const result = { status: 0, headers: {}, body: null, error: null };
   try {
     if (url.startsWith("file:")) {
@@ -83,16 +157,24 @@ parentPort.on("message", async ({ port, signal, method, url, headers, body }) =>
 });
 `;
 
+// Ranges a batch keeps in flight. The engine plans its batches for this
+// fan-out: its reader reports a concurrency of 16 once the hook is installed.
+const FANOUT = 16;
+
 let worker = null;
 
-function syncFetch(method, url, headers, body) {
+function fetchWorker() {
   if (!worker) {
     worker = new Worker(WORKER_SRC, { eval: true });
     worker.unref(); // never keep the process alive on our account
   }
+  return worker;
+}
+
+function syncFetch(method, url, headers, body) {
   const signal = new Int32Array(new SharedArrayBuffer(4));
   const { port1, port2 } = new MessageChannel();
-  worker.postMessage({ port: port2, signal, method, url, headers, body }, [port2]);
+  fetchWorker().postMessage({ port: port2, signal, method, url, headers, body }, [port2]);
   Atomics.wait(signal, 0, 0);
   const msg = receiveMessageOnPort(port1);
   port1.close();
@@ -142,9 +224,37 @@ export class NodeSyncXMLHttpRequest {
   }
 }
 
-/** Install as the global XMLHttpRequest if none exists (idempotent). */
+/**
+ * `globalThis.reteReadMany(url, offsets, lens)`: the engine's parallel-read
+ * hook (`read_many_via_pool` in crates/rete-wasm). Reads every range of one
+ * batch concurrently and returns them concatenated in request order, or
+ * `null` if any range failed — the engine then falls back to reading the
+ * batch one range at a time. Offsets are absolute; a `file://` URL is read off
+ * disk.
+ */
+function readMany(url, offsets, lens) {
+  let total = 0;
+  for (const len of lens) total += len;
+  const data = new SharedArrayBuffer(total);
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  fetchWorker().postMessage({ op: "many", signal, url, offsets, lens, data, fanout: FANOUT });
+  Atomics.wait(signal, 0, 0);
+  return signal[0] === 1 ? new Uint8Array(data) : null;
+}
+
+/**
+ * Install as the global XMLHttpRequest if none exists, and the parallel-read
+ * hook alongside it (idempotent). The hook goes in only while the XHR in use
+ * is this one: a caller-supplied XHR may carry auth or a proxy that the
+ * hook's own fetch would bypass, so that caller keeps every read. Set
+ * `globalThis.reteReadMany = null` before the first open() to keep reads
+ * strictly one at a time.
+ */
 export function install() {
   if (typeof globalThis.XMLHttpRequest === "undefined") {
     globalThis.XMLHttpRequest = NodeSyncXMLHttpRequest;
+  }
+  if (globalThis.XMLHttpRequest === NodeSyncXMLHttpRequest && globalThis.reteReadMany === undefined) {
+    globalThis.reteReadMany = readMany;
   }
 }

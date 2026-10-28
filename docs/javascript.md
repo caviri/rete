@@ -55,6 +55,18 @@ On a main thread, either fetch the bytes yourself (small files) or run the
 graph in a worker — the pattern the playground uses. Hosts must send CORS
 headers and honor `Range` ([Hosting your .rete](hosting.md)).
 
+In Node the bridge also serves the engine's **batched reads** in parallel:
+when a query needs a set of ranges at once — the dictionary terms a result
+decodes, the index tiles a join is about to probe — they are fetched
+concurrently (16 in flight) instead of one round trip each. A synchronous
+read is still a round trip, so this matters most over a slow link to a large
+file: on `crossref.rete` (60 GB) from a residential connection, listing the
+4,758 works that cite one paper took 3.5–4.9 s instead of 23–35 s, and title,
+venue and year for 100 of them 19–25 s instead of 46–65 s (two runs, cold
+cache). Results are identical. To keep reads
+strictly sequential, set `globalThis.reteReadMany = null` before the first
+`open()`.
+
 ## Query results
 
 `query()` returns `{variable: Term}` rows for SELECT, a boolean for ASK, and

@@ -57,6 +57,23 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Changed
 
+- **Remote and local queries in Node fetch batched reads in parallel.** The
+  engine asks for some reads as a batch — the dictionary terms a result
+  decodes, the tiles a join is about to probe — and offers a hook,
+  `globalThis.reteReadMany`, to fetch such a batch concurrently. The
+  playground has always installed one; the Node client did not, so under
+  Node every range of a batch was its own blocking round trip. Its sync-fetch
+  bridge now installs the hook: up to 16 ranges in flight, one wait for the
+  whole batch, and the engine plans for that fan-out. On `crossref.rete`
+  (60 GB) over a residential link, listing the 4,758 works citing one paper
+  took 3.5–4.9 s instead of 23–35 s, and title/venue/year for 100 of them
+  19–25 s instead of 46–65 s (two cold runs), with identical rows. This
+  reaches the npm package and the Claude
+  Desktop extension, which bundles it. A batch with any range that is not a
+  206 at the requested offset comes back `null` and the engine re-reads it
+  sequentially, as before. The hook is installed only with the bridge's own
+  XHR (never over a caller-supplied one), and
+  `globalThis.reteReadMany = null` before the first `open()` opts out.
 - **One `vX.Y.Z` tag releases every channel.** The same tag that builds the
   GitHub release and publishes the crates now also publishes `rete-graph` to
   PyPI (`python-client-publish.yml`) and npm (`js-client-publish.yml`) and the
