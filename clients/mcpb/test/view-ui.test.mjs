@@ -225,6 +225,134 @@ test("the graph view works in a sandboxed iframe behind an MCP Apps host", { ski
   await until(() => window.__reteView.options.diagram === "boxes" && window.__reteView.highlight.size === 3, null, "its members");
 });
 
+test("a right-click on a node offers what to do with it; light or dark", { skip }, async (t) => {
+  const { client, page, view, inView, until, messages, viewId, shot } = await host(t, {
+    dataset: "people",
+    query: "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o FILTER(isIRI(?o)) }",
+  });
+  const P = (k) => `<https://example.org/${k}>`;
+  const nodes = async () => JSON.parse((await client.callTool({ name: "graph_view_state", arguments: { view_id: viewId } })).content[0].text).nodes;
+  await until((id) => window.__reteView?.cy?.getElementById(id).data("label") === "Analytical Engine", P("engine"), "the nodes, named");
+
+  // A real right-click, where the node is drawn — once the layout has stopped moving it.
+  const settled = async () => {
+    let last = "";
+    for (let i = 0; i < 60; i++) {
+      const now = await inView(() => {
+        const cy = window.__reteView.cy;
+        return JSON.stringify([cy.zoom(), cy.pan(), cy.nodes().map((n) => n.position())]);
+      });
+      if (now === last) return;
+      last = now;
+      await page.waitForTimeout(150);
+    }
+  };
+  const frame = await page.locator("#f").boundingBox();
+  const at = async (id) => {
+    await settled();
+    const p = await inView((id) => {
+      const r = document.getElementById("graph").getBoundingClientRect();
+      const q = window.__reteView.cy.getElementById(id).renderedPosition();
+      return { x: r.left + q.x, y: r.top + q.y };
+    }, id);
+    return { x: frame.x + p.x, y: frame.y + p.y };
+  };
+  const click = async (id, button = "left") => {
+    const p = await at(id);
+    await page.mouse.click(p.x, p.y, { button });
+  };
+  const item = (text) => view.locator("#ctx button", { hasText: text });
+  const menuOpen = () => until(() => !document.getElementById("ctx").hidden, null, "the menu");
+
+  // The engine: what can be done with it.
+  await click(P("engine"), "right");
+  await menuOpen();
+  assert.equal(await view.locator("#ctx .ctx-title").textContent(), "Analytical Engine");
+  for (const label of ["Expand", "Compress", "Select neighbours", "Search its name", "Send to chat", "Select several…", "Hide", "Remove", "Open in browser"]) {
+    assert.equal(await item(label).count(), 1, label);
+  }
+  await shot("-menu");
+  // Compress: the lab, linked to the engine alone, goes.
+  await item("Compress").click();
+  await until((id) => !window.__reteView.nodes.has(id), P("lab"), "the lab compressed away");
+  assert.ok(await view.locator("#ctx").isHidden());
+  assert.equal(await nodes(), 4);
+
+  // Aggregate every Person into one node; the links to it merge, counted.
+  await click(P("ada"), "right");
+  await menuOpen();
+  await item("Aggregate all Person").click();
+  await until(() => window.__reteView.cy.getElementById("agg:1").nonempty(), null, "the aggregate drawn");
+  assert.ok(await inView((id) => window.__reteView.cy.getElementById(id).empty(), P("ada")), "Ada is inside it");
+  assert.ok((await inView(() => window.__reteView.cy.edges().map((e) => e.data("label")))).includes("worksFor ×2"));
+  await click("agg:1", "right");
+  await menuOpen();
+  await item("Ungroup").click();
+  await until((id) => window.__reteView.aggregates.size === 0 && window.__reteView.cy.getElementById(id).nonempty(), P("ada"), "the people again");
+
+  // Select several: clicks add; the menu then acts on all of them.
+  await click(P("charles"), "right");
+  await menuOpen();
+  await item("Select several…").click();
+  assert.ok(await view.locator("#selecting").isVisible());
+  await click(P("mary"));
+  await until(() => window.__reteView.selection.length === 2, null, "two selected").catch(async (error) => {
+    const why = await inView(() => {
+      const cy = window.__reteView.cy;
+      return JSON.stringify({
+        selection: window.__reteView.selection.map((s) => s.id),
+        selected: cy.$(":selected").map((n) => n.id()),
+        type: cy.selectionType(),
+        at: cy.nodes().map((n) => [n.id(), n.renderedPosition(), n.renderedWidth()]),
+      });
+    });
+    throw new Error(`${error.message} — ${why}`);
+  });
+  assert.equal(await view.locator("#selecting-count").textContent(), "2");
+  // A stray click on the background keeps them, while selecting several.
+  await page.mouse.click(frame.x + 12, frame.y + 120);
+  await page.waitForTimeout(200);
+  assert.equal(await inView(() => window.__reteView.cy.$(":selected").length), 2);
+  await click(P("mary"), "right");
+  await menuOpen();
+  assert.equal(await view.locator("#ctx .ctx-title").textContent(), "2 nodes");
+  await item("Send 2 to chat").click();
+  for (let i = 0; i < 30 && !messages.length; i++) await page.waitForTimeout(100);
+  const sent = messages.at(-1).content[0].text;
+  assert.match(sent, /^From graph view v\d+ on people, 2 nodes:\n/);
+  assert.match(sent, /- Charles Babbage <https:\/\/example\.org\/charles> \(Person\)/);
+  assert.match(sent, /- Mary Somerville <https:\/\/example\.org\/mary> \(Person\)/);
+  await page.keyboard.press("Escape");
+  assert.ok(await view.locator("#selecting").isHidden());
+
+  // Remove takes a node out of the view, on the server too.
+  await inView(() => window.__reteView.cy.$(":selected").unselect());
+  await click(P("mary"), "right");
+  await menuOpen();
+  await item("Remove").click();
+  await until((id) => !window.__reteView.nodes.has(id), P("mary"), "Mary removed");
+  assert.equal(await nodes(), 3);
+
+  // On the background: the view's own menu.
+  await page.mouse.click(frame.x + 12, frame.y + 120, { button: "right" });
+  await menuOpen();
+  assert.equal(await item("Fit to view").count(), 1);
+  await page.keyboard.press("Escape");
+
+  // Light or dark, whatever Claude's theme: auto, light, dark.
+  assert.equal(await view.locator("#theme").textContent(), "◐");
+  const line = () => inView(() => window.__reteView.cy.edges()[0].style("line-color"));
+  const lightLine = await line();
+  await view.locator("#theme").click();
+  await view.locator("#theme").click();
+  assert.equal(await inView(() => document.documentElement.dataset.theme), "dark");
+  assert.equal(await view.locator("#theme").textContent(), "☾");
+  assert.notEqual(await line(), lightLine);
+  await view.locator("#opt-diagram").selectOption("boxes");
+  await until(() => window.__reteView.cy.nodes(".card").length === 3, null, "boxes, dark");
+  await shot("-dark");
+});
+
 test("a dataset's schema, drawn as class boxes with their properties", { skip }, async (t) => {
   const { view, inView, until, shot } = await host(t, { dataset: "people", schema: true });
   await until(() => window.__reteView.cy?.nodes(".card").length === 3, null, "a box per class");

@@ -78,6 +78,7 @@ const optionsSchema = z
       .optional()
       .describe("cose: force-directed (default for graph); layered: top-down layers (default for boxes and classes)"),
     view: z.enum(["graph", "table"]).optional().describe("which tab is shown"),
+    theme: z.enum(["auto", "light", "dark"]).optional().describe("the view's colours; auto (default) follows Claude's theme"),
     literals_as_nodes: z.boolean().optional().describe("draw literal values as nodes instead of node properties"),
   })
   .optional();
@@ -106,6 +107,8 @@ class View {
     this.nodes = new Map(); // token -> node
     this.edges = new Map(); // id -> edge
     this.table = null; // { vars, rows } of the last SELECT, for the table tab
+    this.aggregates = new Map(); // id -> { id, label, members }: nodes drawn as one
+    this.aggregated = 0; // aggregates made, for their ids
     this.version = 0;
     this.log = []; // [{ version, ...patch }]
     this.ui = null; // what the view last reported: selection, options, …
@@ -142,6 +145,7 @@ class View {
       table: this.table,
       status: this.status,
       awaiting: this.awaiting,
+      aggregates: [...this.aggregates.values()],
     };
   }
 
@@ -178,6 +182,60 @@ class View {
     this.nodes.clear();
     this.edges.clear();
     this.table = null;
+    this.aggregates.clear();
+  }
+
+  /** Take nodes out, with their edges; a node leaves its aggregate, and an emptied one goes. */
+  remove(ids) {
+    const gone = new Set(ids.filter((id) => this.nodes.has(id)));
+    for (const id of gone) this.nodes.delete(id);
+    for (const [eid, e] of this.edges) if (gone.has(e.source) || gone.has(e.target)) this.edges.delete(eid);
+    for (const a of this.aggregates.values()) {
+      a.members = a.members.filter((m) => !gone.has(m));
+      if (!a.members.length) this.aggregates.delete(a.id);
+    }
+    this.patch({ op: "remove", ids: [...gone] });
+    return gone.size;
+  }
+
+  /**
+   * Draw nodes as one. An aggregate among them is merged into the new one:
+   * a node belongs to one aggregate at a time.
+   */
+  aggregate(ids, label) {
+    const members = new Set();
+    const merged = [];
+    for (const id of ids) {
+      const a = this.aggregates.get(id);
+      if (a) {
+        for (const m of a.members) members.add(m);
+        merged.push(a.id);
+      } else if (this.nodes.has(id)) members.add(id);
+    }
+    if (members.size < 2) throw new Error("aggregate at least two nodes of the view");
+    const shrunk = [];
+    for (const a of this.aggregates.values()) {
+      if (merged.includes(a.id) || !a.members.some((m) => members.has(m))) continue;
+      a.members = a.members.filter((m) => !members.has(m));
+      if (a.members.length) shrunk.push(a);
+      else merged.push(a.id);
+    }
+    for (const id of merged) this.aggregates.delete(id);
+    if (merged.length) this.patch({ op: "ungroup", ids: merged });
+    // Copies: a patch says what was, and the aggregate changes on.
+    for (const a of shrunk) this.patch({ op: "aggregate", aggregate: { ...a, members: [...a.members] } });
+    const aggregate = { id: `agg:${++this.aggregated}`, label: label || `${members.size} nodes`, members: [...members] };
+    this.aggregates.set(aggregate.id, aggregate);
+    this.patch({ op: "aggregate", aggregate: { ...aggregate, members: [...aggregate.members] } });
+    return aggregate;
+  }
+
+  /** Split aggregates back into their nodes: one, or "all". */
+  ungroup(id) {
+    const ids = id === "all" ? [...this.aggregates.keys()] : this.aggregates.has(id) ? [id] : [];
+    for (const a of ids) this.aggregates.delete(a);
+    if (ids.length) this.patch({ op: "ungroup", ids });
+    return ids.length;
   }
 }
 
@@ -541,6 +599,9 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
     nodes: view.nodes.size,
     edges: view.edges.size,
     table_rows: view.table?.rows.length ?? 0,
+    ...(view.aggregates.size
+      ? { aggregates: [...view.aggregates.values()].map(({ id, label, members }) => ({ id, label, members: members.length })) }
+      : {}),
     ...(view.awaiting ? { awaiting: view.awaiting.file } : {}),
   });
 
@@ -657,11 +718,13 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       description:
         "Change a graph view the user has open (from graph_view): add the results of another " +
         "query to it (mode add, default) or replace them (mode replace), expand an entity's " +
-        "neighbourhood, highlight or focus nodes, remove nodes, or change its look — diagram " +
+        "neighbourhood, highlight or focus nodes, remove nodes, aggregate several into one node " +
+        "(or every node of a type) and ungroup them, or change its look — diagram " +
         "(graph / boxes / classes), labels, edge_labels, properties, node_shape, edge_style " +
         "(curved / straight / square), group_by (type / namespace / none / a predicate IRI), " +
-        "group_boxes, layout, view (graph / table), literals_as_nodes. The open view picks the " +
-        "change up within a second or two. Answers with the new counts and what the user has selected.",
+        "group_boxes, layout, view (graph / table), literals_as_nodes, theme (auto / light / dark). " +
+        "The open view picks the change up within a second or two. Answers with the new counts " +
+        "and what the user has selected.",
       inputSchema: {
         view_id: z.string().describe("the view, from graph_view"),
         query: z.string().optional().describe("SPARQL CONSTRUCT or SELECT whose results to add"),
@@ -670,12 +733,21 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
         highlight: z.array(z.string()).optional().describe("entity IRIs to highlight (an empty list clears)"),
         focus: z.string().optional().describe("an entity IRI to centre on"),
         remove: z.array(z.string()).optional().describe("entity IRIs to take out of the view"),
+        aggregate: z
+          .object({
+            iris: z.array(z.string()).optional().describe("the entities to draw as one node"),
+            type: z.string().optional().describe("or: every node of this rdf:type (an IRI)"),
+            label: z.string().optional().describe("the aggregate's name (default: the type, or a count)"),
+          })
+          .optional()
+          .describe("draw several nodes as one aggregate node, their links merged and counted"),
+        ungroup: z.string().optional().describe('an aggregate id (from graph_view_state) to split back into its nodes, or "all"'),
         title: z.string().optional(),
         options: optionsSchema,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
-    guard(async ({ view_id, query: text, mode = "add", expand: iri, highlight, focus, remove, title, options }) => {
+    guard(async ({ view_id, query: text, mode = "add", expand: iri, highlight, focus, remove, aggregate, ungroup, title, options }) => {
       const view = viewOf(view_id);
       const done = [];
       if (options || title) {
@@ -692,12 +764,19 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
         const r = await expand(view, iri);
         done.push(`expanded ${iri}: +${r.nodes.length} nodes, +${r.edges.length} edges`);
       }
-      if (remove?.length) {
-        const ids = remove.map(iriToken).filter((id) => view.nodes.has(id));
-        for (const id of ids) view.nodes.delete(id);
-        for (const [eid, e] of view.edges) if (ids.includes(e.source) || ids.includes(e.target)) view.edges.delete(eid);
-        view.patch({ op: "remove", ids });
-        done.push(`removed ${ids.length} nodes`);
+      if (remove?.length) done.push(`removed ${view.remove(remove.map(iriToken))} nodes`);
+      if (ungroup) done.push(`ungrouped ${view.ungroup(ungroup)} aggregate(s)`);
+      if (aggregate) {
+        const ids = aggregate.type
+          ? [...view.nodes.values()].filter((n) => n.types.includes(String(aggregate.type).replace(/^<|>$/g, ""))).map((n) => n.id)
+          : (aggregate.iris ?? []).map(iriToken);
+        const label = aggregate.label ?? (aggregate.type ? localName(String(aggregate.type).replace(/^<|>$/g, "")) : undefined);
+        try {
+          const a = view.aggregate(ids, label);
+          done.push(`aggregated ${a.members.length} nodes as ${a.id} "${a.label}"`);
+        } catch (error) {
+          throw new UsageError(`${error.message} (${ids.length} matched)`);
+        }
       }
       if (highlight) {
         view.patch({ op: "highlight", ids: highlight.map(iriToken) });
@@ -717,9 +796,9 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       title: "What the user did in a graph view",
       description:
         "What the user has selected and set in a graph view: the selected nodes (IRI and label), " +
-        "the search text, hidden layers, the look (labels, grouping, layout, tab) and whether the " +
-        "view is still open. Use it when the user refers to \"this\", \"these\" or \"the selected\" " +
-        "nodes.",
+        "the search text, hidden layers, the look (labels, grouping, layout, tab), the aggregates " +
+        "and whether the view is still open. Use it when the user refers to \"this\", \"these\" " +
+        "or \"the selected\" nodes.",
       inputSchema: { view_id: z.string().describe("the view, from graph_view") },
       annotations: { readOnlyHint: true },
     },
@@ -808,6 +887,36 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
     guard(async ({ view_id, ids, since: v }) => {
       const view = viewOf(view_id);
       await label(view, ids);
+      return json(view.since(v));
+    }),
+  );
+
+  registerAppTool(
+    server,
+    "graph_view_edit",
+    {
+      title: "Graph view: edit",
+      description: "The user's edits from the view's menu: take nodes out of it, aggregate nodes into one, ungroup.",
+      inputSchema: {
+        view_id: z.string(),
+        remove: z.array(z.string()).optional().describe("node ids to take out"),
+        aggregate: z.object({ ids: z.array(z.string()), label: z.string().optional() }).optional(),
+        ungroup: z.string().optional().describe('an aggregate id, or "all"'),
+        since,
+      },
+      _meta: appOnly,
+    },
+    guard(async ({ view_id, remove, aggregate, ungroup, since: v }) => {
+      const view = viewOf(view_id);
+      if (remove?.length) view.remove(remove);
+      if (ungroup) view.ungroup(ungroup);
+      if (aggregate) {
+        try {
+          view.aggregate(aggregate.ids, aggregate.label);
+        } catch (error) {
+          throw new UsageError(error.message);
+        }
+      }
       return json(view.since(v));
     }),
   );

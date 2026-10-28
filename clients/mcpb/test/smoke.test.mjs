@@ -59,6 +59,7 @@ test("serves the declared tools", async (t) => {
     "example_queries",
     "find_entities",
     "graph_view",
+    "graph_view_edit",
     "graph_view_expand",
     "graph_view_labels",
     "graph_view_search",

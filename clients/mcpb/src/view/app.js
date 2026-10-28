@@ -43,9 +43,14 @@ const S = {
     layout: "cose",
     view: "graph",
     literals_as_nodes: false,
+    theme: "auto", // or "light", "dark"; auto follows Claude's
   },
   groups: new Map(), // key -> { color, count }
   classBoxes: new Map(), // box id -> { id, iri, label, members, props }: the classes diagram's boxes
+  aggregates: new Map(), // id -> { id, label, members }: nodes drawn as one (kept by the server)
+  placeAt: new Map(), // node id -> where to put it when it is drawn again (out of an aggregate)
+  selecting: false, // the "select several" mode: a click adds or removes, a drag draws a box
+  menu: [], // the open right-click menu's items
   hiddenGroups: new Set(),
   hiddenNodes: new Set(),
   highlight: new Set(),
@@ -173,7 +178,9 @@ function loadSnapshot(snap) {
   Object.assign(S.options, snap.options ?? {});
   S.status = snap.status ?? "";
   S.awaiting = snap.awaiting ?? null;
+  S.aggregates = new Map((snap.aggregates ?? []).map((a) => [a.id, a]));
   renderAwaiting();
+  applyTheme(false); // the rebuild below draws the boxes
   syncControls();
   rebuild(true);
   requestLabels();
@@ -183,6 +190,7 @@ function applyPatch(p) {
   S.lastActivity = Date.now();
   switch (p.op) {
     case "replace":
+      S.aggregates = new Map();
       S.nodes = new Map();
       S.edges = new Map();
       S.table = p.table ?? null;
@@ -212,6 +220,7 @@ function applyPatch(p) {
       if (p.title) S.title = p.title;
       syncControls();
       const structural = ["group_by", "group_boxes", "literals_as_nodes", "diagram", "properties"].some((k) => before[k] !== S.options[k]);
+      if (before.theme !== S.options.theme) applyTheme();
       if (structural) rebuild(true);
       else {
         applyStyle();
@@ -227,12 +236,30 @@ function applyPatch(p) {
     case "focus":
       focusNode(p.id);
       break;
-    case "remove":
-      for (const id of p.ids) {
-        S.nodes.delete(id);
-        for (const [k, e] of S.edges) if (e.source === id || e.target === id) S.edges.delete(k);
+    case "remove": {
+      const gone = new Set(p.ids);
+      for (const id of gone) S.nodes.delete(id);
+      for (const [k, e] of S.edges) if (gone.has(e.source) || gone.has(e.target)) S.edges.delete(k);
+      // As the server does: a node leaves its aggregate, an emptied one goes.
+      for (const a of [...S.aggregates.values()]) {
+        a.members = a.members.filter((m) => !gone.has(m));
+        if (!a.members.length) S.aggregates.delete(a.id);
       }
       rebuild(false);
+      break;
+    }
+    case "aggregate":
+      S.aggregates.set(p.aggregate.id, p.aggregate);
+      rebuild(true);
+      break;
+    case "ungroup":
+      for (const id of p.ids) {
+        // Its members come back where it was.
+        const el = S.cy?.getElementById(id);
+        if (el?.nonempty()) for (const m of S.aggregates.get(id)?.members ?? []) S.placeAt.set(m, { ...el.position() });
+        S.aggregates.delete(id);
+      }
+      rebuild(true);
       break;
     case "status":
       S.status = p.status ?? "";
@@ -242,6 +269,7 @@ function applyPatch(p) {
       S.dataset = p.dataset;
       if (p.title) S.title = p.title;
       S.awaiting = null;
+      S.aggregates = new Map();
       S.nodes = new Map();
       S.edges = new Map();
       S.table = null;
@@ -287,6 +315,35 @@ function elements() {
   return diagram === "classes" && !schema ? classElements(theme) : boxElements(theme);
 }
 
+/**
+ * What is drawn: the nodes outside any aggregate, a node per aggregate, and
+ * the edges re-pointed at the aggregates — merged and counted where several
+ * fall on the same pair, and not drawn at all inside one aggregate.
+ */
+function drawn() {
+  const owner = new Map();
+  for (const a of S.aggregates.values()) for (const m of a.members) if (S.nodes.has(m)) owner.set(m, a.id);
+  const nodes = [...S.nodes.values()].filter((n) => !owner.has(n.id));
+  const aggregates = [...S.aggregates.values()]
+    .map((a) => ({ ...a, members: a.members.filter((m) => owner.get(m) === a.id).map((m) => S.nodes.get(m)) }))
+    .filter((a) => a.members.length);
+  const edges = [];
+  const merged = new Map();
+  for (const e of S.edges.values()) {
+    const source = owner.get(e.source) ?? e.source;
+    const target = owner.get(e.target) ?? e.target;
+    if (source === e.source && target === e.target) edges.push(e);
+    else if (source !== target) {
+      const k = `${source}\u0001${e.p ?? e.label}\u0001${target}`;
+      const m = merged.get(k) ?? { id: `ae:${k}`, source, target, label: e.label, n: 0 };
+      m.n += 1;
+      merged.set(k, m);
+    }
+  }
+  for (const m of merged.values()) edges.push({ ...m, label: m.n > 1 ? `${m.label} ×${m.n}` : m.label });
+  return { nodes, aggregates, edges };
+}
+
 /** The graph diagram: a dot per entity, in layer colours, maybe framed by layer. */
 function dotElements() {
   const boxes = S.options.group_boxes && S.options.group_by !== "none";
@@ -294,7 +351,17 @@ function dotElements() {
   if (boxes) {
     for (const [k, g] of S.groups) els.push({ group: "nodes", data: { id: `group:${k}`, label: k || "—", color: g.color, gk: k }, classes: "box" });
   }
-  for (const n of S.nodes.values()) {
+  const { nodes, aggregates, edges } = drawn();
+  for (const a of aggregates) {
+    const k = groupKey(a.members[0]);
+    const size = Math.round(Math.min(64, 20 + 5 * Math.sqrt(a.members.length)));
+    els.push({
+      group: "nodes",
+      data: { id: a.id, label: `${a.label} (${a.members.length})`, color: S.groups.get(k)?.color ?? OTHER, gk: k, size, ...(boxes ? { parent: `group:${k}` } : {}) },
+      classes: "agg",
+    });
+  }
+  for (const n of nodes) {
     const k = groupKey(n);
     els.push({
       group: "nodes",
@@ -309,7 +376,7 @@ function dotElements() {
       });
     }
   }
-  for (const e of S.edges.values()) els.push({ group: "edges", data: { id: e.id, source: e.source, target: e.target, label: e.label } });
+  for (const e of edges) els.push({ group: "edges", data: { id: e.id, source: e.source, target: e.target, label: e.label } });
   return els;
 }
 
@@ -427,14 +494,24 @@ function boxEdge(id, source, target, label, sizes) {
 function boxElements(theme) {
   const els = [];
   const sizes = new Map();
-  for (const n of S.nodes.values()) {
+  const { nodes, aggregates, edges } = drawn();
+  for (const n of nodes) {
     const k = groupKey(n);
     const color = S.groups.get(k)?.color ?? OTHER;
     const box = boxImage(entityBox(n, color), theme);
     sizes.set(n.id, box);
     els.push({ group: "nodes", data: { id: n.id, label: nodeLabel(n), color, gk: k, w: box.w, h: box.h, svg: box.svg }, classes: "card" });
   }
-  for (const e of S.edges.values()) els.push(boxEdge(e.id, e.source, e.target, e.label, sizes));
+  // An aggregate's box lists its members.
+  for (const a of aggregates) {
+    const k = groupKey(a.members[0]);
+    const color = S.groups.get(k)?.color ?? OTHER;
+    const rows = a.members.map((m) => [m.types?.[0] ? local(m.types[0]) : "", nodeLabel(m)]);
+    const box = boxImage({ title: a.label, subtitle: `${a.members.length} aggregated`, rows, color }, theme);
+    sizes.set(a.id, box);
+    els.push({ group: "nodes", data: { id: a.id, label: a.label, color, gk: k, w: box.w, h: box.h, svg: box.svg }, classes: "card agg" });
+  }
+  for (const e of edges) els.push(boxEdge(e.id, e.source, e.target, e.label, sizes));
   return els;
 }
 
@@ -528,6 +605,19 @@ function styleSheet() {
     { selector: "node.literal, node.lit", style: { shape: "round-rectangle", width: 10, height: 10, "font-size": 8 } },
     { selector: "node.bnode", style: { shape: "diamond" } },
     {
+      selector: "node.agg",
+      style: {
+        shape: "round-rectangle",
+        width: "data(size)",
+        height: "data(size)",
+        "border-width": 4,
+        "border-style": "double",
+        "border-color": "data(color)",
+        "background-opacity": 0.85,
+        "font-weight": 600,
+      },
+    },
+    {
       selector: "node.card",
       style: {
         shape: "round-rectangle",
@@ -543,6 +633,7 @@ function styleSheet() {
         label: "",
       },
     },
+    { selector: "node.card.agg", style: { "border-width": 4, "border-style": "double" } },
     {
       selector: "edge",
       style: {
@@ -584,6 +675,17 @@ function rebuild(layout) {
   cy.elements().remove();
   cy.add(elements());
   for (const [id, pos] of positions) cy.getElementById(id).position(pos);
+  // A new aggregate starts amid its members; members out of one, where it was.
+  for (const a of S.aggregates.values()) {
+    const at = a.members.map((m) => positions.get(m)).filter(Boolean);
+    if (!positions.has(a.id) && at.length) {
+      cy.getElementById(a.id).position({ x: at.reduce((s, p) => s + p.x, 0) / at.length, y: at.reduce((s, p) => s + p.y, 0) / at.length });
+    }
+  }
+  for (const [id, pos] of S.placeAt) {
+    if (!positions.has(id)) cy.getElementById(id).position({ x: pos.x + (Math.random() - 0.5) * 60, y: pos.y + (Math.random() - 0.5) * 60 });
+  }
+  S.placeAt.clear();
   applyStyle();
   applyHidden();
   applyHighlight();
@@ -598,7 +700,7 @@ function rebuild(layout) {
 function grow(nodes, edges) {
   const cy = S.cy;
   if (!cy) return;
-  if (S.options.group_boxes || S.options.literals_as_nodes || diagramOf() !== "graph") return rebuild(true);
+  if (S.options.group_boxes || S.options.literals_as_nodes || diagramOf() !== "graph" || S.aggregates.size) return rebuild(true);
   const fresh = [];
   for (const n of nodes) {
     const el = cy.getElementById(n.id);
@@ -625,7 +727,7 @@ function refresh() {
   if (!S.cy) return;
   // A box grows with its name and types, and a class with its members: draw them again.
   if (diagramOf() !== "graph") return rebuild(true);
-  if (S.options.group_boxes) return rebuild(false);
+  if (S.options.group_boxes || S.aggregates.size) return rebuild(false);
   computeGroups();
   S.cy.nodes().not(".box, .lit").forEach((el) => {
     const n = S.nodes.get(el.id());
@@ -717,9 +819,7 @@ function applyHidden() {
   p.innerHTML = `${S.hiddenNodes.size} node(s) hidden · <a href="#" id="unhide">show again</a>`;
   $("unhide")?.addEventListener("click", (e) => {
     e.preventDefault();
-    S.hiddenNodes.clear();
-    applyHidden();
-    markState();
+    unhideAll();
   });
 }
 
@@ -789,13 +889,24 @@ function renderDetails() {
   if (picked.length > 1) {
     body.innerHTML =
       `<p class="title">${picked.length} nodes selected</p>` +
-      `<div class="actions"><button type="button" data-act="hide">Hide</button><button type="button" data-act="ask">Ask Claude</button></div>` +
+      `<div class="actions"><button type="button" data-act="aggregate">Aggregate</button><button type="button" data-act="send">Send to chat</button>` +
+      `<button type="button" data-act="hide">Hide</button><button type="button" data-act="remove">Remove</button>` +
+      `<button type="button" data-act="ask">Ask Claude</button></div>` +
       `<p class="hint">${picked.slice(0, 12).map((s) => esc(s.label)).join(" · ")}${picked.length > 12 ? " …" : ""}</p>`;
     return;
   }
   const c = S.classBoxes.get(picked[0].id);
   if (c) {
     body.innerHTML = classDetails(c);
+    return;
+  }
+  const a = S.aggregates.get(picked[0].id);
+  if (a) {
+    body.innerHTML =
+      `<p class="title">${esc(a.label)}</p><div class="types">an aggregate of ${a.members.length} nodes</div>` +
+      `<div class="actions"><button type="button" data-act="ungroup">Ungroup</button><button type="button" data-act="send">Send to chat</button>` +
+      `<button type="button" data-act="remove">Remove</button></div>` +
+      `<p class="hint">${a.members.slice(0, 20).map((m) => esc(nameOf(m))).join(" · ")}${a.members.length > 20 ? " …" : ""}</p>`;
     return;
   }
   const n = S.nodes.get(picked[0].id);
@@ -841,6 +952,234 @@ function showMembers(c) {
   }, 450);
 }
 
+// --- the right-click menu, and what it does ------------------------------------------------
+
+function nameOf(id) {
+  const a = S.aggregates.get(id);
+  if (a) return a.label;
+  const c = S.classBoxes.get(id);
+  if (c) return c.label;
+  const n = S.nodes.get(id);
+  return n ? nodeLabel(n) : id;
+}
+
+/** The nodes a menu acts on: the selection, when the node is part of it; else the node alone. */
+function targetsOf(el) {
+  const picked = S.cy.$("node:selected").not(".box, .lit");
+  return picked.length > 1 && picked.contains(el) ? picked.map((n) => n.id()) : [el.id()];
+}
+
+/** Separators only between items: none first, last, or twice. */
+function tidy(items) {
+  const out = [];
+  for (const it of items) {
+    if (!it || (it === "-" && (!out.length || out.at(-1) === "-"))) continue;
+    out.push(it);
+  }
+  while (out.at(-1) === "-") out.pop();
+  return out;
+}
+
+function nodeMenu(el) {
+  const ids = targetsOf(el);
+  const many = ids.length > 1;
+  const count = many ? ` ${ids.length}` : "";
+  const one = many ? null : ids[0];
+  const c = one && S.classBoxes.get(one);
+  if (c) {
+    return [
+      { label: "Show members", hint: `${c.members.length}`, run: () => showMembers(c) },
+      { label: "Send to chat", run: () => sendToChat(ids) },
+      "-",
+      { label: "Hide", run: () => hide(ids) },
+    ];
+  }
+  const a = one && S.aggregates.get(one);
+  const n = one && S.nodes.get(one);
+  const expandable = ids.filter((id) => S.nodes.get(id)?.kind === "iri");
+  // A node's layer, aggregated: every node of its type (or namespace, or value).
+  const layer = n && S.options.group_by !== "none" ? groupKey(n) : null;
+  const grouped = new Set([...S.aggregates.values()].flatMap((g) => g.members));
+  const sameLayer = layer === null ? [] : [...S.nodes.values()].filter((m) => groupKey(m) === layer && !grouped.has(m.id)).map((m) => m.id);
+  return tidy([
+    expandable.length && { label: `Expand${many ? ` ${expandable.length}` : ""}`, hint: "add its links", run: () => expandAll(expandable) },
+    { label: `Compress${count}`, hint: "drop what hangs only off it", run: () => compress(ids) },
+    { label: many ? "Select their neighbours" : "Select neighbours", run: () => selectNeighbours(ids) },
+    n && (n.label || n.iri) && { label: "Search its name", hint: "in the dataset", run: () => searchDataset(n.label || local(n.iri)) },
+    { label: `Send${count} to chat`, run: () => sendToChat(ids) },
+    { label: "Select several…", hint: "click to add", run: () => selectMode(true, ids) },
+    "-",
+    a
+      ? { label: "Ungroup", hint: `${a.members.length} nodes`, run: () => edit({ ungroup: a.id }) }
+      : many
+        ? { label: `Aggregate${count}`, hint: "draw as one", run: () => aggregate(ids) }
+        : sameLayer.length > 1 && { label: `Aggregate all ${layer || "nodes"}`, hint: `${sameLayer.length} nodes`, run: () => aggregate(sameLayer, layer) },
+    "-",
+    { label: `Hide${count}`, hint: "until shown again", run: () => hide(ids) },
+    { label: `Remove${count}`, hint: "from the view", danger: true, run: () => removeNodes(ids) },
+    n?.iri && { label: "Open in browser", run: () => S.app.openLink({ url: n.iri }).catch(() => {}) },
+  ]);
+}
+
+function backgroundMenu() {
+  return tidy([
+    { label: S.selecting ? "Stop selecting" : "Select several…", hint: "click to add", run: () => selectMode(!S.selecting) },
+    { label: "Select all", run: () => S.cy.nodes(":visible").not(".box, .lit").select() },
+    S.hiddenNodes.size && { label: `Show ${S.hiddenNodes.size} hidden`, run: unhideAll },
+    S.aggregates.size && { label: "Ungroup all", run: () => edit({ ungroup: "all" }) },
+    "-",
+    { label: "Fit to view", run: () => S.cy.fit(S.cy.elements(":visible"), 30) },
+    { label: "Lay out again", run: () => runLayout(true) },
+  ]);
+}
+
+function openMenu(title, items, x, y) {
+  const menu = $("ctx");
+  S.menu = items;
+  menu.innerHTML =
+    (title ? `<div class="ctx-title">${esc(title)}</div>` : "") +
+    items
+      .map((it, i) =>
+        it === "-"
+          ? "<hr>"
+          : `<button type="button" role="menuitem" data-i="${i}"${it.danger ? ' class="danger"' : ""}>` +
+            `<span>${esc(it.label)}</span>${it.hint ? `<span class="hint">${esc(it.hint)}</span>` : ""}</button>`,
+      )
+      .join("");
+  menu.hidden = false;
+  // Inside the frame, however near its edge the click was.
+  const { width, height } = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - height - 4))}px`;
+}
+
+function closeMenu() {
+  $("ctx").hidden = true;
+  S.menu = [];
+}
+
+async function edit(change) {
+  try {
+    apply(await call("graph_view_edit", { view_id: S.viewId, since: S.version, ...change }));
+  } catch (error) {
+    setNote(`edit: ${error.message}`);
+  }
+}
+
+async function expandAll(ids) {
+  for (const id of ids.slice(0, 10)) await expand(id);
+  if (ids.length > 10) setNote(`expanded the first 10 of ${ids.length}`);
+}
+
+/** What hangs only off these nodes: linked to them, and to nothing else in the view. */
+function leavesOf(ids) {
+  const set = new Set(ids.flatMap((id) => S.aggregates.get(id)?.members ?? [id]));
+  const links = new Map();
+  const link = (a, b) => (links.get(a) ?? links.set(a, new Set()).get(a)).add(b);
+  for (const e of S.edges.values()) {
+    link(e.source, e.target);
+    link(e.target, e.source);
+  }
+  const out = new Set();
+  for (const id of set) {
+    for (const m of links.get(id) ?? []) if (!set.has(m) && [...links.get(m)].every((x) => set.has(x))) out.add(m);
+  }
+  return [...out];
+}
+
+/** Compress: drop what hangs only off the nodes; Expand brings it back. */
+function compress(ids) {
+  const leaves = leavesOf(ids);
+  if (!leaves.length) return setNote(`nothing hangs only off ${ids.length > 1 ? `these ${ids.length}` : nameOf(ids[0])}`);
+  setNote(`compressed: ${leaves.length} node(s) taken out — Expand brings them back`);
+  return edit({ remove: leaves });
+}
+
+function selectNeighbours(ids) {
+  const els = S.cy.collection(ids.map((id) => S.cy.getElementById(id)));
+  els.union(els.neighborhood("node")).not(".box, .lit").select();
+}
+
+function hide(ids) {
+  for (const id of ids) S.hiddenNodes.add(id);
+  S.cy.$(":selected").unselect();
+  applyHidden();
+  markState();
+}
+
+function unhideAll() {
+  S.hiddenNodes.clear();
+  applyHidden();
+  markState();
+}
+
+/** Out of the view, for good (Expand or a query brings them back); an aggregate takes its members. */
+function removeNodes(ids) {
+  const all = ids.flatMap((id) => S.aggregates.get(id)?.members ?? (S.nodes.has(id) ? [id] : []));
+  return all.length ? edit({ remove: all }) : undefined;
+}
+
+/** Draw nodes as one, named after the type they share, if they do. */
+function aggregate(ids, label) {
+  const types = ids.map((id) => S.nodes.get(id)?.types?.[0]);
+  const shared = types[0] && types.every((t) => t === types[0]) ? local(types[0]) : null;
+  const name = label || shared;
+  return edit({ aggregate: { ids, ...(name ? { label: name } : {}) } });
+}
+
+/** The nodes as text for the conversation: name, IRI, types, a few properties; an aggregate, its members. */
+function describe(ids) {
+  const line = (id) => {
+    const a = S.aggregates.get(id);
+    if (a) return `- ${a.label}: an aggregate of ${a.members.length} — ${a.members.slice(0, 10).map(nameOf).join(", ")}${a.members.length > 10 ? ", …" : ""}`;
+    const c = S.classBoxes.get(id);
+    if (c) return `- the class ${c.label}${c.iri ? ` <${c.iri}>` : ""}, ${c.members.length} in the view`;
+    const n = S.nodes.get(id);
+    if (!n) return `- ${id}`;
+    const props = n.props
+      .filter(([, v]) => v !== n.label)
+      .slice(0, 6)
+      .map(([p, v]) => `${shortName(p)}: ${trunc(v, 80)}`)
+      .join("; ");
+    return `- ${nodeLabel(n)}${n.iri ? ` <${n.iri}>` : ""}${n.types.length ? ` (${n.types.map(local).join(", ")})` : ""}${props ? ` — ${props}` : ""}`;
+  };
+  const head = `From graph view ${S.viewId} on ${S.dataset}${ids.length > 1 ? `, ${ids.length} nodes` : ""}:`;
+  return [head, ...ids.slice(0, 25).map(line), ...(ids.length > 25 ? [`… and ${ids.length - 25} more`] : [])].join("\n");
+}
+
+function sendToChat(ids) {
+  S.app
+    .sendMessage({ role: "user", content: [{ type: "text", text: describe(ids) }] })
+    .catch((error) => setNote(`send: ${error.message}`));
+}
+
+/**
+ * Select several: a click adds a node or takes it out again, and a drag on
+ * the background draws a box over many (panning waits until the mode ends).
+ */
+function selectMode(on, ids = []) {
+  S.selecting = on;
+  S.cy.selectionType(on ? "additive" : "single");
+  S.cy.userPanningEnabled(!on);
+  $("selecting").hidden = !on;
+  for (const id of ids) S.cy.getElementById(id).select();
+  $("selecting-count").textContent = S.selection.length;
+}
+
+/** Find entities by name in the dataset, as Enter in the search box does. */
+async function searchDataset(text) {
+  if (!text?.trim() || !S.viewId) return;
+  $("search").value = text;
+  setNote(`finding “${text.trim()}” in ${S.dataset}…`);
+  try {
+    const r = await call("graph_view_search", { view_id: S.viewId, text: text.trim(), since: S.version });
+    apply(r);
+    setNote(r.note ?? `${r.found ?? 0} found in the graph`);
+  } catch (error) {
+    setNote(`search: ${error.message}`);
+  }
+}
+
 /** Draw the graph another way; each diagram comes with its own layout and lines. */
 function setDiagram(diagram) {
   if (diagramOf() === diagram) return;
@@ -869,10 +1208,13 @@ function onSelectionChanged() {
     .map((el) => {
       const c = S.classBoxes.get(el.id());
       if (c) return { id: el.id(), iri: c.iri, label: c.label, class_members: c.members.length };
+      const a = S.aggregates.get(el.id());
+      if (a) return { id: el.id(), iri: null, label: a.label, aggregate_of: a.members.length };
       const n = S.nodes.get(el.id());
       return { id: el.id(), iri: n?.iri ?? null, label: n ? nodeLabel(n) : el.id() };
     });
   renderDetails();
+  $("selecting-count").textContent = S.selection.length;
   markState();
   tellClaude();
 }
@@ -1046,13 +1388,25 @@ function syncControls() {
 function applyHost(ctx = {}) {
   S.host = { ...S.host, ...ctx };
   const root = document.documentElement;
-  if (S.host.theme) root.dataset.theme = S.host.theme;
   for (const [k, v] of Object.entries(S.host.styles?.variables ?? {})) if (v) root.style.setProperty(k, v);
   $("fullscreen").hidden = !(S.host.availableDisplayModes ?? []).includes("fullscreen");
   document.body.classList.toggle("full", S.host.displayMode === "fullscreen");
-  applyStyle();
-  if (diagramOf() !== "graph") rebuild(false); // the boxes are pictures, in the theme's colours
+  applyTheme();
   S.cy?.resize();
+}
+
+const THEMES = { auto: ["◐", "Theme: follows Claude"], light: ["☀", "Theme: light"], dark: ["☾", "Theme: dark"] };
+
+/** Light or dark: the user's choice, or else Claude's theme, or else the system's. */
+function applyTheme(redraw = true) {
+  const chosen = THEMES[S.options.theme] ? S.options.theme : "auto";
+  const system = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  document.documentElement.dataset.theme = chosen === "auto" ? (S.host.theme ?? system) : chosen;
+  const [icon, title] = THEMES[chosen];
+  $("theme").textContent = icon;
+  $("theme").title = `${title} — click to change`;
+  applyStyle();
+  if (redraw && diagramOf() !== "graph") rebuild(false); // the boxes are pictures, in the theme's colours
 }
 
 function wire() {
@@ -1083,6 +1437,12 @@ function wire() {
   $("zoom-out").addEventListener("click", () => zoomBy(0.8));
   $("fit").addEventListener("click", () => S.cy?.fit(S.cy.elements(":visible"), 30));
   $("relayout").addEventListener("click", () => runLayout(true));
+  $("theme").addEventListener("click", () => {
+    const order = Object.keys(THEMES);
+    S.options.theme = order[(order.indexOf(S.options.theme) + 1) % order.length];
+    applyTheme();
+    markState();
+  });
   $("fullscreen").addEventListener("click", async () => {
     const want = S.host.displayMode === "fullscreen" ? "inline" : "fullscreen";
     try {
@@ -1110,17 +1470,7 @@ function wire() {
       markState();
     }, 200),
   );
-  search.addEventListener("keydown", async (e) => {
-    if (e.key !== "Enter" || !search.value.trim() || !S.viewId) return;
-    setNote(`finding “${search.value.trim()}” in ${S.dataset}…`);
-    try {
-      const r = await call("graph_view_search", { view_id: S.viewId, text: search.value.trim(), since: S.version });
-      apply(r);
-      setNote(r.note ?? `${r.found ?? 0} found in the graph`);
-    } catch (error) {
-      setNote(`search: ${error.message}`);
-    }
-  });
+  search.addEventListener("keydown", (e) => e.key === "Enter" && searchDataset(search.value));
 
   document.querySelector("#layers ul").addEventListener("change", (e) => {
     const key = e.target.dataset.layer;
@@ -1151,12 +1501,12 @@ function wire() {
     if (!act) return;
     if (act === "expand") await expand(S.selection[0]?.id);
     if (act === "members") showMembers(S.classBoxes.get(S.selection[0]?.id));
-    if (act === "hide") {
-      for (const s of S.selection) S.hiddenNodes.add(s.id);
-      S.cy.$(":selected").unselect();
-      applyHidden();
-      markState();
-    }
+    const ids = S.selection.map((s) => s.id);
+    if (act === "hide") hide(ids);
+    if (act === "remove") removeNodes(ids);
+    if (act === "aggregate") aggregate(ids);
+    if (act === "ungroup") edit({ ungroup: ids[0] });
+    if (act === "send") sendToChat(ids);
     if (act === "ask") {
       const about = S.selection.slice(0, 10).map((s) => `${s.label}${s.iri ? ` (<${s.iri}>)` : ""}`).join(", ");
       S.app
@@ -1189,6 +1539,49 @@ function wire() {
     dragging = 0;
     $("dropzone").hidden = true;
     openFile(e.dataTransfer.files?.[0]);
+  });
+
+  // The right-click menu: on a node, on the selection it is part of, or on the background.
+  S.cy.on("cxttap", (e) => {
+    const el = e.target === S.cy ? null : e.target;
+    if (el && (el.isEdge() || el.hasClass("lit"))) return closeMenu();
+    const node = el && !el.hasClass("box") ? el : null;
+    const r = $("graph").getBoundingClientRect();
+    const x = e.originalEvent?.clientX ?? r.left + (e.renderedPosition?.x ?? 0);
+    const y = e.originalEvent?.clientY ?? r.top + (e.renderedPosition?.y ?? 0);
+    const ids = node ? targetsOf(node) : [];
+    openMenu(node ? (ids.length > 1 ? `${ids.length} nodes` : nameOf(node.id())) : "", node ? nodeMenu(node) : backgroundMenu(), x, y);
+  });
+  $("graph").addEventListener("contextmenu", (e) => e.preventDefault());
+  $("ctx").addEventListener("click", async (e) => {
+    const item = S.menu[e.target.closest("[data-i]")?.dataset.i];
+    if (!item) return;
+    closeMenu();
+    try {
+      await item.run();
+    } catch (error) {
+      setNote(error.message);
+    }
+  });
+  document.addEventListener("pointerdown", (e) => !$("ctx").contains(e.target) && closeMenu(), true);
+  // Closed by the user's own moves only: a layout's animated fit pans and zooms too.
+  $("graph").addEventListener("wheel", closeMenu, { passive: true });
+  $("selecting-done").addEventListener("click", () => selectMode(false));
+  // A click on the background unselects everything (cytoscape does, even when
+  // selection is additive) — not while selecting several: the selection is put back.
+  let keep = null;
+  S.cy.on("tapstart", (e) => (keep = S.selecting && e.target === S.cy ? S.cy.$(":selected") : null));
+  S.cy.on("tapend", (e) => {
+    const kept = e.target === S.cy ? keep : null;
+    keep = null;
+    if (kept?.nonempty()) setTimeout(() => kept.select(), 0);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeMenu();
+      if (S.selecting) selectMode(false);
+    }
+    if (e.key === "Delete" && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) && S.selection.length) removeNodes(S.selection.map((s) => s.id));
   });
 
   $("table-filter").addEventListener("input", debounce(renderTable, 150));

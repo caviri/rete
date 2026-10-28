@@ -187,13 +187,21 @@ Graph views (shown in the conversation, where the client renders MCP Apps):
   (each entity a box with its properties listed under its name) and "classes"
   (one box per rdf:type with its members' properties, linked by the relations
   between classes — a UML class diagram). Boxes and classes come laid out in
-  layers with square lines; edge_style and layout change that. For "what is in
+  layers with square lines; edge_style and layout change that. options.theme
+  sets light or dark (default auto: Claude's theme). For "what is in
   this dataset", graph_view(dataset, schema: true) draws its schema — classes
   as boxes listing their literal properties, linked by their relations.
 - graph_view_state(view_id) says what the user selected, searched and set.
   Read it when they say "this", "these" or "the selected ones".
 - The user can open a file of their own in any view (Open file…, or by
   dropping it there); the view then shows that file, as "chat:<name>".
+- A right-click on a node offers the user: expand, compress (drop what hangs
+  only off it), select neighbours, search its name, send to chat, select
+  several, aggregate (draw many nodes as one, e.g. every node of a type),
+  hide and remove. "Send to chat" arrives as a message from the user listing
+  the nodes, with their IRIs and properties: answer about those. The user's
+  removals and aggregates are in the view, as graph_view_state shows;
+  graph_view_update can aggregate and ungroup too.
 
 Every result carries \`stats\`: the bytes and requests actually read. Report
 them when the user asks how much data was touched — a good query over a huge

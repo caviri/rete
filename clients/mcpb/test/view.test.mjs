@@ -35,7 +35,7 @@ test("the host sees a UI tool, its resource, and app-only tools", async (t) => {
   const { tools } = await client.listTools();
   const byName = Object.fromEntries(tools.map((x) => [x.name, x]));
   assert.equal(byName.graph_view._meta.ui.resourceUri, "ui://rete/graph-view.html");
-  for (const name of ["graph_view_sync", "graph_view_expand", "graph_view_search", "graph_view_labels", "graph_view_upload"]) {
+  for (const name of ["graph_view_sync", "graph_view_expand", "graph_view_search", "graph_view_labels", "graph_view_upload", "graph_view_edit"]) {
     assert.deepEqual(byName[name]._meta.ui.visibility, ["app"], name);
   }
   // Claude's own tools: no UI of their own, visible to the model.
@@ -233,6 +233,41 @@ test("a diagram comes with its look; a schema view draws classes with their prop
     JSON.stringify(snapshot.edges),
   );
   assert.deepEqual(snapshot.table.vars, ["class", "property", "object", "count"]);
+});
+
+test("the user's edits — remove, aggregate, ungroup — and Claude's aggregates by type", async (t) => {
+  const { client, call, data } = await connect(t, await fixture());
+  const P = (k) => `<https://example.org/${k}>`;
+  const ALL = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o FILTER(isIRI(?o)) }";
+  const { view_id } = (await call("graph_view", { dataset: "people", query: ALL })).structuredContent;
+  const first = await data("graph_view_sync", { view_id, since: 0 });
+  assert.equal(first.snapshot.nodes.length, 5);
+
+  // The user aggregates the three people…
+  const made = await data("graph_view_edit", { view_id, aggregate: { ids: [P("ada"), P("charles"), P("mary")], label: "Person" }, since: first.version });
+  const { aggregate } = made.patches.find((p) => p.op === "aggregate");
+  assert.deepEqual({ ...aggregate, members: aggregate.members.sort() }, { id: "agg:1", label: "Person", members: [P("ada"), P("charles"), P("mary")] });
+  // …which Claude sees…
+  assert.deepEqual((await data("graph_view_state", { view_id })).aggregates, [{ id: "agg:1", label: "Person", members: 3 }]);
+  // …a removal takes a member out of it…
+  const removed = await data("graph_view_edit", { view_id, remove: [P("mary")], since: made.version });
+  assert.deepEqual(removed.patches.map((p) => p.op), ["remove"]);
+  const after = await data("graph_view_state", { view_id });
+  assert.equal(after.nodes, 4);
+  assert.equal(after.aggregates[0].members, 2);
+  // …and it is split up again.
+  const split = await data("graph_view_edit", { view_id, ungroup: "agg:1", since: removed.version });
+  assert.deepEqual(split.patches.at(-1), { version: split.version, op: "ungroup", ids: ["agg:1"] });
+
+  // Claude aggregates every node of a type, then ungroups them all.
+  const byType = await data("graph_view_update", { view_id, aggregate: { type: "https://example.org/Person" } });
+  assert.match(byType.done.join(" "), /aggregated 2 nodes as agg:2 "Person"/);
+  const all = await data("graph_view_update", { view_id, ungroup: "all" });
+  assert.match(all.done.join(" "), /ungrouped 1 aggregate/);
+
+  const lone = await client.callTool({ name: "graph_view_edit", arguments: { view_id, aggregate: { ids: [P("ada")] }, since: 0 } });
+  assert.ok(lone.isError);
+  assert.match(lone.content[0].text, /at least two/);
 });
 
 test("bad calls say what is wrong", async (t) => {

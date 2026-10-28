@@ -64,6 +64,7 @@
       <button type="button" id="zoom-in" title="Zoom in">+</button>
       <button type="button" id="fit" title="Fit to view">Fit</button>
       <button type="button" id="relayout" title="Run the layout again">↻</button>
+      <button type="button" id="theme" title="Theme: follows Claude — click to change">◐</button>
       <button type="button" id="fullscreen" title="Fullscreen" hidden>⛶</button>
     </div>
   </header>
@@ -98,9 +99,15 @@
       </div>
     </div>
     <div id="dropzone" hidden><div>Drop to open it in this view</div></div>
+    <div id="selecting" hidden>
+      <span>Selecting several: click nodes to add or remove them, or drag a box over many.</span>
+      <b id="selecting-count">0</b> selected
+      <button type="button" id="selecting-done">Done</button>
+    </div>
   </main>
   <footer id="status"><span id="status-main">Waiting for the query…</span><span id="status-note"></span></footer>
 </div>
+<div id="ctx" role="menu" hidden></div>
 <script>/*SCRIPT*/</script>
 </body>
 </html>

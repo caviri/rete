@@ -87,6 +87,20 @@ its most frequent classes as boxes listing their literal properties with
 counts, linked by their relations — from the schema pyramid, or the card's
 lists in a file without one.
 
+A right-click on a node opens its menu — on a node of the selection, the
+selection's: **Expand** (its links), **Compress** (take out what hangs only off
+it; Expand brings it back), **Select neighbours**, **Search its name** in the
+dataset, **Send to chat** (a message listing the nodes with their IRIs, types
+and properties), **Select several…** (clicks add or remove, a drag draws a box;
+a stray click on the background keeps the selection), **Aggregate** (draw
+several nodes — or every node of a layer — as one, their links merged and
+counted; **Ungroup** splits it), **Hide**, **Remove** (Delete does too) and
+**Open in browser**. The background has its own (select several, select all,
+show hidden, ungroup all, fit, lay out again). Removals and aggregates live on
+the server (`graph_view_edit`, app-only), so `graph_view_state` reports them,
+and `graph_view_update` can aggregate a type and ungroup too. The ◐ button
+switches the view between Claude's theme, light and dark (`options.theme`).
+
 ### What each graph supports
 
 Not every `.rete` carries every index. The largest published graphs are built
