@@ -5,6 +5,53 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-10-28
+
+**Where 0.3.7 is published: every channel, from the one `v0.3.7` tag.**
+crates.io (`rete-core`, `rete-graph`, `rete-cli`, `rete-wasm`), PyPI and npm
+(`rete-graph`), the GitHub release with its native archives, browser bundle,
+Blender add-on, the Claude Desktop extension (`rete-0.3.7.mcpb`, and
+`rete.mcpb` behind the `releases/latest/download/rete.mcpb` link) and the
+Pyodide wheels, the container images on GHCR (`rete-cli`, `rete-relay`,
+`rete-dev`), and the desktop File Explorer installers. It is the first release
+cut the new way: no `py-v*` / `js-v*` tags, no follow-up PR, no manual upload.
+
+What 0.3.7 changes on top of 0.3.6:
+
+- **Behaviour change: SPARQL comparisons go by datatype, not by what a string
+  looks like.** `=`, `!=`, `IN`, `<`…`>=`, `ORDER BY`, `MIN`/`MAX` and the
+  arithmetic follow SPARQL 1.1 §17.3 and §15.1: `"01" = "1"` is false,
+  `FILTER(?year > 2000)` over string years returns nothing (cast it:
+  `xsd:integer(?year) > 2000`), and `ORDER BY` is a total order. The query
+  warnings name the new cases. Details under Fixed.
+- **The Claude Desktop extension no longer times out on long queries.** Every
+  query runs as a job on a worker thread: a call answers within 40 s with the
+  rows or a `job_id`, and `query_status`, `query_result` (every row, by cursor
+  or saved to a CSV/TSV/JSON file) and `cancel_query` follow it. With
+  `partition_by` a long extraction runs as chunks checkpointed on disk, and
+  the same call resumes after a cancel, a crash or a restart; `keys_job` runs
+  it for the entities an earlier job listed — the works citing a paper,
+  listed in `crossref-citations`, then their details from `crossref` —
+  without copying them into the query. The extension also queries RDF shared
+  in the chat (`load_rdf`), and its instructions now say what a query costs
+  and when and how to split one.
+- **Node reads batched ranges in parallel** (npm `rete-graph`, and the
+  extension that bundles it): listing the 4,758 works citing one paper on
+  the 60 GB Crossref graph took 3.5–4.9 s instead of 23–35 s.
+- **Split a query by one variable**, from the engine:
+  `rete_core::partition_plan` / `eval_query_partitioned`, and in JS
+  `Graph.partitionPlan()` and `queryRaw(q, { partition })`. The keys come
+  from a `VALUES` list on the variable, else its cheapest constant pattern.
+  `SparqlError` gains a `Partition` variant.
+- **`--query-file <path>`** (or `-` for standard input) on every CLI command
+  that takes a query, for queries past the OS argument limit.
+- **Security:** `zstd` 0.14.3 / `zstd-safe` 8.2.0 / `zstd-sys` 2.1.2
+  (RUSTSEC-2026-0391, -0395 to -0406, -0410), PyO3 0.30.1 in the Python
+  client (RUSTSEC-2025-0020, RUSTSEC-2026-0177), `tokio` 1.54.1 in the File
+  Explorer (RUSTSEC-2026-0386), and in the extension the MCP SDK 1.32.1,
+  `body-parser` 2.4.0 and `zod` 4.6.7. Every lockfile is now audited in CI
+  and nightly against one exception list.
+
 ### Added
 
 - **The Claude Desktop extension runs queries as jobs, so a long one no

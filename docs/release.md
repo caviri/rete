@@ -328,7 +328,7 @@ the crates are 0.x; semver applies from 1.0.0 onward.
 ## Verify a download
 
 ```sh
-v=0.3.6   # the version you downloaded
+v=0.3.7   # the version you downloaded
 sha256sum --ignore-missing -c SHA256SUMS
 gh attestation verify rete-$v-x86_64-unknown-linux-gnu.tar.gz \
   --repo caviri/rete
