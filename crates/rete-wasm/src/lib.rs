@@ -629,6 +629,28 @@ impl Graph {
         query_json_with(&self.rete, query, format, "", reason, union_default)
     }
 
+    /// Plan running `query` as chunks split by the values of `var` — see
+    /// `rete_core::partition_plan`. JSON `{var, form, keys_query,
+    /// keys_from_where, offset, limit, dedupe}`, or an error saying why the
+    /// split would change the answer.
+    pub fn partition_plan(&self, query: &str, var: &str) -> Result<String, JsValue> {
+        partition_plan_json(&self.rete, query, var)
+    }
+
+    /// One chunk of a split query: the solutions whose `var` is one of `keys`
+    /// (term tokens, as the plan's keys query returned them), without the
+    /// query's top-level OFFSET/LIMIT. Same envelope as [`Graph::query`].
+    pub fn query_partition(
+        &self,
+        query: &str,
+        format: &str,
+        reason: bool,
+        var: &str,
+        keys: Vec<String>,
+    ) -> Result<String, JsValue> {
+        query_partition_json(&self.rete, query, format, reason, var, &keys)
+    }
+
     /// See [`query_triples`].
     pub fn query_triples(
         &self,
@@ -1270,6 +1292,30 @@ impl RemoteGraph {
         Ok(s)
     }
 
+    /// See [`Graph::partition_plan`]. Reads the dictionary entries of the
+    /// query's constants and the resident tile directory — no tile data.
+    pub fn partition_plan(&self, query: &str, var: &str) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
+        let s = partition_plan_json(&self.rete, query, var)?;
+        incomplete_guard(&self.rete, "query")?;
+        Ok(s)
+    }
+
+    /// See [`Graph::query_partition`].
+    pub fn query_partition(
+        &self,
+        query: &str,
+        format: &str,
+        reason: bool,
+        var: &str,
+        keys: Vec<String>,
+    ) -> Result<String, JsValue> {
+        self.rete.reset_load_failures();
+        let s = query_partition_json(&self.rete, query, format, reason, var, &keys)?;
+        incomplete_guard(&self.rete, "query")?;
+        Ok(s)
+    }
+
     /// See [`prefix_search`] — over the resident, cached remote handle. Faults the
     /// pyramid (where the label index lives) on the first call, then serves the
     /// search from memory.
@@ -1706,16 +1752,51 @@ fn query_json_with(
         },
     )
     .map_err(err)?;
-    // The expression type errors FILTER absorbed (CONTAINS on an IRI, …): an
-    // optional `warnings` member, present only when there is one, so an
-    // envelope without diagnostics is byte-identical to before.
+    write_with_warnings(&out, &warnings, format, extra)
+}
+
+/// The envelope plus, when there are any, the expression type errors FILTER
+/// absorbed (CONTAINS on an IRI, …): an optional `warnings` member, present
+/// only when there is one, so an envelope without diagnostics is
+/// byte-identical to before.
+fn write_with_warnings(
+    out: &QueryOutput,
+    warnings: &[rete_core::QueryWarning],
+    format: &str,
+    extra: &str,
+) -> Result<String, JsValue> {
     if warnings.is_empty() {
-        return write_query_json(&out, format, extra).map_err(js_error);
+        return write_query_json(out, format, extra).map_err(js_error);
     }
     let mut extra = extra.to_string();
     extra.push_str(r#","warnings":"#);
-    extra.push_str(&rete_core::warnings_json(&warnings));
-    write_query_json(&out, format, &extra).map_err(js_error)
+    extra.push_str(&rete_core::warnings_json(warnings));
+    write_query_json(out, format, &extra).map_err(js_error)
+}
+
+/// [`rete_core::partition_plan`] as JSON.
+fn partition_plan_json(rete: &Rete, query: &str, var: &str) -> Result<String, JsValue> {
+    let plan = rete_core::partition_plan(rete, query, var).map_err(err)?;
+    serde_json::to_string(&plan).map_err(err)
+}
+
+/// One chunk of a split query ([`rete_core::eval_query_partitioned`]), as the
+/// envelope [`query_json_with`] writes.
+fn query_partition_json(
+    rete: &Rete,
+    query: &str,
+    format: &str,
+    reason: bool,
+    var: &str,
+    keys: &[String],
+) -> Result<String, JsValue> {
+    let opts = QueryOpts {
+        reason,
+        union_default_graph: false,
+    };
+    let (out, warnings) =
+        rete_core::eval_query_partitioned(rete, query, opts, var, keys).map_err(err)?;
+    write_with_warnings(&out, &warnings, format, "")
 }
 
 /// Serialize an already-evaluated [`QueryOutput`] into the playground JSON

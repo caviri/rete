@@ -27,6 +27,28 @@ export type RawQuad = [string, string, string, string | null];
 export interface QueryOptions {
   /** OWL 2 QL entailment by query rewriting. */
   reason?: boolean;
+  /**
+   * Run one chunk of a split query (see `Graph.partitionPlan`): only the
+   * solutions whose `var` is one of `keys` (term tokens as the plan's keys
+   * query returned them), without the query's top-level OFFSET/LIMIT.
+   */
+  partition?: { var: string; keys: string[] };
+}
+
+/** How to run a query as chunks split by one variable — `Graph.partitionPlan`. */
+export interface PartitionPlan {
+  /** The variable split on, without its `?`. */
+  var: string;
+  form: "select" | "construct";
+  /** `SELECT DISTINCT ?var …`: a superset of the values the variable takes. */
+  keys_query: string;
+  /** No constant pattern binds the variable: the keys come from the whole WHERE clause. */
+  keys_from_where: boolean;
+  /** The query's OFFSET/LIMIT, which the chunks drop: apply them once to the merged rows. */
+  offset: number;
+  limit: number | null;
+  /** Two chunks can yield the same row: deduplicate the merged rows. */
+  dedupe: boolean;
 }
 
 /**
@@ -124,6 +146,15 @@ export class Graph {
    * when there is nothing to report. Results are never changed by them.
    */
   lastWarnings(): QueryWarning[];
+  /**
+   * Plan running `query` as chunks split by the values of `variable`, or throw
+   * saying why that would change the answer (ORDER BY, an aggregate not
+   * grouped by it, a variable some row leaves unbound, ASK, DESCRIBE). Run
+   * `plan.keys_query`, then each chunk of keys with `queryRaw(query,
+   * {partition: {var, keys}})`; concatenate in key order, deduplicate if
+   * `plan.dedupe`, then apply `plan.offset` / `plan.limit`.
+   */
+  partitionPlan(query: string, variable: string): PartitionPlan;
   prefixSearch(prefix: string, limit?: number): { label: string; subject: string }[];
   textSearch(
     words: string | string[],

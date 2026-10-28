@@ -749,6 +749,44 @@ and <code>GROUP BY</code> / <code>ORDER BY</code> / <code>LIMIT</code> / <code>D
 rows. A query is refused only when nothing in it can split (no BGP with a
 variable subject — the strategy would add nothing) or under <code>FROM</code> / <code>FROM NAMED</code>. The playground's "Split by community" strategy uses this; natively
 the per-star, per-community partials are the seam for parallel evaluation.</p>
+<h3 id="partition">Splitting a query by a variable</h3>
+<p>A long extraction — title, venue and year of every work citing a paper, over
+a remote graph where each scattered work is a network round trip — can run as
+many short queries instead of one long one, each finished, retried or resumed
+on its own. <code>partition_plan(query, var)</code> plans that and
+<code>eval_query_partitioned(query, opts, var, keys)</code> runs one chunk (JS:
+<code>g.partitionPlan(q, "?work")</code> and <code>g.queryRaw(q, { partition: { var, keys } })</code>;
+the Claude Desktop extension's <code>partition_by</code> drives both).</p>
+<ul>
+<li><strong>Exact, or refused.</strong> Every solution must bind the variable: then each
+solution belongs to exactly one chunk, the one holding its value, and the
+chunks' rows together are the query's rows. The plan is refused, with the
+reason, for ASK and DESCRIBE, an <code>ORDER BY</code> (it needs every row at once), an
+aggregate not grouped by the variable (it would be computed per chunk), a
+variable a select expression computes, and a variable some solution may
+leave unbound (matched only inside <code>OPTIONAL</code>, one side of a <code>UNION</code>, a
+<code>BIND</code>, a <code>SERVICE</code>, or a sub-SELECT that does not project it).</li>
+<li><strong>The keys.</strong> The plan's <code>keys_query</code> lists the variable's values from the
+one required triple pattern that binds it with constants alone
+(<code>?work cx:cites &lt;paper&gt;</code>), the one whose tiles are smallest according to the
+tile directory — so listing them is one range scan, where the query is a read
+per entity. That is a superset of the values the solutions take; a key with
+no solution makes an empty chunk. When no such pattern exists
+(<code>keys_from_where</code>), the keys come from the whole WHERE clause and may cost
+as much as the query.</li>
+<li><strong>A chunk</strong> is the query with its keys joined in as <code>VALUES</code> on the first
+required pattern block that binds the variable, where the VALUES pushdown
+turns each key into an index lookup, and without the query's top-level
+<code>OFFSET</code> / <code>LIMIT</code>.</li>
+<li><strong>Merging</strong> is the caller's: the chunks' rows in key order, deduplicated when
+the plan says <code>dedupe</code> (a <code>DISTINCT</code> that does not project the variable, and
+every <code>CONSTRUCT</code>), then the plan's <code>offset</code> / <code>limit</code>. A <code>LIMIT</code> without
+<code>ORDER BY</code> asks for any rows, so a caller may stop starting chunks once the
+finished ones hold enough.</li>
+<li>Keys are term tokens as the keys query returns them (<code>&lt;https://…&gt;</code>,
+<code>"…"^^&lt;…&gt;</code>), matched against the dictionary as stored. A variable bound to
+blank nodes cannot be split by: a blank node cannot be named in a chunk.</li>
+</ul>
 <h2 id="union-default-graph">Union default graph (⛁ All graphs)</h2>
 <p>Standard SPARQL scopes a pattern outside <code>GRAPH</code> to the <strong>default graph</strong>, and
 the engine keeps exactly that — the W3C conformance suite runs on it. But many

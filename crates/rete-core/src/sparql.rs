@@ -20,6 +20,7 @@ mod distinct;
 mod eval;
 mod expr;
 mod lower;
+mod partition;
 mod path;
 mod ql;
 mod value;
@@ -28,6 +29,7 @@ pub use diag::{warnings_json, QueryWarning, WarningSeverity};
 use eval::{ask_solution, instantiate, raw_solutions, run_select, run_select_communities};
 use lower::{lower_pattern, lower_select, parse_query};
 pub use lower::{parse_select, query_predicates};
+pub use partition::PartitionPlan;
 // Re-exported so the sibling modules' `use super::*` can reach the evaluator
 // (expr's FILTER EXISTS evaluates a sub-plan via `eval_plan_in`).
 pub(crate) use eval::eval_plan_in;
@@ -48,6 +50,11 @@ pub enum SparqlError {
     /// attached to the file handle. Partial results are never returned.
     #[error("SERVICE federation: {0}")]
     Service(String),
+    /// [`partition_plan`] / [`eval_query_partitioned`] refused to split a
+    /// query by a variable, because the chunks' answers together would not be
+    /// the query's answer; the message says why and what to do instead.
+    #[error("cannot split this query {0}")]
+    Partition(String),
 }
 
 /// A lowered SELECT query: solution modifiers plus the evaluation plan tree.
@@ -859,6 +866,94 @@ pub fn eval_query_with_warnings(
     let out = eval_query_with(rete, query, opts)?;
     let warnings = diag::finish(&out);
     Ok((out, warnings))
+}
+
+/// Plan running `query` as many smaller queries, split by the values of
+/// `var` (`?w`, `$w` or `w`), so a long extraction can go in short chunks
+/// that each finish quickly and can be retried or resumed one by one.
+///
+/// Refused — [`SparqlError::Partition`], saying why — when the chunks'
+/// answers together would not be the query's answer: an ASK or DESCRIBE, an
+/// ORDER BY, an aggregate not grouped by `var`, or a `var` some solution may
+/// leave unbound. Otherwise the plan carries the **keys query**, which lists
+/// the values to split (a superset: a value with no solution makes an empty
+/// chunk), and the top-level OFFSET/LIMIT the chunks drop and the caller
+/// applies once to the merged rows. Run each chunk with
+/// [`eval_query_partitioned`].
+///
+/// Reads only the tile directory (to pick the cheapest pattern for the keys
+/// query), never tile data.
+pub fn partition_plan(rete: &Rete, query: &str, var: &str) -> Result<PartitionPlan, SparqlError> {
+    partition::plan(rete, query, var)
+}
+
+/// [`eval_query_with_warnings`] for one chunk of a [`partition_plan`]: the
+/// query restricted to the solutions whose `var` is one of `keys` (term
+/// tokens as the keys query returned them, e.g. `<https://…>`), without its
+/// top-level OFFSET/LIMIT. The keys are joined in as `VALUES` on the first
+/// required pattern block that binds `var`, so each one is an index lookup.
+///
+/// The chunks' rows, taken in the keys' order, are the query's rows — except
+/// that the caller applies the plan's OFFSET/LIMIT and, when the plan says
+/// `dedupe`, drops repeated rows.
+pub fn eval_query_partitioned(
+    rete: &Rete,
+    query: &str,
+    opts: QueryOpts,
+    var: &str,
+    keys: &[String],
+) -> Result<(QueryOutput, Vec<QueryWarning>), SparqlError> {
+    diag::begin();
+    let out = eval_partition_inner(rete, query, opts, partition::var_name(var), keys);
+    let out = match rete.take_service_error() {
+        Some(e) => Err(SparqlError::Service(e)),
+        None => out,
+    }?;
+    let warnings = diag::finish(&out);
+    Ok((out, warnings))
+}
+
+fn eval_partition_inner(
+    rete: &Rete,
+    query: &str,
+    opts: QueryOpts,
+    var: &str,
+    keys: &[String],
+) -> Result<QueryOutput, SparqlError> {
+    let parsed = parse_query(query)?;
+    partition::check(&parsed, var)?;
+    let values = Plan::Values(
+        vec![var.to_string()],
+        keys.iter().map(|k| vec![Some(k.clone())]).collect(),
+    );
+    // Seeded after reasoning, so the VALUES lands on the pattern block the
+    // engine will actually scan.
+    let chunk = |sel: Select| -> Select {
+        let mut sel = maybe_reason(rete, apply_opts(sel, opts), opts.reason);
+        sel.offset = 0;
+        sel.limit = None;
+        sel.plan = partition::seed(sel.plan, var, values.clone());
+        sel
+    };
+    match parsed {
+        Query::Select {
+            pattern, dataset, ..
+        } => {
+            let (vars, rows) = run_select(rete, &chunk(lower_select(&pattern, &dataset)?));
+            Ok(QueryOutput::Select(vars, rows))
+        }
+        Query::Construct {
+            template, pattern, ..
+        } => {
+            let sel = chunk(lower_pattern(&pattern)?);
+            let (ctx, sols) = raw_solutions(rete, &sel);
+            Ok(QueryOutput::Construct(instantiate(&ctx, &template, &sols)))
+        }
+        // `check` refused every other form.
+        _ => Err(SparqlError::Unsupported(
+            "only SELECT and CONSTRUCT can be split",
+        )),
+    }
 }
 
 /// Apply OWL 2 QL plan rewriting when reasoning is on (no-op otherwise). Reads a

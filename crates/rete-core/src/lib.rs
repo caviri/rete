@@ -151,11 +151,11 @@ pub mod query {
         parse_sparql_json_results, sparql_json_ask, sparql_json_results, ServiceClient,
     };
     pub use crate::sparql::{
-        eval_query, eval_query_reasoned, eval_query_with, eval_query_with_warnings,
-        eval_select_communities, eval_sparql, eval_sparql_reasoned, query_predicates,
-        routed_triple_pattern, summary_query_shape, warnings_json, CommunityPartial,
-        CommunitySelect, QueryOpts, QueryOutput, QueryWarning, RoutedTriplePattern, SparqlError,
-        SummaryQueryShape, WarningSeverity,
+        eval_query, eval_query_partitioned, eval_query_reasoned, eval_query_with,
+        eval_query_with_warnings, eval_select_communities, eval_sparql, eval_sparql_reasoned,
+        partition_plan, query_predicates, routed_triple_pattern, summary_query_shape,
+        warnings_json, CommunityPartial, CommunitySelect, PartitionPlan, QueryOpts, QueryOutput,
+        QueryWarning, RoutedTriplePattern, SparqlError, SummaryQueryShape, WarningSeverity,
     };
 }
 
@@ -253,12 +253,12 @@ pub use shacl::{
 };
 #[doc(hidden)]
 pub use sparql::{
-    eval_query, eval_query_reasoned, eval_query_with, eval_query_with_warnings,
-    eval_select_communities, eval_sparql, eval_sparql_reasoned, parse_select, query_predicates,
-    routed_triple_pattern, summary_query_shape, warnings_json, Agg, CommunityPartial,
-    CommunitySelect, FExpr, GraphTarget, GroupSpec, Op, PathAst, Plan, QueryOpts, QueryOutput,
-    QueryWarning, Rep, RoutedTriplePattern, Select, SparqlError, SummaryQueryShape,
-    WarningSeverity,
+    eval_query, eval_query_partitioned, eval_query_reasoned, eval_query_with,
+    eval_query_with_warnings, eval_select_communities, eval_sparql, eval_sparql_reasoned,
+    parse_select, partition_plan, query_predicates, routed_triple_pattern, summary_query_shape,
+    warnings_json, Agg, CommunityPartial, CommunitySelect, FExpr, GraphTarget, GroupSpec, Op,
+    PartitionPlan, PathAst, Plan, QueryOpts, QueryOutput, QueryWarning, Rep, RoutedTriplePattern,
+    Select, SparqlError, SummaryQueryShape, WarningSeverity,
 };
 #[doc(hidden)]
 pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};

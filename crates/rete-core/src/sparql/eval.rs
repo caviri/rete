@@ -547,6 +547,25 @@ fn merge_union_default(rete: &Rete) -> GraphIndex {
     b.build()
 }
 
+/// How many bytes of tiles a one-block query (`sel.plan` a single BGP) would
+/// at least scan on its active graph, from the tile directory alone (see
+/// [`crate::bgp::bgp_min_scan_bytes`]) — 0 when a constant is not in the file,
+/// so nothing can match. `None` when there is no estimate to give: the plan is
+/// not one BGP, or the dataset is a merge of several `FROM` graphs, which is
+/// not built just to estimate.
+pub(super) fn scan_estimate(rete: &Rete, sel: &Select) -> Option<u64> {
+    let Plan::Bgp(patterns) = &sel.plan else {
+        return None;
+    };
+    let index = match &sel.from[..] {
+        [] => rete.default_index(),
+        [g] => rete.graph_index(g)?,
+        _ => return None,
+    };
+    let ctx = query_ctx(rete, sel);
+    Some(crate::bgp::bgp_min_scan_bytes(&ctx, index, patterns).unwrap_or(0))
+}
+
 /// Instantiate a CONSTRUCT template against solutions (triples with any unbound
 /// variable are dropped; the result is deduplicated).
 pub(super) fn instantiate(
