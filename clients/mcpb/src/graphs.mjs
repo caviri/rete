@@ -35,6 +35,7 @@ export class Source {
 export class GraphStore {
   #cache = new Map(); // openTarget -> Graph (insertion-ordered = LRU eviction)
   #scan = { at: 0, files: [] };
+  #generation = new Map(); // local path -> times build_rete rewrote it
 
   /**
    * @param {object} opts
@@ -173,6 +174,21 @@ export class GraphStore {
   changed(path) {
     this.#scan.at = 0;
     this.#cache.delete(new Source({ kind: "local", key: "", path: resolve(path) }).openTarget);
+    this.#generation.set(resolve(path), (this.#generation.get(resolve(path)) ?? 0) + 1);
+  }
+
+  /**
+   * A token that changes whenever a local file's bytes may have: bumped by
+   * changed() (build_rete), and derived from size and mtime for any other
+   * writer. The query workers key their open graphs by it, so they never
+   * answer from a file's previous bytes. A published URL names immutable
+   * bytes: "".
+   */
+  async stamp(source) {
+    if (source.kind !== "local") return "";
+    const path = resolve(source.path);
+    const info = await stat(path).catch(() => null);
+    return `${this.#generation.get(path) ?? 0}:${info?.size}:${info?.mtimeMs}`;
   }
 
   /** The open (and cached) graph for a dataset argument, plus its Source. */

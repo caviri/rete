@@ -7,6 +7,39 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The Claude Desktop extension runs queries as jobs, so a long one no
+  longer times out or blocks everything else.** Claude gives up on a tool
+  call after 60 s, and the engine's range reads are synchronous: a query on
+  the extension's own thread froze it until the query ended, a client that
+  had given up could not cancel it, and every later call — even a trivial
+  one — queued behind it and timed out too. Asking for title, venue and year
+  of the ~4,800 works citing one paper on the 60 GB Crossref graph did
+  exactly this. Every query now runs on a worker thread (up to three at
+  once). `sparql_query` waits up to 40 s and otherwise answers with a
+  `job_id` while the query keeps running; new tools `start_query` (do not
+  wait), `query_status` (wait up to 45 s; reads, bytes, elapsed; the first
+  rows once done), `query_result` and `cancel_query`. The 200-row answer
+  page now carries `next_cursor`: `query_result` pages through every row
+  (up to 1000 a page) or writes all of them to a `.csv` / `.tsv` / `.json` /
+  `.jsonl` / `.nt` file in a granted folder, never over an existing file —
+  agents had been folding rows into one `GROUP_CONCAT` string to get past
+  the cap. A client that cancels a `sparql_query` call stops its query.
+- **The extension tells the model what a query costs.** Its instructions now
+  explain that a published graph costs one network round trip per separate
+  place a query touches — so per-entity details for thousands of scattered
+  entities are expensive while a COUNT is cheap — how to follow a job, and
+  how to split a large extraction into a cheap key list plus `VALUES`
+  batches; they also ask the model to check in `dataset_schema` that the
+  relation it needs is in the graph it is querying. `list_datasets` returns
+  whole descriptions when a filter narrows it to three graphs or fewer: the
+  caveat that matters most for a large graph ("keep queries selective") sat
+  past the 320-character cut.
+- **`mcpb-test.yml`: the extension's stdio suites run on pull requests.**
+  They ran only in the release workflow, so a change to `clients/mcpb`
+  reached a tag unchecked. The new workflow builds the engine, the JS client
+  and the bundle, runs the suites on Node 22 and on the Node 18 floor, and
+  validates the manifest.
+
 - **`--query-file <path>` on every CLI command that takes a query**, with
   `-` reading standard input: `sparql`, `sparql-url`, `federate` (in place of
   `--query`), `cost`, `progressive`, `cypher` and `manifest query`. The query
