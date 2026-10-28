@@ -26,6 +26,7 @@ import { Term, build } from "rete-graph";
 import { GraphStore, UsageError, formatOf } from "./graphs.mjs";
 import { JobManager } from "./jobs.mjs";
 import { PartitionRuns } from "./partition.mjs";
+import { registerGraphViews } from "./views.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Stamped by build.mjs from the workspace Cargo.toml; the fallback only shows
@@ -156,6 +157,23 @@ Long queries and big results:
   runs only for the listed values, without copying them into the query —
   never paste thousands of IRIs into a VALUES block. The listing's column must
   be named like the variable (or be its only column).
+
+Graph views (shown in the conversation, where the client renders MCP Apps):
+- graph_view(dataset, query | iri) opens an interactive graph of a CONSTRUCT or
+  SELECT result, or of one entity's neighbourhood. In it the user toggles node
+  and edge labels, groups nodes into coloured layers (by rdf:type, namespace or
+  a property) and hides layers, changes the layout, zooms, searches, expands a
+  node by double-clicking it, and switches to a table. Offer it when the user
+  wants to see, explore or show how things connect. Keep it to a few hundred
+  nodes (LIMIT); the SELECT's first column is what each row is about, a ?title
+  / ?label / ?name column names it, other IRIs become links and literals become
+  properties; s/p/o columns are read as triples.
+- graph_view_update(view_id, …) changes the view the user has open: add (or
+  replace) a query's results, expand or focus an entity, highlight or remove
+  nodes, set labels, group_by, layout or the tab. When the user asks to change
+  what they see, update their view rather than opening another.
+- graph_view_state(view_id) says what the user selected, searched and set.
+  Read it when they say "this", "these" or "the selected ones".
 
 Every result carries \`stats\`: the bytes and requests actually read. Report
 them when the user asks how much data was touched — a good query over a huge
@@ -1226,6 +1244,9 @@ function grantedPath(path) {
   }
   return target;
 }
+
+// The interactive graph view (an MCP App) and the tools around it: views.mjs.
+registerGraphViews({ server, store, jobs, here: HERE, guard, json, UsageError, dataset });
 
 // --- go --------------------------------------------------------------------
 

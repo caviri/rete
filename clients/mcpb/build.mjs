@@ -61,6 +61,25 @@ const bundle = {
 await build({ ...bundle, entryPoints: [join(here, "src", "server.mjs")], outfile: join(out, "server", "index.mjs") });
 await build({ ...bundle, entryPoints: [join(here, "src", "worker.mjs")], outfile: join(out, "server", "worker.mjs") });
 
+// The graph view (src/view): an MCP App page the host renders in a sandbox that
+// runs inline scripts but reaches no network, so its script — cytoscape and the
+// MCP Apps client included — and its styles are inlined into one HTML file,
+// which src/views.mjs serves as the ui://rete/graph-view.html resource.
+const view = await build({
+  entryPoints: [join(here, "src", "view", "app.js")],
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2020",
+  minify: true,
+  write: false,
+  legalComments: "eof",
+});
+const viewHtml = readFileSync(join(here, "src", "view", "index.html"), "utf8")
+  .replace("/*STYLE*/", () => readFileSync(join(here, "src", "view", "style.css"), "utf8"))
+  .replace("/*SCRIPT*/", () => view.outputFiles[0].text.replaceAll("</script", "<\\/script"));
+writeFileSync(join(out, "server", "graph-view.html"), viewHtml);
+
 // The engine, loaded at runtime from beside the server bundle.
 cpSync(wasm, join(out, "server", "rete_wasm_bg.wasm"));
 
@@ -119,4 +138,5 @@ console.log(`  server/index.mjs        ${mb(join(out, "server", "index.mjs"))}`)
 console.log(`  server/worker.mjs       ${mb(join(out, "server", "worker.mjs"))}`);
 console.log(`  server/rete_wasm_bg.wasm ${mb(join(out, "server", "rete_wasm_bg.wasm"))}`);
 console.log(`  server/catalog.json     ${mb(join(out, "server", "catalog.json"))} (${datasets.length} datasets)`);
+console.log(`  server/graph-view.html  ${mb(join(out, "server", "graph-view.html"))}`);
 console.log("next: npx @anthropic-ai/mcpb pack build rete.mcpb");
