@@ -14,7 +14,7 @@
 import { createWriteStream } from "node:fs";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { once } from "node:events";
-import { delimiter, dirname, extname, isAbsolute, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -22,7 +22,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Term, build } from "rete-graph";
 
-import { GraphStore, UsageError } from "./graphs.mjs";
+import { GraphStore, UsageError, formatOf } from "./graphs.mjs";
 import { JobManager } from "./jobs.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -46,10 +46,12 @@ fetched, whether the file sits on this machine or on public HTTP storage. A
 multi-gigabyte graph therefore answers a selective query in megabytes, and
 local graphs work with no network at all.
 
-Two kinds of dataset are reachable, and every tool's \`dataset\` argument takes
-either — plus a full https:// URL to any published .rete:
+Three kinds of dataset are reachable, and every tool's \`dataset\` argument
+takes any of them — plus a full https:// URL to any published .rete:
   * LOCAL — .rete files in the folders the user granted this extension.
   * PUBLISHED — the public catalogue (data.graphplaza.com), read over HTTP.
+  * CHAT — RDF the user shared in this conversation, loaded with load_rdf as
+    "chat:<name>" and held in memory until the extension restarts.
 
 Recommended workflow:
 1. list_datasets — what is here, local and published. Descriptions are
@@ -77,6 +79,24 @@ Recommended workflow:
    .rete file in a granted folder; it is queryable immediately by its file name.
    For RDF 1.2 Turtle/TriG (<<( s p o )>>, reifiers, {| … |}) pass
    quoted_triple_syntax="rdf12"; the default reads << s p o >> as RDF-star.
+9. load_rdf — make RDF shared in the chat queryable (below).
+
+Files the user shares in the chat:
+- Claude Desktop does not hand chat attachments to this extension, and a path
+  you may see for one (/mnt/user-data/uploads/…) is in Claude's own sandbox,
+  not on this machine. For RDF text — a .ttl, .nt, .nq or .trig file, or RDF
+  pasted into the message — call load_rdf(name: "<the file's name>",
+  rdf: <its full text, unchanged>), then pass "chat:<name>" as \`dataset\` to
+  any tool. Too long for one call: send it in parts, every part after the
+  first with append=true, each part ending where a statement ends.
+- A table or document (CSV, JSON, RDF/XML, JSON-LD): convert it to Turtle
+  yourself — one subject per record, IRIs minted under one base, a predicate
+  per column — then load_rdf it.
+- A .rete file is binary and cannot travel through the chat: ask the user to
+  put it in a granted folder, or for its https:// URL. The same for an RDF
+  file too large to send: once it sits in a granted folder, load_rdf reads it
+  from there by \`path\`.
+- save_as keeps a chat graph as a .rete file in a granted folder.
 
 What a query costs — read this before a large extraction:
 - A published graph is read over the network, one request per separate place
@@ -226,12 +246,12 @@ function withWarnings(value, size, warnings) {
 
 const statsOf = (graph, source) => {
   const s = graph.stats();
-  if (!s) return null;
+  if (!s) return { where: source.where }; // a chat graph: in memory, nothing read
   const prev = lastStats.get(graph) ?? { bytes: 0, requests: 0 };
   lastStats.set(graph, { bytes: s.bytes, requests: s.requests });
   const bytes = Math.max(0, s.bytes - prev.bytes);
   return {
-    where: source.kind === "local" ? "local file (lazy byte-range reads)" : "remote (HTTP Range)",
+    where: source.where,
     fileBytes: s.fileLength,
     bytesRead: bytes,
     requests: Math.max(0, s.requests - prev.requests),
@@ -264,7 +284,7 @@ const itemsOf = (job) => (job.env.kind === "construct" ? job.env.triples : job.e
 
 function jobStats(job) {
   const s = job.stats;
-  if (!s) return null;
+  if (!s) return { where: job.where };
   return {
     where: job.where,
     fileBytes: s.fileBytes,
@@ -358,12 +378,12 @@ async function submitQuery(name, query, reason) {
   const source = await store.resolve(name);
   const job = jobs.submit({
     dataset: source.key,
-    key: `${source.openTarget}#${await store.stamp(source)}`,
+    key: `${source.cacheKey}#${await store.stamp(source)}`,
     target: source.openTarget,
     query,
     reason,
   });
-  job.where = source.kind === "local" ? "local file (lazy byte-range reads)" : "remote (HTTP Range)";
+  job.where = source.where;
   return job;
 }
 
@@ -490,7 +510,10 @@ const server = new McpServer(
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };
 const dataset = z
   .string()
-  .describe("a local .rete file name or path, a published catalogue key, or an https:// .rete URL");
+  .describe(
+    "a local .rete file name or path, a published catalogue key, an https:// .rete URL, or " +
+      "chat:<name> for RDF loaded from the chat with load_rdf",
+  );
 
 // --- tools -----------------------------------------------------------------
 
@@ -506,22 +529,39 @@ server.registerTool(
       "dataset_card gives a graph's whole self-description.",
     inputSchema: {
       query: z.string().optional().describe("free-text filter over key, label and description"),
-      source: z.enum(["all", "local", "published"]).optional().describe("default: all"),
+      source: z
+        .enum(["all", "local", "chat", "published"])
+        .optional()
+        .describe("default: all; chat = RDF loaded from the conversation with load_rdf"),
     },
     annotations: { ...READ_ONLY, openWorldHint: true },
   },
   guard(async ({ query, source = "all" }) => {
     const needle = query?.toLowerCase();
     const hit = (...fields) => !needle || fields.some((f) => String(f ?? "").toLowerCase().includes(needle));
+    const want = (kind) => source === "all" || source === kind;
 
-    const local =
-      source === "published"
-        ? []
-        : (await store.localFiles())
-            .filter((f) => hit(f.key, f.path))
-            .map((f) => ({ key: f.key, path: f.path, bytes: f.size, modified: f.modified }));
+    const local = !want("local")
+      ? []
+      : (await store.localFiles())
+          .filter((f) => hit(f.key, f.path))
+          .map((f) => ({ key: f.key, path: f.path, bytes: f.size, modified: f.modified }));
 
-    const matches = source === "local" ? [] : store.catalog.filter((d) => hit(d.key, d.label, d.description));
+    const chat = !want("chat")
+      ? []
+      : store
+          .chatGraphs()
+          .filter((c) => hit(c.source.key))
+          .map((c) => ({
+            key: c.source.key,
+            format: c.format,
+            parts: c.parts,
+            rdf_bytes: c.size,
+            bytes: c.source.bytes.length,
+            loaded: c.loadedAt,
+          }));
+
+    const matches = !want("published") ? [] : store.catalog.filter((d) => hit(d.key, d.label, d.description));
     // A filter that narrows the catalogue to a few graphs gets their whole
     // descriptions: the caveats that matter most for a large graph ("keep
     // queries selective", what it does NOT contain) sit past the abridged cut.
@@ -538,13 +578,14 @@ server.registerTool(
 
     return json({
       local,
+      ...(chat.length ? { chat } : {}),
       published,
       note:
         dirs.length === 0
           ? "No local folders granted yet — add them in the extension's settings to query and " +
             "build .rete files on this machine."
           : `Local folders: ${dirs.join(", ")}`,
-      counts: { local: local.length, published: published.length },
+      counts: { local: local.length, chat: chat.length, published: published.length },
     });
   }),
 );
@@ -567,7 +608,7 @@ server.registerTool(
     const card = graph.card();
     return json({
       dataset: source.key,
-      where: source.kind === "local" ? source.path : source.url,
+      where: source.path ?? source.url ?? source.where,
       card: card ?? null,
       note: card ? undefined : "this file carries no embedded card — try dataset_schema",
       stats: statsOf(graph, source),
@@ -934,6 +975,89 @@ server.registerTool(
     });
   }),
 );
+
+server.registerTool(
+  "load_rdf",
+  {
+    title: "Query RDF shared in the chat",
+    description:
+      "Make RDF the user shared in the chat queryable: an attached .ttl / .nt / .nq / .trig file, " +
+      "or RDF pasted into a message. Claude Desktop does not hand attachments to extensions, so " +
+      "pass the file's full text, unchanged, as `rdf`. It is built into a graph held in memory — " +
+      "no granted folder needed, nothing written to disk — and every tool takes it as dataset " +
+      '"chat:<name>" until the extension restarts. Too long for one call: send it in parts, the ' +
+      "rest with append=true, each part ending where a statement ends (prefixes from the first " +
+      "part carry over). Without append, a second call replaces the graph. CSV, JSON, RDF/XML or " +
+      "JSON-LD: convert to Turtle first. A file the user saved in a granted folder is read by " +
+      "`path` instead; save_as keeps the graph as a .rete file there.",
+    inputSchema: {
+      name: z.string().describe("the shared file's name, e.g. people.ttl — the dataset becomes chat:people"),
+      rdf: z.string().optional().describe("the RDF text, exactly as shared (or one part of it)"),
+      path: z.string().optional().describe("instead of rdf: an RDF text file in a granted folder"),
+      format: z
+        .enum(["ttl", "trig", "nt", "nq"])
+        .optional()
+        .describe("RDF syntax (default: from the file's extension, else ttl)"),
+      append: z
+        .boolean()
+        .optional()
+        .describe("add this part to chat:<name> rather than replace it (default false)"),
+      quoted_triple_syntax: z
+        .enum(["rdf-star", "rdf12"])
+        .optional()
+        .describe("as for build_rete: rdf12 reads RDF 1.2 Turtle/TriG (default rdf-star)"),
+      save_as: z
+        .string()
+        .optional()
+        .describe("also write the whole graph as a .rete file in a granted folder (never overwrites)"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  guard(async ({ name, rdf, path, format, append = false, quoted_triple_syntax = "rdf-star", save_as }) => {
+    if ((rdf === undefined) === (path === undefined)) {
+      throw new UsageError("pass the RDF as `rdf` (its text) or as `path` (a file in a granted folder) — one of the two");
+    }
+    const text = rdf ?? (await store.readGrantedText(path));
+    const loaded = await store.loadChat(name, text, {
+      format: format ?? (path === undefined ? undefined : (formatOf(name) ?? formatOf(path))),
+      append,
+      quotedTripleSyntax: quoted_triple_syntax,
+    });
+    const { graph, source } = await store.graph(loaded.source.key);
+    const info = graph.info();
+    const saved = save_as === undefined ? undefined : await saveChat(loaded, save_as);
+    return json({
+      dataset: source.key,
+      statements: info.quads,
+      parts: loaded.parts,
+      format: loaded.format,
+      rdf_bytes: loaded.size,
+      info,
+      ...(saved ? { saved } : {}),
+      note:
+        `Queryable now: pass dataset "${source.key}" to sparql_query, dataset_schema, find_entities ` +
+        "and the rest. Held in memory until the extension restarts" +
+        (saved
+          ? `; also saved as ${saved.path} (dataset "${saved.dataset}").`
+          : " — save_as keeps it as a .rete file in a granted folder."),
+    });
+  }),
+);
+
+/** Write a chat graph's file image into a granted folder, beside any file of that name. */
+async function saveChat(loaded, outputPath) {
+  if (dirs.length === 0) {
+    throw new UsageError(
+      "no folder granted — add one in the extension's settings (Graph folders) to save a graph. " +
+        `${loaded.source.key} stays queryable in memory meanwhile.`,
+    );
+  }
+  const target = await freeName(grantedPath(outputPath.toLowerCase().endsWith(".rete") ? outputPath : `${outputPath}.rete`));
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, new Uint8Array(loaded.source.bytes)); // a copy, off the shared memory
+  store.changed(target);
+  return { path: target, bytes: loaded.source.bytes.length, dataset: basename(target).replace(/\.rete$/i, "") };
+}
 
 /** Is `target` inside `dir`? Keeps writes within the folders the user granted. */
 function isInside(dir, target) {
