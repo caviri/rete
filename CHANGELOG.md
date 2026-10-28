@@ -20,6 +20,15 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Security
 
+- **The 2026-10 zstd, tokio, zod and body-parser advisories are cleared.**
+  `zstd` is 0.14.3 (was 0.13.3; the workspace requirement moves from `0.13` to
+  `0.14`, no source change), with `zstd-safe` 8.2.0 (was 7.2.4) and `zstd-sys`
+  2.1.2 (was 2.0.16), fixing RUSTSEC-2026-0391, RUSTSEC-2026-0395 to
+  RUSTSEC-2026-0406 and RUSTSEC-2026-0410 in the workspace, Python, R, desktop
+  explorer and fuzz lockfiles. `tokio` is 1.54.1 (was 1.53.1) in the desktop
+  explorer, fixing RUSTSEC-2026-0386. The Claude Desktop extension resolves
+  `body-parser` 2.4.0 (was 2.3.0, GHSA-27r3-jxmh-p828) and `zod` 4.6.7 (was
+  4.4.3, GHSA-mrhx-c7xc-m3w5). No exceptions were added.
 - **PyO3 0.30.1 in the Python client** (was 0.23.5), fixing RUSTSEC-2025-0020
   (possible buffer overflow in `PyString::from_object`) and RUSTSEC-2026-0177
   (missing `Sync` bound on `PyCFunction::new_closure` closures) in the PyPI
