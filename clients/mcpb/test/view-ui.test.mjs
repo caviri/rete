@@ -59,8 +59,10 @@ async function host(t, args) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 640 } });
   const toModel = [];
   const messages = [];
+  const links = [];
+  const saw = { context: toModel, message: messages, link: links };
   await page.exposeFunction("hostCallTool", async (params) => client.callTool(params));
-  await page.exposeFunction("hostSaw", (kind, params) => (kind === "context" ? toModel : messages).push(params));
+  await page.exposeFunction("hostSaw", (kind, params) => saw[kind].push(params));
   await page.setContent(
     `<!doctype html><html><body style="margin:0"><iframe id="f" sandbox="allow-scripts" style="border:0;width:1080px;height:600px"></iframe><script>${bridge.outputFiles[0].text}</script></body></html>`,
   );
@@ -77,6 +79,7 @@ async function host(t, args) {
       bridge.onupdatemodelcontext = async (params) => (window.hostSaw("context", params), {});
       bridge.onmessage = async (params) => (window.hostSaw("message", params), {});
       bridge.onrequestdisplaymode = async ({ mode }) => ({ mode });
+      bridge.onopenlink = async ({ url }) => (window.hostSaw("link", url), {});
       bridge.oninitialized = () => {
         bridge.sendToolInput({ arguments: args });
         bridge.sendToolResult(result);
@@ -102,7 +105,7 @@ async function host(t, args) {
     await page.waitForTimeout(600);
     await page.locator("#f").screenshot({ path: process.env.RETE_UI_SHOT.replace(/\.png$/, `${suffix}.png`) });
   };
-  return { client, dir, page, view, inView, until, toModel, messages, viewId, shot };
+  return { client, dir, page, view, inView, until, toModel, messages, links, viewId, shot };
 }
 
 test("the graph view works in a sandboxed iframe behind an MCP Apps host", { skip }, async (t) => {
@@ -351,6 +354,26 @@ test("a right-click on a node offers what to do with it; light or dark", { skip 
   await view.locator("#opt-diagram").selectOption("boxes");
   await until(() => window.__reteView.cy.nodes(".card").length === 3, null, "boxes, dark");
   await shot("-dark");
+});
+
+test("the view says which version it is, with credits and links", { skip }, async (t) => {
+  const { view, page, until, links, shot } = await host(t, { dataset: "people", schema: true });
+  await until(() => window.__reteView.cy?.nodes(".card").length === 3, null, "the view");
+  const version = JSON.parse(await (await import("node:fs/promises")).readFile(join(here, "..", "build", "manifest.json"), "utf8")).version;
+  assert.equal(await view.locator("#about-open").textContent(), `rete ${version}`);
+  await view.locator("#about-open").click();
+  const about = view.locator("#about");
+  assert.ok(await about.isVisible());
+  const text = await about.textContent();
+  assert.match(text, /By Carlos Vivar Rios · Apache-2\.0/);
+  assert.match(text, /cytoscape \d+\.\d+\.\d+ \(MIT\)/);
+  await shot("-about");
+  // Links open through the host: the sandbox navigates nowhere itself.
+  await about.locator("a", { hasText: "Documentation" }).click();
+  for (let i = 0; i < 30 && !links.length; i++) await page.waitForTimeout(100);
+  assert.deepEqual(links, ["https://caviri.github.io/rete/"]);
+  await page.keyboard.press("Escape");
+  assert.ok(await about.isHidden());
 });
 
 test("a dataset's schema, drawn as class boxes with their properties", { skip }, async (t) => {

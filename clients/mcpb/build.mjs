@@ -5,6 +5,7 @@
 // the whole extension is two files of consequence (index.mjs + the .wasm).
 // Run through Docker (./build.sh) unless you have node on PATH.
 import { build } from "esbuild";
+import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
@@ -43,6 +44,80 @@ const workspace = readFileSync(join(repo, "Cargo.toml"), "utf8");
 const version = workspace.match(/\[workspace\.package\][\s\S]*?\nversion = "([^"]+)"/)?.[1];
 if (!version) throw new Error("could not read the workspace version from Cargo.toml");
 
+// Which build this is, for the about tool and the view's About panel: the
+// commit (RETE_BUILD_COMMIT, CI's GITHUB_SHA, or git — a copy without either
+// says it does not know), the date (SOURCE_DATE_EPOCH when set), and
+// RETE_BUILD_LABEL, which names a build that is not a release.
+function commitOf() {
+  const given = process.env.RETE_BUILD_COMMIT || process.env.GITHUB_SHA;
+  if (given) return given.slice(0, 12);
+  try {
+    return execFileSync("git", ["rev-parse", "--short=12", "HEAD"], { cwd: repo, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return null;
+  }
+}
+const builtAt = process.env.SOURCE_DATE_EPOCH ? new Date(Number(process.env.SOURCE_DATE_EPOCH) * 1000) : new Date();
+
+// Who made it and how to cite it, from CITATION.cff — the one place that says.
+const cff = readFileSync(join(repo, "CITATION.cff"), "utf8");
+const cffField = (key) => cff.match(new RegExp(`^\\s*-?\\s*${key}:\\s*"?([^"\\n]+)"?`, "m"))?.[1]?.trim() ?? null;
+
+// What the bundle carries of other people's work, each with its licence — read
+// from the packages themselves, so the list cannot drift from what is inlined.
+const BUNDLED = [
+  ["@modelcontextprotocol/sdk", "the MCP server"],
+  ["@modelcontextprotocol/ext-apps", "MCP Apps: the graph view in the conversation"],
+  ["zod", "tool input schemas"],
+  ["cytoscape", "drawing the graph view"],
+  ["@dagrejs/dagre", "the layered layout"],
+  ["@dagrejs/graphlib", "the layered layout"],
+];
+function packageOf(name) {
+  const at = [join(here, "node_modules", name), ...BUNDLED.map(([p]) => join(here, "node_modules", p, "node_modules", name))]
+    .map((dir) => join(dir, "package.json"))
+    .find(existsSync);
+  if (!at) throw new Error(`${name} is not installed — run npm ci first`);
+  return JSON.parse(readFileSync(at, "utf8"));
+}
+const repoUrl = (pkg) => {
+  const url = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+  return (pkg.homepage || url || "").replace(/^git\+/, "").replace(/\.git$/, "") || null;
+};
+const about = {
+  name: "rete-graphs",
+  title: "rete — knowledge graphs",
+  version,
+  build: { commit: commitOf(), date: builtAt.toISOString().slice(0, 10), label: process.env.RETE_BUILD_LABEL || null },
+  license: "Apache-2.0",
+  author: {
+    name: [cffField("given-names"), cffField("family-names")].filter(Boolean).join(" "),
+    orcid: cffField("orcid"),
+  },
+  cite: { title: cffField("title"), doi: cffField("doi"), url: cffField("doi") ? `https://doi.org/${cffField("doi")}` : null },
+  links: {
+    documentation: "https://caviri.github.io/rete/",
+    playground: "https://caviri.github.io/rete/playground.html",
+    repository: "https://github.com/caviri/rete",
+    issues: "https://github.com/caviri/rete/issues",
+    releases: "https://github.com/caviri/rete/releases",
+    latest_bundle: "https://github.com/caviri/rete/releases/latest/download/rete.mcpb",
+  },
+  credits: [
+    ...BUNDLED.map(([name, role]) => {
+      const pkg = packageOf(name);
+      return { name, version: pkg.version, license: pkg.license, role, url: repoUrl(pkg) };
+    }),
+    {
+      name: "oxrdf, oxttl, spargebra (Oxigraph)",
+      license: "MIT OR Apache-2.0",
+      role: "RDF terms, Turtle and N-Triples parsing, SPARQL parsing — inside the engine",
+      url: "https://github.com/oxigraph/oxigraph",
+    },
+  ],
+  data: "Every published graph has its own licence and source; dataset_card says which. Credit them when using the data.",
+};
+
 // Two bundles side by side: the server, and the query worker it starts on
 // worker threads (src/jobs.mjs) — each with its own copy of the client, since
 // each thread loads its own engine.
@@ -55,7 +130,7 @@ const bundle = {
   // node: builtins stay external (they are provided by the runtime).
   external: ["node:*"],
   alias: { "rete-graph": join(client, "dist", "index.js") },
-  define: { __RETE_VERSION__: JSON.stringify(version) },
+  define: { __RETE_VERSION__: JSON.stringify(version), __RETE_ABOUT__: JSON.stringify(about) },
   banner: { js: `// rete-graphs MCP server v${version} — Apache-2.0 — https://github.com/caviri/rete` },
 };
 await build({ ...bundle, entryPoints: [join(here, "src", "server.mjs")], outfile: join(out, "server", "index.mjs") });
@@ -74,6 +149,7 @@ const view = await build({
   minify: true,
   write: false,
   legalComments: "eof",
+  define: { __RETE_ABOUT__: JSON.stringify(about) },
 });
 const viewHtml = readFileSync(join(here, "src", "view", "index.html"), "utf8")
   .replace("/*STYLE*/", () => readFileSync(join(here, "src", "view", "style.css"), "utf8"))
@@ -134,7 +210,7 @@ const manifest = JSON.parse(readFileSync(join(here, "manifest.json"), "utf8"));
 writeFileSync(join(out, "manifest.json"), `${JSON.stringify({ ...manifest, version }, null, 2)}\n`);
 
 const mb = (p) => `${(statSync(p).size / 1e6).toFixed(2)} MB`;
-console.log(`built ${out} — version ${version} (from the workspace Cargo.toml)`);
+console.log(`built ${out} — version ${version} (from the workspace Cargo.toml), build ${about.build.commit ?? "of unknown commit"} ${about.build.date}${about.build.label ? ` "${about.build.label}"` : ""}`);
 console.log(`  server/index.mjs        ${mb(join(out, "server", "index.mjs"))}`);
 console.log(`  server/worker.mjs       ${mb(join(out, "server", "worker.mjs"))}`);
 console.log(`  server/rete_wasm_bg.wasm ${mb(join(out, "server", "rete_wasm_bg.wasm"))}`);

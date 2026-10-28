@@ -16,6 +16,8 @@ const MAX_PROPS = 40; // shown in the selection panel
 const MAX_LITERAL_NODES = 12; // per node, with literals as nodes
 const MAX_TABLE = 1000; // rows drawn at once
 const PART = 1024 * 1024; // bytes of a file per graph_view_upload call
+// Version, build, credits and links: stamped in by build.mjs.
+const ABOUT = typeof __RETE_ABOUT__ === "object" ? __RETE_ABOUT__ : null;
 const FONT = `system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
 // A box: its name on a band, its type under it, then a line per property (px).
 const BOX = { pad: 8, title: 12, small: 10, head: 24, sub: 14, row: 15, rows: 8, keyMax: 120, valueMax: 190, min: 110, max: 330 };
@@ -1023,6 +1025,8 @@ function nodeMenu(el) {
 
 function backgroundMenu() {
   return tidy([
+    ABOUT && { label: "About rete…", hint: ABOUT.version, run: () => ($("about").hidden = false) },
+    "-",
     { label: S.selecting ? "Stop selecting" : "Select several…", hint: "click to add", run: () => selectMode(!S.selecting) },
     { label: "Select all", run: () => S.cy.nodes(":visible").not(".box, .lit").select() },
     S.hiddenNodes.size && { label: `Show ${S.hiddenNodes.size} hidden`, run: unhideAll },
@@ -1051,6 +1055,23 @@ function openMenu(title, items, x, y) {
   const { width, height } = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - width - 4))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - height - 4))}px`;
+}
+
+/** The About panel: version and build, author, links, credits. */
+function renderAbout() {
+  if (!ABOUT) return;
+  const { version, build, author, license, links, cite, credits, data } = ABOUT;
+  const link = (url, text) => (url ? `<a href="#" data-open="${esc(url)}">${esc(text)}</a>` : esc(text));
+  $("about-open").textContent = `rete ${version}`;
+  $("about").innerHTML =
+    `<p class="title">rete graph view <span class="v">${esc(version)}</span></p>` +
+    `<p class="muted">build ${esc(build.commit ?? "of unknown commit")}${build.date ? ` · ${esc(build.date)}` : ""}${build.label ? ` · ${esc(build.label)}` : ""}</p>` +
+    `<p>By ${link(author.orcid, author.name)} · ${esc(license)}</p>` +
+    `<p class="links">${link(links.documentation, "Documentation")} · ${link(links.playground, "Playground")} · ` +
+    `${link(links.repository, "Source")} · ${link(links.issues, "Report an issue")} · ${link(links.releases, "Releases")}` +
+    `${cite?.url ? ` · ${link(cite.url, "Cite")}` : ""}</p>` +
+    `<p class="muted">Built with ${credits.map((c) => `${link(c.url, `${c.name}${c.version ? ` ${c.version}` : ""}`)} (${esc(c.license)})`).join(", ")}.</p>` +
+    `<p class="muted">${esc(data)}</p>`;
 }
 
 function closeMenu() {
@@ -1567,6 +1588,16 @@ function wire() {
   // Closed by the user's own moves only: a layout's animated fit pans and zooms too.
   $("graph").addEventListener("wheel", closeMenu, { passive: true });
   $("selecting-done").addEventListener("click", () => selectMode(false));
+  $("about-open").addEventListener("click", () => ($("about").hidden = !$("about").hidden));
+  $("about").addEventListener("click", (e) => {
+    const open = e.target.closest("[data-open]");
+    if (!open) return;
+    e.preventDefault();
+    S.app.openLink({ url: open.dataset.open }).catch((error) => setNote(`link: ${error.message}`));
+  });
+  document.addEventListener("pointerdown", (e) => {
+    if (!$("about").hidden && !$("about").contains(e.target) && e.target !== $("about-open")) $("about").hidden = true;
+  });
   // A click on the background unselects everything (cytoscape does, even when
   // selection is additive) — not while selecting several: the selection is put back.
   let keep = null;
@@ -1579,6 +1610,7 @@ function wire() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       closeMenu();
+      $("about").hidden = true;
       if (S.selecting) selectMode(false);
     }
     if (e.key === "Delete" && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) && S.selection.length) removeNodes(S.selection.map((s) => s.id));
@@ -1626,10 +1658,11 @@ function start() {
     if (!el.hasClass("box") && !el.hasClass("lit") && S.nodes.get(el.id())?.kind !== "class") expand(el.id());
   });
   wire();
+  renderAbout();
   syncControls();
   renderLayers();
 
-  const app = new App({ name: "rete graph view", version: "1.0.0" }, { availableDisplayModes: ["inline", "fullscreen"] }, { autoResize: true });
+  const app = new App({ name: "rete graph view", version: ABOUT?.version ?? "0.0.0-dev" }, { availableDisplayModes: ["inline", "fullscreen"] }, { autoResize: true });
   S.app = app;
   app.ontoolinput = ({ arguments: args = {} }) => {
     if (args.options) Object.assign(S.options, args.options);

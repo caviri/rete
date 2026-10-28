@@ -41,6 +41,7 @@ No `node_modules` in the archive, no native modules, nothing to install.
 
 | Tool | What it does |
 | --- | --- |
+| `about` | The extension's version and build (commit, date), credits, how to cite rete, links (docs, playground, source, issues, releases), and the bundled open-source software with its licences |
 | `list_datasets` | Local files + published catalogue, optionally filtered |
 | `dataset_card` | The file's embedded self-description, and its `capabilities`: schema, name search, full-text search (2 small reads, any size) |
 | `dataset_schema` | Classes and relations with counts, from the baked pyramid — or, in a file built without one, the lists its card carries |
@@ -100,6 +101,18 @@ show hidden, ungroup all, fit, lay out again). Removals and aggregates live on
 the server (`graph_view_edit`, app-only), so `graph_view_state` reports them,
 and `graph_view_update` can aggregate a type and ungroup too. The ◐ button
 switches the view between Claude's theme, light and dark (`options.theme`).
+
+### Version, credits and links
+
+`build.mjs` stamps every build with its version (from the workspace
+`Cargo.toml`), its commit (`RETE_BUILD_COMMIT`, CI's `GITHUB_SHA`, or git) and
+date, and `RETE_BUILD_LABEL` for a build that is not a release. With them goes
+who made it and how to cite it — read from `CITATION.cff` — the project's links,
+and the open-source packages the bundle inlines, each with the version and
+licence read from its own `package.json`. Claude reads the version in the
+server's instructions and the rest from the `about` tool; the graph view shows
+it in an About panel behind the version in its footer, whose links open
+through the host.
 
 ### What each graph supports
 

@@ -24,7 +24,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--fg); }
-#root { display: flex; flex-direction: column; height: 560px; }
+#root { display: flex; flex-direction: column; height: 560px; position: relative; }
 body.full #root { height: 100vh; }
 
 #bar {
@@ -136,3 +136,18 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 #status { display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; border-top: 1px solid var(--border); color: var(--muted); background: var(--panel); }
 #status-note { color: var(--accent); }
+#status-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#about-open { border: 0; background: none; padding: 0 2px; color: var(--muted); font: inherit; }
+#about-open:hover { color: var(--accent); }
+#about {
+  position: absolute; right: 8px; bottom: 30px; z-index: 25; width: min(420px, calc(100% - 16px));
+  padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18); line-height: 1.45;
+}
+#about[hidden] { display: none; }
+#about p { margin: 0 0 6px; }
+#about p:last-child { margin-bottom: 0; }
+#about .title { font-weight: 600; font-size: 13px; }
+#about .v, #about .muted { color: var(--muted); font-weight: 400; }
+#about a { color: var(--accent); text-decoration: none; }
+#about a:hover { text-decoration: underline; }

@@ -33,6 +33,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // Stamped by build.mjs from the workspace Cargo.toml; the fallback only shows
 // up if this file is ever run unbundled.
 const VERSION = typeof __RETE_VERSION__ === "string" ? __RETE_VERSION__ : "0.0.0-dev";
+// Which build this is, who made it, what it bundles: stamped in by build.mjs.
+const ABOUT =
+  typeof __RETE_ABOUT__ === "object"
+    ? __RETE_ABOUT__
+    : { name: "rete-graphs", version: VERSION, build: { commit: null, date: null, label: "unbundled source" }, author: {}, links: {}, credits: [] };
+const BUILD = [ABOUT.build.commit && `build ${ABOUT.build.commit}`, ABOUT.build.date, ABOUT.build.label].filter(Boolean).join(", ");
 const MAX_ROWS = 200; // rows per answer page (query_result can ask for up to PAGE_MAX)
 const PAGE_MAX = 1000;
 const MAX_DESC = 320; // chars of a catalogue description in list_datasets…
@@ -205,7 +211,13 @@ Graph views (shown in the conversation, where the client renders MCP Apps):
 
 Every result carries \`stats\`: the bytes and requests actually read. Report
 them when the user asks how much data was touched — a good query over a huge
-graph reads a tiny fraction of it.`;
+graph reads a tiny fraction of it.
+
+This is rete-graphs ${VERSION}${BUILD ? ` (${BUILD})` : ""}${ABOUT.author.name ? `, by ${ABOUT.author.name}` : ""}. The
+about tool gives the version and build, credits, how to cite rete, and links —
+documentation, playground, source, where to report a problem, the latest
+release. Call it when the user asks which version is installed, who made it,
+or where to get help.`;
 
 // --- helpers ---------------------------------------------------------------
 
@@ -785,6 +797,31 @@ function noSearchIndex(source, t, text) {
 }
 
 // --- tools -----------------------------------------------------------------
+
+server.registerTool(
+  "about",
+  {
+    title: "About this extension",
+    description:
+      "This extension's version and build (commit, date), who made it and how to cite it, links — " +
+      "documentation, playground, source code, where to report a problem, the latest release — and " +
+      "the open-source software it bundles, with licences. Call it when the user asks which version " +
+      "is installed, for credits, or where to get help or a newer version.",
+    inputSchema: {},
+    annotations: READ_ONLY,
+  },
+  guard(async () =>
+    json({
+      ...ABOUT,
+      running: {
+        node: process.version,
+        platform: `${process.platform}-${process.arch}`,
+        granted_folders: dirs.length,
+        published_datasets: store.catalog.length,
+      },
+    }),
+  ),
+);
 
 server.registerTool(
   "list_datasets",

@@ -2,7 +2,7 @@
 // over stdio, call every tool. Covers the two paths that matter — a LOCAL
 // .rete read lazily off disk, and a PUBLISHED one read over HTTP Range.
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -51,6 +51,7 @@ test("serves the declared tools", async (t) => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
+    "about",
     "build_rete",
     "cancel_query",
     "dataset_card",
@@ -75,6 +76,23 @@ test("serves the declared tools", async (t) => {
     "start_query",
     "validate_shacl",
   ]);
+});
+
+test("says which version it is, who made it, and what it bundles", async (t) => {
+  const client = await connect(t, await fixture());
+  const about = payload(await client.callTool({ name: "about", arguments: {} }));
+  const manifest = JSON.parse(await readFile(join(here, "..", "build", "manifest.json"), "utf8"));
+  assert.equal(about.version, manifest.version);
+  assert.match(about.build.date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(about.author.name, "Carlos Vivar Rios");
+  assert.equal(about.cite.doi, "10.5281/zenodo.21546287");
+  assert.equal(about.links.repository, "https://github.com/caviri/rete");
+  const cytoscape = about.credits.find((c) => c.name === "cytoscape");
+  assert.equal(cytoscape.license, "MIT");
+  assert.match(cytoscape.version, /^\d+\.\d+\.\d+$/);
+  assert.ok(about.credits.some((c) => c.name === "@dagrejs/dagre"));
+  // The agent reads the version without a call, too.
+  assert.match(client.getInstructions(), new RegExp(`This is rete-graphs ${manifest.version.replaceAll(".", "\\.")}`));
 });
 
 test("queries a local graph lazily, by file name", async (t) => {
