@@ -3,8 +3,9 @@
 // sandboxed iframe, gets the tool's input and result, and its tool calls go
 // through the bridge to a real server process. Needs Chromium, so it runs only
 // with RETE_UI_TEST=1 (the Playwright image has it; see clients/mcpb/README.md).
-// RETE_UI_SHOT=<path> also saves a screenshot.
+// RETE_UI_SHOT=<path> also saves screenshots.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -17,20 +18,26 @@ import { fixture } from "./view-fixture.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(here, "..", "build", "server", "index.mjs");
 const enabled = process.env.RETE_UI_TEST === "1";
+const skip = !enabled && "set RETE_UI_TEST=1 (needs Chromium)";
 
 const KNOWS =
   "PREFIX ex: <https://example.org/> CONSTRUCT { ?a ex:knows ?b . ?a a ?t } WHERE { ?a ex:knows ?b ; a ?t }";
 
-test("the graph view works in a sandboxed iframe behind an MCP Apps host", { skip: !enabled && "set RETE_UI_TEST=1 (needs Chromium)" }, async (t) => {
+/**
+ * A page that hosts the view in a sandboxed iframe, as Claude Desktop does,
+ * once Claude has called graph_view with `args`. What the view sends the
+ * model lands in `toModel` (context updates) and `messages` (chat messages).
+ */
+async function host(t, args) {
   const { chromium } = await import("playwright");
   const { build } = await import("esbuild");
 
+  const dir = await fixture();
   const client = new Client({ name: "ui-host", version: "0" });
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: [SERVER, await fixture()] }));
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [SERVER, dir] }));
   t.after(() => client.close());
 
   const html = (await client.readResource({ uri: "ui://rete/graph-view.html" })).contents[0].text;
-  const args = { dataset: "people", query: KNOWS, title: "who knows whom" };
   const result = await client.callTool({ name: "graph_view", arguments: args });
   const viewId = result.structuredContent.view_id;
 
@@ -90,6 +97,20 @@ test("the graph view works in a sandboxed iframe behind an MCP Apps host", { ski
     }
     assert.fail(`timed out waiting for ${what}`);
   };
+  const shot = async (suffix) => {
+    if (!process.env.RETE_UI_SHOT) return;
+    await page.waitForTimeout(600);
+    await page.locator("#f").screenshot({ path: process.env.RETE_UI_SHOT.replace(/\.png$/, `${suffix}.png`) });
+  };
+  return { client, dir, page, view, inView, until, toModel, messages, viewId, shot };
+}
+
+test("the graph view works in a sandboxed iframe behind an MCP Apps host", { skip }, async (t) => {
+  const { client, page, view, inView, until, toModel, messages, viewId, shot } = await host(t, {
+    dataset: "people",
+    query: KNOWS,
+    title: "who knows whom",
+  });
 
   // It loads its view, then names the nodes.
   await until(() => window.__reteView?.cy?.nodes().length === 3, null, "3 nodes drawn");
@@ -159,10 +180,42 @@ test("the graph view works in a sandboxed iframe behind an MCP Apps host", { ski
   for (let i = 0; i < 30 && !messages.length; i++) await page.waitForTimeout(100);
   assert.match(messages.at(-1).content[0].text, /tell me about .*Ada Lovelace/);
 
-  if (process.env.RETE_UI_SHOT) {
-    await inView(() => window.__reteView.cy.$(":selected").unselect());
-    await view.locator("#fit").click();
-    await page.waitForTimeout(600);
-    await page.locator("#f").screenshot({ path: process.env.RETE_UI_SHOT });
-  }
+  await inView(() => window.__reteView.cy.$(":selected").unselect());
+  await view.locator("#fit").click();
+  await shot("");
+});
+
+test("a file attached to the chat opens when the user chooses it in the view", { skip }, async (t) => {
+  const { dir, page, view, inView, until, toModel, messages, shot } = await host(t, {
+    dataset: "/mnt/user-data/uploads/talks.rete",
+  });
+
+  // Claude's copy is out of reach: the view asks the user for the file.
+  await until(() => !document.getElementById("awaiting").hidden, null, "the request for the file");
+  assert.equal(await view.locator("#awaiting-file").textContent(), "talks.rete");
+  assert.match(await view.locator("#status-main").textContent(), /waiting for talks.rete/);
+  await shot("-attachment");
+
+  // The user chooses it on their computer (here: the fixture's people.rete).
+  const bytes = await readFile(join(dir, "people.rete"));
+  await view.locator("#file-input").setInputFiles({ name: "talks.rete", mimeType: "application/octet-stream", buffer: bytes });
+  await until(() => window.__reteView.dataset === "chat:talks" && window.__reteView.cy.nodes().length > 0, null, "the file drawn");
+  assert.ok(await view.locator("#awaiting").isHidden());
+  // Claude asked for it, so the view tells Claude, which carries on.
+  for (let i = 0; i < 30 && !messages.length; i++) await page.waitForTimeout(100);
+  assert.match(messages.at(-1).content[0].text, /^I opened talks.rete in graph view v\d+: it is dataset "chat:talks" \(17 statements\)/);
+
+  // A file dropped on the view opens there too; Claude learns of it quietly.
+  await inView(() => {
+    const files = new DataTransfer();
+    files.items.add(new File(["@prefix ex: <https://example.org/> .\nex:x ex:p ex:y .\n"], "dropped.ttl"));
+    for (const type of ["dragenter", "dragover", "drop"]) {
+      document.dispatchEvent(new DragEvent(type, { dataTransfer: files, bubbles: true, cancelable: true }));
+    }
+  });
+  await until(() => window.__reteView.dataset === "chat:dropped" && window.__reteView.cy.nodes().length === 2, null, "the dropped file");
+  assert.ok(await view.locator("#dropzone").isHidden());
+  for (let i = 0; i < 30 && !toModel.length; i++) await page.waitForTimeout(100);
+  assert.match(toModel.at(-1).content[0].text, /the user opened dropped.ttl: the view now shows dataset "chat:dropped"/);
+  assert.equal(messages.length, 1, "no message for a file Claude did not ask for");
 });

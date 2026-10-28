@@ -10,12 +10,18 @@
 // as a numbered patch, which the view collects on its next sync — about every
 // second while it is shown — together with what the user selected, which
 // graph_view_state reports back to Claude.
+//
+// A view also takes a file from the user — chosen or dropped in it, sent here
+// in parts (graph_view_upload). That is how a file attached to the chat reaches
+// the extension at all: Claude's copy is in its own sandbox, out of reach.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { RESOURCE_MIME_TYPE, registerAppResource, registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
 import { Term } from "rete-graph";
+
+import { AttachmentError, uploadLimit } from "./graphs.mjs";
 
 const VIEW_URI = "ui://rete/graph-view.html";
 const MAX_NODES = 1500; // per view; more is unreadable on a canvas anyway
@@ -26,6 +32,9 @@ const MAX_LOG = 300; // patches kept for views that are behind
 const WAIT_MS = 35_000; // a view call answers before the client's 60 s limit
 const NEIGHBOURS = 150; // statements per direction when a node is expanded
 const LABEL_BATCH = 200;
+// What a file opened in a view shows first, unless Claude asked for a query.
+const SAMPLE = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 300";
+const mb = (n) => `${(n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 
 const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const LABELS = [
@@ -69,6 +78,8 @@ class View {
     this.ui = null; // what the view last reported: selection, options, …
     this.seenAt = null; // when the view last synced
     this.status = "";
+    this.awaiting = null; // { file, key }: a chat attachment the view asks the user for
+    this.then = null; // what to show once that file is open: { query, iri }
     this.touchedAt = Date.now();
   }
 
@@ -97,6 +108,7 @@ class View {
       edges: [...this.edges.values()],
       table: this.table,
       status: this.status,
+      awaiting: this.awaiting,
     };
   }
 
@@ -266,10 +278,17 @@ const iriToken = (iri) => {
  * Register the graph view: its UI resource, the three tools Claude uses, and
  * the app-only tools the view uses.
  */
-export function registerGraphViews({ server, store, jobs, here, guard, json, UsageError, dataset }) {
+export function registerGraphViews({ server, store, jobs, here, guard, json, UsageError, dataset, capabilities }) {
   const views = new Map();
+  const uploads = new Map(); // view id -> the file it is receiving: { name, size, bytes, received }
   let seq = 0;
   let html = null;
+
+  /** A view's dataset — none yet while it waits for the user to open a file. */
+  const datasetOf = (view) => {
+    if (view.dataset) return view.dataset;
+    throw new UsageError(`graph view ${view.id} is still waiting for the user to open ${view.awaiting?.file ?? "a file"} in it`);
+  };
 
   /** Run a query on a worker for a view; settles with the job, done or still running after `waitMs`. */
   async function run(name, query, { variable, keys, waitMs = WAIT_MS } = {}) {
@@ -331,7 +350,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
 
   /** Run `query` into `view`; a query still running at the deadline lands when it finishes. */
   async function query(view, text, mode) {
-    const job = await run(view.dataset, text);
+    const job = await run(datasetOf(view), text);
     if (job.state !== "done") {
       view.status = "running a query…";
       view.patch({ op: "status", status: view.status });
@@ -353,8 +372,8 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
   async function expand(view, iri) {
     const node = iriToken(iri);
     const [out, inc] = await Promise.all([
-      run(view.dataset, `CONSTRUCT { ${node} ?p ?o } WHERE { ${node} ?p ?o } LIMIT ${NEIGHBOURS}`),
-      run(view.dataset, `CONSTRUCT { ?s ?p ${node} } WHERE { ?s ?p ${node} } LIMIT ${NEIGHBOURS}`),
+      run(datasetOf(view), `CONSTRUCT { ${node} ?p ?o } WHERE { ${node} ?p ?o } LIMIT ${NEIGHBOURS}`),
+      run(datasetOf(view), `CONSTRUCT { ?s ?p ${node} } WHERE { ?s ?p ${node} } LIMIT ${NEIGHBOURS}`),
     ]);
     const triples = [out, inc].flatMap((j) => (j.state === "done" ? j.env.triples : []));
     const added = view.add(graphOf(triples));
@@ -370,7 +389,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
     });
     if (!want.length) return { labelled: 0 };
     const preds = [...LABELS, RDF_TYPE].map((p) => `<${p}>`).join(", ");
-    const job = await run(view.dataset, `SELECT ?s ?p ?o WHERE { ?s ?p ?o FILTER(?p IN (${preds})) }`, {
+    const job = await run(datasetOf(view), `SELECT ?s ?p ?o WHERE { ?s ?p ?o FILTER(?p IN (${preds})) }`, {
       variable: "s",
       keys: want.slice(0, LABEL_BATCH),
     });
@@ -388,12 +407,64 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
     return { labelled: Object.keys(labels).length };
   }
 
+  /**
+   * A view for a chat attachment the extension cannot read: it asks the user
+   * to choose or drop the file, which graph_view_upload then brings here.
+   */
+  function awaitFile(error, { title, options, query: text, iri }) {
+    const view = openView(null, title ?? error.file, options);
+    view.awaiting = { file: error.file, key: error.key };
+    view.then = { query: text, iri };
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            `Graph view ${view.id} is waiting for ${error.file}: Claude's copy of it is in Claude's own ` +
+            "sandbox, out of this extension's reach, so the view asks the user to choose or drop the " +
+            "file. Tell them to. Once they do, it opens there" +
+            (text || iri ? " with what you asked for" : "") +
+            `, it is dataset "${error.key}" for every tool (the path you were given works too), and the ` +
+            `view says so in the conversation. graph_view_state({view_id: "${view.id}"}) shows whether it is open yet.`,
+        },
+      ],
+      structuredContent: summary(view),
+    };
+  }
+
+  /** A file the user opened in a view, whole: it becomes a chat graph, and the view shows it. */
+  async function opened(view, name, bytes) {
+    const wasAwaiting = view.awaiting;
+    // An awaited attachment keeps its own name, so the sandbox path Claude has resolves to it.
+    const entry = await store.loadFile(wasAwaiting?.file ?? name, bytes);
+    const { graph } = await store.graph(entry.source.key);
+    const then = view.then ?? {};
+    view.dataset = entry.source.key;
+    view.awaiting = null;
+    view.then = null;
+    if (!wasAwaiting) view.title = name;
+    view.clear();
+    view.status = "";
+    view.patch({ op: "dataset", dataset: view.dataset, title: view.title });
+    try {
+      if (then.query) await query(view, then.query, "replace");
+      else if (then.iri) await expand(view, then.iri);
+      else await query(view, SAMPLE, "replace");
+    } catch (error) {
+      // The file is open all the same; the view says what went wrong.
+      view.status = String(error?.message ?? error).split("\n")[0];
+      view.patch({ op: "status", status: view.status });
+    }
+    return { dataset: view.dataset, statements: graph.info().quads, file: name, awaited: Boolean(wasAwaiting) };
+  }
+
   const summary = (view) => ({
     view_id: view.id,
     dataset: view.dataset,
     nodes: view.nodes.size,
     edges: view.edges.size,
     table_rows: view.table?.rows.length ?? 0,
+    ...(view.awaiting ? { awaiting: view.awaiting.file } : {}),
   });
 
   /** What the user has done in the view, as it last reported. */
@@ -434,7 +505,9 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
         "(by rdf:type, namespace or a predicate) and hide layers, change the layout, zoom, search, " +
         "expand a node by double-clicking it, and switch to a table. Keep queries to a few hundred " +
         "nodes (a LIMIT). Answers with a view_id: change the open view with graph_view_update and " +
-        "read what the user selected with graph_view_state.",
+        "read what the user selected with graph_view_state. Also the way to open a file attached " +
+        "to the chat (a path like /mnt/user-data/uploads/…, which this extension cannot read): pass " +
+        "that path as dataset, and the view asks the user to choose or drop the file.",
       inputSchema: {
         dataset,
         query: z.string().optional().describe("SPARQL CONSTRUCT or SELECT whose results to show"),
@@ -446,7 +519,13 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       _meta: { ui: { resourceUri: VIEW_URI } },
     },
     guard(async ({ dataset: name, query: text, iri, title, options = {} }) => {
-      const source = await store.resolve(name);
+      let source;
+      try {
+        source = await store.resolve(name);
+      } catch (error) {
+        if (error instanceof AttachmentError) return awaitFile(error, { title, options, query: text, iri });
+        throw error;
+      }
       const view = openView(source.key, title ?? (iri ? localName(String(iri).replace(/[<>]/g, "")) : "graph"), options);
       let note = "";
       if (text) {
@@ -599,11 +678,17 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
     },
     guard(async ({ view_id, text, since: v }) => {
       const view = viewOf(view_id);
+      // The header says which index there is to search, before a giant graph is opened for nothing.
+      const caps = await capabilities(await store.resolve(datasetOf(view)));
+      if (caps && !caps.name_search && !caps.full_text_search) {
+        return json({ ...view.since(v), found: 0, note: `${view.dataset} has no name index to search — ask Claude to find it with a query` });
+      }
       const { graph } = await store.graph(view.dataset);
       const nodes = [];
-      for (const { label: l, subject } of graph.prefixSearch(text, 20)) {
+      const hits = !caps || caps.name_search ? graph.prefixSearch(text, 20) : graph.textSearch(text, { limit: 20 }).map((subject) => ({ subject }));
+      for (const { label: l, subject } of hits) {
         const iri = String(subject).replace(/^<|>$/g, "");
-        nodes.push({ id: `<${iri}>`, iri, kind: "iri", label: l, types: [], props: [] });
+        nodes.push({ id: `<${iri}>`, iri, kind: "iri", label: l ?? null, types: [], props: [] });
       }
       const added = view.add({ nodes, edges: [] });
       view.patch({ op: "add", nodes: added.nodes, edges: [], highlight: nodes.map((n) => n.id) });
@@ -624,6 +709,55 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       const view = viewOf(view_id);
       await label(view, ids);
       return json(view.since(v));
+    }),
+  );
+
+  registerAppTool(
+    server,
+    "graph_view_upload",
+    {
+      title: "Graph view: open a file",
+      description:
+        "A file the user chose or dropped in the view, in base64 parts sent in order: the last one " +
+        "opens it as a chat graph and shows it in the view.",
+      inputSchema: {
+        view_id: z.string(),
+        name: z.string().describe("the file's name"),
+        size: z.number().int().min(1).describe("the whole file's bytes"),
+        offset: z.number().int().min(0).describe("where this part starts"),
+        data: z.string().describe("this part, base64"),
+        since,
+      },
+      _meta: appOnly,
+    },
+    guard(async ({ view_id, name, size, offset, data, since: v }) => {
+      const view = viewOf(view_id);
+      let up = uploads.get(view.id);
+      if (offset === 0) {
+        const max = uploadLimit(view.awaiting?.file ?? name);
+        if (size > max) {
+          throw new UsageError(
+            `${name} is ${mb(size)}, more than the ${mb(max)} a file opened in a view may be. Put it in a ` +
+              "Graph folder instead (the extension's settings): there it is read lazily, at any size.",
+          );
+        }
+        up = { name, size, bytes: new Uint8Array(new SharedArrayBuffer(size)), received: 0 };
+        uploads.set(view.id, up);
+      }
+      if (!up || up.name !== name || up.size !== size || offset !== up.received) {
+        throw new UsageError(`the parts of ${name} came out of order (at ${offset}, expected ${up?.received ?? 0}) — open it again`);
+      }
+      const part = Buffer.from(data, "base64");
+      if (offset + part.length > size) {
+        uploads.delete(view.id);
+        throw new UsageError(`${name} came out longer than its ${size} bytes — open it again`);
+      }
+      up.bytes.set(part, offset);
+      up.received += part.length;
+      if (up.received < size) return json({ received: up.received, size });
+      uploads.delete(view.id);
+      const done = await opened(view, name, up.bytes);
+      return json({ ...view.since(v), ...done });
     }),
   );
 }

@@ -42,33 +42,65 @@ No `node_modules` in the archive, no native modules, nothing to install.
 | Tool | What it does |
 | --- | --- |
 | `list_datasets` | Local files + published catalogue, optionally filtered |
-| `dataset_card` | The file's embedded self-description (2 small reads, any size) |
-| `dataset_schema` | Classes and relations with counts, from the baked pyramid |
+| `dataset_card` | The file's embedded self-description, and its `capabilities`: schema, name search, full-text search (2 small reads, any size) |
+| `dataset_schema` | Classes and relations with counts, from the baked pyramid — or, in a file built without one, the lists its card carries |
 | `example_queries` | Runnable SPARQL the dataset ships with |
 | `sparql_query` | SELECT / ASK / CONSTRUCT / DESCRIBE, `reason=true` for OWL 2 QL, `union_default_graph=true` to match every named graph from a pattern outside `GRAPH`; waits up to 40 s, then answers with a `job_id` while the query keeps running. A FILTER type error (CONTAINS on an IRI, …) comes back as `warnings` plus a plain-language line |
 | `start_query` | The same, without waiting: a `job_id` at once. Both take `partition_by`, which runs a long extraction in resumable chunks |
 | `query_status` | Waits up to 45 s for a job; state, reads, bytes, elapsed; the first rows once done. No `job_id`: every job held |
 | `query_result` | A finished job's rows by cursor (up to 1000 a page), or all of them to a `.csv` / `.tsv` / `.json` / `.jsonl` / `.nt` file in a granted folder (`save_as`; never overwrites) |
 | `cancel_query` | Stops a job by terminating its worker |
-| `find_entities` | Label-prefix + full-text search → entity IRIs |
+| `find_entities` | Label-prefix + full-text search → entity IRIs; a graph with neither index answers at once, saying so and how to find the entity by SPARQL |
 | `describe_entity` | Every statement about one IRI, both directions |
 | `validate_shacl` | SHACL Core report; only the shapes' targets are read |
 | `build_rete` | RDF text (Turtle, TriG, N-Triples, N-Quads) → a new `.rete` in a granted folder, offline; `quoted_triple_syntax: "rdf12"` reads RDF 1.2 Turtle/TriG (default `rdf-star`, as `rete build`) |
 | `load_rdf` | RDF shared in the chat → a graph held in memory, `chat:<name>`, no folder needed; `append` adds a part, `path` reads a file in a granted folder (also a binary `.jelly` file), `save_as` keeps it as a `.rete` |
 
 Every `dataset` argument accepts a local file name or path, a catalogue key,
-an `https://` URL to any published `.rete`, or `chat:<name>`. Local files win
-a name clash.
+an `https://` URL to any published `.rete`, `chat:<name>`, or the sandbox
+path of a file attached to the chat (below). Local files win a name clash.
 
 `dataset_card` includes `signals.quoted_triples` — whether the graph holds quoted
 triples and the surfaces `rete export` can write them in — measured from the
 file's header, so it answers for every published file.
 
+### What each graph supports
+
+Not every `.rete` carries every index. The largest published graphs are built
+by the low-memory builder, which writes no schema pyramid — so no schema and no
+label index for names — and only files built with `--text-index` can be searched
+by word. `src/capabilities.mjs` reads what a file has from its header and its
+card (two small reads, cached per file version), before anything opens it:
+
+- `dataset_card` reports it as `capabilities` and one plain `supports` line, and
+  now reads the card itself that way: crossref's card used to cost the full
+  open, 106 MB and 17 s.
+- `dataset_schema` on a file without a pyramid answers from the class, class-link
+  and predicate lists the card carries, marked `from: "card"`; with no card
+  either, it says how to look at the data without reading all of it.
+- `find_entities` runs only the searches the file can answer and names them
+  (`searched`). With neither index it answers at once that nothing was searched
+  and how to find the entity by SPARQL, rather than "nothing matched" after
+  opening the graph for nothing. The graph view's search box does the same.
+- `list_datasets` marks the published graphs built with a text index.
+
 ### Files shared in the chat
 
 Claude Desktop does not hand chat attachments to an extension, and the path
 the model sees for an upload (`/mnt/user-data/uploads/…`) is in Claude's own
-sandbox, not on this machine. So the model passes an attached or pasted RDF
+sandbox, not on this machine. Every tool still takes that path:
+
+- A file of that name in a granted folder, or one the user already opened in a
+  graph view, is used.
+- Otherwise the tool says how to get it here: `graph_view` with that path opens
+  a view that asks the user to choose or drop the file. The view sends it to
+  the server in 1 MB parts (`graph_view_upload`, app-only), so the bytes never
+  pass through the conversation; it becomes `chat:<name>` (a `.rete` held as
+  it is, up to 512 MB; RDF text built as below), the view shows what Claude
+  asked for, and posts a message saying the file is open. Any view also has an
+  **Open file…** button, and takes a file dropped on it.
+
+RDF text can also travel as text: the model passes an attached or pasted RDF
 file's text to `load_rdf`:
 
 - It is built in-wasm into a graph held in memory, shared with the query
@@ -83,7 +115,7 @@ file's text to `load_rdf`:
 - Reloading a name without `append` replaces the graph; the workers key it by
   a generation, so none answers from the old bytes.
 - CSV, JSON, RDF/XML and JSON-LD are the model's to convert to Turtle first; a
-  `.rete` is binary and has to come through a granted folder or a URL.
+  `.rete` is binary and comes through a graph view, a granted folder or a URL.
 
 ### Long queries: jobs
 

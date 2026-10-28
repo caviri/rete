@@ -34,6 +34,8 @@
       </select>
     </label>
     <input id="search" type="search" placeholder="Search · Enter finds in the graph" autocomplete="off">
+    <button type="button" id="open-file" title="Open a .rete or RDF file from this computer in this view">Open file…</button>
+    <input type="file" id="file-input" accept=".rete,.ttl,.turtle,.nt,.ntriples,.nq,.nquads,.trig" hidden>
     <span class="grow"></span>
     <div class="zoom">
       <button type="button" id="zoom-out" title="Zoom out">−</button>
@@ -65,6 +67,15 @@
         <div class="body"><p class="hint">Click a node to see it. Double-click to expand it.</p></div>
       </section>
     </aside>
+    <div id="awaiting" hidden>
+      <div class="card">
+        <p class="big">Open <b id="awaiting-file">the file</b> here</p>
+        <p>Claude keeps files attached to the chat in its own sandbox, which this extension cannot reach. Choose the file on this computer, or drop it here: it goes straight to the extension.</p>
+        <button type="button" id="awaiting-choose" class="primary">Choose file…</button>
+        <p id="awaiting-progress"></p>
+      </div>
+    </div>
+    <div id="dropzone" hidden><div>Drop to open it in this view</div></div>
   </main>
   <footer id="status"><span id="status-main">Waiting for the query…</span><span id="status-note"></span></footer>
 </div>

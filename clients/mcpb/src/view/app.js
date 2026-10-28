@@ -3,7 +3,9 @@
 // elements, applies the numbered patches the server records — its own
 // expansions and searches, and the changes Claude makes with
 // graph_view_update — and reports what the user selected and set, which
-// Claude reads with graph_view_state.
+// Claude reads with graph_view_state. It also takes a file from the user — the
+// way a chat attachment, which Claude keeps in its own sandbox, reaches the
+// extension: chosen or dropped here, sent to the server in parts.
 import { App } from "@modelcontextprotocol/ext-apps/app-with-deps";
 import cytoscape from "cytoscape";
 
@@ -12,6 +14,7 @@ const OTHER = "#a8a8a8";
 const MAX_PROPS = 40; // shown in the selection panel
 const MAX_LITERAL_NODES = 12; // per node, with literals as nodes
 const MAX_TABLE = 1000; // rows drawn at once
+const PART = 1024 * 1024; // bytes of a file per graph_view_upload call
 
 const S = {
   app: null,
@@ -32,6 +35,8 @@ const S = {
   selection: [],
   search: "",
   status: "",
+  awaiting: null, // { file }: the chat attachment this view asks the user to open
+  uploading: false,
   labelled: new Set(), // node ids whose labels were asked for
   sort: { col: null, desc: false },
   lastActivity: Date.now(),
@@ -122,8 +127,9 @@ function reportState() {
 
 function apply(response) {
   if (response.snapshot) loadSnapshot(response.snapshot);
-  for (const patch of response.patches ?? []) applyPatch(patch);
-  if (typeof response.version === "number") S.version = response.version;
+  // Two answers can carry the same patches (a sync and a search, say): each applies once.
+  for (const patch of response.patches ?? []) if (!(patch.version <= S.version)) applyPatch(patch);
+  if (typeof response.version === "number") S.version = response.snapshot ? response.version : Math.max(S.version, response.version);
   renderStatus();
 }
 
@@ -144,6 +150,8 @@ function loadSnapshot(snap) {
   S.dataset = snap.dataset ?? S.dataset;
   Object.assign(S.options, snap.options ?? {});
   S.status = snap.status ?? "";
+  S.awaiting = snap.awaiting ?? null;
+  renderAwaiting();
   syncControls();
   rebuild(true);
   requestLabels();
@@ -206,6 +214,19 @@ function applyPatch(p) {
       break;
     case "status":
       S.status = p.status ?? "";
+      break;
+    case "dataset":
+      // A file the user opened: the view starts over on it.
+      S.dataset = p.dataset;
+      if (p.title) S.title = p.title;
+      S.awaiting = null;
+      S.nodes = new Map();
+      S.edges = new Map();
+      S.table = null;
+      S.hiddenGroups.clear();
+      S.hiddenNodes.clear();
+      renderAwaiting();
+      rebuild(true);
       break;
   }
   requestLabels();
@@ -610,8 +631,60 @@ function setNote(text) {
 }
 
 function renderStatus() {
+  if (S.awaiting) {
+    $("status-main").textContent = `waiting for ${S.awaiting.file}${S.viewId ? ` · view ${S.viewId}` : ""}`;
+    return;
+  }
   const parts = [S.title, S.dataset, `${S.nodes.size} nodes`, `${S.edges.size} edges`].filter(Boolean);
   $("status-main").textContent = `${parts.join(" · ")}${S.viewId ? ` · view ${S.viewId}` : ""}${S.status ? ` — ${S.status}` : ""}`;
+}
+
+function renderAwaiting() {
+  $("awaiting").hidden = !S.awaiting;
+  if (S.awaiting) $("awaiting-file").textContent = S.awaiting.file;
+}
+
+// --- a file from the user ------------------------------------------------------------------
+
+/** base64 of bytes, a slice at a time: String.fromCharCode takes no megabyte at once. */
+function base64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/** Send a file the user chose or dropped to the server, in parts; the view then shows it. */
+async function openFile(file) {
+  if (!file || !S.viewId || S.uploading) return;
+  const awaited = S.awaiting;
+  const say = (text) => {
+    setNote(text);
+    $("awaiting-progress").textContent = text;
+  };
+  if (!file.size) return say(`${file.name} is empty`);
+  S.uploading = true;
+  try {
+    let r = {};
+    for (let offset = 0; offset < file.size; ) {
+      const part = new Uint8Array(await file.slice(offset, offset + PART).arrayBuffer());
+      r = await call("graph_view_upload", { view_id: S.viewId, name: file.name, size: file.size, offset, data: base64(part), since: S.version });
+      offset += part.length;
+      say(`opening ${file.name}… ${Math.round((100 * offset) / file.size)}%`);
+    }
+    apply(r);
+    say(`${file.name}: ${r.statements} statements`);
+    // Claude asked for this file: tell it, so it carries on. Otherwise let it know quietly.
+    const text = awaited
+      ? `I opened ${file.name} in graph view ${S.viewId}: it is dataset "${r.dataset}" (${r.statements} statements).`
+      : `In graph view ${S.viewId} the user opened ${file.name}: the view now shows dataset "${r.dataset}" (${r.statements} statements).`;
+    if (awaited) await S.app.sendMessage({ role: "user", content: [{ type: "text", text }] }).catch(() => {});
+    else if (S.app.getHostCapabilities()?.updateModelContext) await S.app.updateModelContext({ content: [{ type: "text", text }] }).catch(() => {});
+  } catch (error) {
+    say(`open: ${error.message}`);
+  } finally {
+    S.uploading = false;
+    $("file-input").value = "";
+  }
 }
 
 function syncControls() {
@@ -695,7 +768,7 @@ function wire() {
     try {
       const r = await call("graph_view_search", { view_id: S.viewId, text: search.value.trim(), since: S.version });
       apply(r);
-      setNote(`${r.found ?? 0} found in the graph`);
+      setNote(r.note ?? `${r.found ?? 0} found in the graph`);
     } catch (error) {
       setNote(`search: ${error.message}`);
     }
@@ -741,6 +814,32 @@ function wire() {
         .sendMessage({ role: "user", content: [{ type: "text", text: `In graph view ${S.viewId} on ${S.dataset}: tell me about ${about}.` }] })
         .catch((error) => setNote(`ask: ${error.message}`));
     }
+  });
+
+  const choose = () => $("file-input").click();
+  $("open-file").addEventListener("click", choose);
+  $("awaiting-choose").addEventListener("click", choose);
+  $("file-input").addEventListener("change", (e) => openFile(e.target.files?.[0]));
+  // A file dropped anywhere on the view opens in it.
+  let dragging = 0;
+  const carriesFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes("Files");
+  document.addEventListener("dragenter", (e) => {
+    if (!carriesFiles(e)) return;
+    e.preventDefault();
+    dragging += 1;
+    $("dropzone").hidden = false;
+  });
+  document.addEventListener("dragover", (e) => carriesFiles(e) && e.preventDefault());
+  document.addEventListener("dragleave", () => {
+    dragging = Math.max(0, dragging - 1);
+    if (!dragging) $("dropzone").hidden = true;
+  });
+  document.addEventListener("drop", (e) => {
+    if (!carriesFiles(e)) return;
+    e.preventDefault();
+    dragging = 0;
+    $("dropzone").hidden = true;
+    openFile(e.dataTransfer.files?.[0]);
   });
 
   $("table-filter").addEventListener("input", debounce(renderTable, 150));

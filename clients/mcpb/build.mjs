@@ -108,6 +108,7 @@ const datasets = source.datasets.map((d) => {
     license: m.license,
     source: m.source,
     tags: (extra[d.key] ?? {}).tags,
+    textIndex: d.textIndex || undefined, // built with --text-index: full-text search
     examples: (examples[d.key] ?? [])
       .filter((e) => e.q)
       .map((e) => ({ title: e.label, tip: e.tip, sparql: e.q })),

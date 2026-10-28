@@ -2,6 +2,7 @@
 // tools/list and resources/read, and the tools the view and Claude call. The
 // view itself (the HTML) is driven in a real browser by view-ui.test.mjs.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -34,7 +35,7 @@ test("the host sees a UI tool, its resource, and app-only tools", async (t) => {
   const { tools } = await client.listTools();
   const byName = Object.fromEntries(tools.map((x) => [x.name, x]));
   assert.equal(byName.graph_view._meta.ui.resourceUri, "ui://rete/graph-view.html");
-  for (const name of ["graph_view_sync", "graph_view_expand", "graph_view_search", "graph_view_labels"]) {
+  for (const name of ["graph_view_sync", "graph_view_expand", "graph_view_search", "graph_view_labels", "graph_view_upload"]) {
     assert.deepEqual(byName[name]._meta.ui.visibility, ["app"], name);
   }
   // Claude's own tools: no UI of their own, visible to the model.
@@ -125,6 +126,80 @@ test("SELECT rows become nodes, links and properties; search adds entities", asy
   // An entity's neighbourhood as the starting point.
   const around = await call("graph_view", { dataset: "people", iri: "https://example.org/charles" });
   assert.ok(around.structuredContent.nodes >= 3);
+});
+
+test("a file attached to the chat: found by its name, or handed over in a view", async (t) => {
+  const dir = await fixture();
+  const { client, call, data } = await connect(t, dir);
+  const refusal = async (name, args) => {
+    const r = await client.callTool({ name, arguments: args });
+    assert.ok(r.isError, `${name} should have failed`);
+    return r.content[0].text;
+  };
+
+  // Claude's sandbox path for a file the user also keeps in a Graph folder.
+  const kept = await data("dataset_card", { dataset: "/mnt/user-data/uploads/people.rete" });
+  assert.equal(kept.dataset, "people");
+
+  // One that is not here: every tool says how to get it.
+  const path = "/mnt/user-data/uploads/talks.rete";
+  const why = await refusal("sparql_query", { dataset: path, query: "ASK { ?s ?p ?o }" });
+  assert.match(why, /attached to the chat: Claude's copy of it is in Claude's own sandbox/);
+  assert.match(why, /call graph_view with dataset "\/mnt\/user-data\/uploads\/talks.rete"/);
+  assert.match(why, /"chat:talks"/);
+
+  // graph_view opens a view that asks the user for it…
+  const waiting = await call("graph_view", { dataset: path, query: EDGES });
+  const { view_id } = waiting.structuredContent;
+  assert.equal(waiting.structuredContent.awaiting, "talks.rete");
+  assert.match(waiting.content[0].text, /waiting for talks.rete/);
+  const first = await data("graph_view_sync", { view_id, since: 0 });
+  assert.deepEqual(first.snapshot.awaiting, { file: "talks.rete", key: "chat:talks" });
+  assert.match(await refusal("graph_view_update", { view_id, query: EDGES }), /still waiting for the user to open talks.rete/);
+
+  // …and the view sends it in parts.
+  const bytes = await readFile(join(dir, "people.rete"));
+  const cut = Math.floor(bytes.length / 2);
+  const part = (offset, end) => ({ view_id, name: "talks.rete", size: bytes.length, offset, data: bytes.subarray(offset, end).toString("base64"), since: first.version });
+  assert.match(await refusal("graph_view_upload", part(cut, bytes.length)), /out of order/);
+  assert.deepEqual(await data("graph_view_upload", part(0, cut)), { received: cut, size: bytes.length });
+  const done = await data("graph_view_upload", part(cut, bytes.length));
+  assert.equal(done.dataset, "chat:talks");
+  assert.equal(done.statements, 17);
+  assert.equal(done.awaited, true);
+  // The view had shown nothing yet, so it gets the whole of it: what Claude asked for.
+  assert.equal(done.snapshot.dataset, "chat:talks");
+  assert.equal(done.snapshot.awaiting, null);
+  assert.equal(done.snapshot.nodes.length, 3);
+
+  // From now on the sandbox path is the file, for every tool.
+  const count = await data("sparql_query", { dataset: path, query: "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }" });
+  assert.equal(Number(count.rows[0].n), 17);
+  const listed = await data("list_datasets", { source: "chat" });
+  assert.deepEqual(
+    listed.chat.map(({ key, format, bytes: n }) => ({ key, format, n })),
+    [{ key: "chat:talks", format: "rete", n: bytes.length }],
+  );
+  const state = await data("graph_view_state", { view_id });
+  assert.equal(state.dataset, "chat:talks");
+  assert.equal(state.awaiting, undefined);
+});
+
+test("a file the user opens in a view replaces what it shows", async (t) => {
+  const { client, call, data } = await connect(t, await fixture());
+  const { view_id } = (await call("graph_view", { dataset: "people", query: EDGES })).structuredContent;
+  const ttl = Buffer.from("@prefix ex: <https://example.org/> .\nex:x ex:p ex:y .\nex:y ex:p ex:z .\n");
+  const done = await data("graph_view_upload", { view_id, name: "extra.ttl", size: ttl.length, offset: 0, data: ttl.toString("base64"), since: 0 });
+  assert.equal(done.dataset, "chat:extra");
+  assert.equal(done.awaited, false);
+  assert.equal(done.snapshot.dataset, "chat:extra");
+  assert.equal(done.snapshot.title, "extra.ttl");
+  assert.equal(done.snapshot.nodes.length, 3, "a sample of the new file, nothing of the old one");
+
+  const junk = Buffer.from("not a graph at all");
+  const r = await client.callTool({ name: "graph_view_upload", arguments: { view_id, name: "junk.rete", size: junk.length, offset: 0, data: junk.toString("base64"), since: 0 } });
+  assert.ok(r.isError);
+  assert.match(r.content[0].text, /junk.rete is not a .rete file this can read/);
 });
 
 test("bad calls say what is wrong", async (t) => {

@@ -23,6 +23,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Term, build } from "rete-graph";
 
+import { CardTier, examplesOf, supportLine } from "./capabilities.mjs";
 import { GraphStore, UsageError, formatOf } from "./graphs.mjs";
 import { JobManager } from "./jobs.mjs";
 import { PartitionRuns } from "./partition.mjs";
@@ -53,8 +54,9 @@ Three kinds of dataset are reachable, and every tool's \`dataset\` argument
 takes any of them — plus a full https:// URL to any published .rete:
   * LOCAL — .rete files in the folders the user granted this extension.
   * PUBLISHED — the public catalogue (data.graphplaza.com), read over HTTP.
-  * CHAT — RDF the user shared in this conversation, loaded with load_rdf as
-    "chat:<name>" and held in memory until the extension restarts.
+  * CHAT — files the user shared in this conversation, as "chat:<name>": RDF
+    loaded with load_rdf, or a file the user opened in a graph view; held in
+    memory until the extension restarts.
 
 Recommended workflow:
 1. list_datasets — what is here, local and published. Descriptions are
@@ -63,8 +65,13 @@ Recommended workflow:
 2. dataset_card — the graph's own self-description: what it is, its licence,
    provenance, identity (creators, publisher, DOI, citation, when curated),
    counts, and how to query it well. Costs two small reads even on a 60 GB file.
+   Its \`capabilities\` say what THIS file supports: a schema, name search,
+   full-text search. Not every graph has them — the largest ones, built for
+   size, carry no schema pyramid and so no name index: find entities there by
+   identifier or a selective SPARQL pattern, not with find_entities.
 3. dataset_schema — the classes and the subject-class/predicate/object-class
-   relations, with counts. USE THESE IRIs EXACTLY; never invent a namespace.
+   relations, with counts (from the card's lists when the file has no schema
+   pyramid). USE THESE IRIs EXACTLY; never invent a namespace.
    Check here that the relation you need is in THIS graph before querying it:
    two graphs about the same things can carry different links (one holds
    citations, another only the bibliographic records).
@@ -85,20 +92,24 @@ Recommended workflow:
 9. load_rdf — make RDF shared in the chat queryable (below).
 
 Files the user shares in the chat:
-- Claude Desktop does not hand chat attachments to this extension, and a path
-  you may see for one (/mnt/user-data/uploads/…) is in Claude's own sandbox,
-  not on this machine. For RDF text — a .ttl, .nt, .nq or .trig file, or RDF
-  pasted into the message — call load_rdf(name: "<the file's name>",
-  rdf: <its full text, unchanged>), then pass "chat:<name>" as \`dataset\` to
-  any tool. Too long for one call: send it in parts, every part after the
-  first with append=true, each part ending where a statement ends.
+- The path you see for an attachment (/mnt/user-data/uploads/…) is in Claude's
+  own sandbox, not on the user's computer where this extension runs. Pass it
+  as \`dataset\` all the same: a file of that name the user keeps in a Graph
+  folder, or already opened in a graph view, is used.
+- Otherwise call graph_view(dataset: "<that path>") — for a .rete above all,
+  which is binary and cannot travel through the chat. The view asks the user
+  to choose or drop the file, which goes straight to the extension, not
+  through the conversation. Tell the user to do so; the view posts a message
+  when the file is open. From then on "chat:<name>" — and the path — works
+  with every tool. (Up to 512 MB; a larger file belongs in a Graph folder.)
+- RDF text — a .ttl, .nt, .nq or .trig file, or RDF pasted into the message —
+  can also go through load_rdf(name: "<the file's name>", rdf: <its full
+  text, unchanged>), then "chat:<name>" is the dataset. Too long for one call:
+  send it in parts, every part after the first with append=true, each part
+  ending where a statement ends — or open it through graph_view instead.
 - A table or document (CSV, JSON, RDF/XML, JSON-LD): convert it to Turtle
   yourself — one subject per record, IRIs minted under one base, a predicate
   per column — then load_rdf it.
-- A .rete file is binary and cannot travel through the chat: ask the user to
-  put it in a granted folder, or for its https:// URL. The same for an RDF
-  file too large to send: once it sits in a granted folder, load_rdf reads it
-  from there by \`path\`.
 - save_as keeps a chat graph as a .rete file in a granted folder.
 
 What a query costs — read this before a large extraction:
@@ -174,6 +185,8 @@ Graph views (shown in the conversation, where the client renders MCP Apps):
   what they see, update their view rather than opening another.
 - graph_view_state(view_id) says what the user selected, searched and set.
   Read it when they say "this", "these" or "the selected ones".
+- The user can open a file of their own in any view (Open file…, or by
+  dropping it there); the view then shows that file, as "chat:<name>".
 
 Every result carries \`stats\`: the bytes and requests actually read. Report
 them when the user asks how much data was touched — a good query over a huge
@@ -609,6 +622,7 @@ async function loadCatalog() {
 const dirs = allowedDirs();
 const store = new GraphStore({ allowedDirs: dirs, catalog: await loadCatalog() });
 const jobs = new JobManager(new URL("./worker.mjs", import.meta.url));
+const tier = new CardTier(store);
 // Checkpoints of partitioned queries: in the system's temp folder, so they
 // survive a restart of Claude Desktop without writing into the user's folders.
 const runs = new PartitionRuns(jobs, process.env.RETE_MCPB_RUNS || join(tmpdir(), "rete-mcpb", "partitions"));
@@ -640,9 +654,96 @@ const keysJob = z
 const dataset = z
   .string()
   .describe(
-    "a local .rete file name or path, a published catalogue key, an https:// .rete URL, or " +
-      "chat:<name> for RDF loaded from the chat with load_rdf",
+    "a local .rete file name or path, a published catalogue key, an https:// .rete URL, " +
+      "chat:<name> for a file shared in the chat (load_rdf, or opened in a graph view), or the " +
+      "/mnt/user-data/uploads/… path of a file attached to the chat",
   );
+
+/**
+ * A dataset's CARD tier — its card, and what its file supports — from two
+ * small reads however large the file; null when its header is not one the
+ * tier reads, and the tools open the graph as before.
+ */
+async function cardTier(source) {
+  try {
+    const t = await tier.of(source);
+    return t.readable ? t : null;
+  } catch {
+    return null; // a failed range read: opening the graph says what is wrong
+  }
+}
+
+/** The CARD tier's reads, shaped like statsOf's. */
+const tierStats = (t, source) =>
+  source.kind === "chat"
+    ? { where: source.where }
+    : {
+        where: source.where,
+        fileBytes: t.fileBytes,
+        bytesRead: t.stats.bytesRead,
+        requests: t.stats.requests,
+        fractionRead: t.fileBytes ? +(t.stats.bytesRead / t.fileBytes).toFixed(4) : null,
+      };
+
+const bareIri = (t) => (/^<.*>$/.test(t) ? t.slice(1, -1) : t);
+const gigabytes = (n) => (n ? ` (${(n / 1e9).toFixed(n < 1e10 ? 1 : 0)} GB)` : "");
+
+/** Where to start on a graph that lists none of its classes or predicates. */
+const lookFirst = (t) =>
+  "SELECT * WHERE { ?s ?p ?o } LIMIT 100 reads only the start of the file and shows how its " +
+  "subjects are described. Avoid DISTINCT, GROUP BY or COUNT over every triple: they read the " +
+  `whole file${gigabytes(t.fileBytes)}.`;
+
+/**
+ * dataset_schema for a file with no schema pyramid (the giant graphs, built
+ * by the low-memory builder): the classes, class links and predicates its
+ * card lists — counted when it was built — or, with none, where to start.
+ */
+function schemaFromCard(source, t, limit) {
+  const card = t.card ?? {};
+  const classes = (card.classes ?? []).map(([c, n]) => [bareIri(c), n]);
+  const relations = (card.class_links ?? []).map((l) => [bareIri(l.s_class), bareIri(l.predicate), bareIri(l.o_class), l.count]);
+  const predicates = (card.predicates ?? []).map(([p, n]) => [bareIri(p), n]);
+  const listed = classes.length + relations.length + predicates.length > 0;
+  return {
+    dataset: source.key,
+    from: "card",
+    classes: classes.slice(0, limit),
+    relations: relations.slice(0, limit),
+    predicates: predicates.slice(0, limit),
+    truncated: {
+      classes: Math.max(0, classes.length - limit),
+      relations: Math.max(0, relations.length - limit),
+      predicates: Math.max(0, predicates.length - limit),
+    },
+    capabilities: t.capabilities,
+    note: listed
+      ? "This file has no schema pyramid; these are the lists its card carries, counted when it " +
+        "was built (the most frequent ones). Use these IRIs exactly."
+      : `This file has no schema pyramid, and ${t.card ? "its card lists no classes or predicates" : "no card"}. ` +
+        lookFirst(t),
+    stats: tierStats(t, source),
+  };
+}
+
+/** find_entities on a graph with neither a label index nor a full-text index. */
+function noSearchIndex(source, t, text) {
+  const label = t.capabilities.label_predicate;
+  const words = JSON.stringify(String(text).toLowerCase());
+  return {
+    dataset: source.key,
+    hits: [],
+    searched: [],
+    capabilities: t.capabilities,
+    note:
+      `${source.key} has no name index and no full-text index, so nothing was searched — this ` +
+      "is not a \"no match\". Find the entity with SPARQL instead: best by an identifier (a DOI, " +
+      "ORCID, …) or a selective pattern; a label filter reads every label it passes, so pin it " +
+      `down first: ?s ${label ?? "rdfs:label"} ?l FILTER(CONTAINS(LCASE(STR(?l)), ${words})) with ` +
+      "?s narrowed by its class or a link, and a LIMIT.",
+    stats: tierStats(t, source),
+  };
+}
 
 // --- tools -----------------------------------------------------------------
 
@@ -655,7 +756,8 @@ server.registerTool(
       "folders) and the PUBLISHED catalogue, with size and triple count. Descriptions are " +
       `abridged unless a free-text query narrows the list to ${FULL_DESC} or fewer graphs — read ` +
       "a large graph's full description before querying it, since its caveats come last. " +
-      "dataset_card gives a graph's whole self-description.",
+      "dataset_card gives a graph's whole self-description and says what it supports (schema, " +
+      "name search, full-text search).",
     inputSchema: {
       query: z.string().optional().describe("free-text filter over key, label and description"),
       source: z
@@ -684,8 +786,8 @@ server.registerTool(
           .map((c) => ({
             key: c.source.key,
             format: c.format,
-            parts: c.parts,
-            rdf_bytes: c.size,
+            // A .rete opened whole has no RDF text, nor parts.
+            ...(c.format === "rete" ? {} : { parts: c.parts, rdf_bytes: c.size }),
             bytes: c.source.bytes.length,
             loaded: c.loadedAt,
           }));
@@ -703,6 +805,7 @@ server.registerTool(
       size: d.size,
       license: d.license,
       url: d.url,
+      ...(d.textIndex ? { full_text_search: true } : {}),
     }));
 
     return json({
@@ -727,12 +830,28 @@ server.registerTool(
       "The Dataset Card embedded in the .rete file itself: title, description, licence, " +
       "provenance and — when the publisher curated them — identity fields (version, creators " +
       "as ORCID IRIs, publisher as a ROR IRI, DOI, citation), plus counts and often example " +
-      "queries. Index-free — reads only the header and the card's byte range, so it is just " +
-      "as cheap on a multi-gigabyte graph.",
+      "queries — and what the file supports: a schema (dataset_schema), name search and " +
+      "full-text search (find_entities). Index-free — reads only the header and the card's " +
+      "byte range, so it is just as cheap on a multi-gigabyte graph.",
     inputSchema: { dataset },
     annotations: { ...READ_ONLY, openWorldHint: true },
   },
   guard(async ({ dataset: name }) => {
+    const resolved = await store.resolve(name);
+    const t = await cardTier(resolved);
+    if (t) {
+      return json({
+        dataset: resolved.key,
+        where: resolved.path ?? resolved.url ?? resolved.where,
+        card: t.card,
+        capabilities: t.capabilities,
+        supports: supportLine(t.capabilities),
+        note: t.card
+          ? undefined
+          : `this file carries no embedded card — ${t.capabilities.schema ? "dataset_schema lists its classes" : lookFirst(t)}`,
+        stats: tierStats(t, resolved),
+      });
+    }
     const { graph, source } = await store.graph(name);
     const card = graph.card();
     return json({
@@ -751,8 +870,9 @@ server.registerTool(
     title: "Dataset schema",
     description:
       "The graph's classes with instance counts, and its subject-class/predicate/object-class " +
-      "relations. Read from the file's baked schema pyramid, not by scanning. USE THE RETURNED " +
-      "IRIs EXACTLY when writing SPARQL — inventing a namespace is the classic silent-0-rows bug.",
+      "relations. Read from the file's baked schema pyramid, not by scanning; a file built without " +
+      "one answers with the class and predicate lists its card carries. USE THE RETURNED IRIs " +
+      "EXACTLY when writing SPARQL — inventing a namespace is the classic silent-0-rows bug.",
     inputSchema: {
       dataset,
       limit: z.number().int().min(1).max(500).optional().describe("classes/relations to return (default 60)"),
@@ -760,6 +880,9 @@ server.registerTool(
     annotations: { ...READ_ONLY, openWorldHint: true },
   },
   guard(async ({ dataset: name, limit = 60 }) => {
+    const resolved = await store.resolve(name);
+    const t = await cardTier(resolved);
+    if (t && !t.capabilities.schema) return json(schemaFromCard(resolved, t, limit));
     const { graph, source } = await store.graph(name);
     let schema = { classes: [], relations: [] };
     let note;
@@ -796,14 +919,16 @@ server.registerTool(
     annotations: { ...READ_ONLY, openWorldHint: true },
   },
   guard(async ({ dataset: name }) => {
-    const { graph, source } = await store.graph(name);
-    const embedded = graph.examples();
+    const source = await store.resolve(name);
+    const t = await cardTier(source);
+    const opened = t ? null : await store.graph(name);
+    const embedded = t ? examplesOf(t.card) : opened.graph.examples();
     const queries = embedded.length ? embedded : (source.entry?.examples ?? []);
     return json({
       dataset: source.key,
       queries,
       note: queries.length ? undefined : "this dataset ships no example queries — start from dataset_schema",
-      stats: statsOf(graph, source),
+      stats: t ? tierStats(t, source) : statsOf(opened.graph, source),
     });
   }),
 );
@@ -983,7 +1108,8 @@ server.registerTool(
     description:
       "Resolve a name to entity IRIs — label prefix search over the graph's label index, plus " +
       "full-text search where the file carries a text index. Do this FIRST when a question " +
-      "names a specific thing, then use the returned IRI in a query.",
+      "names a specific thing, then use the returned IRI in a query. A graph with neither index " +
+      "(dataset_card's capabilities say so) answers at once with how to find the entity by SPARQL.",
     inputSchema: {
       dataset,
       text: z.string().describe("the name or words to look for"),
@@ -992,27 +1118,47 @@ server.registerTool(
     annotations: { ...READ_ONLY, openWorldHint: true },
   },
   guard(async ({ dataset: name, text, limit = 20 }) => {
+    // Ask the header first: opening a giant graph only to find it has no index
+    // to search costs seconds and megabytes, and says nothing.
+    const resolved = await store.resolve(name);
+    const t = await cardTier(resolved);
+    const caps = t?.capabilities;
+    if (caps && !caps.name_search && !caps.full_text_search) return json(noSearchIndex(resolved, t, text));
     const { graph, source } = await store.graph(name);
     const hits = [];
     const seen = new Set();
-    for (const { label, subject } of graph.prefixSearch(text, limit)) {
-      if (seen.has(subject)) continue;
-      seen.add(subject);
-      hits.push({ subject, label, via: "label-prefix" });
-    }
-    try {
-      for (const subject of graph.textSearch(text, { limit })) {
+    const searched = [];
+    if (!caps || caps.name_search) {
+      searched.push("label-prefix");
+      for (const { label, subject } of graph.prefixSearch(text, limit)) {
         if (seen.has(subject)) continue;
         seen.add(subject);
-        hits.push({ subject, via: "text-index" });
+        hits.push({ subject, label, via: "label-prefix" });
       }
-    } catch {
-      // no TEXT_INDEX in this file: prefix hits are the whole answer
     }
+    if (!caps || caps.full_text_search) {
+      try {
+        for (const subject of graph.textSearch(text, { limit })) {
+          if (seen.has(subject)) continue;
+          seen.add(subject);
+          hits.push({ subject, via: "text-index" });
+        }
+        searched.push("text-index");
+      } catch {
+        // no TEXT_INDEX in this file: prefix hits are the whole answer
+      }
+    }
+    const missing = caps && !caps.name_search ? "name" : caps && !caps.full_text_search ? "full-text" : null;
     return json({
       dataset: source.key,
       hits: hits.slice(0, limit),
-      note: hits.length ? undefined : "nothing matched — try fewer words, or a different spelling",
+      searched,
+      note: hits.length
+        ? undefined
+        : `nothing matched in the ${searched.join(" and ")} search` +
+          (missing ? ` (the file has no ${missing} index)` : "") +
+          " — try fewer words, or a different spelling" +
+          (searched.includes("label-prefix") ? "; label search matches the start of a label" : ""),
       stats: statsOf(graph, source),
     });
   }),
@@ -1139,7 +1285,8 @@ server.registerTool(
     description:
       "Make RDF the user shared in the chat queryable: an attached .ttl / .nt / .nq / .trig file, " +
       "or RDF pasted into a message. Claude Desktop does not hand attachments to extensions, so " +
-      "pass the file's full text, unchanged, as `rdf`. It is built into a graph held in memory — " +
+      "pass the file's full text, unchanged, as `rdf` (a large file is easier opened through " +
+      "graph_view, which asks the user for it). It is built into a graph held in memory — " +
       "no granted folder needed, nothing written to disk — and every tool takes it as dataset " +
       '"chat:<name>" until the extension restarts. Too long for one call: send it in parts, the ' +
       "rest with append=true, each part ending where a statement ends (prefixes from the first " +
@@ -1246,7 +1393,17 @@ function grantedPath(path) {
 }
 
 // The interactive graph view (an MCP App) and the tools around it: views.mjs.
-registerGraphViews({ server, store, jobs, here: HERE, guard, json, UsageError, dataset });
+registerGraphViews({
+  server,
+  store,
+  jobs,
+  here: HERE,
+  guard,
+  json,
+  UsageError,
+  dataset,
+  capabilities: async (source) => (await cardTier(source))?.capabilities ?? null,
+});
 
 // --- go --------------------------------------------------------------------
 
