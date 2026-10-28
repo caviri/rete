@@ -183,6 +183,13 @@ Graph views (shown in the conversation, where the client renders MCP Apps):
   replace) a query's results, expand or focus an entity, highlight or remove
   nodes, set labels, group_by, layout or the tab. When the user asks to change
   what they see, update their view rather than opening another.
+- Three ways to draw: options.diagram "graph" (dots, the default), "boxes"
+  (each entity a box with its properties listed under its name) and "classes"
+  (one box per rdf:type with its members' properties, linked by the relations
+  between classes — a UML class diagram). Boxes and classes come laid out in
+  layers with square lines; edge_style and layout change that. For "what is in
+  this dataset", graph_view(dataset, schema: true) draws its schema — classes
+  as boxes listing their literal properties, linked by their relations.
 - graph_view_state(view_id) says what the user selected, searched and set.
   Read it when they say "this", "these" or "the selected ones".
 - The user can open a file of their own in any view (Open file…, or by
@@ -724,6 +731,30 @@ function schemaFromCard(source, t, limit) {
         lookFirst(t),
     stats: tierStats(t, source),
   };
+}
+
+/**
+ * A graph's classes and class-level relations, as [iri, n] and [s, p, o, n]
+ * — from its schema pyramid, or else the lists its card carries. For the
+ * graph view's schema diagram.
+ */
+async function schemaOf(name) {
+  const source = await store.resolve(name);
+  const t = await cardTier(source);
+  if (t && !t.capabilities.schema) {
+    const { classes, relations } = schemaFromCard(source, t, Infinity);
+    if (!classes.length) {
+      throw new UsageError(`${source.key} has no schema pyramid, and its card lists no classes: there is no schema to draw`);
+    }
+    return { classes, relations, from: "card" };
+  }
+  const { graph } = await store.graph(name);
+  try {
+    const { classes, relations } = graph.schema();
+    return { classes, relations, from: "pyramid" };
+  } catch (error) {
+    throw new UsageError(`${source.key} has no schema to draw (${error.message})`);
+  }
 }
 
 /** find_entities on a graph with neither a label index nor a full-text index. */
@@ -1403,6 +1434,7 @@ registerGraphViews({
   UsageError,
   dataset,
   capabilities: async (source) => (await cardTier(source))?.capabilities ?? null,
+  schemaOf,
 });
 
 // --- go --------------------------------------------------------------------

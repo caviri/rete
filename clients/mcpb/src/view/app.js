@@ -6,6 +6,7 @@
 // Claude reads with graph_view_state. It also takes a file from the user — the
 // way a chat attachment, which Claude keeps in its own sandbox, reaches the
 // extension: chosen or dropped here, sent to the server in parts.
+import { layout as dagreLayout, graphlib } from "@dagrejs/dagre";
 import { App } from "@modelcontextprotocol/ext-apps/app-with-deps";
 import cytoscape from "cytoscape";
 
@@ -15,6 +16,9 @@ const MAX_PROPS = 40; // shown in the selection panel
 const MAX_LITERAL_NODES = 12; // per node, with literals as nodes
 const MAX_TABLE = 1000; // rows drawn at once
 const PART = 1024 * 1024; // bytes of a file per graph_view_upload call
+const FONT = `system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
+// A box: its name on a band, its type under it, then a line per property (px).
+const BOX = { pad: 8, title: 12, small: 10, head: 24, sub: 14, row: 15, rows: 8, keyMax: 120, valueMax: 190, min: 110, max: 330 };
 
 const S = {
   app: null,
@@ -27,8 +31,21 @@ const S = {
   nodes: new Map(),
   edges: new Map(),
   table: null,
-  options: { labels: true, edge_labels: false, group_by: "type", group_boxes: false, layout: "cose", view: "graph", literals_as_nodes: false },
+  options: {
+    diagram: "graph",
+    labels: true,
+    edge_labels: false,
+    properties: true,
+    node_shape: "circle",
+    edge_style: "curved",
+    group_by: "type",
+    group_boxes: false,
+    layout: "cose",
+    view: "graph",
+    literals_as_nodes: false,
+  },
   groups: new Map(), // key -> { color, count }
+  classBoxes: new Map(), // box id -> { id, iri, label, members, props }: the classes diagram's boxes
   hiddenGroups: new Set(),
   hiddenNodes: new Set(),
   highlight: new Set(),
@@ -60,6 +77,11 @@ const namespace = (iri) => {
 };
 const trunc = (s, n) => (String(s).length > n ? `${String(s).slice(0, n - 1)}…` : String(s));
 const nodeLabel = (n) => trunc(n.label || (n.iri ? local(n.iri) : n.id), 48);
+const shortName = (p) => (String(p).startsWith("?") ? p : local(p)); // a predicate, or a SELECT column
+const diagramOf = () => S.options.diagram || "graph";
+/** A diagram's own look, as the server gives it: boxes and classes in layers with square lines. */
+const diagramLook = (diagram) =>
+  diagram === "graph" ? { diagram, layout: "cose", edge_style: "curved" } : { diagram, layout: "layered", edge_style: "square" };
 const debounce = (fn, ms) => {
   let t;
   return (...a) => {
@@ -189,7 +211,7 @@ function applyPatch(p) {
       Object.assign(S.options, p.options ?? {});
       if (p.title) S.title = p.title;
       syncControls();
-      const structural = ["group_by", "group_boxes", "literals_as_nodes"].some((k) => before[k] !== S.options[k]);
+      const structural = ["group_by", "group_boxes", "literals_as_nodes", "diagram", "properties"].some((k) => before[k] !== S.options[k]);
       if (structural) rebuild(true);
       else {
         applyStyle();
@@ -256,6 +278,17 @@ function computeGroups() {
 
 function elements() {
   computeGroups();
+  S.classBoxes = new Map();
+  const diagram = diagramOf();
+  if (diagram === "graph") return dotElements();
+  const theme = themeColors();
+  // A schema view's nodes are classes already: its class diagram is its boxes.
+  const schema = S.nodes.size > 0 && [...S.nodes.values()].every((n) => n.kind === "class");
+  return diagram === "classes" && !schema ? classElements(theme) : boxElements(theme);
+}
+
+/** The graph diagram: a dot per entity, in layer colours, maybe framed by layer. */
+function dotElements() {
   const boxes = S.options.group_boxes && S.options.group_by !== "none";
   const els = [];
   if (boxes) {
@@ -280,15 +313,190 @@ function elements() {
   return els;
 }
 
+// --- boxes: an entity or a class as a box, its properties listed under its name ---------
+
+let measure = null;
+function textWidth(text, size, weight = 400) {
+  measure ??= document.createElement("canvas").getContext("2d");
+  measure.font = `${weight} ${size}px ${FONT}`;
+  return measure.measureText(text).width;
+}
+
+/** `text` cut to `max` pixels, with an ellipsis. */
+function fit(text, size, max, weight = 400) {
+  const s = String(text ?? "");
+  if (textWidth(s, size, weight) <= max) return s;
+  let lo = 0;
+  let hi = s.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (textWidth(`${s.slice(0, mid)}…`, size, weight) <= max) lo = mid;
+    else hi = mid - 1;
+  }
+  return `${s.slice(0, lo)}…`;
+}
+
+function themeColors() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name) => css.getPropertyValue(name).trim();
+  return { bg: v("--bg"), fg: v("--fg"), muted: v("--muted") };
+}
+
+const boxCache = new Map(); // what a box shows -> its size and picture
+
+/**
+ * A box as a picture, the node's background: its name on a band in its
+ * layer's colour, its type under it, then its properties a line each. Drawn
+ * at twice its size, so it stays sharp when zoomed in. `numeric` right-aligns
+ * the values (counts).
+ */
+function boxImage({ title, subtitle, rows, color, numeric }, theme) {
+  const showRows = S.options.properties !== false;
+  const key = JSON.stringify([title, subtitle, rows, color, numeric, theme, showRows]);
+  const hit = boxCache.get(key);
+  if (hit) return hit;
+  const { pad, small, row } = BOX;
+  const name = fit(title, BOX.title, BOX.max - 2 * pad - 4, 600);
+  const sub = subtitle ? fit(subtitle, small, BOX.max - 2 * pad - 4) : "";
+  const list = showRows ? rows.slice(0, BOX.rows) : [];
+  const more = showRows ? rows.length - list.length : 0;
+  const keys = list.map(([k]) => fit(k, small, BOX.keyMax));
+  const values = list.map(([, v]) => fit(v, small, BOX.valueMax));
+  const keyW = Math.max(0, ...keys.map((k) => textWidth(k, small)));
+  const valueW = Math.max(0, ...values.map((v) => textWidth(v, small)));
+  const w = Math.round(
+    Math.min(
+      BOX.max,
+      Math.max(BOX.min, textWidth(name, BOX.title, 600) + 2 * pad + 4, sub ? textWidth(sub, small) + 2 * pad + 4 : 0, list.length ? keyW + 14 + valueW + 2 * pad : 0),
+    ),
+  );
+  const headH = BOX.head + (sub ? BOX.sub : 0);
+  const lines = list.length + (more ? 1 : 0);
+  const h = headH + (lines ? 6 + lines * row + 4 : 0);
+  const text = (x, y, s, size, fill, attrs = "") => `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}"${attrs}>${esc(s)}</text>`;
+  let body = "";
+  list.forEach((_, i) => {
+    const y = headH + 6 + i * row + 10;
+    body += text(pad, y, keys[i], small, theme.muted);
+    body += numeric ? text(w - pad, y, values[i], small, theme.fg, ' text-anchor="end"') : text(pad + keyW + 14, y, values[i], small, theme.fg);
+  });
+  if (more) body += text(pad, headH + 6 + list.length * row + 10, `… ${more} more`, small, theme.muted, ' font-style="italic"');
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w * 2}" height="${h * 2}" viewBox="0 0 ${w} ${h}" font-family='${FONT}'>` +
+    `<rect width="${w}" height="${h}" fill="${theme.bg}"/>` +
+    `<rect width="${w}" height="${headH}" fill="${color}" fill-opacity="0.18"/>` +
+    `<rect width="4" height="${headH}" fill="${color}"/>` +
+    text(pad + 4, 16, name, BOX.title, theme.fg, ' font-weight="600"') +
+    (sub ? text(pad + 4, 31, sub, small, theme.muted, ' font-style="italic"') : "") +
+    (lines ? `<line x1="0" x2="${w}" y1="${headH}" y2="${headH}" stroke="${color}" stroke-opacity="0.55"/>` : "") +
+    body +
+    `</svg>`;
+  const out = { w, h, svg: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` };
+  if (boxCache.size > 4000) boxCache.clear();
+  boxCache.set(key, out);
+  return out;
+}
+
+/** What an entity's box shows: its name, its types, its properties. A schema's class shows its count. */
+function entityBox(n, color) {
+  const subtitle =
+    n.kind === "class"
+      ? n.count == null
+        ? "class"
+        : `${n.count.toLocaleString("en-US")} instance${n.count === 1 ? "" : "s"}`
+      : n.types?.length
+        ? n.types.map(local).join(", ")
+        : { bnode: "blank node", literal: "literal" }[n.kind] ?? "";
+  const title = n.label || (n.iri ? local(n.iri) : n.id);
+  const rows = n.props.filter(([, v]) => v !== n.label).map(([p, v]) => [shortName(p), v]);
+  return { title, subtitle, rows, color, numeric: n.kind === "class" };
+}
+
+/**
+ * An edge between boxes. One from a box back to itself loops round the box's
+ * top-right corner: cytoscape puts a loop's control points 1.4 × its step from
+ * the node's centre, so the step grows with the box, or the loop is lost inside it.
+ */
+function boxEdge(id, source, target, label, sizes) {
+  const box = source === target ? sizes.get(source) : null;
+  if (!box) return { group: "edges", data: { id, source, target, label } };
+  return { group: "edges", data: { id, source, target, label, loop: Math.round((Math.max(box.w, box.h) / 2 + 36) / 1.4) }, classes: "self" };
+}
+
+/** The boxes diagram: a box per entity, its properties inside. */
+function boxElements(theme) {
+  const els = [];
+  const sizes = new Map();
+  for (const n of S.nodes.values()) {
+    const k = groupKey(n);
+    const color = S.groups.get(k)?.color ?? OTHER;
+    const box = boxImage(entityBox(n, color), theme);
+    sizes.set(n.id, box);
+    els.push({ group: "nodes", data: { id: n.id, label: nodeLabel(n), color, gk: k, w: box.w, h: box.h, svg: box.svg }, classes: "card" });
+  }
+  for (const e of S.edges.values()) els.push(boxEdge(e.id, e.source, e.target, e.label, sizes));
+  return els;
+}
+
+/**
+ * The classes diagram: the view's entities folded into their (first)
+ * rdf:type — a box per class listing the properties its members carry and
+ * how many do, a line per predicate between two classes.
+ */
+function classElements(theme) {
+  const classes = new Map(); // class IRI (or "(untyped)") -> its box
+  const classOf = new Map(); // entity id -> class key
+  for (const n of S.nodes.values()) {
+    if (n.kind === "literal") continue;
+    const type = n.types?.[0] ?? null;
+    const key = type ?? "(untyped)";
+    let c = classes.get(key);
+    if (!c) classes.set(key, (c = { id: `class:${key}`, iri: type, label: type ? local(type) : "(untyped)", members: [], props: new Map() }));
+    c.members.push(n);
+    for (const [p] of n.props) c.props.set(p, (c.props.get(p) ?? 0) + 1);
+    classOf.set(n.id, key);
+  }
+  const links = new Map();
+  for (const e of S.edges.values()) {
+    const a = classOf.get(e.source);
+    const b = classOf.get(e.target);
+    if (a === undefined || b === undefined) continue;
+    const p = e.p ?? e.label;
+    const k = `${a}\u0001${p}\u0001${b}`;
+    const link = links.get(k) ?? { id: `cl:${k}`, source: classes.get(a).id, target: classes.get(b).id, p, n: 0 };
+    link.n += 1;
+    links.set(k, link);
+  }
+  const els = [];
+  const sizes = new Map();
+  for (const c of classes.values()) {
+    const k = groupKey(c.members[0]);
+    const color = S.groups.get(k)?.color ?? OTHER;
+    const rows = [...c.props].sort((x, y) => y[1] - x[1]).map(([p, n]) => [shortName(p), String(n)]);
+    const box = boxImage({ title: c.label, subtitle: `${c.members.length} in this view`, rows, color, numeric: true }, theme);
+    els.push({ group: "nodes", data: { id: c.id, label: c.label, color, gk: k, w: box.w, h: box.h, svg: box.svg }, classes: "card" });
+    sizes.set(c.id, box);
+    S.classBoxes.set(c.id, c);
+  }
+  for (const l of links.values()) els.push(boxEdge(l.id, l.source, l.target, `${shortName(l.p)}${l.n > 1 ? ` ×${l.n}` : ""}`, sizes));
+  return els;
+}
+
 function styleSheet() {
   const css = getComputedStyle(document.documentElement);
   const v = (name) => css.getPropertyValue(name).trim();
+  const square = S.options.edge_style === "square";
+  // Square lines leave and enter boxes vertically when the layout runs top-down.
+  const lines = square
+    ? { "curve-style": "round-taxi", "taxi-direction": S.options.layout === "layered" ? "vertical" : "auto", "taxi-turn": "50%", "taxi-turn-min-distance": 12, "taxi-radius": 6 }
+    : { "curve-style": S.options.edge_style === "straight" ? "straight" : "bezier" };
   return [
     {
       selector: "node",
       style: {
         "background-color": "data(color)",
         label: S.options.labels ? "data(label)" : "",
+        shape: S.options.node_shape === "square" ? "round-rectangle" : "ellipse",
         width: 16,
         height: 16,
         "font-size": 9,
@@ -320,6 +528,22 @@ function styleSheet() {
     { selector: "node.literal, node.lit", style: { shape: "round-rectangle", width: 10, height: 10, "font-size": 8 } },
     { selector: "node.bnode", style: { shape: "diamond" } },
     {
+      selector: "node.card",
+      style: {
+        shape: "round-rectangle",
+        width: "data(w)",
+        height: "data(h)",
+        "background-color": v("--bg"),
+        "background-image": "data(svg)",
+        "background-width": "100%",
+        "background-height": "100%",
+        "background-clip": "node",
+        "border-width": 1,
+        "border-color": "data(color)",
+        label: "",
+      },
+    },
+    {
       selector: "edge",
       style: {
         width: 1,
@@ -327,17 +551,21 @@ function styleSheet() {
         "target-arrow-shape": "triangle",
         "target-arrow-color": v("--edge"),
         "arrow-scale": 0.7,
-        "curve-style": "bezier",
+        ...lines,
         label: S.options.edge_labels ? "data(label)" : "",
         "font-size": 7,
         color: v("--muted"),
-        "text-rotation": "autorotate",
+        "text-rotation": square ? "none" : "autorotate",
         "text-outline-width": 2,
         "text-outline-color": v("--bg"),
         "min-zoomed-font-size": 6,
       },
     },
     { selector: "edge.litedge", style: { "line-style": "dashed", "target-arrow-shape": "none" } },
+    {
+      selector: "edge.self",
+      style: { "curve-style": "bezier", "loop-direction": "45deg", "loop-sweep": "-60deg", "control-point-step-size": "data(loop)", "text-rotation": "none" },
+    },
     { selector: "node:selected", style: { "border-width": 3, "border-color": v("--accent") } },
     { selector: ".hl", style: { "border-width": 3, "border-color": v("--hl"), "z-index": 10 } },
     { selector: ".faded", style: { opacity: 0.15 } },
@@ -370,7 +598,7 @@ function rebuild(layout) {
 function grow(nodes, edges) {
   const cy = S.cy;
   if (!cy) return;
-  if (S.options.group_boxes || S.options.literals_as_nodes) return rebuild(true);
+  if (S.options.group_boxes || S.options.literals_as_nodes || diagramOf() !== "graph") return rebuild(true);
   const fresh = [];
   for (const n of nodes) {
     const el = cy.getElementById(n.id);
@@ -395,6 +623,8 @@ function grow(nodes, edges) {
 /** Labels, colours and layers again, after names, types or grouping change. */
 function refresh() {
   if (!S.cy) return;
+  // A box grows with its name and types, and a class with its members: draw them again.
+  if (diagramOf() !== "graph") return rebuild(true);
   if (S.options.group_boxes) return rebuild(false);
   computeGroups();
   S.cy.nodes().not(".box, .lit").forEach((el) => {
@@ -413,11 +643,66 @@ function runLayout(randomize) {
   if (!cy || cy.nodes().empty()) return;
   const name = S.options.layout || "cose";
   const many = cy.nodes().length > 400;
+  if (name === "layered") return layered(cy.elements(":visible"), !many);
   const opts = { name, fit: true, padding: 30, animate: !many, animationDuration: 350, nodeDimensionsIncludeLabels: true };
   if (name === "cose") Object.assign(opts, { randomize, idealEdgeLength: 70, nodeRepulsion: 9000, gravity: 0.25, numIter: many ? 600 : 1200, componentSpacing: 60 });
   if (name === "concentric") Object.assign(opts, { minNodeSpacing: 18, concentric: (n) => n.degree(), levelWidth: () => 2 });
   if (name === "breadthfirst") Object.assign(opts, { directed: true, spacingFactor: 1.1 });
   cy.elements(":visible").layout(opts).run();
+}
+
+/**
+ * Layers, top down, for what is linked (dagre, sized to each box); what is
+ * not linked is packed in rows underneath rather than strung along one rank.
+ */
+function layered(eles, animate) {
+  const nodes = eles.nodes().filter((n) => !n.isParent());
+  const size = new Map(nodes.map((n) => [n.id(), n.layoutDimensions({ nodeDimensionsIncludeLabels: true })]));
+  const linked = new Set();
+  const edges = eles.edges().filter((e) => {
+    const [a, b] = [e.source().id(), e.target().id()];
+    if (a === b || !size.has(a) || !size.has(b)) return false;
+    linked.add(a).add(b);
+    return true;
+  });
+  const pos = {};
+  let right = 0;
+  let bottom = 0;
+  if (linked.size) {
+    const g = new graphlib.Graph({ multigraph: true });
+    g.setGraph({ rankdir: "TB", nodesep: 30, ranksep: 64, edgesep: 14 });
+    g.setDefaultEdgeLabel(() => ({}));
+    for (const id of linked) g.setNode(id, { width: size.get(id).w, height: size.get(id).h });
+    edges.forEach((e) => g.setEdge(e.source().id(), e.target().id(), {}, e.id()));
+    dagreLayout(g);
+    for (const id of linked) {
+      const p = g.node(id);
+      pos[id] = { x: p.x, y: p.y };
+      right = Math.max(right, p.x + p.width / 2);
+      bottom = Math.max(bottom, p.y + p.height / 2);
+    }
+  }
+  const loose = nodes.filter((n) => !linked.has(n.id()));
+  if (loose.length) {
+    const gap = 24;
+    const area = loose.reduce((a, n) => a + (size.get(n.id()).w + gap) * (size.get(n.id()).h + gap), 0);
+    const width = Math.max(right, Math.sqrt(area) * 1.6, 360);
+    let x = 0;
+    let y = linked.size ? bottom + 64 : 0;
+    let rowH = 0;
+    loose.forEach((n) => {
+      const { w, h } = size.get(n.id());
+      if (x > 0 && x + w > width) {
+        x = 0;
+        y += rowH + gap;
+        rowH = 0;
+      }
+      pos[n.id()] = { x: x + w / 2, y: y + h / 2 };
+      x += w + gap;
+      rowH = Math.max(rowH, h);
+    });
+  }
+  eles.layout({ name: "preset", positions: (n) => pos[n.id()] ?? n.position(), fit: true, padding: 30, animate, animationDuration: 350 }).run();
 }
 
 function applyHidden() {
@@ -508,6 +793,11 @@ function renderDetails() {
       `<p class="hint">${picked.slice(0, 12).map((s) => esc(s.label)).join(" · ")}${picked.length > 12 ? " …" : ""}</p>`;
     return;
   }
+  const c = S.classBoxes.get(picked[0].id);
+  if (c) {
+    body.innerHTML = classDetails(c);
+    return;
+  }
   const n = S.nodes.get(picked[0].id);
   if (!n) return;
   const degree = S.cy?.getElementById(n.id).degree() ?? 0;
@@ -516,11 +806,49 @@ function renderDetails() {
     `<p class="title">${esc(n.label || local(n.iri) || n.id)}</p>` +
     (n.iri ? `<a href="#" class="iri" data-open="${esc(n.iri)}">${esc(n.iri)}</a>` : "") +
     (n.types.length ? `<div class="types">${n.types.map((t) => esc(local(t))).join(", ")}</div>` : "") +
+    (n.kind === "class" && n.count != null ? `<div class="types">${n.count.toLocaleString("en-US")} instance${n.count === 1 ? "" : "s"}</div>` : "") +
     `<div class="actions">` +
     (n.kind === "iri" ? `<button type="button" data-act="expand">Expand</button>` : "") +
     `<button type="button" data-act="hide">Hide</button><button type="button" data-act="ask">Ask Claude</button></div>` +
     `<p class="hint">${degree} link(s) in the view${n.props.length > MAX_PROPS ? ` · ${n.props.length} properties, first ${MAX_PROPS} shown` : ""}</p>` +
     (props ? `<dl>${props}</dl>` : "");
+}
+
+/** A class box of the classes diagram: its members and the properties they carry. */
+function classDetails(c) {
+  const props = [...c.props]
+    .sort((x, y) => y[1] - x[1])
+    .slice(0, MAX_PROPS)
+    .map(([p, n]) => `<dt title="${esc(p)}">${esc(shortName(p))}</dt><dd>${n} of ${c.members.length}</dd>`)
+    .join("");
+  return (
+    `<p class="title">${esc(c.label)}</p>` +
+    (c.iri ? `<a href="#" class="iri" data-open="${esc(c.iri)}">${esc(c.iri)}</a>` : "") +
+    `<div class="actions"><button type="button" data-act="members">Show members</button><button type="button" data-act="ask">Ask Claude</button></div>` +
+    `<p class="hint">${c.members.length} in the view: ${c.members.slice(0, 12).map((m) => esc(nodeLabel(m))).join(" · ")}${c.members.length > 12 ? " …" : ""}</p>` +
+    (props ? `<dl>${props}</dl>` : "")
+  );
+}
+
+/** From a class to its members: the boxes diagram, with them highlighted. */
+function showMembers(c) {
+  const ids = c.members.map((m) => m.id);
+  setDiagram("boxes");
+  setHighlight(ids);
+  setTimeout(() => {
+    const eles = S.cy.collection(ids.map((id) => S.cy.getElementById(id)).filter((el) => el.nonempty()));
+    if (eles.nonempty()) S.cy.animate({ fit: { eles, padding: 40 }, duration: 300 });
+  }, 450);
+}
+
+/** Draw the graph another way; each diagram comes with its own layout and lines. */
+function setDiagram(diagram) {
+  if (diagramOf() === diagram) return;
+  Object.assign(S.options, diagramLook(diagram));
+  S.cy?.$(":selected").unselect();
+  syncControls();
+  rebuild(true);
+  markState();
 }
 
 const tellClaude = debounce(() => {
@@ -539,6 +867,8 @@ function onSelectionChanged() {
     .$("node:selected")
     .not(".box, .lit")
     .map((el) => {
+      const c = S.classBoxes.get(el.id());
+      if (c) return { id: el.id(), iri: c.iri, label: c.label, class_members: c.members.length };
       const n = S.nodes.get(el.id());
       return { id: el.id(), iri: n?.iri ?? null, label: n ? nodeLabel(n) : el.id() };
     });
@@ -688,6 +1018,14 @@ async function openFile(file) {
 }
 
 function syncControls() {
+  const dots = diagramOf() === "graph";
+  $("opt-diagram").value = diagramOf();
+  $("opt-edges").value = S.options.edge_style || "curved";
+  $("opt-shape").checked = S.options.node_shape === "square";
+  $("opt-props").checked = S.options.properties !== false;
+  // Each setting where it means something: dots have labels and frames, boxes properties.
+  for (const id of ["opt-labels", "opt-literals", "opt-boxes", "opt-shape"]) $(id).disabled = !dots;
+  $("opt-props").disabled = dots;
   $("opt-labels").checked = !!S.options.labels;
   $("opt-edge-labels").checked = !!S.options.edge_labels;
   $("opt-literals").checked = !!S.options.literals_as_nodes;
@@ -713,6 +1051,7 @@ function applyHost(ctx = {}) {
   $("fullscreen").hidden = !(S.host.availableDisplayModes ?? []).includes("fullscreen");
   document.body.classList.toggle("full", S.host.displayMode === "fullscreen");
   applyStyle();
+  if (diagramOf() !== "graph") rebuild(false); // the boxes are pictures, in the theme's colours
   S.cy?.resize();
 }
 
@@ -730,7 +1069,16 @@ function wire() {
     S.hiddenGroups.clear();
     rebuild(S.options.group_boxes);
   });
-  $("opt-layout").addEventListener("change", (e) => (option("layout", e.target.value), runLayout(true)));
+  $("opt-layout").addEventListener("change", (e) => (option("layout", e.target.value), applyStyle(), runLayout(true)));
+  $("opt-diagram").addEventListener("change", (e) => setDiagram(e.target.value));
+  $("opt-edges").addEventListener("change", (e) => (option("edge_style", e.target.value), applyStyle()));
+  $("opt-shape").addEventListener("change", (e) => (option("node_shape", e.target.checked ? "square" : "circle"), applyStyle()));
+  $("opt-props").addEventListener("change", (e) => (option("properties", e.target.checked), rebuild(true)));
+  // The Show menu closes on a click anywhere else.
+  document.addEventListener("click", (e) => {
+    const menu = $("show");
+    if (menu.open && !menu.contains(e.target)) menu.open = false;
+  });
   $("zoom-in").addEventListener("click", () => zoomBy(1.25));
   $("zoom-out").addEventListener("click", () => zoomBy(0.8));
   $("fit").addEventListener("click", () => S.cy?.fit(S.cy.elements(":visible"), 30));
@@ -802,6 +1150,7 @@ function wire() {
     const act = e.target.closest("[data-act]")?.dataset.act;
     if (!act) return;
     if (act === "expand") await expand(S.selection[0]?.id);
+    if (act === "members") showMembers(S.classBoxes.get(S.selection[0]?.id));
     if (act === "hide") {
       for (const s of S.selection) S.hiddenNodes.add(s.id);
       S.cy.$(":selected").unselect();
@@ -879,7 +1228,9 @@ function start() {
   S.cy.on("select unselect", "node", debounce(onSelectionChanged, 60));
   S.cy.on("dbltap", "node", (e) => {
     const el = e.target;
-    if (!el.hasClass("box") && !el.hasClass("lit")) expand(el.id());
+    const c = S.classBoxes.get(el.id());
+    if (c) return showMembers(c);
+    if (!el.hasClass("box") && !el.hasClass("lit") && S.nodes.get(el.id())?.kind !== "class") expand(el.id());
   });
   wire();
   syncControls();

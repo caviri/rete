@@ -13,10 +13,13 @@
       <button type="button" data-tab="graph" class="on">Graph</button>
       <button type="button" data-tab="table">Table</button>
     </div>
-    <label class="chk"><input type="checkbox" id="opt-labels" checked> Labels</label>
-    <label class="chk"><input type="checkbox" id="opt-edge-labels"> Edge labels</label>
-    <label class="chk"><input type="checkbox" id="opt-literals"> Literals as nodes</label>
-    <label class="chk"><input type="checkbox" id="opt-boxes"> Group boxes</label>
+    <label class="sel">Draw
+      <select id="opt-diagram" title="Dots, a box per entity with its properties, or a class diagram">
+        <option value="graph">nodes</option>
+        <option value="boxes">boxes</option>
+        <option value="classes">classes</option>
+      </select>
+    </label>
     <label class="sel">Layers
       <select id="opt-group">
         <option value="type">by type</option>
@@ -27,12 +30,31 @@
     <label class="sel">Layout
       <select id="opt-layout">
         <option value="cose">force</option>
+        <option value="layered">layers</option>
         <option value="concentric">concentric</option>
         <option value="breadthfirst">tree</option>
         <option value="circle">circle</option>
         <option value="grid">grid</option>
       </select>
     </label>
+    <label class="sel">Lines
+      <select id="opt-edges">
+        <option value="curved">curved</option>
+        <option value="straight">straight</option>
+        <option value="square">square</option>
+      </select>
+    </label>
+    <details id="show" class="menu">
+      <summary>Show</summary>
+      <div class="menu-body">
+        <label class="chk"><input type="checkbox" id="opt-labels" checked> Labels</label>
+        <label class="chk"><input type="checkbox" id="opt-edge-labels"> Edge labels</label>
+        <label class="chk"><input type="checkbox" id="opt-props" checked> Properties in boxes</label>
+        <label class="chk"><input type="checkbox" id="opt-shape"> Square nodes</label>
+        <label class="chk"><input type="checkbox" id="opt-literals"> Literals as nodes</label>
+        <label class="chk"><input type="checkbox" id="opt-boxes"> Frame each layer</label>
+      </div>
+    </details>
     <input id="search" type="search" placeholder="Search · Enter finds in the graph" autocomplete="off">
     <button type="button" id="open-file" title="Open a .rete or RDF file from this computer in this view">Open file…</button>
     <input type="file" id="file-input" accept=".rete,.ttl,.turtle,.nt,.ntriples,.nq,.nquads,.trig" hidden>

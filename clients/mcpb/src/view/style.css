@@ -40,7 +40,21 @@ select, input[type="search"], button {
 }
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
-#search { width: 190px; }
+#search { width: 160px; }
+details.menu { position: relative; }
+details.menu > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; background: var(--bg);
+}
+details.menu > summary::-webkit-details-marker { display: none; }
+details.menu > summary::after { content: " ▾"; color: var(--muted); }
+details.menu[open] > summary { border-color: var(--accent); }
+.menu-body {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; min-width: 180px;
+  display: flex; flex-direction: column; gap: 7px; padding: 9px 11px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .14);
+}
+label.chk:has(input:disabled) { color: var(--muted); }
 .zoom { display: inline-flex; gap: 3px; }
 .zoom button { min-width: 26px; }
 

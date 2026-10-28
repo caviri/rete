@@ -32,6 +32,7 @@ const MAX_LOG = 300; // patches kept for views that are behind
 const WAIT_MS = 35_000; // a view call answers before the client's 60 s limit
 const NEIGHBOURS = 150; // statements per direction when a node is expanded
 const LABEL_BATCH = 200;
+const SCHEMA_CLASSES = 60; // classes a schema view draws: the most frequent
 // What a file opened in a view shows first, unless Claude asked for a query.
 const SAMPLE = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 300";
 const mb = (n) => `${(n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`;
@@ -50,18 +51,50 @@ const LABELS = [
 /** The shape of a graph view's look, shared by graph_view and graph_view_update. */
 const optionsSchema = z
   .object({
+    diagram: z
+      .enum(["graph", "boxes", "classes"])
+      .optional()
+      .describe(
+        "how to draw it: graph (default) — each entity a dot; boxes — each entity a box with its " +
+          "name and type, its properties listed below (a UML object diagram); classes — one box per " +
+          "rdf:type listing the properties its members carry, linked by the relations between the " +
+          "classes (a UML class diagram). boxes and classes come laid out in layers with square lines",
+      ),
     labels: z.boolean().optional().describe("show node labels (default true)"),
+    properties: z.boolean().optional().describe("list properties inside boxes (default true)"),
+    node_shape: z.enum(["circle", "square"]).optional().describe("the dots of the graph diagram (default circle)"),
+    edge_style: z
+      .enum(["curved", "straight", "square"])
+      .optional()
+      .describe("lines between nodes: square draws orthogonal connectors, as in UML diagrams"),
     edge_labels: z.boolean().optional().describe("show predicate names on edges (default false)"),
     group_by: z
       .string()
       .optional()
       .describe('colour and layer nodes by "type" (rdf:type, default), "namespace", "none", or a predicate IRI'),
     group_boxes: z.boolean().optional().describe("draw each group as a box around its nodes (default false)"),
-    layout: z.enum(["cose", "concentric", "breadthfirst", "circle", "grid"]).optional(),
+    layout: z
+      .enum(["cose", "layered", "concentric", "breadthfirst", "circle", "grid"])
+      .optional()
+      .describe("cose: force-directed (default for graph); layered: top-down layers (default for boxes and classes)"),
     view: z.enum(["graph", "table"]).optional().describe("which tab is shown"),
     literals_as_nodes: z.boolean().optional().describe("draw literal values as nodes instead of node properties"),
   })
   .optional();
+
+/**
+ * A diagram's own look, unless the call sets it: boxes and classes read best
+ * laid out in layers with square connectors, dots in a force layout.
+ */
+function lookOf(options, current = {}) {
+  const look = { ...options };
+  if (look.diagram && look.diagram !== (current.diagram ?? "graph")) {
+    const boxes = look.diagram !== "graph";
+    look.layout ??= boxes ? "layered" : "cose";
+    look.edge_style ??= boxes ? "square" : "curved";
+  }
+  return look;
+}
 
 /** A view's graph, kept here so a view that reloads, or falls behind, gets it whole. */
 class View {
@@ -157,6 +190,38 @@ const localName = (iri) => {
 };
 
 const literalText = (term) => term.value + (term.lang ? `@${term.lang}` : "");
+
+/**
+ * A schema as graph elements: each class a node of kind "class" with its
+ * instance count, the relations to literals its properties, the relations to
+ * other classes edges. The most frequent classes only, and what links them.
+ */
+function graphOfSchema({ classes, relations }) {
+  const kept = [...classes].sort((a, b) => b[1] - a[1]).slice(0, SCHEMA_CLASSES);
+  const nodes = new Map();
+  const node = (c, count = null) => {
+    const iri = c === "(untyped)" ? null : c;
+    const id = iri ? `<${iri}>` : "_:untyped";
+    if (!nodes.has(id)) nodes.set(id, { id, iri, kind: "class", label: iri ? localName(iri) : "(untyped)", types: [], props: [], count });
+    return nodes.get(id);
+  };
+  for (const [c, n] of kept) node(c, n);
+  const known = (c) => nodes.has(c === "(untyped)" ? "_:untyped" : `<${c}>`);
+  const edges = [];
+  const rows = [];
+  for (const [s, p, o, n] of [...relations].sort((a, b) => b[3] - a[3])) {
+    if (p === RDF_TYPE || !known(s)) continue;
+    if (o === "(literal)") {
+      node(s).props.push([p, n.toLocaleString("en-US")]);
+    } else if (known(o)) {
+      const from = node(s).id;
+      const to = node(o).id;
+      edges.push({ id: `${from} <${p}> ${to}`, source: from, target: to, p, label: `${localName(p)} (${n.toLocaleString("en-US")})` });
+    } else continue;
+    rows.push({ class: localName(s), property: localName(p), object: o === "(literal)" ? "literal" : localName(o), count: String(n) });
+  }
+  return { nodes: [...nodes.values()], edges, table: { vars: ["class", "property", "object", "count"], rows }, classes: classes.length };
+}
 
 /**
  * Graph elements from triples of term tokens. Literal objects become
@@ -278,7 +343,7 @@ const iriToken = (iri) => {
  * Register the graph view: its UI resource, the three tools Claude uses, and
  * the app-only tools the view uses.
  */
-export function registerGraphViews({ server, store, jobs, here, guard, json, UsageError, dataset, capabilities }) {
+export function registerGraphViews({ server, store, jobs, here, guard, json, UsageError, dataset, capabilities, schemaOf }) {
   const views = new Map();
   const uploads = new Map(); // view id -> the file it is receiving: { name, size, bytes, received }
   let seq = 0;
@@ -411,10 +476,10 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
    * A view for a chat attachment the extension cannot read: it asks the user
    * to choose or drop the file, which graph_view_upload then brings here.
    */
-  function awaitFile(error, { title, options, query: text, iri }) {
+  function awaitFile(error, { title, options, query: text, iri, schema }) {
     const view = openView(null, title ?? error.file, options);
     view.awaiting = { file: error.file, key: error.key };
-    view.then = { query: text, iri };
+    view.then = { query: text, iri, schema };
     return {
       content: [
         {
@@ -423,7 +488,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
             `Graph view ${view.id} is waiting for ${error.file}: Claude's copy of it is in Claude's own ` +
             "sandbox, out of this extension's reach, so the view asks the user to choose or drop the " +
             "file. Tell them to. Once they do, it opens there" +
-            (text || iri ? " with what you asked for" : "") +
+            (text || iri || schema ? " with what you asked for" : "") +
             `, it is dataset "${error.key}" for every tool (the path you were given works too), and the ` +
             `view says so in the conversation. graph_view_state({view_id: "${view.id}"}) shows whether it is open yet.`,
         },
@@ -447,7 +512,8 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
     view.status = "";
     view.patch({ op: "dataset", dataset: view.dataset, title: view.title });
     try {
-      if (then.query) await query(view, then.query, "replace");
+      if (then.schema) await schemaInto(view);
+      else if (then.query) await query(view, then.query, "replace");
       else if (then.iri) await expand(view, then.iri);
       else await query(view, SAMPLE, "replace");
     } catch (error) {
@@ -456,6 +522,17 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       view.patch({ op: "status", status: view.status });
     }
     return { dataset: view.dataset, statements: graph.info().quads, file: name, awaited: Boolean(wasAwaiting) };
+  }
+
+  /** A dataset's schema into a view, as boxes of classes and their properties. */
+  async function schemaInto(view) {
+    const schema = await schemaOf(datasetOf(view));
+    const { nodes, edges, table, classes } = graphOfSchema(schema);
+    view.clear();
+    const added = view.add({ nodes, edges });
+    view.table = table;
+    view.patch({ op: "replace", nodes: added.nodes, edges: added.edges, table });
+    return { classes, shown: nodes.length, relations: edges.length, from: schema.from };
   }
 
   const summary = (view) => ({
@@ -507,28 +584,50 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
         "nodes (a LIMIT). Answers with a view_id: change the open view with graph_view_update and " +
         "read what the user selected with graph_view_state. Also the way to open a file attached " +
         "to the chat (a path like /mnt/user-data/uploads/…, which this extension cannot read): pass " +
-        "that path as dataset, and the view asks the user to choose or drop the file.",
+        "that path as dataset, and the view asks the user to choose or drop the file. " +
+        "options.diagram draws it as dots (graph), as boxes listing each entity's properties " +
+        "(boxes), or as a class diagram (classes); schema=true draws the dataset's own schema — " +
+        "its classes as boxes with their properties, linked by their relations — with no query.",
       inputSchema: {
         dataset,
         query: z.string().optional().describe("SPARQL CONSTRUCT or SELECT whose results to show"),
         iri: z.string().optional().describe("or: an entity whose statements (both directions) to show"),
+        schema: z
+          .boolean()
+          .optional()
+          .describe("or: the dataset's schema — classes as boxes listing their properties, linked by their relations"),
         title: z.string().optional().describe("a short title shown above the graph"),
         options: optionsSchema,
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: { ui: { resourceUri: VIEW_URI } },
     },
-    guard(async ({ dataset: name, query: text, iri, title, options = {} }) => {
+    guard(async ({ dataset: name, query: text, iri, schema, title, options = {} }) => {
       let source;
       try {
         source = await store.resolve(name);
       } catch (error) {
-        if (error instanceof AttachmentError) return awaitFile(error, { title, options, query: text, iri });
+        if (error instanceof AttachmentError) {
+          const look = lookOf(schema ? { diagram: "boxes", group_by: "namespace", edge_labels: true, ...options } : options);
+          return awaitFile(error, { title, options: look, query: text, iri, schema });
+        }
         throw error;
       }
-      const view = openView(source.key, title ?? (iri ? localName(String(iri).replace(/[<>]/g, "")) : "graph"), options);
+      // A schema reads best as boxes of classes, coloured by vocabulary, its relations named.
+      const look = lookOf(schema ? { diagram: "boxes", group_by: "namespace", edge_labels: true, ...options } : options);
+      const view = openView(
+        source.key,
+        title ?? (schema ? `schema of ${source.key}` : iri ? localName(String(iri).replace(/[<>]/g, "")) : "graph"),
+        look,
+      );
       let note = "";
-      if (text) {
+      if (schema) {
+        const r = await schemaInto(view);
+        note =
+          ` The schema (from its ${r.from === "card" ? "card" : "schema pyramid"}): ` +
+          (r.classes > r.shown ? `the ${r.shown} most frequent of ${r.classes} classes` : `${r.shown} classes`) +
+          `, ${r.relations} relations between them; each box lists the class's literal properties.`;
+      } else if (text) {
         const r = await query(view, text, "replace");
         note = r.pending ? " The query is still running; the view fills in when it finishes." : r.truncated ? ` Capped at ${MAX_NODES} nodes / ${MAX_EDGES} edges: narrow the query.` : "";
       } else if (iri) {
@@ -558,10 +657,11 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       description:
         "Change a graph view the user has open (from graph_view): add the results of another " +
         "query to it (mode add, default) or replace them (mode replace), expand an entity's " +
-        "neighbourhood, highlight or focus nodes, remove nodes, or change its look — labels, " +
-        "edge_labels, group_by (type / namespace / none / a predicate IRI), group_boxes, layout, " +
-        "view (graph / table), literals_as_nodes. The open view picks the change up within a " +
-        "second or two. Answers with the new counts and what the user has selected.",
+        "neighbourhood, highlight or focus nodes, remove nodes, or change its look — diagram " +
+        "(graph / boxes / classes), labels, edge_labels, properties, node_shape, edge_style " +
+        "(curved / straight / square), group_by (type / namespace / none / a predicate IRI), " +
+        "group_boxes, layout, view (graph / table), literals_as_nodes. The open view picks the " +
+        "change up within a second or two. Answers with the new counts and what the user has selected.",
       inputSchema: {
         view_id: z.string().describe("the view, from graph_view"),
         query: z.string().optional().describe("SPARQL CONSTRUCT or SELECT whose results to add"),
@@ -579,7 +679,7 @@ export function registerGraphViews({ server, store, jobs, here, guard, json, Usa
       const view = viewOf(view_id);
       const done = [];
       if (options || title) {
-        Object.assign(view.options, options ?? {});
+        Object.assign(view.options, lookOf(options ?? {}, view.options));
         if (title) view.title = title;
         view.patch({ op: "options", options: view.options, title: view.title });
         done.push("look changed");

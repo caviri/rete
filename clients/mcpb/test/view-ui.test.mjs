@@ -117,7 +117,11 @@ test("the graph view works in a sandboxed iframe behind an MCP Apps host", { ski
   await until(() => window.__reteView.cy.getElementById("<https://example.org/ada>").data("label") === "Ada Lovelace", null, "labels");
   assert.equal(await inView(() => window.__reteView.viewId), viewId);
 
+  // The checkboxes sit in the Show menu, which closes on a click elsewhere.
+  const menu = () => view.locator("#show").evaluate((d) => (d.open = true));
+
   // Labels off and on.
+  await menu();
   await view.locator("#opt-labels").uncheck();
   assert.equal(await inView(() => window.__reteView.cy.nodes()[0].style("label")), "");
   await view.locator("#opt-labels").check();
@@ -128,6 +132,7 @@ test("the graph view works in a sandboxed iframe behind an MCP Apps host", { ski
   await view.locator('#layers input[data-layer="Person"]').uncheck();
   assert.equal(await inView(() => window.__reteView.cy.nodes(".hidden").length), 3);
   await view.locator('#layers input[data-layer="Person"]').check();
+  await menu();
   await view.locator("#opt-boxes").check();
   assert.equal(await inView(() => window.__reteView.cy.nodes(".box").length), 1);
   await view.locator("#opt-boxes").uncheck();
@@ -183,6 +188,51 @@ test("the graph view works in a sandboxed iframe behind an MCP Apps host", { ski
   await inView(() => window.__reteView.cy.$(":selected").unselect());
   await view.locator("#fit").click();
   await shot("");
+
+  // Charles's statements, so his box has a property to list.
+  await inView(() => window.__reteView.cy.getElementById("<https://example.org/charles>").emit("dbltap"));
+  await until(() => window.__reteView.nodes.get("<https://example.org/charles>").props.length > 0, null, "Charles's properties");
+
+  // Boxes: each entity a box with its properties, in layers, with square lines.
+  await view.locator("#opt-diagram").selectOption("boxes");
+  await until(() => window.__reteView.cy.nodes(".card").length === window.__reteView.nodes.size, null, "a box per entity");
+  assert.equal(await view.locator("#opt-layout").inputValue(), "layered");
+  assert.equal(await view.locator("#opt-edges").inputValue(), "square");
+  assert.equal(await inView(() => window.__reteView.cy.edges()[0].style("curve-style")), "round-taxi");
+  const charles = await inView(() => {
+    const el = window.__reteView.cy.getElementById("<https://example.org/charles>");
+    return { h: el.height(), svg: decodeURIComponent(el.data("svg")) };
+  });
+  assert.match(charles.svg, />Charles Babbage</);
+  assert.match(charles.svg, />born<[\s\S]*>1791</);
+  assert.ok(charles.h > 40, `a box with a property is taller than a name: ${charles.h}`);
+  // Laid out in layers: Ada knows Mary, so Mary sits below her (once the layout has animated).
+  await page.waitForTimeout(500);
+  const [ada, mary] = await inView(() => ["ada", "mary"].map((k) => window.__reteView.cy.getElementById(`<https://example.org/${k}>`).position("y")));
+  assert.ok(mary > ada, `Mary (${mary}) below Ada (${ada})`);
+  await shot("-boxes");
+
+  // Classes: a box per type with its members' properties, the links between classes counted.
+  await view.locator("#opt-diagram").selectOption("classes");
+  await until(() => window.__reteView.classBoxes.size === 3, null, "a box per class");
+  const links = await inView(() => window.__reteView.cy.edges().map((e) => e.data("label")));
+  assert.ok(links.includes("knows ×3"), links.join(", "));
+  await shot("-classes");
+  // A class leads to its members.
+  await inView(() => window.__reteView.cy.getElementById("class:https://example.org/Person").select());
+  await until(() => window.__reteView.selection[0]?.class_members === 3, null, "the class selected");
+  await view.locator('#details [data-act="members"]').click();
+  await until(() => window.__reteView.options.diagram === "boxes" && window.__reteView.highlight.size === 3, null, "its members");
+});
+
+test("a dataset's schema, drawn as class boxes with their properties", { skip }, async (t) => {
+  const { view, inView, until, shot } = await host(t, { dataset: "people", schema: true });
+  await until(() => window.__reteView.cy?.nodes(".card").length === 3, null, "a box per class");
+  assert.equal(await view.locator("#opt-diagram").inputValue(), "boxes");
+  const person = await inView(() => decodeURIComponent(window.__reteView.cy.getElementById("<https://example.org/Person>").data("svg")));
+  assert.match(person, />3 instances</);
+  assert.match(person, />label</);
+  await shot("-schema");
 });
 
 test("a file attached to the chat opens when the user chooses it in the view", { skip }, async (t) => {

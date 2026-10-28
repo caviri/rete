@@ -64,6 +64,29 @@ path of a file attached to the chat (below). Local files win a name clash.
 triples and the surfaces `rete export` can write them in — measured from the
 file's header, so it answers for every published file.
 
+### Graph views
+
+Where the client renders MCP Apps (Claude Desktop does), `graph_view` opens an
+interactive view in the conversation; `graph_view_update` changes it and
+`graph_view_state` reads what the user selected. Its page (`src/view/`) is
+built into one self-contained HTML file — cytoscape and dagre inlined, since
+the sandbox has no network — and fetches its elements with app-only tools, so
+the data never passes through the model. It draws the graph three ways:
+
+- **nodes** — a dot per entity (circles, or squares), in a force layout;
+- **boxes** — a box per entity: its name on a band in its layer's colour, its
+  type, then its properties a line each (a UML object diagram);
+- **classes** — a box per `rdf:type` listing the properties its members carry
+  and how many do, joined by the predicates between classes, counted (a UML
+  class diagram). A class leads to its members.
+
+Boxes and classes come laid out in layers (dagre, top down; what is not linked
+is packed in rows underneath) with square connectors; lines can also be curved
+or straight. `graph_view(dataset, schema: true)` draws a dataset's own schema —
+its most frequent classes as boxes listing their literal properties with
+counts, linked by their relations — from the schema pyramid, or the card's
+lists in a file without one.
+
 ### What each graph supports
 
 Not every `.rete` carries every index. The largest published graphs are built

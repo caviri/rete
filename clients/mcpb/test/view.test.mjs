@@ -202,6 +202,39 @@ test("a file the user opens in a view replaces what it shows", async (t) => {
   assert.match(r.content[0].text, /junk.rete is not a .rete file this can read/);
 });
 
+test("a diagram comes with its look; a schema view draws classes with their properties", async (t) => {
+  const { call, data } = await connect(t, await fixture());
+  const { view_id } = (await call("graph_view", { dataset: "people", query: EDGES })).structuredContent;
+  const first = await data("graph_view_sync", { view_id, since: 0 });
+
+  // Boxes and classes come in layers with square lines…
+  await data("graph_view_update", { view_id, options: { diagram: "classes" } });
+  const classes = await data("graph_view_sync", { view_id, since: first.version });
+  assert.deepEqual(classes.patches[0].options, { diagram: "classes", layout: "layered", edge_style: "square" });
+  // …unless the call says otherwise.
+  await data("graph_view_update", { view_id, options: { diagram: "graph", edge_style: "square" } });
+  const dots = await data("graph_view_sync", { view_id, since: classes.version });
+  assert.equal(dots.patches[0].options.layout, "cose");
+  assert.equal(dots.patches[0].options.edge_style, "square");
+
+  // The dataset's own schema, with no query.
+  const schema = await call("graph_view", { dataset: "people", schema: true });
+  assert.match(schema.content[0].text, /from its schema pyramid\): 3 classes/);
+  const { snapshot } = await data("graph_view_sync", { view_id: schema.structuredContent.view_id, since: 0 });
+  assert.equal(snapshot.title, "schema of people");
+  assert.equal(snapshot.options.diagram, "boxes");
+  assert.equal(snapshot.options.layout, "layered");
+  const person = snapshot.nodes.find((n) => n.iri === "https://example.org/Person");
+  assert.equal(person.kind, "class");
+  assert.equal(person.count, 3);
+  assert.ok(person.props.some(([p, n]) => p === "http://www.w3.org/2000/01/rdf-schema#label" && n === "3"), JSON.stringify(person.props));
+  assert.ok(
+    snapshot.edges.some((e) => e.source === "<https://example.org/Person>" && e.target === "<https://example.org/Project>" && /^worksFor \(2\)$/.test(e.label)),
+    JSON.stringify(snapshot.edges),
+  );
+  assert.deepEqual(snapshot.table.vars, ["class", "property", "object", "count"]);
+});
+
 test("bad calls say what is wrong", async (t) => {
   const { client } = await connect(t, await fixture());
   const r = await client.callTool({ name: "graph_view_update", arguments: { view_id: "v999", options: { labels: false } } });
