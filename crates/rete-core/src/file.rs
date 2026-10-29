@@ -292,30 +292,22 @@ fn compute_label_index(
         .collect()
 }
 
-/// Build the full-text index section (`token → subjects`) over every
-/// string-literal object: tokenize each literal into words and record the
-/// subject that carries it. Empty when the graph has no literals. Opt-in
-/// (`rete build --text-index`); O(literal bytes) transient. The token table is
-/// compressed with `writer_codec` (the reader decompresses with `block_codec`).
+/// Build the default-scope full-text index section (`token → subjects`) over
+/// every literal object of `triples`: tokenize each literal into words and
+/// record the subject that carries it. Empty when the graph has no literals.
+/// This is the pre-0.4.0 index, byte for byte; the builds call
+/// `text_index::build_section` with their scope (`--text-index-graphs`,
+/// `--text-index-include`/`-exclude`). O(literal bytes) transient. The token
+/// table is compressed with `writer_codec` (the reader decompresses with
+/// `block_codec`).
 pub fn compute_text_index(dict: &Dictionary, triples: &[(u32, u32, u32)]) -> Vec<u8> {
-    use crate::terms::{is_literal, literal_lexical};
-    let mut b = crate::text_index::TextIndexBuilder::new();
-    for &(s, _p, o) in triples {
-        let Some(term) = dict.object_term(o) else {
-            continue;
-        };
-        if !is_literal(&term) {
-            continue;
-        }
-        if let Some(lit) = literal_lexical(&term) {
-            b.add_text(&lit, s);
-        }
-    }
-    if b.is_empty() {
-        Vec::new()
-    } else {
-        b.build(writer_codec())
-    }
+    crate::text_index::build_section(
+        dict,
+        &crate::text_index::TextIndexScope::default(),
+        triples,
+        std::iter::empty(),
+        writer_codec(),
+    )
 }
 
 /// The top entity **shapes** (characteristic sets): group subjects by the exact
@@ -438,6 +430,30 @@ pub(crate) fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
             zstd::encode_all(bytes, ZSTD_LEVEL).expect("zstd encode is infallible in-memory")
         }
         _ => bytes.to_vec(),
+    }
+}
+
+/// The streaming twin of [`compress`]: the same codec at the same level, read
+/// from `src` and written to `dst`, for a payload the memory-bounded build
+/// keeps on disk (the TEXT_INDEX token table). [`compress`] is itself a
+/// streaming encode (`zstd::encode_all` drives the same `Encoder`), and the
+/// encoder cuts blocks from its own input buffer, not from how the input was
+/// handed to it — so the bytes are the same. `text_index_spill` pins that.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn compress_to(
+    codec: u8,
+    src: &mut dyn std::io::Read,
+    dst: &mut dyn std::io::Write,
+) -> std::io::Result<()> {
+    match codec {
+        #[cfg(feature = "compression")]
+        CODEC_ZSTD => {
+            let mut enc = zstd::stream::Encoder::new(dst, ZSTD_LEVEL)?;
+            std::io::copy(src, &mut enc)?;
+            enc.finish()?;
+            Ok(())
+        }
+        _ => std::io::copy(src, dst).map(|_| ()),
     }
 }
 
@@ -1843,6 +1859,11 @@ pub fn write_dataset_with_metadata(
 ) -> Vec<u8> {
     let codec = writer_codec();
     let dict_container = encode_dict_container(dict, codec);
+    // This entry point takes a finished section, so it reads the section's own
+    // scope block to pick the directory kind (6, or 11 for a partial index).
+    let text_index_partial = !text_index.is_empty()
+        && crate::text_index::TextIndex::from_section(text_index, codec)
+            .is_ok_and(|ti| ti.scope().restricts_predicates());
     write_dataset_from_parts(
         &dict_container,
         dict.term_count() as u64,
@@ -1854,6 +1875,7 @@ pub fn write_dataset_with_metadata(
         pyramid_levels,
         metadata,
         text_index,
+        text_index_partial,
         codec,
     )
 }
@@ -1874,6 +1896,7 @@ pub(crate) fn write_dataset_from_parts(
     pyramid_levels: u16,
     metadata: &[u8],
     text_index: &[u8],
+    text_index_partial: bool,
     codec: u8,
 ) -> Vec<u8> {
     let index_container = encode_index_container(default_index, codec);
@@ -1957,6 +1980,7 @@ pub(crate) fn write_dataset_from_parts(
         schema_meta_len,
         text_index_offset: if text_len > 0 { text_offset } else { 0 },
         text_index_len: text_len,
+        text_index_partial: text_len > 0 && text_index_partial,
         build_info_offset: 0,
         build_info_len: 0,
         extra_sections: Vec::new(),
@@ -3787,6 +3811,13 @@ impl Rete {
     /// built with `--text-index`. Cheap — reads the header, never faults.
     pub fn has_text_index(&self) -> bool {
         self.header.text_index_len > 0
+    }
+
+    /// What the full-text index covers (graphs, predicates) — `None` when the
+    /// file has none. Faults the token table on the lazy remote path, as a
+    /// search does; the scope block lives in it.
+    pub fn text_index_scope(&self) -> Option<crate::text_index::TextIndexScope> {
+        self.text_index().map(|ti| ti.scope().clone())
     }
 
     /// Byte length of the TEXT_INDEX section's leading **token table** — the

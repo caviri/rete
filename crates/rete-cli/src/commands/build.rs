@@ -7,6 +7,7 @@
 use crate::commands::buildinfo;
 use crate::commands::card::{self, CardArgs};
 use rete_core::ingest;
+use rete_core::{IntoTextIndex, TextIndexScope};
 
 /// The optional sections added after the generation-1 freeze that a build
 /// writes: the LABEL_INDEX (kind 8, `--label-index`) and the SCHEMA (kind 9,
@@ -37,14 +38,15 @@ impl BuildSections {
     fn assemble_options<'a>(
         self,
         with_pyramid: bool,
-        with_text_index: bool,
+        text_index: Option<&'a TextIndexScope>,
         type_override: Option<&'a str>,
         algo: rete_core::PyramidAlgo,
         perms: rete_core::PermSet,
     ) -> ingest::AssembleOptions<'a> {
         ingest::AssembleOptions {
             with_pyramid,
-            with_text_index,
+            with_text_index: text_index.is_some(),
+            text_index_scope: text_index,
             type_override,
             algo,
             perms,
@@ -125,7 +127,7 @@ fn attach_build_record(
     command: &str,
     format: Option<&str>,
     no_pyramid: bool,
-    text_index: bool,
+    text_index: Option<&TextIndexScope>,
     materialize: bool,
     reason: bool,
     pyramid_algo: rete_core::PyramidAlgo,
@@ -133,11 +135,10 @@ fn attach_build_record(
     sections: BuildSections,
 ) -> anyhow::Result<Vec<u8>> {
     let header = rete_core::Header::from_bytes(&bytes)?;
-    let mut info = buildinfo::new_build_info(buildinfo::BuildParams {
+    let mut params = buildinfo::BuildParams {
         command: Some(command.to_string()),
         format: format.map(str::to_string),
         no_pyramid,
-        text_index,
         label_index: sections.label_index,
         no_schema: !sections.schema,
         materialize,
@@ -156,7 +157,10 @@ fn attach_build_record(
         memory_budget_mb: None,
         codec: Some(buildinfo::codec_name(header.dict_codec).to_string()),
         card_top_n: Some(card::CARD_TOP_N as u32),
-    });
+        ..Default::default()
+    };
+    params.set_text_index(text_index);
+    let mut info = buildinfo::new_build_info(params);
     if !measure_costs {
         eprintln!(
             "--no-card-costs: the starter queries were NOT run, so nothing checked that they \
@@ -441,7 +445,7 @@ pub(crate) fn build(
     no_pyramid: bool,
     reason: bool,
     pyramid_algo: rete_core::PyramidAlgo,
-    text_index: bool,
+    text_index: impl IntoTextIndex,
     type_predicate: Option<&str>,
     collapse_graphs: bool,
     card_args: CardArgs,
@@ -451,8 +455,14 @@ pub(crate) fn build(
     surface: ingest::QuotedTripleSurface,
     sections: BuildSections,
 ) -> anyhow::Result<()> {
-    let opts =
-        sections.assemble_options(!no_pyramid, text_index, type_predicate, pyramid_algo, perms);
+    let text_index = text_index.into_text_index();
+    let opts = sections.assemble_options(
+        !no_pyramid,
+        text_index.as_ref(),
+        type_predicate,
+        pyramid_algo,
+        perms,
+    );
     // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
     // reasoning is requested, assemble by STREAMING the inputs twice instead of
     // materializing every parsed quad. Peak RAM drops from the (huge, heavily
@@ -546,7 +556,7 @@ pub(crate) fn build(
                 "build",
                 format,
                 no_pyramid,
-                text_index,
+                text_index.as_ref(),
                 false,
                 false,
                 pyramid_algo,
@@ -649,7 +659,7 @@ pub(crate) fn build(
             "build",
             format,
             no_pyramid,
-            text_index,
+            text_index.as_ref(),
             materialize,
             reason,
             pyramid_algo,
@@ -677,7 +687,11 @@ pub(crate) fn build(
 /// (`--collapse-graphs` still folds them into the default graph when that is what
 /// you want).
 ///
-/// Constraints (explicit errors): no pyramid, no text index, no reasoning.
+/// `--text-index` (any scope) is a second external sort over the literal
+/// words, inside the same budget, and writes the same TEXT_INDEX bytes as the
+/// in-RAM build (`rete_core::text_index_spill`).
+///
+/// Constraints (explicit errors): no pyramid, no reasoning.
 /// `--card` embeds curated fields + counts (the derived profile lists need
 /// unbounded RAM, so they are omitted here). Every input syntax streams,
 /// including gzipped ones, so the source never has to be decompressed to disk.
@@ -690,7 +704,7 @@ pub(crate) fn build_external_cmd(
     tmp_dir: Option<&str>,
     materialize: bool,
     reason: bool,
-    text_index: bool,
+    text_index: Option<TextIndexScope>,
     collapse_graphs: bool,
     card_args: CardArgs,
     perms: rete_core::PermSet,
@@ -703,20 +717,6 @@ pub(crate) fn build_external_cmd(
         anyhow::bail!(
             "--memory-budget-mb is incompatible with --materialize/--reason \
              (they need the whole graph resident); run them via the standard build"
-        );
-    }
-    // Still refused, deliberately. The text index is `token -> sorted subjects`
-    // over the *literals* — a second external sort on a completely different
-    // key (a string token, not an id), fed from the chunk-local terms before the
-    // dictionary merge, and emitted as its own section. It shares no code with
-    // the named-graph column, so landing it here would not have saved a second
-    // pass over the same lines; it is its own change. Until then, build a
-    // text-indexed file with the standard build, or index the text separately.
-    if text_index {
-        anyhow::bail!(
-            "--memory-budget-mb does not support --text-index (the inverted index is \
-             a separate external sort over literal tokens, not part of the triple \
-             spill); build with the standard path, or drop --text-index"
         );
     }
     let inputs_fmt: Vec<(&str, &'static str)> = inputs
@@ -756,7 +756,7 @@ pub(crate) fn build_external_cmd(
     // front (there are no starter queries to measure — the external card has no
     // derived profile), so the section is written natively during the stream.
     let build_info = if curated.is_some() {
-        buildinfo::new_build_info(buildinfo::BuildParams {
+        let mut params = buildinfo::BuildParams {
             command: Some("build --memory-budget-mb".to_string()),
             format: format.map(str::to_string),
             no_pyramid: true,
@@ -764,8 +764,9 @@ pub(crate) fn build_external_cmd(
             no_schema: !sections.schema,
             memory_budget_mb: Some(memory_budget_mb),
             ..Default::default()
-        })
-        .to_json_bytes()
+        };
+        params.set_text_index(text_index.as_ref());
+        buildinfo::new_build_info(params).to_json_bytes()
     } else {
         Vec::new()
     };
@@ -831,6 +832,7 @@ pub(crate) fn build_external_cmd(
             label_index: sections.label_index,
             schema: sections.schema,
             type_override: type_predicate.map(str::to_string),
+            text_index,
         },
     )
     .map_err(|e| match e {
@@ -868,7 +870,7 @@ fn print_build_summary(output: &str, stats: &ingest::BuildStats, byte_len: usize
 pub(crate) fn repyramid(
     input: &str,
     output: &str,
-    text_index: bool,
+    text_index: Option<TextIndexScope>,
     type_predicate: Option<&str>,
     pyramid_algo: rete_core::PyramidAlgo,
     card_args: CardArgs,
@@ -920,7 +922,13 @@ pub(crate) fn repyramid(
         None
     };
     let card_requested = curated.is_some();
-    let opts = sections.assemble_options(true, text_index, type_predicate, pyramid_algo, perms);
+    let opts = sections.assemble_options(
+        true,
+        text_index.as_ref(),
+        type_predicate,
+        pyramid_algo,
+        perms,
+    );
     let (out_bytes, stats) =
         ingest::assemble_dataset_opts(quads, &opts, |stats, quads| match curated {
             Some(curated) => {
@@ -944,7 +952,7 @@ pub(crate) fn repyramid(
             "repyramid",
             None,
             false,
-            text_index,
+            text_index.as_ref(),
             false,
             false,
             pyramid_algo,
@@ -1372,5 +1380,101 @@ mod tests {
 
         std::fs::remove_file(&inp).ok();
         std::fs::remove_file(&out).ok();
+    }
+
+    /// `--text-index` with `--memory-budget-mb` (B1): no longer refused, and the
+    /// TEXT_INDEX section is the bytes the in-RAM build writes — for the
+    /// default scope and for a scoped one, whose flags build-info records.
+    #[test]
+    fn memory_bounded_text_index_matches_the_in_ram_section() {
+        let nq = "<http://x/e1> <http://x/title> \"Glucose metabolism étude\" .\n\
+                  <http://x/e1> <http://x/desc> \"The entity has been modified.\" .\n\
+                  <http://x/e2> <http://x/title> \"Benzene ring\"@en .\n\
+                  <http://x/p1> <http://x/desc> \"The entity has been created.\" <http://x/g1> .\n\
+                  <http://x/p1> <http://x/note> \"created by an agent\" <http://x/g1> .\n";
+        let pid = std::process::id();
+        let dir = std::env::temp_dir().join(format!("rete_tiext_{pid}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let inp = dir.join("in.nq");
+        std::fs::write(&inp, nq).unwrap();
+        let input = [inp.to_str().unwrap().to_string()];
+        let none: [&str; 0] = [];
+        let scopes = [
+            TextIndexScope::default(),
+            TextIndexScope::from_options(rete_core::TextIndexGraphs::All, none, ["http://x/desc"])
+                .unwrap(),
+        ];
+        let section = |b: &[u8]| -> (Vec<u8>, bool) {
+            let h = rete_core::Header::from_bytes(b).unwrap();
+            let off = h.text_index_offset as usize;
+            (
+                b[off..off + h.text_index_len as usize].to_vec(),
+                h.text_index_partial,
+            )
+        };
+        for scope in scopes {
+            let ram = dir.join("ram.rete");
+            let ext = dir.join("ext.rete");
+            build(
+                &input,
+                ram.to_str().unwrap(),
+                None,
+                false,
+                true,
+                false,
+                rete_core::PyramidAlgo::Louvain,
+                Some(scope.clone()),
+                None,
+                false,
+                CardArgs::default(),
+                false,
+                rete_core::PermSet::ALL,
+                false,
+                ingest::QuotedTripleSurface::default(),
+            )
+            .unwrap();
+            build_external_cmd(
+                &input,
+                ext.to_str().unwrap(),
+                None,
+                64,
+                Some(dir.to_str().unwrap()),
+                false,
+                false,
+                Some(scope.clone()),
+                false,
+                CardArgs {
+                    enabled: true,
+                    ..CardArgs::default()
+                },
+                rete_core::PermSet::ALL,
+                false,
+                ingest::QuotedTripleSurface::default(),
+            )
+            .unwrap();
+            let ram_bytes = std::fs::read(&ram).unwrap();
+            let ext_bytes = std::fs::read(&ext).unwrap();
+            let (ram_sec, ram_partial) = section(&ram_bytes);
+            let (ext_sec, ext_partial) = section(&ext_bytes);
+            assert!(!ram_sec.is_empty());
+            assert_eq!(ext_sec, ram_sec, "{scope:?}: TEXT_INDEX sections differ");
+            assert_eq!(ext_partial, scope.restricts_predicates());
+            assert_eq!(ram_partial, ext_partial);
+
+            // The carded external build records the scope it was given.
+            let info = buildinfo::BuildInfo::from_json_bytes(
+                &rete_core::read_build_info(&ext_bytes).unwrap().unwrap(),
+            )
+            .unwrap();
+            assert!(info.params.text_index);
+            if scope.is_default() {
+                assert_eq!(info.params.text_index_graphs, None);
+                assert!(info.params.text_index_exclude.is_empty());
+            } else {
+                assert_eq!(info.params.text_index_graphs.as_deref(), Some("all"));
+                assert_eq!(info.params.text_index_exclude, ["<http://x/desc>"]);
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

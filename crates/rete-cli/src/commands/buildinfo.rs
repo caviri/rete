@@ -97,6 +97,16 @@ pub(crate) struct BuildParams {
     /// `--no-schema`: the SCHEMA section (kind 9) was left out.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_schema: bool,
+    /// `--text-index-graphs`: `all` when the named graphs' literals are indexed
+    /// too; absent for the default graph only (the pre-0.4.0 scope).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_index_graphs: Option<String>,
+    /// `--text-index-include`: the only predicates whose literals are indexed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_index_include: Vec<String>,
+    /// `--text-index-exclude`: predicates whose literals are left out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_index_exclude: Vec<String>,
     /// `--materialize`: OWL RL/RDFS entailments were baked into the file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub materialize: bool,
@@ -120,6 +130,28 @@ pub(crate) struct BuildParams {
 impl BuildParams {
     fn is_empty(&self) -> bool {
         *self == BuildParams::default()
+    }
+
+    /// Record the text index and its scope (`None` = no text index). The scope
+    /// is also in the section itself, which is what readers act on; this is
+    /// the build's account of the flags that produced it.
+    pub(crate) fn set_text_index(&mut self, scope: Option<&rete_core::TextIndexScope>) {
+        use rete_core::{TextIndexGraphs, TextIndexPredicates};
+        self.text_index = scope.is_some();
+        self.text_index_graphs = None;
+        self.text_index_include.clear();
+        self.text_index_exclude.clear();
+        let Some(scope) = scope else {
+            return;
+        };
+        if scope.graphs == TextIndexGraphs::All {
+            self.text_index_graphs = Some("all".to_string());
+        }
+        match &scope.predicates {
+            TextIndexPredicates::All => {}
+            TextIndexPredicates::Only(l) => self.text_index_include = l.clone(),
+            TextIndexPredicates::Except(l) => self.text_index_exclude = l.clone(),
+        }
     }
 }
 
@@ -829,6 +861,15 @@ pub(crate) fn format_build_info(info: &BuildInfo) -> String {
         }
         if p.text_index {
             flags.push("--text-index".into());
+        }
+        if let Some(g) = &p.text_index_graphs {
+            flags.push(format!("--text-index-graphs {g}"));
+        }
+        for iri in &p.text_index_include {
+            flags.push(format!("--text-index-include {iri}"));
+        }
+        for iri in &p.text_index_exclude {
+            flags.push(format!("--text-index-exclude {iri}"));
         }
         if p.materialize {
             flags.push("--materialize".into());

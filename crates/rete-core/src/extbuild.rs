@@ -3,7 +3,7 @@
 //! intermediate artifacts to disk and merging them, instead of holding the whole
 //! dictionary + id-triples + permutations in RAM (SPEC-compatible output;
 //! byte-identical to [`crate::ingest::assemble_dataset_streaming_algo`] with the
-//! pyramid and text index disabled).
+//! pyramid disabled, text index included or not).
 //!
 //! ## How the budget bounds memory
 //!
@@ -28,8 +28,11 @@
 //! named:  external sort of global.qtri by (g, s, p, o) — so every graph is one
 //!           CONTIGUOUS RUN — then one index container per graph, in graph-name
 //!           order, appended to a single spill file
-//! write:  header | metadata | dict | index | named graphs | footer, hashed
-//!           incrementally
+//! text:   (`--text-index` only) each chunk's literal words → c<i>.tok, remapped
+//!           with the same tables → global.tok, external sort by (token,
+//!           subject) → the TEXT_INDEX section (`crate::text_index_spill`)
+//! write:  header | metadata | dict | index | text index | named graphs |
+//!           footer, hashed incrementally
 //! ```
 //!
 //! Peak RAM ≈ max(one chunk's working set, remap tables + merge buffers, one
@@ -50,9 +53,10 @@
 //! so an input with no named graphs runs exactly the code (and the record
 //! widths) it ran before this existed.
 //!
-//! v1 limits (clear errors, not silent degradation): no community pyramid, no
-//! full-text index. SPARQL/joins/verify are unaffected (they never require the
-//! pyramid).
+//! Limits (clear errors, not silent degradation): no community pyramid.
+//! SPARQL/joins/verify are unaffected (they never require the pyramid). The
+//! full-text index is supported, in any scope, and its section is byte-identical
+//! to the in-RAM build's.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -115,6 +119,10 @@ pub struct ExternalBuildOptions {
     pub schema: bool,
     /// The schema's type predicate; `rdf:type` when `None`.
     pub type_override: Option<String>,
+    /// Build the full-text index over the literals of this scope (`None` = no
+    /// TEXT_INDEX section). A second external sort, on the literal words, inside
+    /// the same budget; see [`crate::text_index_spill`].
+    pub text_index: Option<crate::text_index::TextIndexScope>,
 }
 
 impl Default for ExternalBuildOptions {
@@ -128,8 +136,17 @@ impl Default for ExternalBuildOptions {
             label_index: false,
             schema: false,
             type_override: None,
+            text_index: None,
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// `(chunk budget, text-index run bytes)` for tests that drive a small
+    /// graph through [`build_external`] as many chunks and many sort runs —
+    /// the public budget floor would otherwise make it one of each.
+    static TEST_SPLIT: std::cell::Cell<Option<(u64, usize)>> = const { std::cell::Cell::new(None) };
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -188,12 +205,24 @@ where
 
     // ---- Phase 1: chunk the input ------------------------------------------
     let chunk_budget = (budget as f64 * CHUNK_BUDGET_FRACTION) as u64;
+    // A text-index sort run holds at most a quarter of the budget in records;
+    // its vectors may grow to twice that, which is the half the phase may use.
+    let text_run_bytes = (budget / 4) as usize;
+    #[cfg(test)]
+    let (chunk_budget, text_run_bytes) = TEST_SPLIT
+        .with(|c| c.get())
+        .unwrap_or((chunk_budget, text_run_bytes));
     eprintln!(
         "extbuild: budget {} MiB -> chunk target {} MiB",
         budget >> 20,
         chunk_budget >> 20
     );
+    let mut text = opts
+        .text_index
+        .clone()
+        .map(crate::text_index_spill::TextSpill::new);
     let mut chunker = Chunker::new(&tmp, chunk_budget);
+    chunker.text = text.as_mut();
     // LABEL_INDEX / SCHEMA (kinds 8, 9): the passes live in extbuild_sections;
     // each phase below calls one hook. A sort run gets an eighth of the budget
     // while chunks are resident, a quarter afterwards.
@@ -252,8 +281,15 @@ where
         } else {
             None
         };
+        if let Some(text) = text.as_mut() {
+            text.begin_remap(tmp.path("global.tok"))?;
+        }
         for (ci, chunk) in chunks.iter().enumerate() {
             let maps = &remaps[ci];
+            // The chunk's literal words, onto the same global subject ids.
+            if let Some(text) = text.as_mut() {
+                text.remap_chunk(&tmp.path(&format!("c{ci}.tok")), &maps.subj)?;
+            }
             let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri")))?);
             let mut buf = [0u8; 12];
             loop {
@@ -307,8 +343,14 @@ where
     }
     drop(remaps); // free the remap tables before the sort phase
 
-    // ---- Phase 4: per-permutation external sort + streaming tiler -----------
+    // ---- Phase 3b: the full-text index (`--text-index`) -----------------------
     let codec = crate::file::writer_codec();
+    let text_section = match text {
+        Some(t) => t.finish(&|name| tmp.path(name), text_run_bytes, codec)?,
+        None => None,
+    };
+
+    // ---- Phase 4: per-permutation external sort + streaming tiler -----------
     // A run holds R triples resident twice over during sort (Vec + sort scratch).
     let run_len = ((budget / 2) / 24).clamp(1 << 16, u32::MAX as u64) as usize;
     let mut perm_sections: Vec<SectionFile> = Vec::with_capacity(opts.perms.len());
@@ -417,6 +459,7 @@ where
         &opts.build_info,
         &merged,
         &perm_sections,
+        text_section.as_ref(),
         named.as_ref(),
         quad_count,
         codec,
@@ -518,6 +561,8 @@ struct Chunker<'a> {
     has_quoted: bool,
     /// The LABEL_INDEX pass, fed each chunk's default-graph quads at seal.
     labels: Option<ExtLabels>,
+    /// `--text-index`: each sealed chunk spills its literal words here.
+    text: Option<&'a mut crate::text_index_spill::TextSpill>,
 }
 
 impl<'a> Chunker<'a> {
@@ -532,6 +577,7 @@ impl<'a> Chunker<'a> {
             chunks: Vec::new(),
             has_quoted: false,
             labels: None,
+            text: None,
         }
     }
 
@@ -587,6 +633,11 @@ impl<'a> Chunker<'a> {
         let dict = db.build();
         if dict.has_quoted_triples() {
             self.has_quoted = true;
+        }
+        // `--text-index`: the chunk's literal words, keyed by chunk-local subject
+        // ids, while the raw strings and their dictionary are both in hand.
+        if let Some(text) = self.text.as_mut() {
+            text.spill_chunk(&self.tmp.path(&format!("c{ci}.tok")), &dict, &quads, &named)?;
         }
 
         // local id-triples (subject-space id, predicate id, object-space id)
@@ -2025,9 +2076,10 @@ impl StreamingTiler {
 // Phase 5: final streaming file assembly
 // ---------------------------------------------------------------------------
 
-/// Stream `header | metadata | dict container | index container | footer` to
-/// `output`, hashing the payload sections incrementally (same part order as
-/// `write_dataset_from_parts`), then patch the finished header at offset 0.
+/// Stream `header | metadata | dict container | index container | text index |
+/// named graphs | footer` to `output`, hashing the payload sections
+/// incrementally (same part order as `write_dataset_from_parts`), then patch the
+/// finished header at offset 0.
 #[allow(clippy::too_many_arguments)]
 fn write_final_file(
     output: &Path,
@@ -2035,6 +2087,7 @@ fn write_final_file(
     build_info: &[u8],
     dict: &MergedDict,
     perm_sections: &[SectionFile],
+    text: Option<&crate::text_index_spill::TextSection>,
     named: Option<&NamedSection>,
     quad_count: u64,
     codec: u8,
@@ -2082,9 +2135,12 @@ fn write_final_file(
     let build_len = build_info.len() as u64;
     let dict_offset = HEADER_LEN as u64 + meta_len + build_len;
     let index_offset = dict_offset + dict_len;
-    // pyramid and text index are absent (length 0), so the named graphs follow
-    // the index directly — the same arithmetic `write_dataset_from_parts` does.
-    let named_offset = index_offset + index_len;
+    // The pyramid is absent (length 0), so the text index follows the index
+    // directly and the named graphs follow it — the same arithmetic
+    // `write_dataset_from_parts` does.
+    let text_offset = index_offset + index_len;
+    let text_len = text.map_or(0, |t| t.len());
+    let named_offset = text_offset + text_len;
 
     let mut out = BufWriter::with_capacity(1 << 20, File::create(output)?);
     let mut hasher = blake3::Hasher::new();
@@ -2127,7 +2183,14 @@ fn write_final_file(
     }
 
     // pyramid section is empty (hash update of nothing = no-op, same as the
-    // in-RAM writer pushing an empty slice); the text index is absent.
+    // in-RAM writer pushing an empty slice).
+
+    // text index: `varint table_len | token table | postings`
+    if let Some(t) = text {
+        write_hashed(&mut out, &mut hasher, &t.head)?;
+        copy_hashed(&t.table, &mut out, &mut hasher)?;
+        copy_hashed(&t.postings, &mut out, &mut hasher)?;
+    }
 
     // named-graphs container
     if let Some(n) = named {
@@ -2168,8 +2231,9 @@ fn write_final_file(
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
         named_graphs_len: named_len,
         schema_meta_len: 0,
-        text_index_offset: 0,
-        text_index_len: 0,
+        text_index_offset: if text_len > 0 { text_offset } else { 0 },
+        text_index_len: text_len,
+        text_index_partial: text.is_some_and(|t| t.partial),
         build_info_offset: if build_len > 0 {
             HEADER_LEN as u64 + meta_len
         } else {
@@ -2455,6 +2519,7 @@ mod tests {
             &merged,
             &sections,
             None,
+            None,
             count.unwrap(),
             codec,
             crate::index::PermSet::ALL,
@@ -2622,6 +2687,12 @@ mod tests {
     /// carries `global.qtri` and `g.graphs`, and this harness ignores both — it
     /// would resume as a file with the named graphs silently dropped. It is
     /// checked rather than commented: `global.qtri` present is a hard stop.
+    ///
+    /// **A text index is carried over when it was finished.** Phase 3b leaves
+    /// `tok.table` + `tok.postings` behind before any permutation is sorted, and
+    /// they are reused as they are. Text-index files of an unfinished phase
+    /// (`global.tok`, `tok.run*`, `c<i>.tok`) are a hard stop for the same
+    /// reason as `global.qtri`.
     #[test]
     #[ignore = "operational tool, driven by RETE_RESUME_* env vars"]
     fn resume_from_spill() {
@@ -2631,6 +2702,15 @@ mod tests {
             "this spill has named quads (global.qtri); resuming it here would \
              write a file with the named graphs silently missing — rerun the \
              build instead"
+        );
+        let unfinished_text = std::fs::read_dir(&spill).unwrap().flatten().any(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n == "global.tok" || n.starts_with("tok.run") || n.ends_with(".tok")
+        });
+        assert!(
+            !unfinished_text,
+            "this spill has an unfinished text index (global.tok / tok.run* / c<i>.tok); \
+             resuming it here would write a file without it — rerun the build instead"
         );
         let out = PathBuf::from(std::env::var("RETE_RESUME_OUT").expect("RETE_RESUME_OUT"));
         let term_count: u64 = std::env::var("RETE_RESUME_TERMS").unwrap().parse().unwrap();
@@ -2693,12 +2773,41 @@ mod tests {
             eprintln!("resume: {} done", perm.name());
             sections.push(s);
         }
+        let (table, postings) = (spill.join("tok.table"), spill.join("tok.postings"));
+        let text = if table.exists() && postings.exists() {
+            let table_len = std::fs::metadata(&table).unwrap().len();
+            let mut head = Vec::new();
+            write_uvarint(&mut head, table_len);
+            // The scope block in the token table decides kind 6 or 11.
+            let mut prefix = head.clone();
+            prefix.extend(std::fs::read(&table).unwrap());
+            let partial = crate::text_index::TextIndex::from_token_table(
+                &prefix,
+                codec,
+                Box::new(|_, _| None),
+            )
+            .expect("tok.table parses")
+            .scope()
+            .restricts_predicates();
+            eprintln!("resume: reusing the text index");
+            Some(crate::text_index_spill::TextSection {
+                head,
+                table,
+                table_len,
+                postings_len: std::fs::metadata(&postings).unwrap().len(),
+                postings,
+                partial,
+            })
+        } else {
+            None
+        };
         write_final_file(
             &out,
             &metadata,
             &[],
             &merged,
             &sections,
+            text.as_ref(),
             None,
             quad_count,
             codec,
@@ -3025,11 +3134,207 @@ mod tests {
             &[],
             &merged,
             &sections,
+            None,
             named.as_ref(),
             quads,
             codec,
             perms,
         )?;
         Ok(std::fs::read(out)?)
+    }
+
+    // ---- `--text-index` in the memory-bounded build -------------------------
+
+    /// Literal-rich quads: titles and provenance-style descriptions in the
+    /// default graph (multi-byte words included), provenance snapshots in
+    /// named graphs, on top of the fedlex shape (its `"Artikel …"@de` literals
+    /// live in named graphs too).
+    fn text_quads() -> Vec<RawQuad> {
+        let mut q = fedlex_shaped_quads(40, 9);
+        for i in 0..600usize {
+            let s = format!("<http://ex/w{}>", i % 150);
+            q.push((
+                s.clone(),
+                "<http://purl.org/dc/terms/title>".to_string(),
+                format!("\"Glucose Études {} on ünïcode café\"@en", i % 37),
+                None,
+            ));
+            q.push((
+                s.clone(),
+                "<http://purl.org/dc/terms/description>".to_string(),
+                format!("\"The entity {} has been modified.\"", i % 150),
+                None,
+            ));
+            q.push((
+                format!("<http://ex/w{}/prov/se/1>", i % 150),
+                "<http://purl.org/dc/terms/description>".to_string(),
+                format!("\"The entity has been created ({i}).\""),
+                Some(format!("<http://ex/w{}/prov/>", i % 150)),
+            ));
+        }
+        q
+    }
+
+    fn text_scopes() -> Vec<crate::text_index::TextIndexScope> {
+        use crate::text_index::{TextIndexGraphs, TextIndexScope};
+        let none: [&str; 0] = [];
+        vec![
+            TextIndexScope::default(),
+            TextIndexScope::from_options(TextIndexGraphs::All, none, none).unwrap(),
+            TextIndexScope::from_options(
+                TextIndexGraphs::Default,
+                none,
+                ["http://purl.org/dc/terms/description"],
+            )
+            .unwrap(),
+            TextIndexScope::from_options(
+                TextIndexGraphs::All,
+                ["http://purl.org/dc/terms/description"],
+                none,
+            )
+            .unwrap(),
+        ]
+    }
+
+    fn build_reference_text(
+        quads: &[RawQuad],
+        scope: &crate::text_index::TextIndexScope,
+    ) -> Vec<u8> {
+        let (bytes, _stats) = ingest::assemble_dataset_streaming_algo(
+            |visit: &mut dyn FnMut(RawQuad)| {
+                for q in quads.iter().cloned() {
+                    visit(q);
+                }
+                Ok(())
+            },
+            false,
+            scope.clone(),
+            None,
+            crate::PyramidAlgo::Louvain,
+            |_, _, _| Vec::new(),
+        )
+        .unwrap();
+        bytes
+    }
+
+    /// The public entry point with a text index; `split` forces many chunks and
+    /// many text sort runs on a small graph.
+    fn build_ext_text(
+        quads: &[RawQuad],
+        scope: &crate::text_index::TextIndexScope,
+        split: Option<(u64, usize)>,
+    ) -> Vec<u8> {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("rete-extbuild-text-{}-{seq}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.rete");
+        TEST_SPLIT.with(|c| c.set(split));
+        let res = build_external(
+            |visit| {
+                for q in quads.iter().cloned() {
+                    visit(q)?;
+                }
+                Ok(())
+            },
+            &out,
+            ExternalBuildOptions {
+                memory_budget: 0,
+                tmp_dir: Some(dir.clone()),
+                text_index: Some(scope.clone()),
+                ..Default::default()
+            },
+        );
+        TEST_SPLIT.with(|c| c.set(None));
+        res.unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        // The spill directory is gone; only the output remains.
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, [std::ffi::OsString::from("out.rete")]);
+        let _ = std::fs::remove_dir_all(&dir);
+        bytes
+    }
+
+    /// B1's requirement: with `--text-index` the memory-bounded build writes the
+    /// same TEXT_INDEX section as the in-RAM build — and, the pyramid being off
+    /// on both sides, the same file — in one chunk and in many, for every scope.
+    #[test]
+    fn external_text_index_is_byte_identical_to_in_ram() {
+        let quads = text_quads();
+        for scope in text_scopes() {
+            let reference = build_reference_text(&quads, &scope);
+            let rh = crate::Header::from_bytes(&reference).unwrap();
+            assert!(
+                rh.text_index_len > 0,
+                "{scope:?}: the fixture must index something"
+            );
+            assert_eq!(rh.text_index_partial, scope.restricts_predicates());
+            for split in [None, Some((4 * 1024, 1024))] {
+                let bytes = build_ext_text(&quads, &scope, split);
+                assert_eq!(
+                    bytes, reference,
+                    "{scope:?}, split {split:?}: external build must be byte-identical"
+                );
+            }
+        }
+    }
+
+    /// The external file's text index answers searches, verifies, and carries
+    /// its scope: the provenance text is found only when named graphs are in
+    /// scope, the descriptions only when their predicate is.
+    #[test]
+    fn external_text_index_is_searchable_in_its_scope() {
+        let quads = text_quads();
+        let scopes = text_scopes();
+        let search = |scope: &crate::text_index::TextIndexScope, word: &str| -> usize {
+            let bytes = build_ext_text(&quads, scope, Some((4 * 1024, 1024)));
+            assert!(crate::verify(&bytes).unwrap());
+            let rete = crate::Rete::open(&bytes).unwrap();
+            assert!(rete.has_text_index());
+            assert_eq!(rete.text_index().unwrap().scope(), scope);
+            rete.text_search(&[word], None, 0).len()
+        };
+        // "glucose": 150 titled works, in every scope that keeps titles.
+        assert_eq!(search(&scopes[0], "glucose"), 150);
+        assert_eq!(search(&scopes[2], "glucose"), 150);
+        assert_eq!(
+            search(&scopes[3], "glucose"),
+            0,
+            "an include-only scope drops titles"
+        );
+        // "modified": the default-graph descriptions.
+        assert_eq!(search(&scopes[0], "modified"), 150);
+        assert_eq!(search(&scopes[2], "modified"), 0, "excluded predicate");
+        // "created": only in the named provenance graphs.
+        assert_eq!(
+            search(&scopes[0], "created"),
+            0,
+            "named graphs not in scope"
+        );
+        assert_eq!(search(&scopes[1], "created"), 150);
+        assert_eq!(search(&scopes[3], "created"), 150);
+        // A multi-byte word survives the spill's byte-level front coding.
+        assert_eq!(search(&scopes[0], "études"), 150);
+    }
+
+    /// No literal in scope: no section at all, as the in-RAM build writes none.
+    #[test]
+    fn external_text_index_with_nothing_in_scope_writes_no_section() {
+        let quads = test_quads(400);
+        let none: [&str; 0] = [];
+        let scope = crate::text_index::TextIndexScope::from_options(
+            crate::text_index::TextIndexGraphs::Default,
+            ["http://ex/never"],
+            none,
+        )
+        .unwrap();
+        let reference = build_reference_text(&quads, &scope);
+        let bytes = build_ext_text(&quads, &scope, None);
+        assert_eq!(bytes, reference);
+        assert_eq!(crate::Header::from_bytes(&bytes).unwrap().text_index_len, 0);
     }
 }

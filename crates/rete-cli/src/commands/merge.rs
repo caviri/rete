@@ -197,6 +197,7 @@ pub(crate) fn merge_cmd(
             label_index,
             schema: true,
             type_override: None,
+            text_index: None,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;

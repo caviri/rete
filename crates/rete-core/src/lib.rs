@@ -81,6 +81,7 @@ pub mod sparql;
 pub mod terms;
 #[doc(hidden)]
 pub mod text_index;
+mod text_index_spill;
 #[doc(hidden)]
 pub mod tiling;
 #[doc(hidden)]
@@ -277,7 +278,10 @@ pub use sparql::{
 #[doc(hidden)]
 pub use terms::{NodeId, ObjectId, PredicateId, SubjectId, TermToken};
 #[doc(hidden)]
-pub use text_index::{tokenize, TextIndex, TextIndexBuilder};
+pub use text_index::{
+    tokenize, IntoTextIndex, TextIndex, TextIndexBuilder, TextIndexGraphs, TextIndexPredicates,
+    TextIndexScope,
+};
 #[doc(hidden)]
 pub use tiling::{choose_round_for_budget, summarize, tile_by_community, SuperEdge, Tile};
 #[doc(hidden)]

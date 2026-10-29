@@ -336,6 +336,11 @@ pub(crate) fn search_contains(
             terms.push(format!("{p}*"));
         }
         println!("(no entities contain {})", terms.join(" + "));
+        // An index of some graphs or predicates finds only their words; say
+        // which, so "nothing" is not read as "nowhere in the file".
+        if let Some(scope) = rete.text_index_scope().filter(|s| !s.is_default()) {
+            eprintln!("(the text index covers: {})", scope.describe());
+        }
         return Ok(());
     }
     for iri in &hits {
