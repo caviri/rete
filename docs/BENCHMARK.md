@@ -55,7 +55,12 @@ build (synthetic, `scripts`-style entities with type/label/edges):
 Output is byte-identical. Reproduce the phase-by-phase heap profile with
 `cargo run --release -p rete-bench -- --build-mem <file.nt>` — it snapshots the
 live heap (exact, via a counting allocator) after parse, dictionary, encode,
-the drop, pyramid, index, and write.
+the Dataset Card derivation, the drop, pyramid, the full-text index, index,
+write, and the starter-query costing that `rete build --card` runs against the
+written file (each query cold, as the build does; the five heaviest are listed
+under the phase row). That last phase is where a carded build peaks on a large
+graph, so it is the row to watch. `--no-card`, `--no-card-costs` and
+`--no-text-index` leave those phases out, mirroring a build without them.
 
 ### Build time (big graphs)
 

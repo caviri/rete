@@ -246,7 +246,7 @@ fn main() -> Result<()> {
         let path = raw
             .get(i + 1)
             .context("--build-mem needs a <file.nt> path")?;
-        return buildmem::run(path);
+        return buildmem::run(path, buildmem::Phases::from_args(&raw));
     }
     // Query-path memory profiler: `--query-mem <file.rete> "<sparql>"`.
     if let Some(i) = raw.iter().position(|a| a == "--query-mem") {

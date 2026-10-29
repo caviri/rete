@@ -202,7 +202,7 @@ pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]
 pub use file::{
     attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with,
-    plan_build_info, read_build_info, read_card_and_build_info_ranged,
+    compute_text_index, plan_build_info, read_build_info, read_card_and_build_info_ranged,
     read_card_and_build_info_with_header, read_metadata_ranged, read_schema_coherence_ranged,
     read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata,
     schema_classes, schema_coherence, schema_summary, spill_threshold_for, split_memory_budget,
