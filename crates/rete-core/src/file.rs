@@ -861,6 +861,18 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
         r = r2;
     }
 
+    // Chunks are independent: compress them across all cores, as the index
+    // tiles are (`par_iter` keeps the order, so the bytes are unchanged). At a
+    // high `--zstd-level` this serial loop was most of a build's wall time.
+    #[cfg(feature = "parallel")]
+    let compressed: Vec<Vec<u8>> = {
+        use rayon::prelude::*;
+        bounds
+            .par_iter()
+            .map(|&(_, s, e)| compress(codec, &raw[s as usize..e as usize]))
+            .collect()
+    };
+    #[cfg(not(feature = "parallel"))]
     let compressed: Vec<Vec<u8>> = bounds
         .iter()
         .map(|&(_, s, e)| compress(codec, &raw[s as usize..e as usize]))
