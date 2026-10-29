@@ -115,6 +115,26 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   graph whatever the query said: a sub-`SELECT` inside `GRAPH <g>`, under
   `FROM` or under the union-default toggle now reads that active graph, and
   `DESCRIBE … FROM <g>` describes from `<g>`.
+- **Planner: a query starting from a literal could materialize a whole
+  predicate.** The byte-size figure behind the merge-join and fat-side gates
+  routed a bound term by its unified node id instead of its id in the role
+  of its position — off by the whole subject-only block for any literal — so
+  `?id :hasLiteralValue "10.…" ; :usesIdentifierScheme :doi` saw its
+  identifier-scheme partner as "0 bytes" and merge-joined it in full (every
+  DOI identifier of a 2.9 B-triple OpenCitations part, killed at 4 GB). The
+  figure now routes in role-id space.
+- **Planner: a small outside side now probes a basic graph pattern** instead
+  of evaluating it whole and hash-joining. The outside rows (a property path,
+  an `OPTIONAL`'s left side, another block) are pulled first; when they are
+  at least 16 times fewer than the pattern's most selective triple pattern
+  (above 65,536 triples), the pattern is looked up per row — the rule a
+  basic graph pattern already applied between its own triple patterns. On
+  OpenCitations' 1 GB sample, the card's "authors in order" query went from
+  0.48 s and 353 MB to 0.07 s and 48 MB, and "where a work was published"
+  from 1.2 s and 546 MB to 0.07 s and 15 MB.
+- **`rete cost` no longer reads the whole file.** It performed the eager open
+  to report that open's size; on a 26 GB file it was killed at 2 GB. The
+  figure is now computed from the header, and is the same.
 
 ### Added
 

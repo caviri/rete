@@ -2329,4 +2329,46 @@ mod tests {
         assert_eq!(subjects(r#"STRLEN(?l) = 25"#), vec![c]);
         assert_eq!(subjects(r#"STRLEN(?l) = 24"#), vec![b]);
     }
+
+    /// A join whose left side turns out far smaller than the right BGP probes
+    /// the BGP per left row instead of evaluating it whole — the same rows
+    /// either way. Driven here with the probe floor removed, so the small
+    /// graph takes the path a 2.9 B-triple file takes for real.
+    #[test]
+    fn a_small_left_side_probes_the_right_bgp() {
+        let mut t: Vec<(String, String, String)> = Vec::new();
+        let e = |n: String| format!("<http://ex/{n}>");
+        for i in 0..200 {
+            t.push((e(format!("j{i}")), e("a".into()), e("Journal".into())));
+            t.push((e(format!("j{i}")), e("title".into()), format!("\"T{i}\"")));
+            t.push((e(format!("j{i}")), e("id".into()), e(format!("id{i}"))));
+            t.push((e(format!("id{i}")), e("value".into()), format!("\"{i}\"")));
+        }
+        t.push((e("work".into()), e("partOf".into()), e("issue".into())));
+        t.push((e("issue".into()), e("partOf".into()), e("j7".into())));
+        let refs: Vec<(&str, &str, &str)> = t
+            .iter()
+            .map(|(s, p, o)| (s.as_str(), p.as_str(), o.as_str()))
+            .collect();
+        let rete = Rete::open(&rete_from(&refs)).unwrap();
+        let queries = [
+            "PREFIX ex: <http://ex/> SELECT ?j ?t ?v WHERE { ex:work ex:partOf+ ?j . \
+             ?j ex:a ex:Journal ; ex:title ?t ; ex:id ?i . ?i ex:value ?v }",
+            "PREFIX ex: <http://ex/> SELECT ?j ?t WHERE { ex:work ex:partOf+ ?j \
+             OPTIONAL { ?j ex:title ?t } }",
+        ];
+        for q in queries {
+            let run = |floor: f64| {
+                crate::bgp::with_probe_floor(floor, || {
+                    let (_, sols) = eval_sparql(&rete, q).unwrap();
+                    let mut v: Vec<String> = sols.iter().map(|b| format!("{b:?}")).collect();
+                    v.sort();
+                    v
+                })
+            };
+            let hashed = run(f64::MAX);
+            assert!(!hashed.is_empty());
+            assert_eq!(run(0.0), hashed, "{q}");
+        }
+    }
 }

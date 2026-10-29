@@ -1943,13 +1943,47 @@ fn join_iter<'q>(
     //     memory — on a big remote graph that is the 32-bit wasm OOM behind
     //     `OPTIONAL { ?x schema:description ?d }` over 185M triples — whereas
     //     the probe faults only the rows the left side actually asks about.
+    //  3. when the left side turns out to be far smaller than the right BGP:
+    //     its rows are pulled first, up to the number that may still probe the
+    //     BGP's cheapest pattern profitably (the rule a BGP applies between its
+    //     own patterns), and if the left side ends within that budget it
+    //     probes. `<work> frbr:partOf+ ?j . ?j a :Journal ; :title ?t ; …`
+    //     finds three containers, yet hash-joined against every journal of a
+    //     2.9 B-triple file and took 40 s and 3.2 GB; the three probe instead.
+    //     Past the budget the rows already pulled feed the hash join.
+    let mut left_pulled: Option<RowIter<'q>> = None;
     if let Plan::Bgp(patterns) = r {
         if !patterns.is_empty() {
             let lcert = certain_bound(ctx, l, ctx.slots.len());
-            let probe = inlj_hint(ctx).is_some()
-                || (shares_certain_var(ctx, patterns, &lcert)
+            let shares = shares_certain_var(ctx, patterns, &lcert);
+            let mut probe = inlj_hint(ctx).is_some()
+                || (shares
                     && crate::bgp::bgp_min_scan_bytes(ctx, index, patterns)
                         .is_none_or(|n| n >= crate::bgp::FAT_SCAN_BYTES));
+            let mut small_left: Option<Vec<Row>> = None;
+            if !probe && shares {
+                let budget = crate::bgp::bgp_min_estimate(ctx, index, patterns)
+                    .and_then(crate::bgp::probe_row_budget);
+                if let Some(budget) = budget {
+                    let mut it = eval_plan_iter(ctx, index, nf, l);
+                    let mut head: Vec<Row> = Vec::new();
+                    let exhausted = loop {
+                        if head.len() > budget {
+                            break false;
+                        }
+                        match it.next() {
+                            Some(row) => head.push(row),
+                            None => break true,
+                        }
+                    };
+                    if exhausted {
+                        probe = true;
+                        small_left = Some(head);
+                    } else {
+                        left_pulled = Some(Box::new(head.into_iter().chain(it)));
+                    }
+                }
+            }
             if probe {
                 return match ProbePlan::new(ctx, index, patterns, &lcert) {
                     Some(plan) => {
@@ -1959,7 +1993,10 @@ fn join_iter<'q>(
                         // coalesced reads instead of one blocking round trip
                         // per row. The demand-bound path stays fully lazy
                         // (materializing would defeat its early exit).
-                        let left: RowIter<'q> = if inlj_hint(ctx).is_none() {
+                        let left: RowIter<'q> = if let Some(rows) = small_left {
+                            crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
+                            Box::new(rows.into_iter())
+                        } else if inlj_hint(ctx).is_none() {
                             let rows: Vec<Row> = eval_plan_iter(ctx, index, nf, l).collect();
                             crate::bgp::prefetch_plan_probes(ctx, index, &plan, &rows);
                             Box::new(rows.into_iter())
@@ -1978,7 +2015,10 @@ fn join_iter<'q>(
                         })
                     }
                     // An unknown constant empties the right side for every row.
-                    None if optional => eval_plan_iter(ctx, index, nf, l),
+                    None if optional => match small_left {
+                        Some(rows) => Box::new(rows.into_iter()),
+                        None => eval_plan_iter(ctx, index, nf, l),
+                    },
                     None => Box::new(std::iter::empty()),
                 };
             }
@@ -2007,9 +2047,10 @@ fn join_iter<'q>(
     // Build the right side first: an empty build side short-circuits without
     // ever constructing (or scanning) the left side.
     let right: Vec<Row> = eval_plan_iter(ctx, index, nf, r).collect();
+    let left = move || left_pulled.unwrap_or_else(|| eval_plan_iter(ctx, index, nf, l));
     if right.is_empty() {
         return if optional {
-            eval_plan_iter(ctx, index, nf, l)
+            left()
         } else {
             Box::new(std::iter::empty())
         };
@@ -2039,7 +2080,7 @@ fn join_iter<'q>(
     Box::new(JoinIter {
         ctx,
         index,
-        left: eval_plan_iter(ctx, index, nf, l),
+        left: left(),
         right,
         buckets,
         partial,

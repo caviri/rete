@@ -116,6 +116,14 @@ own instances, so on a 9.53 B-triple file `?s a :Service ; :publicationYear
   pattern is held;
 - otherwise the small side is materialized and hash-joined, as before.
 
+The same rule applies between a basic graph pattern and what joins it from the
+outside — a property path, an `OPTIONAL`, another block: the outside rows are
+pulled first, and if there are few of them next to the pattern's most selective
+triple pattern (16 times fewer, that pattern above 65,536 triples), the pattern
+is looked up once per row instead of being evaluated whole and hash-joined.
+`<work> frbr:partOf+ ?j . ?j a fabio:Journal ; dcterms:title ?t` reads the
+three containers of one work, not every journal of the file.
+
 A sub-select's rows enter the outer query as dictionary ids, never resolved to
 strings in between. It is still not a cost-based optimizer over the whole
 algebra (only within a basic graph pattern), and the benchmark page separates

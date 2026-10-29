@@ -294,7 +294,10 @@ fn try_merge_join(
     // pinpoint side, probe the fat one per surviving row), so leave the merge
     // seed to comparably-sized sides.
     let (lo, hi) = {
-        let (a, b) = (pattern_scan_bytes(index, ta), pattern_scan_bytes(index, tb));
+        let (a, b) = (
+            pattern_scan_bytes(ctx, index, ta),
+            pattern_scan_bytes(ctx, index, tb),
+        );
         (a.min(b), a.max(b))
     };
     if hi >= FAT_SCAN_BYTES && hi / 4 >= lo {
@@ -396,6 +399,44 @@ const PROBE_RATIO: f64 = 16.0;
 /// `scan_est` triples?
 fn probe_beats_scan(rows: usize, scan_est: f64) -> bool {
     scan_est >= limits().probe_floor && (rows as f64) * PROBE_RATIO <= scan_est
+}
+
+/// The most rows that may probe a BGP whose cheapest pattern is estimated at
+/// `est` triples while probing still beats evaluating it whole
+/// ([`probe_beats_scan`]); `None` below the probe floor, where the BGP is
+/// cheap to evaluate either way.
+pub(crate) fn probe_row_budget(est: f64) -> Option<usize> {
+    (est >= limits().probe_floor).then(|| (est / PROBE_RATIO) as usize)
+}
+
+/// The smallest tile-directory estimate ([`GraphIndex::estimate_matches`])
+/// among a BGP's patterns — a floor on what evaluating it whole would scan.
+/// `None` when a constant is not in the file (the BGP matches nothing).
+pub(crate) fn bgp_min_estimate(
+    ctx: &Ctx,
+    index: &GraphIndex,
+    patterns: &[TriplePattern],
+) -> Option<f64> {
+    let lowered = lower(patterns, ctx)?;
+    tile_estimates(ctx, index, &lowered, &std::collections::HashSet::new())
+        .into_iter()
+        .reduce(f64::min)
+}
+
+/// Run `f` with the probe floor set to `floor` (tests only), so a join's
+/// probe paths can be driven over a graph small enough to check by hand.
+#[cfg(test)]
+pub(crate) fn with_probe_floor<T>(floor: f64, f: impl FnOnce() -> T) -> T {
+    let saved = TEST_LIMITS.with(|c| c.get());
+    TEST_LIMITS.with(|c| {
+        c.set(Some(PlanLimits {
+            probe_floor: floor,
+            ..limits()
+        }))
+    });
+    let out = f();
+    TEST_LIMITS.with(|c| c.set(saved));
+    out
 }
 
 /// The planner's size thresholds, gathered so tests can shrink them and drive
@@ -751,7 +792,10 @@ pub(crate) fn bgp_min_scan_bytes(
     patterns: &[TriplePattern],
 ) -> Option<u64> {
     let lowered = lower(patterns, ctx)?;
-    lowered.iter().map(|t| pattern_scan_bytes(index, t)).min()
+    lowered
+        .iter()
+        .map(|t| pattern_scan_bytes(ctx, index, t))
+        .min()
 }
 
 /// One pattern's cheapest scan extent in BYTES: for each permutation, sum the
@@ -760,29 +804,46 @@ pub(crate) fn bgp_min_scan_bytes(
 /// key is unbound), and take the minimum. Tile *counts* are useless here — a
 /// broad predicate can sit inside one giant tile — but the directory's byte
 /// lengths expose it. Reads only resident metadata, never tile data.
-fn pattern_scan_bytes(index: &GraphIndex, t: &(SlotTerm, SlotTerm, SlotTerm)) -> u64 {
+///
+/// A bound term routes by its id **in the role its position has**: a tile's
+/// leading range is in subject-, predicate- or object-id space, not in the
+/// unified node space a lowered constant carries. Routing the node id instead
+/// was off by one for subjects and off by the whole subject-only block for an
+/// object-only term (every literal), so `?id :value "10.1234/x"` could cost
+/// "0 bytes" and pass the merge-join gate against a fat partner, which the
+/// merge then materialized in full. A constant that has no id in the role
+/// (never a subject, say) matches nothing: 0 bytes is then exact.
+fn pattern_scan_bytes(ctx: &Ctx, index: &GraphIndex, t: &(SlotTerm, SlotTerm, SlotTerm)) -> u64 {
+    let dict = ctx.rete.dictionary();
+    match (
+        const_subject(&t.0, dict),
+        const_predicate(&t.1),
+        const_object(&t.2, dict),
+    ) {
+        (Some(s), Some(p), Some(o)) => routed_scan_bytes(index, (s, p, o)),
+        _ => 0,
+    }
+}
+
+/// [`pattern_scan_bytes`] for a pattern already in role-id space.
+pub(crate) fn routed_scan_bytes(index: &GraphIndex, pattern: Pattern) -> u64 {
     let sections = index.tile_sections();
-    let comp = |role: usize| match role {
-        0 => &t.0,
-        1 => &t.1,
-        _ => &t.2,
-    };
     let mut best = u64::MAX;
     // Only the permutations the FILE carries: an absent section is an empty
     // `Vec<Tile>`, and summing its (zero) tile lengths would report a free scan
     // for the one permutation that cannot be scanned at all.
     for perm in index.perms().iter() {
         let tiles = sections[perm.section_index()];
-        best = best.min(match comp(perm.roles()[0]) {
-            SlotTerm::Node(id) | SlotTerm::Pred(id) => tiles
+        best = best.min(match perm.order_pattern(pattern)[0] {
+            Some(id) => tiles
                 .iter()
                 .filter(|tile| {
                     let (lo, hi) = tile.leading_range();
-                    lo <= *id && *id <= hi
+                    lo <= id && id <= hi
                 })
                 .map(Tile::encoded_len)
                 .sum(),
-            SlotTerm::Var(_) => tiles.iter().map(Tile::encoded_len).sum(),
+            None => tiles.iter().map(Tile::encoded_len).sum(),
         });
     }
     best
@@ -1670,6 +1731,46 @@ mod tests {
             s: PatternTerm::parse(s),
             p: PatternTerm::parse(p),
             o: PatternTerm::parse(o),
+        }
+    }
+
+    /// The scan-bytes figure behind the merge-join and fat-side gates routes a
+    /// bound term by its id IN ITS ROLE. It used to route the unified node id,
+    /// which for an object-only term (any literal) is shifted past the whole
+    /// subject-only block: `?s :value "lit"` found no OPS tile at all, cost
+    /// "0 bytes", and so let a merge join materialize its partner in full —
+    /// on OpenCitations, every DOI identifier of a 2.9 B-triple file, behind
+    /// `?id :hasLiteralValue "10.…" ; :usesIdentifierScheme :doi`.
+    #[test]
+    fn scan_bytes_route_a_literal_by_its_object_id() {
+        let value = "<http://ex/value>";
+        let owned: Vec<(String, String)> = (0..400)
+            .map(|i| (format!("<http://ex/s{i:03}>"), format!("\"lit {i:03}\"")))
+            .collect();
+        let mut db = DictionaryBuilder::new();
+        for (s, o) in &owned {
+            db.observe(s, value, o);
+        }
+        let dict = db.build();
+        let mut ib = GraphIndexBuilder::new().with_tile_budget(256);
+        for (s, o) in &owned {
+            ib.push(dict.encode(s, value, o).unwrap());
+        }
+        let rete = Rete::open(&write_file(&dict, &ib.build(), false, &[], 0)).unwrap();
+        let index = rete.default_index();
+        // The whole predicate, the most a bound object could ever cost.
+        let whole = routed_scan_bytes(index, (None, rete.dictionary().predicate_id(value), None));
+        for (_, lit) in owned.iter().step_by(57) {
+            let q = [pat("?s", value, lit)];
+            let mut slots = Slots::new();
+            collect_pattern_slots(&q, &mut slots);
+            let ctx = Ctx::new(&rete, slots);
+            let got = bgp_min_scan_bytes(&ctx, index, &q).unwrap();
+            assert!(got > 0, "{lit} routed to no tile");
+            assert!(
+                got < whole,
+                "{lit} routed to the whole predicate ({got} of {whole})"
+            );
         }
     }
 
