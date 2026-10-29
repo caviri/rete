@@ -247,8 +247,14 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
     // Full-text index (TEXT_INDEX section): word/CONTAINS search over literals.
     if rete.has_text_index() {
         println!(
-            "  text index: {} bytes (full-text — `rete search {} --contains <word>`)",
-            h.text_index_len, file
+            "  text index: {} bytes (full-text — `rete search {} --contains <word>`){}",
+            h.text_index_len,
+            file,
+            if h.text_index_partial {
+                "; some predicates only (section kind 11)"
+            } else {
+                ""
+            }
         );
     }
     Ok(())
