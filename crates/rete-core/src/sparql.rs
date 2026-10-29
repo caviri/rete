@@ -1028,10 +1028,25 @@ fn eval_query_inner(rete: &Rete, query: &str, opts: QueryOpts) -> Result<QueryOu
                     }
                 }
             }
+            // Described from the query's active default graph, the same graph
+            // its WHERE clause matched: the file's default graph, the `FROM`
+            // graphs, or (union-default toggle, no FROM) the default graph plus
+            // every named graph.
+            let mut graphs: Vec<Option<&str>> = Vec::new();
+            if !sel.from.is_empty() {
+                graphs.extend(sel.from.iter().map(|g| Some(g.as_str())));
+            } else {
+                graphs.push(None);
+                if sel.union_default {
+                    graphs.extend(rete.graph_names().into_iter().map(Some));
+                }
+            }
             let mut triples = std::collections::BTreeSet::new();
             for r in &resources {
-                for t in rete.query(Some(r), None, None) {
-                    triples.insert(t);
+                for g in &graphs {
+                    for t in rete.query_in_graph(*g, Some(r), None, None) {
+                        triples.insert(t);
+                    }
                 }
             }
             Ok(QueryOutput::Construct(triples.into_iter().collect()))

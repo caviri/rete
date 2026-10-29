@@ -105,6 +105,16 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `named-graph quads`, splitting the count from the Dataset Card's build-time
   counts or the default graph's index, never by reading the named graphs, and
   counts the graphs without walking them.
+- **SPARQL: `FILTER(CONTAINS(…))` inside `GRAPH <g> { … }` returned no rows**
+  on a file built with `--text-index`, even when the graph's literals
+  contained the string (`STRSTARTS`, `REGEX` and `BIND(CONTAINS(…))` were
+  right). The full-text pushdown seeded the scan with subjects from the
+  default graph's words; it now runs only when the active graph is the
+  default graph, and `CONTAINS` scans elsewhere (inside `GRAPH`, under
+  `FROM`, over the union default graph). Two more places read the default
+  graph whatever the query said: a sub-`SELECT` inside `GRAPH <g>`, under
+  `FROM` or under the union-default toggle now reads that active graph, and
+  `DESCRIBE … FROM <g>` describes from `<g>`.
 
 ### Added
 

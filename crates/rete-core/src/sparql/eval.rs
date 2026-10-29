@@ -637,7 +637,19 @@ pub(super) fn run_select(rete: &Rete, sel: &Select) -> (Vec<String>, Vec<Binding
 /// query directly — dictionary ids stay ids — instead of resolving every
 /// value to a string and canonicalizing it back.
 fn select_rows(ctx: &Ctx, sel: &Select) -> Vec<Row> {
-    let rete = ctx.rete;
+    let mut merged = None;
+    let active = active_index(ctx.rete, sel, &mut merged);
+    select_rows_on(ctx, sel, active, sel.from_named.as_deref())
+}
+
+/// [`select_rows`] against a given active graph: the query's own dataset for a
+/// top-level SELECT, and the **enclosing** active graph for a subquery. A
+/// subquery has no dataset clause of its own (the grammar allows none), so it
+/// sees whatever graph the surrounding pattern sees: inside `GRAPH <g> { … }`
+/// that is `<g>`, under `FROM` the merge, under the union-default toggle the
+/// union. Evaluating it on the file's default graph instead made
+/// `GRAPH <g> { { SELECT … } }` read the wrong graph.
+fn select_rows_on(ctx: &Ctx, sel: &Select, active: &GraphIndex, nf: Option<&[String]>) -> Vec<Row> {
     // A pure LIMIT/OFFSET (no ORDER BY/DISTINCT/aggregate/HAVING, which all
     // consume their input fully) bounds how many rows the pipeline will pull â€”
     // joins below may switch to index probing. BIND only adds columns.
@@ -654,9 +666,6 @@ fn select_rows(ctx: &Ctx, sel: &Select) -> Vec<Row> {
     // guess.
     ctx.exhaustive
         .set(sel.limit.is_none() || sel.group.is_some() || !sel.order.is_empty());
-    let mut merged = None;
-    let active = active_index(rete, sel, &mut merged);
-    let nf = sel.from_named.as_deref();
     let source = eval_plan_iter(ctx, active, nf, &sel.plan);
     finish_select_rows(ctx, active, sel, source)
 }
@@ -1247,7 +1256,7 @@ pub(crate) fn eval_plan_iter<'q>(
         // held every subject IRI as a string to do that.
         Plan::Subquery(sub) => {
             let sub_ctx = query_ctx(ctx.rete, sub);
-            let raw = select_rows(&sub_ctx, sub);
+            let raw = select_rows_on(&sub_ctx, sub, index, named_filter);
             let map: Vec<(usize, usize)> = if sub.project.is_empty() {
                 (0..sub_ctx.slots.len())
                     .filter_map(|i| Some((i, ctx.slots.slot(sub_ctx.slots.name(i))?)))
@@ -1494,6 +1503,9 @@ fn text_contains_pushdown(
     inner: &Plan,
 ) -> Option<Vec<Row>> {
     use std::collections::BTreeSet;
+    if !text_index_covers(ctx, index) {
+        return None;
+    }
     let ti = ctx.rete.text_index()?;
     let mut needles: Vec<(String, String)> = Vec::new();
     required_contains(expr, &mut needles);
@@ -1575,6 +1587,19 @@ fn text_contains_pushdown(
         .filter(|b| expr.boolean(ctx, index, b, &mut cache))
         .collect();
     Some(out)
+}
+
+/// May the TEXT_INDEX bound a scan of `index`? The index is built over the
+/// literals of the file's **default graph** only, so its candidate subjects are
+/// a sound over-approximation there and nowhere else: inside `GRAPH <g> { … }`,
+/// under `FROM <g>`, or over the union default graph, a subject whose literal
+/// lives in a named graph is not among the candidates, and seeding the scan
+/// with them silently returns nothing (`FILTER(CONTAINS(…))` inside `GRAPH`
+/// answered 0 rows while `BIND(CONTAINS(…))` found them). The active index is
+/// the file's default index exactly when the active graph is the default graph
+/// (a `FROM`/union merge, or a named graph, is a different object).
+fn text_index_covers(ctx: &Ctx, index: &GraphIndex) -> bool {
+    std::ptr::eq(index, ctx.rete.default_index())
 }
 
 /// The required-spine `Bgp` that [`inject_contains_seed`] will wrap — same
