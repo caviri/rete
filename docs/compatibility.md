@@ -143,6 +143,7 @@ each:
 | N-Triples / N-Quads **in** | yes | yes (always — that reader is rete's own) |
 | Turtle / TriG **in** | `rete build --quoted-triple-syntax rdf-star` (**default**) | `--quoted-triple-syntax rdf12` |
 | N-Quads / Turtle / TriG **out** | `rete export --quoted-triple-syntax rdf-star` | `--quoted-triple-syntax rdf12` (**default**) |
+| SPARQL **query** | `<< s p o >>`: a quoted triple, unless the query declares `VERSION "1.2"` | `<<( s p o )>>`: a triple term, always; under `VERSION "1.2"`, `<< s p o >>` is a reified triple (`?r rdf:reifies <<( s p o )>>`) |
 
 The two input defaults look inconsistent and are not: `<<( … )>>` is
 unambiguous, so reading an RDF 1.2 file as RDF-star fails loudly, whereas
@@ -165,7 +166,8 @@ an exported quoted triple comes back as `<<( s p o )>>`, not as
 **Base-direction language strings** (`"…"@lang--dir`, RDF 1.2's
 `rdf:dirLangString`) are modelled — `DATATYPE` reports `rdf:dirLangString` and
 `LANG` returns the language subtag — and a leading SPARQL 1.2 `VERSION "1.2"`
-declaration is accepted; `--quoted-triple-syntax rdf12` is also what lets the
+declaration is accepted (it switches `<< … >>` in the query to the SPARQL 1.2
+reified triple; see [SPARQL 1.2 triple terms](sparql.md#rdf-star)); `--quoted-triple-syntax rdf12` is also what lets the
 Turtle reader *parse* the `@lang--dir` form. Not yet: the new SPARQL 1.2
 direction *functions* (`LANGDIR`…). The RDF 1.2 Turtle/TriG reader runs in the
 browser too: the in-browser builder's **Quoted triples: RDF 1.2** choice reads

@@ -84,6 +84,19 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   walking their sections' length prefixes, about eight dependent reads
   each.
 
+### Added
+
+- **SPARQL 1.2 triple terms in queries.** `<<( s p o )>>` parses as a
+  triple-term pattern — in a pattern, `VALUES`, `BIND` or a `CONSTRUCT`
+  template — and matches the same stored token as `<< s p o >>`, so it finds
+  triple terms written in either RDF 1.2 or RDF-star. Under a leading
+  `VERSION "1.2"` declaration, `<< s p o >>` is SPARQL 1.2's reified triple
+  (`?r rdf:reifies <<( s p o )>>`); without it, it keeps its SPARQL-star
+  meaning, so existing queries and published card starters answer as before.
+  Named reifiers (`~ ?r`) and annotations (`{| … |}`) are refused by name
+  under the declaration. The parser stays `spargebra` 0.3; the 1.2 surface is
+  translated before parsing.
+
 ### Fixed
 
 - **A host that ignores `Range` no longer breaks the browser reader.** A `200`

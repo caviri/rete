@@ -24,6 +24,7 @@ mod lower;
 mod partition;
 mod path;
 mod ql;
+mod sparql12;
 mod value;
 
 pub use diag::{warnings_json, QueryWarning, WarningSeverity};

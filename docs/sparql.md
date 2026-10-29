@@ -414,8 +414,38 @@ SELECT ?occ ?who WHERE {
 ```
 
 `CONSTRUCT` (and `rete serve`'s SPARQL Update) may build quoted triples in their
-templates. Nested quoting (`<< << … >> :p ?o >>`) works. rete follows the
-RDF-star community-group / SPARQL-star syntax that its parser (Oxigraph) implements.
+templates. Nested quoting (`<< << … >> :p ?o >>`) works.
+
+**Query — SPARQL 1.2 triple terms.** The ratified spelling `<<( s p o )>>` is a
+**triple-term pattern** in every query, with constants or inner variables, in a
+pattern, `VALUES`, `BIND` or a `CONSTRUCT` template. It matches the same stored
+token as `<< s p o >>`, so it finds triple terms written in either surface:
+
+```sparql
+SELECT ?s ?t WHERE { ?snapshot oc:inserted <<( ?s dcterms:title ?t )>> }
+```
+
+SPARQL 1.2 also changed what `<< s p o >>` means: it is a **reified triple** — a
+reifier `?r` with `?r rdf:reifies <<( s p o )>>` — not a quoted triple. rete
+reads it that way **only when the query starts with `VERSION "1.2"`**; without
+the declaration it keeps its SPARQL-star meaning, so existing queries and the
+starter queries in published cards answer as before:
+
+```sparql
+VERSION "1.2"
+# the source recorded on a reifier of the statement (RDF 1.2 data)
+SELECT ?src WHERE { << :a :b :c >> :source ?src }
+# = SELECT ?src WHERE { ?r rdf:reifies <<( :a :b :c )>> ; :source ?src }
+```
+
+Under the declaration a reified triple is refused where SPARQL 1.2 forbids it
+(an expression, `VALUES`), and two 1.2 forms are refused by name rather than
+read in their SPARQL-star sense: a named reifier `<< s p o ~ ?r >>` and the
+annotation syntax `s p o {| … |}` — write `?r rdf:reifies <<( s p o )>>`
+instead. The parser is `spargebra` 0.3 (SPARQL-star); rete translates the
+SPARQL 1.2 surface before parsing. A SPARQL 1.2 engine (Oxigraph 0.5, Jena 5)
+reads `<< s p o >>` as a reifier too, so a query meant to run on both should
+spell triple terms `<<( s p o )>>`.
 
 **You do not have to write the first one.** A dataset built with `--card` whose
 statements quote other statements ships a `qt-*` family of starter queries in
@@ -423,8 +453,8 @@ its [dataset card](dataset-cards.md#querying-the-star-layer), instantiated with
 its own annotation vocabulary — what gets said about statements, who says it,
 and how much of the data is qualified — and every one of them is run against the
 finished file at build time, so a shipped query is one that answers. Note that
-those bodies are written in the `<< s p o >>` surface above: the ratified RDF 1.2
-`<<( s p o )>>` is an **export** spelling and does not parse in a query.
+those bodies are written in the `<< s p o >>` SPARQL-star surface, which rete
+reads as a quoted triple when the query has no `VERSION "1.2"` declaration.
 
 **RDF 1.2 interop.** rete's **N-Triples/N-Quads** reader also accepts the
 ratified RDF 1.2 object triple-term syntax `<<( s p o )>>`, mapped to the *same*
@@ -434,8 +464,10 @@ the RDF-star surface only; the export prints a note when it writes a TriG dump
 rete itself could not read back.) RDF 1.2
 **base-direction strings** (`"…"@lang--dir`) are modelled: `DATATYPE` reports
 `rdf:dirLangString` and `LANG` returns the language subtag; a leading SPARQL 1.2
-`VERSION "1.2"` declaration is accepted. RDF 1.2 reification (`rdf:reifies`) and
-the new SPARQL 1.2 direction functions are not yet supported — see
+`VERSION "1.2"` declaration is accepted, and switches `<< … >>` to the reified
+triple described above. RDF 1.2 reification is otherwise ordinary data
+(`?r rdf:reifies <<( s p o )>>`); the new SPARQL 1.2 direction functions are not
+yet supported — see
 [Compatibility](compatibility.md#is-it-compatible-with-rdf).
 
 ## Reasoning (OWL 2 QL)
