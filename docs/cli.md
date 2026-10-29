@@ -1138,6 +1138,41 @@ rete reach g.rete --predicate '<http://ex/knows>' --seeds-file seeds.txt --paral
 Both URL commands work against `http://` and `https://` hosts that honor `Range`
 requests (S3, GitHub, any CDN).
 
+**How the ranges are fetched.** On a remote file the time goes to round trips,
+not bytes, so the HTTP reader behind every `-url` command (and `cost`,
+`progressive`, `card-audit`, `reason --url`, `shacl-url` and `federate` on a
+URL):
+
+- keeps its connections alive: one client with a connection pool, where each
+  range used to open (and on `https://` TLS-handshake) a connection of its own;
+- fetches the engine's **batches in parallel**, up to 16 requests in flight —
+  the tiles a scan or a join step is about to read, the dictionary chunks a
+  result decodes (all four dictionary sections in one batch), the subjects a
+  full-text search returns — so a batch costs one round trip instead of one
+  per range; before 0.4.0 the CLI passed every batch on one range at a time;
+- walks the dictionary and the index containers **at the same time** while
+  opening a file: each is a chain of small dependent reads (a container's
+  sections are found through their length prefixes), and the header says
+  where both start;
+- merges ranges of one batch that lie at most 32 KiB apart into one request
+  (never past 8 MiB), and slices them apart again;
+- retries a transient failure (a dropped connection, a short body, `408`,
+  `429`, a `5xx`) twice with backoff, and fails at once on a permanent one: a
+  host that ignores `Range` (`200` for a range request), a `Content-Range` for
+  the wrong offset, a `404`. One range failing fails the batch, and a query
+  never returns a partial answer as if it were whole.
+
+Knobs: `RETE_HTTP_CONCURRENCY` (requests in flight, 1–64, default 16; `1`
+fetches one range at a time, the behaviour before 0.4.0),
+`RETE_HTTP_COALESCE_KB` (default 32; `0` merges only touching ranges) and
+`RETE_HTTP_RETRIES` (default 2). The `fetched … in N range request(s)` line
+counts the ranges handed to the HTTP reader (after the block cache has merged
+adjacent blocks); when the reader merges two nearby ones into one request the
+server sees one fewer, and retries are not counted.
+
+Measured through a latency-injecting proxy on the OpenCitations sample: see
+the CHANGELOG entry for 0.4.0 for the per-query numbers at 20 and 80 ms RTT.
+
 ### `rete card-url <url> [--json] [--format jsonld|croissant] [--sha256 <hex>]`
 Fetch only the embedded [Dataset Card](dataset-cards.md) — the header and one
 coalesced metadata + build-info range, in **two small range requests**. The

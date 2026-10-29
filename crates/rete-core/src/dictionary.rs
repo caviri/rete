@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 
 use crate::chunk_cache::ChunkCache;
-use crate::dict::{ChunkedSection, DictSectionBuilder};
+use crate::dict::{ChunkedSection, DictSectionBuilder, MultiChunkBulkLoader};
 use crate::terms::{NodeId, ObjectId, PredicateId, SubjectId};
 
 /// Sort a term slice ascending — in parallel when the `parallel` feature is on.
@@ -124,6 +124,13 @@ pub struct WindowResolver {
     out: Vec<Option<String>>,
 }
 
+/// The most chunks one id-list prefetch ([`Dictionary::prefetch_subject_terms`],
+/// [`Dictionary::prefetch_node_terms`]) faults in a single batch. A batch holds
+/// every body it fetched until all are cached, so this bounds that transient
+/// (512 chunks of ≤64 KiB: ≤32 MiB) however many ids a caller passes; a longer
+/// list goes out in several batches.
+const PREFETCH_BATCH_CHUNKS: usize = 512;
+
 /// A read-only dictionary mapping terms ↔ role-specific IDs.
 ///
 /// Holds the four sections as [`ChunkedSection`]s — local files keep each
@@ -137,6 +144,9 @@ pub struct Dictionary {
     /// time (from the observed terms); `false` on the read path, where the
     /// header's `FLAG_HAS_QUOTED_TRIPLES` is the source of truth instead.
     has_quoted_triples: bool,
+    /// Faults the chunks of several sections in one batch (a ranged open);
+    /// `None` = section by section (local, or no batch reader).
+    multi_bulk: Option<MultiChunkBulkLoader>,
 }
 
 impl Dictionary {
@@ -162,6 +172,57 @@ impl Dictionary {
             sections,
             shared_len,
             has_quoted_triples: false,
+            multi_bulk: None,
+        }
+    }
+
+    /// Attach a cross-section chunk fetcher (see [`MultiChunkBulkLoader`]):
+    /// the term prefetchers then fault every section's missing chunks in one
+    /// batch instead of one batch per section.
+    pub(crate) fn with_multi_bulk_loader(mut self, loader: MultiChunkBulkLoader) -> Self {
+        self.multi_bulk = Some(loader);
+        self
+    }
+
+    /// Fault the chunks `want[si]` of each section, at most `batch` chunks
+    /// per read. With a cross-section fetcher every missing chunk goes out in
+    /// one batch (round trips: one, not one per section); without one, each
+    /// section batches its own. A failed batch leaves the chunks for the
+    /// per-chunk loader, which retries them lookup by lookup. Purely a cache
+    /// warmer: results never depend on it.
+    fn prefetch_sections(&self, want: &[Vec<usize>; 4], batch: usize) {
+        let batch = batch.max(2);
+        if let Some(multi) = &self.multi_bulk {
+            let pairs: Vec<(u8, usize)> = want
+                .iter()
+                .enumerate()
+                .flat_map(|(si, cis)| {
+                    self.sections[si]
+                        .missing_chunks(cis)
+                        .into_iter()
+                        .map(move |ci| (si as u8, ci))
+                })
+                .collect();
+            // A single missing chunk costs the same either way: leave it to
+            // the per-chunk loader, as a section's own batch does.
+            if pairs.len() < 2 {
+                return;
+            }
+            for part in pairs.chunks(batch) {
+                if let Some(bodies) = multi(part) {
+                    if bodies.len() == part.len() {
+                        for (&(si, ci), body) in part.iter().zip(bodies) {
+                            self.sections[si as usize].seed_chunk(ci, body);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        for (si, cis) in want.iter().enumerate() {
+            for part in cis.chunks(batch) {
+                self.sections[si].prefetch_chunks(part);
+            }
         }
     }
 
@@ -249,7 +310,6 @@ impl Dictionary {
     /// up to thousands of chunks at once, outside every cache cap. A bounded
     /// export batches it so that transient stays a few MB.
     pub fn prefetch_terms_batched(&self, node_ids: &[u32], predicate_ids: &[u32], batch: usize) {
-        let batch = batch.max(2);
         let mut want: [std::collections::BTreeSet<usize>; 4] = Default::default();
         for &n in node_ids {
             if let Some((si, ci)) = self.node_chunk(n) {
@@ -261,14 +321,8 @@ impl Dictionary {
                 want[3].insert(ci);
             }
         }
-        for (si, set) in want.iter().enumerate() {
-            if set.len() >= 2 {
-                let cis: Vec<usize> = set.iter().copied().collect();
-                for part in cis.chunks(batch) {
-                    self.sections[si].prefetch_chunks(part);
-                }
-            }
-        }
+        let want: [Vec<usize>; 4] = want.map(|set| set.into_iter().collect());
+        self.prefetch_sections(&want, batch);
     }
 
     /// The `(section, chunk)` holding a unified node id — mirrors the section
@@ -364,11 +418,19 @@ impl Dictionary {
                 per_section[si].push(ci);
             }
         }
-        for (si, cis) in per_section.iter_mut().enumerate() {
+        let [shared, subjects] = per_section;
+        self.prefetch_sorted([shared, subjects, Vec::new(), Vec::new()]);
+    }
+
+    /// Sort, dedup and fault each section's chunk list (one batch across
+    /// sections when the dictionary has a cross-section fetcher), at most
+    /// [`PREFETCH_BATCH_CHUNKS`] chunks per read.
+    fn prefetch_sorted(&self, mut want: [Vec<usize>; 4]) {
+        for cis in &mut want {
             cis.sort_unstable();
             cis.dedup();
-            self.sections[si].prefetch_chunks(cis);
         }
+        self.prefetch_sections(&want, PREFETCH_BATCH_CHUNKS);
     }
 
     /// [`prefetch_subject_terms`](Self::prefetch_subject_terms) for unified
@@ -398,11 +460,8 @@ impl Dictionary {
                 per_section[si].push(ci);
             }
         }
-        for (si, cis) in per_section.iter_mut().enumerate() {
-            cis.sort_unstable();
-            cis.dedup();
-            self.sections[si].prefetch_chunks(cis);
-        }
+        let [shared, subjects, objects] = per_section;
+        self.prefetch_sorted([shared, subjects, objects, Vec::new()]);
     }
 
     /// Unified node ID for a term, resolving via subject role then object role.
