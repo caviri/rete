@@ -178,8 +178,9 @@ Error: malformed container: unexpected container section count
 | 0.3.4 – 0.3.7 (expect the mask's 3 or 6) | work; `verify` says OK | refused: 7 or 4 sections |
 | 0.4.0 | work; `verify` also checks the quad index | read |
 
-(Measured with the 0.3.7 and 0.3.5 binaries and a 0.3.3 build; see the table in
-`dev/session-notes/QUAD-INDEX-DESIGN.md` §9.)
+Checked with the 0.3.7 and 0.3.5 binaries and with 0.3.0 built from its tag, on
+the OpenCitations sample: none of them returned a row or a quad from any
+command; 0.3.0 says `malformed container: expected 6 permutation sections`.
 
 - Why not a new format byte: the refusal comes from a check every `0x05` reader
   already performs, it leaves the header-only tools (`info`, `card-url`, the

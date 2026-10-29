@@ -221,14 +221,18 @@ fn the_quad_index_is_far_smaller_than_one_container_per_graph() {
     let lh = Rete::open(&legacy).unwrap().header().clone();
     let qh = Rete::open(&quad).unwrap().header().clone();
     let q = qh.quad_index_section().unwrap();
+    // Most of the per-graph overhead is one zstd frame per tiny tile; without
+    // compression (`--no-default-features`) the gap is smaller.
+    let factor = if cfg!(feature = "compression") { 5 } else { 1 };
     assert!(
-        q.length * 5 < lh.named_graphs_len,
+        q.length * factor < lh.named_graphs_len,
         "quad index {} B vs per-graph {} B",
         q.length,
         lh.named_graphs_len
     );
+    let file_factor = if cfg!(feature = "compression") { 2 } else { 1 };
     assert!(
-        quad.len() * 2 < legacy.len(),
+        quad.len() * file_factor < legacy.len(),
         "{} vs {}",
         quad.len(),
         legacy.len()

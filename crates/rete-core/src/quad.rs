@@ -409,7 +409,9 @@ impl PermDirWriter {
         self.payload_len += t.bytes.len() as u64;
     }
 
-    /// Bytes of the tiles' payloads written so far.
+    /// Bytes of the tiles' payloads written so far (the external builder
+    /// spills them; it does not exist on wasm32).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn payload_len(&self) -> u64 {
         self.payload_len
     }

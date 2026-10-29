@@ -173,12 +173,12 @@ every named-graph quad stored once, the graph as a fourth column of
 graph-leading permutations in tiles that many graphs share, behind a sorted
 graph directory, with graph names as dictionary terms. The rows a query returns
 are the same either way. What changes is the cost of many small graphs — on the
-OpenCitations sample (1.5 M per-entity provenance graphs of ~10 quads) the quad
-index is a fraction of the per-graph section and a `GRAPH <g>` query reads one
-graph's tiles instead of walking the section to it (measurements in
-[compatibility.md](compatibility.md#named-graphs-in-the-quad-index)). The
-layout applies to every build path, `--memory-budget-mb` included; `repyramid`
-and `merge` keep the layout of their input.
+OpenCitations sample (1.5 M per-entity provenance graphs of ~9 quads) the
+named-graph section drops from 974 MB to 102 MB, the build from 33 min to 77 s,
+and a remote `GRAPH <g>` query from 414 MB in 81 requests to 3.7 MB in 26
+([BENCHMARK.md](BENCHMARK.md#named-graphs-per-graph-layout-vs-the-quad-index)).
+The layout applies to every build path, `--memory-budget-mb` included;
+`repyramid` and `merge` keep the layout of their input.
 
 **A `quad` file is refused by every Rete before 0.4.0** — loudly, with the same
 container section-count error as above, on every query, export and remote open

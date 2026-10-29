@@ -299,6 +299,43 @@ request cost of a real query against either build.
 Repro: `dev/perms/{build_bench.sh,query_bench.py,sections.py,rangeserver.py}`
 (gitignored; sources are `data/tree-city-inventory/` and `data/davidrumsey-maps/`).
 
+## Named graphs: per-graph layout vs the quad index
+
+`rete build --named-graphs quad` stores the named graphs in the quad index
+([SPEC.md §6.4](SPEC.md#64-quad-index-quad_index-section-optional)) instead of
+one permutation container per graph. Measured on the OpenCitations Meta
+development sample (1 work in 1,200, 2026-10): 18,869,242 statements, of which
+12,897,306 are provenance in **1,494,934 per-entity graphs** of ~9 quads
+(`<entity>/prov/`) — the shape the per-graph layout handles worst. Same input,
+same flags (`--strict --no-pyramid --card`), one binary; the third column puts
+the provenance in the default graph instead (no `GRAPH` at all).
+
+| | per-graph (kind 5) | quad index (kind 10) | provenance in the default graph |
+|---|--:|--:|--:|
+| file | 1,062,199,572 B | **191,077,024 B** | 166,630,831 B |
+| named-graph section | 974,397,639 B | **102,138,600 B** | — |
+| bytes per provenance statement | 75.6 | **7.9** | ~6.1 |
+| build (in RAM) | 33 min, 9.8 GiB | **77 s, 1.9 GB** | — |
+
+Query cost, cold process per run, `--memory-budget-mb 2048`, a local nginx
+range server (requests and bytes as the server saw them):
+
+| Query | per-graph, remote | quad index, remote |
+|---|---|---|
+| one work's provenance, `GRAPH <work/prov/> { … }` | 81 requests · 414 MB · 1.04 s | **26 requests · 3.7 MB · 0.05 s** |
+| one deleted agent's provenance | 141 requests · 909 MB · 2.12 s | **26 requests · 3.5 MB · 0.04 s** |
+| `COUNT(*)` over `GRAPH ?g` (all 1.5 M graphs) | killed at 4 GB | **131 requests · 23 MB · 15.5 s · 0.36 GB** |
+
+Every query returns the same rows from each layout. Why: the per-graph layout
+spends ~650 B per graph on the graph's IRI as text, six tile directories and six
+zstd frames of a handful of triples each, and has no directory, so reaching one
+graph means walking the section up to it. The quad index stores the quads once
+in tiles shared by ~1,000 graphs and finds a graph by binary search. The one
+place it costs more than the default-graph layout is the graph column itself,
+mostly in the orders that lead with a predicate or an object. Details, the
+encoding experiment and the build table: `dev/session-notes/QUAD-INDEX-DESIGN.md`
+(gitignored).
+
 ## Coherence checking: tier costs
 
 How much of a remote `.rete` each coherence check actually fetches, as the graph
