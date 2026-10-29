@@ -19,7 +19,7 @@
 //! | index tile budget | `RETE_TILE_KIB` | 64 KiB |
 //! | dictionary chunk budget | `RETE_DICT_CHUNK_KIB` | 64 KiB |
 //! | zstd level | `RETE_ZSTD_LEVEL` | 9 |
-//! | zstd frame shape | `RETE_ZSTD_FRAME` (`stream` / `sized`) | `stream` |
+//! | zstd frame shape | `RETE_ZSTD_FRAME` (`sized` / `stream`) | `sized` |
 //! | frequency-promoted objects | `RETE_FREQUENT_OBJECTS` | 0 (off) |
 
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
@@ -41,12 +41,13 @@ pub const MAX_BUDGET_KIB: usize = 4096;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameShape {
     /// A streaming frame without a content size: what every writer up to 0.3
-    /// produced (the default). Not knowing the input size, zstd compresses each
+    /// produced, and still available (`RETE_ZSTD_FRAME=stream`) to reproduce a
+    /// 0.3 file byte for byte. Not knowing the input size, zstd compresses each
     /// 64 KiB unit with the parameters it tunes for large inputs, and declares
     /// the level's whole window (4 MiB at level 9) in the frame header.
     Stream,
-    /// A single-segment frame that records its content size
-    /// (`RETE_ZSTD_FRAME=sized`). zstd then picks the parameter set it tunes for inputs of this size:
+    /// A single-segment frame that records its content size (the default since
+    /// 0.4). zstd then picks the parameter set it tunes for inputs of this size:
     /// at level 9 the index comes out 8% smaller on the OpenCitations sample,
     /// and encoding is faster; the frame declares the tile's own size instead
     /// of a 4 MiB window. Any conformant decoder reads both shapes, so this is
@@ -76,7 +77,7 @@ impl Default for WriteOptions {
             tile_budget: DEFAULT_TILE_BUDGET_BYTES,
             dict_chunk_budget: DEFAULT_DICT_CHUNK_BYTES,
             zstd_level: DEFAULT_ZSTD_LEVEL,
-            frame: FrameShape::Stream,
+            frame: FrameShape::Sized,
             frequent_objects: 0,
         }
     }
@@ -143,8 +144,8 @@ pub fn frame_shape() -> FrameShape {
     let code = match FRAME.load(Ordering::Relaxed) {
         u8::MAX => {
             let v = match std::env::var("RETE_ZSTD_FRAME").ok().as_deref() {
-                Some("sized") => 1,
-                _ => 0,
+                Some("stream") => 0,
+                _ => 1,
             };
             FRAME.store(v, Ordering::Relaxed);
             v
