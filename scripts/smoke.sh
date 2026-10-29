@@ -111,6 +111,12 @@ check "info"       "magic|version|pyramid"        -- "$B" info "$T/g.rete"
 check "stats"      "triples|terms|predicate"      -- "$B" stats "$T/g.rete"
 check "verify ok"  "OK|matches"     -- "$B" verify "$T/g.rete"
 check "graphs"     "g1|g2"                          -- "$B" graphs "$T/d.rete"
+# The header counts every statement; stats splits it (d.nq: 2 quads, 2 graphs).
+check "stats split"  "named-graph quads +: 2"        -- "$B" stats "$T/d.rete"
+check "stats dg"     "default-graph triples : 0"     -- "$B" stats "$T/d.rete"
+# The local open is memory-aware; RETE_OPEN_DEBUG says which way it went and why.
+check "open eager"   "threshold=[0-9]+ [(].+[)] -> EAGER" -- env RETE_OPEN_DEBUG=1 "$B" stats "$T/g.rete"
+check "open lazy"    "RETE_LOCAL_LAZY_ABOVE_MB=0[)] -> LAZY" -- env RETE_OPEN_DEBUG=1 RETE_LOCAL_LAZY_ABOVE_MB=0 "$B" stats "$T/g.rete"
 
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1

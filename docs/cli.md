@@ -334,9 +334,28 @@ the header and card byte ranges (the same two small reads `card-url` does over
 HTTP), so a 50 GB file answers in about a second.
 
 ### `rete stats <file>`
-Human-friendly overview: file size, default-graph triple count, distinct terms,
-named-graph count, pyramid levels, and top predicates. Notes the label-index and
-**text-index** sizes when the file carries them.
+Human-friendly overview: file size, statement counts, distinct terms, pyramid
+levels, and top predicates. Notes the label-index and **text-index** sizes when
+the file carries them.
+
+The header counts every statement in the file, so `stats` prints that as
+`statements` and splits it: `default-graph triples`, `named graphs` (the graph
+count) and, when there are any, `named-graph quads`. The split costs no read of
+the named graphs: with none, the header says it all; otherwise it comes from
+the [Dataset Card](dataset-cards.md)'s build-time counts when the card agrees
+with the header, else from counting the default graph's index tiles. The line
+says which.
+
+```text
+opencitations-2026-06-small-full-labels.rete — 1073354201 bytes
+  statements            : 18869242 (all graphs)
+  default-graph triples : 5971936
+  named graphs          : 1494934
+  named-graph quads     : 12897306 (split from the dataset card)
+```
+
+Before 0.4.0 the first line read `default-graph triples : 18869242`, which
+on this file is the whole dataset, 1.5 M provenance graphs included.
 
 ### `rete verify <file>`
 Recompute the blake3 content hash and compare to the header. Exits non-zero with
