@@ -142,6 +142,7 @@ pub(crate) fn merge_cmd(
             command: Some("merge".to_string()),
             no_pyramid: true,
             memory_budget_mb: Some(memory_budget_mb),
+            write: crate::commands::buildinfo::write_record(),
             ..Default::default()
         })
         .to_json_bytes()

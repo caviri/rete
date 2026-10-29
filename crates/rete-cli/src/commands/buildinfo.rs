@@ -125,6 +125,43 @@ pub(crate) struct BuildParams {
     /// number `truncated: true` was hinting at without stating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_top_n: Option<u32>,
+    /// The writer knobs in force (`--tile-kib`, `--dict-chunk-kib`,
+    /// `--zstd-level`, the frame shape, `--frequent-objects`), so a file says
+    /// how it was compressed. Absent in files written before 0.4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write: Option<WriteRecord>,
+}
+
+/// [`rete_core::write_opts::WriteOptions`] as recorded in the build info.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WriteRecord {
+    pub tile_kib: u32,
+    pub dict_chunk_kib: u32,
+    pub zstd_level: i32,
+    /// `sized` (single-segment frames, the 0.4 default) or `stream`.
+    pub zstd_frame: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub frequent_objects: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// The writer settings this process is building with.
+pub(crate) fn write_record() -> Option<WriteRecord> {
+    let o = rete_core::write_opts::write_options();
+    Some(WriteRecord {
+        tile_kib: (o.tile_budget / 1024) as u32,
+        dict_chunk_kib: (o.dict_chunk_budget / 1024) as u32,
+        zstd_level: o.zstd_level,
+        zstd_frame: match o.frame {
+            rete_core::write_opts::FrameShape::Sized => "sized",
+            rete_core::write_opts::FrameShape::Stream => "stream",
+        }
+        .to_string(),
+        frequent_objects: o.frequent_objects as u64,
+    })
 }
 
 impl BuildParams {
