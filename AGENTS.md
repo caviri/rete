@@ -383,7 +383,8 @@ Before touching a `.rete` that is already published. Full lifecycle in
   starter queries) — then `rete recard` the result to give it a full one. It
   *does* build named graphs (#139) — `--collapse-graphs` is now a modelling
   choice (fold a TriG export's graphs into the default graph when that is what
-  the dump means), not a requirement. `--text-index` is still refused there.
+  the dump means), not a requirement. `--text-index` works there too (0.4.0),
+  in any scope, and writes the same TEXT_INDEX bytes as the in-RAM build.
 - **Feed the external build the dump as it ships.** It reads
   N-Triples/N-Quads/Turtle/TriG, gzipped or not, straight from the compressed
   file — so a `dump.ttl.gz` never has to be expanded to `.nt` first. That

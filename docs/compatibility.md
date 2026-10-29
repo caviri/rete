@@ -117,6 +117,25 @@ files with both sections: `info`, `verify`, `stats`, `sparql`, `export` and
 bundled engines before publishing files written by 0.4.0, as for every writer
 change.
 
+### A text index of some predicates: a section older readers do not see
+
+`rete build --text-index --text-index-include/--text-index-exclude <IRI>`
+(0.4.0) indexes the literals of some predicates only. Readers older than 0.4.0
+use any text index they find to prune `FILTER(CONTAINS(…))`, as if it covered
+every literal of the default graph; with an index that left a predicate out,
+they would drop that predicate's matching rows without a word. So such an index
+is written as section kind **11** rather than 6, with the same payload
+([SPEC §6.3](SPEC.md#63-full-text-index-text_index-section-optional)). An older
+reader keeps the unknown entry and never opens it: the file reads normally,
+`CONTAINS` scans and returns every row, and `rete search --contains` reports
+that the file has no text index. A current reader opens either kind and prunes
+only where the index covers the query.
+
+The other scope change stays kind 6. `--text-index-graphs all` adds the named
+graphs' literals, so the index covers everything an older reader assumes it
+covers, plus more. Its extra candidates are re-checked by the filter and fall
+away. A default-scope index (no scope flags) is the same bytes as before 0.4.0.
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query
