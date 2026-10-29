@@ -915,9 +915,22 @@ federate against the endpoint with `SERVICE <http://host:port/sparql>`.
 - Binds loopback by default. Expose deliberately (`--bind 0.0.0.0:7878`) and
   set `--token`: updates then require `Authorization: Bearer <t>` (reads stay
   open). CORS is enabled, so browsers can query it directly.
-- Scale: the state lives in memory and rebuilds after writes — built for
-  living small/medium datasets (annotation, curation; up to a few million
-  triples), not the multi-GB catalog files.
+- Scale: until the first update the endpoint answers **straight from the
+  file**, opened like any local command opens it (read whole only when it is a
+  small fraction of the free memory, lazily otherwise; see `rete sparql`'s
+  Memory & I/O), and `GET /snapshot.rete` streams the file itself. So serving
+  a multi-GB catalog file read-only costs what its queries touch. Before
+  0.4.0 the server loaded every quad at startup: in a 4 GiB container it was
+  killed before answering on both the 1.07 GB and the 0.24 GB OpenCitations
+  files (18.9 M quads each); now it answers its first query in 0.06 s at
+  16 MB, and in 3.0 s at 1.6 GB on the smaller file, which it reads whole. The first update (or a
+  journal with changes to replay at startup) loads every quad into memory and
+  rebuilds after each write, which is built for living small/medium datasets
+  (annotation, curation; up to a few million triples). An update whose load
+  would not fit is refused with `503` and a message, and the endpoint keeps
+  answering queries. The estimate is 1 KiB per quad against the available
+  memory (measured: 646 MiB at peak for 1 M OpenCitations quads), so a graph
+  of very long literals can still need more than it predicts.
 
 ```sh
 rete serve notes.rete
