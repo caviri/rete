@@ -1489,17 +1489,79 @@ fn decode_index_container(
     codec: u8,
     perms: PermSet,
 ) -> Result<GraphIndex, FileError> {
-    let mut isecs = decode_container(bytes, CODEC_NONE)?;
+    let isecs = decode_container(bytes, CODEC_NONE)?;
     if isecs.len() != perms.len() {
         return Err(FileError::Container(
             "index container section count does not match the header permutation mask",
         ));
     }
+    decode_index_sections(isecs, codec, perms)
+}
+
+fn decode_index_sections(
+    mut isecs: Vec<Vec<u8>>,
+    codec: u8,
+    perms: PermSet,
+) -> Result<GraphIndex, FileError> {
     let mut sections: [Vec<(u32, u32, Vec<u8>)>; NUM_PERMS] = Default::default();
     for (perm, sec) in perms.iter().zip(isecs.iter_mut()) {
         sections[perm.section_index()] = decode_tiled_section(sec, codec)?;
     }
     Ok(GraphIndex::from_tiles(sections, perms))
+}
+
+/// Decode the file's **root** index container (the default graph): the
+/// permutation sections, plus — on a quad-index file — the trailing seal, which
+/// is checked and set aside. Returns the seal's digest of the QUAD_INDEX
+/// section when there is one.
+fn decode_root_index_container(
+    bytes: &[u8],
+    header: &Header,
+) -> Result<(GraphIndex, Option<[u8; 16]>), FileError> {
+    if !header.has_quad_index() {
+        return Ok((
+            decode_index_container(bytes, header.block_codec, header.perms)?,
+            None,
+        ));
+    }
+    let mut isecs = decode_container(bytes, CODEC_NONE)?;
+    if isecs.len() != header.index_container_sections() {
+        return Err(FileError::Container(
+            "index container section count does not match the header permutation mask",
+        ));
+    }
+    let seal = isecs.pop().unwrap_or_default();
+    let digest = crate::quad::parse_seal(&seal)?;
+    Ok((
+        decode_index_sections(isecs, header.block_codec, header.perms)?,
+        Some(digest),
+    ))
+}
+
+/// The named-graph layout a header announces must be the one its directory
+/// holds: the quad flag with a QUAD_INDEX section and no NAMED_GRAPHS section,
+/// or no flag and no QUAD_INDEX section. Anything else is a corrupt (or a
+/// hand-edited) header, refused before either layout is read.
+fn check_named_layout(header: &Header) -> Result<(), FileError> {
+    let quad = header.quad_index_section().is_some();
+    if header.has_quad_index() {
+        if !quad {
+            return Err(FileError::Container(
+                "quad-index flag set but the file has no quad-index section",
+            ));
+        }
+        if header.named_graphs_len > 0 {
+            return Err(FileError::Container(
+                "a file cannot carry both a quad index and a named-graphs section",
+            ));
+        }
+        crate::quad::check_perms(header.perms)?;
+    } else if quad {
+        return Err(FileError::Container(
+            "quad-index section present but the header does not flag it",
+        ));
+    }
+    Ok(())
 }
 
 fn container_section_payload_ranges(
@@ -1543,12 +1605,16 @@ fn container_section_payload_ranges(
     Ok(ranges)
 }
 
+/// The permutation payload ranges of an index container holding `sections`
+/// sections (the permutations, then — on a quad-index root — the seal, which
+/// is not a permutation and is left out).
 fn decode_index_section_ranges(
     bytes: &[u8],
     container_offset: u64,
     perms: PermSet,
+    sections: usize,
 ) -> Result<[ByteRange; NUM_PERMS], FileError> {
-    let ranges = container_section_payload_ranges(bytes, container_offset, perms.len())?;
+    let ranges = container_section_payload_ranges(bytes, container_offset, sections)?;
     let mut out = [ByteRange { offset: 0, len: 0 }; NUM_PERMS];
     for (perm, range) in perms.iter().zip(ranges) {
         out[perm.section_index()] = range;
@@ -1556,7 +1622,7 @@ fn decode_index_section_ranges(
     Ok(out)
 }
 
-fn read_uvarint_at<R: RangeReader>(
+fn read_uvarint_at<R: RangeReader + ?Sized>(
     reader: &R,
     absolute_offset: u64,
     container_end: u64,
@@ -1574,7 +1640,7 @@ fn read_uvarint_at<R: RangeReader>(
 
 /// Locate one section's payload byte range inside a remote container, walking
 /// only the (tiny) varint framing â€” no payload bytes are fetched.
-fn locate_container_section_ranged<R: RangeReader>(
+fn locate_container_section_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     container_offset: u64,
     container_len: u64,
@@ -1628,6 +1694,7 @@ fn open_index_container_lazy(
     has_synopsis: bool,
     read_concurrency: usize,
     perms: PermSet,
+    sections: usize,
 ) -> Result<
     (
         GraphIndex,
@@ -1647,7 +1714,7 @@ fn open_index_container_lazy(
             container.offset,
             container.len,
             pos,
-            perms.len() as u64,
+            sections as u64,
         )?;
         index_section_ranges[si] = section;
         let dir = read_tile_directory_ranged(reader, section)?;
@@ -1737,12 +1804,23 @@ pub fn write_file(
 /// sections — not six with three empty, which would be indistinguishable from
 /// an empty graph to a reader that does not check the header mask.
 pub(crate) fn encode_index_container(index: &GraphIndex, codec: u8) -> Vec<u8> {
+    encode_index_container_sealed(index, codec, None)
+}
+
+/// [`encode_index_container`] with an optional trailing **seal** section —
+/// the root container of a quad-index file (see `quad.rs`). The seal is what
+/// makes every reader that predates the quad index refuse the file: they all
+/// check the container's section count before reading a payload.
+fn encode_index_container_sealed(index: &GraphIndex, codec: u8, seal: Option<&[u8]>) -> Vec<u8> {
     let payloads: Vec<Vec<u8>> = index
         .perms()
         .iter()
         .map(|perm| encode_tiled_section(index, perm.section_index(), codec))
         .collect();
-    let refs: Vec<&[u8]> = payloads.iter().map(|p| p.as_slice()).collect();
+    let mut refs: Vec<&[u8]> = payloads.iter().map(|p| p.as_slice()).collect();
+    if let Some(seal) = seal {
+        refs.push(seal);
+    }
     encode_container(&refs, CODEC_NONE)
 }
 
@@ -1876,7 +1954,7 @@ pub fn write_dataset_with_metadata(
         &dict_container,
         dict.term_count() as u64,
         default_index,
-        named,
+        NamedPart::PerGraph(named),
         has_quads,
         dict.has_quoted_triples(),
         pyramid_meta,
@@ -1889,6 +1967,13 @@ pub fn write_dataset_with_metadata(
     )
 }
 
+/// How the named graphs reach the writer: one index per graph (the
+/// NAMED_GRAPHS section, kind 5), or an encoded quad index (kind 10).
+pub(crate) enum NamedPart<'a> {
+    PerGraph(&'a [(String, GraphIndex)]),
+    Quad(&'a crate::quad::EncodedQuadIndex),
+}
+
 /// Assemble the final file image from an **already-serialized** dictionary
 /// container (so the caller can drop the live `Dictionary` before calling this)
 /// plus the permutation index and optional sections. The byte output is identical
@@ -1898,7 +1983,7 @@ pub(crate) fn write_dataset_from_parts(
     dict_container: &[u8],
     term_count: u64,
     default_index: &GraphIndex,
-    named: &[(String, GraphIndex)],
+    named: NamedPart<'_>,
     has_quads: bool,
     has_quoted_triples: bool,
     pyramid_meta: &[u8],
@@ -1909,7 +1994,27 @@ pub(crate) fn write_dataset_from_parts(
     text_index_named: bool,
     codec: u8,
 ) -> Vec<u8> {
-    let index_container = encode_index_container(default_index, codec);
+    // The named graphs: either the per-graph section (kind 5) or the quad index
+    // (kind 10), whose digest the root container's seal carries. An empty quad
+    // index is written as no named graphs at all.
+    let (named_section, quad, named_quads) = match named {
+        NamedPart::PerGraph(named) => (
+            if named.is_empty() {
+                Vec::new()
+            } else {
+                encode_named_graphs(named, codec)
+            },
+            None,
+            named
+                .iter()
+                .map(|(_, idx)| idx.triple_count() as u64)
+                .sum::<u64>(),
+        ),
+        NamedPart::Quad(q) if q.graph_count == 0 => (Vec::new(), None, 0),
+        NamedPart::Quad(q) => (Vec::new(), Some(q), q.quad_count),
+    };
+    let seal = quad.map(|q| crate::quad::encode_seal(crate::quad::digest(&q.bytes)));
+    let index_container = encode_index_container_sealed(default_index, codec, seal.as_deref());
     // A predicate-restricted index (kind 11) is outside the content hash, like
     // kinds 8 and 9, and starts with its own digest instead: a reader older
     // than 0.4.0 does not see kind 11, so a hashed one would make its `verify`
@@ -1922,7 +2027,6 @@ pub(crate) fn write_dataset_from_parts(
     } else {
         text_index
     };
-    let named_section = encode_named_graphs(named, codec);
 
     // The metadata section (if any) sits between the header and the dictionary,
     // so the dictionary â€” and everything after it â€” shifts forward by its length.
@@ -1937,11 +2041,10 @@ pub(crate) fn write_dataset_from_parts(
     let text_offset = pyr_offset + pyr_len;
     let text_len = text_index.len() as u64;
     let named_offset = text_offset + text_len;
-    let named_len = if named.is_empty() {
-        0
-    } else {
-        named_section.len() as u64
-    };
+    let named_len = named_section.len() as u64;
+    // The quad index sits where the named-graphs section would (the two are
+    // exclusive).
+    let quad_len = quad.map_or(0, |q| q.bytes.len() as u64);
 
     // Hash parts in physical order, with the metadata payload prepended when
     // present. Omitting it entirely (rather than hashing an empty slice) keeps the
@@ -1966,10 +2069,18 @@ pub(crate) fn write_dataset_from_parts(
     // fetch just that block for an index/dictionary/summary-free Tier-0 read.
     let schema_meta_len = crate::meta::schema_block_len(pyramid_meta);
 
+    // The QUAD_INDEX section is not a hash part of its own: the seal inside the
+    // index container carries its digest, so the content hash covers it — and a
+    // reader that predates it computes the same hash over the same parts.
     let header = Header {
         version: crate::header::CURRENT_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
             | if has_quads { FLAG_HAS_QUADS } else { 0 }
+            | if quad.is_some() {
+                crate::header::FLAG_QUAD_INDEX
+            } else {
+                0
+            }
             | if has_quoted_triples {
                 FLAG_HAS_QUOTED_TRIPLES
             } else {
@@ -1995,11 +2106,7 @@ pub(crate) fn write_dataset_from_parts(
         // is written from an index built with the same set, so the mask is a
         // file-level fact and the default index is its source of truth.
         perms: default_index.perms(),
-        quad_count: default_index.triple_count() as u64
-            + named
-                .iter()
-                .map(|(_, idx)| idx.triple_count() as u64)
-                .sum::<u64>(),
+        quad_count: default_index.triple_count() as u64 + named_quads,
         term_count,
         content_hash: content_hash(&parts),
         named_graphs_offset: if named_len > 0 { named_offset } else { 0 },
@@ -2010,7 +2117,16 @@ pub(crate) fn write_dataset_from_parts(
         text_index_partial: text_len > 0 && text_index_partial,
         build_info_offset: 0,
         build_info_len: 0,
-        extra_sections: Vec::new(),
+        extra_sections: if quad_len > 0 {
+            vec![crate::header::Section {
+                kind: crate::header::SectionKind::QuadIndex,
+                flags: 0,
+                offset: named_offset,
+                length: quad_len,
+            }]
+        } else {
+            Vec::new()
+        },
     };
 
     let mut out = Vec::with_capacity(
@@ -2021,6 +2137,7 @@ pub(crate) fn write_dataset_from_parts(
             + pyramid_meta.len()
             + text_index.len()
             + named_section.len()
+            + quad_len as usize
             + MAGIC.len(),
     );
     out.extend_from_slice(&header.to_bytes());
@@ -2035,6 +2152,9 @@ pub(crate) fn write_dataset_from_parts(
     }
     if named_len > 0 {
         out.extend_from_slice(&named_section);
+    }
+    if let Some(q) = quad {
+        out.extend_from_slice(&q.bytes);
     }
     out.extend_from_slice(&MAGIC); // footer marker
     out
@@ -2431,6 +2551,32 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     if hash_of_sections(&header, bytes)? != header.content_hash {
         return Ok(false);
     }
+    // The QUAD_INDEX section is covered through the seal's digest (inside the
+    // hashed index container), so it is checked against that.
+    if header.has_quad_index() || header.quad_index_section().is_some() {
+        check_named_layout(&header)?;
+        let slice = |off: u64, len: u64| -> Result<&[u8], FileError> {
+            bytes
+                .get(off as usize..off.saturating_add(len) as usize)
+                .ok_or(FileError::Container("section overruns buffer"))
+        };
+        let root = slice(header.root_dir_offset, header.root_dir_len)?;
+        let ranges = container_section_payload_ranges(
+            root,
+            header.root_dir_offset,
+            header.index_container_sections(),
+        )?;
+        let seal = ranges
+            .last()
+            .ok_or(FileError::Container("missing quad-index seal"))?;
+        let want = crate::quad::parse_seal(slice(seal.offset, seal.len)?)?;
+        let q = header
+            .quad_index_section()
+            .ok_or(FileError::Container("missing quad-index section"))?;
+        if crate::quad::digest(slice(q.offset, q.length)?) != want {
+            return Ok(false);
+        }
+    }
     for s in self_digested_sections(&header) {
         let end = s.offset.saturating_add(s.length);
         let section = bytes
@@ -2626,7 +2772,39 @@ pub fn verify_ranged(reader: &dyn crate::reader::RangeReader) -> Result<bool, Fi
     if out != header.content_hash {
         return Ok(false);
     }
-    // The self-digested sections (kinds 8, 9), streamed the same way.
+    // The QUAD_INDEX section, against the digest in the index container's seal
+    // (see `verify`), streamed the same way.
+    if header.has_quad_index() || header.quad_index_section().is_some() {
+        check_named_layout(&header)?;
+        let sections = header.index_container_sections();
+        let seal = locate_container_section_ranged(
+            reader,
+            header.root_dir_offset,
+            header.root_dir_len,
+            sections - 1,
+            sections as u64,
+        )?;
+        let want = crate::quad::parse_seal(&reader.read_at(seal.offset, seal.len)?)?;
+        let q = header
+            .quad_index_section()
+            .ok_or(FileError::Container("missing quad-index section"))?;
+        if q.offset.checked_add(q.length).is_none_or(|end| end > len) {
+            return Err(FileError::Container("section overruns buffer"));
+        }
+        let mut h = blake3::Hasher::new();
+        let mut at = q.offset;
+        while at < q.offset + q.length {
+            let take = (q.offset + q.length - at).min(SLICE);
+            h.update(&reader.read_at(at, take)?);
+            at += take;
+        }
+        let mut got = [0u8; 16];
+        got.copy_from_slice(&h.finalize().as_bytes()[..16]);
+        if got != want {
+            return Ok(false);
+        }
+    }
+    // The self-digested sections (kinds 8, 9, 11), streamed the same way.
     for s in self_digested_sections(&header) {
         if s.length < 16 || s.offset.checked_add(s.length).is_none_or(|end| end > len) {
             return Err(FileError::Container("section overruns buffer"));
@@ -3274,6 +3452,7 @@ impl LazyNamedGraphs {
                 self.has_synopsis,
                 self.read_concurrency,
                 self.perms,
+                self.perms.len(),
             ) {
                 Ok((g, _, _)) => {
                     // A large graph faults its tiles through a loader, so bound
@@ -3341,6 +3520,9 @@ impl LazyNamedGraphs {
 enum NamedGraphsSlot {
     Resident(Vec<(String, GraphIndex)>),
     Lazy(LazyNamedGraphs),
+    /// The quad index (kind 10), on every open path: graphs are views over
+    /// shared tiles, found through the dictionary and the sorted directory.
+    Quad(crate::quad::QuadNamed),
 }
 
 impl NamedGraphsSlot {
@@ -3372,6 +3554,7 @@ impl NamedGraphsSlot {
                 }
                 bytes
             }
+            NamedGraphsSlot::Quad(q) => q.directory_bytes(),
         }
     }
 
@@ -3379,27 +3562,37 @@ impl NamedGraphsSlot {
         match self {
             NamedGraphsSlot::Resident(v) => v.len(),
             NamedGraphsSlot::Lazy(l) => l.count(),
+            NamedGraphsSlot::Quad(q) => q.count(),
         }
     }
 
     /// `exhaustive` is the walk-demand hint (resident opens ignore it): see
-    /// [`LazyNamedGraphs::ensure_meta`].
-    fn name_at(&self, i: usize, exhaustive: bool) -> Option<&str> {
+    /// [`LazyNamedGraphs::ensure_meta`]. `dict` names the graphs of a quad
+    /// index (their names are dictionary terms there).
+    fn name_at<'a>(&'a self, dict: &Dictionary, i: usize, exhaustive: bool) -> Option<&'a str> {
         match self {
             NamedGraphsSlot::Resident(v) => v.get(i).map(|(iri, _)| iri.as_str()),
             NamedGraphsSlot::Lazy(l) => l.name_at(i, exhaustive),
+            NamedGraphsSlot::Quad(q) => q.name_at(dict, i, exhaustive),
         }
     }
 
-    fn graph_at(&self, i: usize, exhaustive: bool) -> Option<(&str, &GraphIndex)> {
+    fn graph_at<'a>(
+        &'a self,
+        dict: &Dictionary,
+        i: usize,
+        exhaustive: bool,
+    ) -> Option<(&'a str, &'a GraphIndex)> {
         match self {
             NamedGraphsSlot::Resident(v) => v.get(i).map(|(iri, g)| (iri.as_str(), g)),
             NamedGraphsSlot::Lazy(l) => l.graph_at(i, exhaustive),
+            NamedGraphsSlot::Quad(q) => q.graph_at(dict, i, exhaustive),
         }
     }
 
-    fn find(&self, iri: &str) -> Option<&GraphIndex> {
+    fn find<'a>(&'a self, dict: &Dictionary, iri: &str) -> Option<&'a GraphIndex> {
         match self {
+            NamedGraphsSlot::Quad(q) => q.find(dict, iri),
             NamedGraphsSlot::Resident(v) => v.iter().find(|(name, _)| name == iri).map(|(_, g)| g),
             NamedGraphsSlot::Lazy(l) => {
                 // Walk headers only until the IRI matches; decode just that
@@ -3427,6 +3620,7 @@ impl NamedGraphsSlot {
                 l.for_each_opened(|g| bad |= g.load_incomplete());
                 bad
             }
+            NamedGraphsSlot::Quad(q) => q.load_incomplete(),
         }
     }
 
@@ -3441,7 +3635,32 @@ impl NamedGraphsSlot {
                 l.failed.store(false, std::sync::atomic::Ordering::Relaxed);
                 l.for_each_opened(|g| g.reset_load_failure());
             }
+            NamedGraphsSlot::Quad(q) => q.reset_load_failures(),
         }
+    }
+
+    /// The named-graph slot of a file opened with all its bytes in hand
+    /// (`Rete::open`, `open_ranged`): the per-graph section decoded resident,
+    /// or the quad index read through an owned copy of its section.
+    fn resident(
+        header: &Header,
+        quad_section: impl FnOnce(u64, u64) -> Result<Vec<u8>, FileError>,
+        per_graph: impl FnOnce() -> Result<Vec<(String, GraphIndex)>, FileError>,
+    ) -> Result<Self, FileError> {
+        check_named_layout(header)?;
+        if let Some(q) = header.quad_index_section() {
+            let bytes = quad_section(q.offset, q.length)?;
+            return Ok(NamedGraphsSlot::Quad(crate::quad::QuadNamed::resident(
+                bytes,
+                header.block_codec,
+                header.perms,
+            )));
+        }
+        Ok(NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
+            per_graph()?
+        } else {
+            Vec::new()
+        }))
     }
 }
 
@@ -3504,10 +3723,15 @@ impl Rete {
             header.dict_codec,
         )?;
 
+        check_named_layout(&header)?;
         let index_bytes = region(header.root_dir_offset, header.root_dir_len)?;
-        let index = decode_index_container(index_bytes, header.block_codec, header.perms)?;
-        let index_section_ranges =
-            decode_index_section_ranges(index_bytes, header.root_dir_offset, header.perms)?;
+        let (index, _) = decode_root_index_container(index_bytes, &header)?;
+        let index_section_ranges = decode_index_section_ranges(
+            index_bytes,
+            header.root_dir_offset,
+            header.perms,
+            header.index_container_sections(),
+        )?;
 
         let pyramid = PyramidSlot::Resident(if header.pyramid_meta_len > 0 {
             Some(
@@ -3532,15 +3756,17 @@ impl Rete {
         let labels = resident_label_slot(&header, &region);
         let schema = resident_schema_slot(&header, &region);
 
-        let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
-            decode_named_graphs(
-                region(header.named_graphs_offset, header.named_graphs_len)?,
-                header.block_codec,
-                header.perms,
-            )?
-        } else {
-            Vec::new()
-        });
+        let named_graphs = NamedGraphsSlot::resident(
+            &header,
+            |off, len| Ok(region(off, len)?.to_vec()),
+            || {
+                decode_named_graphs(
+                    region(header.named_graphs_offset, header.named_graphs_len)?,
+                    header.block_codec,
+                    header.perms,
+                )
+            },
+        )?;
 
         let metadata = if header.metadata_len > 0 {
             region(header.metadata_offset, header.metadata_len)?.to_vec()
@@ -3691,6 +3917,14 @@ impl Rete {
                 "schema (classes, query_stats, shapes)".into(),
                 s.offset,
                 s.length,
+            ));
+        }
+        if let Some(q) = h.quad_index_section() {
+            out.push(seg(
+                "quad-index",
+                format!("quad index ({} named graphs)", self.named_graphs.count()),
+                q.offset,
+                q.length,
             ));
         }
         out.sort_by_key(|s| s.offset);
@@ -4349,9 +4583,26 @@ impl Rete {
             probes -= 1;
             let hits = index.match_pattern((Some(sid), None, None));
             if hits.is_empty() {
-                // No triples at this id. If it also falls in a hole BETWEEN
-                // tiles, jump straight to the next tile's first id instead of
-                // stepping through the gap one absent id at a time.
+                // No triples at this id: jump to the next subject the index
+                // holds (the tile's group directory knows it), instead of
+                // stepping through absent ids one at a time. That is what keeps
+                // a quad-index view — whose tile shared with other graphs has
+                // the conservative range `0..=u32::MAX` — from probing four
+                // billion ids. Only when that lookup cannot answer (a failed
+                // fetch, already recorded) does it fall back to the directory:
+                // if the id falls in a hole BETWEEN tiles, jump to the next
+                // tile's first id.
+                match index.next_leading(IndexPermutation::Spo.section_index(), sid) {
+                    Some(next) if next > sid => {
+                        sid = next;
+                        continue;
+                    }
+                    None if !index.load_incomplete() => {
+                        exhausted = true;
+                        break;
+                    }
+                    _ => {}
+                }
                 match next_tile_start(tiles, sid) {
                     None => {
                         exhausted = true;
@@ -4413,17 +4664,39 @@ impl Rete {
         self.named_graphs.count()
     }
 
+    /// The `i`-th named graph's quad count, when the file records it: a
+    /// quad-index file keeps it in its graph directory, so this reads one
+    /// directory block and never the graph's index. `None` for a per-graph
+    /// (NAMED_GRAPHS section) file, or past the last graph.
+    pub fn named_graph_quad_count(&self, i: usize) -> Option<u64> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => q.quad_count_at(i),
+            _ => None,
+        }
+    }
+
+    /// Deduplicated quads across every named graph, when the file records it
+    /// (a quad-index file, from its preamble: one small read). `None` for a
+    /// per-graph file — there it is the header's `quad_count` minus the
+    /// default graph's triples.
+    pub fn named_quad_count(&self) -> Option<u64> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => Some(q.quad_count()),
+            _ => None,
+        }
+    }
+
     /// The `i`-th named graph's IRI (stored order). On a lazy ranged open this
     /// walks entry HEADERS up to `i` — it never decodes a graph's index.
     pub fn named_graph_name_at(&self, i: usize) -> Option<&str> {
-        self.named_graphs.name_at(i, false)
+        self.named_graphs.name_at(&self.dict, i, false)
     }
 
     /// The `i`-th named graph as `(iri, index)`. On a lazy ranged open the
     /// index is fetched and decoded on first access and memoised; check
     /// [`index_incomplete`](Self::index_incomplete) after evaluating.
     pub fn named_graph_at(&self, i: usize) -> Option<(&str, &GraphIndex)> {
-        self.named_graphs.graph_at(i, false)
+        self.named_graphs.graph_at(&self.dict, i, false)
     }
 
     /// [`named_graph_name_at`](Self::named_graph_name_at) under a declared
@@ -4432,7 +4705,7 @@ impl Rete {
     /// strategy — results are identical either way. Only the SPARQL evaluator
     /// sets it, from shapes where full consumption is provable.
     pub(crate) fn named_graph_name_at_demand(&self, i: usize, exhaustive: bool) -> Option<&str> {
-        self.named_graphs.name_at(i, exhaustive)
+        self.named_graphs.name_at(&self.dict, i, exhaustive)
     }
 
     /// [`named_graph_at`](Self::named_graph_at) under a declared demand: see
@@ -4442,7 +4715,7 @@ impl Rete {
         i: usize,
         exhaustive: bool,
     ) -> Option<(&str, &GraphIndex)> {
-        self.named_graphs.graph_at(i, exhaustive)
+        self.named_graphs.graph_at(&self.dict, i, exhaustive)
     }
 
     /// IRIs of the named graphs in this dataset (the default graph is unnamed).
@@ -4451,13 +4724,13 @@ impl Rete {
     /// is all that's needed.
     pub fn graph_names(&self) -> Vec<&str> {
         (0..self.named_graphs.count())
-            .filter_map(|i| self.named_graphs.name_at(i, false))
+            .filter_map(|i| self.named_graphs.name_at(&self.dict, i, false))
             .collect()
     }
 
     /// The permutation index of a named graph, or `None` if absent.
     pub fn graph_index(&self, iri: &str) -> Option<&GraphIndex> {
-        self.named_graphs.find(iri)
+        self.named_graphs.find(&self.dict, iri)
     }
 
     /// Match a triple pattern in dictionary-ID space (subject/predicate/object
@@ -4493,10 +4766,15 @@ impl Rete {
         let dict_bytes = reader.read_at(header.dictionary_offset, header.dictionary_len)?;
         let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
 
+        check_named_layout(&header)?;
         let index_bytes = reader.read_at(header.root_dir_offset, header.root_dir_len)?;
-        let index = decode_index_container(&index_bytes, header.block_codec, header.perms)?;
-        let index_section_ranges =
-            decode_index_section_ranges(&index_bytes, header.root_dir_offset, header.perms)?;
+        let (index, _) = decode_root_index_container(&index_bytes, &header)?;
+        let index_section_ranges = decode_index_section_ranges(
+            &index_bytes,
+            header.root_dir_offset,
+            header.perms,
+            header.index_container_sections(),
+        )?;
 
         let pyramid = PyramidSlot::Resident(if header.pyramid_meta_len > 0 {
             let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
@@ -4525,12 +4803,14 @@ impl Rete {
         }));
         let schema = SectionSlot::Resident(read_schema_with_header(reader, &header));
 
-        let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
-            let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
-            decode_named_graphs(&nb, header.block_codec, header.perms)?
-        } else {
-            Vec::new()
-        });
+        let named_graphs = NamedGraphsSlot::resident(
+            &header,
+            |off, len| Ok(reader.read_at(off, len)?),
+            || {
+                let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
+                decode_named_graphs(&nb, header.block_codec, header.perms)
+            },
+        )?;
 
         // The metadata section (Dataset Card) is deliberately NOT fetched here:
         // a ranged query open keeps to its small range budget. Use `Rete::open`
@@ -4571,6 +4851,7 @@ impl Rete {
     ) -> Result<Self, FileError> {
         let head = reader.read_at(0, HEADER_LEN as u64)?;
         let header = Header::from_bytes(&head)?;
+        check_named_layout(&header)?;
         let reader = std::sync::Arc::new(reader);
         // Captured before the loader closures take the Arc: the reader's
         // concurrent-range fan-out, stamped onto the index for the planner.
@@ -4596,6 +4877,7 @@ impl Rete {
                 header.has_tile_synopsis(),
                 read_concurrency,
                 header.perms,
+                header.index_container_sections(),
             )
         };
 
@@ -4632,7 +4914,21 @@ impl Rete {
         // file whose queries then touch a handful of graphs). Defer them like
         // the pyramid and text index: nothing is read at open; a query walks
         // the directory and decodes only the graphs it touches.
-        let named_graphs = if header.named_graphs_len > 0 {
+        let named_graphs = if let Some(q) = header.quad_index_section() {
+            // The quad index: nothing read at open either; the preamble on the
+            // first named-graph touch, then only the routing parts and tiles
+            // a query uses.
+            NamedGraphsSlot::Quad(crate::quad::QuadNamed::new(
+                reader_dyn,
+                ByteRange {
+                    offset: q.offset,
+                    len: q.length,
+                },
+                header.block_codec,
+                header.perms,
+                read_concurrency,
+            ))
+        } else if header.named_graphs_len > 0 {
             NamedGraphsSlot::Lazy(LazyNamedGraphs::new(
                 reader_dyn,
                 ByteRange {
@@ -4752,8 +5048,12 @@ impl Rete {
         // cap; small resident ones stay unlimited (bounded by size + per-slot
         // release). Combined with `release_named_graph`, a many-graph dump holds
         // one graph's tiles at a time, each capped.
-        if let NamedGraphsSlot::Lazy(lazy) = &self.named_graphs {
-            lazy.set_tile_cap(split.tile_cache);
+        match &self.named_graphs {
+            NamedGraphsSlot::Lazy(lazy) => lazy.set_tile_cap(split.tile_cache),
+            // Every quad-index view, and the tiles they share, re-fault
+            // through loaders — on every open path — so they take the cap too.
+            NamedGraphsSlot::Quad(q) => q.set_tile_cap(split.tile_cache),
+            NamedGraphsSlot::Resident(_) => {}
         }
         if std::env::var("RETE_OPEN_DEBUG").is_ok() {
             eprintln!(
@@ -4834,8 +5134,10 @@ impl Rete {
     /// tile directory) on a later access — the same lazy contract as a chunk
     /// that was never faulted.
     pub fn release_named_graph(&mut self, iri: &str) {
-        if let NamedGraphsSlot::Lazy(lazy) = &mut self.named_graphs {
-            lazy.release(iri);
+        match &mut self.named_graphs {
+            NamedGraphsSlot::Lazy(lazy) => lazy.release(iri),
+            NamedGraphsSlot::Quad(q) => q.release(&self.dict, iri),
+            NamedGraphsSlot::Resident(_) => {}
         }
     }
 
@@ -5018,7 +5320,7 @@ impl Rete {
         for i in 0..self.named_graphs.count() {
             // A quad dump visits every graph by construction — exhaustive
             // demand, so a lazy walk may read the section in bulk chunks.
-            let Some(iri) = self.named_graphs.name_at(i, true) else {
+            let Some(iri) = self.named_graphs.name_at(&self.dict, i, true) else {
                 continue;
             };
             for triple in self.query_in_graph(Some(iri), s, p, o) {
@@ -5107,7 +5409,7 @@ fn route_pattern<R: RangeReader>(
             .perms
             .position(permutation)
             .ok_or(FileError::Container("routed to an absent permutation"))?,
-        header.perms.len() as u64,
+        header.index_container_sections() as u64,
     )?;
     Ok(Some(RoutedPattern {
         dict,
@@ -8014,6 +8316,72 @@ mod tests {
         assert!(view.tbox_is_coherent(), "a plain hierarchy is coherent");
     }
 
+    /// A quad-index file must be **refused** by every reader that predates it —
+    /// an old reader ignores flag bit 3 and the unknown kind 10, so it would
+    /// otherwise open the file as one without named graphs and answer `GRAPH`
+    /// queries with nothing. The seal makes each of their open paths fail on the
+    /// index container's section count, before any payload is read; their
+    /// `verify` still passes, because the part list it hashes is unchanged.
+    /// (Checked against real 0.3.x binaries too: QUAD-INDEX-DESIGN.md §9.)
+    #[test]
+    fn readers_before_the_quad_index_refuse_its_files() {
+        for perms in [PermSet::ALL, PermSet::CORE] {
+            let quads: Vec<crate::ingest::RawQuad> = (0..50)
+                .map(|i| {
+                    (
+                        format!("<http://ex/s{i}>"),
+                        "<http://ex/p>".to_string(),
+                        format!("\"{i}\""),
+                        Some(format!("<http://ex/g{}>", i % 7)),
+                    )
+                })
+                .collect();
+            let (bytes, _) = crate::ingest::assemble_dataset_with_layout(
+                quads,
+                false,
+                false,
+                None,
+                crate::PyramidAlgo::Louvain,
+                perms,
+                crate::ingest::GraphLayout::Quad,
+                |_, _| Vec::<u8>::new(),
+            );
+            let h = Header::from_bytes(&bytes).unwrap();
+            assert!(h.has_quad_index());
+            let root =
+                &bytes[h.root_dir_offset as usize..(h.root_dir_offset + h.root_dir_len) as usize];
+            // 0.3.4–0.3.7, resident (`Rete::open`, `open_ranged`): count != mask.
+            assert!(decode_index_container(root, h.block_codec, h.perms).is_err());
+            assert!(
+                container_section_payload_ranges(root, h.root_dir_offset, h.perms.len()).is_err()
+            );
+            // 0.3.0–0.3.3 expected exactly six sections, whatever the mask.
+            assert_ne!(decode_container(root, CODEC_NONE).unwrap().len(), NUM_PERMS);
+            assert_ne!(
+                decode_container(root, CODEC_NONE).unwrap().len(),
+                h.perms.len()
+            );
+            // Every lazy / remote open (`open_ranged_lazy`, `query_ranged`).
+            let r = crate::reader::SliceReader::new(&bytes);
+            for expect in [h.perms.len(), NUM_PERMS] {
+                assert!(locate_container_section_ranged(
+                    &r,
+                    h.root_dir_offset,
+                    h.root_dir_len,
+                    0,
+                    expect as u64
+                )
+                .is_err());
+            }
+            // Their `verify` hashes the same parts the writer hashed.
+            assert_eq!(hash_of_sections(&h, &bytes).unwrap(), h.content_hash);
+            // And a current reader reads the file.
+            let rete = Rete::open(&bytes).unwrap();
+            assert_eq!(rete.named_graph_count(), 7);
+            assert_eq!(rete.dump(Some("<http://ex/g3>")).len(), 7);
+        }
+    }
+
     #[test]
     fn named_graphs_round_trip() {
         // One shared dictionary; default graph + a named graph "g1".
@@ -8114,6 +8482,7 @@ mod tests {
             header.has_tile_synopsis(),
             1,
             header.perms,
+            header.perms.len(),
         )
         .unwrap();
         let mut want = rete

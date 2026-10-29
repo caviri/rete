@@ -35,6 +35,7 @@ impl Default for BuildSections {
 
 impl BuildSections {
     /// The in-memory assembly options for these sections.
+    #[allow(clippy::too_many_arguments)]
     fn assemble_options<'a>(
         self,
         with_pyramid: bool,
@@ -42,6 +43,7 @@ impl BuildSections {
         type_override: Option<&'a str>,
         algo: rete_core::PyramidAlgo,
         perms: rete_core::PermSet,
+        graphs: rete_core::GraphLayout,
     ) -> ingest::AssembleOptions<'a> {
         ingest::AssembleOptions {
             with_pyramid,
@@ -50,6 +52,7 @@ impl BuildSections {
             type_override,
             algo,
             perms,
+            graph_layout: graphs,
             pyramid_layout: rete_core::PyramidLayout::CommunityOnly,
             label_index: self.label_index,
             schema: self.schema,
@@ -451,6 +454,7 @@ pub(crate) fn build(
     card_args: CardArgs,
     no_card_costs: bool,
     perms: rete_core::PermSet,
+    graphs: rete_core::GraphLayout,
     strict: bool,
     surface: ingest::QuotedTripleSurface,
     sections: BuildSections,
@@ -462,6 +466,7 @@ pub(crate) fn build(
         type_predicate,
         pyramid_algo,
         perms,
+        graphs,
     );
     // Fast low-RAM path: when every input is an N-Triples / N-Quads FILE and no
     // reasoning is requested, assemble by STREAMING the inputs twice instead of
@@ -708,6 +713,7 @@ pub(crate) fn build_external_cmd(
     collapse_graphs: bool,
     card_args: CardArgs,
     perms: rete_core::PermSet,
+    graphs: rete_core::GraphLayout,
     strict: bool,
     surface: ingest::QuotedTripleSurface,
     type_predicate: Option<&str>,
@@ -833,6 +839,7 @@ pub(crate) fn build_external_cmd(
             schema: sections.schema,
             type_override: type_predicate.map(str::to_string),
             text_index,
+            graphs,
         },
     )
     .map_err(|e| match e {
@@ -884,6 +891,13 @@ pub(crate) fn repyramid(
     // `--no-pyramid` — it re-assembles an existing file, it does not re-decide
     // how it was built. Rebuild from source to change the set.
     let perms = rete.header().perms;
+    // The named-graph layout is the same kind of fact: a quad-index input
+    // stays a quad-index file.
+    let graphs = if rete.header().has_quad_index() {
+        rete_core::GraphLayout::Quad
+    } else {
+        rete_core::GraphLayout::PerGraph
+    };
     if perms != rete_core::PermSet::ALL {
         eprintln!(
             "preserving the input's {} permutation(s): {}",
@@ -928,6 +942,7 @@ pub(crate) fn repyramid(
         type_predicate,
         pyramid_algo,
         perms,
+        graphs,
     );
     let (out_bytes, stats) =
         ingest::assemble_dataset_opts(quads, &opts, |stats, quads| match curated {
@@ -1015,6 +1030,7 @@ mod tests {
             },
             !measure,
             rete_core::PermSet::ALL,
+            rete_core::GraphLayout::PerGraph,
             false,
             ingest::QuotedTripleSurface::default(),
             BuildSections::default(),
@@ -1207,6 +1223,7 @@ mod tests {
                 },
                 false,
                 rete_core::PermSet::ALL,
+                rete_core::GraphLayout::PerGraph,
                 false,
                 ingest::QuotedTripleSurface::default(),
                 BuildSections::default(),
@@ -1302,6 +1319,7 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            rete_core::GraphLayout::PerGraph,
             false,
             ingest::QuotedTripleSurface::default(),
             BuildSections::default(),
@@ -1342,6 +1360,7 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            rete_core::GraphLayout::PerGraph,
             false,
             ingest::QuotedTripleSurface::default(),
             BuildSections::default(),
@@ -1368,6 +1387,7 @@ mod tests {
             CardArgs::default(),
             false,
             rete_core::PermSet::ALL,
+            rete_core::GraphLayout::PerGraph,
             false,
             ingest::QuotedTripleSurface::default(),
             BuildSections::default(),
@@ -1429,6 +1449,7 @@ mod tests {
                 CardArgs::default(),
                 false,
                 rete_core::PermSet::ALL,
+                rete_core::GraphLayout::PerGraph,
                 false,
                 ingest::QuotedTripleSurface::default(),
                 BuildSections::default(),
@@ -1449,6 +1470,7 @@ mod tests {
                     ..CardArgs::default()
                 },
                 rete_core::PermSet::ALL,
+                rete_core::GraphLayout::PerGraph,
                 false,
                 ingest::QuotedTripleSurface::default(),
                 None,

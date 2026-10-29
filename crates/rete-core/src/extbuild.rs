@@ -53,6 +53,20 @@
 //! so an input with no named graphs runs exactly the code (and the record
 //! widths) it ran before this existed.
 //!
+//! ## Quad index (`GraphLayout::Quad`)
+//!
+//! Graph names **are** dictionary terms there (subject role), so the chunker
+//! observes each name into its chunk dictionary and spills a named quad as
+//! `(local subject id of g, s, p, o)`: no name file, no graph-ordinal merge;
+//! the remap phase maps `g` like `s`. Then, per graph-leading order, one
+//! external sort of 16-byte `(g, a, b, c)` records, a k-way merge with dedup,
+//! and the same `quad::QuadTiler` the in-RAM builder uses — so the two write
+//! identical bytes. The `G+SPO` pass also emits the graph directory. The
+//! section is assembled in a spill file (its digest goes into the index
+//! container's seal) and streamed after the index. Peak RAM: one sort run plus
+//! one tile batch.
+//!
+//!
 //! Limits (clear errors, not silent degradation): no community pyramid.
 //! SPARQL/joins/verify are unaffected (they never require the pyramid). The
 //! full-text index is supported, in any scope, and its section is byte-identical
@@ -69,7 +83,7 @@ use crate::dict::env_restart_interval;
 
 use crate::extbuild_sections::{ExtLabels, ExtSchema};
 use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
-use crate::ingest::{BuildStats, IngestError, RawQuad};
+use crate::ingest::{BuildStats, GraphLayout, IngestError, RawQuad};
 use crate::triples::TripleBlockBuilder;
 use crate::varint::write_uvarint;
 use crate::DictionaryBuilder;
@@ -123,6 +137,10 @@ pub struct ExternalBuildOptions {
     /// TEXT_INDEX section). A second external sort, on the literal words, inside
     /// the same budget; see `text_index_spill`.
     pub text_index: Option<crate::text_index::TextIndexScope>,
+    /// How the named graphs are stored ([`GraphLayout::PerGraph`] by default).
+    /// [`GraphLayout::Quad`] writes the quad index (SPEC.md §6.4) through its
+    /// own external sorts — see "Quad index" in the module docs.
+    pub graphs: GraphLayout,
 }
 
 impl Default for ExternalBuildOptions {
@@ -137,6 +155,7 @@ impl Default for ExternalBuildOptions {
             schema: false,
             type_override: None,
             text_index: None,
+            graphs: GraphLayout::PerGraph,
         }
     }
 }
@@ -217,11 +236,17 @@ where
         budget >> 20,
         chunk_budget >> 20
     );
+    let quad_layout = opts.graphs == GraphLayout::Quad;
+    if quad_layout {
+        crate::quad::check_perms(opts.perms).map_err(|_| {
+            ExtBuildError::Internal("the quad index needs the 3- or 6-permutation set")
+        })?;
+    }
     let mut text = opts
         .text_index
         .clone()
         .map(crate::text_index_spill::TextSpill::new);
-    let mut chunker = Chunker::new(&tmp, chunk_budget);
+    let mut chunker = Chunker::new(&tmp, chunk_budget, opts.graphs);
     chunker.text = text.as_mut();
     // LABEL_INDEX / SCHEMA (kinds 8, 9): the passes live in extbuild_sections;
     // each phase below calls one hook. A sort run gets an eighth of the budget
@@ -328,7 +353,9 @@ where
                     let s = u32::from_le_bytes(buf[4..8].try_into().unwrap());
                     let p = u32::from_le_bytes(buf[8..12].try_into().unwrap());
                     let o = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-                    qout.write_all(&maps.graph[(g - 1) as usize].to_le_bytes())?;
+                    // Quad index: the graph is a subject id; else an ordinal.
+                    let gmap = if quad_layout { &maps.subj } else { &maps.graph };
+                    qout.write_all(&gmap[(g - 1) as usize].to_le_bytes())?;
                     qout.write_all(&maps.subj[(s - 1) as usize].to_le_bytes())?;
                     qout.write_all(&maps.pred[(p - 1) as usize].to_le_bytes())?;
                     qout.write_all(&maps.obj[(o - 1) as usize].to_le_bytes())?;
@@ -403,12 +430,24 @@ where
     // The graph ordinal leads the sort key, so the merge hands back one
     // contiguous run per graph, in graph-name order — exactly the order the
     // named-graphs section stores them in.
-    let named = if has_named {
-        // Same accounting as `run_len`, at the quad record's 16 bytes rather
-        // than the triple's 12: a run holds Q quads resident twice over, so
-        // Q·16·2 = budget/2. Reusing `run_len` here would have quietly spent
-        // 4/3 of the intended half-budget on the quad sort.
-        let quad_run_len = ((budget / 2) / 32).clamp(1 << 16, u32::MAX as u64) as usize;
+    // Same accounting as `run_len`, at the quad record's 16 bytes rather
+    // than the triple's 12: a run holds Q quads resident twice over, so
+    // Q·16·2 = budget/2. Reusing `run_len` here would have quietly spent
+    // 4/3 of the intended half-budget on the quad sort.
+    let quad_run_len = ((budget / 2) / 32).clamp(1 << 16, u32::MAX as u64) as usize;
+    // ---- Phase 4b (quad index): graph-leading orders over the quad spill ----
+    let quad = if has_named && quad_layout {
+        let q = build_quad_section(&tmp, &global_qtri, quad_run_len, opts.perms, codec)?;
+        let _ = std::fs::remove_file(&global_qtri);
+        eprintln!(
+            "extbuild: quad index — {} named graph(s), {} unique quad(s), {} byte(s)",
+            q.graph_count, q.quad_count, q.len
+        );
+        Some(q)
+    } else {
+        None
+    };
+    let named = if has_named && !quad_layout {
         let ram_triples = (((budget / 2) / NAMED_GRAPH_BYTES_PER_TRIPLE).max(1) as usize)
             .min(NAMED_GRAPH_RAM_TRIPLE_CAP);
         let section = build_named_graphs(
@@ -434,8 +473,10 @@ where
     } else {
         None
     };
-    let named_triples = named.as_ref().map(|n| n.triples).unwrap_or(0);
-    let named_graphs = named.as_ref().map(|n| n.count).unwrap_or(0);
+    let named_triples = named.as_ref().map(|n| n.triples).unwrap_or(0)
+        + quad.as_ref().map(|q| q.quad_count).unwrap_or(0);
+    let named_graphs = named.as_ref().map(|n| n.count).unwrap_or(0)
+        + quad.as_ref().map(|q| q.graph_count).unwrap_or(0);
     let quad_count = default_count + named_triples;
 
     // ---- Phase 5: stream the final file -------------------------------------
@@ -461,6 +502,7 @@ where
         &perm_sections,
         text_section.as_ref(),
         named.as_ref(),
+        quad.as_ref(),
         quad_count,
         codec,
         opts.perms,
@@ -563,10 +605,13 @@ struct Chunker<'a> {
     labels: Option<ExtLabels>,
     /// `--text-index`: each sealed chunk spills its literal words here.
     text: Option<&'a mut crate::text_index_spill::TextSpill>,
+    /// Quad index: graph names are subject terms of the chunk dictionary and
+    /// a named quad's graph id is the name's local subject id.
+    quad: bool,
 }
 
 impl<'a> Chunker<'a> {
-    fn new(tmp: &'a TmpDir, chunk_budget: u64) -> Self {
+    fn new(tmp: &'a TmpDir, chunk_budget: u64, graphs: GraphLayout) -> Self {
         Chunker {
             tmp,
             chunk_budget,
@@ -578,6 +623,7 @@ impl<'a> Chunker<'a> {
             has_quoted: false,
             labels: None,
             text: None,
+            quad: graphs == GraphLayout::Quad,
         }
     }
 
@@ -630,6 +676,12 @@ impl<'a> Chunker<'a> {
         for (_, s, p, o) in &named {
             db.observe(s, p, o);
         }
+        // ...except in the quad index, where they are subject terms.
+        if self.quad {
+            for name in graph_ids.keys() {
+                db.observe_graph(name);
+            }
+        }
         let dict = db.build();
         if dict.has_quoted_triples() {
             self.has_quoted = true;
@@ -663,8 +715,29 @@ impl<'a> Chunker<'a> {
         // (Graph names are NT tokens — an IRI or a blank node — so they never
         // contain a raw \n, the same property the term files rely on.)
         let quad_count = named.len() as u64;
-        let graph_terms = graph_ids.len() as u32;
-        if !named.is_empty() {
+        let graphs_seen = graph_ids.len();
+        let graph_terms = if self.quad { 0 } else { graph_ids.len() as u32 };
+        if !named.is_empty() && self.quad {
+            // Quad index: the graph column is the name's local subject id,
+            // remapped later exactly like a subject.
+            let mut sid_of = vec![0u32; graph_ids.len() + 1];
+            for (name, insertion_id) in &graph_ids {
+                sid_of[*insertion_id as usize] = dict
+                    .subject_id(name)
+                    .ok_or(ExtBuildError::Internal("graph name missing from own dict"))?;
+            }
+            let mut qw = BufWriter::new(File::create(self.tmp.path(&format!("c{ci}.qtri")))?);
+            for (gid, s, p, o) in &named {
+                let (si, pi, oi) = dict
+                    .encode(s, p, o)
+                    .ok_or(ExtBuildError::Internal("chunk term missing from own dict"))?;
+                qw.write_all(&sid_of[*gid as usize].to_le_bytes())?;
+                qw.write_all(&si.to_le_bytes())?;
+                qw.write_all(&pi.to_le_bytes())?;
+                qw.write_all(&oi.to_le_bytes())?;
+            }
+            qw.flush()?;
+        } else if !named.is_empty() {
             let mut rank_of = vec![0u32; graph_ids.len() + 1];
             let mut gw = BufWriter::new(File::create(self.tmp.path(&format!("c{ci}.graph")))?);
             for (rank, (name, insertion_id)) in graph_ids.iter().enumerate() {
@@ -721,7 +794,7 @@ impl<'a> Chunker<'a> {
         write_terms(&format!("c{ci}.pred"), preds, &|i| dict.predicate_term(i))?;
 
         eprintln!(
-            "extbuild: chunk {ci} sealed — {} statement(s), {} term(s), {graph_terms} graph(s)",
+            "extbuild: chunk {ci} sealed — {} statement(s), {} term(s), {graphs_seen} graph(s)",
             triple_count + quad_count,
             shared + subj_only + obj_only + preds
         );
@@ -1867,6 +1940,220 @@ impl GraphRun {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4b (quad index): the graph-leading orders of `GraphLayout::Quad`
+// ---------------------------------------------------------------------------
+
+/// The finished QUAD_INDEX section, spilled, with the digest the index
+/// container's seal carries.
+struct QuadSectionFile {
+    path: PathBuf,
+    len: u64,
+    digest: [u8; 16],
+    graph_count: u64,
+    quad_count: u64,
+}
+
+/// Spill `input` (16-byte `(g, s, p, o)` records) as sorted, deduplicated runs
+/// of `map`ped quads.
+fn quad_runs(
+    tmp: &TmpDir,
+    input: &Path,
+    run_len: usize,
+    name: &str,
+    map: impl Fn(IdQuad) -> IdQuad,
+) -> Result<Vec<PathBuf>, ExtBuildError> {
+    let mut runs = Vec::new();
+    let mut rd = QuadRunReader::open(input)?;
+    let mut run: Vec<IdQuad> = Vec::with_capacity(run_len.min(1 << 22));
+    loop {
+        let next = rd.next()?;
+        if let Some(q) = next {
+            run.push(map(q));
+        }
+        if run.len() >= run_len || (next.is_none() && !run.is_empty()) {
+            sort_quads(&mut run);
+            run.dedup();
+            let path = tmp.path(&format!("{name}.run{}", runs.len()));
+            let mut w = BufWriter::with_capacity(1 << 20, File::create(&path)?);
+            for &(g, a, b, c) in &run {
+                w.write_all(&g.to_le_bytes())?;
+                w.write_all(&a.to_le_bytes())?;
+                w.write_all(&b.to_le_bytes())?;
+                w.write_all(&c.to_le_bytes())?;
+            }
+            w.flush()?;
+            runs.push(path);
+            run.clear();
+        }
+        if next.is_none() {
+            break;
+        }
+    }
+    Ok(runs)
+}
+
+/// k-way merge of sorted runs, handing each distinct quad to `f` in order.
+fn merge_quad_runs(
+    runs: &[PathBuf],
+    mut f: impl FnMut(IdQuad) -> Result<(), ExtBuildError>,
+) -> Result<(), ExtBuildError> {
+    let mut readers: Vec<QuadRunReader> = runs
+        .iter()
+        .map(|p| QuadRunReader::open(p))
+        .collect::<Result<_, _>>()?;
+    let mut heap: BinaryHeap<QuadMergeEntry> = BinaryHeap::new();
+    for (i, r) in readers.iter_mut().enumerate() {
+        if let Some(q) = r.next()? {
+            heap.push(std::cmp::Reverse((q, i)));
+        }
+    }
+    let mut last: Option<IdQuad> = None;
+    while let Some(std::cmp::Reverse((q, i))) = heap.pop() {
+        if let Some(n) = readers[i].next()? {
+            heap.push(std::cmp::Reverse((n, i)));
+        }
+        if last != Some(q) {
+            f(q)?;
+            last = Some(q);
+        }
+    }
+    Ok(())
+}
+
+/// Encode a batch of finished quad tiles into an order's directory + payload.
+fn drain_quad_tiles(
+    pending: &mut Vec<Vec<crate::quad::QuadRow>>,
+    codec: u8,
+    dir: &mut crate::quad::PermDirWriter,
+    payload: &mut BufWriter<File>,
+) -> Result<(), ExtBuildError> {
+    for t in crate::quad::encode_tiles(pending, codec) {
+        dir.add(&t);
+        payload.write_all(&t.bytes)?;
+    }
+    pending.clear();
+    Ok(())
+}
+
+/// Build the QUAD_INDEX section from the globally remapped quad spill: per
+/// graph-leading order, an external sort of `(g, a, b, c)` and the shared
+/// [`crate::quad::QuadTiler`] — byte-identical to `quad::encode_quad_index`.
+fn build_quad_section(
+    tmp: &TmpDir,
+    global_qtri: &Path,
+    run_len: usize,
+    perms: crate::index::PermSet,
+    codec: u8,
+) -> Result<QuadSectionFile, ExtBuildError> {
+    let gblocks_path = tmp.path("quad.gblocks");
+    let mut gblocks = BufWriter::with_capacity(1 << 20, File::create(&gblocks_path)?);
+    let mut gdir = crate::quad::GraphDirWriter::new(codec);
+    let mut dirs: Vec<Vec<u8>> = Vec::with_capacity(perms.len());
+    let mut payloads: Vec<(PathBuf, u64)> = Vec::with_capacity(perms.len());
+    let mut quad_count: Option<u64> = None;
+    for perm in perms.iter() {
+        let spo = perm == crate::index::IndexPermutation::Spo;
+        let name = format!("q{}", perm.name());
+        let runs = quad_runs(tmp, global_qtri, run_len, &name, |(g, s, p, o)| {
+            let (a, b, c) = perm.forward((s, p, o));
+            (g, a, b, c)
+        })?;
+        let ppath = tmp.path(&format!("{name}.tiles"));
+        let mut payload = BufWriter::with_capacity(1 << 20, File::create(&ppath)?);
+        let mut dir = crate::quad::PermDirWriter::default();
+        let mut tiler = crate::quad::QuadTiler::new();
+        let mut pending: Vec<Vec<crate::quad::QuadRow>> = Vec::new();
+        // G+SPO also yields the graph directory: (graph, deduplicated count).
+        let mut cur: Option<(u32, u64)> = None;
+        merge_quad_runs(&runs, |q| {
+            tiler.push(q, &mut |t| pending.push(t));
+            if pending.len() >= TILE_COMPRESS_BATCH {
+                drain_quad_tiles(&mut pending, codec, &mut dir, &mut payload)?;
+            }
+            if spo {
+                cur = match cur {
+                    Some((g, n)) if g == q.0 => Some((g, n + 1)),
+                    Some((g, n)) => {
+                        gdir.push(g, n, &mut gblocks)?;
+                        Some((q.0, 1))
+                    }
+                    None => Some((q.0, 1)),
+                };
+            }
+            Ok(())
+        })?;
+        let n = tiler.finish(&mut |t| pending.push(t));
+        drain_quad_tiles(&mut pending, codec, &mut dir, &mut payload)?;
+        if let (true, Some((g, k))) = (spo, cur) {
+            gdir.push(g, k, &mut gblocks)?;
+        }
+        payload.flush()?;
+        drop(payload);
+        for r in runs {
+            let _ = std::fs::remove_file(r);
+        }
+        if quad_count.is_some_and(|prev| prev != n) {
+            return Err(ExtBuildError::Internal("quad orders' dedup counts diverge"));
+        }
+        quad_count = Some(n);
+        payloads.push((ppath, dir.payload_len()));
+        dirs.push(dir.finish());
+        eprintln!(
+            "extbuild: quad order G+{} indexed ({n} unique quad(s))",
+            perm.name()
+        );
+    }
+    let (gindex, gblocks_len, graph_count) = gdir.finish(&mut gblocks)?;
+    gblocks.flush()?;
+    drop(gblocks);
+    let quad_count = quad_count.unwrap_or(0);
+
+    let mut part_lens = vec![gindex.len() as u64];
+    part_lens.extend(dirs.iter().map(|d| d.len() as u64));
+    part_lens.push(gblocks_len);
+    part_lens.extend(payloads.iter().map(|(_, l)| *l));
+    let preamble = crate::quad::encode_preamble(perms, graph_count, quad_count, &part_lens);
+
+    let path = tmp.path("quad.sec");
+    let mut out = BufWriter::with_capacity(1 << 20, File::create(&path)?);
+    let mut hasher = blake3::Hasher::new();
+    let mut len = 0u64;
+    for bytes in std::iter::once(&preamble)
+        .chain(std::iter::once(&gindex))
+        .chain(dirs.iter())
+    {
+        out.write_all(bytes)?;
+        hasher.update(bytes);
+        len += bytes.len() as u64;
+    }
+    for p in std::iter::once(&gblocks_path).chain(payloads.iter().map(|(p, _)| p)) {
+        let mut rd = File::open(p)?;
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            let k = rd.read(&mut buf)?;
+            if k == 0 {
+                break;
+            }
+            out.write_all(&buf[..k])?;
+            hasher.update(&buf[..k]);
+            len += k as u64;
+        }
+        drop(rd);
+        let _ = std::fs::remove_file(p);
+    }
+    out.flush()?;
+    let mut digest = [0u8; 16];
+    digest.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    Ok(QuadSectionFile {
+        path,
+        len,
+        digest,
+        graph_count,
+        quad_count,
+    })
+}
+
 fn write_uvarint_to(w: &mut BufWriter<File>, v: u64) -> Result<(), std::io::Error> {
     let mut b = Vec::new();
     write_uvarint(&mut b, v);
@@ -2089,6 +2376,7 @@ fn write_final_file(
     perm_sections: &[SectionFile],
     text: Option<&crate::text_index_spill::TextSection>,
     named: Option<&NamedSection>,
+    quad: Option<&QuadSectionFile>,
     quad_count: u64,
     codec: u8,
     perms: crate::index::PermSet,
@@ -2097,6 +2385,9 @@ fn write_final_file(
         Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TEXT_INDEX_NAMED_GRAPHS,
         FLAG_TILE_SYNOPSIS, HEADER_LEN,
     };
+    // Quad index: the index container ends with the seal (the section's
+    // digest), which every pre-quad-index reader refuses on the section count.
+    let seal = quad.map(|q| crate::quad::encode_seal(q.digest));
 
     // container framings are tiny; build them in RAM
     let mut dict_frame = Vec::new();
@@ -2111,7 +2402,10 @@ fn write_final_file(
     }
 
     let mut index_frame = Vec::new();
-    write_uvarint(&mut index_frame, perm_sections.len() as u64);
+    write_uvarint(
+        &mut index_frame,
+        (perm_sections.len() + usize::from(seal.is_some())) as u64,
+    );
     let mut index_len = index_frame.len() as u64;
     let mut index_section_heads = Vec::with_capacity(perm_sections.len());
     for s in perm_sections {
@@ -2119,6 +2413,12 @@ fn write_final_file(
         write_uvarint(&mut h, s.len);
         index_len += h.len() as u64 + s.len;
         index_section_heads.push(h);
+    }
+    let mut seal_frame = Vec::new();
+    if let Some(seal) = &seal {
+        write_uvarint(&mut seal_frame, seal.len() as u64);
+        seal_frame.extend_from_slice(seal);
+        index_len += seal_frame.len() as u64;
     }
 
     // The named-graphs section is `[count][per graph: iri, container]`; only the
@@ -2182,6 +2482,7 @@ fn write_final_file(
         write_hashed(&mut out, &mut hasher, head)?;
         copy_hashed(&s.path, &mut out, &mut hasher)?;
     }
+    write_hashed(&mut out, &mut hasher, &seal_frame)?;
 
     // pyramid section is empty (hash update of nothing = no-op, same as the
     // in-RAM writer pushing an empty slice).
@@ -2212,6 +2513,13 @@ fn write_final_file(
         copy_hashed(&n.body, &mut out, &mut hasher)?;
     }
 
+    // quad index: where the named graphs would be; not a hash part of its
+    // own (the seal above carries its digest), exactly as the in-RAM writer.
+    if let Some(q) = quad {
+        let mut rd = File::open(&q.path)?;
+        std::io::copy(&mut rd, &mut out)?;
+    }
+
     out.write_all(&crate::header::MAGIC)?; // footer marker
     out.flush()?;
 
@@ -2221,7 +2529,16 @@ fn write_final_file(
     let header = Header {
         version: crate::header::CURRENT_FORMAT_VERSION,
         flags: FLAG_TILE_SYNOPSIS
-            | if named_len > 0 { FLAG_HAS_QUADS } else { 0 }
+            | if named_len > 0 || quad.is_some() {
+                FLAG_HAS_QUADS
+            } else {
+                0
+            }
+            | if quad.is_some() {
+                crate::header::FLAG_QUAD_INDEX
+            } else {
+                0
+            }
             | if dict.has_quoted {
                 FLAG_HAS_QUOTED_TRIPLES
             } else {
@@ -2259,7 +2576,15 @@ fn write_final_file(
             0
         },
         build_info_len: build_len,
-        extra_sections: Vec::new(),
+        extra_sections: match quad {
+            Some(q) => vec![crate::header::Section {
+                kind: crate::header::SectionKind::QuadIndex,
+                flags: 0,
+                offset: named_offset,
+                length: q.len,
+            }],
+            None => Vec::new(),
+        },
     };
     let mut f = out.into_inner().map_err(|e| e.into_error())?;
     f.seek(SeekFrom::Start(0))?;
@@ -2487,7 +2812,7 @@ mod tests {
 
         // drive the internals directly with a tiny chunk budget
         let tmp = TmpDir::create(&dir).unwrap();
-        let mut chunker = Chunker::new(&tmp, 4 * 1024); // ~4 KiB chunks
+        let mut chunker = Chunker::new(&tmp, 4 * 1024, GraphLayout::PerGraph); // ~4 KiB chunks
         for q in quads.iter().cloned() {
             chunker.push(q).unwrap();
         }
@@ -2541,6 +2866,7 @@ mod tests {
             &[],
             &merged,
             &sections,
+            None,
             None,
             None,
             count.unwrap(),
@@ -2834,6 +3160,7 @@ mod tests {
             &sections,
             text.as_ref(),
             None,
+            None,
             quad_count,
             codec,
             crate::index::PermSet::ALL,
@@ -2944,7 +3271,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("out.rete");
         let tmp = TmpDir::create(&dir).unwrap();
-        let mut chunker = Chunker::new(&tmp, 4 * 1024); // ~4 KiB chunks
+        let mut chunker = Chunker::new(&tmp, 4 * 1024, GraphLayout::PerGraph); // ~4 KiB chunks
         for q in quads.iter().cloned() {
             chunker.push(q).unwrap();
         }
@@ -2997,7 +3324,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("out.rete");
         let tmp = TmpDir::create(&dir).unwrap();
-        let mut chunker = Chunker::new(&tmp, 64 * 1024);
+        let mut chunker = Chunker::new(&tmp, 64 * 1024, GraphLayout::PerGraph);
         for q in quads.iter().cloned() {
             chunker.push(q).unwrap();
         }
@@ -3161,6 +3488,7 @@ mod tests {
             &sections,
             None,
             named.as_ref(),
+            None,
             quads,
             codec,
             perms,
@@ -3365,5 +3693,188 @@ mod tests {
         let bytes = build_ext_text(&quads, &scope, None);
         assert_eq!(bytes, reference);
         assert_eq!(crate::Header::from_bytes(&bytes).unwrap().text_index_len, 0);
+    }
+
+    // ---- quad index (`GraphLayout::Quad`) --------------------------------
+
+    fn build_reference_quad(quads: Vec<RawQuad>, perms: crate::index::PermSet) -> Vec<u8> {
+        let (bytes, _) = ingest::assemble_dataset_streaming_with_layout(
+            move |visit: &mut dyn FnMut(RawQuad)| {
+                for q in quads.iter().cloned() {
+                    visit(q);
+                }
+                Ok(())
+            },
+            false,
+            false,
+            None,
+            crate::PyramidAlgo::Louvain,
+            perms,
+            GraphLayout::Quad,
+            |_, _, _| Vec::new(),
+        )
+        .unwrap();
+        bytes
+    }
+
+    fn build_ext_quad(quads: Vec<RawQuad>, perms: crate::index::PermSet) -> (Vec<u8>, BuildStats) {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("rete-extbuild-quad-{}-{seq}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.rete");
+        let stats = build_external(
+            |visit| {
+                for q in quads.iter().cloned() {
+                    visit(q)?;
+                }
+                Ok(())
+            },
+            &out,
+            ExternalBuildOptions {
+                memory_budget: 0,
+                tmp_dir: Some(dir.clone()),
+                perms,
+                graphs: GraphLayout::Quad,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        (bytes, stats)
+    }
+
+    /// The external quad build writes the in-RAM build's bytes, for both
+    /// permutation sets — the shared `QuadTiler` is what guarantees it.
+    #[test]
+    fn quad_external_build_is_byte_identical() {
+        for perms in [crate::index::PermSet::ALL, crate::index::PermSet::CORE] {
+            let quads = fedlex_shaped_quads(60, 9);
+            let reference = build_reference_quad(quads.clone(), perms);
+            let (bytes, stats) = build_ext_quad(quads.clone(), perms);
+            assert_eq!(bytes, reference, "quad external build, {perms:?}");
+            let header = crate::Header::from_bytes(&bytes).unwrap();
+            assert!(header.has_quad_index());
+            assert_eq!(stats.statements as u64, header.quad_count);
+            let rete = crate::Rete::open(&bytes).unwrap();
+            assert_eq!(rete.named_graph_count(), stats.named_graphs);
+            assert!(crate::file::verify(&bytes).unwrap());
+        }
+    }
+
+    /// Many chunks and many sort runs: graph names first seen in different
+    /// chunks must merge into one dictionary id, and runs must merge back into
+    /// the same tiles.
+    #[test]
+    fn multi_chunk_multi_run_quad_build_is_byte_identical() {
+        let quads = fedlex_shaped_quads(80, 7);
+        let reference = build_reference_quad(quads.clone(), crate::index::PermSet::ALL);
+
+        let dir = std::env::temp_dir().join(format!("rete-extbuild-mcq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.rete");
+        let tmp = TmpDir::create(&dir).unwrap();
+        let mut chunker = Chunker::new(&tmp, 4 * 1024, GraphLayout::Quad);
+        for q in quads.iter().cloned() {
+            chunker.push(q).unwrap();
+        }
+        let chunks = chunker.finish().unwrap();
+        assert!(
+            chunks.len() >= 8,
+            "expected many chunks, got {}",
+            chunks.len()
+        );
+        let mut merged = merge_dictionaries(&tmp, &chunks).unwrap();
+        assert_eq!(merged.graph_count, 0, "no separate graph-name merge");
+        let remaps = std::mem::take(&mut merged.remaps);
+        let global_tri = tmp.path("global.tri");
+        let global_qtri = tmp.path("global.qtri");
+        {
+            let mut w = BufWriter::new(File::create(&global_tri).unwrap());
+            let mut qw = BufWriter::new(File::create(&global_qtri).unwrap());
+            for (ci, chunk) in chunks.iter().enumerate() {
+                let maps = &remaps[ci];
+                let mut rd = BufReader::new(File::open(tmp.path(&format!("c{ci}.tri"))).unwrap());
+                let mut buf = [0u8; 12];
+                while rd.read_exact(&mut buf).is_ok() {
+                    let r = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
+                    w.write_all(&maps.subj[(r(0) - 1) as usize].to_le_bytes())
+                        .unwrap();
+                    w.write_all(&maps.pred[(r(4) - 1) as usize].to_le_bytes())
+                        .unwrap();
+                    w.write_all(&maps.obj[(r(8) - 1) as usize].to_le_bytes())
+                        .unwrap();
+                }
+                if chunk.quad_count > 0 {
+                    let mut rd =
+                        BufReader::new(File::open(tmp.path(&format!("c{ci}.qtri"))).unwrap());
+                    let mut buf = [0u8; 16];
+                    while rd.read_exact(&mut buf).is_ok() {
+                        let r = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
+                        qw.write_all(&maps.subj[(r(0) - 1) as usize].to_le_bytes())
+                            .unwrap();
+                        qw.write_all(&maps.subj[(r(4) - 1) as usize].to_le_bytes())
+                            .unwrap();
+                        qw.write_all(&maps.pred[(r(8) - 1) as usize].to_le_bytes())
+                            .unwrap();
+                        qw.write_all(&maps.obj[(r(12) - 1) as usize].to_le_bytes())
+                            .unwrap();
+                    }
+                }
+            }
+            w.flush().unwrap();
+            qw.flush().unwrap();
+        }
+        let codec = crate::file::writer_codec();
+        let perms = crate::index::PermSet::ALL;
+        let mut sections = Vec::new();
+        let mut default_count = 0u64;
+        for perm in perms.iter() {
+            let (sec, n) =
+                build_permutation_section(&tmp, &global_tri, perm, 256, codec, "").unwrap();
+            default_count = n;
+            sections.push(sec);
+        }
+        // 64-quad runs: many runs per order, merged back.
+        let quad = build_quad_section(&tmp, &global_qtri, 64, perms, codec).unwrap();
+        write_final_file(
+            &out,
+            &[],
+            &[],
+            &merged,
+            &sections,
+            None,
+            None,
+            Some(&quad),
+            default_count + quad.quad_count,
+            codec,
+            perms,
+        )
+        .unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        assert_eq!(bytes, reference, "multi-chunk, multi-run quad build");
+        drop(tmp);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The quad layout needs the 3- or 6-permutation set (see `quad::check_perms`).
+    #[test]
+    fn quad_external_build_refuses_other_permutation_sets() {
+        let dir = std::env::temp_dir().join(format!("rete-extbuild-q5-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let r = build_external(
+            |visit| visit(("<a>".into(), "<p>".into(), "<b>".into(), Some("<g>".into()))),
+            &dir.join("out.rete"),
+            ExternalBuildOptions {
+                tmp_dir: Some(dir.clone()),
+                perms: crate::index::PermSet::from_bits(0b0001_1111).unwrap(),
+                graphs: GraphLayout::Quad,
+                ..Default::default()
+            },
+        );
+        assert!(r.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -58,6 +58,7 @@ pub mod meta;
 pub mod parallel;
 #[doc(hidden)]
 pub mod pyramid;
+mod quad;
 #[doc(hidden)]
 pub mod reach;
 #[doc(hidden)]
@@ -102,11 +103,11 @@ pub mod format {
     };
     pub use crate::index::ScanPlan;
     pub use crate::ingest::{
-        assemble_dataset, assemble_dataset_with, assemble_dataset_with_opts,
-        assemble_dataset_with_opts_algo, assemble_dataset_with_perms, parse, parse_quads,
-        parse_rdfxml, parse_statements, parse_statements_audited_surface, parse_turtle,
-        parse_turtle_surface, BuildStats, DeferredMetadata, FinalCounts, IngestError, IntoMetadata,
-        QuotedTripleSurface, RawQuad, RawTriple,
+        assemble_dataset, assemble_dataset_with, assemble_dataset_with_layout,
+        assemble_dataset_with_opts, assemble_dataset_with_opts_algo, assemble_dataset_with_perms,
+        parse, parse_quads, parse_rdfxml, parse_statements, parse_statements_audited_surface,
+        parse_turtle, parse_turtle_surface, BuildStats, DeferredMetadata, FinalCounts, GraphLayout,
+        IngestError, IntoMetadata, QuotedTripleSurface, RawQuad, RawTriple,
     };
     pub use crate::recard::{plan_card_rewrite, rewrite_card, CardRewritePlan, REWRITE_CHUNK};
 }
@@ -229,6 +230,7 @@ pub use header::{
 };
 #[doc(hidden)]
 pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSet, ScanPlan};
+pub use ingest::GraphLayout;
 pub use iri::{
     iri_content_defect, sanitize_iri_content, sanitize_term, term_defect, IriDefect, IriReport,
 };

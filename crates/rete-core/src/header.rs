@@ -69,6 +69,16 @@ pub const FLAG_TILE_SYNOPSIS: u8 = 0b0000_0010;
 /// this needs no format-version bump and old readers stay forward-compatible.
 pub const FLAG_HAS_QUOTED_TRIPLES: u8 = 0b0000_0100;
 
+/// Flag bit: the named graphs live in the **quad index** — the QUAD_INDEX
+/// section ([`SectionKind::QuadIndex`], kind 10) holds every named-graph quad as
+/// the fourth column of graph-leading permutations, the NAMED_GRAPHS section
+/// (kind 5) is absent, and the index container carries one trailing **seal**
+/// section (see `quad.rs`). Readers before this flag do not check it; they
+/// refuse the file anyway, on the seal (the container's section count), so a
+/// quad-index file never opens as one without named graphs
+/// (`docs/compatibility.md`).
+pub const FLAG_QUAD_INDEX: u8 = 0b0000_1000;
+
 /// Flag bit: the full-text index also covers the **named graphs'** literals
 /// (`rete build --text-index-graphs all`, Rete 0.4.0). It lets a query inside
 /// `GRAPH`, under `FROM` or over the union default graph decide from the
@@ -131,6 +141,11 @@ pub enum SectionKind {
     /// community dendrogram. See [`crate::schema_section`]. Optional; outside
     /// the content hash and self-digested (SPEC §7.5).
     Schema,
+    /// The quad index (kind 10): every named-graph quad in graph-leading
+    /// permutations behind a sorted graph directory. Present exactly when the
+    /// header has [`FLAG_QUAD_INDEX`]. Kept in [`Header::extra_sections`] like
+    /// an unknown kind (it has no named convenience fields).
+    QuadIndex,
     /// A section kind this build doesn't know — preserved verbatim on round-trip
     /// so a newer writer's sections survive an older reader.
     Unknown(u16),
@@ -148,6 +163,7 @@ impl SectionKind {
             SectionKind::BuildInfo => 7,
             SectionKind::LabelIndex => 8,
             SectionKind::Schema => 9,
+            SectionKind::QuadIndex => 10,
             SectionKind::TextIndexPartial => 11,
             SectionKind::Unknown(k) => k,
         }
@@ -164,6 +180,7 @@ impl SectionKind {
             7 => SectionKind::BuildInfo,
             8 => SectionKind::LabelIndex,
             9 => SectionKind::Schema,
+            10 => SectionKind::QuadIndex,
             11 => SectionKind::TextIndexPartial,
             other => SectionKind::Unknown(other),
         }
@@ -454,7 +471,10 @@ impl Header {
                     h.build_info_offset = offset;
                     h.build_info_len = length;
                 }
-                SectionKind::LabelIndex | SectionKind::Schema | SectionKind::Unknown(_) => {
+                SectionKind::LabelIndex
+                    | SectionKind::Schema
+                    | SectionKind::QuadIndex
+                    | SectionKind::Unknown(_) => {
                     h.extra_sections.push(Section {
                         kind,
                         flags: u16_at(p + 2),
@@ -570,7 +590,10 @@ impl Header {
             }
             SectionKind::TextIndex | SectionKind::TextIndexPartial => (0, 0),
             SectionKind::BuildInfo => (self.build_info_offset, self.build_info_len),
-            SectionKind::LabelIndex | SectionKind::Schema | SectionKind::Unknown(_) => {
+            SectionKind::LabelIndex
+            | SectionKind::Schema
+            | SectionKind::QuadIndex
+            | SectionKind::Unknown(_) => {
                 return self.extra_sections.iter().find(|s| s.kind == kind).copied()
             }
         };
@@ -621,7 +644,7 @@ impl Header {
                 self.build_info_offset = offset;
                 self.build_info_len = length;
             }
-            SectionKind::LabelIndex | SectionKind::Schema => {
+            SectionKind::LabelIndex | SectionKind::Schema | SectionKind::QuadIndex => {
                 // A known post-freeze kind appears at most once: overwrite.
                 match self.extra_sections.iter_mut().find(|s| s.kind == kind) {
                     Some(s) => {
@@ -644,6 +667,23 @@ impl Header {
             }),
         }
         self
+    }
+
+    /// Are the named graphs stored in the quad index ([`FLAG_QUAD_INDEX`])?
+    pub fn has_quad_index(&self) -> bool {
+        self.flags & FLAG_QUAD_INDEX != 0
+    }
+
+    /// The QUAD_INDEX section, when the directory lists a non-empty one.
+    pub fn quad_index_section(&self) -> Option<Section> {
+        self.section(SectionKind::QuadIndex)
+            .filter(|s| s.length > 0)
+    }
+
+    /// How many sections the index container (kind 3) holds: one per stored
+    /// permutation, plus the quad-index seal when [`FLAG_QUAD_INDEX`] is set.
+    pub fn index_container_sections(&self) -> usize {
+        self.perms.len() + usize::from(self.has_quad_index())
     }
 }
 
@@ -903,6 +943,50 @@ mod tests {
         // A zero-length entry reads as absent.
         let empty = sample().with_section(SectionKind::LabelIndex, 0, 0);
         assert!(empty.label_index_section().is_none());
+    }
+
+    #[test]
+    fn quad_index_flag_and_section_round_trip() {
+        // Absent: no flag, no kind-10 entry, the container is the permutations.
+        let plain = sample();
+        assert!(!plain.has_quad_index());
+        assert!(plain.quad_index_section().is_none());
+        assert_eq!(plain.index_container_sections(), 6);
+
+        // Present: flag bit 3, a kind-10 entry kept with the extra sections,
+        // and one more container section (the seal).
+        let mut h = sample().with_section(SectionKind::QuadIndex, 7000, 900);
+        h.flags |= FLAG_QUAD_INDEX;
+        h.named_graphs_offset = 0;
+        h.named_graphs_len = 0;
+        let bytes = h.to_bytes();
+        assert_eq!(bytes[5] & 0b1000, 0b1000, "flag bit 3");
+        let n = u16::from_le_bytes(bytes[44..46].try_into().unwrap()) as usize;
+        let kinds: Vec<u16> = (0..n)
+            .map(|i| {
+                let p = SECTION_DIR_OFFSET + i * SECTION_ENTRY_LEN;
+                u16::from_le_bytes(bytes[p..p + 2].try_into().unwrap())
+            })
+            .collect();
+        assert!(kinds.contains(&10), "a kind-10 directory entry: {kinds:?}");
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(back, h);
+        assert!(back.has_quad_index());
+        let s = back.quad_index_section().unwrap();
+        assert_eq!(
+            (s.kind, s.offset, s.length),
+            (SectionKind::QuadIndex, 7000, 900)
+        );
+        assert_eq!(back.index_container_sections(), 7);
+        assert_eq!(back.expected_file_len(), Some(7000 + 900 + 4));
+        // Three permutations + seal = four: never the 3 or 6 an old reader wants.
+        let mut lean = back.clone();
+        lean.perms = crate::index::PermSet::CORE;
+        assert_eq!(lean.index_container_sections(), 4);
+        // Re-attaching overwrites rather than duplicating.
+        let again = back.with_section(SectionKind::QuadIndex, 8000, 10);
+        assert_eq!(again.extra_sections.len(), 1);
+        assert_eq!(again.quad_index_section().unwrap().offset, 8000);
     }
 
     #[test]
