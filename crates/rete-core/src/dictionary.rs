@@ -62,7 +62,7 @@ impl DictionaryBuilder {
     }
 
     /// Record a **graph name** as a term in the subject role — how the quad
-    /// index (SPEC.md §6.4) makes graph names dictionary ids. It lands in the
+    /// index (SPEC.md §6.5) makes graph names dictionary ids. It lands in the
     /// shared section when the name is also an object, else in the
     /// subject-only section.
     pub fn observe_graph(&mut self, graph: &str) {

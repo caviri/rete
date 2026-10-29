@@ -138,7 +138,7 @@ pub struct ExternalBuildOptions {
     /// the same budget; see `text_index_spill`.
     pub text_index: Option<crate::text_index::TextIndexScope>,
     /// How the named graphs are stored ([`GraphLayout::PerGraph`] by default).
-    /// [`GraphLayout::Quad`] writes the quad index (SPEC.md §6.4) through its
+    /// [`GraphLayout::Quad`] writes the quad index (SPEC.md §6.5) through its
     /// own external sorts — see "Quad index" in the module docs.
     pub graphs: GraphLayout,
 }
@@ -2025,10 +2025,11 @@ fn merge_quad_runs(
 fn drain_quad_tiles(
     pending: &mut Vec<Vec<crate::quad::QuadRow>>,
     codec: u8,
+    perm: crate::index::IndexPermutation,
     dir: &mut crate::quad::PermDirWriter,
     payload: &mut BufWriter<File>,
 ) -> Result<(), ExtBuildError> {
-    for t in crate::quad::encode_tiles(pending, codec) {
+    for t in crate::quad::encode_tiles(pending, codec, perm) {
         dir.add(&t);
         payload.write_all(&t.bytes)?;
     }
@@ -2069,7 +2070,7 @@ fn build_quad_section(
         merge_quad_runs(&runs, |q| {
             tiler.push(q, &mut |t| pending.push(t));
             if pending.len() >= TILE_COMPRESS_BATCH {
-                drain_quad_tiles(&mut pending, codec, &mut dir, &mut payload)?;
+                drain_quad_tiles(&mut pending, codec, perm, &mut dir, &mut payload)?;
             }
             if spo {
                 cur = match cur {
@@ -2084,7 +2085,7 @@ fn build_quad_section(
             Ok(())
         })?;
         let n = tiler.finish(&mut |t| pending.push(t));
-        drain_quad_tiles(&mut pending, codec, &mut dir, &mut payload)?;
+        drain_quad_tiles(&mut pending, codec, perm, &mut dir, &mut payload)?;
         if let (true, Some((g, k))) = (spo, cur) {
             gdir.push(g, k, &mut gblocks)?;
         }

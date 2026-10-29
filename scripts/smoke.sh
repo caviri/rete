@@ -155,6 +155,13 @@ check "memory-bounded labels"  "triples|quads"     -- "$B" build "$T/lab.nt" -o 
 check "external = in-memory"   "^same$"            -- bash -c "cmp -s '$T/lab.rete' '$T/labx.rete' && echo same || echo differ"
 check "card label signal"      '"entries": ?2' -- bash -c "$B build '$T/lab.nt' -o '$T/labc.rete' --label-index --card >/dev/null 2>&1; $B card '$T/labc.rete' --json"
 
+# The quad index (`--named-graphs quad`): same graphs, same answers.
+check "build quad index" "quads"                    -- "$B" build "$T/d.nq" -o "$T/dq.rete" --named-graphs quad
+check "quad graphs"   "g1|g2"                       -- "$B" graphs "$T/dq.rete"
+check "quad GRAPH <g>" "Bob"                        -- "$B" sparql "$T/dq.rete" 'SELECT ?o WHERE { GRAPH <http://ex/g1> { ?s <http://ex/knows> ?o } }'
+check "quad verify"   "OK|matches"                  -- "$B" verify "$T/dq.rete"
+check "quad export"   "<http://ex/g2>"              -- "$B" export "$T/dq.rete"
+
 echo "== dataset card =="
 $B build "$T/g.nt" -o "$T/gc.rete" --card --title "Smoke" --license "CC0-1.0" >/dev/null 2>&1
 check "card build"  "dataset card"                  -- bash -c "$B build '$T/g.nt' -o '$T/gc2.rete' --card 2>&1"

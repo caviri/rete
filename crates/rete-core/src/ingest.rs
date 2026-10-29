@@ -942,7 +942,7 @@ pub enum GraphLayout {
     /// before 0.4 writes and reads.
     #[default]
     PerGraph,
-    /// The **quad index** (kind 10, SPEC.md §6.4): every named-graph quad
+    /// The **quad index** (kind 10, SPEC.md §6.5): every named-graph quad
     /// stored once, the graph as a fourth column of graph-leading permutations
     /// in shared tiles, behind a sorted graph directory; graph names become
     /// dictionary terms. Far smaller and randomly addressable when graphs are

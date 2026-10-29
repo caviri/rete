@@ -164,6 +164,27 @@ refuses loudly (`malformed container: expected 6 permutation sections`, exit 1)
 rather than answering wrongly, but it does refuse. Keep the default for anything
 published; see [compatibility.md](compatibility.md).
 
+`--named-graphs per-graph|quad` (default **per-graph**) chooses how the named
+graphs of an N-Quads/TriG input are stored. `per-graph` writes one permutation
+index per graph (the NAMED_GRAPHS section): the graph's IRI as text, then its
+own tiles, the graphs chained with no directory. `quad` writes the **quad
+index** ([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional)):
+every named-graph quad stored once, the graph as a fourth column of
+graph-leading permutations in tiles that many graphs share, behind a sorted
+graph directory, with graph names as dictionary terms. The rows a query returns
+are the same either way. What changes is the cost of many small graphs — on the
+OpenCitations sample (1.5 M per-entity provenance graphs of ~10 quads) the quad
+index is a fraction of the per-graph section and a `GRAPH <g>` query reads one
+graph's tiles instead of walking the section to it (measurements in
+[compatibility.md](compatibility.md#named-graphs-in-the-quad-index)). The
+layout applies to every build path, `--memory-budget-mb` included; `repyramid`
+and `merge` keep the layout of their input.
+
+**A `quad` file is refused by every Rete before 0.4.0** — loudly, with the same
+container section-count error as above, on every query, export and remote open
+(`info`, `verify` and `card-url` still work). Keep `per-graph` for a file older
+engines must read.
+
 The flag exists on `build` only. The two commands that re-assemble an existing
 file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---label-index---card-)
 **preserves its input's set** (and says so on stderr when that set is not the
@@ -354,7 +375,9 @@ not the default six. It re-assembles an existing file rather than re-deciding ho
 it was built, so it has no `--permutations` of its own — rebuild from source to
 change the set. It keeps a LABEL_INDEX the input carries (`--label-index` adds
 one), and writes the SCHEMA section and the community-only pyramid-meta `rete build`
-writes.
+writes. The named-graph layout is kept the same way: a quad-index input
+(`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
+when any of its inputs is one.
 
 ### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …]`
 Fold several `.rete` files into one without going back through text — the way to

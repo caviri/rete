@@ -124,6 +124,9 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
         );
     }
     println!("  distinct terms        : {}", h.term_count);
+    if h.has_quad_index() {
+        println!("  named-graph layout    : quad index (graph-leading permutations, kind 10)");
+    }
     println!("  pyramid levels        : {}", h.pyramid_levels);
     if h.has_tile_synopsis() {
         println!("  tile synopsis         : yes (range readers prune tiles by a bound secondary)");

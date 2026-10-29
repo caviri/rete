@@ -3068,6 +3068,13 @@ fn read_token_table_len<R: RangeReader + ?Sized>(reader: &R, off: u64, len: u64)
 /// graph faults only the tile directories plus the tiles it touches.
 const NAMED_GRAPH_RESIDENT_MAX: u64 = 1 << 20; // 1 MiB
 
+/// Largest quad-index graph (in quads) a many-graph walk evaluates through an
+/// owned, dropped view ([`Rete::named_graph_transient`]) rather than a memoised
+/// one. A view is ~1–2 KB of descriptors whatever the graph's size, so keeping
+/// one per graph is what grows with the graph count; past this size a graph is
+/// worth memoising, and its rows are no longer worth materializing per graph.
+pub const TRANSIENT_GRAPH_QUADS: u64 = 1024;
+
 /// Entries per lazily-allocated named-graph slab. The outer table is sized by
 /// the section's leading count varint, which is UNTRUSTED — slabbing keeps a
 /// hostile count from ballooning the allocation (the outer table costs a few
@@ -4675,6 +4682,21 @@ impl Rete {
         }
     }
 
+    /// The `i`-th named graph as an **owned** index that is not memoised,
+    /// when the file can make one cheaply: a quad-index file's graph of at
+    /// most [`TRANSIENT_GRAPH_QUADS`] quads. A walk over every graph (`GRAPH
+    /// ?g`, the union default graph, `query_quads`) evaluates each such graph
+    /// and drops it, instead of keeping one index per graph for the life of
+    /// the open — 1.5 M of them on the OpenCitations sample. `None` for a
+    /// larger graph, a per-graph file, or a failed read: use
+    /// [`named_graph_at`](Self::named_graph_at) then.
+    pub fn named_graph_transient(&self, i: usize) -> Option<GraphIndex> {
+        match &self.named_graphs {
+            NamedGraphsSlot::Quad(q) => q.transient_view(i, TRANSIENT_GRAPH_QUADS),
+            _ => None,
+        }
+    }
+
     /// Deduplicated quads across every named graph, when the file records it
     /// (a quad-index file, from its preamble: one small read). `None` for a
     /// per-graph file — there it is the header's `quad_count` minus the
@@ -5273,7 +5295,12 @@ impl Rete {
                 None => return Vec::new(),
             },
         };
-        let ids = index.match_pattern(pattern);
+        self.resolve_matches(index.match_pattern(pattern))
+    }
+
+    /// Resolve matched id-triples to terms, with one coalesced dictionary
+    /// fault for exactly their terms.
+    fn resolve_matches(&self, ids: Vec<Triple>) -> Vec<TermTriple> {
         // One coalesced dictionary fault for THIS pattern's output, not the
         // whole dictionary. `prefetch_all` used to sit here, which made a
         // bounded `(s, p, o, g)` lookup — the primitive an RDF4J `Sail`'s
@@ -5317,13 +5344,26 @@ impl Rete {
             .into_iter()
             .map(|t| (t, None))
             .collect();
+        let Some(pattern) = self.resolve_query_pattern(s, p, o) else {
+            return out;
+        };
         for i in 0..self.named_graphs.count() {
             // A quad dump visits every graph by construction — exhaustive
             // demand, so a lazy walk may read the section in bulk chunks.
             let Some(iri) = self.named_graphs.name_at(&self.dict, i, true) else {
                 continue;
             };
-            for triple in self.query_in_graph(Some(iri), s, p, o) {
+            // A small quad-index graph through an owned view, dropped here:
+            // the walk holds one view at a time, not one per graph.
+            let owned = self.named_graph_transient(i);
+            let index = match &owned {
+                Some(view) => view,
+                None => match self.named_graphs.graph_at(&self.dict, i, true) {
+                    Some((_, g)) => g,
+                    None => continue,
+                },
+            };
+            for triple in self.resolve_matches(index.match_pattern(pattern)) {
                 out.push((triple, Some(iri.to_string())));
             }
         }

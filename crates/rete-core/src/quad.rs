@@ -1,4 +1,4 @@
-//! The **quad index** (SPEC.md §6.4): every named-graph quad stored once, as the
+//! The **quad index** (SPEC.md §6.5): every named-graph quad stored once, as the
 //! fourth column of graph-leading permutations (`G+SPO`, `G+POS`, `G+OSP`, and
 //! `G+SOP`, `G+PSO`, `G+OPS` when the file carries six), cut into ~64 KiB tiles
 //! that many graphs share, behind a sorted graph directory.
@@ -26,7 +26,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::chunk_cache::{CacheEntry, ChunkCache};
 use crate::dictionary::Dictionary;
 use crate::file::{compress, decompress, ByteRange, FileError, CODEC_NONE};
-use crate::index::{GraphIndex, GroupSizer, PermSet, INDEX_TILE_BUDGET, NUM_PERMS};
+use crate::index::{
+    GraphIndex, GroupSizer, IndexPermutation, PermSet, ALL_PERMS, INDEX_TILE_BUDGET, NUM_PERMS,
+};
 use crate::reader::RangeReader;
 use crate::triples::{Triple, TripleBlockBuilder};
 use crate::varint::{read_uvarint, write_uvarint};
@@ -50,6 +52,9 @@ const PREAMBLE_MAX: u64 = 8 + 4 * 10 + 14 * 10;
 const READ_AHEAD_MAX: usize = 64;
 /// Entries per lazily-allocated slab of per-graph cells.
 const ENTRY_SLAB: usize = 1024;
+/// Largest span of all orders' tile directories fetched together on first use
+/// (one request instead of one per order).
+const DIRS_TOGETHER_MAX: u64 = 4 << 20;
 
 /// A quad in one graph-leading order: `(g, a, b, c)`, `(a, b, c)` being the
 /// permuted `(s, p, o)`.
@@ -213,10 +218,24 @@ fn pack(codec: u8, body: Vec<u8>) -> (Vec<u8>, bool) {
     }
 }
 
+/// Which trailing column of a graph-leading order holds the **subject**:
+/// `(b, c)`. Within one graph the subjects are a handful of ids (OpenCitations:
+/// a record's snapshots) that recur across every a-group, so in that column the
+/// first value of a run is coded relative to the previous run's first value
+/// (zigzag) instead of from 0 — measured on the M=1200 sample, it shrinks the
+/// four orders with a trailing subject by 46–49% (G+POS 30.5 → 16.3 MB). The
+/// object column is left alone: the same rule makes G+SPO 64% larger.
+pub(crate) fn subject_columns(perm: IndexPermutation) -> (bool, bool) {
+    let r = perm.roles();
+    (r[1] == 0, r[2] == 0)
+}
+
 /// Encode one graph's rows of a tile (sorted `(a, b, c)`, first a carried in
 /// the segment header): `num_a`, then the §6.1 groups with the first group's
-/// `Δa` omitted.
-fn encode_segment_body(rows: &[QuadRow], out: &mut Vec<u8>) {
+/// `Δa` omitted — and, in the subject column ([`subject_columns`]), the first
+/// value of each run as `zigzag(v − previous run's first v)`, 0-based per
+/// segment.
+fn encode_segment_body(rows: &[QuadRow], (zz_b, zz_c): (bool, bool), out: &mut Vec<u8>) {
     let mut num_a = 0u64;
     let mut i = 0;
     while i < rows.len() {
@@ -228,6 +247,7 @@ fn encode_segment_body(rows: &[QuadRow], out: &mut Vec<u8>) {
     }
     write_uvarint(out, num_a);
     let mut prev_a = rows[0].1;
+    let (mut base_b, mut base_c) = (0i64, 0i64);
     let mut i = 0;
     let mut first = true;
     while i < rows.len() {
@@ -260,12 +280,22 @@ fn encode_segment_body(rows: &[QuadRow], out: &mut Vec<u8>) {
             while l < group.len() && group[l].2 == b {
                 l += 1;
             }
-            write_uvarint(out, (b - prev_b) as u64);
+            if zz_b && k == 0 {
+                write_uvarint(out, zigzag(b as i64 - base_b));
+                base_b = b as i64;
+            } else {
+                write_uvarint(out, (b - prev_b) as u64);
+            }
             prev_b = b;
             write_uvarint(out, (l - k) as u64);
             let mut prev_c = 0u32;
-            for r in &group[k..l] {
-                write_uvarint(out, (r.3 - prev_c) as u64);
+            for (n, r) in group[k..l].iter().enumerate() {
+                if zz_c && n == 0 {
+                    write_uvarint(out, zigzag(r.3 as i64 - base_c));
+                    base_c = r.3 as i64;
+                } else {
+                    write_uvarint(out, (r.3 - prev_c) as u64);
+                }
                 prev_c = r.3;
             }
             k = l;
@@ -274,8 +304,10 @@ fn encode_segment_body(rows: &[QuadRow], out: &mut Vec<u8>) {
     }
 }
 
-/// Encode and pack one tile's rows (sorted, deduplicated, non-empty).
-pub(crate) fn encode_tile(rows: &[QuadRow], codec: u8) -> EncodedTile {
+/// Encode and pack one tile's rows (sorted, deduplicated, non-empty) of the
+/// graph-leading order `perm`.
+pub(crate) fn encode_tile(rows: &[QuadRow], codec: u8, perm: IndexPermutation) -> EncodedTile {
+    let cols = subject_columns(perm);
     debug_assert!(!rows.is_empty());
     let mut segments = 0u64;
     let mut i = 0;
@@ -304,7 +336,7 @@ pub(crate) fn encode_tile(rows: &[QuadRow], codec: u8) -> EncodedTile {
         write_uvarint(&mut out, zigzag(fa as i64 - prev_fa as i64));
         prev_fa = fa;
         body.clear();
-        encode_segment_body(&rows[i..j], &mut body);
+        encode_segment_body(&rows[i..j], cols, &mut body);
         write_uvarint(&mut out, body.len() as u64);
         out.extend_from_slice(&body);
         i = j;
@@ -330,15 +362,22 @@ pub(crate) fn encode_tile(rows: &[QuadRow], codec: u8) -> EncodedTile {
 
 /// Encode a batch of tiles, in parallel when the `parallel` feature is on
 /// (order preserved, so the output is identical either way).
-pub(crate) fn encode_tiles(batch: &[Vec<QuadRow>], codec: u8) -> Vec<EncodedTile> {
+pub(crate) fn encode_tiles(
+    batch: &[Vec<QuadRow>],
+    codec: u8,
+    perm: IndexPermutation,
+) -> Vec<EncodedTile> {
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
-        batch.par_iter().map(|t| encode_tile(t, codec)).collect()
+        batch
+            .par_iter()
+            .map(|t| encode_tile(t, codec, perm))
+            .collect()
     }
     #[cfg(not(feature = "parallel"))]
     {
-        batch.iter().map(|t| encode_tile(t, codec)).collect()
+        batch.iter().map(|t| encode_tile(t, codec, perm)).collect()
     }
 }
 
@@ -461,7 +500,7 @@ impl GraphDirWriter {
 }
 
 /// The section's preamble: magic, version, order mask, counts and the part
-/// table (`part_lens` in part order — see SPEC.md §6.4).
+/// table (`part_lens` in part order — see SPEC.md §6.5).
 pub(crate) fn encode_preamble(
     perms: PermSet,
     graph_count: u64,
@@ -507,10 +546,11 @@ const ENCODE_BATCH: usize = 256;
 fn drain_tiles(
     pending: &mut Vec<Vec<QuadRow>>,
     codec: u8,
+    perm: IndexPermutation,
     dir: &mut PermDirWriter,
     payload: &mut Vec<u8>,
 ) {
-    for t in encode_tiles(pending, codec) {
+    for t in encode_tiles(pending, codec, perm) {
         dir.add(&t);
         payload.extend_from_slice(&t.bytes);
     }
@@ -518,18 +558,23 @@ fn drain_tiles(
 }
 
 /// Tile one order's sorted rows into `payload`, returning its directory part.
-fn tile_order(rows: &[QuadRow], codec: u8, payload: &mut Vec<u8>) -> Vec<u8> {
+fn tile_order(
+    rows: &[QuadRow],
+    codec: u8,
+    perm: IndexPermutation,
+    payload: &mut Vec<u8>,
+) -> Vec<u8> {
     let mut dir = PermDirWriter::default();
     let mut pending: Vec<Vec<QuadRow>> = Vec::new();
     let mut tiler = QuadTiler::new();
     for &r in rows {
         tiler.push(r, &mut |t| pending.push(t));
         if pending.len() >= ENCODE_BATCH {
-            drain_tiles(&mut pending, codec, &mut dir, payload);
+            drain_tiles(&mut pending, codec, perm, &mut dir, payload);
         }
     }
     tiler.finish(&mut |t| pending.push(t));
-    drain_tiles(&mut pending, codec, &mut dir, payload);
+    drain_tiles(&mut pending, codec, perm, &mut dir, payload);
     dir.finish()
 }
 
@@ -572,8 +617,8 @@ pub(crate) fn encode_quad_index(
     let mut payloads: Vec<Vec<u8>> = Vec::with_capacity(perms.len());
     for perm in perms.iter() {
         let mut payload = Vec::new();
-        let dir = if perm == crate::index::IndexPermutation::Spo {
-            tile_order(&spo, codec, &mut payload)
+        let dir = if perm == IndexPermutation::Spo {
+            tile_order(&spo, codec, perm, &mut payload)
         } else {
             let mut rows: Vec<QuadRow> = spo
                 .iter()
@@ -583,7 +628,7 @@ pub(crate) fn encode_quad_index(
                 })
                 .collect();
             sort_rows(&mut rows);
-            tile_order(&rows, codec, &mut payload)
+            tile_order(&rows, codec, perm, &mut payload)
         };
         dirs.push(dir);
         payloads.push(payload);
@@ -972,68 +1017,64 @@ impl QuadCore {
         Some((bi - 1) * self.pre()?.block_graphs as usize + pos)
     }
 
-    /// The tile directory of the order in section slot `si`.
+    /// The tile directory of the order in section slot `si`. A view needs
+    /// every order's directory, and they are adjacent parts, so the first miss
+    /// reads all the missing ones in one request when together they are small
+    /// ([`DIRS_TOGETHER_MAX`]); a larger file reads each on its own.
     fn dir(&self, si: usize) -> Option<Arc<[QTile]>> {
         if let Some(d) = self.dirs[si].get() {
             return Some(d.clone());
         }
-        let perm = crate::index::ALL_PERMS[si];
-        let k = self.perms.position(perm)?;
         let pre = self.pre()?.clone();
-        let bytes = self.read_part(1 + k)?;
-        let payload = pre.parts[2 + self.n_orders() + k];
-        let parsed = (|| -> Option<Vec<QTile>> {
-            let b = &bytes[..];
-            let mut pos = 0usize;
-            let num = rd64(b, &mut pos)?;
-            let mut out = Vec::with_capacity((num as usize).min(b.len()));
-            let mut first_g = 0u32;
-            let mut at = 0u64;
-            let mut prev_key = (0u32, 0u32);
-            for i in 0..num {
-                first_g = first_g.checked_add(rd32(b, &mut pos)?)?;
-                let first_a = rd32(b, &mut pos)?;
-                let last_g = first_g.checked_add(rd32(b, &mut pos)?)?;
-                let last_a = rd32(b, &mut pos)?;
-                let packed = rd64(b, &mut pos)?;
-                let min_b = rd32(b, &mut pos)?;
-                let max_b = min_b.checked_add(rd32(b, &mut pos)?)?;
-                let min_c = rd32(b, &mut pos)?;
-                let max_c = min_c.checked_add(rd32(b, &mut pos)?)?;
-                // Keys ascend (equal only across a mega-group cut).
-                if (first_g, first_a) > (last_g, last_a) || (i > 0 && (first_g, first_a) < prev_key)
-                {
+        let n = self.n_orders();
+        let first = pre.parts[1];
+        let last = pre.parts[n];
+        let together = last.end() - first.offset <= DIRS_TOGETHER_MAX;
+        let want: Vec<IndexPermutation> = if together {
+            self.perms
+                .iter()
+                .filter(|p| self.dirs[p.section_index()].get().is_none())
+                .collect()
+        } else {
+            vec![ALL_PERMS[si]]
+        };
+        let span = ByteRange {
+            offset: if together {
+                first.offset
+            } else {
+                pre.parts[1 + self.perms.position(want[0])?].offset
+            },
+            len: if together {
+                last.end() - first.offset
+            } else {
+                pre.parts[1 + self.perms.position(want[0])?].len
+            },
+        };
+        let bytes = match self.reader.read_at(span.offset, span.len) {
+            Ok(b) => b,
+            Err(_) => {
+                self.fail();
+                return None;
+            }
+        };
+        for perm in want {
+            let k = self.perms.position(perm)?;
+            let part = pre.parts[1 + k];
+            let lo = (part.offset - span.offset) as usize;
+            let parsed = bytes
+                .get(lo..lo + part.len as usize)
+                .and_then(|b| parse_tile_dir(b, pre.parts[2 + n + k]));
+            match parsed {
+                Some(v) => {
+                    let _ = self.dirs[perm.section_index()].set(Arc::from(v));
+                }
+                None => {
+                    self.fail();
                     return None;
                 }
-                prev_key = (last_g, last_a);
-                let clen = packed >> 1;
-                let end = at.checked_add(clen).filter(|&e| e <= payload.len)?;
-                out.push(QTile {
-                    first_g,
-                    first_a,
-                    last_g,
-                    last_a,
-                    range: ByteRange {
-                        offset: payload.offset + at,
-                        len: clen,
-                    },
-                    raw: packed & 1 == 1,
-                    syn: (min_b, max_b, min_c, max_c),
-                });
-                at = end;
-            }
-            Some(out)
-        })();
-        match parsed {
-            Some(v) => {
-                let _ = self.dirs[si].set(Arc::from(v));
-                self.dirs[si].get().cloned()
-            }
-            None => {
-                self.fail();
-                None
             }
         }
+        self.dirs[si].get().cloned()
     }
 
     fn unpack(&self, t: &QTile, stored: &[u8]) -> Option<Arc<[u8]>> {
@@ -1159,7 +1200,7 @@ impl QuadCore {
             let p = *phys.get(si)?.get(ti)?;
             let dir = dirs.get(si)?.as_ref()?;
             let entry = core.tile(si, dir, p)?;
-            let block = segment_block(entry.body(), dir[p].first_g, g);
+            let block = segment_block(entry.body(), dir[p].first_g, g, ALL_PERMS[si]);
             if block.is_none() {
                 core.fail();
             }
@@ -1178,7 +1219,7 @@ impl QuadCore {
             want.iter()
                 .map(|&p| {
                     let entry = core.tile(si, dir, p)?;
-                    segment_block(entry.body(), dir[p].first_g, g)
+                    segment_block(entry.body(), dir[p].first_g, g, ALL_PERMS[si])
                 })
                 .collect()
         });
@@ -1193,29 +1234,87 @@ impl QuadCore {
     }
 }
 
+/// Parse one order's tile directory part; tile ranges are resolved against
+/// `payload`, the order's payload part. Every field is untrusted.
+fn parse_tile_dir(b: &[u8], payload: ByteRange) -> Option<Vec<QTile>> {
+    let mut pos = 0usize;
+    let num = rd64(b, &mut pos)?;
+    let mut out = Vec::with_capacity((num as usize).min(b.len()));
+    let mut first_g = 0u32;
+    let mut at = 0u64;
+    let mut prev_key = (0u32, 0u32);
+    for i in 0..num {
+        first_g = first_g.checked_add(rd32(b, &mut pos)?)?;
+        let first_a = rd32(b, &mut pos)?;
+        let last_g = first_g.checked_add(rd32(b, &mut pos)?)?;
+        let last_a = rd32(b, &mut pos)?;
+        let packed = rd64(b, &mut pos)?;
+        let min_b = rd32(b, &mut pos)?;
+        let max_b = min_b.checked_add(rd32(b, &mut pos)?)?;
+        let min_c = rd32(b, &mut pos)?;
+        let max_c = min_c.checked_add(rd32(b, &mut pos)?)?;
+        // Keys ascend (equal only across a mega-group cut).
+        if (first_g, first_a) > (last_g, last_a) || (i > 0 && (first_g, first_a) < prev_key) {
+            return None;
+        }
+        prev_key = (last_g, last_a);
+        let clen = packed >> 1;
+        let end = at.checked_add(clen).filter(|&e| e <= payload.len)?;
+        out.push(QTile {
+            first_g,
+            first_a,
+            last_g,
+            last_a,
+            range: ByteRange {
+                offset: payload.offset + at,
+                len: clen,
+            },
+            raw: packed & 1 == 1,
+            syn: (min_b, max_b, min_c, max_c),
+        });
+        at = end;
+    }
+    Some(out)
+}
+
 /// Decode a segment body (see [`encode_segment_body`]) into `(a, b, c)` rows.
 /// Bounds-safe: `None` on any malformed varint or overrun.
-fn decode_segment_body(body: &[u8], first_a: u32, out: &mut Vec<Triple>) -> Option<()> {
+fn decode_segment_body(
+    body: &[u8],
+    first_a: u32,
+    (zz_b, zz_c): (bool, bool),
+    out: &mut Vec<Triple>,
+) -> Option<()> {
     let mut pos = 0usize;
-    let mut take = || -> Option<u32> {
-        let (v, n) = read_uvarint(body.get(pos..)?)?;
-        pos += n;
-        u32::try_from(v).ok()
+    // A zigzag-coded run start: `base + unzigzag(v)`, kept inside `u32`.
+    let rebase = |base: &mut i64, v: u64| -> Option<u32> {
+        let x = base.checked_add(unzigzag(v))?;
+        *base = x;
+        u32::try_from(x).ok()
     };
-    let num_a = take()?;
+    let (mut base_b, mut base_c) = (0i64, 0i64);
+    let num_a = rd32(body, &mut pos)?;
     let mut a = first_a;
     for i in 0..num_a {
         if i > 0 {
-            a = a.checked_add(take()?)?;
+            a = a.checked_add(rd32(body, &mut pos)?)?;
         }
-        let num_b = take()?;
+        let num_b = rd32(body, &mut pos)?;
         let mut b = 0u32;
-        for _ in 0..num_b {
-            b = b.checked_add(take()?)?;
-            let num_c = take()?;
+        for j in 0..num_b {
+            b = if zz_b && j == 0 {
+                rebase(&mut base_b, rd64(body, &mut pos)?)?
+            } else {
+                b.checked_add(rd32(body, &mut pos)?)?
+            };
+            let num_c = rd32(body, &mut pos)?;
             let mut c = 0u32;
-            for _ in 0..num_c {
-                c = c.checked_add(take()?)?;
+            for k in 0..num_c {
+                c = if zz_c && k == 0 {
+                    rebase(&mut base_c, rd64(body, &mut pos)?)?
+                } else {
+                    c.checked_add(rd32(body, &mut pos)?)?
+                };
                 if out.len() >= body.len() {
                     return None; // every row costs at least one byte
                 }
@@ -1258,12 +1357,13 @@ fn walk_segments(
 
 /// Graph `g`'s rows in a decompressed tile as a §6.1 block (an empty block when
 /// the tile holds none of them). `None` on a malformed tile.
-fn segment_block(tile: &[u8], first_g: u32, g: u32) -> Option<Vec<u8>> {
+fn segment_block(tile: &[u8], first_g: u32, g: u32, perm: IndexPermutation) -> Option<Vec<u8>> {
+    let cols = subject_columns(perm);
     let mut rows: Vec<Triple> = Vec::new();
     let mut ok = true;
     walk_segments(tile, first_g, |sg, first_a, body| {
         if sg == g {
-            ok = decode_segment_body(body, first_a, &mut rows).is_some();
+            ok = decode_segment_body(body, first_a, cols, &mut rows).is_some();
             false
         } else {
             sg < g
@@ -1281,12 +1381,13 @@ fn segment_block(tile: &[u8], first_g: u32, g: u32) -> Option<Vec<u8>> {
 
 /// Every row of a decompressed tile as `(g, a, b, c)` — for tests and checks.
 #[cfg(test)]
-fn tile_rows(tile: &[u8], first_g: u32) -> Option<Vec<QuadRow>> {
+fn tile_rows(tile: &[u8], first_g: u32, perm: IndexPermutation) -> Option<Vec<QuadRow>> {
+    let cols = subject_columns(perm);
     let mut out = Vec::new();
     let mut ok = true;
     walk_segments(tile, first_g, |g, first_a, body| {
         let mut rows = Vec::new();
-        ok &= decode_segment_body(body, first_a, &mut rows).is_some();
+        ok &= decode_segment_body(body, first_a, cols, &mut rows).is_some();
         out.extend(rows.into_iter().map(|(a, b, c)| (g, a, b, c)));
         ok
     })?;
@@ -1420,6 +1521,20 @@ impl QuadNamed {
             let _ = e.view.set(Box::new(view));
         }
         Some((name, e.view.get()?.as_ref()))
+    }
+
+    /// The `i`-th graph as an **owned, unmemoised** view, when it holds at most
+    /// `max_quads` quads (from the directory) — for a walk over many graphs
+    /// (`GRAPH ?g`), which then holds one small view at a time instead of one
+    /// per graph. The view shares the decompressed-tile cache, so consecutive
+    /// graphs of one tile still cost one decompression. `None` for a larger
+    /// graph (use [`graph_at`](Self::graph_at)) or on a failed read.
+    pub(crate) fn transient_view(&self, i: usize, max_quads: u64) -> Option<GraphIndex> {
+        let (g, n) = self.core.graph_at(i, false)?;
+        if n > max_quads {
+            return None;
+        }
+        self.core.view(g, self.tile_cap.load(Ordering::Relaxed))
     }
 
     fn ordinal_of_name(&self, dict: &Dictionary, iri: &str) -> Option<usize> {
@@ -1558,7 +1673,7 @@ pub(crate) fn check_section(bytes: &[u8], perms: PermSet, codec: u8) -> Result<u
         let mut seen = 0u64;
         for (ti, t) in dir.iter().enumerate() {
             let e = q.core.tile(si, &dir, ti).ok_or("tile")?;
-            let rows = tile_rows(e.body(), t.first_g).ok_or("rows")?;
+            let rows = tile_rows(e.body(), t.first_g, perm).ok_or("rows")?;
             if rows.first().map(|r| (r.0, r.1)) != Some((t.first_g, t.first_a))
                 || rows.last().map(|r| (r.0, r.1)) != Some((t.last_g, t.last_a))
             {
@@ -1762,6 +1877,34 @@ mod tests {
         let mut s = encode_seal(d);
         s[4] = 2;
         assert!(parse_seal(&s).is_err());
+    }
+
+    #[test]
+    fn the_subject_column_is_the_one_coded_across_runs() {
+        use IndexPermutation::*;
+        for (perm, cols) in [
+            (Spo, (false, false)),
+            (Sop, (false, false)),
+            (Pos, (false, true)),
+            (Ops, (false, true)),
+            (Osp, (true, false)),
+            (Pso, (true, false)),
+        ] {
+            assert_eq!(subject_columns(perm), cols, "{}", perm.name());
+        }
+        // A segment whose subjects repeat across groups round-trips, and the
+        // cross-run deltas make it smaller than coding each run from 0.
+        let rows: Vec<QuadRow> = (0..40u32)
+            .map(|k| (7, 100 + k, 5_000_000 + k * 977, 9_000_000 + k % 3))
+            .collect();
+        let (mut with, mut without) = (Vec::new(), Vec::new());
+        encode_segment_body(&rows, (false, true), &mut with);
+        encode_segment_body(&rows, (false, false), &mut without);
+        assert!(with.len() < without.len());
+        let mut back = Vec::new();
+        decode_segment_body(&with, rows[0].1, (false, true), &mut back).unwrap();
+        let want: Vec<Triple> = rows.iter().map(|r| (r.1, r.2, r.3)).collect();
+        assert_eq!(back, want);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! The quad index (SPEC.md §6.4, `GraphLayout::Quad`) against the per-graph
+//! The quad index (SPEC.md §6.5, `GraphLayout::Quad`) against the per-graph
 //! layout it replaces: same quads in, the same answers out — through every open
 //! path, every graph-scoped API and SPARQL — with a fraction of the bytes, a
 //! directory instead of a walk, and an old reader refusing the file.
@@ -169,6 +169,29 @@ fn quad_layout_answers_exactly_like_the_per_graph_layout() {
             assert_eq!(select(&quad, q), select(&legacy, q), "{q}");
         }
         assert!(!quad.index_incomplete());
+    }
+}
+
+#[test]
+fn the_union_default_graph_merges_every_view() {
+    let opts = rete_core::QueryOpts {
+        union_default_graph: true,
+        ..Default::default()
+    };
+    let legacy_bytes = build(GraphLayout::PerGraph, PermSet::ALL);
+    let quad_bytes = build(GraphLayout::Quad, PermSet::ALL);
+    let legacy = Rete::open(&legacy_bytes).unwrap();
+    let quad = Rete::open(&quad_bytes).unwrap();
+    for q in [
+        "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }",
+        "SELECT ?s WHERE { ?s <http://ex/specializationOf> <http://ex/br/9> }",
+        "SELECT ?o WHERE { <http://ex/a> <http://ex/p> ?o }",
+    ] {
+        let run = |r: &Rete| match rete_core::eval_query_with(r, q, opts).unwrap() {
+            QueryOutput::Select(_, rows) => sorted(rows.into_iter().map(|b| format!("{b:?}"))),
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(run(&quad), run(&legacy), "{q}");
     }
 }
 

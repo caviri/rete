@@ -292,7 +292,7 @@ enum Command {
         /// `per-graph` writes one permutation index per graph (the
         /// NAMED_GRAPHS section): each graph's IRI as text, then its own
         /// tiles, chained with no directory. `quad` writes the **quad index**
-        /// (SPEC.md §6.4): every named-graph quad once, the graph as a fourth
+        /// (SPEC.md §6.5): every named-graph quad once, the graph as a fourth
         /// column of graph-leading permutations in tiles that many graphs
         /// share, behind a sorted graph directory, with graph names as
         /// dictionary terms. On many small graphs (per-entity provenance)
