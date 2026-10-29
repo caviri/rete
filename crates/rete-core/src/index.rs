@@ -24,7 +24,8 @@ pub type Pattern = (Option<u32>, Option<u32>, Option<u32>);
 /// Default per-tile budget in (uncompressed) encoded bytes. Tiles are the
 /// independently-compressed, independently-fetchable units of a permutation
 /// section: ~64 KiB matches both zstd's sweet spot and one HTTP range read.
-pub const INDEX_TILE_BUDGET: usize = 64 * 1024;
+/// The budget a build uses is [`crate::write_opts::tile_budget`] (`--tile-kib`).
+pub const INDEX_TILE_BUDGET: usize = crate::write_opts::DEFAULT_TILE_BUDGET_BYTES;
 
 /// Geometric tile-prefetch ramp for an unbound (multi-tile) scan (see
 /// [`GraphIndex::scan_iter`]). The first coalesced batch faults this many
@@ -360,7 +361,7 @@ impl Default for GraphIndexBuilder {
     fn default() -> Self {
         Self {
             triples: Vec::new(),
-            tile_budget: INDEX_TILE_BUDGET,
+            tile_budget: crate::write_opts::tile_budget(),
             perms: PermSet::ALL,
         }
     }
@@ -377,7 +378,7 @@ impl GraphIndexBuilder {
     pub fn from_triples(triples: Vec<Triple>) -> Self {
         Self {
             triples,
-            tile_budget: INDEX_TILE_BUDGET,
+            tile_budget: crate::write_opts::tile_budget(),
             perms: PermSet::ALL,
         }
     }

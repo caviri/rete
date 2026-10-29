@@ -82,7 +82,7 @@ use std::path::{Path, PathBuf};
 use crate::dict::env_restart_interval;
 
 use crate::extbuild_sections::{ExtLabels, ExtSchema};
-use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
+use crate::index::GroupSizer;
 use crate::ingest::{BuildStats, GraphLayout, IngestError, RawQuad};
 use crate::triples::TripleBlockBuilder;
 use crate::varint::write_uvarint;
@@ -666,7 +666,10 @@ impl<'a> Chunker<'a> {
         let graph_ids = std::mem::take(&mut self.graph_ids);
         self.acc_bytes = 0;
 
-        let mut db = DictionaryBuilder::new();
+        // Chunk-local dictionaries are merged by role, so they must classify
+        // terms by role alone: frequent-object promotion is an in-memory-build
+        // feature (the CLI refuses it with `--memory-budget-mb`).
+        let mut db = DictionaryBuilder::new().with_frequent_objects(0);
         for (s, p, o) in &quads {
             db.observe(s, p, o);
         }
@@ -1372,7 +1375,7 @@ impl RawSectionWriter {
         }
 
         // chunk bounds over the body by run offsets (whole runs, 64 KiB budget)
-        let budget = 64 * 1024u64; // DICT_CHUNK_BUDGET
+        let budget = crate::write_opts::dict_chunk_budget() as u64; // as encode_chunked_dict_section
         let offs = &self.restart_offsets;
         let mut bounds: Vec<(usize, u64, u64)> = Vec::new(); // (first_run, start, end)
         let mut r = 0usize;
@@ -2197,7 +2200,7 @@ impl StreamingTiler {
     fn new(tmp: &TmpDir, name: &str, codec: u8) -> Result<Self, ExtBuildError> {
         let comp_path = tmp.path(&format!("{name}.tiles"));
         Ok(StreamingTiler {
-            tile_budget: INDEX_TILE_BUDGET,
+            tile_budget: crate::write_opts::tile_budget(),
             codec,
             tile: Vec::new(),
             tile_size: 0,

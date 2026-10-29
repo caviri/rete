@@ -7,7 +7,7 @@
 //! then `S+1..` (subject-only); object IDs reuse `1..=S` for the same shared
 //! terms then `S+1..` for object-only. Predicates have their own space.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::chunk_cache::ChunkCache;
 use crate::dict::{ChunkedSection, DictSectionBuilder, MultiChunkBulkLoader};
@@ -38,11 +38,42 @@ pub struct DictionaryBuilder {
     subjects: HashSet<String>,
     objects: HashSet<String>,
     predicates: HashSet<String>,
+    /// Frequent-object promotion ([`Self::with_frequent_objects`]): how many of
+    /// the most frequent object-only terms move into the shared section.
+    promote: usize,
+    /// Object occurrence counts, kept **instead of** `objects` while promotion
+    /// is on (so a default build pays nothing for it).
+    object_counts: HashMap<String, u64>,
 }
 
 impl DictionaryBuilder {
+    /// A builder with the process-wide writer settings
+    /// ([`crate::write_opts::frequent_objects`]).
     pub fn new() -> Self {
-        Self::default()
+        Self::default().with_frequent_objects(crate::write_opts::frequent_objects())
+    }
+
+    /// Promote the `n` most frequent **object-only** terms (by the number of
+    /// statements that carry them as object; ties by term order) into the
+    /// shared section (`0` = off, the default).
+    ///
+    /// The shared section is numbered first and in term order, so a promoted
+    /// vocabulary term (a class, a scheme individual, a status literal) gets a
+    /// small object id wherever it sorts ahead of the shared entities — the
+    /// effect declaring the vocabulary in a TBox has, without the TBox. A
+    /// promoted term keeps its object id role; the subject id it also gets is
+    /// simply never used by any statement. Readers need nothing new: the shared
+    /// section has always been looked up first for both roles.
+    ///
+    /// Set it before the first [`Self::observe`]: promotion counts objects as
+    /// they are observed.
+    pub fn with_frequent_objects(mut self, n: usize) -> Self {
+        debug_assert!(
+            self.objects.is_empty() && self.object_counts.is_empty(),
+            "with_frequent_objects after observe"
+        );
+        self.promote = n;
+        self
     }
 
     /// Record one triple's terms (IDs are assigned later, in [`Self::build`]).
@@ -53,7 +84,13 @@ impl DictionaryBuilder {
         if !self.subjects.contains(subject) {
             self.subjects.insert(subject.to_string());
         }
-        if !self.objects.contains(object) {
+        if self.promote > 0 {
+            if let Some(n) = self.object_counts.get_mut(object) {
+                *n += 1;
+            } else {
+                self.object_counts.insert(object.to_string(), 1);
+            }
+        } else if !self.objects.contains(object) {
             self.objects.insert(object.to_string());
         }
         if !self.predicates.contains(predicate) {
@@ -76,31 +113,64 @@ impl DictionaryBuilder {
         // the old BTreeSet iteration, but without the per-insert tree cost.
         let mut subjects: Vec<String> = self.subjects.into_iter().collect();
         let mut predicates: Vec<String> = self.predicates.into_iter().collect();
-        let object_set = self.objects; // kept for the shared (subject ∩ object) test
         sort_terms(&mut subjects);
         sort_terms(&mut predicates);
 
         // A term is "shared" when it appears as both a subject and an object.
         let subject_set: HashSet<&str> = subjects.iter().map(String::as_str).collect();
 
+        // The object terms: a plain set, or (promotion on) the count map, used
+        // as-is rather than converted, so no second table over every object.
+        let object_set = if self.promote > 0 {
+            ObjectTerms::Counted(self.object_counts)
+        } else {
+            ObjectTerms::Plain(self.objects)
+        };
+        // Frequent-object promotion: the top `promote` object-only terms by
+        // statement count (ties by term order) join the shared section.
+        let mut promoted: Vec<String> = Vec::new();
+        if let ObjectTerms::Counted(counts) = &object_set {
+            let mut top: Vec<(&String, u64)> = counts
+                .iter()
+                .filter(|(t, _)| !subject_set.contains(t.as_str()))
+                .map(|(t, &n)| (t, n))
+                .collect();
+            let k = self.promote.min(top.len());
+            if k > 0 && k < top.len() {
+                top.select_nth_unstable_by(k - 1, |a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+            }
+            top.truncate(k);
+            promoted = top.into_iter().map(|(t, _)| t.clone()).collect();
+            sort_terms(&mut promoted);
+        }
+        let promoted_set: HashSet<&str> = promoted.iter().map(String::as_str).collect();
+
         let mut shared_b = DictSectionBuilder::new();
         let mut subj_b = DictSectionBuilder::new();
         let mut obj_b = DictSectionBuilder::new();
         let mut pred_b = DictSectionBuilder::new();
 
-        // Subjects ascending: shared (also an object) vs subject-only.
+        // Subjects ascending: shared (also an object) vs subject-only. Promoted
+        // objects are merged into the shared run in term order.
+        let mut promoted_iter = promoted.iter().peekable();
         for s in &subjects {
             if object_set.contains(s) {
+                while let Some(p) = promoted_iter.next_if(|p| p.as_str() < s.as_str()) {
+                    shared_b.push(p.clone());
+                }
                 shared_b.push(s.clone());
             } else {
                 subj_b.push(s.clone());
             }
         }
+        for p in promoted_iter {
+            shared_b.push(p.clone());
+        }
         // Objects ascending: object-only (shared terms were emitted above).
-        let mut objects: Vec<String> = object_set.into_iter().collect();
+        let mut objects: Vec<String> = object_set.into_terms();
         sort_terms(&mut objects);
         for o in &objects {
-            if !subject_set.contains(o.as_str()) {
+            if !subject_set.contains(o.as_str()) && !promoted_set.contains(o.as_str()) {
                 obj_b.push(o.clone());
             }
         }
@@ -118,6 +188,29 @@ impl DictionaryBuilder {
             Dictionary::from_sections([shared, subj_b.build(), obj_b.build(), pred_b.build()]);
         dict.has_quoted_triples = has_quoted_triples;
         dict
+    }
+}
+
+/// The object terms a [`DictionaryBuilder`] observed: a set, or the
+/// occurrence counts frequent-object promotion needs.
+enum ObjectTerms {
+    Plain(HashSet<String>),
+    Counted(HashMap<String, u64>),
+}
+
+impl ObjectTerms {
+    fn contains(&self, term: &str) -> bool {
+        match self {
+            ObjectTerms::Plain(s) => s.contains(term),
+            ObjectTerms::Counted(m) => m.contains_key(term),
+        }
+    }
+
+    fn into_terms(self) -> Vec<String> {
+        match self {
+            ObjectTerms::Plain(s) => s.into_iter().collect(),
+            ObjectTerms::Counted(m) => m.into_keys().collect(),
+        }
     }
 }
 

@@ -375,9 +375,6 @@ fn compute_predicate_stats(triples: &[(u32, u32, u32)]) -> Vec<crate::meta::Pred
 pub const CODEC_NONE: u8 = 0;
 /// zstd compression (per section).
 pub const CODEC_ZSTD: u8 = 1;
-/// zstd compression level used by the writer.
-#[cfg(feature = "compression")]
-const ZSTD_LEVEL: i32 = 9;
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -425,9 +422,16 @@ fn intersect_sorted(a: &[u32], b: &[u32]) -> Vec<u32> {
 
 pub(crate) fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
     match codec {
+        // Level and frame shape are writer knobs (`crate::write_opts`); any
+        // combination decodes with every conformant zstd decoder.
         #[cfg(feature = "compression")]
         CODEC_ZSTD => {
-            zstd::encode_all(bytes, ZSTD_LEVEL).expect("zstd encode is infallible in-memory")
+            let level = crate::write_opts::zstd_level();
+            match crate::write_opts::frame_shape() {
+                crate::write_opts::FrameShape::Stream => zstd::encode_all(bytes, level),
+                crate::write_opts::FrameShape::Sized => zstd::bulk::compress(bytes, level),
+            }
+            .expect("zstd encode is infallible in-memory")
         }
         _ => bytes.to_vec(),
     }
@@ -806,7 +810,7 @@ fn checked_end(off: u64, len: u64) -> Result<u64, FileError> {
 
 /// Per-chunk budget for dictionary section bodies â€” same reasoning as
 /// [`crate::index::INDEX_TILE_BUDGET`]: one fetch, one decompress per touch.
-const DICT_CHUNK_BUDGET: usize = 64 * 1024;
+const DICT_CHUNK_BUDGET: usize = crate::write_opts::DEFAULT_DICT_CHUNK_BYTES;
 
 /// Encode one dictionary section as a chunked payload (format v0.2):
 /// `[header_len, raw header (term_count/interval/restart table)]
@@ -838,13 +842,14 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
     let header = &raw[..(body_start.min(raw.len() as u64)) as usize];
 
     // Split runs into chunks by body-byte budget (whole runs only).
+    let chunk_budget = crate::write_opts::dict_chunk_budget() as u64;
     let n_runs = meta.restart_offsets.len();
     let mut bounds: Vec<(usize, u64, u64)> = Vec::new(); // (first_run, start, end)
     let mut r = 0;
     while r < n_runs {
         let start = meta.restart_offsets[r];
         let mut r2 = r + 1;
-        while r2 < n_runs && meta.restart_offsets[r2] - start < DICT_CHUNK_BUDGET as u64 {
+        while r2 < n_runs && meta.restart_offsets[r2] - start < chunk_budget {
             r2 += 1;
         }
         let end = if r2 < n_runs {
