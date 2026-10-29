@@ -105,6 +105,29 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   `named-graph quads`, splitting the count from the Dataset Card's build-time
   counts or the default graph's index, never by reading the named graphs, and
   counts the graphs without walking them.
+- **`--entail` answers each entailed triple once.** `?x a C` was rewritten to
+  a union of the asserted patterns that entail it, and returned a node once
+  per matching pattern: OpenCitations works are typed both `fabio:Expression`
+  and a subtype, so `COUNT(?s)` over `?s a fabio:Expression` gave 508,044
+  where 258,268 works exist. The rewrite now yields the distinct members
+  (each source streams sorted on the subject and the sources merge, so no
+  answer set is held, and `LIMIT` stops early), and role atoms through
+  subproperties and inverses likewise answer each pair once. Queries that
+  relied on the repeated rows (a `COUNT(*)` over a reasoned class atom)
+  now count members. The TBox is read from the default graph as before; the
+  hierarchy is now closed when the query is rewritten, so it also applies
+  inside `GRAPH` and under `FROM`. On the OpenCitations sample with its
+  ontology: the `COUNT` 2.58 s → 0.07 s, the card's `lb-labels` starter
+  (`LIMIT 50`) 2.92 s → 0.06 s.
+- **`--entail` gates each class atom by its own axioms.** Any one
+  `rdfs:domain` or `rdfs:range` axiom used to add a domain/range branch to
+  every class atom of every reasoned query. A class now gets a branch only
+  for the properties whose domain (range) is below it, and a class or
+  property the file never uses adds nothing. On the same file, the card's
+  `ty-class-shape` starter over `pro:RoleInTime` (no subclass; OCO's one
+  domain axiom is about `cito:Citation`) went from 1.16 s back to 0.32 s,
+  and `?x a cito:Citation` (whose domain property is unused) from 2.43 s
+  to 0.03 s.
 - **SPARQL: `FILTER(CONTAINS(…))` inside `GRAPH <g> { … }` returned no rows**
   on a file built with `--text-index`, even when the graph's literals
   contained the string (`STRSTARTS`, `REGEX` and `BIND(CONTAINS(…))` were

@@ -5,24 +5,45 @@
 //! answers. A remote file becomes ontology-aware with no rebuild, and only the
 //! bytes the rewritten query touches are fetched.
 //!
-//! **Stage 1a — hierarchy (`rdfs:subClassOf`, `rdfs:subPropertyOf`).** Both are
-//! exactly what rete's goal-directed property paths already do, so a hierarchy
-//! atom is rewritten to walk the hierarchy edge over the RAW data:
+//! **The TBox** is read from the file's default graph, once per reasoned query:
+//! the `rdfs:subClassOf`, `rdfs:subPropertyOf`, `rdfs:domain`, `rdfs:range` and
+//! `owl:inverseOf` statements (a few scans of small predicates). The class and
+//! property hierarchies are closed here, at rewrite time, so the rewritten
+//! query carries the concrete classes and properties to look up rather than a
+//! hierarchy walk.
 //!
-//! - class atom `?x a C`      → `?x a ?c . ?c rdfs:subClassOf* C`
-//! - role atom  `?x P ?y`     → `?x ?p ?y . ?p rdfs:subPropertyOf* P`
+//! **An entailed atom becomes the distinct union of the asserted patterns that
+//! entail it** ([`Plan::DistinctUnion`]):
 //!
-//! `*` is reflexive, so a direct match still counts. No `UNION` enumeration, no
-//! blow-up. A tiny TBox read (the *objects* of the two hierarchy predicates)
-//! GATES the rewrite: an atom whose class/property has no sub-terms is left
-//! untouched, so reasoning is zero-overhead where it can add nothing.
+//! - class atom `?x a C` → `?x a D` for every `D ⊑* C`, plus `?x p ?_` for every
+//!   `p` whose `rdfs:domain` is `⊑* C`, plus `?_ q ?x` for every `q` whose
+//!   `rdfs:range` is `⊑* C` (and their subproperties);
+//! - role atom `?x P ?y` → `?x Q ?y` for every `Q ⊑* P`, plus `?y R ?x` for
+//!   every `R ⊑* P'` with `P'` an `owl:inverseOf` of `P`.
+//!
+//! Each solution comes out ONCE: the entailed triple `?x a C` exists once, even
+//! when `?x` is typed both `C` and a subclass of it, or is also the subject of a
+//! property whose domain is `C`. A plain union would return it once per
+//! asserted triple (508,044 rows for 258,268 OpenCitations works typed both
+//! `fabio:Expression` and a subtype). The sources stream sorted and merge, so
+//! this costs no set of every solution.
+//!
+//! **Gating is per atom.** A class gets a domain (range) source only for the
+//! properties whose domain (range) is `⊑* C`, and a class, a property or a
+//! domain/range property the file never uses contributes no source at all. An
+//! atom whose sources reduce to itself is left exactly as written — reasoning is
+//! zero-overhead where it can add nothing, and one unrelated `rdfs:domain`
+//! axiom no longer adds a branch to every class atom of the query.
+//!
+//! Existential restrictions (`A ⊑ ∃P`) still answer a role atom with a purely
+//! existential object through a hierarchy walk ([`existential_branch`]).
 //!
 //! This runs as a post-lowering pass on the `Plan` tree, only when reasoning is
 //! requested — the hot BGP matcher and every default query are untouched.
 
 use super::*;
 use crate::bgp::{PatternTerm, TriplePattern};
-use crate::Rete;
+use crate::{Dictionary, Rete};
 use std::collections::{HashMap, HashSet};
 
 const RDF_TYPE: &str = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
@@ -34,22 +55,18 @@ const OWL_INVERSE_OF: &str = "<http://www.w3.org/2002/07/owl#inverseOf>";
 const OWL_ON_PROPERTY: &str = "<http://www.w3.org/2002/07/owl#onProperty>";
 const OWL_SOME_VALUES_FROM: &str = "<http://www.w3.org/2002/07/owl#someValuesFrom>";
 
-/// The slice of the ontology (TBox) that gates the Stage 1a rewrite: which
-/// classes/properties actually have sub-terms, so we only rewrite atoms that can
-/// gain rows. Read once per reasoned query with two small scans (the hierarchy
-/// transitivity itself is handled at eval time by the `*` path — the gate only
-/// needs the *direct* super-terms, and a transitive super is always the object
-/// of some hierarchy edge, so this set is exact).
+/// The slice of the ontology (TBox) the rewrite needs, read from the default
+/// graph. Every map is keyed by the *super*-term, so closing a hierarchy below a
+/// class or property is a walk down it.
 struct QlTbox {
-    /// Classes that are the object of a `subClassOf` edge (⇒ have ≥1 subclass).
-    superclasses: HashSet<String>,
-    /// Properties that are the object of a `subPropertyOf` edge (⇒ have ≥1 subproperty).
-    superprops: HashSet<String>,
-    /// The graph declares at least one `rdfs:domain` axiom (enables the domain
-    /// branch of a class-atom rewrite; the branch self-filters on the actual class).
-    has_domain: bool,
-    /// The graph declares at least one `rdfs:range` axiom.
-    has_range: bool,
+    /// `C` ↦ its direct subclasses (`D rdfs:subClassOf C`).
+    sub_classes: HashMap<String, Vec<String>>,
+    /// `P` ↦ its direct subproperties (`Q rdfs:subPropertyOf P`).
+    sub_props: HashMap<String, Vec<String>>,
+    /// Class `D` ↦ the properties declared `p rdfs:domain D`.
+    domain_of: HashMap<String, Vec<String>>,
+    /// Class `D` ↦ the properties declared `p rdfs:range D`.
+    range_of: HashMap<String, Vec<String>>,
     /// Property → its inverses (`P owl:inverseOf Q`, both directions), so a role
     /// atom `?x P ?y` is also answered by `?y Q ?x`.
     inverses: HashMap<String, Vec<String>>,
@@ -62,41 +79,92 @@ struct QlTbox {
 impl QlTbox {
     fn read(rete: &Rete) -> Self {
         QlTbox {
-            superclasses: objects_of(rete, SUBCLASS_OF),
-            superprops: objects_of(rete, SUBPROPERTY_OF),
-            has_domain: has_predicate(rete, RDFS_DOMAIN),
-            has_range: has_predicate(rete, RDFS_RANGE),
+            sub_classes: by_object(rete, SUBCLASS_OF),
+            sub_props: by_object(rete, SUBPROPERTY_OF),
+            domain_of: by_object(rete, RDFS_DOMAIN),
+            range_of: by_object(rete, RDFS_RANGE),
             inverses: inverse_pairs(rete),
             has_restrictions: has_predicate(rete, OWL_SOME_VALUES_FROM),
         }
     }
     fn is_empty(&self) -> bool {
-        self.superclasses.is_empty()
-            && self.superprops.is_empty()
-            && !self.has_domain
-            && !self.has_range
+        self.sub_classes.is_empty()
+            && self.sub_props.is_empty()
+            && self.domain_of.is_empty()
+            && self.range_of.is_empty()
             && self.inverses.is_empty()
             && !self.has_restrictions
     }
-    /// Does a concrete class atom `?x a C` need rewriting? (has subclasses, or
-    /// there are domain/range axioms that could infer the type from a property.)
-    fn class_rewritable(&self, c: &str) -> bool {
-        self.superclasses.contains(c) || self.has_domain || self.has_range
+    /// `C` and every class below it (`D ⊑* C`), each once.
+    fn classes_below(&self, c: &str) -> Vec<String> {
+        closure_below(&self.sub_classes, c)
     }
-    /// Does a role atom `?x P ?y` need rewriting? (P has subproperties or inverses.)
-    fn role_rewritable(&self, p: &str) -> bool {
-        self.superprops.contains(p) || self.inverses.contains_key(p)
+    /// `P` and every property below it (`Q ⊑* P`), each once.
+    fn props_below(&self, p: &str) -> Vec<String> {
+        closure_below(&self.sub_props, p)
+    }
+    /// The properties whose use in subject (`domain`) or object position makes
+    /// a node a `C`: those declared with a domain (range) `⊑* C`, and every
+    /// subproperty of one. Sorted and deduplicated.
+    fn typing_props(&self, c: &str, domain: bool) -> Vec<String> {
+        let decl = if domain {
+            &self.domain_of
+        } else {
+            &self.range_of
+        };
+        if decl.is_empty() {
+            return Vec::new();
+        }
+        let mut out: Vec<String> = Vec::new();
+        for d in self.classes_below(c) {
+            for p in decl.get(&d).into_iter().flatten() {
+                out.extend(self.props_below(p));
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
     }
 }
 
-/// The distinct objects of triples with predicate `pred` (reasoning OFF, so no
-/// recursion). Bounded — a hierarchy predicate is a small fraction of any graph.
-fn objects_of(rete: &Rete, pred: &str) -> HashSet<String> {
-    let q = format!("SELECT ?o WHERE {{ ?s {pred} ?o }}");
-    match super::eval_sparql(rete, &q) {
-        Ok((_, sols)) => sols.iter().filter_map(|b| b.get("o").cloned()).collect(),
-        Err(_) => HashSet::new(),
+/// `top` and everything reachable from it through `below` (a hierarchy keyed by
+/// the super-term), breadth first, each once — cycles included.
+fn closure_below(below: &HashMap<String, Vec<String>>, top: &str) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = vec![top.to_string()];
+    seen.insert(top.to_string());
+    let mut i = 0;
+    while i < out.len() {
+        if let Some(subs) = below.get(&out[i]) {
+            for s in subs {
+                if seen.insert(s.clone()) {
+                    out.push(s.clone());
+                }
+            }
+        }
+        i += 1;
     }
+    out
+}
+
+/// The statements with predicate `pred`, grouped by object: `o ↦ [s, …]`
+/// (reasoning OFF, so no recursion). Bounded — TBox predicates are a small
+/// fraction of any graph.
+fn by_object(rete: &Rete, pred: &str) -> HashMap<String, Vec<String>> {
+    let q = format!("SELECT ?s ?o WHERE {{ ?s {pred} ?o }}");
+    let mut m: HashMap<String, Vec<String>> = HashMap::new();
+    if let Ok((_, sols)) = super::eval_sparql(rete, &q) {
+        for b in sols {
+            if let (Some(s), Some(o)) = (b.get("s"), b.get("o")) {
+                m.entry(o.clone()).or_default().push(s.clone());
+            }
+        }
+    }
+    for v in m.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+    m
 }
 
 /// Whether the graph has any triple with predicate `pred` (a one-row probe).
@@ -192,6 +260,13 @@ fn plan_var_occurrences(plan: &Plan, c: &mut HashMap<String, usize>) {
                 *c.entry(v.clone()).or_insert(0) += 1;
             }
         }
+        Plan::DistinctUnion { sources, .. } => {
+            for tp in sources {
+                term(&tp.s, c);
+                term(&tp.p, c);
+                term(&tp.o, c);
+            }
+        }
     }
 }
 
@@ -251,31 +326,241 @@ pub(crate) fn reason_rewrite(plan: Plan, rete: &Rete, projected: &[String]) -> P
     } else {
         HashSet::new()
     };
-    let mut counter: usize = 0;
-    rewrite_plan(plan, &tbox, &exq, &mut counter)
+    let mut rw = Rewriter {
+        tbox: &tbox,
+        dict: rete.dictionary(),
+        exq: &exq,
+        counter: 0,
+    };
+    rw.plan(plan)
 }
 
-/// Walk the plan tree; transform each BGP, recurse structurally through every
-/// other operator so reasoning reaches nested patterns (UNION/OPTIONAL/subquery…).
-fn rewrite_plan(plan: Plan, tbox: &QlTbox, exq: &HashSet<String>, counter: &mut usize) -> Plan {
-    let recur = |p: Box<Plan>, counter: &mut usize| Box::new(rewrite_plan(*p, tbox, exq, counter));
-    match plan {
-        Plan::Bgp(patterns) => rewrite_bgp(patterns, tbox, exq, counter),
-        Plan::Join(a, b) => Plan::Join(recur(a, counter), recur(b, counter)),
-        Plan::Union(a, b) => Plan::Union(recur(a, counter), recur(b, counter)),
-        Plan::LeftJoin(a, b, cond) => Plan::LeftJoin(recur(a, counter), recur(b, counter), cond),
-        Plan::Filter(f, p) => Plan::Filter(f, recur(p, counter)),
-        Plan::Extend(v, e, p) => Plan::Extend(v, e, recur(p, counter)),
-        Plan::Minus(a, b) => Plan::Minus(recur(a, counter), recur(b, counter)),
-        Plan::Graph(t, p) => Plan::Graph(t, recur(p, counter)),
-        Plan::Subquery(mut sel) => {
-            sel.plan = rewrite_plan(sel.plan, tbox, exq, counter);
-            Plan::Subquery(sel)
+/// Per-query rewrite state: the TBox, the dictionary (a class or property the
+/// file never uses contributes no source), the existential variables and the
+/// fresh-name counter.
+struct Rewriter<'a> {
+    tbox: &'a QlTbox,
+    dict: &'a Dictionary,
+    exq: &'a HashSet<String>,
+    counter: usize,
+}
+
+impl Rewriter<'_> {
+    /// Walk the plan tree; transform each BGP, recurse structurally through
+    /// every other operator so reasoning reaches nested patterns
+    /// (UNION/OPTIONAL/subquery…).
+    fn plan(&mut self, plan: Plan) -> Plan {
+        match plan {
+            Plan::Bgp(patterns) => self.bgp(patterns),
+            Plan::Join(a, b) => Plan::Join(self.boxed(a), self.boxed(b)),
+            Plan::Union(a, b) => Plan::Union(self.boxed(a), self.boxed(b)),
+            Plan::LeftJoin(a, b, cond) => Plan::LeftJoin(self.boxed(a), self.boxed(b), cond),
+            Plan::Filter(f, p) => Plan::Filter(f, self.boxed(p)),
+            Plan::Extend(v, e, p) => Plan::Extend(v, e, self.boxed(p)),
+            Plan::Minus(a, b) => Plan::Minus(self.boxed(a), self.boxed(b)),
+            Plan::Graph(t, p) => Plan::Graph(t, self.boxed(p)),
+            Plan::Subquery(mut sel) => {
+                sel.plan = self.plan(sel.plan);
+                Plan::Subquery(sel)
+            }
+            // No BGP inside — a path, inline VALUES, a SERVICE block (rewriting
+            // a remote sub-query against our TBox would be unsound), or an
+            // already-rewritten atom — left unchanged.
+            other => other,
         }
-        // No BGP inside — a path, inline VALUES, or a SERVICE block (rewriting a
-        // remote sub-query against our TBox would be unsound) — left unchanged.
-        other => other,
     }
+
+    /// Rewrite a boxed sub-plan in place (reusing its allocation).
+    fn boxed(&mut self, mut p: Box<Plan>) -> Box<Plan> {
+        let inner = std::mem::replace(&mut *p, Plan::Bgp(Vec::new()));
+        *p = self.plan(inner);
+        p
+    }
+
+    /// A fresh, query-unique variable name for a rewrite-introduced binding.
+    fn fresh(&mut self, tag: &str) -> String {
+        self.counter += 1;
+        format!("__ql{tag}{}", self.counter)
+    }
+
+    fn uses_class(&self, c: &str) -> bool {
+        self.dict.object_id(c).is_some()
+    }
+    fn uses_predicate(&self, p: &str) -> bool {
+        self.dict.predicate_id(p).is_some()
+    }
+
+    /// Rewrite one BGP. Each class atom `s a C` and role atom `s P o` that
+    /// reasoning can add rows to becomes its own plan, joined with the residual
+    /// BGP of every other atom; a BGP with nothing to rewrite is returned as is.
+    fn bgp(&mut self, patterns: Vec<TriplePattern>) -> Plan {
+        let mut residual: Vec<TriplePattern> = Vec::new();
+        let mut extra: Vec<Plan> = Vec::new();
+        for tp in patterns {
+            let rewritten = if let Some(class) = type_atom_class(&tp) {
+                let class = class.to_string();
+                self.class_atom(&tp.s, &class)
+            } else if let Some(pred) = role_atom_pred(&tp) {
+                let pred = pred.to_string();
+                self.role_atom(&tp.s, &pred, &tp.o)
+            } else {
+                None
+            };
+            match rewritten {
+                Some(plan) => extra.push(plan),
+                None => residual.push(tp),
+            }
+        }
+        if extra.is_empty() {
+            return Plan::Bgp(residual);
+        }
+        // Conjoin the residual BGP with each extra plan. If every atom was
+        // rewritten, start from the first extra plan (no empty-BGP operand).
+        let mut iter = extra.into_iter();
+        let mut plan = if residual.is_empty() {
+            iter.next().expect("extra is non-empty")
+        } else {
+            Plan::Bgp(residual)
+        };
+        for p in iter {
+            plan = join(plan, p);
+        }
+        plan
+    }
+
+    /// The plan for a class atom `subject a C`, or `None` when reasoning adds
+    /// nothing to it (no subclass, domain or range the file uses).
+    fn class_atom(&mut self, subject: &PatternTerm, class: &str) -> Option<Plan> {
+        let mut sources: Vec<TriplePattern> = Vec::new();
+        for d in self.tbox.classes_below(class) {
+            if self.uses_class(&d) {
+                sources.push(atom(subject.clone(), RDF_TYPE, PatternTerm::Const(d)));
+            }
+        }
+        // Domain: each subject of a property whose domain is `⊑* C` is a C.
+        for p in self.tbox.typing_props(class, true) {
+            if self.uses_predicate(&p) {
+                let anon = PatternTerm::Var(self.fresh("dra"));
+                sources.push(atom(subject.clone(), &p, anon));
+            }
+        }
+        // Range: each object of a property whose range is `⊑* C` is a C.
+        for p in self.tbox.typing_props(class, false) {
+            if self.uses_predicate(&p) {
+                let anon = PatternTerm::Var(self.fresh("dra"));
+                sources.push(atom(anon, &p, subject.clone()));
+            }
+        }
+        // Nothing beyond the atom itself (or nothing at all, when not even `C`
+        // is used): the atom as written is exact and stays in the BGP.
+        let only_itself = match sources.as_slice() {
+            [] => true,
+            [one] => type_atom_class(one) == Some(class),
+            _ => false,
+        };
+        if only_itself {
+            return None;
+        }
+        Some(Plan::DistinctUnion {
+            vars: term_vars(&[subject]),
+            sources,
+        })
+    }
+
+    /// The plan for a role atom `s P o`: the distinct union of `s Q o` for each
+    /// `Q ⊑* P` and `o R s` for each `R ⊑* P'`, `P'` an inverse of `P` — plus,
+    /// when `o` (or `s`) is a purely existential variable and the graph has `∃`
+    /// restrictions, the existential branch. `None` when reasoning adds nothing.
+    fn role_atom(&mut self, s: &PatternTerm, pred: &str, o: &PatternTerm) -> Option<Plan> {
+        let mut sources: Vec<TriplePattern> = Vec::new();
+        for q in self.tbox.props_below(pred) {
+            if self.uses_predicate(&q) {
+                sources.push(atom(s.clone(), &q, o.clone()));
+            }
+        }
+        if let Some(invs) = self.tbox.inverses.get(pred) {
+            for inv in invs {
+                for q in self.tbox.props_below(inv) {
+                    if self.uses_predicate(&q) {
+                        sources.push(atom(o.clone(), &q, s.clone()));
+                    }
+                }
+            }
+        }
+        let has_r = self.tbox.has_restrictions;
+        let forward_ex = has_r && is_existential(o, self.exq);
+        // Inverse existential `A ⊑ ∃P⁻`: the SUBJECT is existential, so `o` is
+        // entailed to be a P-object when it is an A restricted on P's inverse.
+        let inverse_ex = has_r
+            && is_existential(s, self.exq)
+            && self.tbox.inverses.get(pred).is_some_and(|v| !v.is_empty());
+        let only_itself = match sources.as_slice() {
+            [] => true,
+            [one] => role_atom_pred(one) == Some(pred) && one.s == *s,
+            _ => false,
+        };
+        if only_itself && !forward_ex && !inverse_ex {
+            return None;
+        }
+        let mut plan = if sources.is_empty() {
+            None
+        } else {
+            Some(Plan::DistinctUnion {
+                vars: term_vars(&[s, o]),
+                sources,
+            })
+        };
+        let add = |plan: &mut Option<Plan>, branch: Plan| {
+            *plan = Some(match plan.take() {
+                Some(p) => union(p, branch),
+                None => branch,
+            });
+        };
+        if forward_ex {
+            // Forward existential `A ⊑ ∃P`: the OBJECT is existential, so `s`
+            // is entailed to have a P-successor when it is (transitively) an A.
+            let branch = existential_branch(s.clone(), pred, &mut self.counter);
+            add(&mut plan, distinct_on(branch, s));
+        }
+        if inverse_ex {
+            let invs = self.tbox.inverses.get(pred).cloned().unwrap_or_default();
+            for q in invs {
+                let branch = existential_branch(o.clone(), &q, &mut self.counter);
+                add(&mut plan, distinct_on(branch, o));
+            }
+        }
+        // `sources` empty and no existential branch was returned above.
+        plan
+    }
+}
+
+/// The variables among `terms`, in order, each once.
+fn term_vars(terms: &[&PatternTerm]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for t in terms {
+        if let PatternTerm::Var(v) = t {
+            if !out.contains(v) {
+                out.push(v.clone());
+            }
+        }
+    }
+    out
+}
+
+/// `plan`'s rows reduced to the distinct values of `subject` (one row, or none,
+/// for a constant): an existential branch can reach one node through several
+/// classes, and its entailed fact holds once.
+fn distinct_on(plan: Plan, subject: &PatternTerm) -> Plan {
+    let mut sel = Select::default();
+    match subject {
+        PatternTerm::Var(v) => {
+            sel.project = vec![v.clone()];
+            sel.distinct = true;
+        }
+        PatternTerm::Const(_) => sel.limit = Some(1),
+    }
+    sel.plan = plan;
+    Plan::Subquery(Box::new(sel))
 }
 
 /// The constant class token `C` iff `tp` is a `?x rdf:type C` atom.
@@ -307,15 +592,13 @@ fn star_path(subject: PatternTerm, pred: &str, target: PatternTerm) -> Plan {
     )
 }
 
-/// A fresh, query-unique variable name for a rewrite-introduced binding.
+/// A fresh, query-unique variable name (for the existential branch, which
+/// builds its own patterns).
 fn fresh(counter: &mut usize, tag: &str) -> String {
     *counter += 1;
     format!("__ql{tag}{}", counter)
 }
 
-fn single(tp: TriplePattern) -> Plan {
-    Plan::Bgp(vec![tp])
-}
 fn join(a: Plan, b: Plan) -> Plan {
     Plan::Join(Box::new(a), Box::new(b))
 }
@@ -327,140 +610,6 @@ fn atom(s: PatternTerm, p: &str, o: PatternTerm) -> TriplePattern {
         s,
         p: PatternTerm::Const(p.to_string()),
         o,
-    }
-}
-
-/// The plan for a single class atom `subject a C` under QL: a UNION of the
-/// **typing** branch (subject typed to C or a subclass) and — when the graph has
-/// them — the **domain** and **range** branches (subject inferred to be a C
-/// because it is the subject/object of a property whose domain/range is `⊑* C`).
-fn class_atom_plan(subject: PatternTerm, class: &str, tbox: &QlTbox, counter: &mut usize) -> Plan {
-    // Typing: `subject a ?c . ?c subClassOf* C` (reflexive → direct type too).
-    // If C has no subclasses, the plain atom is exactly equivalent and cheaper.
-    let typing = if tbox.superclasses.contains(class) {
-        let c = fresh(counter, "c");
-        join(
-            single(atom(subject.clone(), RDF_TYPE, PatternTerm::Var(c.clone()))),
-            star_path(
-                PatternTerm::Var(c),
-                SUBCLASS_OF,
-                PatternTerm::Const(class.to_string()),
-            ),
-        )
-    } else {
-        single(atom(
-            subject.clone(),
-            RDF_TYPE,
-            PatternTerm::Const(class.to_string()),
-        ))
-    };
-    let mut plan = typing;
-    // Domain: a property whose domain is `⊑* C` makes each of its subjects a C.
-    if tbox.has_domain {
-        plan = union(plan, dr_branch(subject.clone(), true, class, tbox, counter));
-    }
-    // Range: a property whose range is `⊑* C` makes each of its objects a C.
-    if tbox.has_range {
-        plan = union(
-            plan,
-            dr_branch(subject.clone(), false, class, tbox, counter),
-        );
-    }
-    plan
-}
-
-/// The domain (`is_domain`) or range branch of a class atom `subject a C`:
-/// `?pd rdfs:domain|range ?dc . ?dc subClassOf* C` and `subject` uses a property
-/// that is `subPropertyOf* ?pd` (in subject/object position respectively). When
-/// the graph has subproperties the used property walks `subPropertyOf*` (so a
-/// subproperty of a domain/range-declared property also infers the type); with
-/// none it is `?pd` directly.
-fn dr_branch(
-    subject: PatternTerm,
-    is_domain: bool,
-    class: &str,
-    tbox: &QlTbox,
-    counter: &mut usize,
-) -> Plan {
-    let (pd, dc, anon) = (
-        fresh(counter, "drp"),
-        fresh(counter, "drc"),
-        fresh(counter, "dra"),
-    );
-    let dr_pred = if is_domain { RDFS_DOMAIN } else { RDFS_RANGE };
-    // `?pd <domain|range> ?dc . ?dc subClassOf* C`
-    let restr = join(
-        single(atom(
-            PatternTerm::Var(pd.clone()),
-            dr_pred,
-            PatternTerm::Var(dc.clone()),
-        )),
-        star_path(
-            PatternTerm::Var(dc),
-            SUBCLASS_OF,
-            PatternTerm::Const(class.to_string()),
-        ),
-    );
-    // The property `subject` actually uses — `?pd`, or (composing) a subproperty
-    // `?q` with `?q subPropertyOf* ?pd`.
-    let (used, compose) = if tbox.superprops.is_empty() {
-        (pd.clone(), None)
-    } else {
-        let q = fresh(counter, "drq");
-        (
-            q.clone(),
-            Some(star_path(
-                PatternTerm::Var(q),
-                SUBPROPERTY_OF,
-                PatternTerm::Var(pd.clone()),
-            )),
-        )
-    };
-    let use_pat = if is_domain {
-        single(TriplePattern {
-            s: subject,
-            p: PatternTerm::Var(used),
-            o: PatternTerm::Var(anon),
-        })
-    } else {
-        single(TriplePattern {
-            s: PatternTerm::Var(anon),
-            p: PatternTerm::Var(used),
-            o: subject,
-        })
-    };
-    let mut branch = join(restr, use_pat);
-    if let Some(e) = compose {
-        branch = join(branch, e);
-    }
-    branch
-}
-
-/// One directional branch matching `s pred o`, expanded over `subPropertyOf*`
-/// when `pred` has subproperties (else the plain atom).
-fn role_branch(
-    s: PatternTerm,
-    pred: &str,
-    o: PatternTerm,
-    tbox: &QlTbox,
-    counter: &mut usize,
-) -> Plan {
-    if tbox.superprops.contains(pred) {
-        let pv = fresh(counter, "p");
-        join(
-            single(TriplePattern {
-                s,
-                p: PatternTerm::Var(pv.clone()),
-                o,
-            }),
-            star_path(
-                PatternTerm::Var(pv),
-                SUBPROPERTY_OF,
-                PatternTerm::Const(pred.to_string()),
-            ),
-        )
-    } else {
-        single(atom(s, pred, o))
     }
 }
 
@@ -502,100 +651,8 @@ fn existential_branch(subject: PatternTerm, pred: &str, counter: &mut usize) -> 
     )
 }
 
-/// The plan for a role atom `s P o` under QL: the forward branch (P and its
-/// subproperties) UNION, for each inverse Q of P, an inverse branch `o Q s`
-/// (Q and its subproperties), UNION — when `o` is a purely-existential variable
-/// and the graph has `∃P` restrictions — an existential branch.
-fn role_atom_plan(
-    s: PatternTerm,
-    pred: &str,
-    o: PatternTerm,
-    tbox: &QlTbox,
-    exq: &HashSet<String>,
-    counter: &mut usize,
-) -> Plan {
-    let mut plan = role_branch(s.clone(), pred, o.clone(), tbox, counter);
-    if let Some(invs) = tbox.inverses.get(pred) {
-        for q in invs {
-            let branch = role_branch(o.clone(), q, s.clone(), tbox, counter);
-            plan = union(plan, branch);
-        }
-    }
-    if tbox.has_restrictions && is_existential(&o, exq) {
-        // Forward existential `A ⊑ ∃P`: the OBJECT is existential, so `s` is
-        // entailed to have a P-successor when it is (transitively) such an A.
-        plan = union(plan, existential_branch(s.clone(), pred, counter));
-    }
-    if tbox.has_restrictions && is_existential(&s, exq) {
-        // Inverse existential `A ⊑ ∃P⁻`: the SUBJECT is existential, so `o` is
-        // entailed to be a P-object when it is an A restricted on P's inverse Q
-        // (∃Q ≡ ∃P⁻). Uses each NAMED inverse of P.
-        if let Some(invs) = tbox.inverses.get(pred) {
-            for q in invs {
-                plan = union(plan, existential_branch(o.clone(), q, counter));
-            }
-        }
-    }
-    plan
-}
-
 /// `true` iff `t` is a variable that the query uses purely existentially (occurs
 /// once, not returned), so an anonymous `∃` successor is an admissible answer.
 fn is_existential(t: &PatternTerm, exq: &HashSet<String>) -> bool {
     matches!(t, PatternTerm::Var(v) if exq.contains(v))
-}
-
-/// Rewrite one BGP. Each concrete class atom `?x a C` (needing reasoning) becomes
-/// a class-atom UNION plan; each role atom `?x P ?y` whose P has subproperties or
-/// inverses becomes a role-atom UNION plan. Every other atom stays in the residual
-/// BGP; a BGP with nothing to rewrite is returned unchanged.
-fn rewrite_bgp(
-    patterns: Vec<TriplePattern>,
-    tbox: &QlTbox,
-    exq: &HashSet<String>,
-    counter: &mut usize,
-) -> Plan {
-    // A role atom needs rewriting if P has subproperties/inverses, OR (with `∃`
-    // restrictions in the graph) its object is existential (forward `∃P`), or its
-    // subject is existential and P has an inverse (inverse `∃P⁻`).
-    let role_needs = |tp: &TriplePattern| {
-        role_atom_pred(tp).is_some_and(|p| {
-            tbox.role_rewritable(p)
-                || (tbox.has_restrictions
-                    && (is_existential(&tp.o, exq)
-                        || (is_existential(&tp.s, exq) && tbox.inverses.contains_key(p))))
-        })
-    };
-    let rewritable = |tp: &TriplePattern| {
-        type_atom_class(tp).is_some_and(|c| tbox.class_rewritable(c)) || role_needs(tp)
-    };
-    if !patterns.iter().any(rewritable) {
-        return Plan::Bgp(patterns);
-    }
-    let mut residual: Vec<TriplePattern> = Vec::new();
-    let mut extra: Vec<Plan> = Vec::new();
-    for tp in patterns {
-        if type_atom_class(&tp).is_some_and(|c| tbox.class_rewritable(c)) {
-            let class = type_atom_class(&tp).unwrap().to_string();
-            extra.push(class_atom_plan(tp.s, &class, tbox, counter));
-        } else if role_needs(&tp) {
-            let pred = role_atom_pred(&tp).unwrap().to_string();
-            extra.push(role_atom_plan(tp.s, &pred, tp.o, tbox, exq, counter));
-        } else {
-            residual.push(tp);
-        }
-    }
-    // Conjoin the residual BGP with each extra plan. If every atom was rewritten,
-    // start from the first extra plan (avoid an empty-BGP left operand).
-    let mut plan;
-    let mut iter = extra.into_iter();
-    if residual.is_empty() {
-        plan = iter.next().expect("rewritable ⇒ at least one extra plan");
-    } else {
-        plan = Plan::Bgp(residual);
-    }
-    for p in iter {
-        plan = join(plan, p);
-    }
-    plan
 }

@@ -170,6 +170,13 @@ fn collect_plan_slots(plan: &Plan, slots: &mut Slots) {
             }
             collect_plan_slots(inner, slots);
         }
+        // Only the output variables: a source's anonymous variables are never
+        // bound, so they need no slot.
+        Plan::DistinctUnion { vars, .. } => {
+            for v in vars {
+                slots.add(v);
+            }
+        }
     }
 }
 
@@ -305,6 +312,11 @@ fn mark_certain(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             }
             mark_certain(ctx, inner, m);
         }
+        Plan::DistinctUnion { vars, .. } => {
+            for v in vars {
+                mark_var(v, m);
+            }
+        }
     }
 }
 
@@ -374,7 +386,7 @@ fn mark_possible(ctx: &Ctx, plan: &Plan, m: &mut [bool]) {
             mark_possible(ctx, r, m);
         }
         Plan::Minus(l, _) => mark_possible(ctx, l, m),
-        Plan::Service { vars, .. } => {
+        Plan::Service { vars, .. } | Plan::DistinctUnion { vars, .. } => {
             for v in vars {
                 mark_var(v, m);
             }
@@ -1333,6 +1345,9 @@ pub(crate) fn eval_plan_iter<'q>(
             )),
         ),
         Plan::Minus(l, r) => minus_iter(ctx, index, named_filter, l, r),
+        Plan::DistinctUnion { vars, sources } => {
+            super::distinct_union::iter(ctx, index, vars, sources)
+        }
         Plan::Join(l, r) => {
             // VALUES-driven pushdown: substitute few ground rows into the BGP
             // scan instead of scanning the whole pattern and hash-joining.
@@ -2022,6 +2037,31 @@ fn join_iter<'q>(
                     None => Box::new(std::iter::empty()),
                 };
             }
+        }
+    }
+    // An entailed atom (OWL 2 QL) joined with a side that certainly binds all
+    // of its variables is a semi-join: each left row checks the atom's sources
+    // with its values substituted — a few point lookups — instead of the right
+    // side enumerating every member of a class. Taken under a small demand
+    // bound, or when enumerating would scan a fat extent. Same rows as the
+    // hash join: the right side yields each binding once, and a left row that
+    // already binds every variable merges with it exactly when it matches.
+    if let Plan::DistinctUnion { vars, sources } = r {
+        let lcert = certain_bound(ctx, l, ctx.slots.len());
+        let all_bound = vars
+            .iter()
+            .all(|v| ctx.slots.slot(v).is_some_and(|s| lcert[s]));
+        if all_bound
+            && (inlj_hint(ctx).is_some()
+                || super::distinct_union::scan_bytes(ctx, index, vars, sources)
+                    >= crate::bgp::FAT_SCAN_BYTES)
+        {
+            let mut cache = ExistsCache::new();
+            return Box::new(eval_plan_iter(ctx, index, nf, l).filter(move |row| {
+                optional
+                    || (super::distinct_union::matches(ctx, index, vars, sources, row)
+                        && cond.is_none_or(|f| f.boolean(ctx, index, row, &mut cache)))
+            }));
         }
     }
     // A property path joined with a side that already binds one of its

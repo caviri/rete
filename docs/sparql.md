@@ -472,13 +472,31 @@ Reasoning is **opt-in** — `rete sparql|sparql-url … --entail`, or the playgr
 SELECT ?o WHERE { ?o a <https://w3id.org/rete/gbif/taxon/class/Aves> } LIMIT 20
 ```
 
-**How** — a hierarchy atom is lowered to the property path that already walks the
-hierarchy: `?x a C` becomes `?x a ?c . ?c rdfs:subClassOf* C` (reflexive, so a
-direct type still matches), and likewise `subPropertyOf*` for roles; `domain` /
-`range` add `UNION` branches. A small TBox read gates the rewrite, so an atom
-whose class/property has no sub-terms — and every non-reasoned query — is
-untouched. The reasoning reaches nested patterns (`UNION` / `OPTIONAL` /
-subqueries).
+**How** — the TBox is read from the file's **default graph** (the
+`subClassOf` / `subPropertyOf` / `domain` / `range` / `inverseOf` statements,
+a few scans of small predicates) and its hierarchies are closed before the query
+runs. An atom then becomes the **distinct union** of the asserted patterns that
+entail it: `?x a C` → `?x a D` for every `D ⊑* C`, plus `?x p ?_` for every
+property `p` whose domain is `⊑* C`, plus `?_ q ?x` for every `q` whose range
+is; `?x P ?y` → `?x Q ?y` for every `Q ⊑* P`, plus `?y R ?x` for the inverses.
+The TBox applies inside `GRAPH` and under `FROM` too.
+
+- **One row per entailed triple.** A work typed both `fabio:Expression` and
+  `fabio:JournalArticle` is an Expression once: `COUNT(?s)` over
+  `?s a fabio:Expression` gives the number of works, not of type statements
+  (on OpenCitations' sample, 258,268 rather than 508,044). Each source is read
+  in subject order and the sources are merged, so the duplicates are dropped
+  without holding the answer set; `LIMIT` still stops early. A class with many
+  subclasses that cover most of the typed nodes is read as one scan of
+  `rdf:type`. Joined with rows that already bind the subject, the atom is a
+  check: the subject's own types are read once per row.
+- **Gated per atom.** A class gets a domain (range) branch only for the
+  properties whose domain (range) is `⊑* C`, and a class or property the file
+  never uses adds nothing. An atom reasoning cannot extend is left exactly as
+  written, so one unrelated `rdfs:domain` axiom no longer slows every class
+  atom of every reasoned query.
+
+The reasoning reaches nested patterns (`UNION` / `OPTIONAL` / subqueries).
 
 The existential rewrite is **sound by construction**: it fires only when the
 object variable is purely existential — it occurs exactly once in the whole query

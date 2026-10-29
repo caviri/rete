@@ -17,6 +17,7 @@ use crate::file::Rete;
 mod aggregate;
 mod diag;
 mod distinct;
+mod distinct_union;
 mod eval;
 mod expr;
 mod lower;
@@ -183,6 +184,22 @@ pub enum Plan {
     Minus(Box<Plan>, Box<Plan>),
     /// `GRAPH <iri>|?g { … }` — evaluate the inner pattern against a named graph.
     Graph(GraphTarget, Box<Plan>),
+    /// The **distinct** bindings of `vars` over the union of single triple
+    /// patterns (`sources`) — each solution once, however many sources (or
+    /// triples of one source) produce it. Every variable of a source that is
+    /// not in `vars` is anonymous: matched, never bound in the output. With
+    /// `vars` empty it is an existence test (one empty solution or none).
+    ///
+    /// Built only by the OWL 2 QL rewriter ([`ql`]): an entailed atom such as
+    /// `?x a C` holds once per entailed triple, while its rewriting
+    /// (`?x a C₁`, `?x a C₂`, `?x p ?_` for a `p` with domain `C`, …) matches
+    /// it once per *asserted* triple. The sources stream sorted on the key
+    /// and are merged, so deduplicating costs one cursor per source, not a
+    /// set of every solution.
+    DistinctUnion {
+        vars: Vec<String>,
+        sources: Vec<TriplePattern>,
+    },
     /// A nested `SELECT` subquery: evaluated independently to its projected
     /// solutions, which then join with the surrounding pattern on shared
     /// variables (only the subquery's projected variables are visible outside).
@@ -2328,6 +2345,61 @@ mod tests {
         );
         assert_eq!(subjects(r#"STRLEN(?l) = 25"#), vec![c]);
         assert_eq!(subjects(r#"STRLEN(?l) = 24"#), vec![b]);
+    }
+
+    /// The OWL 2 QL rewrite is gated PER ATOM: one `rdfs:domain` axiom on a
+    /// property the data never uses used to add a domain branch to every class
+    /// atom of every reasoned query (0.30 s became 1.02 s, 4.2 MB became
+    /// 11.8 MB fetched, on OpenCitations with its ontology). A class with no
+    /// subclass and no domain/range property the file uses keeps its plain
+    /// pattern; a class that gains members becomes a `DistinctUnion` holding
+    /// exactly the sources that can produce them.
+    #[test]
+    fn reasoning_rewrites_only_the_atoms_it_can_extend() {
+        let dom = "<http://www.w3.org/2000/01/rdf-schema#domain>";
+        let sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
+        let ty = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+        let bytes = rete_from(&[
+            (
+                "<http://ex/hasCharacterisation>",
+                dom,
+                "<http://ex/Citation>",
+            ),
+            ("<http://ex/SelfCitation>", sub, "<http://ex/Citation>"),
+            ("<http://ex/writtenBy>", dom, "<http://ex/Work>"),
+            ("<http://ex/r1>", ty, "<http://ex/Role>"),
+            ("<http://ex/w1>", ty, "<http://ex/Work>"),
+            ("<http://ex/w2>", "<http://ex/writtenBy>", "<http://ex/ann>"),
+        ]);
+        let rete = Rete::open(&bytes).unwrap();
+        let rewrite = |q: &str| {
+            let sel = parse_select(q).unwrap();
+            ql::reason_rewrite(sel.plan, &rete, &sel.project)
+        };
+        // No subclass, and the one domain axiom is about another class: as is.
+        assert!(matches!(
+            rewrite("SELECT ?s WHERE { ?s a <http://ex/Role> ; ?p ?o }"),
+            Plan::Bgp(p) if p.len() == 2
+        ));
+        // The domain axiom's own class: its property and its subclass are
+        // never used, so there is nothing to add.
+        assert!(matches!(
+            rewrite("SELECT ?s WHERE { ?s a <http://ex/Citation> }"),
+            Plan::Bgp(p) if p.len() == 1
+        ));
+        // Work gains the subjects of writtenBy: two sources, one per way.
+        match rewrite("SELECT ?s WHERE { ?s a <http://ex/Work> }") {
+            Plan::DistinctUnion { vars, sources } => {
+                assert_eq!(vars, vec!["s".to_string()]);
+                assert_eq!(sources.len(), 2);
+            }
+            other => panic!("expected a DistinctUnion, got {other:?}"),
+        }
+        let (_, sols) =
+            eval_sparql_reasoned(&rete, "SELECT ?s WHERE { ?s a <http://ex/Work> }").unwrap();
+        let mut got: Vec<&str> = sols.iter().map(|b| b["s"].as_str()).collect();
+        got.sort();
+        assert_eq!(got, vec!["<http://ex/w1>", "<http://ex/w2>"]);
     }
 
     /// A join whose left side turns out far smaller than the right BGP probes
