@@ -16,6 +16,10 @@ command -v wasm-opt >/dev/null || {
   exit 1
 }
 
+# The wasm-bindgen CLI pinned to Cargo.lock, and `wasm-pack --mode no-install`
+# so nothing is downloaded at build time. Exported for build_playground_async.sh.
+source scripts/wasm_bindgen_pin.sh
+
 if [[ -z "${RETE_SOURCE_REVISION:-}" ]]; then
   if [[ -n "${GITHUB_SHA:-}" ]]; then
     RETE_SOURCE_REVISION="$GITHUB_SHA"
@@ -79,9 +83,13 @@ echo ">> asyncify tgt dir: $RETE_WASM_ASYNC_TARGET_DIR"
 # Asyncify pass. It corrupts modern wasm-bindgen externref tables, so regular
 # builds explicitly skip wasm-opt. Rust's release profile still optimizes them.
 CARGO_TARGET_DIR="$RETE_WASM_TARGET_DIR" \
-  wasm-pack build crates/rete-wasm --target web --out-dir ../../web/pkg --no-opt
+  wasm-pack build crates/rete-wasm --mode "$RETE_WASM_PACK_MODE" --target web --out-dir ../../web/pkg --no-opt
 CARGO_TARGET_DIR="$RETE_WASM_TARGET_DIR" \
-  wasm-pack build crates/rete-wasm --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
+  wasm-pack build crates/rete-wasm --mode "$RETE_WASM_PACK_MODE" --target no-modules --out-dir ../../web/pkg-nomodules --no-opt
+# Each package records the engine source it was built from (web/pkg* is
+# gitignored, so nothing else can say). `node scripts/engine_stamp.mjs check`
+# compares them with the checkout; the gate's G0 runs it.
+node scripts/engine_stamp.mjs stamp web/pkg web/pkg-nomodules
 # docs/engine/ is the tracked ESM copy the standalone docs pages import
 # (anatomy/bim-pair/building). It used to be a hand-copy with no producer —
 # refresh it here so the CI parity diff below can actually guard it.
@@ -125,9 +133,15 @@ for path in paths:
         "sha256": hashlib.sha256(payload).hexdigest(),
     })
 
+engine = json.loads(version("node", "scripts/engine_stamp.mjs", "hash"))
+
 manifest = {
     "schemaVersion": 1,
     "gitCommit": os.environ["RETE_SOURCE_REVISION"],
+    # The content hash of every file the wasm is compiled from (see
+    # scripts/engine_stamp.mjs). Unlike gitCommit it also covers uncommitted
+    # edits, and it is what each web/pkg*/rete-build.json is compared against.
+    "engineSource": engine["sha256"],
     # The string stamped into docs/playground.html. Recorded because getting it
     # wrong is invisible until CI byte-diffs the page (#199).
     "buildStamp": os.environ["RETE_BUILD_STAMP"],
@@ -137,6 +151,7 @@ manifest = {
             "rustup", "run", os.environ["ASYNCIFY_TOOLCHAIN"], "rustc", "--version"
         ),
         "wasmPack": version("wasm-pack", "--version"),
+        "wasmBindgen": version("wasm-bindgen", "--version"),
         "binaryen": version("wasm-opt", "--version"),
         "node": version("node", "--version"),
     },

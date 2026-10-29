@@ -104,6 +104,27 @@ docker compose run --rm -e RETE_SOURCE_REVISION=$(git rev-parse HEAD) wasm
 (`RETE_SOURCE_REVISION` is only needed from a git worktree, whose `.git` file
 points at a host path the container cannot follow.)
 
+**Nothing is downloaded at build time.** The dev image carries the wasm-bindgen
+CLI at exactly the `wasm-bindgen` version in `Cargo.lock`
+(`WASM_BINDGEN_VERSION` and `WASM_BINDGEN_REV` in `.devcontainer/Dockerfile`),
+and the script runs `wasm-pack --mode no-install`, so a missing or mismatched
+CLI stops the build with both versions named instead of wasm-pack fetching one
+from GitHub. When `Cargo.lock` moves wasm-bindgen, bump both ARGs in the same
+commit (`WASM_BINDGEN_REV` is the release tag's commit, first 9 hex digits:
+wasm-bindgen writes it into every wasm's `producers` section, and it is what
+makes the image's CLI emit the same bytes as the official binary).
+`RETE_WASM_ALLOW_DOWNLOAD=1` restores the old download for a machine without
+the image.
+
+**Which engine is in `web/pkg*`?** Those packages are gitignored, so the build
+stamps each one with `rete-build.json`: the content hash of the engine source it
+compiled (the workspace manifests, `Cargo.lock`, and `Cargo.toml` + `src/` of
+rete-wasm and every crate it reaches by path), the commit, and the wasm's
+sha256. `node scripts/engine_stamp.mjs check` compares them with the checkout,
+and the gate's G0 fails on a stale or unstamped package, so a gate can no
+longer vouch for an engine built from other source. `docs/wasm-build.json`
+records the same `engineSource` for the tracked artifacts.
+
 Four things make that byte diff go red, all presenting as the same
 `Binary files … differ`. Two are handled by the script; the other two are the
 check doing its job:

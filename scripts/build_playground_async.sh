@@ -51,9 +51,13 @@ rustup target list --toolchain "$ASYNCIFY_TOOLCHAIN" --installed \
 source scripts/wasm_target_dir.sh   # cwd is the repository root (the cd above)
 export CARGO_TARGET_DIR="$RETE_WASM_ASYNC_TARGET_DIR"
 
+# The wasm-bindgen CLI pinned to Cargo.lock; no download (see the file). A no-op
+# when build_wasm.sh already decided and exported RETE_WASM_PACK_MODE.
+source scripts/wasm_bindgen_pin.sh
+
 export RUSTFLAGS="-Ctarget-feature=-reference-types"   # NOT -multivalue (see above)
 rustup run "$ASYNCIFY_TOOLCHAIN" wasm-pack build crates/rete-wasm \
-  --target no-modules --out-dir ../../web/pkg-nomodules-async \
+  --mode "$RETE_WASM_PACK_MODE" --target no-modules --out-dir ../../web/pkg-nomodules-async \
   --no-opt -- --features asyncify -Z build-std=panic_abort,std
 
 RAW=web/pkg-nomodules-async/rete_wasm_bg.wasm
@@ -62,3 +66,6 @@ node -e "const m=new WebAssembly.Module(require('fs').readFileSync('$RAW'));if(W
 wasm-opt --asyncify --pass-arg=asyncify-imports@env.rete_fetch_ranges,env.rete_file_len "$RAW" -o "$RAW.async"
 mv "$RAW.async" "$RAW"
 echo ">> asyncified: $(stat -c%s "$RAW") bytes; asyncify control fns: $(node -e "const m=new WebAssembly.Module(require('fs').readFileSync('$RAW'));console.log(WebAssembly.Module.exports(m).filter(e=>/asyncify/.test(e.name)).map(e=>e.name).join(', '))")"
+# Record the engine source this package came from (it is gitignored, so nothing
+# else can say): the gate's G0 compares it with the checkout.
+node scripts/engine_stamp.mjs stamp web/pkg-nomodules-async

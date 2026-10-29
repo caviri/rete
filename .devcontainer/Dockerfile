@@ -109,3 +109,29 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 COPY --from=oxigraph /usr/local/bin/oxigraph /usr/local/bin/oxigraph
 
 USER $USERNAME
+
+# The wasm-bindgen CLI, at EXACTLY the `wasm-bindgen` version in Cargo.lock.
+# Without it, `wasm-pack build` downloads a matching CLI from GitHub on the
+# first build in every fresh container, so a build depended on the network and
+# on whatever that download served. scripts/build_wasm.sh now refuses to build
+# when this binary is missing or does not match Cargo.lock, and runs wasm-pack
+# with `--mode no-install`, so nothing is fetched at build time. When Cargo.lock
+# moves wasm-bindgen, bump this ARG in the same commit: the build names both
+# versions when they disagree. A layer of its own, last, so a bump rebuilds
+# only this one.
+#
+# WASM_BINDGEN_REV is the first 9 hex digits of the release tag's commit
+# (`git ls-remote https://github.com/wasm-bindgen/wasm-bindgen refs/tags/<version>`).
+# wasm-bindgen writes "wasm-bindgen <version> (<rev>)" into the `producers`
+# section of every wasm it emits, and takes <rev> from `git rev-parse` when its
+# build script runs inside a git checkout, which is how the official release
+# binaries (the ones wasm-pack downloads) are built. A crates.io install has no
+# checkout, so it would write "0.2.122" alone and every artifact would differ
+# from an official-binary build in those 12 bytes. WBG_VERSION, read by
+# wasm-bindgen-shared's option_env!, supplies the same label: the output is then
+# byte-identical to a build with the downloaded CLI.
+ARG WASM_BINDGEN_VERSION=0.2.122
+ARG WASM_BINDGEN_REV=ddd322514
+RUN WBG_VERSION=${WASM_BINDGEN_REV} CARGO_BUILD_JOBS=4 \
+      cargo install wasm-bindgen-cli --version ${WASM_BINDGEN_VERSION} --locked \
+    && test "$(wasm-bindgen --version)" = "wasm-bindgen ${WASM_BINDGEN_VERSION}"
