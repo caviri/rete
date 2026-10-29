@@ -300,6 +300,8 @@ check "sparql-url"  "Bob|solution" -- "$B" sparql-url "http://127.0.0.1:8099/web
 check "cost-url"    "full query open|range request" -- "$B" cost "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 check "shacl-url"   "MinCountConstraintComponent" -- bash -c "$B shacl-url 'http://127.0.0.1:8099/g.rete' --shapes '$T/person-bad.ttl' --format json; true"
 check "why-url"     "index_permutation|POS|tile" -- "$B" why-url "http://127.0.0.1:8099/web.rete" --predicate "<http://ex/knows>" --json
+# Same answer with the parallel batches off (one range at a time) and on.
+check "sparql-url seq" "Bob|solution" -- env RETE_HTTP_CONCURRENCY=1 RETE_HTTP_RETRIES=0 "$B" sparql-url "http://127.0.0.1:8099/web.rete" "PREFIX e: <http://ex/> SELECT ?y WHERE { e:Alice e:knows ?y }"
 kill "$(cat "$T/srv.pid")" 2>/dev/null
 
 echo "== error handling (must fail cleanly, not panic) =="
