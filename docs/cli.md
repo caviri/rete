@@ -848,12 +848,30 @@ never an addition: giving both, or neither, is a usage error (exit 2). The
 file must be UTF-8 (a leading byte-order mark is ignored); a file that cannot
 be read, or holds only whitespace, is an error (exit 1).
 
-**Memory & I/O.** A local file larger than a quarter of the memory budget
-(1 GiB at the default) opens through the same lazy range reader the `-url`
-commands use (threshold override: `RETE_LOCAL_LAZY_ABOVE_MB`, block size:
-`RETE_BLOCK_KB`), and aggregation streams through per-group accumulators.
-Preview a query's byte cost with `rete cost`, and see the exact ranges a query
-read with `rete why`.
+**Memory & I/O.** Every command that opens a local file (this one, `stats`,
+`search`, `serve`, …) reads it whole only when that is cheap, and otherwise
+opens it through the same lazy range reader the `-url` commands use (block
+size: `RETE_BLOCK_KB`). Reading whole holds the file image, its decoded
+dictionary and every index permutation, none of it evictable: 6.8× the file
+on the OpenCitations sample. So a file is read whole only when it is **at most
+a sixteenth of the memory available to the process**, never past 1 GiB, and
+for `sparql` also at most a quarter of `--memory-budget-mb`. Available memory
+is the smaller of the kernel's `MemAvailable` and the headroom under the
+process's cgroup limit (v2 `memory.max` or v1 `memory.limit_in_bytes`, page
+cache not counted as used), so inside a container the container's limit is
+what counts. Where neither can be read (macOS, Windows) the threshold is
+256 MiB. `RETE_LOCAL_LAZY_ABOVE_MB` overrides the threshold outright (`0` =
+always lazy); `RETE_OPEN_DEBUG=1` prints which way each open went and why.
+
+Measured in a 4 GiB container on the OpenCitations sample: under the fixed
+1 GiB threshold of earlier releases, `stats`, `sparql`, `search` and `serve`
+on the 1.07 GB file each read it whole, passed 4 GiB and were killed after
+24–49 s. Now the same file opens lazily: a one-row `sparql` answers in
+0.035 s at 15 MB peak, `search --contains` in 0.11 s at 59 MB, `stats` in
+0.53 s at 421 MB (it reads the pyramid's statistics blocks). Its 0.24 GB
+sibling is still a small enough fraction to read whole (3.1 s, 1.6 GB). Aggregation
+streams through per-group accumulators. Preview a query's byte cost with
+`rete cost`, and see the exact ranges a query read with `rete why`.
 
 **`--memory-budget-mb N`** (default 4096; `0` = unlimited) bounds what the
 lazy reader keeps resident: the decoded dictionary chunks, the decoded index

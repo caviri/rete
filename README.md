@@ -72,8 +72,8 @@ WebAssembly, so a **browser can query the file directly with no backend**.
 - **Lazy over HTTP — and on disk.** Range-read the file wherever it lives: a
   selective query faults in only the dictionary chunks and index tiles it
   touches, so a **1 GB graph stays interactive in the browser** and a **52 GB
-  graph opens locally in KBs** (files past 1 GiB go through the same range
-  reader).
+  graph opens locally in KBs** (a local file goes through the same range
+  reader unless it is small next to the free memory).
 - **Bounded memory at any scale.** Aggregation streams through per-group
   accumulators — a `COUNT` over the **9.83-billion-triple** DataCite file
   returns **779,399 in 4 s inside a 2 GiB container**, and a `GROUP BY` over

@@ -2,7 +2,7 @@
 //! `.rete` sources (local paths and/or http(s) URLs), with summary-based routing
 //! and a term-level merge of the per-source results.
 
-use rete_core::{eval_query, query_predicates, QueryOutput, Rete, SliceReader, SummaryView};
+use rete_core::{eval_query, query_predicates, QueryOutput, Rete, SummaryView};
 
 use crate::commands::range_source::open_local;
 use crate::commands::render::print_query_output;
@@ -23,8 +23,8 @@ pub(crate) fn source_predicates(
         let reader = HttpRangeReader::open(source)?;
         SummaryView::open_ranged(&reader)?
     } else {
-        let bytes = std::fs::read(source)?;
-        let reader = SliceReader::new(&bytes);
+        // Positional reads of the summary's sections, not the whole file.
+        let reader = crate::commands::range_source::LocalRangeReader::open(source)?;
         SummaryView::open_ranged(&reader)?
     };
     Ok(view.map(|v| {

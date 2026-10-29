@@ -5,7 +5,7 @@
 //! from the summary alone, never touching the triple index.
 
 use crate::commands::range_source::{open_local, LocalRangeReader};
-use rete_core::{SliceReader, SummaryView, CODEC_ZSTD};
+use rete_core::{SummaryView, CODEC_ZSTD};
 
 /// Print the raw file header (section offsets, counts, codec), plus the embedded
 /// Dataset Card catalog when the file carries one.
@@ -314,8 +314,8 @@ pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
 /// levels, leaves as you zoom in). All read **index-free** from the pyramid-meta
 /// via [`SummaryView`]. With `--level k`, print just level `k`'s type histogram.
 pub(crate) fn summary(file: &str, level: Option<usize>) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let Some(view) = SummaryView::open_ranged(&SliceReader::new(&bytes))? else {
+    // Positional reads of the sections the view needs, not the whole file.
+    let Some(view) = SummaryView::open_ranged(&LocalRangeReader::open(file)?)? else {
         eprintln!("file has no pyramid");
         return Ok(());
     };
@@ -456,8 +456,7 @@ pub(crate) fn schema(file: &str) -> anyhow::Result<()> {
 /// Exact per-predicate triple counts, computed from the summary alone (the triple
 /// index is never read).
 pub(crate) fn predicates(file: &str) -> anyhow::Result<()> {
-    let bytes = std::fs::read(file)?;
-    let reader = SliceReader::new(&bytes);
+    let reader = LocalRangeReader::open(file)?;
     match SummaryView::open_ranged(&reader)? {
         Some(view) => {
             println!(

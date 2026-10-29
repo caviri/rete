@@ -31,9 +31,15 @@ front.
 
 ## Lazy vs read-whole — which commands, and when it kicks in
 
-- Files **larger than `RETE_LOCAL_LAZY_ABOVE_MB` (default 1024 MiB)** open through the
-  lazy range path **automatically**. Smaller files use the read-it-all path, which is
-  faster when the whole graph will be touched anyway.
+- Files open through the lazy range path **automatically** unless they are small next to
+  the memory the process can still use: read whole only when the file is at most **1/16
+  of the available memory** (the smaller of `MemAvailable` and the cgroup limit's
+  headroom, so a container's `--memory` counts), never past 1 GiB, and for `sparql` at
+  most 1/4 of `--memory-budget-mb`; 256 MiB where memory cannot be read (macOS,
+  Windows). Reading whole costs 3–7x the file and is faster only when the whole graph
+  will be touched anyway. (Before 0.4.0 the rule was a fixed 1 GiB, which read a
+  1.07 GB file whole inside a 4 GiB container and got it killed.)
+  `RETE_OPEN_DEBUG=1` prints which way each open went and why.
 - **Lazy (range-read) commands:** `query`, `bgp`, `sparql`, `cypher`, `why`, `stats`,
   `search`, `graphs`, `summary`, `predicates`, `schema`, `export`, `reach`, `shacl`,
   `communities`, `federate`, `reason`, `serve`.
@@ -48,7 +54,7 @@ front.
 
 | var | default | what it does |
 |---|---|---|
-| `RETE_LOCAL_LAZY_ABOVE_MB` | `1024` | file-size threshold to switch to the lazy path. Lower it (e.g. `RETE_LOCAL_LAZY_ABOVE_MB=64`) to force lazy on smaller files; raise it to force read-whole (faster for a full scan you'll consume entirely). |
+| `RETE_LOCAL_LAZY_ABOVE_MB` | memory-aware (see above) | file-size threshold to switch to the lazy path, overriding the memory-aware rule. `0` forces lazy for everything; raise it to force read-whole (faster for a full scan you'll consume entirely, if the RAM is there). |
 | `RETE_BLOCK_KB` | `64` (auto **128** for files >100 MB) | the range-read **block size** — the KB fetched per cache miss. The reader **coalesces byte-adjacent blocks into one request**, so a selective query only pays for the handful of *scattered* blocks it touches. Keep it near the 64 KiB dictionary-chunk size: bigger blocks over-fetch on scattered faults, smaller blocks add round-trips. |
 | `RETE_DICT_RESTART_INTERVAL` | build-time | dictionary front-coding restart interval — sets how big the in-memory restart-offset table is (a 50 M-term section's table is ~24 MiB). Larger interval → smaller table, slower term seeks. Set at **build**, not at query time. |
 
