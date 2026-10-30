@@ -1026,7 +1026,7 @@ pub fn assemble_dataset_with<M: IntoMetadata>(
 pub fn assemble_dataset_with_opts<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
@@ -1046,7 +1046,7 @@ pub fn assemble_dataset_with_opts<M: IntoMetadata>(
 pub fn assemble_dataset_with_opts_algo<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
@@ -1070,15 +1070,17 @@ pub fn assemble_dataset_with_opts_algo<M: IntoMetadata>(
 pub fn assemble_dataset_with_perms<M: IntoMetadata>(
     quads: Vec<RawQuad>,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     perms: crate::index::PermSet,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
+    let text_index = crate::text_index::IntoTextIndex::into_text_index(with_text_index);
     let opts = AssembleOptions {
         with_pyramid,
-        with_text_index,
+        with_text_index: text_index.is_some(),
+        text_index_scope: text_index.as_ref(),
         type_override,
         algo,
         perms,
@@ -1094,8 +1096,13 @@ pub fn assemble_dataset_with_perms<M: IntoMetadata>(
 pub struct AssembleOptions<'a> {
     /// Build the community pyramid (kind 4).
     pub with_pyramid: bool,
-    /// Build the full-text index (kind 6).
+    /// Build the full-text index (kind 6, or kind 11 when its scope leaves
+    /// out some predicates).
     pub with_text_index: bool,
+    /// The scope of that index (`--text-index-graphs`, `--text-index-include`,
+    /// `--text-index-exclude`); `None` is the default scope, the only one
+    /// before 0.4.0: the default graph, every predicate.
+    pub text_index_scope: Option<&'a crate::text_index::TextIndexScope>,
     /// The type predicate for the schema (e.g. `wdt:P31`); `rdf:type` if `None`.
     pub type_override: Option<&'a str>,
     /// The community algorithm of the pyramid.
@@ -1119,6 +1126,7 @@ impl AssembleOptions<'_> {
         AssembleOptions {
             with_pyramid: true,
             with_text_index: false,
+            text_index_scope: None,
             type_override: None,
             algo: PyramidAlgo::Louvain,
             perms: crate::index::PermSet::ALL,
@@ -1202,7 +1210,7 @@ pub fn assemble_dataset_opts<M: IntoMetadata>(
 pub fn assemble_dataset_streaming<S, M: IntoMetadata>(
     stream: S,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
@@ -1225,7 +1233,7 @@ where
 pub fn assemble_dataset_streaming_algo<S, M: IntoMetadata>(
     stream: S,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
@@ -1250,7 +1258,7 @@ where
 pub fn assemble_dataset_streaming_with_perms<S, M: IntoMetadata>(
     stream: S,
     with_pyramid: bool,
-    with_text_index: bool,
+    with_text_index: impl crate::text_index::IntoTextIndex,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     perms: crate::index::PermSet,
@@ -1259,9 +1267,11 @@ pub fn assemble_dataset_streaming_with_perms<S, M: IntoMetadata>(
 where
     S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
 {
+    let text_index = crate::text_index::IntoTextIndex::into_text_index(with_text_index);
     let opts = AssembleOptions {
         with_pyramid,
-        with_text_index,
+        with_text_index: text_index.is_some(),
+        text_index_scope: text_index.as_ref(),
         type_override,
         algo,
         perms,
@@ -1349,11 +1359,28 @@ fn finish_assembly<M: IntoMetadata>(
     };
     stats.pyramid_levels = levels;
 
-    let text_index = if opts.with_text_index {
-        crate::file::compute_text_index(&dict, &default_triples)
-    } else {
-        Vec::new()
+    // The full-text index over the literals of the requested scope: the
+    // default graph's (the only scope before 0.4.0), optionally every named
+    // graph's too, optionally only some predicates'.
+    let with_text_index = opts
+        .with_text_index
+        .then(|| opts.text_index_scope.cloned().unwrap_or_default());
+    let text_index = match &with_text_index {
+        Some(scope) => crate::text_index::build_section(
+            &dict,
+            scope,
+            &default_triples,
+            named.values().map(Vec::as_slice),
+            crate::file::writer_codec(),
+        ),
+        None => Vec::new(),
     };
+    let text_index_partial = with_text_index
+        .as_ref()
+        .is_some_and(crate::text_index::TextIndexScope::restricts_predicates);
+    let text_index_named = with_text_index
+        .as_ref()
+        .is_some_and(crate::text_index::TextIndexScope::covers_named_graphs);
 
     // The LABEL_INDEX and SCHEMA sections are computed over the DEDUPLICATED
     // default graph in SPO order (and the schema's second pass in POS order),
@@ -1443,6 +1470,8 @@ fn finish_assembly<M: IntoMetadata>(
         levels,
         &blob,
         &text_index,
+        text_index_partial,
+        text_index_named,
         codec,
     );
     // Kinds 8 and 9 go after everything else: they are outside the content

@@ -144,7 +144,7 @@ addressing — *how many* of those six a given file actually stores is its
 |---|---|---|
 | 0 | 4 | magic `RETE` |
 | 4 | 1 | format version (`0x05`, stable generation 1) |
-| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples) |
+| 5 | 1 | flags (bit0: has named graphs/quads; bit1: tile-synopsis trailer; bit2: contains RDF-star quoted triples; bit4: the text index also covers the named graphs' literals, `--text-index-graphs all`, §6.3 — Rete 0.4.0, ignored by older readers) |
 | 6 | 2 | header length (= 1024) |
 | 8 | 16 | content hash (blake3, first 16 bytes) — also an ETag-like id |
 | 24 | 8 | total quad count |
@@ -161,7 +161,7 @@ addressing — *how many* of those six a given file actually stores is its
 
 | Offset | Size | Field |
 |---|---|---|
-| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index, `7` build-info, `8` label-index, `9` schema; higher ids reserved for future sections) |
+| +0 | 2 | section kind (`1` metadata, `2` dictionary, `3` index, `4` pyramid-meta, `5` named-graphs, `6` text-index, `7` build-info, `8` label-index, `9` schema, `11` text-index restricted to some predicates (§6.3); other ids reserved for future sections) |
 | +2 | 2 | section flags (reserved) |
 | +4 | 4 | reserved (zero) |
 | +8 | 8 | section offset |
@@ -215,6 +215,12 @@ that predates them keeps their directory entries verbatim, shifts them on every
 header rewrite like any unknown kind, and never reads them; it answers every query
 with the same rows, but finds no label index, no schema and no planner statistics
 in a file whose pyramid-meta no longer carries them (§7.3).
+
+A **predicate-restricted text index** (kind `11`, §6.3) follows the same rule,
+although it sits where a kind-`6` index does: it is outside the content hash and
+starts with the same 16-byte self-digest, which a current `verify` checks. A
+reader older than 0.4.0 does not know kind `11`, so a hashed one would make its
+`verify` call the file corrupt. A kind-`6` index is hashed, as it always was.
 
 ---
 
@@ -439,18 +445,28 @@ while `term → id` returns wrong answers.
 
 ### 6.3 Full-text index (TEXT_INDEX section, optional)
 
-An **opt-in** section (kind `6`, built with `rete build --text-index`) that maps
-each **word** appearing in a string literal to the **subjects** that carry it, so
+An **opt-in** section (kind `6`, or `11` when it covers only some predicates —
+see *Where it is stored* below; built with `rete build --text-index`) that maps
+each **word** appearing in a literal to the **subjects** that carry it, so
 a reader can answer "which entities mention `glucose`?" without scanning the
 literals — and a *remote* reader fetches only the posting lists it queries, never
-the whole index. Absent by default: a build without `--text-index` writes no kind
-`6` entry and is byte-identical to one that never had the feature.
+the whole index. Absent by default: a build without `--text-index` writes no
+text-index entry and is byte-identical to one that never had the feature. The
+memory-bounded build (`--memory-budget-mb`) writes the same section bytes as the
+in-RAM build, for every scope.
 
-**What is indexed.** Every triple whose object is a **string literal** is
-tokenized: the literal's lexical value is split on non-alphanumeric (Unicode)
-boundaries, each run lowercased and kept if ≥ 2 characters. The build and query
-sides share one tokenizer, so a query word matches how it was stored. The result
-is `token → sorted distinct subject ids`.
+**What is indexed.** Every statement in the index's **scope** whose object is a
+**literal** (any datatype or language) is tokenized: the literal's lexical value
+is split on non-alphanumeric (Unicode) boundaries, each run lowercased and kept if
+≥ 2 characters. The build and query sides share one tokenizer, so a query word
+matches how it was stored. The result is `token → sorted distinct subject ids`.
+
+**Scope.** By default the scope is the **default graph, every predicate** — the
+only scope of any file written before Rete 0.4.0. A build may widen it to every
+named graph (`--text-index-graphs all`) and narrow it to some predicates
+(`--text-index-include <IRI>…` or `--text-index-exclude <IRI>…`). Subject ids are
+dictionary ids, which the default and named graphs share, so a named-graph
+subject's posting entry is the same id the graph's own index uses.
 
 **On-disk layout** (the section payload):
 
@@ -461,9 +477,45 @@ token table (compressed with the header's block codec):
   per token (ascending): varint shared_prefix_len   # front-coded vs previous token
                          varint suffix_len, suffix bytes
                          varint posting_off, varint posting_len   # into the postings blob
+  [scope block]          # only for a non-default scope, see below
 postings blob (uncompressed, so one posting range-reads directly):
   per token (same order): varint count, then `count` delta-varint ascending subject ids
 ```
+
+The **scope block** follows the last token entry inside the (compressed) token
+table, so a reader gets it with the table and pays no extra read:
+
+```
+u8      1            # scope-block version
+u8      graphs       # 0 = default graph only, 1 = default + every named graph
+u8      predicates   # 0 = every predicate, 1 = only those listed, 2 = all but those listed
+varint  n, then n × (varint len, bytes)   # predicate IRIs as N-Triples tokens `<…>`, ascending
+```
+
+The default scope writes **no** block: its section is byte-identical to one
+written before scopes existed, and a reader that predates the block stops after
+`num_tokens` entries and never looks further. A reader that finds a block of a
+version it does not know treats the index as covering no predicate — it still
+answers word search, and never prunes a query with coverage it cannot read.
+Fields appended to a version-1 block must not narrow what the index covers;
+anything that does takes a new version byte.
+
+**Where it is stored.** An index that covers every predicate is section kind `6`
+— with or without named graphs. One that leaves predicates out
+(`predicates` 1 or 2) is section kind **`11`**, same payload. The split is for
+readers older than scopes: they prune `FILTER(CONTAINS(…))` with any text index
+they find (below), as if it covered every literal. A kind-`6` index always
+covers at least what they assume — the default graph, every predicate — so they
+stay correct with it. A predicate-restricted index does not, so it is filed
+under a kind they do not know: they preserve it, never open it, and answer
+`CONTAINS` by scanning and `rete search --contains` with "no text index". The
+header maps either kind onto the same text-index offset and length.
+
+A kind-`11` section is `digest(16) | payload`, where `digest =
+blake3(payload)[..16]` and the payload is the kind-`6` layout above. It is outside
+the content hash (§4.1) and verified by that digest instead, so a reader that
+cannot see it still verifies the file; a reader skips the digest to reach the
+`token_table_len` varint. A kind-`6` section has no digest and is hashed.
 
 The **token table** is small (distinct words, front-coded) and read whole; the
 **postings blob** is the bulk and is fetched one posting at a time. A remote
@@ -472,7 +524,20 @@ one prefix range, binary-searches the (sorted) tokens locally, then range-reads
 the single `(posting_off, posting_len)` it needs — `lookup(word)` faults one
 posting, `prefix(word)` the contiguous run of postings whose tokens share the
 prefix. Multiple query words **AND** by intersecting their sorted posting lists.
-SPARQL never touches this section, so a query open neither fetches nor pays for it.
+
+**SPARQL** reads it in one place: a required `FILTER(CONTAINS(?v, "needle"))` over
+a pattern `?s <p> ?v` seeds `?s` with the subjects whose words contain every
+piece of the needle — an over-approximation that the original filter then
+re-verifies row by row, so the index can only make the query faster. That holds
+only inside the scope, so the engine applies it only when the active graph is
+covered (the default graph; any graph under `graphs = 1`) and the pattern's
+predicate is covered (a variable predicate only when every predicate is).
+Elsewhere — inside `GRAPH` over a default-scope index, under `FROM`, on a
+predicate left out — the filter scans. Whether the index covers the named graphs
+is header flag bit 4 (§4.1), written with `graphs = 1`, so a query off the
+default graph on a file without the bit decides from the header and fetches no
+byte of the section. A query that uses no such filter neither fetches nor pays
+for the section.
 
 **Discoverability.** Because a file *without* the section answers the same
 `FILTER(CONTAINS(…))` with the same rows — by full scan — the capability cannot
@@ -491,6 +556,13 @@ table it measures, i.e. the prefix a first search fetches — costs one ≤10-by
 range read at `text_index offset` and is the honest cost figure; the section
 length alone overstates it several-fold, since the postings blob is never read
 whole.
+
+**Compatibility:** the scope block and kind `11` are optional additions inside
+`0x05` (Rete 0.4.0): a default-scope index is the same bytes as before, a
+`graphs = 1` kind-`6` index is read by older readers as a plain index (they find
+more subjects than they expect, which their re-verifying filter discards), and a
+kind-`11` index is invisible to them — outside the content hash, so their
+`verify` still passes. Header flag bit 4 is unknown to them and ignored.
 
 ### 6.4 Label index (LABEL_INDEX section, optional)
 

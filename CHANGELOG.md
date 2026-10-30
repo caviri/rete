@@ -64,6 +64,40 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
     checked by `rete verify`), so an older `rete verify` still passes and the
     content identity of a file does not depend on them.
 - `rete repyramid --label-index`; `rete merge` keeps its shards' label index.
+- **`--text-index` in the memory-bounded build.** `rete build
+  --memory-budget-mb N --text-index` used to be refused, so no file that
+  needs the bounded build (OpenCitations, Crossref) could carry full-text
+  search. The index is now a second external sort inside the same budget:
+  each chunk spills its literal words with chunk-local subject ids while it
+  is sealed, the dictionary merge's remap tables turn them into global ids,
+  and runs of at most a quarter of the budget are merged into the section;
+  the token table is compressed from disk. The TEXT_INDEX section is
+  **byte-identical** to the in-RAM build's. On the OpenCitations sample
+  (18.9 M statements) the sections equal the in-RAM files' at 1,500 and
+  3,000 MiB, with provenance in named graphs (10.2 MB) and in the default
+  graph (68.3 MB). With provenance in the default graph the build took 83 s
+  instead of 59 s at 1,500 MiB, and its peak RSS stayed at 1.19 GB (1.17 GB
+  without the index).
+- **Text-index scope**, on `rete build` (both paths) and `rete repyramid`:
+  - `--text-index-graphs default|all`: `all` indexes the named graphs'
+    literals as well as the default graph's;
+  - `--text-index-include <IRI>` / `--text-index-exclude <IRI>`
+    (repeatable): index only, or all but, these predicates' literals.
+
+  The scope is stored in the section, in a block after the token entries
+  (none for the default scope, which stays byte-identical), and recorded in
+  build-info (`text_index_graphs`, `text_index_include`,
+  `text_index_exclude`). `rete search --contains` names the scope when it
+  finds nothing, and `rete stats` marks a predicate-restricted index. On the
+  OpenCitations sample with provenance in the default graph, excluding
+  `dcterms:description` and `oco:hasUpdateQuery` shrinks the index from
+  68.3 MB to 23.8 MB (−65%), and excluding the two provenance timestamps as
+  well leaves 10.2 MB (−85%), the data alone.
+- rete-core: `TextIndexScope` (with `TextIndexGraphs`,
+  `TextIndexPredicates`), `TextIndex::scope`, `Rete::text_index_scope` and
+  `ExternalBuildOptions::text_index`. The build functions' `with_text_index`
+  argument takes a `bool` as before, or a scope (`IntoTextIndex`), and
+  `AssembleOptions` carries it as `text_index_scope`.
 
 ### Changed
 
@@ -215,6 +249,18 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   predicate is `--type-predicate` or `rdf:type` (the pyramid's
   "behaves like instance-of" auto-detection applies to its descriptors only).
   `query_stats` now counts deduplicated statements.
+- **File format, within `0x05`: section kind 11 and header flag bit 4.** A
+  predicate-restricted text index is written as kind 11 instead of 6, with the
+  same payload behind a 16-byte self-digest. Readers older than 0.4.0 prune
+  `FILTER(CONTAINS(…))` with any text index they find; with one that left a
+  predicate out they would drop that predicate's rows. They do not know kind
+  11, so they keep it unopened and scan instead. Like kinds 8 and 9 it is
+  outside the content hash, so their `verify` still passes (checked with
+  0.3.7); the new `verify` checks its digest. A default-scope or
+  `--text-index-graphs all` index stays kind 6 and hashed. `all` also sets
+  header flag bit 4, so a `CONTAINS` inside `GRAPH` or under `FROM` knows from
+  the header whether the index covers it: without the bit it scans and reads
+  no byte of the index. See [compatibility.md](docs/compatibility.md).
 
 ### Fixed
 
@@ -264,9 +310,12 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   on a file built with `--text-index`, even when the graph's literals
   contained the string (`STRSTARTS`, `REGEX` and `BIND(CONTAINS(…))` were
   right). The full-text pushdown seeded the scan with subjects from the
-  default graph's words; it now runs only when the active graph is the
-  default graph, and `CONTAINS` scans elsewhere (inside `GRAPH`, under
-  `FROM`, over the union default graph). Two more places read the default
+  default graph's words, whatever graph was active. It now runs only where the
+  index covers the active graph and the pattern's predicate — the default
+  graph, or any graph for an index built with `--text-index-graphs all` — and
+  `CONTAINS` scans elsewhere (inside `GRAPH`, under `FROM`, over the union
+  default graph). Found on OpenCitations
+  (`GRAPH <…/prov/> { … CONTAINS(…, "06270426") }`). Two more places read the default
   graph whatever the query said: a sub-`SELECT` inside `GRAPH <g>`, under
   `FROM` or under the union-default toggle now reads that active graph, and
   `DESCRIBE … FROM <g>` describes from `<g>`.

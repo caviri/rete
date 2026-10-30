@@ -1518,10 +1518,14 @@ fn text_contains_pushdown(
     inner: &Plan,
 ) -> Option<Vec<Row>> {
     use std::collections::BTreeSet;
+    // Decided from the header, before anything faults the token table.
     if !text_index_covers(ctx, index) {
         return None;
     }
     let ti = ctx.rete.text_index()?;
+    // The predicates it covers come from its scope block, in the token table
+    // the pushdown reads anyway.
+    let scope = ti.scope();
     let mut needles: Vec<(String, String)> = Vec::new();
     required_contains(expr, &mut needles);
 
@@ -1530,9 +1534,15 @@ fn text_contains_pushdown(
     // constraints only ever come back through the re-verifying filter).
     let mut seed: Option<(String, BTreeSet<u32>)> = None;
     for (cv, needle) in &needles {
-        let Some(sv) = contains_subject_var(inner, cv) else {
+        let Some((sv, pred)) = contains_subject_var(inner, cv) else {
             continue;
         };
+        // ...and over the predicates it covers: an include/exclude index never
+        // saw the literals of the predicates it left out, and a variable
+        // predicate can bind exactly those.
+        if !scope.covers_pattern_predicate(pred.as_deref()) {
+            continue;
+        }
         let pieces: Vec<String> = crate::text_index::tokenize(needle).collect();
         if pieces.is_empty() {
             continue; // nothing indexable in the needle — no pruning power
@@ -1604,17 +1614,23 @@ fn text_contains_pushdown(
     Some(out)
 }
 
-/// May the TEXT_INDEX bound a scan of `index`? The index is built over the
-/// literals of the file's **default graph** only, so its candidate subjects are
-/// a sound over-approximation there and nowhere else: inside `GRAPH <g> { … }`,
-/// under `FROM <g>`, or over the union default graph, a subject whose literal
-/// lives in a named graph is not among the candidates, and seeding the scan
-/// with them silently returns nothing (`FILTER(CONTAINS(…))` inside `GRAPH`
-/// answered 0 rows while `BIND(CONTAINS(…))` found them). The active index is
-/// the file's default index exactly when the active graph is the default graph
-/// (a `FROM`/union merge, or a named graph, is a different object).
+/// May the TEXT_INDEX bound a scan of `index`? Its candidate subjects are a
+/// sound over-approximation only over the literals it indexed. Every index
+/// covers the file's **default graph**; the named graphs only when it was built
+/// with `--text-index-graphs all`, which the header says
+/// ([`crate::header::FLAG_TEXT_INDEX_NAMED_GRAPHS`]). Inside `GRAPH <g> { … }`,
+/// under `FROM <g>`, or over the union default graph, a default-scope index
+/// leaves out every subject whose literal lives in a named graph, and seeding
+/// the scan with its candidates silently returns nothing (`FILTER(CONTAINS(…))`
+/// inside `GRAPH` answered 0 rows while `BIND(CONTAINS(…))` found them). The
+/// active index is the file's default index exactly when the active graph is
+/// the default graph (a `FROM`/union merge, or a named graph, is a different
+/// object). Decided from the header alone, so a declined pushdown never faults
+/// the token table; the predicates the scope covers are checked per pattern,
+/// by the caller.
 fn text_index_covers(ctx: &Ctx, index: &GraphIndex) -> bool {
     std::ptr::eq(index, ctx.rete.default_index())
+        || ctx.rete.header().text_index_covers_named_graphs()
 }
 
 /// The required-spine `Bgp` that [`inject_contains_seed`] will wrap — same
@@ -1632,14 +1648,21 @@ fn find_seed_bgp<'p>(plan: &'p Plan, sv: &str) -> Option<&'p [TriplePattern]> {
     }
 }
 
-/// The subject variable of a pattern binding `cv` as its object, searched over
-/// the plan's REQUIRED spine only: both `Join` sides, a `LeftJoin`'s left, a
-/// nested `Filter`'s inner, and `Bgp` leaves. (A pattern inside an OPTIONAL's
-/// right side never *requires* the binding, so seeding there is left alone.)
-fn contains_subject_var(plan: &Plan, cv: &str) -> Option<String> {
+/// The subject variable of a pattern binding `cv` as its object — with the
+/// pattern's predicate when it is a constant — searched over the plan's
+/// REQUIRED spine only: both `Join` sides, a `LeftJoin`'s left, a nested
+/// `Filter`'s inner, and `Bgp` leaves. (A pattern inside an OPTIONAL's right
+/// side never *requires* the binding, so seeding there is left alone.)
+fn contains_subject_var(plan: &Plan, cv: &str) -> Option<(String, Option<String>)> {
     match plan {
         Plan::Bgp(patterns) => patterns.iter().find_map(|p| match (&p.s, &p.o) {
-            (PatternTerm::Var(s), PatternTerm::Var(o)) if o == cv => Some(s.clone()),
+            (PatternTerm::Var(s), PatternTerm::Var(o)) if o == cv => Some((
+                s.clone(),
+                match &p.p {
+                    PatternTerm::Const(c) => Some(c.clone()),
+                    PatternTerm::Var(_) => None,
+                },
+            )),
             _ => None,
         }),
         Plan::Join(l, r) => contains_subject_var(l, cv).or_else(|| contains_subject_var(r, cv)),

@@ -38,7 +38,7 @@ binary is stale/missing.
 | `--card` | embed a Dataset Card (counts, top predicates/classes, vocabularies + curated fields). Always pass for a publishable dataset. |
 | `--title / --license / --source / --description / --created` | curated card fields (each implies `--card`). |
 | `--card-file <json>` | JSON of curated card fields (implies `--card`). Publisher-defined custom fields go inside its `extra` object (bounded: 8 KB serialized, ≤64 keys, nesting ≤2); unknown TOP-LEVEL keys are rejected loudly — see `docs/dataset-cards.md`. |
-| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build (the SCHEMA section and `--label-index` included). PROVEN at 1.3B triples: ORCID → ONE 17.5 GB .rete @ 16 GiB budget (37 chunks, ~2.5 h). v1: .nt/.nq only (files or stdin `-` with explicit `--format` — the single input pass makes pipes valid), default graph only, no pyramid/text-index/reasoning; card = curated + counts. Spill dir via `--tmp-dir`. |
+| `--memory-budget-mb <N>` | **Memory-bounded external build**: chunk the input to disk and merge, holding ~N MiB in RAM regardless of graph size; the budget decides the chunk count and sort-run sizes. Byte-identical to a standard `--no-pyramid` build (the SCHEMA section and `--label-index` included). PROVEN at 1.3B triples: ORCID → ONE 17.5 GB .rete @ 16 GiB budget (37 chunks, ~2.5 h). v1: .nt/.nq only (files or stdin `-` with explicit `--format` — the single input pass makes pipes valid), default graph only, no pyramid/reasoning; card = curated + counts. Since 0.4.0 it takes `--text-index` (any `--text-index-graphs/-include/-exclude` scope) and writes the same TEXT_INDEX bytes as the in-RAM build. Spill dir via `--tmp-dir`. |
 | `--tmp-dir <dir>` | Where `--memory-budget-mb` puts its spill files (default: alongside the output). |
 | `--permutations 3\|6` | How many index permutations to store. **Default 6 — leave it alone for anything published.** `3` writes SPO/POS/OSP only: same rows, same routing, same tiles for every query, but no sort-merge join (the planner hash-joins instead) and **older readers refuse the file outright** (`malformed container: expected 6 permutation sections`, exit 1). The three dropped orders are 36.8%–50.5% of a built file. Consider `3` only for a private/self-hosted, index-dominated dataset whose workload is lookup-and-follow rather than `?s <p1> ?o1 . ?s <p2> ?o2` subject stars — and measure with `rete cost` first. |
 | `--materialize` | bake RDFS/OWL-RL entailments into the file at build time (aborts if incoherent). |
@@ -66,8 +66,7 @@ section). Escalating levers:
    .rete inside a 16 GiB budget). One file beats shards for UX (one URL, one card,
    real cross-entity BGP joins); shards still win when you need per-shard
    parallel builds or per-part re-publishing.
-4. **Shard** when one file won't fit or v1 limits bite (named graphs, pyramid,
-   text index): split the N-Triples by subject into ~1–2 GB shards, build each
+4. **Shard** when one file won't fit or v1 limits bite (the pyramid): split the N-Triples by subject into ~1–2 GB shards, build each
    with `--no-pyramid` in parallel, and ship a folder + a JSON manifest. The
    dictionary law: cross-shard joins are term-level (string) joins, so shard by
    **subject/entity** to keep star-queries inside one shard. Model:

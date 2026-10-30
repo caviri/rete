@@ -292,30 +292,22 @@ fn compute_label_index(
         .collect()
 }
 
-/// Build the full-text index section (`token → subjects`) over every
-/// string-literal object: tokenize each literal into words and record the
-/// subject that carries it. Empty when the graph has no literals. Opt-in
-/// (`rete build --text-index`); O(literal bytes) transient. The token table is
-/// compressed with `writer_codec` (the reader decompresses with `block_codec`).
+/// Build the default-scope full-text index section (`token → subjects`) over
+/// every literal object of `triples`: tokenize each literal into words and
+/// record the subject that carries it. Empty when the graph has no literals.
+/// This is the pre-0.4.0 index, byte for byte; the builds call
+/// `text_index::build_section` with their scope (`--text-index-graphs`,
+/// `--text-index-include`/`-exclude`). O(literal bytes) transient. The token
+/// table is compressed with `writer_codec` (the reader decompresses with
+/// `block_codec`).
 pub fn compute_text_index(dict: &Dictionary, triples: &[(u32, u32, u32)]) -> Vec<u8> {
-    use crate::terms::{is_literal, literal_lexical};
-    let mut b = crate::text_index::TextIndexBuilder::new();
-    for &(s, _p, o) in triples {
-        let Some(term) = dict.object_term(o) else {
-            continue;
-        };
-        if !is_literal(&term) {
-            continue;
-        }
-        if let Some(lit) = literal_lexical(&term) {
-            b.add_text(&lit, s);
-        }
-    }
-    if b.is_empty() {
-        Vec::new()
-    } else {
-        b.build(writer_codec())
-    }
+    crate::text_index::build_section(
+        dict,
+        &crate::text_index::TextIndexScope::default(),
+        triples,
+        std::iter::empty(),
+        writer_codec(),
+    )
 }
 
 /// The top entity **shapes** (characteristic sets): group subjects by the exact
@@ -438,6 +430,30 @@ pub(crate) fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
             zstd::encode_all(bytes, ZSTD_LEVEL).expect("zstd encode is infallible in-memory")
         }
         _ => bytes.to_vec(),
+    }
+}
+
+/// The streaming twin of [`compress`]: the same codec at the same level, read
+/// from `src` and written to `dst`, for a payload the memory-bounded build
+/// keeps on disk (the TEXT_INDEX token table). [`compress`] is itself a
+/// streaming encode (`zstd::encode_all` drives the same `Encoder`), and the
+/// encoder cuts blocks from its own input buffer, not from how the input was
+/// handed to it — so the bytes are the same. `text_index_spill` pins that.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn compress_to(
+    codec: u8,
+    src: &mut dyn std::io::Read,
+    dst: &mut dyn std::io::Write,
+) -> std::io::Result<()> {
+    match codec {
+        #[cfg(feature = "compression")]
+        CODEC_ZSTD => {
+            let mut enc = zstd::stream::Encoder::new(dst, ZSTD_LEVEL)?;
+            std::io::copy(src, &mut enc)?;
+            enc.finish()?;
+            Ok(())
+        }
+        _ => std::io::copy(src, dst).map(|_| ()),
     }
 }
 
@@ -1843,6 +1859,19 @@ pub fn write_dataset_with_metadata(
 ) -> Vec<u8> {
     let codec = writer_codec();
     let dict_container = encode_dict_container(dict, codec);
+    // This entry point takes a finished section, so it reads the section's own
+    // scope block to pick the directory kind (6, or 11 for a partial index) and
+    // the header's named-graphs bit.
+    let scope = (!text_index.is_empty())
+        .then(|| crate::text_index::TextIndex::from_section(text_index, codec).ok())
+        .flatten()
+        .map(|ti| ti.scope().clone());
+    let text_index_partial = scope
+        .as_ref()
+        .is_some_and(crate::text_index::TextIndexScope::restricts_predicates);
+    let text_index_named = scope
+        .as_ref()
+        .is_some_and(crate::text_index::TextIndexScope::covers_named_graphs);
     write_dataset_from_parts(
         &dict_container,
         dict.term_count() as u64,
@@ -1854,6 +1883,8 @@ pub fn write_dataset_with_metadata(
         pyramid_levels,
         metadata,
         text_index,
+        text_index_partial,
+        text_index_named,
         codec,
     )
 }
@@ -1874,9 +1905,23 @@ pub(crate) fn write_dataset_from_parts(
     pyramid_levels: u16,
     metadata: &[u8],
     text_index: &[u8],
+    text_index_partial: bool,
+    text_index_named: bool,
     codec: u8,
 ) -> Vec<u8> {
     let index_container = encode_index_container(default_index, codec);
+    // A predicate-restricted index (kind 11) is outside the content hash, like
+    // kinds 8 and 9, and starts with its own digest instead: a reader older
+    // than 0.4.0 does not see kind 11, so a hashed one would make its `verify`
+    // call every such file corrupt. A kind-6 index is hashed, as it always was.
+    let text_index_partial = text_index_partial && !text_index.is_empty();
+    let digested;
+    let text_index: &[u8] = if text_index_partial {
+        digested = crate::text_index::with_partial_digest(text_index);
+        &digested
+    } else {
+        text_index
+    };
     let named_section = encode_named_graphs(named, codec);
 
     // The metadata section (if any) sits between the header and the dictionary,
@@ -1910,7 +1955,7 @@ pub(crate) fn write_dataset_from_parts(
     parts.push(dict_container);
     parts.push(&index_container);
     parts.push(pyramid_meta);
-    if text_len > 0 {
+    if text_len > 0 && !text_index_partial {
         parts.push(text_index);
     }
     if named_len > 0 {
@@ -1927,6 +1972,11 @@ pub(crate) fn write_dataset_from_parts(
             | if has_quads { FLAG_HAS_QUADS } else { 0 }
             | if has_quoted_triples {
                 FLAG_HAS_QUOTED_TRIPLES
+            } else {
+                0
+            }
+            | if text_len > 0 && text_index_named {
+                crate::header::FLAG_TEXT_INDEX_NAMED_GRAPHS
             } else {
                 0
             },
@@ -1957,6 +2007,7 @@ pub(crate) fn write_dataset_from_parts(
         schema_meta_len,
         text_index_offset: if text_len > 0 { text_offset } else { 0 },
         text_index_len: text_len,
+        text_index_partial: text_len > 0 && text_index_partial,
         build_info_offset: 0,
         build_info_len: 0,
         extra_sections: Vec::new(),
@@ -2338,8 +2389,10 @@ fn hash_of_sections(header: &Header, bytes: &[u8]) -> Result<[u8; 16], FileError
 
 /// The byte ranges the content hash folds, **in the order it folds them**: the
 /// metadata payload when present, then dictionary, index, pyramid-meta, and —
-/// when present — the text index and the named graphs. Build info and any
-/// section kind this reader does not know are deliberately outside it.
+/// when present — a kind-6 text index and the named graphs. Build info, the
+/// self-digested kinds (8 LABEL_INDEX, 9 SCHEMA, 11 predicate-restricted text
+/// index) and any section kind this reader does not know are deliberately
+/// outside it.
 ///
 /// The one list [`verify`], [`verify_ranged`] and [`replace_metadata`] hash
 /// over, and what a streaming rewriter (`rete recard`) feeds a hasher while it
@@ -2357,7 +2410,8 @@ pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
     if header.pyramid_meta_len > 0 {
         parts.push((header.pyramid_meta_offset, header.pyramid_meta_len));
     }
-    if header.text_index_len > 0 {
+    // A kind-11 (predicate-restricted) text index is self-digested instead.
+    if header.text_index_len > 0 && !header.text_index_partial {
         parts.push((header.text_index_offset, header.text_index_len));
     }
     if header.named_graphs_len > 0 {
@@ -2367,10 +2421,11 @@ pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
 }
 
 /// Recompute the content hash from a file image and check it against the header
-/// â€” detects corruption or truncation of the payload sections. The
-/// LABEL_INDEX and SCHEMA sections (kinds 8, 9) are outside that hash — an
-/// older reader's `verify` must keep passing on a file that carries them — so
-/// each is checked against its own leading digest instead.
+/// — detects corruption or truncation of the payload sections. The
+/// LABEL_INDEX, SCHEMA and predicate-restricted TEXT_INDEX sections (kinds 8,
+/// 9, 11) are outside that hash — an older reader's `verify` must keep passing
+/// on a file that carries them — so each is checked against its own leading
+/// digest instead.
 pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     let header = Header::from_bytes(bytes)?;
     if hash_of_sections(&header, bytes)? != header.content_hash {
@@ -2389,12 +2444,19 @@ pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
 }
 
 /// The sections that carry their own leading 16-byte digest rather than being
-/// folded into the header content hash: LABEL_INDEX (8) and SCHEMA (9).
+/// folded into the header content hash: LABEL_INDEX (8), SCHEMA (9) and a
+/// predicate-restricted TEXT_INDEX (11).
 fn self_digested_sections(header: &Header) -> Vec<Section> {
-    [header.label_index_section(), header.schema_section()]
-        .into_iter()
-        .flatten()
-        .collect()
+    [
+        header.label_index_section(),
+        header.schema_section(),
+        header
+            .section(crate::header::SectionKind::TextIndexPartial)
+            .filter(|s| s.length > 0),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// Append LABEL_INDEX / SCHEMA sections (kinds 8, 9) to a finished file image,
@@ -2806,10 +2868,11 @@ pub fn read_text_index_token_table_len_ranged<R: RangeReader + ?Sized>(
     reader: &R,
     header: &Header,
 ) -> Option<u64> {
-    if header.text_index_len == 0 {
+    let (ti_off, ti_len) = header.text_index_payload();
+    if ti_len == 0 {
         return None;
     }
-    read_token_table_len(reader, header.text_index_offset, header.text_index_len)
+    read_token_table_len(reader, ti_off, ti_len)
 }
 
 /// Byte length of the TEXT_INDEX section's leading token table — its length
@@ -3457,9 +3520,10 @@ impl Rete {
 
         // The TEXT_INDEX section (opt-in `--text-index`); decode the whole thing
         // resident on a full-image open.
+        let (ti_off, ti_len) = header.text_index_payload();
         let text_index = resident_text_index_slot(
-            if header.text_index_len > 0 {
-                Some(region(header.text_index_offset, header.text_index_len)?)
+            if ti_len > 0 {
+                Some(region(ti_off, ti_len)?)
             } else {
                 None
             },
@@ -3787,6 +3851,13 @@ impl Rete {
     /// built with `--text-index`. Cheap — reads the header, never faults.
     pub fn has_text_index(&self) -> bool {
         self.header.text_index_len > 0
+    }
+
+    /// What the full-text index covers (graphs, predicates) — `None` when the
+    /// file has none. Faults the token table on the lazy remote path, as a
+    /// search does; the scope block lives in it.
+    pub fn text_index_scope(&self) -> Option<crate::text_index::TextIndexScope> {
+        self.text_index().map(|ti| ti.scope().clone())
     }
 
     /// Byte length of the TEXT_INDEX section's leading **token table** — the
@@ -4439,8 +4510,9 @@ impl Rete {
 
         // Fetch the whole TEXT_INDEX section resident (this opener does one range
         // read per section; the lazy opener below is the one that defers it).
-        let text_index_bytes = if header.text_index_len > 0 {
-            Some(reader.read_at(header.text_index_offset, header.text_index_len)?)
+        let (ti_off, ti_len) = header.text_index_payload();
+        let text_index_bytes = if ti_len > 0 {
+            Some(reader.read_at(ti_off, ti_len)?)
         } else {
             None
         };
@@ -5290,7 +5362,8 @@ fn ranged_text_index_slot<R: RangeReader + Send + Sync + 'static>(
     reader: &std::sync::Arc<R>,
     header: &Header,
 ) -> TextIndexSlot {
-    if header.text_index_len == 0 {
+    let (ti_off, ti_len) = header.text_index_payload();
+    if ti_len == 0 {
         return TextIndexSlot::Resident {
             index: None,
             token_table_len: None,
@@ -5298,8 +5371,6 @@ fn ranged_text_index_slot<R: RangeReader + Send + Sync + 'static>(
     }
     let ti_reader = reader.clone();
     let probe_reader = reader.clone();
-    let ti_off = header.text_index_offset;
-    let ti_len = header.text_index_len;
     let codec = header.block_codec;
     TextIndexSlot::Lazy {
         loader: Box::new(move || {

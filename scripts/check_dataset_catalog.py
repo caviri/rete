@@ -28,6 +28,9 @@ SECTION_COUNT_OFFSET = 44
 SECTION_DIR_OFFSET = 64
 SECTION_ENTRY_LEN = 24
 SECTION_TEXT_INDEX = 6
+# The same index restricted to some predicates (`--text-index-include/-exclude`):
+# its own kind so that readers older than 0.4.0 do not prune CONTAINS with it.
+SECTION_TEXT_INDEX_PARTIAL = 11
 SECTION_NAMES = {
     1: "Metadata",
     2: "Dictionary",
@@ -123,7 +126,9 @@ def validate_probe(
     content_hash = body[8:24].hex() if len(body) >= 24 else None
     sections = parse_sections(body)
     text_index_bytes = sum(
-        section["length"] for section in sections if section["kind"] == SECTION_TEXT_INDEX
+        section["length"]
+        for section in sections
+        if section["kind"] in (SECTION_TEXT_INDEX, SECTION_TEXT_INDEX_PARTIAL)
     )
 
     if expected:

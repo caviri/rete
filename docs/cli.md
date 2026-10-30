@@ -53,7 +53,9 @@ bounded before they are run: past 2,000,000 statements a template ships a
 [Bounded by construction](dataset-cards.md#bounded-by-construction).
 `--no-card-costs` skips the run, and so skips that check as well. `--text-index` adds a
 full-text (word/CONTAINS) index over the literals for `rete search --contains`
-(see below). `--type-predicate <IRI>` overrides the predicate that types subjects
+and SPARQL `CONTAINS` — its scope flags and the memory-bounded build are under
+[Full-text index](#full-text-index---text-index-and-its-scope) below.
+`--type-predicate <IRI>` overrides the predicate that types subjects
 with classes for the schema (default `rdf:type`) —
 e.g. Wikidata's `--type-predicate http://www.wikidata.org/prop/direct/P31`.
 `--no-pyramid` skips the community pyramid entirely (no pyramid section): SPARQL /
@@ -169,6 +171,101 @@ default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n--
 writes the **union** of its inputs' sets — one full shard is enough to keep the
 merge-join orders its queries relied on. To change a file's set, rebuild it from
 its RDF source.
+
+#### Full-text index: `--text-index` and its scope
+
+`--text-index` adds a TEXT_INDEX section: every word of every literal object in
+the index's **scope** maps to the subjects that carry it. `rete search
+--contains` answers from it, and SPARQL uses it to prune a `FILTER(CONTAINS(…))`
+before re-checking every row. Three flags set the scope; each needs
+`--text-index`, and `repyramid` takes them too:
+
+| flag | default | what it covers |
+| --- | --- | --- |
+| `--text-index-graphs default\|all` | `default` | `default`: the default graph's literals — the scope of every index built before 0.4.0. `all`: those and every named graph's. |
+| `--text-index-include <IRI>` | every predicate | only the literals of this predicate; repeat the flag for several |
+| `--text-index-exclude <IRI>` | none left out | every predicate's literals but this one's; repeat for several |
+
+The IRI is a full one, bare or in `<…>`; a prefixed name is refused, because a
+build has no prefix map to expand it with. Include and exclude do not combine: an
+include list already says exactly what is indexed. A listed predicate that no
+literal in scope carries is reported on stderr, since a misspelt exclude would
+otherwise exclude nothing.
+
+```sh
+rete build data.nq -o data.rete --text-index
+# OpenCitations-style: index the provenance graphs too, but not the generated
+# change notes or the stored SPARQL update text
+rete build oc.nq -o oc.rete --text-index --text-index-graphs all \
+  --text-index-exclude http://purl.org/dc/terms/description \
+  --text-index-exclude https://w3id.org/oc/ontology/hasUpdateQuery
+```
+
+The scope is written **into the section** (SPEC §6.3), so a reader acts on what
+the file covers rather than on how it was built:
+
+- `rete search --contains` finds only words of literals in scope.
+- The SPARQL `CONTAINS` pushdown runs only where the index covers the query: the
+  active graph must be the default graph (or, under `all`, any graph), and the
+  pattern's predicate must be indexed — a variable predicate only when every
+  predicate is. Anywhere else the filter scans and returns the same rows, just
+  without the shortcut. (Before 0.4.0 the pushdown also ran inside `GRAPH`
+  against a default-graph index, where it returned no rows at all.)
+- **An include/exclude index is stored as section kind 11**, not 6. Readers
+  older than 0.4.0 do not know kind 11 and see no text index: `rete search
+  --contains` says the file has none, and `CONTAINS` scans. That is on purpose.
+  Those readers prune `CONTAINS` with whatever text index they find, as if it
+  covered every literal; with a predicate-restricted one they would silently
+  drop the rows of the predicates it left out. A `--text-index-graphs all` index
+  over every predicate stays kind 6, because it covers more than they assume,
+  never less.
+
+A carded build records the flags in its build-info (`text_index_graphs`,
+`text_index_include`, `text_index_exclude`), next to `text_index`.
+
+**What a scope saves**, measured on the OpenCitations Meta sample (M=1200,
+18,869,242 statements) laid out with its provenance **in the default graph**,
+memory-bounded at 3,000 MiB. The file without a text index is 166,562,617 B.
+
+| `--text-index` scope | tokens | section | token table | file |
+| --- | --: | --: | --: | --: |
+| every predicate | 2,178,475 | 68,256,530 B | 9,996,927 B | 234,819,147 B |
+| all but `oco:hasUpdateQuery` | 2,164,679 | 60,352,482 B (−12%) | 9,770,745 B | 226,915,099 B |
+| all but `dcterms:description` | 831,343 | 36,789,772 B (−46%) | 4,667,222 B | 203,352,389 B |
+| all but both | 534,449 | 23,825,664 B (−65%) | 3,177,349 B | 190,388,281 B |
+| all but both and `prov:generatedAtTime`, `prov:invalidatedAtTime` | 533,705 | 10,199,845 B (−85%) | 3,156,034 B | 176,762,462 B |
+
+The last row is the data alone: its postings are byte for byte those of the same
+sample built with provenance in named graphs and the default scope, and it finds
+the same subjects for every data word. The provenance prose ("The entity … has
+been modified.") and the stored SPARQL update text are 65% of the full index,
+the timestamps another 20%. The token table, which a first remote search
+fetches whole, shrinks from 10.0 MB to 3.2 MB.
+
+The other way round: with the provenance **in named graphs** (the layout
+OpenCitations ships), the default scope indexes the data alone (10.2 MB), and
+`--text-index-graphs all` indexes the same literals as the first row above —
+the same 2,178,475 tokens and the same postings, 68.3 MB, +5.4% on the 1.07 GB
+file — so the provenance becomes searchable without moving it out of its
+graphs.
+
+**In the memory-bounded build.** `--text-index`, with any scope, works with
+`--memory-budget-mb`, and the TEXT_INDEX section is **byte-identical** to the
+in-RAM build's for the same input. Each chunk writes its literal words with
+chunk-local subject ids to `--tmp-dir` while it is sealed. The ids are remapped
+with the tables the dictionary merge already produces, sorted externally by
+`(word, subject)` in runs of at most a quarter of the budget, and merged into
+the section. The token table is the one part a reader must hold whole, so the
+build streams it to disk and compresses it from there. `extbuild: text index …`
+reports the token and record counts.
+
+Measured on the same sample with provenance in the default graph (50.5 M word
+records, 2.18 M tokens): at 1,500 MiB the build took 83 s instead of 59 s, peak
+RSS 1.19 GB against 1.17 GB without the index, and the peak spill grew from
+0.91 GB to 1.38 GB. The peak is set by the chunk phase, not by the text sort,
+so it does not move with the index. With provenance in named graphs and the
+default scope (3.3 M records) the text phase takes under a second of a build
+whose time goes to the 1.49 M named graphs.
 
 ### `rete recard <file> -o <out.rete> [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]`
 Give a finished `.rete` a new Dataset Card **without rebuilding it** — the
@@ -472,7 +569,9 @@ line (or the same versioned `matches` envelope with `{subject}` entries under
 requires a literal word starting with `einst`. Answered from the opt-in
 **TEXT_INDEX** section (`rete build --text-index`); on a remote file only the
 queried words' posting lists are fetched, not the whole index. A file built
-without `--text-index` reports that it has no text index. To search a file you
+without `--text-index` reports that it has no text index. Only words of the
+literals in the index's [scope](#full-text-index---text-index-and-its-scope) are
+found — by default the default graph's, every predicate. To search a file you
 have **not** downloaded, use `rete search-url` (below).
 
 ```sh

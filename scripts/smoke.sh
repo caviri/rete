@@ -84,6 +84,23 @@ check "build merge" "triples"           -- "$B" build "$T/g.nt" "$T/extra.nt" -o
 check "build stdin" "triples"           -- bash -c "cat '$T/g.nt' | $B build - --format nt -o '$T/stdin.rete'"
 check "merge has both" "Z"              -- "$B" query "$T/merge.rete" --subject "<http://ex/Z>"
 
+echo "== full-text index =="
+cat > "$T/text.nq" <<EOF
+<http://ex/w1> <http://ex/title> "Glucose metabolism" .
+<http://ex/w1> <http://ex/desc> "The entity has been modified." .
+<http://ex/w1/prov> <http://ex/desc> "The entity has been created." <http://ex/w1/g> .
+EOF
+check "text-index build"      "quads"                -- "$B" build "$T/text.nq" -o "$T/text.rete" --text-index --no-pyramid
+# The memory-bounded build takes --text-index and writes the same bytes.
+check "text-index ext build"  "extbuild: text index" -- "$B" build "$T/text.nq" -o "$T/text-ext.rete" --text-index --memory-budget-mb 64
+check "text-index ext = ram"  "^same$"               -- bash -c "cmp '$T/text.rete' '$T/text-ext.rete' && echo same"
+check "search --contains"     "<http://ex/w1>"       -- "$B" search "$T/text-ext.rete" --contains glucose
+check "scope: named graphs"   "<http://ex/w1/prov>"  -- bash -c "$B build '$T/text.nq' -o '$T/text-all.rete' --text-index --text-index-graphs all --memory-budget-mb 64 >/dev/null 2>&1 && $B search '$T/text-all.rete' --contains created"
+check "scope: exclude"        "covers: .*all but <http://ex/desc>" -- bash -c "$B build '$T/text.nq' -o '$T/text-ex.rete' --text-index --text-index-exclude http://ex/desc >/dev/null 2>&1 && $B search '$T/text-ex.rete' --contains modified 2>&1"
+check "scope: stats kind 11"  "some predicates only" -- "$B" stats "$T/text-ex.rete"
+check "scope: repyramid"      "<http://ex/w1/prov>"  -- bash -c "$B repyramid '$T/text.rete' -o '$T/text-rp.rete' --text-index --text-index-graphs all >/dev/null 2>&1 && $B search '$T/text-rp.rete' --contains created"
+check_code "scope: needs --text-index" 2 "required" -- "$B" build "$T/text.nq" -o "$T/x.rete" --text-index-exclude http://ex/desc
+
 echo "== validate =="
 check "validate ok"    "valid: 5"       -- "$B" validate "$T/g.nt"
 check "validate bad"   "rror|parse"     -- bash -c "printf 'garbage <<<\n' > '$T/bad.nt'; $B validate '$T/bad.nt'; true"

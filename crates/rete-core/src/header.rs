@@ -69,6 +69,20 @@ pub const FLAG_TILE_SYNOPSIS: u8 = 0b0000_0010;
 /// this needs no format-version bump and old readers stay forward-compatible.
 pub const FLAG_HAS_QUOTED_TRIPLES: u8 = 0b0000_0100;
 
+/// Flag bit: the full-text index also covers the **named graphs'** literals
+/// (`rete build --text-index-graphs all`, Rete 0.4.0). It lets a query inside
+/// `GRAPH`, under `FROM` or over the union default graph decide from the
+/// header alone whether the index can prune its `FILTER(CONTAINS(…))`: without
+/// the bit it scans and never faults the index's token table. Bit 3
+/// (`0b0000_1000`) belongs to the quad index. Older readers ignore unknown bits.
+pub const FLAG_TEXT_INDEX_NAMED_GRAPHS: u8 = 0b0001_0000;
+
+/// Length of the BLAKE3 self-digest that heads a predicate-restricted text
+/// index section ([`SectionKind::TextIndexPartial`], kind 11):
+/// `digest = blake3(section[16..])[..16]`, the same rule as the LABEL_INDEX and
+/// SCHEMA sections.
+pub const TEXT_INDEX_PARTIAL_DIGEST_LEN: u64 = 16;
+
 /// A top-level file section, addressed by [`SectionKind`] in the header directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectionKind {
@@ -84,6 +98,20 @@ pub enum SectionKind {
     NamedGraphs,
     /// Full-text (word) index over literals — `token → subjects`.
     TextIndex,
+    /// A full-text index that covers **only some predicates**
+    /// (`rete build --text-index-include/--text-index-exclude`): the same
+    /// layout as [`SectionKind::TextIndex`], under its own kind so that a
+    /// reader which predates text-index scopes does not see it at all. Such a
+    /// reader prunes `FILTER(CONTAINS(…))` with any text index it finds, as if
+    /// the index covered every literal; with this one it would silently drop
+    /// the rows of the predicates left out. Not seeing it, it scans instead.
+    /// The header maps it onto the same `text_index_*` fields, with
+    /// [`Header::text_index_partial`] set. Like kinds 8 and 9 it is **outside
+    /// the content hash** — an older `verify`, which cannot see it, must not
+    /// call the file corrupt — and starts with its own 16-byte digest
+    /// ([`TEXT_INDEX_PARTIAL_DIGEST_LEN`]) instead; the kind-6 layout follows
+    /// it ([`Header::text_index_payload`]).
+    TextIndexPartial,
     /// Build-conditions record (timestamp, builder version, build parameters,
     /// measured starter-query costs), stored as an opaque JSON blob owned by the
     /// application layer (the CLI). **Deliberately excluded from the content
@@ -120,6 +148,7 @@ impl SectionKind {
             SectionKind::BuildInfo => 7,
             SectionKind::LabelIndex => 8,
             SectionKind::Schema => 9,
+            SectionKind::TextIndexPartial => 11,
             SectionKind::Unknown(k) => k,
         }
     }
@@ -135,6 +164,7 @@ impl SectionKind {
             7 => SectionKind::BuildInfo,
             8 => SectionKind::LabelIndex,
             9 => SectionKind::Schema,
+            11 => SectionKind::TextIndexPartial,
             other => SectionKind::Unknown(other),
         }
     }
@@ -203,6 +233,10 @@ pub struct Header {
     /// `rete build --text-index`). See [`SectionKind::TextIndex`].
     pub text_index_offset: u64,
     pub text_index_len: u64,
+    /// The full-text index covers only some predicates: it is written (and was
+    /// read) as [`SectionKind::TextIndexPartial`] rather than
+    /// [`SectionKind::TextIndex`]. `false` for every file without one.
+    pub text_index_partial: bool,
     /// Build-conditions section (0 if absent). See [`SectionKind::BuildInfo`]:
     /// an opaque per-build record that is **not** covered by the content hash.
     pub build_info_offset: u64,
@@ -287,7 +321,11 @@ impl Header {
         ];
         if self.text_index_len > 0 {
             entries.push(entry(
-                SectionKind::TextIndex,
+                if self.text_index_partial {
+                    SectionKind::TextIndexPartial
+                } else {
+                    SectionKind::TextIndex
+                },
                 self.text_index_offset,
                 self.text_index_len,
             ));
@@ -371,6 +409,7 @@ impl Header {
             perms,
             text_index_offset: 0,
             text_index_len: 0,
+            text_index_partial: false,
             build_info_offset: 0,
             build_info_len: 0,
             extra_sections: Vec::new(),
@@ -404,6 +443,12 @@ impl Header {
                 SectionKind::TextIndex => {
                     h.text_index_offset = offset;
                     h.text_index_len = length;
+                    h.text_index_partial = false;
+                }
+                SectionKind::TextIndexPartial => {
+                    h.text_index_offset = offset;
+                    h.text_index_len = length;
+                    h.text_index_partial = true;
                 }
                 SectionKind::BuildInfo => {
                     h.build_info_offset = offset;
@@ -484,6 +529,29 @@ impl Header {
         self.flags & FLAG_TILE_SYNOPSIS != 0
     }
 
+    /// Does the full-text index cover the named graphs' literals too
+    /// ([`FLAG_TEXT_INDEX_NAMED_GRAPHS`])? Known from the header alone.
+    pub fn text_index_covers_named_graphs(&self) -> bool {
+        self.flags & FLAG_TEXT_INDEX_NAMED_GRAPHS != 0
+    }
+
+    /// The `(offset, length)` of the text index's payload — the token-table
+    /// varint, the token table and the postings. That is the whole section for
+    /// kind 6; a kind-11 section starts with its 16-byte self-digest, which this
+    /// skips. `(offset, 0)` past a kind-11 section too short for its digest.
+    pub fn text_index_payload(&self) -> (u64, u64) {
+        if self.text_index_partial {
+            (
+                self.text_index_offset
+                    .saturating_add(TEXT_INDEX_PARTIAL_DIGEST_LEN),
+                self.text_index_len
+                    .saturating_sub(TEXT_INDEX_PARTIAL_DIGEST_LEN),
+            )
+        } else {
+            (self.text_index_offset, self.text_index_len)
+        }
+    }
+
     /// The directory entry for a section kind, or `None` if absent. Known kinds
     /// read from the named convenience fields; unknown kinds from
     /// [`extra_sections`](Self::extra_sections).
@@ -494,7 +562,13 @@ impl Header {
             SectionKind::Index => (self.root_dir_offset, self.root_dir_len),
             SectionKind::PyramidMeta => (self.pyramid_meta_offset, self.pyramid_meta_len),
             SectionKind::NamedGraphs => (self.named_graphs_offset, self.named_graphs_len),
-            SectionKind::TextIndex => (self.text_index_offset, self.text_index_len),
+            SectionKind::TextIndex if !self.text_index_partial => {
+                (self.text_index_offset, self.text_index_len)
+            }
+            SectionKind::TextIndexPartial if self.text_index_partial => {
+                (self.text_index_offset, self.text_index_len)
+            }
+            SectionKind::TextIndex | SectionKind::TextIndexPartial => (0, 0),
             SectionKind::BuildInfo => (self.build_info_offset, self.build_info_len),
             SectionKind::LabelIndex | SectionKind::Schema | SectionKind::Unknown(_) => {
                 return self.extra_sections.iter().find(|s| s.kind == kind).copied()
@@ -536,6 +610,12 @@ impl Header {
             SectionKind::TextIndex => {
                 self.text_index_offset = offset;
                 self.text_index_len = length;
+                self.text_index_partial = false;
+            }
+            SectionKind::TextIndexPartial => {
+                self.text_index_offset = offset;
+                self.text_index_len = length;
+                self.text_index_partial = true;
             }
             SectionKind::BuildInfo => {
                 self.build_info_offset = offset;
@@ -595,6 +675,7 @@ mod tests {
             schema_meta_len: 99,
             text_index_offset: 0,
             text_index_len: 0,
+            text_index_partial: false,
             build_info_offset: 0,
             build_info_len: 0,
             extra_sections: Vec::new(),
@@ -843,5 +924,37 @@ mod tests {
         let s = back.section(SectionKind::TextIndex).unwrap();
         assert_eq!((s.offset, s.length), (5000, 4096));
         assert!(back.extra_sections.is_empty(), "TextIndex is a known kind");
+        assert!(!back.text_index_partial);
+    }
+
+    /// A predicate-restricted text index is written as kind 11, maps onto the
+    /// same `text_index_*` fields, and a reader that only knows kind 6 sees an
+    /// unknown section — no text index at all — rather than a full one.
+    #[test]
+    fn partial_text_index_is_kind_11_and_invisible_as_kind_6() {
+        let h = sample().with_section(SectionKind::TextIndexPartial, 5000, 4096);
+        assert!(h.text_index_partial);
+        let bytes = h.to_bytes();
+        assert_eq!(u16::from_le_bytes(bytes[44..46].try_into().unwrap()), 6);
+        // The 6th entry, at 64 + 5 × 24, carries kind 11.
+        let p = SECTION_DIR_OFFSET + 5 * SECTION_ENTRY_LEN;
+        assert_eq!(u16::from_le_bytes(bytes[p..p + 2].try_into().unwrap()), 11);
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(h, back);
+        assert!(back.text_index_partial);
+        assert_eq!((back.text_index_offset, back.text_index_len), (5000, 4096));
+        let s = back.section(SectionKind::TextIndexPartial).unwrap();
+        assert_eq!((s.offset, s.length), (5000, 4096));
+        assert_eq!(back.section(SectionKind::TextIndex).unwrap().length, 0);
+        assert!(back.extra_sections.is_empty(), "kind 11 is known here");
+
+        // What a reader that predates kind 11 decodes: an unknown kind, which
+        // it preserves, and empty text-index fields — so it neither searches
+        // nor prunes with the partial index.
+        let mut old_view = bytes;
+        old_view[p..p + 2].copy_from_slice(&0x7777u16.to_le_bytes());
+        let old = Header::from_bytes(&old_view).unwrap();
+        assert_eq!(old.text_index_len, 0);
+        assert_eq!(old.extra_sections.len(), 1);
     }
 }

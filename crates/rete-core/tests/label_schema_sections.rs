@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use rete_core::format::{content_hash_parts, rewrite_card};
 use rete_core::ingest::{assemble_dataset_opts, AssembleOptions, RawQuad};
+use rete_core::TextIndexScope;
 use rete_core::{
     append_sections, attach_build_info, read_schema_coherence_ranged, read_schema_summary_ranged,
     replace_metadata, verify, verify_ranged, Header, RangeReader, Rete, SearchView, SectionKind,
@@ -279,13 +280,23 @@ fn a_legacy_build_keeps_its_combined_pyramid_meta_and_answers_from_it() {
     assert!(rete.schema_or_pyramid().is_some());
 }
 
-/// Which section kinds the header content hash covers, pinned, in the order
-/// `content_hash_parts` folds them: metadata (1), dictionary (2), index (3),
-/// pyramid-meta (4), text index (6), named graphs (5). Build info (7) and the
-/// self-digested LABEL_INDEX (8) and SCHEMA (9) are outside it. A kind that
-/// joins the hash joins `content_hash_parts` and this list in the same change.
-#[test]
-fn the_content_hash_covers_exactly_kinds_1_to_6() {
+/// Every section kind a file can carry, with its number.
+const KINDS: [(SectionKind, u16); 10] = [
+    (SectionKind::Metadata, 1),
+    (SectionKind::Dictionary, 2),
+    (SectionKind::Index, 3),
+    (SectionKind::PyramidMeta, 4),
+    (SectionKind::NamedGraphs, 5),
+    (SectionKind::TextIndex, 6),
+    (SectionKind::BuildInfo, 7),
+    (SectionKind::LabelIndex, 8),
+    (SectionKind::Schema, 9),
+    (SectionKind::TextIndexPartial, 11),
+];
+
+/// A file carrying every kind but one of the two text-index kinds: kind 6
+/// for the default scope, kind 11 when `scope` leaves a predicate out.
+fn every_kind(scope: Option<&TextIndexScope>) -> Vec<u8> {
     let mut q = quads(40);
     q.push((
         "<http://ex/g1>".into(),
@@ -295,41 +306,64 @@ fn the_content_hash_covers_exactly_kinds_1_to_6() {
     ));
     let opts = AssembleOptions {
         with_text_index: true,
+        text_index_scope: scope,
         ..sectioned(true)
     };
     let bytes = build(q, &opts);
     let bytes = replace_metadata(&bytes, br#"{"title":"t"}"#).unwrap();
-    let bytes = attach_build_info(&bytes, br#"{"built_at":"x"}"#).unwrap();
-    let h = Header::from_bytes(&bytes).unwrap();
-    let all = [
-        SectionKind::Metadata,
-        SectionKind::Dictionary,
-        SectionKind::Index,
-        SectionKind::PyramidMeta,
-        SectionKind::NamedGraphs,
-        SectionKind::TextIndex,
-        SectionKind::BuildInfo,
-        SectionKind::LabelIndex,
-        SectionKind::Schema,
-    ];
-    for k in all {
-        assert!(h.section(k).is_some(), "the fixture carries {k:?}");
-    }
-    let hashed: Vec<u16> = content_hash_parts(&h)
+    attach_build_info(&bytes, br#"{"built_at":"x"}"#).unwrap()
+}
+
+/// The kind numbers of the ranges `content_hash_parts` folds, in fold order.
+fn hashed_kinds(h: &Header) -> Vec<u16> {
+    content_hash_parts(h)
         .into_iter()
         .map(|(off, len)| {
-            // `all` is in kind order, so a position is its kind number minus one.
-            let i = all
+            KINDS
                 .iter()
-                .position(|k| {
+                .find(|(k, _)| {
                     h.section(*k)
                         .is_some_and(|s| s.offset == off && s.length == len)
                 })
-                .unwrap_or_else(|| panic!("hashed range {off}+{len} is no section"));
-            i as u16 + 1
+                .unwrap_or_else(|| panic!("hashed range {off}+{len} is no section"))
+                .1
         })
-        .collect();
-    assert_eq!(hashed, [1, 2, 3, 4, 6, 5]);
+        .collect()
+}
+
+/// Which section kinds the header content hash covers, pinned, in the order
+/// `content_hash_parts` folds them: metadata (1), dictionary (2), index (3),
+/// pyramid-meta (4), text index (6), named graphs (5). Build info (7) and the
+/// self-digested LABEL_INDEX (8), SCHEMA (9) and predicate-restricted text
+/// index (11) are outside it. A kind that joins the hash joins
+/// `content_hash_parts` and this list in the same change.
+#[test]
+fn the_content_hash_covers_exactly_kinds_1_to_6() {
+    let bytes = every_kind(None);
+    let h = Header::from_bytes(&bytes).unwrap();
+    for (k, n) in KINDS {
+        let present = h.section(k).is_some_and(|s| s.length > 0);
+        assert_eq!(present, n != 11, "the fixture carries {k:?}");
+    }
+    assert_eq!(hashed_kinds(&h), [1, 2, 3, 4, 6, 5]);
+    assert!(verify(&bytes).unwrap());
+
+    // With a predicate-restricted index (kind 11) the text index is not hashed
+    // at all: an older `verify`, which cannot see kind 11, must not fail.
+    let none: [&str; 0] = [];
+    let scope = TextIndexScope::from_options(
+        rete_core::TextIndexGraphs::Default,
+        none,
+        ["http://www.w3.org/2000/01/rdf-schema#label"],
+    )
+    .unwrap();
+    let bytes = every_kind(Some(&scope));
+    let h = Header::from_bytes(&bytes).unwrap();
+    for (k, n) in KINDS {
+        let present = h.section(k).is_some_and(|s| s.length > 0);
+        assert_eq!(present, n != 6, "the fixture carries {k:?}");
+    }
+    assert_eq!(hashed_kinds(&h), [1, 2, 3, 4, 5]);
     assert!(verify(&bytes).unwrap());
 }
 

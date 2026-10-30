@@ -154,8 +154,44 @@ enum Command {
         /// word maps to the subjects that carry it, so `rete search --contains
         /// <word>` finds entities by content with no scan. Adds a `TextIndex`
         /// section (off by default; the index can be large on text-heavy graphs).
+        /// Works with `--memory-budget-mb` too: the section is the same bytes.
         #[arg(long = "text-index")]
         text_index: bool,
+        /// Which graphs' literals the full-text index covers: `default` — the
+        /// default graph only, the one scope before 0.4.0 — or `all`, the
+        /// default graph and every named graph (provenance kept in named
+        /// graphs becomes searchable, and `FILTER(CONTAINS(…))` inside
+        /// `GRAPH` can use the index). Requires `--text-index`.
+        #[arg(
+            long = "text-index-graphs",
+            value_name = "SCOPE",
+            value_parser = ["default", "all"],
+            default_value = "default",
+            requires = "text_index"
+        )]
+        text_index_graphs: String,
+        /// Index only the literals of this predicate — a full IRI, bare or in
+        /// `<…>`. Repeat for several. Requires `--text-index`; not with
+        /// `--text-index-exclude`.
+        #[arg(
+            long = "text-index-include",
+            value_name = "IRI",
+            requires = "text_index",
+            conflicts_with = "text_index_exclude"
+        )]
+        text_index_include: Vec<String>,
+        /// Leave this predicate's literals out of the full-text index — a full
+        /// IRI, bare or in `<…>`. Repeat for several (e.g. provenance prose
+        /// and stored SPARQL text). A predicate-restricted index is written as
+        /// section kind 11, which readers older than 0.4.0 do not see, and the
+        /// SPARQL `CONTAINS` pushdown uses it only for predicates it covers.
+        /// Requires `--text-index`.
+        #[arg(
+            long = "text-index-exclude",
+            value_name = "IRI",
+            requires = "text_index"
+        )]
+        text_index_exclude: Vec<String>,
         /// Build a **label index** (a LABEL_INDEX section, kind 8): the display
         /// label of every labelled subject — `rdfs:label`, `skos:prefLabel`/
         /// `altLabel`, `foaf:name`, `dc`/`dcterms:title`, `schema:name`, and
@@ -218,10 +254,11 @@ enum Command {
         /// SCHEMA section and `--label-index` included.
         /// Named graphs are carried through the same spill (the graph leads the
         /// sort key), so a `.nq`/TriG input needs no `--collapse-graphs`.
-        /// Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or not — RDF/XML
-        /// is the one syntax that must be converted first), implies
-        /// `--no-pyramid`, and excludes
-        /// `--text-index`/`--materialize`/`--reason`.
+        /// `--text-index` (any scope) is a second external sort over the
+        /// literal words inside the same budget, spilling to the same
+        /// `--tmp-dir`. Limits: N-Triples/N-Quads/Turtle/TriG only (gzipped or
+        /// not — RDF/XML is the one syntax that must be converted first),
+        /// implies `--no-pyramid`, and excludes `--materialize`/`--reason`.
         #[arg(long = "memory-budget-mb")]
         memory_budget_mb: Option<u64>,
         /// Directory for the external build's spill files (default: alongside
@@ -779,6 +816,41 @@ enum Command {
         /// TEXT_INDEX section; same semantics as `build --text-index`.
         #[arg(long = "text-index")]
         text_index: bool,
+        /// Which graphs' literals the full-text index covers: `default` — the
+        /// default graph only, the one scope before 0.4.0 — or `all`, the
+        /// default graph and every named graph (provenance kept in named
+        /// graphs becomes searchable, and `FILTER(CONTAINS(…))` inside
+        /// `GRAPH` can use the index). Requires `--text-index`.
+        #[arg(
+            long = "text-index-graphs",
+            value_name = "SCOPE",
+            value_parser = ["default", "all"],
+            default_value = "default",
+            requires = "text_index"
+        )]
+        text_index_graphs: String,
+        /// Index only the literals of this predicate — a full IRI, bare or in
+        /// `<…>`. Repeat for several. Requires `--text-index`; not with
+        /// `--text-index-exclude`.
+        #[arg(
+            long = "text-index-include",
+            value_name = "IRI",
+            requires = "text_index",
+            conflicts_with = "text_index_exclude"
+        )]
+        text_index_include: Vec<String>,
+        /// Leave this predicate's literals out of the full-text index — a full
+        /// IRI, bare or in `<…>`. Repeat for several (e.g. provenance prose
+        /// and stored SPARQL text). A predicate-restricted index is written as
+        /// section kind 11, which readers older than 0.4.0 do not see, and the
+        /// SPARQL `CONTAINS` pushdown uses it only for predicates it covers.
+        /// Requires `--text-index`.
+        #[arg(
+            long = "text-index-exclude",
+            value_name = "IRI",
+            requires = "text_index"
+        )]
+        text_index_exclude: Vec<String>,
         /// Add a LABEL_INDEX section (same semantics as `build --label-index`).
         /// An input that already has one keeps it either way. The rebuilt file
         /// always carries a SCHEMA section.
@@ -1381,6 +1453,25 @@ fn run() -> Result<ExitCode, CliError> {
     }
 }
 
+/// The full-text index the `--text-index*` flags ask for (`None` = no index).
+fn text_index_scope(
+    enabled: bool,
+    graphs: &str,
+    include: &[String],
+    exclude: &[String],
+) -> anyhow::Result<Option<rete_core::TextIndexScope>> {
+    if !enabled {
+        return Ok(None);
+    }
+    let graphs = match graphs {
+        "all" => rete_core::TextIndexGraphs::All,
+        _ => rete_core::TextIndexGraphs::Default,
+    };
+    rete_core::TextIndexScope::from_options(graphs, include, exclude)
+        .map(Some)
+        .map_err(anyhow::Error::msg)
+}
+
 fn dispatch(command: Command) -> anyhow::Result<()> {
     match command {
         Command::Generate { output } => generate_release_artifacts(&output),
@@ -1394,6 +1485,9 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             no_pyramid,
             pyramid_algo,
             text_index,
+            text_index_graphs,
+            text_index_include,
+            text_index_exclude,
             label_index,
             no_schema,
             type_predicate,
@@ -1420,6 +1514,12 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 _ => rete_core::PermSet::ALL,
             };
             let surface = commands::export::parse_quoted_triple_syntax(&quoted_triple_syntax)?;
+            let text_index = text_index_scope(
+                text_index,
+                &text_index_graphs,
+                &text_index_include,
+                &text_index_exclude,
+            )?;
             let card_args = commands::card::CardArgs {
                 enabled: card,
                 file: card_file,
@@ -1662,6 +1762,9 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             type_predicate,
             pyramid_algo,
             text_index,
+            text_index_graphs,
+            text_index_include,
+            text_index_exclude,
             label_index,
             card,
             card_file,
@@ -1673,7 +1776,12 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
         } => commands::build::repyramid(
             &file,
             &output,
-            text_index,
+            text_index_scope(
+                text_index,
+                &text_index_graphs,
+                &text_index_include,
+                &text_index_exclude,
+            )?,
             type_predicate.as_deref(),
             rete_core::PyramidAlgo::from_cli(&pyramid_algo).unwrap_or_default(),
             commands::card::CardArgs {
