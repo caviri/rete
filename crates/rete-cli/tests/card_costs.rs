@@ -11,6 +11,14 @@ mod common;
 
 use predicates::prelude::*;
 
+/// The file's content hash, hex, from header bytes 8..24 (`rete card --json`
+/// carries no checksum, so comparing its `checksum` field compared null with
+/// null).
+fn content_hash(path: &std::path::Path) -> String {
+    let bytes = std::fs::read(path).unwrap();
+    bytes[8..24].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// A fixture with a full derived card. `closed` decides whether every
 /// non-literal object is also a subject: when it is, nothing dangles, and
 /// `top-dangling` — the template the static audit calls **undecidable**,
@@ -246,9 +254,7 @@ fn writing_costs_preserves_the_hash_and_the_data() {
     // Built WITHOUT costs: the state 109 of the 110 published cards are in.
     let (_fixture, out) = carded(false, &["--no-card-costs"]);
     let before_len = std::fs::metadata(&out).unwrap().len();
-    let before_hash = common::json(common::rete().arg("card").arg(&out).arg("--json"))["checksum"]
-        .as_str()
-        .map(str::to_string);
+    let before_hash = content_hash(&out);
     let before_nq = common::rete()
         .arg("export")
         .arg(&out)
@@ -266,8 +272,7 @@ fn writing_costs_preserves_the_hash_and_the_data() {
         .stderr(predicate::str::contains("content hash unchanged"));
 
     // Identity: same content hash, still verifies.
-    let after = common::json(common::rete().arg("card").arg(&out).arg("--json"));
-    assert_eq!(after["checksum"].as_str().map(str::to_string), before_hash);
+    assert_eq!(content_hash(&out), before_hash);
     common::rete().arg("verify").arg(&out).assert().success();
 
     // Data: byte-identical N-Quads.
