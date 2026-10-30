@@ -232,7 +232,7 @@ engines must read.
 The flag exists on `build` only. The two commands that re-assemble an existing
 file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---label-index---card-)
 **preserves its input's set** (and says so on stderr when that set is not the
-default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-)
+default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card----no-card-costs)
 writes the **union** of its inputs' sets — one full shard is enough to keep the
 merge-join orders its queries relied on. To change a file's set, rebuild it from
 its RDF source.
@@ -476,7 +476,7 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
-### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …]`
+### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …] [--no-card-costs]`
 Fold several `.rete` files into one without going back through text — the way to
 consolidate a sharded dataset when the original RDF is gone or expensive to
 re-emit. It reads the **shards** (dictionary-encoded and compressed, roughly a
@@ -492,16 +492,54 @@ memory-bounded external builder `rete build --memory-budget-mb` uses, which
 chunks and spills under this command's own `--memory-budget-mb` (default 4096)
 into `--tmp-dir`. Shards carrying **named graphs** fold like any other: the
 builder puts the graph in its sort key, so each graph comes back out of the
-merge as one contiguous run. Card flags match `rete build`.
+merge as one contiguous run.
 
 The merged file carries the **union** of its inputs' permutation sets — an
 all-lean merge stays lean, and one six-permutation input is enough to keep the
 merge-join orders. Like `repyramid`, it has no `--permutations` flag: it
 consolidates shards, it does not re-decide how they were built.
 
+**The card.** Card flags match `rete build` (`--card`, `--card-file`, the
+curated flags, `--no-card-costs`). With one, the merged file gets the **full**
+card — the derived profile and the starter queries — exactly as the
+memory-bounded `rete build` writes it: once the merged file's index sections are
+on disk they are streamed into the profile and every starter query is run
+against the file, by the derivation
+[`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
+runs (so a re-card of the merged file writes the same card, byte for byte),
+inside this command's `--memory-budget-mb`; the card and the build record are
+then written **after the data**. The data sections are the same bytes as
+without a card, and the same as `rete build --memory-budget-mb` writes for the
+union of the shards' statements. Up to 0.4.0 a merged card carried counts only
+and the full one took a `rete recard` afterwards; on two halves of the
+OpenCitations sample the one pass costs what the merge alone did (see
+[Maintaining a published card](dataset-cards.md#which-re-card-path)).
+
+The budget bounds the builder, not the merge's walk of its inputs: on that
+sample the merge peaked about 1 GiB over `--memory-budget-mb` (3,025 MiB at
+2,000), card or no card, so leave that much headroom under a container's limit.
+
+The build record names what was merged: each input's file name, size and
+BLAKE3 (one sequential read of each shard before the merge, the record's `read`
+phase — a shard is otherwise read by range, in index order, and cannot be
+hashed on the way), the effective flags (`command: merge`, the permutation set
+and named-graph layout it chose, the budget, the `--card-file` digest), the
+counts — `statements_read` counts a statement once for every shard that holds
+it, so `duplicates_dropped` is the shards' overlap — the spill, and the time of
+every phase, the card's own (`card_derive`, `starter_queries`,
+`content_hash`) with their own peak RSS.
+
+**The inputs' own cards are not carried.** The merged card's curated half comes
+from `--card-file` and the curated flags alone: a shard's title, licence,
+description, example queries and coherence verdict describe that shard, and
+neither one of them nor a blend of them describes the merge. When an input's
+card carries curated fields, `merge` says so on stderr; without any card flag
+the merged file has no card at all, whatever its inputs carry. To point at the
+shards as published files, list them in the card file's `derived_from`.
+
 ```sh
 rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
-  --card --card-file curated.json
+  --card-file curated.json
 ```
 
 ## Validating

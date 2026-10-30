@@ -74,8 +74,9 @@ pub(crate) struct BuildInfo {
     /// What the memory-bounded build's external sort did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spill: Option<SpillRecord>,
-    /// Measured starter-query costs (only in-memory `rete build` records these;
-    /// memory-bounded/merge builds carry no starter queries to measure).
+    /// Measured starter-query costs, run against the finished file (absent with
+    /// `--no-card-costs`, and in memory-bounded and merged files written before
+    /// 0.4.1, whose counts-only cards had no starter queries to measure).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_costs: Option<QueryCosts>,
     /// Starter queries this build generated, **ran**, and then refused to ship

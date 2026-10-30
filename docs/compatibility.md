@@ -238,9 +238,10 @@ outside the content hash).
 
 ### A card after the data
 
-The memory-bounded build and `rete recard --in-place` write the Dataset Card
-(and the build record beside it) **after every other section** instead of
-between the header and the dictionary ([SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)).
+The memory-bounded build, `rete merge` and `rete recard --in-place` write the
+Dataset Card (and the build record beside it) **after every other section**
+instead of between the header and the dictionary
+([SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)).
 Nothing about the format changes: the header has always been the directory,
 every reader has always located the card through it, and the content hash folds
 the card first wherever it lies — the same card on the same data hashes the same

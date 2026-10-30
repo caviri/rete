@@ -1244,7 +1244,8 @@ and dictionary-chunk size, zstd level and frame shape, frequent objects),
 the section <code>codec</code>, <code>card_costs</code> (not <code>--no-card-costs</code>), the card's
 <code>card_top_n</code> cap, and <code>card_file</code> — its <strong>file name</strong> and BLAKE3, never its
 path.</li>
-<li><code>inputs</code> — each input by <strong>file name only</strong> (<code>stdin</code> for <code>-</code>), its <code>format</code>,
+<li><code>inputs</code> — each input by <strong>file name only</strong> (<code>stdin</code> for <code>-</code>), its <code>format</code>
+(<code>rete</code> for the shards of a <code>rete merge</code> and the input of <code>repyramid</code>),
 <code>compression</code> (<code>gzip</code>, detected from the bytes), <code>bytes</code> as stored, and the
 <code>blake3</code> of exactly those bytes (below). A build over more than 64 inputs
 lists the first 64 and counts the rest in <code>inputs_omitted</code>.</li>
@@ -1257,10 +1258,11 @@ parse stored verbatim (a <code>--strict</code> build that finished had none).</l
 time per phase, below), <code>peak_rss_bytes</code> (<code>VmHWM</code>; <code>null</code> off Linux),
 <code>memory_limit_bytes</code> (the process's cgroup limit; <code>null</code> when none) and
 <code>cpus</code> (logical CPUs available to the process).</li>
-<li><code>spill</code> — the memory-bounded build only: <code>chunks</code>, <code>merge_passes</code> (k-way
-merges over spilled files), <code>sort_runs</code> (the files those merges read) and
-<code>scratch_peak_bytes</code> (the spill directory at its fullest, sampled at phase
-boundaries and after each sort writes its runs — a lower bound).</li>
+<li><code>spill</code> — the memory-bounded build and <code>rete merge</code> only: <code>chunks</code>,
+<code>merge_passes</code> (k-way merges over spilled files), <code>sort_runs</code> (the files
+those merges read) and <code>scratch_peak_bytes</code> (the spill directory at its
+fullest, sampled at phase boundaries and after each sort writes its runs — a
+lower bound).</li>
 <li><code>query_costs</code> — measured cost figures for every starter query (below).</li>
 <li><code>dropped_queries</code> — starter queries this build generated, <strong>ran</strong>, and then
 refused to ship (below). Absent on a healthy build.</li>
@@ -1299,20 +1301,21 @@ peak RSS (below):</p>
 <p>The builders time themselves with a lap timer (<code>rete_core::build_trace</code>): each
 phase is charged the wall-clock time since the previous one ended, so the
 phases <strong>partition</strong> the run and never overlap. Their names are a closed set:
-<code>read</code> (<code>repyramid</code>/<code>recard</code> reading the input file), <code>parse</code> and <code>reason</code> (the
+<code>read</code> (<code>repyramid</code>/<code>recard</code> reading the input file, <code>merge</code> hashing its
+shards), <code>parse</code> and <code>reason</code> (the
 in-RAM text path), <code>parse+dictionary</code> and <code>parse+encode</code> (the two passes of
 the streaming in-RAM build, where parsing cannot be told apart from what it
 feeds), <code>parse+chunk</code>, <code>dictionary</code>, <code>encode</code> and <code>named_graphs</code> (the
-memory-bounded build), <code>card_derive</code>, <code>pyramid</code>, <code>text_index</code>,
+memory-bounded build and <code>merge</code>), <code>card_derive</code>, <code>pyramid</code>, <code>text_index</code>,
 <code>labels+schema</code>, <code>dictionary_section</code>, <code>index_permutations</code>, <code>serialize</code>,
 <code>starter_queries</code>, <code>write</code> and <code>content_hash</code> (the read of every hashed section
-that places a card after the data needs: the memory-bounded build and
+that places a card after the data needs: the memory-bounded build, <code>merge</code> and
 <code>recard --in-place</code>). In the memory-bounded build the SCHEMA pass is
 fed from the remap and permutation merges, so part of its cost sits in
 <code>encode</code> and <code>index_permutations</code>; <code>labels+schema</code> is only its finish.</p>
 <p>Where a phase is a card's own work — <code>card_derive</code> and <code>starter_queries</code> in the
-memory-bounded build and in <code>rete recard</code> — it also records its <strong>own peak
-RSS</strong> (<code>peak_rss_bytes</code> on the phase, shown as <code>(peak …)</code>), beside the run's:
+memory-bounded build, <code>rete merge</code> and <code>rete recard</code> — it also records its
+<strong>own peak RSS</strong> (<code>peak_rss_bytes</code> on the phase, shown as <code>(peak …)</code>), beside the run's:
 the derivation runs after the build's heavy phases, so the run's peak says
 nothing about it. It is the kernel's high-water mark when the phase raised it,
 and otherwise the highest <code>VmRSS</code> a sampler read every 10 ms during the phase.
@@ -1333,6 +1336,11 @@ cache took 0.05 s and reading and hashing it 0.12 s (read and hash together
 ran at about 8 GB/s, on one core), so the digest added 0.07 s to a 51.5 s in-RAM
 build (0.1%) and a 13.7 s memory-bounded one (0.5%). There is no switch to
 skip it. A cardless build has no record and hashes nothing.</p>
+<p><code>rete merge</code> is the exception to "no second pass": it reads its shards by range,
+in index order, so it hashes each one in a sequential read of its own before
+the merge starts — timed as the record's <code>read</code> phase. That is one read of
+every shard, against the merge's own walk of their dictionaries and index;
+a merge without a card does not hash.</p>
 <h3 id="written-last-in-place">Written last, in place</h3>
 <p>Most of the record is only known at the end — every build's last phase is
 writing the file. So an in-RAM build (and a copying re-card) writes the
@@ -1343,7 +1351,8 @@ written over that reservation <strong>in place</strong>, padded with spaces — 
 trailing whitespace, and every reader of the section (serde, <code>JSON.parse</code>,
 Python's <code>json</code>) accepts it. Nothing else in the file moves; the wall time and
 peak RSS cover the final write. The padding is a few hundred bytes.</p>
-<p>The memory-bounded build reserves nothing: its card and record are written
+<p>The memory-bounded build reserves nothing, and neither does <code>rete merge</code>: the
+card and record are written
 together <strong>after the data</strong>, once everything they describe is on disk, and the
 record is sealed just before that write — its run covers every phase, the
 content hash included, but not the last few KB written.</p>
@@ -1404,9 +1413,9 @@ debug reference, never a guarantee — and is stored <strong>with its context</s
 quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
 9 requests" survives being read elsewhere; "12 ms" does not.</li>
 </ul>
-<p><code>rete merge</code> records timestamp/builder/params but no costs (its card carries no
-derived starter queries to measure). The memory-bounded build measures its
-starter queries against the file it has just written, as <code>rete recard</code> does.</p>
+<p>The memory-bounded build and <code>rete merge</code> measure their starter queries
+against the file they have just written, as <code>rete recard</code> does. (Up to 0.4.0
+both wrote a counts-only card with no starter queries, and so no costs.)</p>
 <h3 id="a-build-does-not-ship-a-query-it-just-measured-at-zero-rows">A build does not ship a query it just measured at zero rows</h3>
 <p>The run above is not only a costing. It is the moment a carded build stops
 <em>reasoning</em> about whether its starter queries answer and simply <strong>observes</strong> it
@@ -1458,8 +1467,8 @@ measurement is deterministic), and a build with nothing to drop is byte-identica
 to one that never measured at all.</p>
 <p><strong>Measurement versus the static machinery.</strong> They are not redundant. The
 generator's <code>NonEmpty</code> claims and <code>provably_empty</code> hooks act at <em>generation</em>
-time, before any measurement exists, and they carry every card built without a
-build record (external builds, <code>merge</code>, and every file published before build
+time, before any measurement exists, and they carry every card whose queries
+were never run (<code>--no-card-costs</code>, and every file published before build
 records). Where both speak, the measurement wins. Where they <em>disagree</em> — a
 template that declares its query cannot come back empty, and then it does —
 that is a defect in the rule, not a fact about the dataset: the build says so
@@ -1856,6 +1865,24 @@ cards are the same bytes and the three files have the same content hash. At
 this size the time is the same either way and the build's spill sets the disk
 peak; what the one pass saves is the second command and, on a file too big to
 copy, the copy — 7 min of the 19 min 27 s above, and a second 26.5 GB file.</p>
+<p><strong><code>rete merge</code> writes its card the same way</strong> — it runs on the same builder,
+and finishes with the same step — so a sharded dataset folded into one file no
+longer needs a <code>recard</code> either. Two halves of the M=1200 sample (its first and
+last 9,434,621 lines, each built memory-bounded with <code>--named-graphs quad --label-index</code>: 94.4 and 102.2 MB) merged in a 4 GiB container at a budget of
+2,000 MiB:</p>
+<table><thead><tr><th>two halves of the M=1200 sample</th><th>one pass (full card)</th><th>merge (counts-only card), then <code>recard -o</code></th><th>merge, then <code>recard --in-place</code></th></tr></thead><tbody>
+<tr><td>wall time</td><td>66.7 s</td><td>66.6 s + 1.6 s</td><td>66.6 s + 1.5 s</td></tr>
+<tr><td>peak RSS</td><td>3,025 MiB</td><td>3,052 MiB, then 173 MiB</td><td>3,052 MiB, then 175 MiB</td></tr>
+<tr><td>written past the merged file</td><td>—</td><td>a second 194.4 MB file</td><td>15 KB of dead bytes (the old card and record)</td></tr>
+</tbody></table>
+<p>In the one pass, <code>read</code> (hashing both shards for the record) took 0.4 s,
+<code>card_derive</code> 0.6 s at a phase peak of 244 MiB, the 16 starter queries 0.8 s
+(198 MiB, none dropped) and <code>content_hash</code> 37 ms. The four cards are the same
+59,740 bytes and the four files have the same content hash; the data sections of
+the two merges are the same bytes. The peak is the merge's own, not the card's:
+its walk of the shards is not counted in <code>--memory-budget-mb</code>, so here it runs
+about 1 GiB over the budget, and at 3,000 MiB the merge does not fit a 4 GiB
+container — with a card or without, and in 0.4.0 too.</p>
 <p><strong>Measurement RAM is in the queries, not in the file.</strong> Attaching costs to an
 existing file rewrites it through a bounded buffer, but running the starter
 queries to get those costs does not: the engine evaluates eagerly, so a query

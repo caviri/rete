@@ -775,13 +775,13 @@ understand the payload simply skips it: every section is located through the
 directory, never by its position relative to another.</p>
 <p>It sits in one of two places, and a reader must accept both:</p>
 <ul>
-<li><strong>between the header and the dictionary</strong> — what the in-RAM build, <code>repyramid</code>
-and <code>merge</code> write;</li>
+<li><strong>between the header and the dictionary</strong> — what the in-RAM build and
+<code>repyramid</code> write (and <code>merge</code> up to 0.4.0);</li>
 <li><strong>after every other section, just before the footer</strong> — what the
-memory-bounded build writes (its full card is derived from the finished
-file's sorted sections, so it exists only once they are on disk) and what
-<code>rete recard --in-place</code> writes (it appends the new card instead of copying
-the file).</li>
+memory-bounded build and <code>merge</code> write (their full card is derived from the
+finished file's sorted sections, so it exists only once they are on disk) and
+what <code>rete recard --in-place</code> writes (it appends the new card instead of
+copying the file).</li>
 </ul>
 <p>The content hash does not depend on where it sits: it folds the metadata section
 <strong>first</strong>, then the other hashed sections in their fixed order, wherever each one

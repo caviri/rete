@@ -21,6 +21,20 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   record times the derivation (`card_derive`, with its own peak RSS),
   the queries (`starter_queries`, likewise) and the extra read of the file that
   folds the hash (`content_hash`).
+- **`rete merge` writes the full Dataset Card too.** A merge with a card
+  (`--card`, `--card-file`, a curated flag) also wrote counts only; it now
+  finishes like the memory-bounded build it runs on — the same derivation and
+  starter-query costing, inside its own `--memory-budget-mb`, the card and the
+  build record after the data — so `rete recard` of a merged file writes the
+  card it already has, byte for byte. The data sections are unchanged (and the
+  same bytes as `rete build --memory-budget-mb` writes for the union of the
+  shards). The build record now names the shards (file name, size, BLAKE3,
+  hashed in one sequential read of each before the merge: the `read` phase),
+  the effective flags, the counts — `duplicates_dropped` is the shards'
+  overlap — the spill and every phase. `merge` gains `--no-card-costs`. The
+  inputs' own cards are still not carried: the curated fields come from
+  `--card-file` and the curated flags only, and `merge` now says so on stderr
+  when an input's card has curated fields.
 - **`rete recard --in-place`** replaces the card of an existing file without
   copying it: the new card and build record are appended after the last
   section, synced, and the 1 KiB header is rewritten last. A crash before the

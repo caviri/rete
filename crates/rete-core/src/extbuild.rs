@@ -38,7 +38,7 @@
 //! labels: (`--label-index`) the remap tees (object, slot, subject) ids; once
 //!           the file is written its own dictionary names them, and the
 //!           LABEL_INDEX and SCHEMA sections are appended (`extbuild_sections`)
-//! card:   (the CLI, `rete build --memory-budget-mb --card…`) the full card is
+//! card:   (the CLI: `build --memory-budget-mb --card…`, `merge`) the full card is
 //!           derived by streaming the finished file's sorted sections and
 //!           appended after them (`crate::recard::plan_card_append`); this
 //!           module then writes no metadata at all

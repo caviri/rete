@@ -190,13 +190,13 @@ directory, never by its position relative to another.
 
 It sits in one of two places, and a reader must accept both:
 
-- **between the header and the dictionary** — what the in-RAM build, `repyramid`
-  and `merge` write;
+- **between the header and the dictionary** — what the in-RAM build and
+  `repyramid` write (and `merge` up to 0.4.0);
 - **after every other section, just before the footer** — what the
-  memory-bounded build writes (its full card is derived from the finished
-  file's sorted sections, so it exists only once they are on disk) and what
-  `rete recard --in-place` writes (it appends the new card instead of copying
-  the file).
+  memory-bounded build and `merge` write (their full card is derived from the
+  finished file's sorted sections, so it exists only once they are on disk) and
+  what `rete recard --in-place` writes (it appends the new card instead of
+  copying the file).
 
 The content hash does not depend on where it sits: it folds the metadata section
 **first**, then the other hashed sections in their fixed order, wherever each one

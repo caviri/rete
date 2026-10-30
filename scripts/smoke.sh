@@ -238,6 +238,15 @@ check "recard in place" "dead byte" -- "$B" recard "$T/gci.rete" --in-place --ke
 check "recard in place verify" "OK|matches" -- "$B" verify "$T/gci.rete"
 check "recard in place record" '"in_place": ?true' -- "$B" card "$T/gci.rete" --json
 check_code "recard -o or --in-place" 2 "in-place|output" -- "$B" recard "$T/gci.rete" --in-place -o "$T/gci2.rete" --keep-curated
+# `rete merge` with a card writes the full card too — the one `rete recard`
+# derives from the merged file — and its build record names the shards.
+$B build "$T/extra.nt" -o "$T/gmx.rete" >/dev/null 2>&1
+check "merge full card" "card .* after the data" -- "$B" merge "$T/gcx.rete" "$T/gmx.rete" -o "$T/gm.rete" --card-file "$T/gcx.json" --memory-budget-mb 64
+check "merge card queries" "starter queries \([1-9]" -- "$B" card "$T/gm.rete"
+check "merge record inputs" "inputs +: gcx\.rete \(rete\), [0-9,]+ B, blake3 [0-9a-f]{16}" -- "$B" card "$T/gm.rete"
+check "merge verify" "OK|matches" -- "$B" verify "$T/gm.rete"
+$B recard "$T/gm.rete" -o "$T/gmr.rete" --keep-curated >/dev/null 2>&1
+check "merge card = recard" "^same$" -- bash -c "cmp -s <(dd if='$T/gm.rete' bs=1 skip=8 count=16 2>/dev/null) <(dd if='$T/gmr.rete' bs=1 skip=8 count=16 2>/dev/null) && echo same || echo differ"
 
 echo "== schema pyramid (semantic zoom) =="
 # A tiny subClassOf hierarchy: Astronomer ⊑ Scientist ⊑ Person, with instances.
