@@ -297,7 +297,7 @@ enum NonEmpty {
 }
 
 /// How many statements a starter query's body may have to read before the
-/// generator swaps it for its [`Bounded`] form (or drops it).
+/// generator swaps it for its `Bounded` form (or drops it).
 ///
 /// Calibrated on the heaviest exact bodies, measured on the OpenCitations
 /// sample's 5.97 M-statement default graph: `top-class-graph` peaked at
@@ -1312,7 +1312,7 @@ pub enum Claim {
 /// is expected news, not a contradiction.
 ///
 /// This is the claim of the template's **exact** body. A template can also
-/// ship a [`Bounded`] form with a claim of its own (a sample of a graph that has
+/// ship a `Bounded` form with a claim of its own (a sample of a graph that has
 /// dangling IRIs need not contain one); [`claim_of_query`] reads the body and
 /// answers for whichever form it is.
 pub fn claim_of(id: &str) -> Claim {
@@ -1752,7 +1752,7 @@ fn scan_estimate(scan: Scan, card: &DatasetCard, caps: &Caps, body: BodyScope) -
 /// Generate the tiered starter-query library for a card: emit each template whose
 /// required capabilities are all present, with the body picked for where the data
 /// lives (`GraphScope`), placeholders substituted, and the shared PREFIX block
-/// prepended. A body whose [`Scan`] is over [`STARTER_SCAN_BUDGET`] statements is
+/// prepended. A body whose `Scan` is over [`STARTER_SCAN_BUDGET`] statements is
 /// replaced by its bounded form, or dropped when it has none.
 pub fn generate(card: &DatasetCard) -> Vec<ExampleQuery> {
     generate_with_budget(card, STARTER_SCAN_BUDGET)

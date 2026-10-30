@@ -721,7 +721,7 @@ where
 
 impl CardInput {
     /// The curated half of an existing card, **verbatim** — the inverse of
-    /// [`fill`](Self::fill). What `rete recard --keep-curated` hands the new
+    /// `fill`. What `rete recard --keep-curated` hands the new
     /// card, so a re-card carries a publisher's title, licence and prose
     /// byte for byte instead of re-typing them (or, as a bare
     /// `repyramid --card` did, silently dropping them).
