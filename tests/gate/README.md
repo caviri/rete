@@ -75,7 +75,12 @@ scripts/docker_gc.sh --apply               # dry-run without --apply
 * **the compiled engine** — `web/pkg*` is gitignored. `gate.sh` checks for it
   first and stops with the command to build it (`docker compose run --rm wasm`)
   rather than letting the two G0 checks that read it fail as if the engine were
-  broken.
+  broken. It must also be the engine **this checkout** builds: the first G0
+  check runs `node scripts/engine_stamp.mjs check`, which compares the
+  `rete-build.json` stamp `scripts/build_wasm.sh` writes into each package (the
+  content hash of the engine source it compiled) with the source on disk, and
+  fails on a stale or unstamped package with the rebuild command. A gate run on
+  a `web/pkg` left over from another engine commit used to pass.
 * **the `.rete` fixtures** — built for you, see below. Nothing is downloaded.
 
 ## Fixtures — one producer, a recipe, and a verified result

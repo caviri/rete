@@ -5,6 +5,43 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+### Changed
+
+- **The playground's cross-source join sends each pattern to every source that
+  can answer it.** It used to route a pattern to the one source that bound its
+  subject whenever that source had the predicate at all: the Crossref title
+  join (`?citing cx:cites <doi> . ?citing rdfs:label ?title` over
+  `crossref-citations` + `crossref`) returned 0 rows because the citation file
+  holds one `rdfs:label` (its declaration of `cx:citedDOIAsWritten`), and with
+  a partner added every pattern of a sharded dataset went to its first shard.
+  Sources are now chosen per pattern by cached `ASK`s (the predicate, then the
+  pattern's constants when several sources have the predicate); patterns only
+  one dataset answers still run together on it, a sharded dataset is one source
+  whose shards each get the sub-query (one subject at a time), a sharded
+  partner brings all its shards, and steps run most-constrained first. The
+  result line now reports the join's sub-queries, bytes and requests.
+- **The wasm build downloads nothing.** The dev image carries the
+  `wasm-bindgen` CLI pinned to `Cargo.lock`, and `scripts/build_wasm.sh` runs
+  `wasm-pack --mode no-install`; the artifacts are byte-identical to a build
+  with the official binary. Each `web/pkg*` package is stamped with the content
+  hash of the engine source it was built from (`rete-build.json`), and the
+  gate fails on a stale or unstamped package (`node scripts/engine_stamp.mjs
+  check`).
+
+### Fixed
+
+- **A host that ignores `Range` no longer breaks the browser reader.** A `200`
+  with the whole file used to fail every read ("server ignored Range"); the
+  sync and asyncify readers, the persistent range cache and the in-file tiles
+  reader now keep that body (up to 256 MiB) and serve every read from it, and
+  refuse a larger one by name without downloading it again.
+- **Zenodo-hosted files.** A host that hides `Content-Range` from JavaScript
+  (Zenodo's file API exposes only `Content-Type`, `ETag`, `Link` and its
+  rate-limit headers) opens as before from the file's own header; the
+  persistent range cache now takes the total from `HEAD`'s `Content-Length`
+  there, and an off-catalog `…/files/<name>/content` URL is labelled with the
+  file name. A gate check serves Zenodo's exact header set.
+
 ## [0.3.7] - 2026-10-28
 
 **Where 0.3.7 is published: every channel, from the one `v0.3.7` tag.**

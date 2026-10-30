@@ -119,7 +119,8 @@ curl -sD - -o /dev/null -r 0-1023 https://my-bucket.s3.amazonaws.com/deps.rete |
 ```
 
 That `206` is the contract: a host that ignores `Range` and returns `200` is
-rejected by the client (it would otherwise read the wrong bytes). For large
+rejected by the CLI (it would otherwise read the wrong bytes; the browser reader
+keeps such a body only up to 256 MiB, and counts the whole download). For large
 files, this is the whole point — a point query pulls a handful of kilobytes from a
 multi-megabyte file instead of the entire thing.
 

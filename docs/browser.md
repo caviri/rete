@@ -203,13 +203,34 @@ use **synchronous XHR — which browsers permit only inside Web Workers**. So
 call `sparql_url` from a worker (see `web/sparql-url-worker.js` and the
 "Remote SPARQL" section of the demo page); on the main thread the browser
 throws. The host must answer `Range` requests with `206 Partial Content`
-(a host that ignores `Range` is rejected loudly, never silently mis-read)
 and send CORS headers when cross-origin. A range fetch that fails mid-query
 is an error — never a silently incomplete result.
 
-The length probe uses a one-byte ranged `GET` (reading the total from
-`Content-Range`) rather than `HEAD`, since some hosts reject `HEAD` —
-notably Hugging Face's signed-redirect storage, which answers `405`.
+**The length probe needs no exposed header.** It is one ranged `GET` of the
+first KiB: a `.rete` header's section directory fixes the file length, and a
+4-byte read of the closing `RETE` footer confirms it, unless a readable
+`Content-Range` already agrees. That matters because a browser sees
+`Content-Range` only when the host lists it in
+`Access-Control-Expose-Headers`, and some hosts do not: Zenodo's file API
+(`…/api/records/<id>/files/<name>/content`) answers `206` with
+`Access-Control-Allow-Origin: *` but exposes only `Content-Type`, `ETag`,
+`Link` and its rate-limit headers, and GitHub Pages sends no expose list at
+all. `HEAD`'s `Content-Length` is always readable, but it can be the size of a
+compressed representation (GitHub Pages HEADs a 71 MB `.rete` as its 58 MB
+gzip, #95), so it is only the fallback for a resource that is not a plain
+`.rete` (a polyglot page). The opt-in persistent range cache below takes its
+total from `HEAD` in the same situation.
+
+**A host that ignores `Range`** answers with `200` and the whole file. Both
+engines treat that body as the file: up to 256 MiB it is kept and every later
+read is a slice of it (the file then behaves like an in-memory one, downloaded
+once per open, and the whole download is counted in the bytes the result line
+reports), and a bigger one is refused with a message that names the cause,
+without retrying the download. The body is never taken for the range
+that was asked for. (Chromium can hide this case for a cacheable body, by
+answering later range requests from its HTTP cache as `206`; a `no-store`
+host cannot be hidden that way, which is what
+`tests/gate/checks/check_zenodo_host.mjs` serves.)
 
 ## Caching remote reads
 

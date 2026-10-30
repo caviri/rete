@@ -61,6 +61,43 @@ function g0() {
     record("G0", "gate fixtures match their recipe (tests/gate/fixtures/manifest.json)", false,
       String(e.stderr || e.stdout || e).slice(-300));
   }
+  // Is the compiled engine the one this checkout's source builds? web/pkg* is
+  // gitignored, so nothing else can say: an agent once ran this gate on a
+  // web/pkg built from another engine commit, and every check below vouched for
+  // a binary nobody was testing. scripts/build_wasm.sh stamps each package with
+  // the content hash of the engine source it compiled (scripts/engine_stamp.mjs).
+  try {
+    let out, code = 0;
+    try {
+      out = execSync(`node ${ROOT}/scripts/engine_stamp.mjs check --json`, { encoding: "utf8" });
+    } catch (e) { out = String(e.stdout || ""); code = e.status || 1; }
+    const verdict = lastJson(out);
+    const ok = code === 0 && verdict && verdict.verdict === "PASS";
+    const bad = verdict ? (verdict.packages || []).filter((p) => p.status === "stale" || p.status === "unstamped") : [];
+    record(
+      "G0",
+      "compiled engine matches this checkout's engine source (web/pkg*/rete-build.json)",
+      ok,
+      ok ? `engine source ${String(verdict.engineSource).slice(0, 12)}`
+        : bad.length ? `${bad.map((p) => `${p.dir}: ${p.status}${p.why ? ` (${p.why})` : ""}`).join("; ")} — rebuild: ${bad[0].rebuild}`
+        : out.slice(-240),
+    );
+  } catch (e) {
+    record("G0", "compiled engine matches this checkout's engine source", false, String(e).slice(0, 200));
+  }
+  // The cross-source router on the shipped app.js, against in-memory sources:
+  // every pattern to every source that can answer it (the Crossref title join,
+  // a sharded partner), exclusive stars kept whole, endpoints only where they bind.
+  try {
+    const out = execSync(`node ${ROOT}/tests/gate/checks/check_fed_router.mjs`, { encoding: "utf8" });
+    const verdict = lastJson(out);
+    const ok = verdict && verdict.verdict === "PASS";
+    record("G0", "federation router: each pattern to every source that can contribute", ok,
+      ok ? `${verdict.cases} routing cases` : out.slice(-240));
+  } catch (e) {
+    record("G0", "federation router: each pattern to every source that can contribute", false,
+      String(e.stderr || e.stdout || e).slice(-240));
+  }
   try {
     const out = execSync(`node ${ROOT}/tests/gate/checks/test_catalog_matrix.mjs`, {
       encoding: "utf8",
@@ -391,6 +428,7 @@ const G2 = [
   ["check_deeplink_view_state", "deep links carry the view: union/reason round-trip WITH differing results, strategy/round/fed/view/labels restored, default hash unchanged", 300000, false],
   ["check_card_modal", "Dataset Card modal: rendered + coloured JSON, remote & resident", 120000, false],
   ["check_len_probe_hostile", "host under-reports length via HEAD + hides Content-Range (#95)", 120000, false],
+  ["check_zenodo_host", "Zenodo's header set (Content-Range hidden, …/content URL) and a Range-ignoring no-store host open in both engines", 300000, false],
   ["check_clear", "Clear everything empties 4 stores + Cache API", 90000, false],
   ["check_worker_init", "broken engine wasm surfaces an error (no infinite hang)", 90000, true],
   ["check_refresh_session", "Settings ↻ Refresh actually reloads the document", 90000, false],

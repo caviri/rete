@@ -799,7 +799,9 @@ selected permutation payload (the best of the six) for the triple pattern. <code
 reads just the header, dictionary, and summary — <strong>the index is never
 downloaded</strong>. The host <strong>must</strong> return <code>206 Partial Content</code> to a <code>Range</code>
 request; a host that ignores <code>Range</code> (returns <code>200</code>) is rejected with a clear
-error rather than silently returning wrong bytes.</p>
+error rather than silently returning wrong bytes. (The browser reader, which
+has already received that whole body, keeps it when it is at most 256 MiB and
+counts the whole download; see <a href="hosting.html">Hosting</a>.)</p>
 <h2 id="generating-synthetic-test-data">Generating synthetic test data</h2>
 <p><code>scripts/synth_graph.py</code> generates a realistic scholarly knowledge graph —
 papers, authors, venues, institutions, grants, fields — with the statistics

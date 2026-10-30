@@ -226,7 +226,11 @@ does:
 
 The product boundary here is strict: a host that ignores `Range` must fail
 clearly instead of silently downloading the world and pretending the query was
-bounded.
+bounded. The CLI refuses its `200`. The browser reader has already received the
+whole body by the time it sees that `200`, so it keeps a body of up to 256 MiB
+and serves every read from it — and counts the whole download in the query's
+bytes, so nothing pretends the read was bounded; a larger body is refused by
+name.
 
 ## Reasoning And Validation
 

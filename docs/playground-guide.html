@@ -885,9 +885,12 @@ reproducible from its address alone, with nothing stored server-side.</p>
 one you published yourself — give the address instead:
 <code>playground.html#url=&lt;https://…/yours.rete&gt;&amp;mode=sparql</code>. It is read the same
 lazy way, over HTTP range requests, so the link works against a file of any size
-as long as its host sends <code>Accept-Ranges: bytes</code> and permits cross-origin reads
-(<code>Access-Control-Allow-Origin</code>, exposing <code>Content-Range</code>). Connecting by hand
-and pressing <strong>Share</strong> produces exactly this form of link.</p>
+as long as its host answers range requests and permits cross-origin reads
+(<code>Access-Control-Allow-Origin</code>, and <code>Range</code> allowed in the preflight). The host
+does not have to expose <code>Content-Range</code>: the length is read from the file's own
+header, so a Zenodo file API URL (<code>…/api/records/&lt;id&gt;/files/&lt;name&gt;/content</code>)
+works as it is. Connecting by hand and pressing <strong>Share</strong> produces exactly this
+form of link.</p>
 <h3 id="sharing-view-state">What the link carries</h3>
 <p>Naming the graph and the query is not enough on its own. Several toolbar
 controls change <strong>what the query returns</strong>, and a link that dropped them would

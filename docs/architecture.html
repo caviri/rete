@@ -808,7 +808,11 @@ on the query shape.</li>
 </ol>
 <p>The product boundary here is strict: a host that ignores <code>Range</code> must fail
 clearly instead of silently downloading the world and pretending the query was
-bounded.</p>
+bounded. The CLI refuses its <code>200</code>. The browser reader has already received the
+whole body by the time it sees that <code>200</code>, so it keeps a body of up to 256 MiB
+and serves every read from it — and counts the whole download in the query's
+bytes, so nothing pretends the read was bounded; a larger body is refused by
+name.</p>
 <h2 id="reasoning-and-validation">Reasoning And Validation</h2>
 <p><code>build --materialize</code> can run the RDFS/OWL-RL subset at build time and write the
 inferred triples into the snapshot. SHACL validation reads the snapshot and shape

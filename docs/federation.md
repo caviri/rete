@@ -212,12 +212,34 @@ long multi-source fan-out isn't a silent spinner.
 The playground goes past the CLI's union: it also does a **term-level cross-source
 JOIN** — one BGP split across sources and joined on the shared variables — so the
 "cross-file join is not found" limit above is a *CLI* limit, not a playground one.
-Each triple pattern is routed to a source by its predicate (and by where its
-subject was bound), each source answers its own sub-pattern with the join keys
-already narrowed down, and the partial rows are joined in the browser. Queries
-that can't be split this way (OPTIONAL / UNION / aggregates / property paths)
-fall back to the union path. So e.g. USTC editions ⋈ the Embassy books they
-cite, joined on the book IRI, returns real joined rows across the two files.
+Queries that can't be split this way (OPTIONAL / UNION / aggregates / property
+paths / VALUES) fall back to the union path. So e.g. USTC editions ⋈ the Embassy
+books they cite, joined on the book IRI, returns real joined rows across the two
+files. How a BGP is split:
+
+- **Every pattern goes to every source that can contribute**, and their rows are
+  unioned. Each `.rete` or in-memory source is asked (`ASK`, cached per file for
+  the session) whether it has the pattern's predicate, and — when several do and
+  the pattern has a constant — whether it has the pattern itself, which is what
+  keeps `?b a schema:Book` on the one dataset that has the class while `rdf:type`
+  is in all of them. A live endpoint is never asked (it answers anything): it
+  takes the patterns no other source has, and the patterns whose subject it bound
+  (`?wd wdt:P17 ?c . ?c rdfs:label ?l` — the labels of *its* entities).
+- **Patterns only one dataset can answer run together** on it as one sub-query
+  (exact: every matching triple is in that dataset). Patterns several datasets
+  can answer run one at a time, on each of them.
+- **Steps run most-constrained first**, each step's join keys VALUES-injected into
+  the next (≤ 250 per hop); a FILTER runs in the first step where all its
+  variables are bound. The **🔍 Plan** button shows the routing and the sub-queries
+  without running them; after a run, the banner lists each pattern's sources and
+  the rows, bytes and requests of its step.
+
+This replaced a router that sent each pattern to **one** source — the one that
+bound its subject, whenever that source had the predicate at all. One stray
+triple was enough to break it: `crossref-citations.rete` holds a single
+`rdfs:label` (in its declaration of `cx:citedDOIAsWritten`), so a title lookup on
+citing works went there and the Crossref title join returned 0 rows; now the
+label pattern runs on both files and the titles come from `crossref.rete`.
 
 A **sharded dataset** is registered as one logical graph with a `shards: [url0, url1,
 …]` list in the catalog; the playground treats `url0` as the primary and the rest as
@@ -225,7 +247,14 @@ intrinsic federation partners, so **every query auto-fans across all shards** (u
 and the rows merge — you query it like one dataset (a "⛓ N shards" chip shows in the
 Sources strip). This is how a graph too big to build as a single file — e.g. a 600 M-
 triple Wikidata split into six independent `--no-pyramid` shards — is served and queried
-as one. The path to a bigger graph is just more shards.
+as one. The path to a bigger graph is just more shards. With a partner added, the
+sharded dataset (on either side: a sharded partner brings all its shards) stays one
+logical source to the join: a pattern only it can answer runs on every shard that has
+it, one subject at a time — a subject's triples live in one shard, but a join between
+two subjects may cross shards, so it is joined across shards like a join between
+datasets. (Before, every pattern of a sharded dataset with a partner went to its first
+shard only.) Without a partner, a query still runs whole on each shard and the rows are
+unioned, so a join between subjects in different shards is not found there.
 
 **Worked example — resolve five terms across two ontologies.** The bundled
 `chebi-full` (the complete ChEBI ontology, 8.83 M triples) and `chemotion` (a
