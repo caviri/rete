@@ -34,8 +34,17 @@
 //!           with the same tables → global.tok, external sort by (token,
 //!           subject) → the TEXT_INDEX section (`crate::text_index_spill`)
 //! write:  header | metadata | dict | index | text index | named graphs |
-//!           footer, hashed incrementally
+//!           footer, hashed incrementally; the spilled sections are deleted
+//! labels: (`--label-index`) the remap tees (object, slot, subject) ids; once
+//!           the file is written its own dictionary names them, and the
+//!           LABEL_INDEX and SCHEMA sections are appended (`extbuild_sections`)
 //! ```
+//!
+//! Spill: the merge deletes each chunk's term files once it has read them,
+//! the remap each chunk's statements and remap tables once rewritten. The
+//! peak is at the end of the merge, while every chunk's statements are on
+//! disk; nothing of the label pass is there yet (up to 0.4.0 its string
+//! records were, +20% on a data-only graph).
 //!
 //! Peak RAM ≈ max(one chunk's working set, the merge's read and write buffers,
 //! one chunk's remap tables, one sort run, one named graph's index) — all
@@ -188,7 +197,7 @@ thread_local! {
     /// `(chunk budget, text-index run bytes)` for tests that drive a small
     /// graph through [`build_external`] as many chunks and many sort runs —
     /// the public budget floor would otherwise make it one of each.
-    static TEST_SPLIT: std::cell::Cell<Option<(u64, usize)>> = const { std::cell::Cell::new(None) };
+    pub(crate) static TEST_SPLIT: std::cell::Cell<Option<(u64, usize)>> = const { std::cell::Cell::new(None) };
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -272,9 +281,11 @@ where
     let mut chunker = Chunker::new(&tmp, chunk_budget, opts.graphs);
     chunker.text = text.as_mut();
     // LABEL_INDEX / SCHEMA (kinds 8, 9): the passes live in extbuild_sections;
-    // each phase below calls one hook. A sort run gets an eighth of the budget
-    // while chunks are resident, a quarter afterwards.
-    chunker.labels = opts
+    // each phase below calls one hook. Both work on global ids from the remap
+    // on, so nothing of them is spilled beside the chunk files. A sort run
+    // gets an eighth of the budget while the remap runs, a quarter once the
+    // file is written.
+    let mut ext_labels = opts
         .label_index
         .then(|| ExtLabels::new(&tmp.dir, (budget / 8) as usize));
     let mut ext_schema = opts.schema.then(|| {
@@ -285,11 +296,7 @@ where
         )
     });
     stream(&mut |q: RawQuad| chunker.push(q))?;
-    let (chunks, labels) = chunker.finish_all()?;
-    let label_section = match labels {
-        Some(l) => l.finish(crate::file::writer_codec())?,
-        None => None,
-    };
+    let chunks = chunker.finish()?;
     let statements: u64 = chunks
         .iter()
         .map(|c| c.triple_count + c.quad_count)
@@ -309,6 +316,9 @@ where
     let (merged, remaps) = merge_dictionaries_with(&tmp, &chunks, &schema_preds, budget)?;
     if let Some(x) = ext_schema.as_mut() {
         x.set_merge_facts(&merged.schema_facts);
+    }
+    if let Some(l) = ext_labels.as_mut() {
+        l.set_predicates(merged.schema_facts.label_preds.clone());
     }
     note_scratch(&tmp);
     trace::lap(Phase::Dictionary);
@@ -338,6 +348,7 @@ where
         has_named.then_some(global_qtri.as_path()),
         text.as_mut(),
         ext_schema.as_mut(),
+        ext_labels.as_mut(),
     )?;
     note_scratch(&tmp);
     trace::lap(Phase::Encode);
@@ -492,8 +503,32 @@ where
     stats.pyramid_levels = 0;
     note_scratch(&tmp);
     trace::lap(Phase::Write);
+    // The sections now live in the output: drop their spill copies before the
+    // label pass sorts, so the two never stack.
+    for p in merged
+        .section_files
+        .iter()
+        .chain(perm_sections.iter())
+        .map(|s| &s.path)
+        .chain(text_section.iter().flat_map(|t| [&t.table, &t.postings]))
+        .chain(named.iter().map(|n| &n.body))
+        .chain(quad.iter().map(|q| &q.path))
+    {
+        let _ = std::fs::remove_file(p);
+    }
 
     // ---- Phase 6: LABEL_INDEX / SCHEMA, appended (outside the content hash) --
+    // Both read the strings they name through the written file's dictionary.
+    let label_section = match ext_labels {
+        Some(l) => {
+            let s = l
+                .finish(output, (budget / 4) as usize, budget / 8, codec)
+                .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?;
+            note_scratch(&tmp);
+            s
+        }
+        None => None,
+    };
     let schema_section = match ext_schema {
         Some(x) => x
             .finish(output)
@@ -618,8 +653,6 @@ struct Chunker<'a> {
     graph_ids: std::collections::BTreeMap<String, u32>,
     chunks: Vec<ChunkInfo>,
     has_quoted: bool,
-    /// The LABEL_INDEX pass, fed each chunk's default-graph quads at seal.
-    labels: Option<ExtLabels>,
     /// `--text-index`: each sealed chunk spills its literal words here.
     text: Option<&'a mut crate::text_index_spill::TextSpill>,
     /// Quad index: graph names are subject terms of the chunk dictionary and
@@ -638,7 +671,6 @@ impl<'a> Chunker<'a> {
             graph_ids: std::collections::BTreeMap::new(),
             chunks: Vec::new(),
             has_quoted: false,
-            labels: None,
             text: None,
             quad: graphs == GraphLayout::Quad,
         }
@@ -724,9 +756,6 @@ impl<'a> Chunker<'a> {
         }
         tri.flush()?;
         let triple_count = quads.len() as u64;
-        if let Some(l) = self.labels.as_mut() {
-            l.observe_chunk(&quads)?;
-        }
         drop(quads);
 
         // Named quads: the chunk-local graph id is the name's RANK in this
@@ -825,13 +854,6 @@ impl<'a> Chunker<'a> {
             graph_terms,
         });
         Ok(())
-    }
-
-    /// [`finish`](Self::finish), handing back the label pass too.
-    fn finish_all(mut self) -> Result<(Vec<ChunkInfo>, Option<ExtLabels>), ExtBuildError> {
-        self.seal()?;
-        let labels = self.labels.take();
-        Ok((self.finish()?, labels))
     }
 
     fn finish(mut self) -> Result<Vec<ChunkInfo>, ExtBuildError> {
@@ -936,27 +958,47 @@ impl SpaceStream {
 
 /// Line-based reader over a chunk's sorted term file.
 struct TermFileReader {
-    rd: BufReader<File>,
+    /// `None` once the file has been read to its end
+    rd: Option<BufReader<File>>,
     buf: String,
+    /// deleted at the end of the file (the merge's chunk term files)
+    consume: Option<PathBuf>,
 }
 
 impl TermFileReader {
     fn open(path: &Path) -> Result<Self, std::io::Error> {
-        Self::open_with(path, 1 << 20)
-    }
-
-    /// With a `capacity`-byte read buffer: the dictionary merge opens every
-    /// chunk's files at once and sizes them from the budget.
-    fn open_with(path: &Path, capacity: usize) -> Result<Self, std::io::Error> {
         Ok(TermFileReader {
-            rd: BufReader::with_capacity(capacity, File::open(path)?),
+            rd: Some(BufReader::with_capacity(1 << 20, File::open(path)?)),
             buf: String::new(),
+            consume: None,
         })
     }
+
+    /// With a `capacity`-byte read buffer, deleting the file once it has been
+    /// read to its end: the dictionary merge opens every chunk's term files at
+    /// once, sizes their buffers from the budget, and gives a chunk's space
+    /// back as soon as the merge is past its last term rather than when every
+    /// chunk is done. (A shared-section file is read twice, by the subject and
+    /// the object stream; its space comes back when the second one closes.)
+    fn open_consuming(path: &Path, capacity: usize) -> Result<Self, std::io::Error> {
+        Ok(TermFileReader {
+            rd: Some(BufReader::with_capacity(capacity, File::open(path)?)),
+            buf: String::new(),
+            consume: Some(path.to_path_buf()),
+        })
+    }
+
     fn next(&mut self) -> Result<Option<String>, std::io::Error> {
+        let Some(rd) = self.rd.as_mut() else {
+            return Ok(None);
+        };
         self.buf.clear();
-        let n = self.rd.read_line(&mut self.buf)?;
+        let n = rd.read_line(&mut self.buf)?;
         if n == 0 {
+            self.rd = None; // close before deleting
+            if let Some(p) = self.consume.take() {
+                let _ = std::fs::remove_file(p);
+            }
             return Ok(None);
         }
         // strip exactly the trailing '\n' we wrote
@@ -1095,14 +1137,20 @@ fn merge_dictionaries_with(
     let mut subj_streams = Vec::with_capacity(k);
     let mut obj_streams = Vec::with_capacity(k);
     for (ci, c) in chunks.iter().enumerate() {
+        let open = |suffix: &str| {
+            TermFileReader::open_consuming(&tmp.path(&format!("c{ci}.{suffix}")), read_buf)
+        };
+        // Both readers of the shared file open before either stream reads:
+        // a stream deletes its file at the end, and an empty one ends at once.
+        let (shared_s, shared_o) = (open("shared")?, open("shared")?);
         subj_streams.push(SpaceStream::new(
-            TermFileReader::open_with(&tmp.path(&format!("c{ci}.shared")), read_buf)?,
-            TermFileReader::open_with(&tmp.path(&format!("c{ci}.subj")), read_buf)?,
+            shared_s,
+            open("subj")?,
             c.section_terms[0],
         )?);
         obj_streams.push(SpaceStream::new(
-            TermFileReader::open_with(&tmp.path(&format!("c{ci}.shared")), read_buf)?,
-            TermFileReader::open_with(&tmp.path(&format!("c{ci}.obj")), read_buf)?,
+            shared_o,
+            open("obj")?,
             c.section_terms[0],
         )?);
     }
@@ -1226,8 +1274,8 @@ fn merge_dictionaries_with(
             let empty = tmp.path(&format!("c{ci}.pred.empty"));
             File::create(&empty)?;
             streams.push(SpaceStream::new(
-                TermFileReader::open_with(&tmp.path(&format!("c{ci}.pred")), read_buf)?,
-                TermFileReader::open_with(&empty, read_buf)?,
+                TermFileReader::open_consuming(&tmp.path(&format!("c{ci}.pred")), read_buf)?,
+                TermFileReader::open_consuming(&empty, read_buf)?,
                 c.section_terms[3],
             )?);
         }
@@ -1239,6 +1287,9 @@ fn merge_dictionaries_with(
             }
             if let Some(i) = schema_preds.iter().position(|w| *w == term) {
                 schema_facts.pred_ids[i] = Some(rank + 1);
+            }
+            if let Some(slot) = crate::label_index::slot_of_predicate(&term) {
+                schema_facts.label_preds.push((rank + 1, slot));
             }
             pred_sec.push(&term)?;
             rank += 1;
@@ -1261,8 +1312,8 @@ fn merge_dictionaries_with(
             let empty = tmp.path(&format!("c{ci}.graph.empty"));
             File::create(&empty)?;
             streams.push(SpaceStream::new(
-                TermFileReader::open_with(&real, read_buf)?,
-                TermFileReader::open_with(&empty, read_buf)?,
+                TermFileReader::open_consuming(&real, read_buf)?,
+                TermFileReader::open_consuming(&empty, read_buf)?,
                 c.graph_terms,
             )?);
         }
@@ -1597,8 +1648,9 @@ fn read_restart_term(raw: &[u8]) -> Option<Vec<u8>> {
 /// Rewrite every chunk's statements in global ids, loading one chunk's remap
 /// tables at a time: default triples to `global_tri`, named quads to
 /// `global_qtri` (graph first: a subject id in the quad layout, an ordinal in
-/// the per-graph one). The default triples are teed into the SCHEMA pass and
-/// each chunk's text-index words are remapped onto the same subject ids. The
+/// the per-graph one). The default triples are teed into the SCHEMA and
+/// LABEL_INDEX passes and each chunk's text-index words are remapped onto the
+/// same subject ids. The
 /// chunk spills are deleted as they are consumed.
 #[allow(clippy::too_many_arguments)]
 fn remap_chunks(
@@ -1610,6 +1662,7 @@ fn remap_chunks(
     global_qtri: Option<&Path>,
     mut text: Option<&mut crate::text_index_spill::TextSpill>,
     mut schema: Option<&mut ExtSchema>,
+    mut labels: Option<&mut ExtLabels>,
 ) -> Result<(), ExtBuildError> {
     let mut out = BufWriter::with_capacity(1 << 20, File::create(global_tri)?);
     let mut qout = match global_qtri {
@@ -1641,6 +1694,9 @@ fn remap_chunks(
             out.write_all(&gp.to_le_bytes())?;
             out.write_all(&go.to_le_bytes())?;
             if let Some(x) = schema.as_deref_mut() {
+                x.tee(gs, gp, go)?;
+            }
+            if let Some(x) = labels.as_deref_mut() {
                 x.tee(gs, gp, go)?;
             }
         }
@@ -3043,7 +3099,18 @@ mod tests {
         let (merged, remaps) = merge_dictionaries(&tmp, &chunks).unwrap();
 
         let global_tri = tmp.path("global.tri");
-        remap_chunks(&tmp, &chunks, &remaps, false, &global_tri, None, None, None).unwrap();
+        remap_chunks(
+            &tmp,
+            &chunks,
+            &remaps,
+            false,
+            &global_tri,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let codec = crate::file::writer_codec();
         let mut sections = Vec::new();
@@ -3672,6 +3739,7 @@ mod tests {
             has_named.then_some(global_qtri.as_path()),
             None,
             None,
+            None,
         )?;
 
         let codec = crate::file::writer_codec();
@@ -4016,6 +4084,7 @@ mod tests {
             true,
             &global_tri,
             Some(&global_qtri),
+            None,
             None,
             None,
         )

@@ -137,6 +137,30 @@ impl SortRecord for (u32, u32, u32) {
     }
 }
 
+/// Two ids and a string: the label pass's `(subject, slot, value)`.
+impl SortRecord for (u32, u32, String) {
+    fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.0.to_le_bytes());
+        out.extend_from_slice(&self.1.to_le_bytes());
+        write_str(out, &self.2);
+    }
+    fn read_from<R: Read>(r: &mut R) -> std::io::Result<Option<Self>> {
+        let mut b = [0u8; 8];
+        if !read_exact_or_eof(r, &mut b)? {
+            return Ok(None);
+        }
+        let c = need(read_str(r, None)?)?;
+        Ok(Some((
+            u32::from_le_bytes(b[0..4].try_into().unwrap()),
+            u32::from_le_bytes(b[4..8].try_into().unwrap()),
+            c,
+        )))
+    }
+    fn mem_size(&self) -> usize {
+        8 + self.2.len() + 24
+    }
+}
+
 /// `read_exact`, but a clean EOF before the first byte is `Ok(false)`.
 fn read_exact_or_eof<R: Read>(r: &mut R, buf: &mut [u8]) -> std::io::Result<bool> {
     let mut got = 0;
