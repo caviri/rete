@@ -86,7 +86,8 @@ fn version_12_reads_a_quoted_triple_as_a_reifier() {
                  <http://ex/source> ?src }";
     assert_eq!(col(&rete, inner, "o"), vec!["<http://ex/c>"]);
     // SELECT * does not show the reifier (a blank node, not a variable).
-    let (vars, sols) = eval_sparql(&rete, &format!("VERSION \"1.2\" SELECT * WHERE {{ << <http://ex/a> <http://ex/b> ?o >> <http://ex/source> ?src }}")).unwrap();
+    let star12 = "VERSION \"1.2\" SELECT * WHERE { << <http://ex/a> <http://ex/b> ?o >> \n                  <http://ex/source> ?src }";
+    let (vars, sols) = eval_sparql(&rete, star12).unwrap();
     assert_eq!(sols.len(), 1);
     assert!(vars.iter().all(|v| v == "o" || v == "src"), "{vars:?}");
     assert!(
