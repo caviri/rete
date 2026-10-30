@@ -17,8 +17,6 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   Named reifiers (`~ ?r`) and annotations (`{| … |}`) are refused by name
   under the declaration. The parser stays `spargebra` 0.3; the 1.2 surface is
   translated before parsing.
-
-
 - **`rete-bench --build-mem` profiles the Dataset Card and the full-text
   index too**: the card derivation, the text-index build and the
   starter-query costing a carded build runs last (each query cold against
@@ -104,8 +102,6 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
   remains is the open: the dictionary and index containers are found by
   walking their sections' length prefixes, about eight dependent reads
   each.
-
-
 - **`REGEX` / `REPLACE` / `sh:pattern` are Unicode-aware in native builds.**
   `regex-lite` treats `\b`, `\w`, `\d` and `(?i)` as ASCII, so
   `REGEX(?name, "\\bsvobodová\\b", "i")` found no "Svobodová" (no boundary
