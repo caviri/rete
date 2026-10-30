@@ -1915,8 +1915,8 @@ let wasm_bindgen = (function(exports) {
     /**
      * Prefix-search the label index of an embedded `.rete` image: the subjects whose
      * label starts with `prefix` (case-insensitive), as `[{"label":…,"subject":…}]`,
-     * capped at `limit`. Answers from the bounded label-index block in the
-     * pyramid-meta — no literal scan. Empty array when the file has no label index.
+     * capped at `limit`. Answers from the LABEL_INDEX section, else from an older
+     * file's pyramid-meta label block, with no literal scan. Empty array without one.
      * @param {Uint8Array} bytes
      * @param {string} prefix
      * @param {number} limit
