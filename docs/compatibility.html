@@ -785,6 +785,27 @@ for, so the flag is harmless on triple-only inputs.</li>
 quad-index file only where every reader is 0.4.0 or later (the playground, the
 explorer pages and the clients are rebuilt in the release that reads it). Files
 already published with the per-graph layout keep working with every reader.</p>
+<h3 id="04-writer-changes-that-every-0x05-reader-reads">0.4 writer changes that every <code>0x05</code> reader reads</h3>
+<p>Four writer choices moved or became flags in 0.4 (<a href="cli.html#compression-knobs">cli.md</a>,
+measurements in <a href="BENCHMARK.html#compression-04">BENCHMARK.md</a>). None of them changes the
+layout, so unlike <code>--permutations 3</code> they need no reader update:</p>
+<ul>
+<li><strong>Single-segment zstd frames (the new default).</strong> Each tile and chunk now records
+its content size, which lets zstd pick its small-input parameters: at the same
+level the four measured datasets came out 0.7–7.0% smaller. Older writers' streaming frames still
+read, and <code>RETE_ZSTD_FRAME=stream</code> reproduces a 0.3 file byte for byte.</li>
+<li><strong><code>--tile-kib</code> / <code>--dict-chunk-kib</code>.</strong> Tiles and chunks are routed by their
+directories, so any size reads.</li>
+<li><strong><code>--zstd-level</code>.</strong> Any level decodes with the same decoders.</li>
+<li><strong><code>--frequent-objects N</code></strong> (off by default) puts frequent object-only terms in
+the shared dictionary section (<a href="SPEC.html#5-dictionary">SPEC §5</a>); readers have
+always looked terms up there first.</li>
+</ul>
+<p>Verified by reading files written with the new defaults and with
+<code>--frequent-objects 64</code> with the released 0.3.5 and 0.3.7 binaries: <code>verify</code>
+passes and the 12-query OpenCitations set returns the same rows as the new reader,
+over the lazy local open. The browser reader decodes the new frames with the same
+<code>ruzstd</code> it ships.</p>
 <h2 id="is-it-compatible-with-rdf">Is it compatible with RDF?</h2>
 <p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
 format <em>for</em> RDF, built on the standard Rust RDF stack

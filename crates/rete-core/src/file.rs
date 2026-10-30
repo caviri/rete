@@ -375,9 +375,6 @@ fn compute_predicate_stats(triples: &[(u32, u32, u32)]) -> Vec<crate::meta::Pred
 pub const CODEC_NONE: u8 = 0;
 /// zstd compression (per section).
 pub const CODEC_ZSTD: u8 = 1;
-/// zstd compression level used by the writer.
-#[cfg(feature = "compression")]
-const ZSTD_LEVEL: i32 = 9;
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -425,35 +422,59 @@ fn intersect_sorted(a: &[u32], b: &[u32]) -> Vec<u32> {
 
 pub(crate) fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
     match codec {
+        // Level and frame shape are writer knobs (`crate::write_opts`); any
+        // combination decodes with every conformant zstd decoder.
         #[cfg(feature = "compression")]
         CODEC_ZSTD => {
-            zstd::encode_all(bytes, ZSTD_LEVEL).expect("zstd encode is infallible in-memory")
+            let level = crate::write_opts::zstd_level();
+            match crate::write_opts::frame_shape() {
+                crate::write_opts::FrameShape::Stream => zstd::encode_all(bytes, level),
+                crate::write_opts::FrameShape::Sized => zstd::bulk::compress(bytes, level),
+            }
+            .expect("zstd encode is infallible in-memory")
         }
         _ => bytes.to_vec(),
     }
 }
 
-/// The streaming twin of [`compress`]: the same codec at the same level, read
-/// from `src` and written to `dst`, for a payload the memory-bounded build
-/// keeps on disk (the TEXT_INDEX token table). [`compress`] is itself a
-/// streaming encode (`zstd::encode_all` drives the same `Encoder`), and the
-/// encoder cuts blocks from its own input buffer, not from how the input was
-/// handed to it — so the bytes are the same. `text_index_spill` pins that.
+/// The streaming twin of [`compress`]: the same codec, level and frame shape,
+/// read from `src` (exactly `src_len` bytes) and written to `dst`, for a
+/// payload the memory-bounded build keeps on disk (the TEXT_INDEX token
+/// table). A streaming frame is what `zstd::encode_all` writes, through the
+/// same `Encoder`. A sized frame is what `zstd::bulk::compress` writes: the
+/// encoder is told the source size up front (`set_pledged_src_size`), so it
+/// picks the same small-input parameters and records the same content size,
+/// without holding the payload. In both cases the encoder cuts blocks from its
+/// own input buffer, not from how the input was handed to it, so the bytes are
+/// [`compress`]'s. `text_index_spill` pins that, for both frame shapes.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn compress_to(
     codec: u8,
+    src_len: u64,
     src: &mut dyn std::io::Read,
     dst: &mut dyn std::io::Write,
 ) -> std::io::Result<()> {
     match codec {
         #[cfg(feature = "compression")]
         CODEC_ZSTD => {
-            let mut enc = zstd::stream::Encoder::new(dst, ZSTD_LEVEL)?;
-            std::io::copy(src, &mut enc)?;
+            let mut enc = zstd::stream::Encoder::new(dst, crate::write_opts::zstd_level())?;
+            if crate::write_opts::frame_shape() == crate::write_opts::FrameShape::Sized {
+                enc.set_pledged_src_size(Some(src_len))?;
+                enc.include_contentsize(true)?;
+            }
+            let copied = std::io::copy(src, &mut enc)?;
+            if copied != src_len {
+                return Err(std::io::Error::other(format!(
+                    "compress_to: {copied} bytes read, {src_len} announced"
+                )));
+            }
             enc.finish()?;
             Ok(())
         }
-        _ => std::io::copy(src, dst).map(|_| ()),
+        _ => {
+            let _ = src_len;
+            std::io::copy(src, dst).map(|_| ())
+        }
     }
 }
 
@@ -806,7 +827,7 @@ fn checked_end(off: u64, len: u64) -> Result<u64, FileError> {
 
 /// Per-chunk budget for dictionary section bodies â€” same reasoning as
 /// [`crate::index::INDEX_TILE_BUDGET`]: one fetch, one decompress per touch.
-const DICT_CHUNK_BUDGET: usize = 64 * 1024;
+const DICT_CHUNK_BUDGET: usize = crate::write_opts::DEFAULT_DICT_CHUNK_BYTES;
 
 /// Encode one dictionary section as a chunked payload (format v0.2):
 /// `[header_len, raw header (term_count/interval/restart table)]
@@ -838,13 +859,14 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
     let header = &raw[..(body_start.min(raw.len() as u64)) as usize];
 
     // Split runs into chunks by body-byte budget (whole runs only).
+    let chunk_budget = crate::write_opts::dict_chunk_budget() as u64;
     let n_runs = meta.restart_offsets.len();
     let mut bounds: Vec<(usize, u64, u64)> = Vec::new(); // (first_run, start, end)
     let mut r = 0;
     while r < n_runs {
         let start = meta.restart_offsets[r];
         let mut r2 = r + 1;
-        while r2 < n_runs && meta.restart_offsets[r2] - start < DICT_CHUNK_BUDGET as u64 {
+        while r2 < n_runs && meta.restart_offsets[r2] - start < chunk_budget {
             r2 += 1;
         }
         let end = if r2 < n_runs {
@@ -856,6 +878,18 @@ fn encode_chunked_dict_section(raw: &[u8], codec: u8) -> Vec<u8> {
         r = r2;
     }
 
+    // Chunks are independent: compress them across all cores, as the index
+    // tiles are (`par_iter` keeps the order, so the bytes are unchanged). At a
+    // high `--zstd-level` this serial loop was most of a build's wall time.
+    #[cfg(feature = "parallel")]
+    let compressed: Vec<Vec<u8>> = {
+        use rayon::prelude::*;
+        bounds
+            .par_iter()
+            .map(|&(_, s, e)| compress(codec, &raw[s as usize..e as usize]))
+            .collect()
+    };
+    #[cfg(not(feature = "parallel"))]
     let compressed: Vec<Vec<u8>> = bounds
         .iter()
         .map(|&(_, s, e)| compress(codec, &raw[s as usize..e as usize]))

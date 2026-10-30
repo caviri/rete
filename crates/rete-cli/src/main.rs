@@ -332,6 +332,8 @@ enum Command {
             long_help = INPUT_QUOTED_TRIPLE_SYNTAX_HELP
         )]
         quoted_triple_syntax: String,
+        #[command(flatten)]
+        write: commands::write_args::WriteArgs,
     },
     /// Validate that RDF input(s) parse as well-formed N-Triples/N-Quads/Turtle/
     /// RDF-XML, without building. Reports counts, or fails with a parse error.
@@ -1526,7 +1528,9 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             named_graphs,
             strict,
             quoted_triple_syntax,
+            write,
         } => {
+            write.apply();
             let sections = commands::build::BuildSections {
                 label_index,
                 schema: !no_schema,
@@ -1556,6 +1560,11 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
                 created,
             };
             if let Some(mb) = memory_budget_mb {
+                if rete_core::write_opts::frequent_objects() > 0 {
+                    anyhow::bail!(
+                        "--memory-budget-mb does not support --frequent-objects (the external                          build merges chunk-local dictionaries by role, before any term's                          frequency over the whole input is known); build with the standard                          path, or drop --frequent-objects"
+                    );
+                }
                 commands::build::build_external_cmd(
                     &inputs,
                     &output,

@@ -269,13 +269,15 @@ impl TextSpill {
         self.scope.encode(&mut scope_block);
         let table_path = path_of("tok.table");
         {
+            let entries_len = std::fs::metadata(&entries_path)?.len();
+            let src_len = count.len() as u64 + entries_len + scope_block.len() as u64;
             let entries = BufReader::with_capacity(READ_BUF, File::open(&entries_path)?);
             let mut src = count
                 .as_slice()
                 .chain(entries)
                 .chain(scope_block.as_slice());
             let mut dst = BufWriter::with_capacity(1 << 20, File::create(&table_path)?);
-            crate::file::compress_to(codec, &mut src, &mut dst)?;
+            crate::file::compress_to(codec, src_len, &mut src, &mut dst)?;
             dst.flush()?;
         }
         let _ = std::fs::remove_file(&entries_path);
@@ -736,13 +738,20 @@ mod tests {
             }
         }
         let mut out = Vec::new();
-        crate::file::compress_to(codec, &mut Pieces(&data, 1), &mut out).unwrap();
+        crate::file::compress_to(codec, data.len() as u64, &mut Pieces(&data, 1), &mut out)
+            .unwrap();
         assert_eq!(out, one_shot);
         // And through the chain the builder uses (count ‖ file ‖ scope).
         let mut out2 = Vec::new();
         let (a, b) = data.split_at(12_345);
         let (b, c) = b.split_at(1 << 20);
-        crate::file::compress_to(codec, &mut a.chain(b).chain(c), &mut out2).unwrap();
+        crate::file::compress_to(
+            codec,
+            data.len() as u64,
+            &mut a.chain(b).chain(c),
+            &mut out2,
+        )
+        .unwrap();
         assert_eq!(out2, one_shot);
     }
 

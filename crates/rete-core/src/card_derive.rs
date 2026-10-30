@@ -2300,10 +2300,12 @@ pub fn derive_card_streaming(
             return;
         }
         let sc = class_map.get(s);
-        let oc = if o <= shared {
-            class_map.get(o)
-        } else if is_literal(o) {
+        // Literal first: a writer may file a frequent literal in the shared
+        // section (`--frequent-objects`), so a shared id is not a subject.
+        let oc = if is_literal(o) {
             LITERAL_CODE
+        } else if o <= shared {
+            class_map.get(o)
         } else {
             0
         };

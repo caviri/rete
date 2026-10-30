@@ -855,6 +855,29 @@ RSS 1.19 GB against 1.17 GB without the index, and the peak spill grew from
 so it does not move with the index. With provenance in named graphs and the
 default scope (3.3 M records) the text phase takes under a second of a build
 whose time goes to the 1.49 M named graphs.</p>
+<p><a id="compression-knobs"></a>
+<strong>Compression knobs (<code>--tile-kib</code>, <code>--dict-chunk-kib</code>, <code>--zstd-level</code>,
+<code>--frequent-objects</code>).</strong> How the index and dictionary are cut and compressed.
+None of them changes the file format: every combination opens in every reader of
+format <code>0x05</code>, released ones included (see
+<a href="compatibility.html#04-writer-changes-that-every-0x05-reader-reads">compatibility.md</a>),
+and every one changes the bytes but never an answer. The measurements behind the
+defaults are in <a href="BENCHMARK.html#compression-04">BENCHMARK.md</a>.</p>
+<table><thead><tr><th>flag</th><th>default</th><th>what it trades</th></tr></thead><tbody>
+<tr><td><code>--tile-kib N</code> (4–4096)</td><td>64</td><td>Uncompressed size of an index tile, the unit a reader fetches and decompresses. 128 makes the file about 1% smaller and each touched tile larger; above 128 the file grows again (zstd's small-input parameters stop applying) and remote queries fetch more bytes (+9% at 256, +24% at 512).</td></tr>
+<tr><td><code>--dict-chunk-kib N</code> (4–4096)</td><td>64</td><td>The same for dictionary chunks.</td></tr>
+<tr><td><code>--zstd-level N</code> (1–22)</td><td>9</td><td>Level of every tile and chunk. <code>19</code> makes a file 4–9% smaller than <code>9</code> for about 2.7× the build CPU, and decodes 8–18% slower: a choice for a file built once and read for a long time. Levels between 9 and 19 gain little or nothing.</td></tr>
+<tr><td><code>--frequent-objects N</code></td><td>0 (off)</td><td>Moves the <code>N</code> most frequent object-only terms (classes, controlled vocabularies, status literals) into the shared dictionary section, which gives them small ids where they sort ahead of the shared entities — the size effect of declaring the vocabulary in a TBox, without one. <code>64</code> made the OpenCitations samples 4.8–6.5% smaller, against 2.7–5.5% for their 499-statement TBox, and two other datasets 2.3–3.2% smaller, at no measurable build cost. Not available with <code>--memory-budget-mb</code> (refused).</td></tr>
+</tbody></table>
+<p>Each flag falls back to an environment variable when left out
+(<code>RETE_TILE_KIB</code>, <code>RETE_DICT_CHUNK_KIB</code>, <code>RETE_ZSTD_LEVEL</code>,
+<code>RETE_FREQUENT_OBJECTS</code>), which is also how <code>merge</code> and <code>repyramid</code> take them
+(<code>merge</code> runs the external builder, so it ignores <code>RETE_FREQUENT_OBJECTS</code>). A card
+build records the settings in its build info (<code>params.write</code>).</p>
+<p>Since 0.4 every tile and chunk is a <strong>single-segment zstd frame that records its
+size</strong>, which lets zstd use its small-input parameters: at the same level the
+four measured datasets came out 0.7–7.0% smaller, and the build used less CPU. <code>RETE_ZSTD_FRAME=stream</code> writes
+the streaming frames of 0.3 instead, byte for byte.</p>
 <h3 id="rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify"><code>rete recard &lt;file&gt; -o &lt;out.rete&gt; [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]</code></h3>
 <p>Give a finished <code>.rete</code> a new Dataset Card <strong>without rebuilding it</strong> — the
 re-card path for a file of any size.</p>

@@ -336,6 +336,95 @@ mostly in the orders that lead with a predicate or an object. Details, the
 encoding experiment and the build table: `dev/session-notes/QUAD-INDEX-DESIGN.md`
 (gitignored).
 
+## Compression (0.4)
+
+What the writer knobs of `rete build` ([cli.md](cli.md#compression-knobs)) do to
+size, build cost and reads, and why 0.4 changed one default. Four inputs, each
+built `--strict --no-pyramid` in a 4 GiB container (6 CPUs) on a shared machine,
+so wall times carry noise of about ±20%; sizes and fetched bytes are exact.
+
+| | statements | terms | 0.3 file |
+|---|--:|--:|--:|
+| **B** OpenCitations sample, provenance in the default graph | 18,869,242 | 6,532,241 | 166,562,617 |
+| **D** the same sample, data only | 5,971,936 | 2,348,222 | 67,630,875 |
+| **C** CORDIS grants (graphs collapsed) | 5,816,992 | 2,167,023 | 106,765,099 |
+| **L** Biblissima, two shards | 879,939 | 283,415 | 9,248,218 |
+
+**Frame shape: the 0.4 default.** Up to 0.3 every tile and chunk was a streaming
+zstd frame, compressed without knowing its size, so zstd used the parameters it
+tunes for large inputs and declared a 4 MiB window. Frames that record their
+size let it use its small-input parameters instead. Same level (9), same data:
+
+| | B | D | C | L |
+|---|--:|--:|--:|--:|
+| file | −7.0% | −6.0% | −0.7% | −4.5% |
+| index sections | −8.3% | −7.0% | −2.4% | −8.0% |
+| dictionary sections | −0.6% | −1.0% | +3.9% | +2.5% |
+
+Encoding is faster (B: 76 against 95 CPU-seconds for the whole build, measured
+back to back in one container), and the 12-query OpenCitations set fetches 5–6%
+fewer bytes remotely with the same number of requests. `ruzstd` decodes the
+denser frames 5–10% slower per tile (wasm under node 18: about 290 against
+260 µs for a 64 KiB SOP tile; 125 against 115 µs for a dictionary chunk).
+Released 0.3.5 and 0.3.7 readers open the new files and answer identically.
+
+**zstd level** (`--zstd-level`), sized frames, against the 0.3 file:
+
+| level | B | D | build CPU-s (B) | ruzstd decode, B index |
+|--:|--:|--:|--:|--:|
+| 6 | −6.2% | −5.7% | 79 | — |
+| **9** | **−7.0%** | **−6.0%** | 76–97 | 386 MB/s |
+| 15 | −6.6% | −6.8% | 114 | 366 MB/s |
+| 19 | −11.8% | −10.1% | 208 | 334 MB/s |
+
+Level 15 is no better than 9 for the index; only 19 pays, at 2.7× the build CPU
+and 8–18% slower decoding. It also changed two of the 12 query plans for the
+worse on B: the evaluator chooses a merge join over a hash/probe join from the
+*compressed* size of the tiles a pattern spans, so a denser file can look
+cheaper to materialize than it is. (Fixed in 0.4.0: the planner's size gates
+now read the tile directory's row estimates, which only the data changes, so a
+level no longer moves a plan.) With the old streaming frames level 19 took 676
+CPU-s for the same size (7× a 0.3 level-9 build), and every level from 12 up
+encoded below 8 MB/s per core, because each 64 KiB frame initialised zstd's
+large-input tables.
+
+**Tile and chunk size** (`--tile-kib`, `--dict-chunk-kib`, set together; sized frames):
+
+| KiB | B file | D file | B remote bytes, 12 queries (0.3 frames) |
+|--:|--:|--:|--:|
+| 32 | +1.6% | +1.4% | −2.7% |
+| **64** | **0** | **0** | **0** |
+| 128 | −0.8% | −0.9% | −4.6% |
+| 256 | +5.1% | +4.2% | +9.0% |
+
+Above 128 KiB a tile no longer gets zstd's small-input parameters, so the file
+grows again; without the block cache (`RETE_BLOCK_KB=0`) every size above 64
+fetched more bytes (+7% at 128, +30% at 256). 64 stays.
+
+**Frequent-object promotion** (`--frequent-objects 64`, off by default): the
+64 most frequent object-only terms move into the shared dictionary section.
+
+| | B | D | C | L |
+|---|--:|--:|--:|--:|
+| promotion alone | −4.8% | −6.5% | −3.2% | −2.3% |
+| the dataset's TBox instead (499 statements) | −2.7% | −5.5% | | |
+| sized frames + promotion | −10.6% | −11.4% | −3.4% | −6.8% |
+| sized frames + promotion + level 19 | −15.0% | −15.3% | | |
+
+The gain is in the merge-join permutation SOP (B: 33.0 to 25.7 MB), where a
+subject's objects are delta-coded and a class at object id ~4 M cost 4 bytes per
+statement. It does not reduce what the 12 queries fetch (they hardly touch SOP),
+and costs no measurable build time or memory. More than 64 terms gains nothing. It stays opt-in because the external
+build (`--memory-budget-mb`) cannot do it, and the two builds are byte-identical
+by contract.
+
+**Measured and not adopted.** zstd dictionaries trained per section saved 0.35%
+(B) and 0.9% (D) of the file against sized frames, almost all of it in the
+dictionary sections, so they are not worth a new codec id (`ruzstd` does decode
+them, also in wasm). Ids ordered strictly by frequency (a "hot" dictionary
+section in front of the shared one, a format change) would save another 0.7–1.6%
+beyond promotion on B and D.
+
 ## Coherence checking: tier costs
 
 How much of a remote `.rete` each coherence check actually fetches, as the graph

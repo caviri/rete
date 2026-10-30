@@ -31,3 +31,4 @@ pub(crate) mod service_http;
 pub(crate) mod shacl;
 pub(crate) mod turtle;
 pub(crate) mod url;
+pub(crate) mod write_args;

@@ -160,6 +160,7 @@ fn attach_build_record(
         memory_budget_mb: None,
         codec: Some(buildinfo::codec_name(header.dict_codec).to_string()),
         card_top_n: Some(card::CARD_TOP_N as u32),
+        write: buildinfo::write_record(),
         ..Default::default()
     };
     params.set_text_index(text_index);
@@ -769,6 +770,7 @@ pub(crate) fn build_external_cmd(
             label_index: sections.label_index,
             no_schema: !sections.schema,
             memory_budget_mb: Some(memory_budget_mb),
+            write: buildinfo::write_record(),
             ..Default::default()
         };
         params.set_text_index(text_index.as_ref());

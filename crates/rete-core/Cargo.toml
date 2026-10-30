@@ -136,3 +136,9 @@ wasm-js = ["getrandom/js", "getrandom03/wasm_js"]
 [[example]]
 name = "parallel_bench"
 required-features = ["parallel"]
+
+# Offline compression measurements (A4): re-encodes a file's tiles and chunks
+# with the C zstd library, so it needs the `compression` feature.
+[[example]]
+name = "compression_lab"
+required-features = ["compression"]

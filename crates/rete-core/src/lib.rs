@@ -89,6 +89,7 @@ pub mod tiling;
 pub mod triples;
 #[doc(hidden)]
 pub mod varint;
+pub mod write_opts;
 
 /// Stable file-format, reader, and in-memory build API.
 pub mod format {
