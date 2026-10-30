@@ -5,88 +5,53 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-30
+
+0.4.1 is for people who build large files with `--memory-budget-mb`. The build
+now stays inside its budget at any size, so a graph of billions of statements
+fits in one file; `--label-index` no longer adds to its scratch disk; and the
+full Dataset Card comes out of the same pass, with no second copy of the file,
+from `rete merge` too. `rete recard --in-place` replaces a card without copying
+the file. The format is unchanged, and a card placed after the data is read by
+every reader since the format froze, 0.3.7 included.
+
+One content hash changes: an in-RAM build whose full-text token table is over
+4 MiB gets a different hash than under 0.4.0, while its content is identical.
+Both builds now compress that table the same way, so in-RAM and memory-bounded
+builds write the same bytes at any size (G16).
+
 ### Added
 
-- **The memory-bounded build writes the full Dataset Card.**
-  `rete build --memory-budget-mb` with a card used to write counts only (no
-  profile, no starter queries), and the full card took a `rete recard`
-  afterwards: a second copy of the whole file on disk and the time to write
-  it. It now runs the same derivation `rete recard` runs — the profile
-  streamed from the finished file's sorted sections, every starter query run
-  against the file — inside the build's own budget, and writes the card and
-  the build record **after the data** instead of in front of it. The card is
-  byte for byte the one `rete recard` writes for the same file, and the content
-  hash the one the same card at the front gives (the hash folds the card
-  first, wherever it lies). `--no-card-costs` skips the queries. The build
-  record times the derivation (`card_derive`, with its own peak RSS),
-  the queries (`starter_queries`, likewise) and the extra read of the file that
-  folds the hash (`content_hash`).
-- **`rete merge` writes the full Dataset Card too.** A merge with a card
-  (`--card`, `--card-file`, a curated flag) also wrote counts only; it now
-  finishes like the memory-bounded build it runs on — the same derivation and
-  starter-query costing, inside its own `--memory-budget-mb`, the card and the
-  build record after the data — so `rete recard` of a merged file writes the
-  card it already has, byte for byte. The data sections are unchanged (and the
-  same bytes as `rete build --memory-budget-mb` writes for the union of the
-  shards). The build record now names the shards (file name, size, BLAKE3,
-  hashed in one sequential read of each before the merge: the `read` phase),
-  the effective flags, the counts — `duplicates_dropped` is the shards'
-  overlap — the spill and every phase. `merge` gains `--no-card-costs`. The
-  inputs' own cards are still not carried: the curated fields come from
-  `--card-file` and the curated flags only, and `merge` now says so on stderr
-  when an input's card has curated fields.
-- **`rete recard --in-place`** replaces the card of an existing file without
-  copying it: the new card and build record are appended after the last
-  section, synced, and the 1 KiB header is rewritten last. A crash before the
-  header write leaves the old file intact; after it, the new one. The old card
-  and build record remain as dead bytes until a copying re-card (which now
-  drops them). Every reader since the format froze — 0.3.7 and 0.4.0 `card`,
-  `card-url`, `verify` and queries, and the 0.4.0 Python and JavaScript
-  packages — reads a card placed after the data.
+- **The memory-bounded build writes the full Dataset Card** (#356): the profile
+  and the starter queries, byte for byte what `rete recard` writes, placed after
+  the data. It used to write counts only, and the full card took a `recard` and
+  a second copy of the file.
+- **`rete recard --in-place`** (#356) appends the new card and rewrites the
+  1 KiB header last, so a crash leaves either the old file or the new one.
+- **`rete merge` writes the full card in the same pass** (#358), and its build
+  record names each input shard with its size and BLAKE3; `--no-card-costs`
+  skips the starter queries.
 
 ### Fixed
 
-- **The memory-bounded build no longer grows with the dataset.**
-  `rete build --memory-budget-mb` kept every chunk's id remap table resident
-  from the dictionary merge to the end of the remap: 4 B per chunk-local term,
-  8 B for one that is both subject and object in its chunk. On half of
-  OpenCitations Meta (1.73 B chunk-local terms) the build peaked at 15.0 GB at
-  a budget of 12,000 MiB, so the whole graph (3.4 B) could not be one file.
-  The merge now appends each table to `--tmp-dir` as it reaches each local id
-  (a chunk's local ids come out in order, so every write is an append), and
-  the remap loads one chunk's table at a time. Two smaller parts that grew with
-  the data went to disk too: a dictionary section's restart offsets (8 B per 16
-  terms) and its chunk directory. The merge's per-chunk read and write buffers
-  now shrink as the chunk count grows, within an eighth and a sixteenth of the
-  budget. Peak RAM is the larger of one chunk's working set and one sort run,
-  both set by the budget. On eight renamed copies of the OpenCitations sample
-  (151 M statements, 186 chunks at 400 MiB) the peak fell from 1,084 MiB to
-  391 MiB, and the merge's own from 1,083 MiB to 101 MiB; a merge over 3.4 B
-  chunk-local terms would have held 14.7–16.2 GB of tables (4.3–4.8 B per
-  term) and now holds one chunk's. The output is byte-identical; the spill
-  grows by the remap tables while the merge runs (+4% on the OpenCitations
-  sample). A dictionary class of more than 2³¹ terms is now refused; the old
-  encoding wrapped silently past 2³⁰.
-- **`--label-index` no longer adds to the memory-bounded build's spill.** The
-  label pass collected string candidates while the chunks were sealed and
-  sorted them before the dictionary merge, so its records sat on disk beside
-  every chunk's files at the spill's peak. On the data-only OpenCitations
-  sample that was +20% (310 MiB against 258 MiB). It now tees 12-byte id
-  records during the remap and, once the file is written, resolves their
-  strings through the file's own dictionary, as the in-memory build does; the
-  section is byte-identical. The merge also deletes each chunk's term files as
-  soon as it has read them, and the spilled sections go once the file is
-  written. Peak spill on that sample: 243 MiB with or without labels. The
-  label pass's sort buffer (an eighth of the budget) also leaves the chunk
-  phase.
-- **`--text-index` writes the same bytes in-RAM and memory-bounded at any
-  size.** 0.4.0 compressed the token table in one shot in RAM and streamed it
-  in the memory-bounded build. The two agree only up to the zstd window (4 MiB
-  at level 9), so on the OpenCitations sample the memory-bounded table came out
-  3,852 B larger. Both builds now use the streaming encoder. An in-RAM build
-  whose token table is over 4 MiB writes a slightly different table than 0.4.0
-  did (3,852 B larger on that sample), so its content hash changes. Smaller
-  tables, and every memory-bounded build, keep their 0.4.0 bytes.
+- **The memory-bounded build no longer grows with the dataset** (#354): the id
+  remap tables go to the spill directory, one chunk's at a time in RAM. On
+  half of OpenCitations Meta it peaked at 15.0 GB at a 12,000 MiB budget; on
+  151 M statements at a 400 MiB budget the peak fell from 1,084 MiB to
+  391 MiB. A dictionary class past 2³¹ terms is now refused instead of
+  wrapping.
+- **`--label-index` no longer adds to the spill** (#355): the label pass runs
+  on ids after the merge, and chunk files go as soon as they are read. On the
+  OpenCitations sample the peak spill is the same with or without labels.
+- **`--text-index` writes the same bytes in RAM and memory-bounded at any
+  size** (G16, #354): see the hash note above.
+
+### Known limits
+
+- `rete merge` can peak about 1 GiB over `--memory-budget-mb` (#358): the
+  budget bounds the builder, not the reads of the input shards, so leave that
+  headroom under a container's limit
+  ([cli](https://caviri.github.io/rete/cli.html)).
 
 ## [0.4.0] - 2026-10-30
 
