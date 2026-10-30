@@ -441,12 +441,19 @@ pub(crate) fn compress(codec: u8, bytes: &[u8]) -> Vec<u8> {
 /// read from `src` (exactly `src_len` bytes) and written to `dst`, for a
 /// payload the memory-bounded build keeps on disk (the TEXT_INDEX token
 /// table). A streaming frame is what `zstd::encode_all` writes, through the
-/// same `Encoder`. A sized frame is what `zstd::bulk::compress` writes: the
-/// encoder is told the source size up front (`set_pledged_src_size`), so it
-/// picks the same small-input parameters and records the same content size,
-/// without holding the payload. In both cases the encoder cuts blocks from its
-/// own input buffer, not from how the input was handed to it, so the bytes are
-/// [`compress`]'s. `text_index_spill` pins that, for both frame shapes.
+/// same `Encoder`. A sized frame is told the source size up front
+/// (`set_pledged_src_size`), so it picks the same small-input parameters and
+/// records the same content size as `zstd::bulk::compress`, without holding
+/// the payload. The encoder cuts blocks from its own input buffer, not from
+/// how the input was handed to it, so how `src` hands out its bytes never
+/// changes the output.
+///
+/// It equals [`compress`]'s one-shot output only while the payload fits the
+/// level's window (4 MiB at level 9): past it the streaming encoder's ring
+/// buffer wraps and it finds slightly different matches. A payload that one
+/// writer streams and another holds whole must therefore go through
+/// [`compress_streamed`] on the in-memory side — the token table does.
+/// `text_index_spill` pins both facts.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn compress_to(
     codec: u8,
@@ -456,26 +463,52 @@ pub(crate) fn compress_to(
 ) -> std::io::Result<()> {
     match codec {
         #[cfg(feature = "compression")]
-        CODEC_ZSTD => {
-            let mut enc = zstd::stream::Encoder::new(dst, crate::write_opts::zstd_level())?;
-            if crate::write_opts::frame_shape() == crate::write_opts::FrameShape::Sized {
-                enc.set_pledged_src_size(Some(src_len))?;
-                enc.include_contentsize(true)?;
-            }
-            let copied = std::io::copy(src, &mut enc)?;
-            if copied != src_len {
-                return Err(std::io::Error::other(format!(
-                    "compress_to: {copied} bytes read, {src_len} announced"
-                )));
-            }
-            enc.finish()?;
-            Ok(())
-        }
+        CODEC_ZSTD => zstd_stream(src_len, src, dst),
         _ => {
             let _ = src_len;
             std::io::copy(src, dst).map(|_| ())
         }
     }
+}
+
+/// [`compress`] through the streaming encoder: byte for byte what
+/// [`compress_to`] writes for the same payload, whatever its size. For the
+/// in-memory writer of a payload the memory-bounded build compresses from
+/// disk (the TEXT_INDEX token table), so the two builds write the same bytes
+/// past the zstd window too. Below it this is [`compress`]'s output.
+pub(crate) fn compress_streamed(codec: u8, bytes: &[u8]) -> Vec<u8> {
+    match codec {
+        #[cfg(feature = "compression")]
+        CODEC_ZSTD => {
+            let mut out = Vec::with_capacity(bytes.len() / 4 + 64);
+            zstd_stream(bytes.len() as u64, &mut &bytes[..], &mut out)
+                .expect("zstd encode is infallible in-memory");
+            out
+        }
+        _ => bytes.to_vec(),
+    }
+}
+
+/// The streaming zstd encoder at the writer's level and frame shape.
+#[cfg(feature = "compression")]
+fn zstd_stream(
+    src_len: u64,
+    src: &mut dyn std::io::Read,
+    dst: &mut dyn std::io::Write,
+) -> std::io::Result<()> {
+    let mut enc = zstd::stream::Encoder::new(dst, crate::write_opts::zstd_level())?;
+    if crate::write_opts::frame_shape() == crate::write_opts::FrameShape::Sized {
+        enc.set_pledged_src_size(Some(src_len))?;
+        enc.include_contentsize(true)?;
+    }
+    let copied = std::io::copy(src, &mut enc)?;
+    if copied != src_len {
+        return Err(std::io::Error::other(format!(
+            "zstd stream: {copied} bytes read, {src_len} announced"
+        )));
+    }
+    enc.finish()?;
+    Ok(())
 }
 
 pub(crate) fn decompress(codec: u8, bytes: &[u8]) -> Result<Vec<u8>, FileError> {

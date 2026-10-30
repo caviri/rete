@@ -20,8 +20,11 @@
 //! **Byte identity with the in-RAM build.** Both builds feed the same
 //! [`SectionWriter`] the same `(token, subjects)` sequence: tokens ascending by
 //! bytes (= `String` order), each token's distinct subjects ascending. The
-//! token table is compressed by `compress_to`, the streaming twin of the
-//! `compress` the in-RAM build calls, pinned to the same bytes by a test here.
+//! token table goes through the streaming zstd encoder on both sides: here
+//! `compress_to` reads it from disk, the in-RAM build hands it whole to
+//! `compress_streamed`, and a test here pins the two to the same bytes at any
+//! size. (Up to 0.4.0 the in-RAM side used the one-shot `compress`, which
+//! agrees only below the zstd window, 4 MiB at level 9.)
 //!
 //! **Memory.** A sort run holds at most `run_bytes` of records (token bytes +
 //! 12 B each), the merge one record per run, and a posting being assembled at
@@ -710,50 +713,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `compress_to` (streamed from a file, fed in arbitrary pieces) and
-    /// `compress` (one slice) must produce the same bytes: the memory-bounded
-    /// build relies on it for a token table it never holds whole.
-    #[test]
-    fn streaming_compression_matches_one_shot() {
-        let codec = crate::file::writer_codec();
-        // Multi-block (zstd blocks are 128 KiB), compressible but not trivial.
+    /// Pseudo-random words, compressible but not trivially: `len` bytes.
+    fn words(len: usize) -> Vec<u8> {
         let mut data = Vec::new();
         let mut x = 7u64;
-        while data.len() < 3 << 20 {
+        while data.len() < len {
             x = x
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
             let word = format!("tok{}-", (x >> 40) % 5000);
             data.extend_from_slice(word.as_bytes());
         }
-        let one_shot = crate::file::compress(codec, &data);
-        // Fed through a reader that hands out odd-sized pieces.
-        struct Pieces<'a>(&'a [u8], usize);
-        impl Read for Pieces<'_> {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                self.1 = (self.1 * 7 + 13) % 70_001 + 1;
-                let n = self.1.min(buf.len()).min(self.0.len());
-                buf[..n].copy_from_slice(&self.0[..n]);
-                self.0 = &self.0[n..];
-                Ok(n)
+        data
+    }
+
+    /// A reader that hands out odd-sized pieces.
+    struct Pieces<'a>(&'a [u8], usize);
+    impl Read for Pieces<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.1 = (self.1 * 7 + 13) % 70_001 + 1;
+            let n = self.1.min(buf.len()).min(self.0.len());
+            buf[..n].copy_from_slice(&self.0[..n]);
+            self.0 = &self.0[n..];
+            Ok(n)
+        }
+    }
+
+    /// `compress_to` (streamed from a file, fed in arbitrary pieces) writes
+    /// the same bytes as `compress_streamed` (one slice), which the in-RAM
+    /// build uses for the token table — at any size. Past the zstd window
+    /// (4 MiB at level 9) that is the only pairing that holds: the one-shot
+    /// `compress` finds other matches there, which is how a 0.4.0
+    /// memory-bounded build's token table came out 3,852 B larger than the
+    /// in-RAM one on the OpenCitations sample. Below the window all three
+    /// agree, so a small table keeps 0.4.0's bytes.
+    #[test]
+    fn streaming_compression_matches_the_in_ram_writer() {
+        let codec = crate::file::writer_codec();
+        for len in [3 << 20, 9 << 20] {
+            // Multi-block (zstd blocks are 128 KiB).
+            let data = words(len);
+            let whole = crate::file::compress_streamed(codec, &data);
+            let mut out = Vec::new();
+            crate::file::compress_to(codec, data.len() as u64, &mut Pieces(&data, 1), &mut out)
+                .unwrap();
+            assert_eq!(out, whole, "{len} B in odd pieces");
+            // And through the chain the builder uses (count ‖ file ‖ scope).
+            let mut out2 = Vec::new();
+            let (a, b) = data.split_at(12_345);
+            let (b, c) = b.split_at(1 << 20);
+            crate::file::compress_to(
+                codec,
+                data.len() as u64,
+                &mut a.chain(b).chain(c),
+                &mut out2,
+            )
+            .unwrap();
+            assert_eq!(out2, whole, "{len} B through the chain");
+            assert_eq!(crate::file::decompress(codec, &whole).unwrap(), data);
+            if len < 4 << 20 {
+                assert_eq!(
+                    whole,
+                    crate::file::compress(codec, &data),
+                    "below the window"
+                );
             }
         }
-        let mut out = Vec::new();
-        crate::file::compress_to(codec, data.len() as u64, &mut Pieces(&data, 1), &mut out)
-            .unwrap();
-        assert_eq!(out, one_shot);
-        // And through the chain the builder uses (count ‖ file ‖ scope).
-        let mut out2 = Vec::new();
-        let (a, b) = data.split_at(12_345);
-        let (b, c) = b.split_at(1 << 20);
-        crate::file::compress_to(
-            codec,
-            data.len() as u64,
-            &mut a.chain(b).chain(c),
-            &mut out2,
-        )
-        .unwrap();
-        assert_eq!(out2, one_shot);
     }
 
     /// The chunk seal reads raw strings: only literal objects, only in-scope
