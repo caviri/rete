@@ -190,7 +190,8 @@ command; 0.3.0 says `malformed container: expected 6 permutation sections`.
 - Why the old `verify` stays truthful: the content hash keeps its part list; the
   seal, inside the hashed container, carries the quad section's digest. An old
   reader verifies everything it can read; a new one also checks the quad index
-  against the seal.
+  against the seal. So the quad index is hashed by reference: unlike the
+  self-digested kinds 8, 9 and 11, it stays part of the file's content hash.
 - The quad index is written only with three or six permutations (`perms + 1`
   is then 4 or 7, never what an old reader wants).
 - A file **without** named graphs is byte-identical whichever layout was asked

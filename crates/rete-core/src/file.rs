@@ -2512,7 +2512,8 @@ fn hash_of_sections(header: &Header, bytes: &[u8]) -> Result<[u8; 16], FileError
 /// when present — a kind-6 text index and the named graphs. Build info, the
 /// self-digested kinds (8 LABEL_INDEX, 9 SCHEMA, 11 predicate-restricted text
 /// index) and any section kind this reader does not know are deliberately
-/// outside it.
+/// outside it. The quad index (kind 10) is not a range here either: its digest
+/// is the seal at the end of the index container, so it is hashed by reference.
 ///
 /// The one list [`verify`], [`verify_ranged`] and [`replace_metadata`] hash
 /// over, and what a streaming rewriter (`rete recard`) feeds a hasher while it
@@ -2545,7 +2546,8 @@ pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
 /// LABEL_INDEX, SCHEMA and predicate-restricted TEXT_INDEX sections (kinds 8,
 /// 9, 11) are outside that hash — an older reader's `verify` must keep passing
 /// on a file that carries them — so each is checked against its own leading
-/// digest instead.
+/// digest instead. The QUAD_INDEX section (kind 10) is hashed by reference: its
+/// digest is the seal inside the (hashed) index container, checked here.
 pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     let header = Header::from_bytes(bytes)?;
     if hash_of_sections(&header, bytes)? != header.content_hash {

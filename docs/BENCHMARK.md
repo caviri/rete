@@ -302,7 +302,7 @@ Repro: `dev/perms/{build_bench.sh,query_bench.py,sections.py,rangeserver.py}`
 ## Named graphs: per-graph layout vs the quad index
 
 `rete build --named-graphs quad` stores the named graphs in the quad index
-([SPEC.md §6.4](SPEC.md#64-quad-index-quad_index-section-optional)) instead of
+([SPEC.md §6.5](SPEC.md#65-quad-index-quad_index-section-optional)) instead of
 one permutation container per graph. Measured on the OpenCitations Meta
 development sample (1 work in 1,200, 2026-10): 18,869,242 statements, of which
 12,897,306 are provenance in **1,494,934 per-entity graphs** of ~9 quads

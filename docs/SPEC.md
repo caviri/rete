@@ -225,6 +225,12 @@ starts with the same 16-byte self-digest, which a current `verify` checks. A
 reader older than 0.4.0 does not know kind `11`, so a hashed one would make its
 `verify` call the file corrupt. A kind-`6` index is hashed, as it always was.
 
+The **quad index** (kind `10`, §6.5) is hashed **by reference**: it is not a
+range of the content hash itself, but its BLAKE3 digest is the **seal**, the last
+section of the index container (kind `3`), which is — so it stays part of the
+file's identity, a current `verify` checks it against the seal, and an older
+`verify` (which refuses to open such a file anyway, on the seal) still passes.
+
 ---
 
 ## 5. Dictionary
