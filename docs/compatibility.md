@@ -225,6 +225,17 @@ passes and the 12-query OpenCitations set returns the same rows as the new reade
 over the lazy local open. The browser reader decodes the new frames with the same
 `ruzstd` it ships.
 
+### The 0.4 build record
+
+The build-info section (kind 7) carries much more in 0.4.0 — engine, inputs,
+counts, timings ([Dataset Cards](dataset-cards.md#build-conditions-the-build-info-section))
+— all as new optional JSON fields, and the JSON may be followed by spaces up to
+the section's length (the record is reserved before the build ends and filled
+in place). Both are invisible to older readers: verified with the released
+0.3.7 binary on the OpenCitations development sample built both ways, `card`
+prints its known subset with no warning and `verify` passes (the section is
+outside the content hash).
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query

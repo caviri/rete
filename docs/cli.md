@@ -41,9 +41,17 @@ the index-free card with no compute; unlike `--materialize` it records
 data-catalog metadata plus an auto-derived profile; the card file's `extra`
 object carries bounded publisher-defined custom fields (no flag — see
 [Custom fields](dataset-cards.md)); a card build also writes a
-**build-info section** (build timestamp, builder version, parameters, measured
-starter-query costs — kept *outside* the content hash so identical data still
-hashes identically). That same run is what proves each starter query answers:
+**build record** (the build-info section, kept *outside* the content hash so
+identical data still hashes identically): every flag that shaped the file, by
+its effective value; the engine (version, git commit, target, profile,
+features) and the host's OS and architecture — nothing else about the machine;
+each input by **file name only** with its size, format and a BLAKE3 hashed as
+it streamed; the statement counts (read, unique, duplicates dropped, named
+graphs); wall time per phase, peak RSS, the memory limit and CPUs seen; the
+memory-bounded build's spill; and the measured starter-query costs. See
+[the build record](dataset-cards.md#build-conditions-the-build-info-section).
+`RETE_BUILD_RECORD=reproducible` leaves the volatile facts out, so two builds
+are byte-identical with it. That same run is what proves each starter query answers:
 one measured at zero rows (or returning a row that binds nothing), or one that
 does not finish inside the 64 MiB starter byte budget (counted past the open),
 is **dropped from the
@@ -349,7 +357,8 @@ exist: a re-card writes a new file and never over its input.
 
 The build record keeps the original build's timestamp, builder and parameters —
 the sections they describe were copied, not rebuilt — and gains a `recarded`
-entry (`at`, `by`, `from_content_hash`); its `query_costs` and
+entry (`at`, `by`, `from_content_hash`, and the re-card's own `engine`, `host`,
+`input` by file name, `params` and `run`); its `query_costs` and
 `dropped_queries` are the re-card's own measurement.
 
 Two differences from the card a build derives, both because a finished file is
@@ -635,12 +644,18 @@ rete search data.rete --contains-prefix einst    # a word starting with "einst�
 Print the embedded [Dataset Card](dataset-cards.md) — curated metadata
 (title/license/source/creators/publisher/…) plus the derived profile (counts, top
 predicates and classes, vocabularies), the content-hash checksum, and (when the
-file carries one) the **build record**: when it was built, by which `rete`, with
-which flags, and the starter queries' measured costs. Costs two small range
+file carries one) the **build record** as a `build:` block: when it was built,
+by which `rete` (version, commit, target), on what OS, the command line that
+reproduces it, its inputs (name, format, size, BLAKE3), the statement counts,
+the wall time per phase and the peak RAM, and the starter queries' measured
+costs. Costs two small range
 reads (header + one coalesced card/build-info range), never the dictionary or
 index — instant on any size. `--json` emits the card object plus
-`schemaVersion: 1` and a `build` block. `--format jsonld` projects the card to
-JSON-LD (VoID + schema.org + PROV-O — already RDF when lifted out);
+`schemaVersion: 1` and a `build` block (the whole record). `--format jsonld`
+projects the card to JSON-LD (VoID + schema.org + PROV-O — already RDF when
+lifted out; the build is a `prov:Activity` with `prov:startedAtTime`,
+`prov:endedAtTime`, `prov:used` for each input and `prov:wasAssociatedWith`
+the engine, the rest under `rete:` as JSON literals);
 `--format croissant` emits the honestly-mappable Croissant subset (no
 `recordSet`: a graph is not a table). `--sha256` supplies the whole-file
 sha256 the Croissant projection's `FileObject` requires — a file cannot carry

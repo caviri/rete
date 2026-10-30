@@ -292,6 +292,8 @@ impl SchemaAccumulator {
         }
     }
 
+    /// Used by the memory-bounded build (native only).
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn ids(&self) -> &SchemaIds {
         &self.ids
     }

@@ -37,6 +37,10 @@ RUN set -eu; \
       exit 1; \
     fi
 
+# The git commit the build record of every file this binary writes names
+# (`rete card` → engine). The context carries no .git, so the workflow passes it;
+# without it the record says `unknown` rather than guessing.
+ARG RETE_SOURCE_REVISION=
 RUN cargo build --locked --release -p rete-cli \
     && strip target/release/rete
 

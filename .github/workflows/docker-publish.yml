@@ -217,6 +217,9 @@ jobs:
         graph files with no toolchain attached.
       cache-from: type=gha,scope=rete-cli-{arch}
       cache-to: type=gha,mode=max,scope=rete-cli-{arch}
+      # The commit every build record written by this image names (the image
+      # copies no .git; crates/rete-cli/build.rs).
+      build-args: RETE_SOURCE_REVISION=${{ github.sha }}
       timeout-minutes: 45
 
   # The relay is verified the way a release builds it: with the engine wheel

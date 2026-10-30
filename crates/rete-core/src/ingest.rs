@@ -1299,6 +1299,7 @@ pub fn assemble_dataset_opts<M: IntoMetadata>(
         }
     }
     let dict = db.build();
+    crate::build_trace::lap(crate::build_trace::Phase::Dictionary);
 
     let mut default_triples = Vec::new();
     let mut named = NamedQuads::new(graphs, &dict);
@@ -1309,6 +1310,7 @@ pub fn assemble_dataset_opts<M: IntoMetadata>(
             Some(graph) => named.push(&dict, graph.clone(), t),
         }
     }
+    crate::build_trace::lap(crate::build_trace::Phase::Encode);
 
     // Derive the metadata blob (the Dataset Card) from the raw quads NOW, while
     // they are resident — then DROP them before the memory-heavy pyramid + index
@@ -1326,6 +1328,7 @@ pub fn assemble_dataset_opts<M: IntoMetadata>(
         pyramid_levels: 0,
     };
     let pending = metadata(&stats, &quads);
+    crate::build_trace::lap(crate::build_trace::Phase::CardDerive);
     drop(quads);
 
     finish_assembly(dict, default_triples, named, opts, pending, stats)
@@ -1476,6 +1479,7 @@ where
         }
     })?;
     let dict = db.build();
+    crate::build_trace::lap(crate::build_trace::Phase::ParseDictionary);
 
     // Pass 2: encode each quad to an id-triple, bucketing named graphs.
     let mut default_triples: Vec<(u32, u32, u32)> = Vec::new();
@@ -1487,6 +1491,7 @@ where
             Some(graph) => named.push(&dict, graph, t),
         }
     })?;
+    crate::build_trace::lap(crate::build_trace::Phase::ParseEncode);
 
     let statements = default_triples.len() + named.quad_count();
     let stats = BuildStats {
@@ -1497,6 +1502,7 @@ where
         pyramid_levels: 0,
     };
     let pending = metadata(&stats, &dict, &default_triples);
+    crate::build_trace::lap(crate::build_trace::Phase::CardDerive);
     Ok(finish_assembly(
         dict,
         default_triples,
@@ -1538,6 +1544,9 @@ fn finish_assembly<M: IntoMetadata>(
         (Vec::new(), 0)
     };
     stats.pyramid_levels = levels;
+    if opts.with_pyramid {
+        crate::build_trace::lap(crate::build_trace::Phase::Pyramid);
+    }
 
     // The full-text index over the literals of the requested scope: the
     // default graph's (the only scope before 0.4.0), optionally every named
@@ -1574,6 +1583,9 @@ fn finish_assembly<M: IntoMetadata>(
         ),
         None => Vec::new(),
     };
+    if with_text_index.is_some() {
+        crate::build_trace::lap(crate::build_trace::Phase::TextIndex);
+    }
     let text_index_partial = with_text_index
         .as_ref()
         .is_some_and(crate::text_index::TextIndexScope::restricts_predicates);
@@ -1604,6 +1616,7 @@ fn finish_assembly<M: IntoMetadata>(
             )
             .encode();
         }
+        crate::build_trace::lap(crate::build_trace::Phase::LabelsSchema);
     }
 
     // From here the dictionary is only needed for its own serialized bytes. Encode
@@ -1617,6 +1630,7 @@ fn finish_assembly<M: IntoMetadata>(
     let term_count = dict.term_count() as u64;
     let has_quoted_triples = dict.has_quoted_triples();
     drop(dict);
+    crate::build_trace::lap(crate::build_trace::Phase::DictionarySection);
 
     // Build each graph's six permutations one-at-a-time on a large graph (a single
     // permuted copy resident at a time, each sort still parallel) instead of all
@@ -1658,6 +1672,7 @@ fn finish_assembly<M: IntoMetadata>(
             .map(|(_, ix)| ix.triple_count() as u64)
             .sum::<u64>(),
     };
+    crate::build_trace::lap(crate::build_trace::Phase::IndexPermutations);
 
     // Only now is the DEDUPLICATED size of the file known: every index sorts and
     // dedups, so an input containing duplicate statements (a harvest that pages
@@ -1707,6 +1722,7 @@ fn finish_assembly<M: IntoMetadata>(
         )
         .expect("appending to an image this function just wrote")
     };
+    crate::build_trace::lap(crate::build_trace::Phase::Serialize);
     (bytes, stats)
 }
 

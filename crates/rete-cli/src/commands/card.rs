@@ -146,6 +146,16 @@ pub(crate) fn load_curated(args: &CardArgs) -> anyhow::Result<CardInput> {
     c.normalize().map_err(|e| anyhow::anyhow!(e))
 }
 
+/// The `--card-file` as the build record names it: file name (never the path)
+/// and BLAKE3 of its bytes. `None` without one, or when it cannot be read again
+/// (a process substitution is gone after the first read) — the record then
+/// says nothing rather than something unverified.
+pub(crate) fn card_file_digest(args: &CardArgs) -> Option<super::buildinfo::FileDigest> {
+    let path = args.file.as_deref()?;
+    let bytes = std::fs::read(path).ok()?;
+    Some(super::buildinfo::FileDigest::of(path, &bytes))
+}
+
 /// Hex-encode a 16-byte content hash (the `.rete` integrity checksum).
 pub(crate) fn hex16(bytes: &[u8; 16]) -> String {
     let mut s = String::with_capacity(32);
@@ -1164,13 +1174,16 @@ pub(crate) struct RecardOptions {
 /// omission.
 pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()> {
     use crate::commands::buildinfo::{
-        builder_version, cost_context, keep_answering, measure_starter, now_rfc3339, BuildInfo,
-        QueryCosts, Recarded, BUILD_INFO_SCHEMA,
+        builder_version, cost_context, engine, file_name, host, keep_answering, measure_starter,
+        patch_build_info, timestamp, zero_debug_ms, BuildInfo, InputRecord, Pending, QueryCosts,
+        RecardParams, Recarded, Recorder, BUILD_INFO_SCHEMA,
     };
     use crate::commands::range_source::LocalRangeReader;
+    use rete_core::build_trace::Phase;
     use std::io::Write;
 
     let started = std::time::Instant::now();
+    let rec = Recorder::start(&[]);
     let out_path = std::path::Path::new(&opts.output);
     if out_path.exists() {
         anyhow::bail!(
@@ -1185,6 +1198,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     let file_len = rete_core::RangeReader::len(&reader);
     let old = load_card_and_build_ranged(&reader)?;
     let curated = curated_for_recard(old.card.as_ref(), opts)?;
+    rec.lap(Phase::Read);
 
     // 2. The profile, streamed from the file's sections.
     let budget = opts.memory_budget_mb.max(64) << 20;
@@ -1212,6 +1226,7 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
         report.class_map_bytes >> 20,
         derive_started.elapsed().as_secs_f64()
     );
+    rec.lap(Phase::CardDerive);
 
     // 3. Run every starter query against the file, inside the starter budget.
     let mut info = old.build.clone().unwrap_or(BuildInfo {
@@ -1224,9 +1239,11 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
     if opts.measure_costs && !card.queries.is_empty() {
         let source: std::sync::Arc<dyn rete_core::RangeReader + Send + Sync> =
             std::sync::Arc::new(LocalRangeReader::open(input)?);
+        // The file NAME, not its path: this string is stored in the file.
         let transport = format!(
-            "local file {input}; cold lazy open per query; logical range reads, no block cache; \
+            "local file {}; cold lazy open per query; logical range reads, no block cache; \
              reader fan-out {}; {} MiB budget per query past the open",
+            file_name(input),
             source.concurrency(),
             rete_core::card::STARTER_MAX_BYTES >> 20
         );
@@ -1253,21 +1270,42 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
             queries: kept,
         });
         info.dropped_queries = dropped;
+        rec.lap(Phase::StarterQueries);
     } else if !opts.measure_costs {
         eprintln!(
             "--no-card-costs: the starter queries were NOT run, so nothing checked that they \
              answer on this file"
         );
     }
+    if rec.is_reproducible() {
+        zero_debug_ms(&mut info);
+    }
     info.recarded = Some(Recarded {
-        at: Some(now_rfc3339()),
+        at: timestamp(),
         by: Some(builder_version()),
         from_content_hash: hex16(&old.header.content_hash),
+        engine: Some(engine()),
+        host: Some(host()),
+        input: Some(InputRecord {
+            name: file_name(input),
+            format: "rete".into(),
+            bytes: Some(file_len),
+            ..Default::default()
+        }),
+        params: Some(RecardParams {
+            keep_curated: opts.keep_curated,
+            card_file: card_file_digest(&opts.card),
+            card_costs: opts.measure_costs,
+            memory_budget_mb: opts.memory_budget_mb,
+        }),
+        run: None,
     });
 
-    // 4. Rewrite: the card and the build record replaced, the rest copied.
+    // 4. Rewrite: the card and the build record replaced, the rest copied. The
+    // record is written at its widest and sealed in place once the copy is
+    // done, so the re-card's own wall time covers the copy.
     let meta = card.to_json_bytes();
-    let blob = info.to_json_bytes();
+    let blob = info.reserve_bytes(Pending::Write, &rec);
     let tmp = std::path::PathBuf::from(format!("{}.recard-tmp", opts.output));
     let copy_started = std::time::Instant::now();
     let header = {
@@ -1299,11 +1337,20 @@ pub(crate) fn recard_cmd(input: &str, opts: &RecardOptions) -> anyhow::Result<()
             .sync_all()?;
         written
     };
+    rec.lap(Phase::Write);
+    if let Some(r) = info.recarded.as_mut() {
+        r.run = rec.run();
+    }
+    let sealed = info.to_json_bytes();
+    if let Err(e) = patch_build_info(&tmp, &sealed) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     eprintln!(
         "recard: wrote {} ({} B card, {} B build record) in {:.0} s",
         tmp.display(),
         meta.len(),
-        blob.len(),
+        sealed.len(),
         copy_started.elapsed().as_secs_f64()
     );
     if opts.verify {

@@ -7,6 +7,37 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ### Added
 
+- **The build record says how the file was made, in full.** Every carded
+  `rete build` (in-RAM and `--memory-budget-mb`), `repyramid` and `recard` now
+  writes into its build-info section (kind 7, still outside the content hash):
+  every flag that shaped the file by its effective value (`--permutations`,
+  `--named-graphs`, `--strict`, `--quoted-triple-syntax`, `--collapse-graphs`,
+  `--type-predicate`, the pyramid, label, schema and text-index choices, the
+  writer knobs, `--memory-budget-mb`, card costs, and `--card-file` by file
+  name and BLAKE3); the engine (`version`, the git `commit` it was built from,
+  `target`, `profile`, `features`); the host's OS and architecture and nothing
+  else about it; each input by **file name only** with its format, size and a
+  BLAKE3 hashed as it streams (stdin included; 0.07 s for the 975 MB
+  OpenCitations pilot, 0.1% of its 51.5 s in-RAM build and 0.5% of its 13.7 s
+  memory-bounded one, so there is no switch to skip it); the statement counts
+  (read, unique, duplicates dropped, named graphs, invalid IRIs); and a `run`
+  block — wall time per phase, peak RSS, the cgroup memory limit and the CPUs
+  seen — plus, for the memory-bounded build, its chunks, k-way merges, sorted
+  runs and scratch peak. `rete recard` adds its own engine, input, flags and run under
+  `recarded`. `rete card` prints it as a readable `build:` block, `--json`
+  carries it whole, and `--format jsonld` maps it to a PROV-O activity
+  (`prov:startedAtTime`, `prov:endedAtTime`, `prov:used` per input,
+  `prov:wasAssociatedWith` the engine; the rest as `rete:` JSON literals).
+  The record is reserved at its widest and sealed in place once the file is
+  written, so its timings cover the write and no second copy of the file is
+  made (the in-RAM carded build used to copy the whole finished image in
+  memory to splice the record in). `rete recard`'s cost context now names its
+  input by file name rather than by path. `RETE_BUILD_RECORD=reproducible` leaves out the volatile facts, and two
+  builds are then byte-identical, record included. All additions are optional
+  JSON fields: a 0.3.7 `rete card` reads the new record without a warning.
+  The commit comes from `RETE_SOURCE_REVISION` (set by the CLI image, the
+  release build and the dev container's compose file) or git, else `unknown`.
+
 - **SPARQL 1.2 triple terms in queries.** `<<( s p o )>>` parses as a
   triple-term pattern — in a pattern, `VALUES`, `BIND` or a `CONSTRUCT`
   template — and matches the same stored token as `<< s p o >>`, so it finds

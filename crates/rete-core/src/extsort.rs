@@ -251,6 +251,7 @@ impl<T: SortRecord> ExtSorter<T> {
             return Ok(Sorted::Memory(v.into_iter()));
         }
         self.spill()?;
+        crate::build_trace::note_merge(self.runs.len());
         let mut readers = Vec::with_capacity(self.runs.len());
         let mut heap = BinaryHeap::new();
         for (i, p) in self.runs.iter().enumerate() {
