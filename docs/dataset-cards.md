@@ -726,16 +726,165 @@ oddly and there was previously no way to answer them from the file ("which
 section** (format section kind `7`, laid out immediately after the card)
 carrying:
 
-- `built_at` — when the file was written (RFC 3339 UTC; `SOURCE_DATE_EPOCH` is
-  honored for reproducible pipelines). Distinct from the curated `created` and
-  `source_date`, which describe the *data*.
-- `builder` — the binary that wrote the file (`rete-cli 0.3.2`).
-- `params` — the flags that shaped the result: `--no-pyramid`, the pyramid
-  algorithm, `--text-index`, `--materialize`/`--reason`,
-  `--memory-budget-mb`, the section codec, and the card's `top_n` cap.
+- `started_at`, `built_at` — when the build started and when it wrote the file
+  (RFC 3339 UTC; `SOURCE_DATE_EPOCH` is honored for reproducible pipelines).
+  Distinct from the curated `created` and `source_date`, which describe the
+  *data*.
+- `builder` — the binary that wrote the file (`rete-cli 0.4.0`), and `engine`,
+  the same binary in full: `version`, the git `commit` it was built from
+  (`unknown` when the build could not see one), the `target` triple, the cargo
+  `profile` (`release`, or `debug` — whose timings mean nothing next to a
+  release build's) and the rete-core `features` compiled in (`compression`,
+  `parallel`, `rdf12-turtle`, `unicode-regex`).
+- `host` — the operating system and architecture, and **nothing else** about
+  the machine: no host name, user name, path or environment.
+- `params` — every flag that shaped the file, by its **effective** value, so
+  the record reads the same whatever a later version's defaults are:
+  `permutations`, `named_graphs` (`per-graph`/`quad`), `collapse_graphs`,
+  `strict`, `quoted_triple_syntax`, `type_predicate`, the pyramid algorithm or
+  `no_pyramid`, `label_index`, `no_schema`, the text index and its scope,
+  `materialize`/`reason`, `memory_budget_mb`, the writer knobs (`write`: tile
+  and dictionary-chunk size, zstd level and frame shape, frequent objects),
+  the section `codec`, `card_costs` (not `--no-card-costs`), the card's
+  `card_top_n` cap, and `card_file` — its **file name** and BLAKE3, never its
+  path.
+- `inputs` — each input by **file name only** (`stdin` for `-`), its `format`,
+  `compression` (`gzip`, detected from the bytes), `bytes` as stored, and the
+  `blake3` of exactly those bytes (below). A build over more than 64 inputs
+  lists the first 64 and counts the rest in `inputs_omitted`.
+- `counts` — `statements_read` (what the parser handed over),
+  `statements_inferred` (`--materialize`), `statements_unique` (what the file
+  holds), `duplicates_dropped`, `default_graph_triples`, `named_graphs`,
+  `named_graph_quads`, `terms`, and `invalid_iris` — the IRIs the tolerant
+  parse stored verbatim (a `--strict` build that finished had none).
+- `run` — the debugging figures of this one run: `wall_ms`, `phases` (wall
+  time per phase, below), `peak_rss_bytes` (`VmHWM`; `null` off Linux),
+  `memory_limit_bytes` (the process's cgroup limit; `null` when none) and
+  `cpus` (logical CPUs available to the process).
+- `spill` — the memory-bounded build only: `chunks`, `merge_passes` (k-way
+  merges over spilled files), `sort_runs` (the files those merges read) and
+  `scratch_peak_bytes` (the spill directory at its fullest, sampled at phase
+  boundaries and after each sort writes its runs — a lower bound).
 - `query_costs` — measured cost figures for every starter query (below).
 - `dropped_queries` — starter queries this build generated, **ran**, and then
   refused to ship (below). Absent on a healthy build.
+- `recarded` — set by `rete recard` (below).
+
+`rete card` prints it as a `build:` block. This one is the OpenCitations Meta
+development sample (1 work in 5,000, with provenance) built in a 4 GiB
+container by a development binary of 0.4.0, which still called itself 0.3.7:
+
+```text
+  build:
+      built at    : 2026-10-30T08:00:06Z (started 2026-10-30T07:59:14Z)
+      engine      : rete-cli 0.3.7, commit 2d381e45f80170db, x86_64-unknown-linux-gnu (release); features: compression, parallel, rdf12-turtle, unicode-regex
+      host        : linux x86_64
+      command     : rete build --permutations 6 --named-graphs quad --pyramid-algo louvain --label-index --quoted-triple-syntax rdf-star --tile-kib 64 --dict-chunk-kib 64 --zstd-level 9 --card-file pilot.card.json
+      card file   : pilot.card.json (15,384 B, blake3 ed6f8b49457ec535…)
+      writer      : zstd, 64 KiB tiles, 64 KiB dictionary chunks, zstd level 9 (sized frames)
+      card top-N  : 100
+      inputs      : opencitations-2026-06-pilot.nq (nq), 974,898,059 B, blake3 1b4729c0b323dd3a…
+      statements  : 5,151,177 read, 5,151,177 unique (0 duplicate(s) dropped)
+                    1,468,983 in the default graph, 3,682,194 in 369,094 named graph(s); 2,110,315 terms
+      wall time   : 51.5 s on 6 CPU(s)
+      peak RAM    : 657.1 MiB of a 4.0 GiB limit
+      phases      : parse+dictionary 5.5 s · parse+encode 6.7 s · card_derive 2.2 s · pyramid 31.8 s
+                    labels+schema 279 ms · dictionary_section 86 ms · index_permutations 689 ms · serialize 134 ms
+                    starter_queries 3.9 s · write 20 ms
+```
+
+The same input through `--memory-budget-mb 1536` adds what its spill did:
+
+```text
+      phases      : parse+chunk 11.4 s · dictionary 625 ms · encode 52 ms · index_permutations 453 ms
+                    named_graphs 1.1 s · card_derive 0 ms · write 19 ms · labels+schema 1 ms
+      spill       : 2 chunk(s); 15 k-way merge(s) over 18 sorted run(s); scratch peak 210.7 MiB
+```
+
+`--json` carries the whole record under `build`.
+
+### Phases
+
+The builders time themselves with a lap timer (`rete_core::build_trace`): each
+phase is charged the wall-clock time since the previous one ended, so the
+phases **partition** the run and never overlap. Their names are a closed set:
+`read` (`repyramid`/`recard` reading the input file), `parse` and `reason` (the
+in-RAM text path), `parse+dictionary` and `parse+encode` (the two passes of
+the streaming in-RAM build, where parsing cannot be told apart from what it
+feeds), `parse+chunk`, `dictionary`, `encode` and `named_graphs` (the
+memory-bounded build), `card_derive`, `pyramid`, `text_index`,
+`labels+schema`, `dictionary_section`, `index_permutations`, `serialize`,
+`starter_queries` and `write`. In the memory-bounded build the SCHEMA pass is
+fed from the remap and permutation merges, so part of its cost sits in
+`encode` and `index_permutations`; `labels+schema` is only its finish.
+
+### Inputs: names, never paths; digests in the same pass
+
+An input is recorded by its last path component. A directory can name a user,
+a machine or a project layout, and a published file carries its record to
+everyone who opens it; the file name is what a reader needs to match an input
+against a dump. The same rule applies to `--card-file`, and to the transport
+string of a re-card's cost figures.
+
+The digest is BLAKE3 over the bytes **as read** — compressed, when the input
+was — taken by the reader underneath the gzip decoder, so it costs no second
+pass and matches `b3sum dump.nq.gz`. Standard input is hashed as it streams.
+The two-pass in-RAM build hashes on its first pass only. It is cheap next to
+parsing: on the 975 MB OpenCitations pilot, reading the file from the page
+cache took 0.05 s and reading and hashing it 0.12 s (read and hash together
+ran at about 8 GB/s, on one core), so the digest added 0.07 s to a 51.5 s in-RAM
+build (0.1%) and a 13.7 s memory-bounded one (0.5%). There is no switch to
+skip it. A cardless build has no record and hashes nothing.
+
+### Written last, in place
+
+Most of the record is only known at the end — the memory-bounded build writes
+the section before it has read its input, and every build's last phase is
+writing the file. So the section is written with the record's **widest**
+form: every figure not yet measured at its largest serialization (each is a
+`u64`, a phase name from the closed set above, or a 64-digit digest, so the
+bound is exact). Once the file is complete, the sealed record is written over
+that reservation **in place**, padded with spaces — JSON allows trailing
+whitespace, and every reader of the section (serde, `JSON.parse`, Python's
+`json`) accepts it. Nothing else in the file moves; the wall time and peak RSS
+cover the final write. The padding is a few hundred bytes for an in-RAM build
+and about a kilobyte for a memory-bounded one.
+
+### Reproducible records
+
+Without help, two builds of the same input differ in this section — the
+timestamps, the wall times, the peak RSS — and only here: the comparison to
+make is with the section stripped (`rete_core::attach_build_info(image,
+&[])`), which is what the test suite does. `RETE_BUILD_RECORD=reproducible`
+removes the volatile facts instead: no `run` block, every `debug_ms` zeroed
+(older readers require the field), and no timestamps unless
+`SOURCE_DATE_EPOCH` provides them. Two such builds of the same input by the
+same binary on the same platform are **byte-identical**, build record
+included. `SOURCE_DATE_EPOCH` alone pins only the timestamps, as before.
+
+### Compatibility
+
+Every addition is a new optional JSON field; `schema` stays `1`. A reader
+from before 0.4.0 ignores what it does not know: `rete card` of 0.3.7 reads a
+0.4.0 record without a warning and prints `built at`, `builder`, its subset of
+the parameters and the costs (its `--json` re-serializes the fields it knows,
+so the new ones do not appear there), and its `verify` passes — the section is
+outside the content hash either way. Old records read in the new `rete card`
+show what they have.
+
+### In JSON-LD
+
+`--format jsonld` maps the record onto PROV-O where PROV-O means what the
+record says: the build is the dataset's `prov:wasGeneratedBy`, a
+`prov:Activity` with `prov:startedAtTime` and `prov:endedAtTime`; each input
+(and the card file) is a `prov:used` `prov:Entity` named by file name, with
+`encodingFormat` (its media type), `rete:bytes` and `rete:blake3`; the engine
+is its `prov:wasAssociatedWith`, a `schema:SoftwareApplication` with
+`softwareVersion`, `rete:gitCommit`, `rete:target`, `rete:profile` and
+`rete:features`. Everything else — `rete:params`, `rete:counts`, `rete:run`,
+`rete:spill`, `rete:host`, `rete:recarded` — has no standard term and travels
+as a JSON literal (`@json`), like the `extra` bag: all the values, none of a
+borrowed meaning.
 
 ### Why it sits outside the content hash
 

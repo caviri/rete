@@ -778,8 +778,14 @@ the section's length.</p>
 <strong>immediately after the metadata section</strong> — adjacent, so a card reader fetches
 metadata + build-info in one coalesced range and the CARD tier stays at one
 header read plus one range read. The CLI stores build-conditions JSON there:
-build timestamp, builder version, the flags in force, and measured starter-query
-costs (see <a href="dataset-cards.html">Dataset Cards</a>). Unlike every other section its
+build timestamps, the engine (version, commit, target, features), the flags in
+force, the inputs (file names and BLAKE3 digests), statement counts, per-phase
+timings and peak memory, and measured starter-query costs (see
+<a href="dataset-cards.html#build-conditions-the-build-info-section">Dataset Cards</a>).
+Since 0.4.0 the JSON may be followed by <strong>ASCII spaces</strong> up to the section's
+length: the writer reserves the record's widest form before the build has
+finished and fills it in place afterwards. JSON allows trailing whitespace, so
+a reader parses the payload as it is. Unlike every other section its
 bytes are <strong>deliberately excluded from the content hash</strong>: it records exactly
 the facts that differ between two builds of identical data (when, by which
 binary, how fast), and the reproducible-hash property — two builds of the same

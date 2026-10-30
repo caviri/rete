@@ -806,6 +806,15 @@ always looked terms up there first.</li>
 passes and the 12-query OpenCitations set returns the same rows as the new reader,
 over the lazy local open. The browser reader decodes the new frames with the same
 <code>ruzstd</code> it ships.</p>
+<h3 id="the-04-build-record">The 0.4 build record</h3>
+<p>The build-info section (kind 7) carries much more in 0.4.0 — engine, inputs,
+counts, timings (<a href="dataset-cards.html#build-conditions-the-build-info-section">Dataset Cards</a>)
+— all as new optional JSON fields, and the JSON may be followed by spaces up to
+the section's length (the record is reserved before the build ends and filled
+in place). Both are invisible to older readers: verified with the released
+0.3.7 binary on the OpenCitations development sample built both ways, <code>card</code>
+prints its known subset with no warning and <code>verify</code> passes (the section is
+outside the content hash).</p>
 <h2 id="is-it-compatible-with-rdf">Is it compatible with RDF?</h2>
 <p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
 format <em>for</em> RDF, built on the standard Rust RDF stack

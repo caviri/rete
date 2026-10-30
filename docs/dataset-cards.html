@@ -1222,17 +1222,145 @@ oddly and there was previously no way to answer them from the file ("which
 section</strong> (format section kind <code>7</code>, laid out immediately after the card)
 carrying:</p>
 <ul>
-<li><code>built_at</code> — when the file was written (RFC 3339 UTC; <code>SOURCE_DATE_EPOCH</code> is
-honored for reproducible pipelines). Distinct from the curated <code>created</code> and
-<code>source_date</code>, which describe the <em>data</em>.</li>
-<li><code>builder</code> — the binary that wrote the file (<code>rete-cli 0.3.2</code>).</li>
-<li><code>params</code> — the flags that shaped the result: <code>--no-pyramid</code>, the pyramid
-algorithm, <code>--text-index</code>, <code>--materialize</code>/<code>--reason</code>,
-<code>--memory-budget-mb</code>, the section codec, and the card's <code>top_n</code> cap.</li>
+<li><code>started_at</code>, <code>built_at</code> — when the build started and when it wrote the file
+(RFC 3339 UTC; <code>SOURCE_DATE_EPOCH</code> is honored for reproducible pipelines).
+Distinct from the curated <code>created</code> and <code>source_date</code>, which describe the
+<em>data</em>.</li>
+<li><code>builder</code> — the binary that wrote the file (<code>rete-cli 0.4.0</code>), and <code>engine</code>,
+the same binary in full: <code>version</code>, the git <code>commit</code> it was built from
+(<code>unknown</code> when the build could not see one), the <code>target</code> triple, the cargo
+<code>profile</code> (<code>release</code>, or <code>debug</code> — whose timings mean nothing next to a
+release build's) and the rete-core <code>features</code> compiled in (<code>compression</code>,
+<code>parallel</code>, <code>rdf12-turtle</code>, <code>unicode-regex</code>).</li>
+<li><code>host</code> — the operating system and architecture, and <strong>nothing else</strong> about
+the machine: no host name, user name, path or environment.</li>
+<li><code>params</code> — every flag that shaped the file, by its <strong>effective</strong> value, so
+the record reads the same whatever a later version's defaults are:
+<code>permutations</code>, <code>named_graphs</code> (<code>per-graph</code>/<code>quad</code>), <code>collapse_graphs</code>,
+<code>strict</code>, <code>quoted_triple_syntax</code>, <code>type_predicate</code>, the pyramid algorithm or
+<code>no_pyramid</code>, <code>label_index</code>, <code>no_schema</code>, the text index and its scope,
+<code>materialize</code>/<code>reason</code>, <code>memory_budget_mb</code>, the writer knobs (<code>write</code>: tile
+and dictionary-chunk size, zstd level and frame shape, frequent objects),
+the section <code>codec</code>, <code>card_costs</code> (not <code>--no-card-costs</code>), the card's
+<code>card_top_n</code> cap, and <code>card_file</code> — its <strong>file name</strong> and BLAKE3, never its
+path.</li>
+<li><code>inputs</code> — each input by <strong>file name only</strong> (<code>stdin</code> for <code>-</code>), its <code>format</code>,
+<code>compression</code> (<code>gzip</code>, detected from the bytes), <code>bytes</code> as stored, and the
+<code>blake3</code> of exactly those bytes (below). A build over more than 64 inputs
+lists the first 64 and counts the rest in <code>inputs_omitted</code>.</li>
+<li><code>counts</code> — <code>statements_read</code> (what the parser handed over),
+<code>statements_inferred</code> (<code>--materialize</code>), <code>statements_unique</code> (what the file
+holds), <code>duplicates_dropped</code>, <code>default_graph_triples</code>, <code>named_graphs</code>,
+<code>named_graph_quads</code>, <code>terms</code>, and <code>invalid_iris</code> — the IRIs the tolerant
+parse stored verbatim (a <code>--strict</code> build that finished had none).</li>
+<li><code>run</code> — the debugging figures of this one run: <code>wall_ms</code>, <code>phases</code> (wall
+time per phase, below), <code>peak_rss_bytes</code> (<code>VmHWM</code>; <code>null</code> off Linux),
+<code>memory_limit_bytes</code> (the process's cgroup limit; <code>null</code> when none) and
+<code>cpus</code> (logical CPUs available to the process).</li>
+<li><code>spill</code> — the memory-bounded build only: <code>chunks</code>, <code>merge_passes</code> (k-way
+merges over spilled files), <code>sort_runs</code> (the files those merges read) and
+<code>scratch_peak_bytes</code> (the spill directory at its fullest, sampled at phase
+boundaries and after each sort writes its runs — a lower bound).</li>
 <li><code>query_costs</code> — measured cost figures for every starter query (below).</li>
 <li><code>dropped_queries</code> — starter queries this build generated, <strong>ran</strong>, and then
 refused to ship (below). Absent on a healthy build.</li>
+<li><code>recarded</code> — set by <code>rete recard</code> (below).</li>
 </ul>
+<p><code>rete card</code> prints it as a <code>build:</code> block. This one is the OpenCitations Meta
+development sample (1 work in 5,000, with provenance) built in a 4 GiB
+container by a development binary of 0.4.0, which still called itself 0.3.7:</p>
+<pre><code class="language-text">  build:
+      built at    : 2026-10-30T08:00:06Z (started 2026-10-30T07:59:14Z)
+      engine      : rete-cli 0.3.7, commit 2d381e45f80170db, x86_64-unknown-linux-gnu (release); features: compression, parallel, rdf12-turtle, unicode-regex
+      host        : linux x86_64
+      command     : rete build --permutations 6 --named-graphs quad --pyramid-algo louvain --label-index --quoted-triple-syntax rdf-star --tile-kib 64 --dict-chunk-kib 64 --zstd-level 9 --card-file pilot.card.json
+      card file   : pilot.card.json (15,384 B, blake3 ed6f8b49457ec535…)
+      writer      : zstd, 64 KiB tiles, 64 KiB dictionary chunks, zstd level 9 (sized frames)
+      card top-N  : 100
+      inputs      : opencitations-2026-06-pilot.nq (nq), 974,898,059 B, blake3 1b4729c0b323dd3a…
+      statements  : 5,151,177 read, 5,151,177 unique (0 duplicate(s) dropped)
+                    1,468,983 in the default graph, 3,682,194 in 369,094 named graph(s); 2,110,315 terms
+      wall time   : 51.5 s on 6 CPU(s)
+      peak RAM    : 657.1 MiB of a 4.0 GiB limit
+      phases      : parse+dictionary 5.5 s · parse+encode 6.7 s · card_derive 2.2 s · pyramid 31.8 s
+                    labels+schema 279 ms · dictionary_section 86 ms · index_permutations 689 ms · serialize 134 ms
+                    starter_queries 3.9 s · write 20 ms
+</code></pre>
+<p>The same input through <code>--memory-budget-mb 1536</code> adds what its spill did:</p>
+<pre><code class="language-text">      phases      : parse+chunk 11.4 s · dictionary 625 ms · encode 52 ms · index_permutations 453 ms
+                    named_graphs 1.1 s · card_derive 0 ms · write 19 ms · labels+schema 1 ms
+      spill       : 2 chunk(s); 15 k-way merge(s) over 18 sorted run(s); scratch peak 210.7 MiB
+</code></pre>
+<p><code>--json</code> carries the whole record under <code>build</code>.</p>
+<h3 id="phases">Phases</h3>
+<p>The builders time themselves with a lap timer (<code>rete_core::build_trace</code>): each
+phase is charged the wall-clock time since the previous one ended, so the
+phases <strong>partition</strong> the run and never overlap. Their names are a closed set:
+<code>read</code> (<code>repyramid</code>/<code>recard</code> reading the input file), <code>parse</code> and <code>reason</code> (the
+in-RAM text path), <code>parse+dictionary</code> and <code>parse+encode</code> (the two passes of
+the streaming in-RAM build, where parsing cannot be told apart from what it
+feeds), <code>parse+chunk</code>, <code>dictionary</code>, <code>encode</code> and <code>named_graphs</code> (the
+memory-bounded build), <code>card_derive</code>, <code>pyramid</code>, <code>text_index</code>,
+<code>labels+schema</code>, <code>dictionary_section</code>, <code>index_permutations</code>, <code>serialize</code>,
+<code>starter_queries</code> and <code>write</code>. In the memory-bounded build the SCHEMA pass is
+fed from the remap and permutation merges, so part of its cost sits in
+<code>encode</code> and <code>index_permutations</code>; <code>labels+schema</code> is only its finish.</p>
+<h3 id="inputs-names-never-paths-digests-in-the-same-pass">Inputs: names, never paths; digests in the same pass</h3>
+<p>An input is recorded by its last path component. A directory can name a user,
+a machine or a project layout, and a published file carries its record to
+everyone who opens it; the file name is what a reader needs to match an input
+against a dump. The same rule applies to <code>--card-file</code>, and to the transport
+string of a re-card's cost figures.</p>
+<p>The digest is BLAKE3 over the bytes <strong>as read</strong> — compressed, when the input
+was — taken by the reader underneath the gzip decoder, so it costs no second
+pass and matches <code>b3sum dump.nq.gz</code>. Standard input is hashed as it streams.
+The two-pass in-RAM build hashes on its first pass only. It is cheap next to
+parsing: on the 975 MB OpenCitations pilot, reading the file from the page
+cache took 0.05 s and reading and hashing it 0.12 s (read and hash together
+ran at about 8 GB/s, on one core), so the digest added 0.07 s to a 51.5 s in-RAM
+build (0.1%) and a 13.7 s memory-bounded one (0.5%). There is no switch to
+skip it. A cardless build has no record and hashes nothing.</p>
+<h3 id="written-last-in-place">Written last, in place</h3>
+<p>Most of the record is only known at the end — the memory-bounded build writes
+the section before it has read its input, and every build's last phase is
+writing the file. So the section is written with the record's <strong>widest</strong>
+form: every figure not yet measured at its largest serialization (each is a
+<code>u64</code>, a phase name from the closed set above, or a 64-digit digest, so the
+bound is exact). Once the file is complete, the sealed record is written over
+that reservation <strong>in place</strong>, padded with spaces — JSON allows trailing
+whitespace, and every reader of the section (serde, <code>JSON.parse</code>, Python's
+<code>json</code>) accepts it. Nothing else in the file moves; the wall time and peak RSS
+cover the final write. The padding is a few hundred bytes for an in-RAM build
+and about a kilobyte for a memory-bounded one.</p>
+<h3 id="reproducible-records">Reproducible records</h3>
+<p>Without help, two builds of the same input differ in this section — the
+timestamps, the wall times, the peak RSS — and only here: the comparison to
+make is with the section stripped (<code>rete_core::attach_build_info(image, &amp;[])</code>), which is what the test suite does. <code>RETE_BUILD_RECORD=reproducible</code>
+removes the volatile facts instead: no <code>run</code> block, every <code>debug_ms</code> zeroed
+(older readers require the field), and no timestamps unless
+<code>SOURCE_DATE_EPOCH</code> provides them. Two such builds of the same input by the
+same binary on the same platform are <strong>byte-identical</strong>, build record
+included. <code>SOURCE_DATE_EPOCH</code> alone pins only the timestamps, as before.</p>
+<h3 id="compatibility">Compatibility</h3>
+<p>Every addition is a new optional JSON field; <code>schema</code> stays <code>1</code>. A reader
+from before 0.4.0 ignores what it does not know: <code>rete card</code> of 0.3.7 reads a
+0.4.0 record without a warning and prints <code>built at</code>, <code>builder</code>, its subset of
+the parameters and the costs (its <code>--json</code> re-serializes the fields it knows,
+so the new ones do not appear there), and its <code>verify</code> passes — the section is
+outside the content hash either way. Old records read in the new <code>rete card</code>
+show what they have.</p>
+<h3 id="in-json-ld">In JSON-LD</h3>
+<p><code>--format jsonld</code> maps the record onto PROV-O where PROV-O means what the
+record says: the build is the dataset's <code>prov:wasGeneratedBy</code>, a
+<code>prov:Activity</code> with <code>prov:startedAtTime</code> and <code>prov:endedAtTime</code>; each input
+(and the card file) is a <code>prov:used</code> <code>prov:Entity</code> named by file name, with
+<code>encodingFormat</code> (its media type), <code>rete:bytes</code> and <code>rete:blake3</code>; the engine
+is its <code>prov:wasAssociatedWith</code>, a <code>schema:SoftwareApplication</code> with
+<code>softwareVersion</code>, <code>rete:gitCommit</code>, <code>rete:target</code>, <code>rete:profile</code> and
+<code>rete:features</code>. Everything else — <code>rete:params</code>, <code>rete:counts</code>, <code>rete:run</code>,
+<code>rete:spill</code>, <code>rete:host</code>, <code>rete:recarded</code> — has no standard term and travels
+as a JSON literal (<code>@json</code>), like the <code>extra</code> bag: all the values, none of a
+borrowed meaning.</p>
 <h3 id="why-it-sits-outside-the-content-hash">Why it sits outside the content hash</h3>
 <p>The card folds into the file's reproducible blake3 content hash, and <strong>two
 builds of identical data must keep hashing identically</strong> — that property is

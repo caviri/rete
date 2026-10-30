@@ -193,8 +193,14 @@ The **build-info section** (kind `7`) is an optional opaque payload laid out
 **immediately after the metadata section** — adjacent, so a card reader fetches
 metadata + build-info in one coalesced range and the CARD tier stays at one
 header read plus one range read. The CLI stores build-conditions JSON there:
-build timestamp, builder version, the flags in force, and measured starter-query
-costs (see [Dataset Cards](dataset-cards.md)). Unlike every other section its
+build timestamps, the engine (version, commit, target, features), the flags in
+force, the inputs (file names and BLAKE3 digests), statement counts, per-phase
+timings and peak memory, and measured starter-query costs (see
+[Dataset Cards](dataset-cards.md#build-conditions-the-build-info-section)).
+Since 0.4.0 the JSON may be followed by **ASCII spaces** up to the section's
+length: the writer reserves the record's widest form before the build has
+finished and fills it in place afterwards. JSON allows trailing whitespace, so
+a reader parses the payload as it is. Unlike every other section its
 bytes are **deliberately excluded from the content hash**: it records exactly
 the facts that differ between two builds of identical data (when, by which
 binary, how fast), and the reproducible-hash property — two builds of the same
