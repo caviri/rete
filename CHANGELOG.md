@@ -7,509 +7,140 @@ versioning for its Rust, CLI, and WASM APIs from 1.0.0 onward.
 
 ## [0.4.0] - 2026-10-30
 
-**Where 0.4.0 is published: every channel, from the one `v0.4.0` tag.**
-crates.io (`rete-core`, `rete-graph`, `rete-cli`, `rete-wasm`), PyPI and npm
-(`rete-graph`), the GitHub release with its native archives, browser bundle,
-Blender add-on, the Claude Desktop extension (`rete-0.4.0.mcpb`, and
-`rete.mcpb` behind the `releases/latest/download/rete.mcpb` link) and the
-Pyodide wheels, the container images on GHCR (`rete-cli`, `rete-relay`,
-`rete-dev`), and the desktop File Explorer installers.
+0.4.0 is about large graphs: it builds them in less memory, stores labels and
+named graphs compactly, and reads them with fewer round trips. One `v0.4.0` tag
+publishes it everywhere: crates.io, PyPI and npm, the GitHub release (archives,
+browser bundle, Blender add-on, Claude Desktop extension, Pyodide wheels), the
+GHCR images and the File Explorer installers. The file format stays `0x05`;
+everything new in it is optional:
 
-**The file format stays `0x05`, stable generation 1.** 0.4.0 adds optional
-sections and header flags inside it (`docs/SPEC.md`, `docs/compatibility.md`):
-
-| addition | written by | in the content hash? | what a 0.3.x reader does |
+| addition | holds | in the content hash | a 0.3.x reader |
 |---|---|---|---|
-| kind 8, LABEL_INDEX | `rete build --label-index` | no: a 16-byte BLAKE3 self-digest | ignores it; finds no label index |
-| kind 9, SCHEMA | every `rete build` (`--no-schema` omits it) | no: self-digest | ignores it; no schema levels or planner statistics |
-| kind 10, QUAD_INDEX, header flag bit 3, and a seal in the index container | `rete build --named-graphs quad` (opt-in) | by reference: the seal, inside the hashed index container, carries its digest | **refuses the file** on every query path (the seal changes the container's section count); `info`, `verify` and `card-url` still work |
-| kind 11, a TEXT_INDEX restricted to some predicates | `--text-index-include` / `--text-index-exclude` | no: self-digest | ignores it: `CONTAINS` scans, `search --contains` finds no index |
-| header flag bit 4: the text index covers the named graphs | `--text-index-graphs all` | (header) | ignores the bit |
+| kind 8 | the label index (`--label-index`) | no, own digest | ignores it |
+| kind 9 | the schema (every build) | no, own digest | ignores it |
+| kind 10, flag bit 3, a seal | the quad index (`--named-graphs quad`) | through the seal in the index | refuses the file; `info` and `verify` work |
+| kind 11 | a text index over some predicates | no, own digest | ignores it; `CONTAINS` scans |
+| flag bit 4 | the text index covers named graphs | header | ignores it |
 
-The rule behind the content hash: **a new section kind never makes an older
-`verify` call a valid file corrupt.** The hash still covers the metadata, the
-dictionary, the index (with the quad-index seal), the pyramid-meta, a kind-6
-text index and the per-graph named graphs; kinds 8, 9 and 11 are checked by
-their own digests and kind 10 against the seal, by the current `verify`. The
-released 0.3.7 `verify` says OK on files carrying each of them. Every file
-0.4.0 writes also uses single-segment zstd frames, which every `0x05` reader
-reads.
+A new section kind never makes an older `verify` call a valid file corrupt:
+0.3.7's `verify` passes on all of them ([compatibility](https://caviri.github.io/rete/compatibility.html)).
 
-**Before publishing files written by 0.4.0:**
+Before publishing files written by 0.4.0:
 
-- A quad-index file must not reach a reader older than 0.4.0, so
-  `--named-graphs per-graph` stays the default: use `quad` only where the
-  playground, the clients, the Pyodide wheels and the HF Space already run
-  0.4.0.
-- `rete build` writes no label index without `--label-index`, and its
-  pyramid-meta no longer carries the labels, the schema or the planner
-  statistics, so a 0.3.x reader finds none of them in a 0.4.0 file. The publish
-  recipe is now `--pyramid-algo types --label-index --card`; rebuild the
-  bundled engines first.
-- Rebuilding from N-Triples/N-Quads that contain `^^xsd:string` changes the
-  content hash (`"x"` and `"x"^^xsd:string` are one term now), and so does the
-  zstd frame change for every rebuilt file.
-
-What 0.4.0 changes on top of 0.3.7:
-
-- **Storage.** Labels and the schema leave the community pyramid for sections
-  of their own, with no 8,192-entry cap and in `--no-pyramid` and
-  memory-bounded files too. The opt-in quad index stores named graphs as a
-  fourth column: on the OpenCitations sample (1.5 M provenance graphs) the
-  named graphs take 102 MB instead of 974 MB, the build 77 s instead of
-  33 min, and one graph's provenance over HTTP 3.7 MB instead of 414 MB.
-  Single-segment zstd frames make files 6–8% smaller at the same level, and
-  `--tile-kib`, `--dict-chunk-kib`, `--zstd-level` and `--frequent-objects`
-  expose the writer's choices.
-- **Build.** `--text-index` works in the memory-bounded build, byte-identical
-  to the in-RAM one, with scopes (`--text-index-graphs`, `-include`,
-  `-exclude`). `rete recard` gives a file a new Dataset Card without a rebuild
-  (a 26.5 GB, 2.9 B-statement file in 19 min at a 1.78 GiB peak). Starter
-  queries are bounded past 2 M statements, so the starter sets of such
-  datasets change; `card-audit` audits the curated examples too.
-- **SPARQL.** SPARQL 1.2 triple terms; `FILTER(CONTAINS(…))` inside `GRAPH`
-  answers; `REGEX` is Unicode-aware natively and in the npm package and
-  extension (the browser playground keeps ASCII classes for its size);
-  `--entail` answers each entailed triple once; `"x"` and `"x"^^xsd:string`
-  are one term; planner fixes for literal starts, small outside sides and
-  row-based size gates.
-- **CLI runtime.** A local file is read whole only when it is small next to
-  the free memory; `rete serve` answers from the file until the first update;
-  remote reads go out in parallel over kept-alive connections (wall time −25%
-  at 80 ms); `rete stats` reports the default and the named graphs apart.
-- **Browser.** Hosts that hide `Content-Range` or ignore `Range` (Zenodo) open;
-  the playground's cross-source join sends each pattern to every source that
-  can answer it; the wasm build downloads nothing and is reproducible
-  (pinned wasm-bindgen CLI, engine-source stamps).
+- Keep the default `--named-graphs per-graph` until every reader (playground,
+  clients, Pyodide wheels, HF Space) runs 0.4.0.
+- Build with `--label-index` (`--pyramid-algo types --label-index --card`):
+  without it there is no label index, and a 0.3.x reader finds no labels,
+  schema or planner statistics in any 0.4.0 file.
+- Rebuilt files get new content hashes: the zstd frames changed, and an
+  N-Triples or N-Quads `"x"^^xsd:string` is now stored as `"x"`.
 
 ### Added
 
-- **The build record says how the file was made, in full.** Every carded
-  `rete build` (in-RAM and `--memory-budget-mb`), `repyramid` and `recard` now
-  writes into its build-info section (kind 7, still outside the content hash):
-  every flag that shaped the file by its effective value (`--permutations`,
-  `--named-graphs`, `--strict`, `--quoted-triple-syntax`, `--collapse-graphs`,
-  `--type-predicate`, the pyramid, label, schema and text-index choices, the
-  writer knobs, `--memory-budget-mb`, card costs, and `--card-file` by file
-  name and BLAKE3); the engine (`version`, the git `commit` it was built from,
-  `target`, `profile`, `features`); the host's OS and architecture and nothing
-  else about it; each input by **file name only** with its format, size and a
-  BLAKE3 hashed as it streams (stdin included; 0.07 s for the 975 MB
-  OpenCitations pilot, 0.1% of its 51.5 s in-RAM build and 0.5% of its 13.7 s
-  memory-bounded one, so there is no switch to skip it); the statement counts
-  (read, unique, duplicates dropped, named graphs, invalid IRIs); and a `run`
-  block — wall time per phase, peak RSS, the cgroup memory limit and the CPUs
-  seen — plus, for the memory-bounded build, its chunks, k-way merges, sorted
-  runs and scratch peak. `rete recard` adds its own engine, input, flags and run under
-  `recarded`. `rete card` prints it as a readable `build:` block, `--json`
-  carries it whole, and `--format jsonld` maps it to a PROV-O activity
-  (`prov:startedAtTime`, `prov:endedAtTime`, `prov:used` per input,
-  `prov:wasAssociatedWith` the engine; the rest as `rete:` JSON literals).
-  The record is reserved at its widest and sealed in place once the file is
-  written, so its timings cover the write and no second copy of the file is
-  made (the in-RAM carded build used to copy the whole finished image in
-  memory to splice the record in). `rete recard`'s cost context now names its
-  input by file name rather than by path. `RETE_BUILD_RECORD=reproducible` leaves out the volatile facts, and two
-  builds are then byte-identical, record included. All additions are optional
-  JSON fields: a 0.3.7 `rete card` reads the new record without a warning.
-  The commit comes from `RETE_SOURCE_REVISION` (set by the CLI image, the
-  release build and the dev container's compose file) or git, else `unknown`.
-
-- **SPARQL 1.2 triple terms in queries.** `<<( s p o )>>` parses as a
-  triple-term pattern — in a pattern, `VALUES`, `BIND` or a `CONSTRUCT`
-  template — and matches the same stored token as `<< s p o >>`, so it finds
-  triple terms written in either RDF 1.2 or RDF-star. Under a leading
-  `VERSION "1.2"` declaration, `<< s p o >>` is SPARQL 1.2's reified triple
-  (`?r rdf:reifies <<( s p o )>>`); without it, it keeps its SPARQL-star
-  meaning, so existing queries and published card starters answer as before.
-  Named reifiers (`~ ?r`) and annotations (`{| … |}`) are refused by name
-  under the declaration. The parser stays `spargebra` 0.3; the 1.2 surface is
-  translated before parsing.
-- **`rete-bench --build-mem` profiles the Dataset Card and the full-text
-  index too**: the card derivation, the text-index build and the
-  starter-query costing a carded build runs last (each query cold against
-  the written file, the five heaviest listed), which is where a carded
-  build peaks on a large graph. `--no-card`, `--no-card-costs` and
-  `--no-text-index` leave them out.
-- **`rete recard <file> -o <out>`: a new Dataset Card without a rebuild, at any
-  size.** The profile and the starter queries are derived by streaming the
-  file's own sorted sections (`rete_core::card::derive_card_streaming`): one
-  byte per subject plus the reader's caches, where `repyramid --card` holds
-  every statement (a ceiling of about 80 M). The file is then rewritten with
-  only the card and the build record replaced — every other section copied
-  byte for byte, the header offsets fixed, the content hash recomputed while
-  the bytes go past (`rete_core::format::rewrite_card`). Curated fields come
-  from `--card-file` as `build` takes them, or verbatim from the input card
-  with `--keep-curated`; an input card with curated fields and neither option
-  is refused, never stripped. The build record keeps the original build's
-  provenance and gains `recarded` (`at`, `by`, `from_content_hash`).
-  On a 26.5 GB OpenCitations Meta part (2,904,375,666 statements) it ran in 19 min 27 s at a 1.78 GiB peak inside a 4 GiB container, where the rebuild it replaces takes about 3 h at 15 GB. `scripts/recard/recard.sh` uses it by default
-  (`--mode recard`), with a byte-identity proof of every data section
-  (`card_tools.py sections-equal`) in place of the N-Quads comparison.
-- **`rete card-audit` audits the curated `example_queries` too**, reported
-  apart from the generated ones (`example_findings`, ids `example-1`, …):
-  `invalid` when one does not parse, `empty` when it reads only an empty
-  default graph, `suspect` when it names a predicate the card's complete
-  predicate list lacks. `--measure` runs them; `--write-costs` still stores
-  the starters' costs only.
-- **Labels and schema out of the community pyramid: two new optional
-  sections.**
-  - **LABEL_INDEX (kind 8)**, `rete build --label-index`: the display label
-    of *every* labelled subject (no 8,192 cap), sorted for prefix search and
-    read in a few small ranges — header, the section head, one directory node
-    per level, one data block, and no dictionary. People who carry only
-    `foaf:givenName`/`familyName` (and the schema.org/vCard equivalents) get
-    `"family, given"`. Works with `--no-pyramid` and `--memory-budget-mb`.
-    `rete search`, `search-url` and the browser's `prefix_search` read it and
-    fall back to the old pyramid block on older files. The card reports
-    `signals.label_index = {present, bytes, entries}`, measured at read time.
-  - **SCHEMA (kind 9)**, written by every `rete build` (`--no-schema` omits
-    it): the class hierarchy, level rollups and links, coherence axioms, the
-    planner's `query_stats` and the characteristic sets, computed without the
-    dendrogram — so `--no-pyramid` and memory-bounded files get them too, and
-    the planner has measured selectivities on files without a pyramid.
-  - Both sit outside the content hash (each carries its own BLAKE3 digest,
-    checked by `rete verify`), so an older `rete verify` still passes and the
-    content identity of a file does not depend on them.
-- `rete repyramid --label-index`; `rete merge` keeps its shards' label index.
-- **`--text-index` in the memory-bounded build.** `rete build
-  --memory-budget-mb N --text-index` used to be refused, so no file that
-  needs the bounded build (OpenCitations, Crossref) could carry full-text
-  search. The index is now a second external sort inside the same budget:
-  each chunk spills its literal words with chunk-local subject ids while it
-  is sealed, the dictionary merge's remap tables turn them into global ids,
-  and runs of at most a quarter of the budget are merged into the section;
-  the token table is compressed from disk. The TEXT_INDEX section is
-  **byte-identical** to the in-RAM build's. On the OpenCitations sample
-  (18.9 M statements) the sections equal the in-RAM files' at 1,500 and
-  3,000 MiB, with provenance in named graphs (10.2 MB) and in the default
-  graph (68.3 MB). With provenance in the default graph the build took 83 s
-  instead of 59 s at 1,500 MiB, and its peak RSS stayed at 1.19 GB (1.17 GB
-  without the index).
-- **Text-index scope**, on `rete build` (both paths) and `rete repyramid`:
-  - `--text-index-graphs default|all`: `all` indexes the named graphs'
-    literals as well as the default graph's;
-  - `--text-index-include <IRI>` / `--text-index-exclude <IRI>`
-    (repeatable): index only, or all but, these predicates' literals.
-
-  The scope is stored in the section, in a block after the token entries
-  (none for the default scope, which stays byte-identical), and recorded in
-  build-info (`text_index_graphs`, `text_index_include`,
-  `text_index_exclude`). `rete search --contains` names the scope when it
-  finds nothing, and `rete stats` marks a predicate-restricted index. On the
-  OpenCitations sample with provenance in the default graph, excluding
-  `dcterms:description` and `oco:hasUpdateQuery` shrinks the index from
-  68.3 MB to 23.8 MB (−65%), and excluding the two provenance timestamps as
-  well leaves 10.2 MB (−85%), the data alone.
-- rete-core: `TextIndexScope` (with `TextIndexGraphs`,
-  `TextIndexPredicates`), `TextIndex::scope`, `Rete::text_index_scope` and
-  `ExternalBuildOptions::text_index`. The build functions' `with_text_index`
-  argument takes a `bool` as before, or a scope (`IntoTextIndex`), and
-  `AssembleOptions` carries it as `text_index_scope`.
-- **The quad index: named graphs as a fourth column** (`rete build
-  --named-graphs quad`, SPEC.md §6.5, section kind 10). Every named-graph quad
-  is stored once, in graph-leading permutations (`G+SPO`, `G+POS`, …) cut into
-  tiles that many graphs share, behind a sorted graph directory; graph names
-  become dictionary terms, and a tile is stored raw when zstd would not shrink
-  it. The per-graph layout (kind 5) wrote each graph's IRI as text and a full
-  permutation container with one zstd frame per tile, chained with no
-  directory, so a dataset of many small graphs paid ~650 B per graph and a
-  remote `GRAPH <g>` walked the section up to `g`. On the OpenCitations sample
-  (1.5 M provenance graphs) the named graphs take 102 MB instead of 974 MB,
-  the build 77 s instead of 33 min, and one graph's provenance over HTTP
-  3.7 MB in 26 requests instead of 414 MB in 81 (docs/BENCHMARK.md). Queries, `export`, `dump`
-  and every graph-scoped API return the same rows from either layout; the
-  memory-bounded build (`--memory-budget-mb`) writes the quad index too, byte
-  for byte, and `repyramid`/`merge` keep a quad-index input's layout. The
-  default stays `per-graph`. **Readers before 0.4.0 refuse quad-index files**
-  (loudly, on the index container's section count — `info`, `verify` and
-  `card-url` still work); see `docs/compatibility.md`.
-- `Rete::named_graph_quad_count` and `Rete::named_quad_count`: a graph's (or all
-  named graphs') quad count from a quad-index file's directory, without reading
-  any index.
-- **Writer knobs on `rete build`: `--tile-kib`, `--dict-chunk-kib`,
-  `--zstd-level` and `--frequent-objects`**, each with an environment variable
-  (`RETE_TILE_KIB`, `RETE_DICT_CHUNK_KIB`, `RETE_ZSTD_LEVEL`,
-  `RETE_FREQUENT_OBJECTS`), which is also how `merge` and `repyramid` take
-  them. None changes the file format and every one changes the bytes, never an
-  answer. `--zstd-level 19` makes a file about 5% smaller than the default 9
-  for about 14× the compression CPU; `--frequent-objects 64` moves the most
-  frequent object-only terms (classes, statuses) into the shared dictionary
-  section and made the OpenCitations samples 4.8–6.5% smaller (refused with
-  `--memory-budget-mb`). The tile budget applies to quad-index tiles too. A
-  card build records the settings in its build info (`params.write`). The
-  measurements are in `docs/BENCHMARK.md` ("Compression (0.4)"), the tool
-  behind them is the `compression_lab` example.
+- **Label index** (kind 8, `--label-index`; A2, #347): every labelled subject,
+  with no 8,192 cap, also in `--no-pyramid` and memory-bounded builds; people
+  with only given and family names get "family, given". A remote prefix search
+  reads one block in 5 requests. `repyramid --label-index` adds one and `merge`
+  keeps its inputs'.
+- **Schema section** (kind 9; A3, #347): the class hierarchy, rollups,
+  coherence axioms, the planner's `query_stats` and characteristic sets,
+  computed without the community pyramid, so `--no-pyramid` and memory-bounded
+  files have them too.
+- **Quad index** (kind 10, `--named-graphs quad`, opt-in; A1, #349): named
+  graphs as a fourth column in shared tiles behind a sorted graph directory,
+  with the same answers as the per-graph layout. One entity's provenance over
+  HTTP on the OpenCitations sample: 414 MB → 3.7 MB. The memory-bounded build,
+  `repyramid` and `merge` support it, `Rete::named_graph_quad_count` reads its
+  directory, and `dump_batch` jumps between sparse subjects
+  ([benchmark](https://caviri.github.io/rete/BENCHMARK.html)).
+- **Full-text index in the memory-bounded build, with scopes** (B1, B2, #348):
+  `--memory-budget-mb` with `--text-index` writes the in-RAM build's bytes.
+  `--text-index-graphs all` also indexes the named graphs (header bit 4);
+  `--text-index-include` and `--text-index-exclude` choose predicates (kind 11).
+  Leaving out OpenCitations' provenance prose and stored SPARQL updates
+  shrinks its index by 65%. The
+  scope is stored in the section and the build record; rete-core gains
+  `TextIndexScope`.
+- **`rete recard`** (B3, #346): a new Dataset Card without a rebuild, derived by
+  streaming the file, every other section copied byte for byte; curated fields
+  come from `--card-file` or `--keep-curated`. A 2.9-billion-statement file
+  took 19 minutes at a 1.78 GiB peak.
+- **`rete card-audit` audits the curated `example_queries` too** (D1, #346).
+- **The build record says how a file was made** (#353): every carded build,
+  `repyramid` and `recard` records in build-info (kind 7, outside the hash)
+  every effective flag, the engine (version, git commit, target, features),
+  each input by file name with its BLAKE3, the statement counts, and the run:
+  per-phase times, peak RSS, memory limit and the memory-bounded build's spill.
+  `rete card` shows it, `--format jsonld` maps it to PROV-O, and
+  `RETE_BUILD_RECORD=reproducible` leaves out the volatile facts
+  ([cards](https://caviri.github.io/rete/dataset-cards.html)).
+- **SPARQL 1.2 triple terms** (C7, #345): `<<( s p o )>>` in patterns, `VALUES`,
+  `BIND` and templates; under `VERSION "1.2"`, `<< s p o >>` is a reified
+  triple, and without it RDF-star as before.
+- **Writer knobs** (A4, #350): `--tile-kib`, `--dict-chunk-kib`, `--zstd-level`
+  and `--frequent-objects`, or their `RETE_*` variables, change the bytes and
+  never the answers; `--frequent-objects 64` made the OpenCitations samples up
+  to 6.5% smaller ([cli](https://caviri.github.io/rete/cli.html#compression-knobs)).
+- **`rete-bench --build-mem`** profiles the card and text-index phases (D5, #344).
 
 ### Changed
 
-- **The playground's cross-source join sends each pattern to every source that
-  can answer it.** It used to route a pattern to the one source that bound its
-  subject whenever that source had the predicate at all: the Crossref title
-  join (`?citing cx:cites <doi> . ?citing rdfs:label ?title` over
-  `crossref-citations` + `crossref`) returned 0 rows because the citation file
-  holds one `rdfs:label` (its declaration of `cx:citedDOIAsWritten`), and with
-  a partner added every pattern of a sharded dataset went to its first shard.
-  Sources are now chosen per pattern by cached `ASK`s (the predicate, then the
-  pattern's constants when several sources have the predicate); patterns only
-  one dataset answers still run together on it, a sharded dataset is one source
-  whose shards each get the sub-query (one subject at a time), a sharded
-  partner brings all its shards, and steps run most-constrained first. The
-  result line now reports the join's sub-queries, bytes and requests.
-- **The wasm build downloads nothing.** The dev image carries the
-  `wasm-bindgen` CLI pinned to `Cargo.lock`, and `scripts/build_wasm.sh` runs
-  `wasm-pack --mode no-install`; the artifacts are byte-identical to a build
-  with the official binary. Each `web/pkg*` package is stamped with the content
-  hash of the engine source it was built from (`rete-build.json`), and the
-  gate fails on a stale or unstamped package (`node scripts/engine_stamp.mjs
-  check`).
-- **A local file is read whole only when it is small next to the free
-  memory.** Every command that opens a local `.rete` (`sparql`, `stats`,
-  `search`, `serve`, `query`, …) used to read any file up to 1 GiB whole,
-  which holds the file image, its decoded dictionary and every index
-  permutation at once: 6.8× the file on the OpenCitations sample. In a
-  4 GiB container `stats`, a one-row `sparql`, `search --contains` and
-  `serve` on its 1.07 GB file were each killed after 24–49 s. The threshold
-  is now a sixteenth of the memory the process can still allocate (the
-  smaller of `MemAvailable` and the headroom under its cgroup v2/v1 limit,
-  page cache not counted), never past 1 GiB, and for `sparql` at most a
-  quarter of `--memory-budget-mb`; 256 MiB where memory cannot be read
-  (macOS, Windows). On the same file in the same container the one-row query
-  now answers in 0.035 s at 15 MB, `search --contains` in 0.11 s at 59 MB and
-  `stats` in 0.53 s at 421 MB. `RETE_LOCAL_LAZY_ABOVE_MB` still overrides it;
-  `RETE_OPEN_DEBUG=1` prints the decision and its reason. `summary`,
-  `predicates` and `federate`'s routing no longer read the whole file to
-  look at its summary.
-- **`rete serve` answers from the file until the first update.** It loaded
-  every quad into memory and rebuilt the file before answering anything, so
-  in a 4 GiB container it was killed on both OpenCitations files (18.9 M
-  quads). It now opens the file like any local command (lazily when large)
-  and streams it as `/snapshot.rete`; the first update, or a journal with
-  changes to replay, loads the quads as before. First answer: 0.06 s at
-  16 MB on the 1.07 GB file, 3.0 s at 1.6 GB on the 0.24 GB one (read
-  whole). An update whose load would not fit in the
-  available memory (estimated at 1 KiB per quad; measured 646 MiB for 1 M
-  quads) is refused with `503`, and the endpoint keeps serving queries.
-- **Remote reads go out in parallel, over kept-alive connections.** The
-  HTTP reader behind every `-url` command had a parallel `read_many`, but the
-  local-or-URL wrapper the commands open did not forward it (nor the reader's
-  fan-out), so every batch the engine asked for went out one range at a time,
-  each on a new connection. It now forwards both; one HTTP agent keeps up to
-  16 connections alive; a batch goes out from a work queue, up to 16 requests
-  in flight; ranges at most 32 KiB apart share a request; transient failures
-  (dropped connection, short body, `408`, `429`, `5xx`) are retried twice
-  with backoff, and a `206` for the wrong offset is refused. The engine
-  batches more as well: a lazy open walks the dictionary and index
-  containers at the same time when the reader has a fan-out, decoding a
-  result faults the chunks of every dictionary section in one batch (it was
-  one batch per section), and a full-text search faults its hits' subject
-  chunks in one batch (it was one read per chunk). Knobs:
-  `RETE_HTTP_CONCURRENCY` (1–64, default 16; `1` is the old sequential
-  behaviour), `RETE_HTTP_COALESCE_KB` (default 32), `RETE_HTTP_RETRIES`
-  (default 2), and `RETE_HTTP_TRACE=1` to print each read and batch.
-  Measured through a latency proxy on the OpenCitations sample (26 card,
-  search and SPARQL queries over the 1.07 GB and 0.24 GB files, median of 5
-  interleaved cold runs, identical rows and bytes): round trips on the
-  critical path 595 → 378 at 20 ms and 595 → 366 at 80 ms, requests
-  595 → 562, connections 595 → 76, total wall time 27.3 → 21.3 s at 20 ms
-  and 62.9 → 47.2 s at 80 ms; with the TCP handshake of each new connection
-  modelled (one more round trip; `https` costs more) 115.6 → 54.0 s at
-  80 ms. At 80 ms a full-text search went from 2.15 to 0.86 s, a one-row
-  query from 1.62 to 1.02 s, a DOI lookup from 1.88 to 1.19 s. Most of what
-  remains is the open: the dictionary and index containers are found by
-  walking their sections' length prefixes, about eight dependent reads
-  each.
-- **`REGEX` / `REPLACE` / `sh:pattern` are Unicode-aware in native builds.**
-  `regex-lite` treats `\b`, `\w`, `\d` and `(?i)` as ASCII, so
-  `REGEX(?name, "\\bsvobodová\\b", "i")` found no "Svobodová" (no boundary
-  after "á") and did find one inside "Svobodováová". rete-core's new
-  `unicode-regex` feature (default on: the CLI, `rete serve`, Python, R, the
-  File Explorer) uses the `regex` crate with its Unicode Perl classes and case
-  folding. `rete-wasm` offers it behind its own `unicode-regex` feature: ON
-  for the npm package `rete-graph` and the Claude Desktop extension built on
-  it, OFF for the browser playground and the other `scripts/build_wasm.sh`
-  packages, which keep `regex-lite` for its size (the Unicode engine adds
-  489 KB raw / 162 KB gzip to a 4.74 MB / 1.33 MB module).
-- **`"x"` and `"x"^^xsd:string` are one term.** RDF 1.1 says so, and rete
-  compared them as two: a pipeline that wrote typed strings could not be
-  matched by a plain constant (OpenCitations' pipelines carry rule R-ocdm-2 to
-  work around it). Now:
-  - **Ingest** stores the plain spelling from every input syntax. The
-    N-Triples/N-Quads reader (rete's own, also behind the memory-bounded
-    build) dropped nothing before and now drops `^^xsd:string`, inside quoted
-    triples too; Turtle, TriG and RDF/XML already arrived plain through
-    `oxrdf`.
-  - **Queries**: constants were already plain (the parser normalizes them);
-    computed values now are too (`STRDT(…, xsd:string)`, `xsd:string(…)`).
-  - **Existing files are not rewritten and keep their content hash.** Reading
-    one that holds the typed spelling, a lookup that misses one spelling tries
-    the other, so a plain constant, a `VALUES` row or a computed value still
-    finds the typed string, and results show the plain spelling (`DATATYPE`
-    still answers `xsd:string`). A file that holds both spellings of the same
-    string keeps them as two dictionary terms until it is rebuilt; `rete
-    export` writes what the file stores.
-  - **A rebuild changes the content hash** of a file whose N-Triples/N-Quads
-    source carries typed strings (the dictionary holds the plain spelling);
-    sources without them, and Turtle/TriG/RDF-XML sources, store exactly the
-    terms they stored before.
-- **Every generated starter query is bounded.** Each template declares what
-  its body reads, and the card's counts turn that into statements: within
-  2,000,000 the exact body ships unchanged; past it the template ships a
-  bounded form (a `LIMIT`ed sample — 1,000 instances, 1,000 statements — or an
-  exact lookup-sized question, titled as such), or nothing when the card's own
-  profile already answers the question (`ov-triples`, `ov-pred-*`, the hub
-  lists, `top-class-graph`, the histograms and extents, `ng-sizes`). On the
-  OpenCitations sample the eight whole-file starters that were killed in a
-  4 GiB client are gone or bounded. On that sample's A layout (1.07 GB) every starter now reads at most 4 MB and peaks at 121 MB RSS, where the old set read up to 992 MB and peaked at 9.4 GB; on a 2.9 B-statement OpenCitations part each reads ~44 MB (the open) at ~225 MB RSS.
-- **The build's starter-query measurement is bounded too**: every starter runs
-  through a 64 MiB byte budget, and one that asks for more is dropped and
-  recorded ("did not finish") instead of finishing — the cost phase is no
-  longer the build's memory peak: on the OpenCitations M=5000 pilot (5.2 M
-  quads) it went from 77 s at a 2.59 GiB peak (the build's, 1.6× the
-  serialization's 1.61 GiB) to ~4 s at 0.53 GiB. A run whose range reads failed is now
-  reported as not finished rather than graded on its partial rows (this also
-  makes `card-audit --max-mb` honest).
-- **`top-dangling` is written `OPTIONAL … FILTER(!BOUND(…))`** instead of
-  `FILTER NOT EXISTS`: the same rows, 18 MB and 0.02 s instead of 3.4 GB and
-  4.8 s on a 6 M-statement graph. Published cards with the old body audit as
-  `superseded`.
-- **The card `extra` bag allows three container levels** (was two), so a list
-  of objects holding a word list fits; size limits unchanged, and an over-deep
-  bag's error names the path to flatten.
-- **`rete build` no longer writes labels or the schema into the
-  pyramid-meta.** Its pyramid now carries only the community summary and the
-  per-community descriptors. A build without `--label-index` therefore has no
-  label index at all (it used to get the bounded 8,192-entry block on pyramid
-  builds): add `--label-index` — the publish recipe is now
-  `--pyramid-algo types --label-index --card`. Readers older than this
-  release open such a file and return the same rows, but find no labels,
-  schema levels or planner statistics in it; rebuild bundled engines first.
-  The library's existing `assemble_*` entry points keep writing the old
-  combined layout, byte for byte.
-- The schema's representative class is now the subject's type with the
-  smallest id (it was the first in input order), and the schema's type
-  predicate is `--type-predicate` or `rdf:type` (the pyramid's
-  "behaves like instance-of" auto-detection applies to its descriptors only).
-  `query_stats` now counts deduplicated statements.
-- **File format, within `0x05`: section kind 11 and header flag bit 4.** A
-  predicate-restricted text index is written as kind 11 instead of 6, with the
-  same payload behind a 16-byte self-digest. Readers older than 0.4.0 prune
-  `FILTER(CONTAINS(…))` with any text index they find; with one that left a
-  predicate out they would drop that predicate's rows. They do not know kind
-  11, so they keep it unopened and scan instead. Like kinds 8 and 9 it is
-  outside the content hash, so their `verify` still passes (checked with
-  0.3.7); the new `verify` checks its digest. A default-scope or
-  `--text-index-graphs all` index stays kind 6 and hashed. `all` also sets
-  header flag bit 4, so a `CONTAINS` inside `GRAPH` or under `FROM` knows from
-  the header whether the index covers it: without the bit it scans and reads
-  no byte of the index. See [compatibility.md](docs/compatibility.md).
-- `dump_batch` over a graph whose subjects are sparse jumps from one subject to
-  the next through the tile's group directory instead of probing every id in
-  between.
-- **Tiles and dictionary chunks are single-segment zstd frames that record
-  their size.** zstd then uses its small-input parameters: at the same level
-  (9) the OpenCitations sample is 7.0% smaller (6.0% data only), encoding is
-  about twice as fast per core, and remote queries fetch 5–6% fewer bytes in
-  the same number of requests; `ruzstd` (wasm) decodes 5–10% slower per tile.
-  Not a format change: the released 0.3.5 and 0.3.7 readers open such files
-  and answer identically. `RETE_ZSTD_FRAME=stream` writes the 0.3 frames,
-  byte for byte. Dictionary chunks are now compressed on every core.
+- **Single-segment zstd frames** (A4, #350): each tile and chunk records its
+  size, so zstd uses its small-input settings; the OpenCitations sample is 7%
+  smaller at the same level. The released 0.3.5 and 0.3.7 read them, and
+  `RETE_ZSTD_FRAME=stream` writes the old frames.
+- **`rete build` keeps labels and the schema out of the pyramid-meta** (A2, A3,
+  #347), so a build without `--label-index` has no label index. The schema's
+  representative class is the subject's type with the smallest id, and
+  `query_stats` counts deduplicated statements.
+- **A local file is read whole only when it is small next to the free memory**
+  (C1, #344): the limit is a sixteenth of what the process can still allocate,
+  container limits included. A one-row query on a 1.07 GB file in a 4 GiB
+  container went from killed to 0.035 s.
+- **`rete serve` answers from the file until the first update** (C1, #344),
+  and refuses with `503` an update that would not fit in memory.
+- **Remote reads go out in parallel over kept-alive connections** (C2, #344):
+  up to 16 in flight, nearby ranges in one request, transient failures retried,
+  and the engine batches more reads. At 80 ms latency a 26-query run took 25%
+  less time (`RETE_HTTP_CONCURRENCY`, `RETE_HTTP_COALESCE_KB`,
+  `RETE_HTTP_RETRIES`, `RETE_HTTP_TRACE`).
+- **`REGEX`, `REPLACE` and `sh:pattern` are Unicode-aware** (C4, #345) in native
+  builds, the npm package and the Claude Desktop extension; the browser
+  playground keeps ASCII-only classes for its size.
+- **`"x"` and `"x"^^xsd:string` are one term** (C8, #345): ingest stores the
+  plain spelling, and existing files match either spelling.
+- **Starter queries are bounded** (B4, #346): past 2 M statements a template
+  ships a `LIMIT`ed or lookup-sized form, or nothing when the card answers it,
+  so those datasets' starter sets change. The build measures them within
+  64 MiB, and `top-dangling` uses `OPTIONAL … !BOUND`. On the OpenCitations
+  sample every starter reads at most 4 MB (up to 992 MB before).
+- **The card's `extra` bag allows three levels** (was two; D4, #346).
+- **The playground sends each federated pattern to every source that can
+  answer it** (E2, #343), and sharded datasets fan out to all their shards: the
+  Crossref title join returns rows instead of none.
+- **The wasm build downloads nothing** (E3, #343): the dev image pins the
+  wasm-bindgen CLI, the output is reproducible, and each package is stamped
+  with its engine source.
 
 ### Fixed
 
-- **A host that ignores `Range` no longer breaks the browser reader.** A `200`
-  with the whole file used to fail every read ("server ignored Range"); the
-  sync and asyncify readers, the persistent range cache and the in-file tiles
-  reader now keep that body (up to 256 MiB) and serve every read from it, and
-  refuse a larger one by name without downloading it again.
-- **Zenodo-hosted files.** A host that hides `Content-Range` from JavaScript
-  (Zenodo's file API exposes only `Content-Type`, `ETag`, `Link` and its
-  rate-limit headers) opens as before from the file's own header; the
-  persistent range cache now takes the total from `HEAD`'s `Content-Length`
-  there, and an off-catalog `…/files/<name>/content` URL is labelled with the
-  file name. A gate check serves Zenodo's exact header set.
-- **`rete stats` printed every statement as "default-graph triples".** The
-  header counts the default graph and every named graph together, so on the
-  OpenCitations file (18,869,242 statements, 1,494,934 provenance graphs) it
-  reported 18.9 M default-graph triples where there are 5,971,936. It now
-  prints `statements`, `default-graph triples`, `named graphs` and
-  `named-graph quads`, splitting the count from the Dataset Card's build-time
-  counts or the default graph's index, never by reading the named graphs, and
-  counts the graphs without walking them.
-- **`--entail` answers each entailed triple once.** `?x a C` was rewritten to
-  a union of the asserted patterns that entail it, and returned a node once
-  per matching pattern: OpenCitations works are typed both `fabio:Expression`
-  and a subtype, so `COUNT(?s)` over `?s a fabio:Expression` gave 508,044
-  where 258,268 works exist. The rewrite now yields the distinct members
-  (each source streams sorted on the subject and the sources merge, so no
-  answer set is held, and `LIMIT` stops early), and role atoms through
-  subproperties and inverses likewise answer each pair once. Queries that
-  relied on the repeated rows (a `COUNT(*)` over a reasoned class atom)
-  now count members. The TBox is read from the default graph as before; the
-  hierarchy is now closed when the query is rewritten, so it also applies
-  inside `GRAPH` and under `FROM`. On the OpenCitations sample with its
-  ontology: the `COUNT` 2.58 s → 0.07 s, the card's `lb-labels` starter
-  (`LIMIT 50`) 2.92 s → 0.06 s.
-- **`--entail` gates each class atom by its own axioms.** Any one
-  `rdfs:domain` or `rdfs:range` axiom used to add a domain/range branch to
-  every class atom of every reasoned query. A class now gets a branch only
-  for the properties whose domain (range) is below it, and a class or
-  property the file never uses adds nothing. On the same file, the card's
-  `ty-class-shape` starter over `pro:RoleInTime` (no subclass; OCO's one
-  domain axiom is about `cito:Citation`) went from 1.16 s back to 0.32 s,
-  and `?x a cito:Citation` (whose domain property is unused) from 2.43 s
-  to 0.03 s.
-- **SPARQL: `FILTER(CONTAINS(…))` inside `GRAPH <g> { … }` returned no rows**
-  on a file built with `--text-index`, even when the graph's literals
-  contained the string (`STRSTARTS`, `REGEX` and `BIND(CONTAINS(…))` were
-  right). The full-text pushdown seeded the scan with subjects from the
-  default graph's words, whatever graph was active. It now runs only where the
-  index covers the active graph and the pattern's predicate — the default
-  graph, or any graph for an index built with `--text-index-graphs all` — and
-  `CONTAINS` scans elsewhere (inside `GRAPH`, under `FROM`, over the union
-  default graph). Found on OpenCitations
-  (`GRAPH <…/prov/> { … CONTAINS(…, "06270426") }`). Two more places read the default
-  graph whatever the query said: a sub-`SELECT` inside `GRAPH <g>`, under
-  `FROM` or under the union-default toggle now reads that active graph, and
-  `DESCRIBE … FROM <g>` describes from `<g>`.
-- **Planner: a query starting from a literal could materialize a whole
-  predicate.** The byte-size figure behind the merge-join and fat-side gates
-  routed a bound term by its unified node id instead of its id in the role
-  of its position — off by the whole subject-only block for any literal — so
-  `?id :hasLiteralValue "10.…" ; :usesIdentifierScheme :doi` saw its
-  identifier-scheme partner as "0 bytes" and merge-joined it in full (every
-  DOI identifier of a 2.9 B-triple OpenCitations part, killed at 4 GB). The
-  figure now routes in role-id space.
-- **Planner: a small outside side now probes a basic graph pattern** instead
-  of evaluating it whole and hash-joining. The outside rows (a property path,
-  an `OPTIONAL`'s left side, another block) are pulled first; when they are
-  at least 16 times fewer than the pattern's most selective triple pattern
-  (above 65,536 triples), the pattern is looked up per row — the rule a
-  basic graph pattern already applied between its own triple patterns. On
-  OpenCitations' 1 GB sample, the card's "authors in order" query went from
-  0.48 s and 353 MB to 0.07 s and 48 MB, and "where a work was published"
-  from 1.2 s and 546 MB to 0.07 s and 15 MB. On the layout with provenance
-  in the default graph, a work's provenance history (a bound subject and four
-  `OPTIONAL`s) went from 2.4 s and 1.45 GiB to 0.03 s and 19 MB locally, and
-  over HTTP from 6.1 s, 35 requests and 5.5 MB to 0.35 s, 26 requests and
-  4.0 MB.
-- **Planner: the size gates count rows, not compressed bytes.** Whether a
-  join side is "fat" (probe it rather than build it) and whether a merge join
-  is lopsided were decided from compressed tile bytes against 2 MiB, so a
-  change of zstd level alone flipped plans (two OpenCitations queries ran
-  3–7× slower at level 19), and a resident open (decoded sizes) and a lazy one
-  (compressed sizes) of the same file could plan differently. They now read
-  the tile-directory row estimate (above about a million rows is fat), which
-  only the data changes.
-- **`rete cost` no longer reads the whole file.** It performed the eager open
-  to report that open's size; on a 26 GB file it was killed at 2 GB. The
-  figure is now computed from the header, and is the same.
+- **Hosts that hide `Content-Range` or ignore `Range`** (E1, #343): a whole-file
+  `200` up to 256 MiB is kept and served, and Zenodo-hosted files open.
+- **`rete stats` printed every statement as default-graph triples** (D3, #344);
+  it now reports the default and named graphs apart.
+- **`--entail` answers each entailed triple once** (C5, #345): counting
+  OpenCitations works gave 508,044 where there are 258,268. Domain and range
+  axioms now gate only the classes they concern (C6).
+- **`FILTER(CONTAINS(…))` inside `GRAPH` returned no rows** on a text-indexed
+  file (C3, #345, #348): the pushdown runs only where the index covers the
+  active graph and predicate, decided from the header. Sub-`SELECT`s and
+  `DESCRIBE … FROM` read the active graph too.
+- **Planner** (C9, #345): a literal start no longer materializes a whole
+  predicate, a small outside side probes per row, the size gates count rows
+  (so the zstd level no longer changes plans), and `rete cost` no longer reads
+  the whole file. A work's provenance history: 1.45 GiB → 19 MB.
 - **The auto `temporal_extent` no longer reads ORCIDs, page numbers and titles
-  as years.** A literal is a date only when it is date-shaped (four year
-  digits, month 01–12, day 01–31, an optional time and zone) and either typed
-  `xsd:date`/`dateTime`/`dateTimeStamp`/`gYear`/`gYearMonth` or the value of a
-  known date predicate. The extent is in calendar order across the three
-  OpenCitations date datatypes of one predicate, negative years by value.
+  as years** (D2, #346).
 
 ## [0.3.7] - 2026-10-28
 
