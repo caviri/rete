@@ -20,7 +20,8 @@ use rete_core::{Header, RangeReader};
 // change if the core module is ever renamed.
 pub(crate) use rete_core::card::{
     curated_counts_card, derive_card, derive_card_encoded, CardInput, Coherence, DatasetCard,
-    ExampleQuery, PermutationsSignal, QuotedTriplesSignal, TextIndexSignal, Tier, CARD_TOP_N,
+    ExampleQuery, LabelIndexSignal, PermutationsSignal, QuotedTriplesSignal, TextIndexSignal, Tier,
+    CARD_TOP_N,
 };
 
 /// `DatasetCard::from_json_bytes` in `anyhow` clothes. `rete-core`'s card
@@ -252,7 +253,9 @@ pub(crate) fn load_card_and_build_ranged<R: rete_core::RangeReader>(
         .filter(|stored| *stored != text_index);
     let permutations = PermutationsSignal::probe(&header);
     let quoted_triples = QuotedTriplesSignal::probe(&header);
+    let label_index = LabelIndexSignal::probe(reader, &header);
     if let Some(c) = card.as_mut() {
+        c.observe_label_index(label_index);
         c.observe_permutations(permutations.clone());
         c.observe_quoted_triples(quoted_triples.clone());
     }
@@ -437,6 +440,9 @@ pub(crate) fn format_card(card: &DatasetCard, checksum: &str) -> String {
         // says nothing at all rather than guessing "no".
         if let Some(ti) = &s.text_index {
             let _ = writeln!(out, "      full text  : {}", ti.describe());
+        }
+        if let Some(li) = &s.label_index {
+            let _ = writeln!(out, "      labels     : {}", li.describe());
         }
         if let Some(p) = &s.permutations {
             let _ = writeln!(out, "      index      : {}", p.describe());

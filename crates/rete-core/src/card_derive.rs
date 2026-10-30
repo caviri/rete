@@ -345,6 +345,12 @@ pub struct Signals {
     /// document, with no file to measure — and never "no index".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_index: Option<TextIndexSignal>,
+    /// Whether the file carries a **label index (LABEL_INDEX section, kind 8)**,
+    /// and how large it is. Like [`Signals::text_index`], measured from the
+    /// file at read time and stripped before the card's bytes are written;
+    /// `None` means unknown, never "no index". See [`LabelIndexSignal`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_index: Option<LabelIndexSignal>,
     /// Which **index permutations** the file stores. Like
     /// [`Signals::text_index`], measured from the file at read time and
     /// stripped before the card's bytes are written; `None` means unknown (a
@@ -597,6 +603,59 @@ impl TextIndexSignal {
                 self.bytes
             ),
             None => format!("TEXT_INDEX present — {} bytes", self.bytes),
+        }
+    }
+}
+
+/// The file's label-prefix-search affordance: does it carry a **LABEL_INDEX
+/// section (kind 8)**, how many labels, and how large is it?
+///
+/// **Measured at read time, never stored**, for the reasons
+/// [`TextIndexSignal`] gives: presence and size come free with the header,
+/// and `entries` is the u64 at bytes 20..28 of the section's fixed preamble —
+/// one 32-byte range read, never the index. A file without the section may
+/// still answer a prefix search from the legacy label block of its
+/// pyramid-meta (at most 8,192 labels); that block is not measured here,
+/// because reading it means fetching the whole pyramid-meta.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelIndexSignal {
+    /// True iff the file has a kind-8 section. Always written, including as
+    /// `false`.
+    pub present: bool,
+    /// Byte length of the whole LABEL_INDEX section.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub bytes: u64,
+    /// Number of `(subject, label)` entries; `None` when there is no index or
+    /// its preamble was unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entries: Option<u64>,
+}
+
+impl LabelIndexSignal {
+    /// Measure the signal from a file's header, through the reader the card
+    /// was read with: nothing beyond the header when there is no index, one
+    /// 32-byte range read when there is.
+    pub fn probe<R: crate::RangeReader + ?Sized>(reader: &R, header: &Header) -> Self {
+        let Some(s) = header.label_index_section() else {
+            return LabelIndexSignal::default();
+        };
+        LabelIndexSignal {
+            present: true,
+            bytes: s.length,
+            entries: crate::label_index::read_label_index_entries_ranged(reader, header),
+        }
+    }
+
+    /// One line for the human catalog view.
+    pub fn describe(&self) -> String {
+        if !self.present {
+            return "no LABEL_INDEX section — a prefix search finds only what a pyramid's \
+                    legacy label block holds, if any"
+                .to_string();
+        }
+        match self.entries {
+            Some(n) => format!("LABEL_INDEX present — {n} labels, {} bytes", self.bytes),
+            None => format!("LABEL_INDEX present — {} bytes", self.bytes),
         }
     }
 }
@@ -859,6 +918,7 @@ impl DatasetCard {
     /// so a hand-written card file cannot set it either.)
     pub fn to_json_bytes(&self) -> Vec<u8> {
         if self.signals.text_index.is_none()
+            && self.signals.label_index.is_none()
             && self.signals.permutations.is_none()
             && self.signals.quoted_triples.is_none()
         {
@@ -866,6 +926,7 @@ impl DatasetCard {
         }
         let mut stored = self.clone();
         stored.signals.text_index = None;
+        stored.signals.label_index = None;
         stored.signals.permutations = None;
         stored.signals.quoted_triples = None;
         serde_json::to_vec(&stored).expect("DatasetCard serializes")
@@ -879,6 +940,12 @@ impl DatasetCard {
     /// `rete card-audit` reports it.
     pub fn observe_text_index(&mut self, measured: TextIndexSignal) -> Option<TextIndexSignal> {
         self.signals.text_index.replace(measured)
+    }
+
+    /// Attach the read-time [`LabelIndexSignal`]. Same contract as
+    /// [`observe_text_index`](Self::observe_text_index).
+    pub fn observe_label_index(&mut self, measured: LabelIndexSignal) -> Option<LabelIndexSignal> {
+        self.signals.label_index.replace(measured)
     }
 
     /// Attach the read-time [`PermutationsSignal`]. Same contract as
@@ -1457,6 +1524,7 @@ fn finish(
         // never derived from the triples and never written — see
         // `TextIndexSignal`, `PermutationsSignal` and `QuotedTriplesSignal`.
         text_index: None,
+        label_index: None,
         permutations: None,
         quoted_triples: None,
     };

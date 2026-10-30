@@ -90,6 +90,33 @@ Which set a file carries is visible without downloading it: `rete info`, `rete
 stats` and the Dataset Card's `signals.permutations` all report it, derived from
 the header byte rather than stored — see [dataset-cards.md](dataset-cards.md).
 
+### LABEL_INDEX and SCHEMA (kinds 8, 9): optional sections older readers skip
+
+Since 0.4.0 `rete build` writes the labels and the schema in sections of their
+own (SPEC §6.4, §7.5), and its pyramid-meta carries only the community summary.
+The file is still format `0x05`: the two kinds are new directory entries, laid out
+after every other section, which is exactly the extension the 1 KiB directory was
+designed for.
+
+| | file built by ≤ 0.3.x | file built by 0.4.0 |
+|---|---|---|
+| **reader ≤ 0.3.x** | unchanged | opens, queries and verifies it. Kinds 8 and 9 are unknown entries: kept verbatim, shifted on every header rewrite, never read. Same rows for every query; but `rete search <prefix>`, `rete summary`'s schema levels and the planner's measured selectivities come back empty, because the pyramid-meta no longer holds them |
+| **reader 0.4.0** | reads the labels and schema from the pyramid-meta, as before | reads them from kinds 8 and 9 |
+
+Both sections are **outside the content hash**. That is what keeps an older
+`rete verify` passing: it hashes the kinds it knows, and a hashed kind 8 or 9 would
+make it call every new file corrupt. Each section starts with its own 16-byte
+BLAKE3 digest instead, which the current `verify` checks too. The content hash is
+therefore the same for a file with and without them — two builds of the same data
+that differ only in `--label-index` share one identity (and one playground session
+cache key), and answer every SPARQL query identically.
+
+Verified against the released 0.3.7 binary (`ghcr.io/caviri/rete-cli:0.3.7`) on
+files with both sections: `info`, `verify`, `stats`, `sparql`, `export` and
+`search` all succeed (the last finds nothing, as the table says). Rebuild the
+bundled engines before publishing files written by 0.4.0, as for every writer
+change.
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query

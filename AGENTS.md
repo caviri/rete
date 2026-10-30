@@ -297,7 +297,7 @@ and `pmtiles` (a tippecanoe vector-tile basemap for the "Tiles" output; can also
 inside the `.rete` as a section). See `docs/browser.md` and `docs/federation.md`.
 
 **Build + publish** (details in `skills/`): `rete build <in.nt> -o <out.rete>
---pyramid-algo types --card` (Docker: the binary is `/work/target/release/rete`, not on
+--pyramid-algo types --label-index --card` (Docker: the binary is `/work/target/release/rete`, not on
 `PATH`), then upload to the R2 bucket `rete` under `<key>/<key>.rete`. R2 S3 credentials
 (`ACCESS_KEY_ID` / `SECRET_ACCESS_KEY` / `S3_API_ENDPOINT`) live in the gitignored
 `.env`; upload via boto3 (`dev/r2_s3.py put rete <local> <key>`). Bulk HF-bucket → R2

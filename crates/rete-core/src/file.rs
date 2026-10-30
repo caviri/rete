@@ -16,7 +16,8 @@
 
 use crate::dictionary::Dictionary;
 use crate::header::{
-    Header, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS, HEADER_LEN, MAGIC,
+    Header, Section, SectionKind, FLAG_HAS_QUADS, FLAG_HAS_QUOTED_TRIPLES, FLAG_TILE_SYNOPSIS,
+    HEADER_LEN, MAGIC,
 };
 use crate::index::{GraphIndex, IndexPermutation, Pattern, PermSet, NUM_PERMS};
 use crate::meta::{ClassNode, CommunityDescriptor, LevelLinks, LevelRollup, PyramidMeta};
@@ -70,6 +71,40 @@ pub fn build_pyramid_meta_algo(
     type_override: Option<&str>,
     algo: PyramidAlgo,
 ) -> (Vec<u8>, u16) {
+    build_pyramid_meta_layout(
+        dict,
+        triples,
+        budget,
+        type_override,
+        algo,
+        PyramidLayout::Combined,
+    )
+}
+
+/// What a pyramid-meta section carries besides the community summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PyramidLayout {
+    /// Everything, as every build up to 0.3.x wrote it: the summary, the
+    /// per-community descriptors, the schema pyramid, `query_stats`, the
+    /// characteristic sets and the bounded (8,192-entry) label block.
+    #[default]
+    Combined,
+    /// Only what needs the community partition: the summary and the
+    /// per-community descriptors. The schema, `query_stats` and the
+    /// characteristic sets live in the SCHEMA section (kind 9) and the labels
+    /// in the LABEL_INDEX section (kind 8) — what `rete build` writes.
+    CommunityOnly,
+}
+
+/// Like [`build_pyramid_meta_algo`], choosing the [`PyramidLayout`].
+pub fn build_pyramid_meta_layout(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    budget: usize,
+    type_override: Option<&str>,
+    algo: PyramidAlgo,
+    layout: PyramidLayout,
+) -> (Vec<u8>, u16) {
     // Optional sub-phase timing (set RETE_BUILD_TIMING=1) — the pyramid build is
     // the dominant cost of a big `rete build`; this shows where inside it.
     // `Instant::now()` must stay behind the flag: `std::time` is unsupported on
@@ -121,6 +156,30 @@ pub fn build_pyramid_meta_algo(
     // type rollups + per-level lateral class relations + per-community
     // descriptors). Empty when the graph has no usable typing, in which case the
     // encoding stays byte-identical to a v1 pyramid-meta.
+    if layout == PyramidLayout::CommunityOnly {
+        // Descriptors only: the schema pyramid's other fields, the planner
+        // stats, the shapes and the labels have sections of their own.
+        let descriptors = crate::schema_pyramid::build_community_descriptors(
+            dict,
+            triples,
+            &dend,
+            round,
+            type_override,
+        );
+        lap("build_community_descriptors");
+        let meta = PyramidMeta::new(round as u32, summary, &[]).with_schema(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            descriptors,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let out = (meta.encode(), dend.rounds() as u16);
+        lap("encode");
+        return out;
+    }
     let sp = crate::schema_pyramid::build_schema_pyramid_with(
         dict,
         triples,
@@ -155,18 +214,12 @@ pub fn build_pyramid_meta_algo(
 
 /// The label predicates a [`compute_label_index`] entry can come from — the
 /// common "human-readable name of this subject" terms, angle-bracketed as the
-/// dictionary stores them. Order is irrelevant (we union their ids).
-const LABEL_PREDICATES: &[&str] = &[
-    "<http://www.w3.org/2000/01/rdf-schema#label>",
-    "<http://www.w3.org/2004/02/skos/core#prefLabel>",
-    "<http://www.w3.org/2004/02/skos/core#altLabel>",
-    "<http://xmlns.com/foaf/0.1/name>",
-    "<http://purl.org/dc/terms/title>",
-    "<http://purl.org/dc/elements/1.1/title>",
-    "<http://schema.org/name>",
-];
+/// dictionary stores them. Order is irrelevant (we union their ids). The same
+/// list the LABEL_INDEX section's rule L1 uses.
+const LABEL_PREDICATES: &[&str] = crate::label_index::DIRECT_LABEL_PREDICATES;
 
-/// Build the bounded **label index** for prefix search: the display labels of
+/// Build the bounded, **legacy** label block of a [`PyramidLayout::Combined`]
+/// pyramid-meta (the LABEL_INDEX section, kind 8, replaces it): the display labels of
 /// the most-connected labeled subjects, sorted by the label's lowercased form.
 /// Ranking keeps autocomplete useful on a huge graph (the prominent entities
 /// survive the bound); a graph with fewer than `MAX_LABELS` labels keeps them
@@ -2314,10 +2367,168 @@ pub fn content_hash_parts(header: &Header) -> Vec<(u64, u64)> {
 }
 
 /// Recompute the content hash from a file image and check it against the header
-/// â€” detects corruption or truncation of the payload sections.
+/// â€” detects corruption or truncation of the payload sections. The
+/// LABEL_INDEX and SCHEMA sections (kinds 8, 9) are outside that hash — an
+/// older reader's `verify` must keep passing on a file that carries them — so
+/// each is checked against its own leading digest instead.
 pub fn verify(bytes: &[u8]) -> Result<bool, FileError> {
     let header = Header::from_bytes(bytes)?;
-    Ok(hash_of_sections(&header, bytes)? == header.content_hash)
+    if hash_of_sections(&header, bytes)? != header.content_hash {
+        return Ok(false);
+    }
+    for s in self_digested_sections(&header) {
+        let end = s.offset.saturating_add(s.length);
+        let section = bytes
+            .get(s.offset as usize..end as usize)
+            .ok_or(FileError::Container("section overruns buffer"))?;
+        if !crate::label_index::digest_ok(section) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The sections that carry their own leading 16-byte digest rather than being
+/// folded into the header content hash: LABEL_INDEX (8) and SCHEMA (9).
+fn self_digested_sections(header: &Header) -> Vec<Section> {
+    [header.label_index_section(), header.schema_section()]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// Append LABEL_INDEX / SCHEMA sections (kinds 8, 9) to a finished file image,
+/// just before its 4-byte footer, and return the new image.
+///
+/// They sit outside the content hash, so nothing before them moves and the
+/// hash is unchanged: only the header's directory gains entries. An empty
+/// payload is skipped. Each kind may be appended once; a second append of a
+/// kind the file already carries is an error, as is any other kind.
+pub fn append_sections(
+    image: &[u8],
+    sections: &[(SectionKind, &[u8])],
+) -> Result<Vec<u8>, FileError> {
+    let lens: Vec<(SectionKind, u64)> =
+        sections.iter().map(|(k, b)| (*k, b.len() as u64)).collect();
+    let (header, body_end) = plan_append(image, image.len() as u64, &lens)?;
+    let extra: usize = sections.iter().map(|(_, b)| b.len()).sum();
+    let mut out = Vec::with_capacity(image.len() + extra);
+    out.extend_from_slice(&header.to_bytes());
+    out.extend_from_slice(&image[HEADER_LEN..body_end as usize]);
+    for (_, b) in sections {
+        out.extend_from_slice(b);
+    }
+    out.extend_from_slice(&MAGIC);
+    Ok(out)
+}
+
+/// The header an append produces, and where the old footer starts.
+fn plan_append(
+    head: &[u8],
+    file_len: u64,
+    sections: &[(SectionKind, u64)],
+) -> Result<(Header, u64), FileError> {
+    let mut header = Header::from_bytes(head)?;
+    if header.expected_file_len() != Some(file_len) {
+        return Err(FileError::Container(
+            "cannot append sections: the file length does not match its header",
+        ));
+    }
+    let body_end = file_len - MAGIC.len() as u64;
+    let mut at = body_end;
+    for &(kind, len) in sections {
+        if !matches!(kind, SectionKind::LabelIndex | SectionKind::Schema) {
+            return Err(FileError::Container(
+                "only LABEL_INDEX and SCHEMA sections can be appended",
+            ));
+        }
+        if len == 0 {
+            continue;
+        }
+        if header.section(kind).is_some_and(|s| s.length > 0) {
+            return Err(FileError::Container(
+                "the file already carries that section",
+            ));
+        }
+        header = header.with_section(kind, at, len);
+        at += len;
+    }
+    Ok((header, body_end))
+}
+
+/// One piece of a section appended by [`append_sections_to_file`].
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) enum PayloadPart<'a> {
+    /// Bytes in memory.
+    Bytes(&'a [u8]),
+    /// A whole file, streamed.
+    File(&'a std::path::Path),
+}
+
+/// [`append_sections`] on a file on disk, in place: the sections overwrite the
+/// footer and are followed by a new one, then the header is rewritten. Each
+/// section is the concatenation of its parts, so a large one streams from a
+/// spill file. The memory-bounded build uses this after writing its output.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn append_sections_to_file(
+    path: &std::path::Path,
+    sections: &[(SectionKind, Vec<PayloadPart<'_>>)],
+) -> Result<(), FileError> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let part_len = |p: &PayloadPart<'_>| -> std::io::Result<u64> {
+        match p {
+            PayloadPart::Bytes(b) => Ok(b.len() as u64),
+            PayloadPart::File(f) => Ok(std::fs::metadata(f)?.len()),
+        }
+    };
+    let mut lens = Vec::with_capacity(sections.len());
+    for (kind, parts) in sections {
+        let mut n = 0u64;
+        for p in parts {
+            n += part_len(p)?;
+        }
+        lens.push((*kind, n));
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let len = f.metadata()?.len();
+    let mut head = vec![0u8; HEADER_LEN];
+    f.read_exact(&mut head)?;
+    let (header, body_end) = plan_append(&head, len, &lens)?;
+    f.seek(SeekFrom::Start(body_end))?;
+    let mut w = std::io::BufWriter::with_capacity(1 << 20, &mut f);
+    for (_, parts) in sections {
+        for p in parts {
+            match p {
+                PayloadPart::Bytes(b) => w.write_all(b)?,
+                PayloadPart::File(src) => {
+                    std::io::copy(&mut std::fs::File::open(src)?, &mut w)?;
+                }
+            }
+        }
+    }
+    w.write_all(&MAGIC)?;
+    w.flush()?;
+    drop(w);
+    f.seek(SeekFrom::Start(0))?;
+    f.write_all(&header.to_bytes())?;
+    f.flush()?;
+    Ok(())
+}
+
+/// Open a file's dictionary over a [`RangeReader`] with only its chunk
+/// directories resident — for the memory-bounded build, which resolves the
+/// SCHEMA section's few class and predicate ids through the file it just
+/// wrote.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn open_dictionary_lazy<R: RangeReader + Send + Sync + 'static>(
+    reader: R,
+) -> Result<Dictionary, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    ranged_chunked_dictionary(&std::sync::Arc::new(reader), &header, [true; 4])
 }
 
 /// [`verify`] over a [`RangeReader`](crate::reader::RangeReader), streaming:
@@ -2350,7 +2561,27 @@ pub fn verify_ranged(reader: &dyn crate::reader::RangeReader) -> Result<bool, Fi
     }
     let mut out = [0u8; 16];
     out.copy_from_slice(&h.finalize().as_bytes()[..16]);
-    Ok(out == header.content_hash)
+    if out != header.content_hash {
+        return Ok(false);
+    }
+    // The self-digested sections (kinds 8, 9), streamed the same way.
+    for s in self_digested_sections(&header) {
+        if s.length < 16 || s.offset.checked_add(s.length).is_none_or(|end| end > len) {
+            return Err(FileError::Container("section overruns buffer"));
+        }
+        let want = reader.read_at(s.offset, 16)?;
+        let mut h = blake3::Hasher::new();
+        let mut at = s.offset + 16;
+        while at < s.offset + s.length {
+            let take = (s.offset + s.length - at).min(SLICE);
+            h.update(&reader.read_at(at, take)?);
+            at += take;
+        }
+        if h.finalize().as_bytes()[..16] != want[..] {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Faults the pyramid meta in on first access. `None` = the fetch failed.
@@ -2367,6 +2598,120 @@ enum PyramidSlot {
         loader: PyramidLoader,
         cell: std::sync::OnceLock<Option<PyramidMeta>>,
     },
+}
+
+/// A section held resident (eager opens) or faulted in on first use (lazy
+/// opens) — the LABEL_INDEX and SCHEMA sections. `None` inside means the file
+/// has no such section, or it could not be read or parsed: both are optional
+/// and derived, so a bad one degrades to "absent" (and `verify` reports it).
+pub(crate) enum SectionSlot<T> {
+    Resident(Option<T>),
+    Lazy {
+        loader: Box<dyn Fn() -> Option<T> + Send + Sync>,
+        cell: std::sync::OnceLock<Option<T>>,
+    },
+}
+
+impl<T> SectionSlot<T> {
+    /// The section, faulting it in on the lazy path.
+    pub(crate) fn get(&self) -> Option<&T> {
+        match self {
+            SectionSlot::Resident(v) => v.as_ref(),
+            SectionSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
+        }
+    }
+
+    /// The section only if it is resident or already faulted — never a read.
+    pub(crate) fn get_if_loaded(&self) -> Option<&T> {
+        match self {
+            SectionSlot::Resident(v) => v.as_ref(),
+            SectionSlot::Lazy { cell, .. } => cell.get().and_then(|o| o.as_ref()),
+        }
+    }
+}
+
+/// The LABEL_INDEX of a file image held in memory.
+fn resident_label_slot<'a>(
+    header: &Header,
+    region: &dyn Fn(u64, u64) -> Result<&'a [u8], FileError>,
+) -> SectionSlot<crate::label_index::LabelIndex> {
+    SectionSlot::Resident(header.label_index_section().and_then(|s| {
+        let bytes = region(s.offset, s.length).ok()?;
+        crate::label_index::LabelIndex::from_section(bytes, header.block_codec).ok()
+    }))
+}
+
+/// The SCHEMA section of a file image held in memory.
+fn resident_schema_slot<'a>(
+    header: &Header,
+    region: &dyn Fn(u64, u64) -> Result<&'a [u8], FileError>,
+) -> SectionSlot<crate::schema_section::SchemaMeta> {
+    SectionSlot::Resident(header.schema_section().and_then(|s| {
+        crate::schema_section::SchemaMeta::decode(region(s.offset, s.length).ok()?).ok()
+    }))
+}
+
+/// The deferred LABEL_INDEX of a ranged open: the first search reads the
+/// section head (preamble + root, ≤ [`crate::label_index::HEAD_READ`] bytes),
+/// then one directory node per level and the data blocks it needs.
+fn ranged_label_slot<R: RangeReader + Send + Sync + 'static>(
+    reader: &std::sync::Arc<R>,
+    header: &Header,
+) -> SectionSlot<crate::label_index::LabelIndex> {
+    let Some(s) = header.label_index_section() else {
+        return SectionSlot::Resident(None);
+    };
+    let r = reader.clone();
+    let codec = header.block_codec;
+    SectionSlot::Lazy {
+        loader: Box::new(move || {
+            let head = r
+                .read_at(s.offset, crate::label_index::HEAD_READ.min(s.length))
+                .ok()?;
+            let rr = r.clone();
+            let loader = Box::new(move |off: u64, len: u64| rr.read_at(s.offset + off, len).ok());
+            crate::label_index::LabelIndex::from_head(&head, s.length, codec, loader).ok()
+        }),
+        cell: std::sync::OnceLock::new(),
+    }
+}
+
+/// The deferred SCHEMA section of a ranged open: one range read, on first use.
+fn ranged_schema_slot<R: RangeReader + Send + Sync + 'static>(
+    reader: &std::sync::Arc<R>,
+    header: &Header,
+) -> SectionSlot<crate::schema_section::SchemaMeta> {
+    let Some(s) = header.schema_section() else {
+        return SectionSlot::Resident(None);
+    };
+    let r = reader.clone();
+    SectionSlot::Lazy {
+        loader: Box::new(move || {
+            let bytes = r.read_at(s.offset, s.length).ok()?;
+            crate::schema_section::SchemaMeta::decode(&bytes).ok()
+        }),
+        cell: std::sync::OnceLock::new(),
+    }
+}
+
+/// Read and decode a file's SCHEMA section over a [`RangeReader`] — the
+/// header and one range. `Ok(None)` when the file has none (or it is
+/// malformed: the section is optional and derived).
+pub fn read_schema_ranged<R: RangeReader + ?Sized>(
+    reader: &R,
+) -> Result<Option<crate::schema_section::SchemaMeta>, FileError> {
+    let head = reader.read_at(0, HEADER_LEN as u64)?;
+    let header = Header::from_bytes(&head)?;
+    Ok(read_schema_with_header(reader, &header))
+}
+
+fn read_schema_with_header<R: RangeReader + ?Sized>(
+    reader: &R,
+    header: &Header,
+) -> Option<crate::schema_section::SchemaMeta> {
+    let s = header.schema_section()?;
+    let bytes = reader.read_at(s.offset, s.length).ok()?;
+    crate::schema_section::SchemaMeta::decode(&bytes).ok()
 }
 
 /// Faults the text index in on first search. `None` = the file has none, or the
@@ -3049,6 +3394,10 @@ pub struct Rete {
     tile_ranges: [Vec<(u32, u32, ByteRange)>; NUM_PERMS],
     pyramid: PyramidSlot,
     text_index: TextIndexSlot,
+    /// The LABEL_INDEX section (kind 8), if any.
+    labels: SectionSlot<crate::label_index::LabelIndex>,
+    /// The SCHEMA section (kind 9), if any.
+    schema: SectionSlot<crate::schema_section::SchemaMeta>,
     named_graphs: NamedGraphsSlot,
     /// Raw bytes of the metadata section (empty if the file has none). The
     /// application layer decodes this (the CLI stores a JSON Dataset Card here).
@@ -3116,6 +3465,8 @@ impl Rete {
             },
             header.block_codec,
         )?;
+        let labels = resident_label_slot(&header, &region);
+        let schema = resident_schema_slot(&header, &region);
 
         let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
             decode_named_graphs(
@@ -3143,6 +3494,8 @@ impl Rete {
             tile_ranges,
             pyramid,
             text_index,
+            labels,
+            schema,
             named_graphs,
             metadata,
             service_client: None,
@@ -3261,6 +3614,21 @@ impl Rete {
                 h.named_graphs_len,
             ));
         }
+        if let Some(s) = h.label_index_section() {
+            let label = match self.labels.get_if_loaded() {
+                Some(li) => format!("label index ({} entries)", li.entry_count()),
+                None => "label index".to_string(),
+            };
+            out.push(seg("label-index", label, s.offset, s.length));
+        }
+        if let Some(s) = h.schema_section() {
+            out.push(seg(
+                "schema",
+                "schema (classes, query_stats, shapes)".into(),
+                s.offset,
+                s.length,
+            ));
+        }
         out.sort_by_key(|s| s.offset);
         out
     }
@@ -3301,37 +3669,101 @@ impl Rete {
         }
     }
 
-    /// Per-predicate planner statistics from the query-stats block — empty when
-    /// the file has none or the pyramid isn't resident (the lazy path doesn't
-    /// fault it just for stats). See [`crate::meta::PredStat`].
+    /// The SCHEMA section (kind 9): class hierarchy, level rollups and links,
+    /// coherence axioms, `query_stats`, characteristic sets. Faults it in (one
+    /// small range read) on the lazy path. `None` when the file has none — a
+    /// file built before it existed keeps those fields in its pyramid-meta
+    /// ([`schema_or_pyramid`](Self::schema_or_pyramid) reads either).
+    pub fn schema(&self) -> Option<&crate::schema_section::SchemaMeta> {
+        self.schema.get()
+    }
+
+    /// The schema fields from the SCHEMA section when the file has one, else
+    /// from the pyramid-meta (faulting either on the lazy path). `None` when
+    /// the file carries neither.
+    pub fn schema_or_pyramid(
+        &self,
+    ) -> Option<std::borrow::Cow<'_, crate::schema_section::SchemaMeta>> {
+        if let Some(s) = self.schema() {
+            return Some(std::borrow::Cow::Borrowed(s));
+        }
+        self.pyramid()
+            .map(|p| std::borrow::Cow::Owned(crate::schema_section::SchemaMeta::from_pyramid(p)))
+    }
+
+    /// Per-predicate planner statistics (`query_stats`): from the SCHEMA
+    /// section (faulting it on the lazy path — it is small), else from the
+    /// pyramid-meta when that is resident. Empty when the file has neither.
+    /// See [`crate::meta::PredStat`].
     pub fn predicate_stats(&self) -> &[crate::meta::PredStat] {
+        if let Some(s) = self.schema().filter(|s| !s.predicate_stats.is_empty()) {
+            return &s.predicate_stats;
+        }
         self.pyramid_if_loaded()
             .map(|p| p.predicate_stats.as_slice())
             .unwrap_or(&[])
     }
 
-    /// The entity shapes (characteristic sets) from the pyramid — empty when the
-    /// file has none or the pyramid isn't resident. See [`crate::meta::CharSet`].
+    /// The statistics the planner may use **without a read it was not going to
+    /// make**: the SCHEMA section if it is resident or already faulted — or,
+    /// with `fault`, after faulting it (one small range, once per session) —
+    /// else the resident pyramid-meta's block.
+    pub(crate) fn planner_stats(&self, fault: bool) -> &[crate::meta::PredStat] {
+        let schema = if fault {
+            self.schema.get()
+        } else {
+            self.schema.get_if_loaded()
+        };
+        if let Some(s) = schema.filter(|s| !s.predicate_stats.is_empty()) {
+            return &s.predicate_stats;
+        }
+        self.pyramid_if_loaded()
+            .map(|p| p.predicate_stats.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The entity shapes (characteristic sets): from the SCHEMA section, else
+    /// from a resident pyramid-meta. See [`crate::meta::CharSet`].
     pub fn char_sets(&self) -> &[crate::meta::CharSet] {
+        if let Some(s) = self.schema().filter(|s| !s.char_sets.is_empty()) {
+            return &s.char_sets;
+        }
         self.pyramid_if_loaded()
             .map(|p| p.char_sets.as_slice())
             .unwrap_or(&[])
     }
 
-    /// The label index from the pyramid — empty when the file has none or the
-    /// pyramid isn't resident. See [`crate::meta::LabelEntry`].
+    /// The **legacy** label block of a pyramid-meta (≤ 8,192 entries) — empty
+    /// when the file has none or the pyramid isn't resident. Files built with
+    /// `--label-index` carry a LABEL_INDEX section instead; see
+    /// [`label_index_section`](Self::label_index_section). See
+    /// [`crate::meta::LabelEntry`].
     pub fn label_index(&self) -> &[crate::meta::LabelEntry] {
         self.pyramid_if_loaded()
             .map(|p| p.label_index.as_slice())
             .unwrap_or(&[])
     }
 
-    /// Prefix-search the label index: the subjects whose label starts with
-    /// `prefix` (case-insensitive), as `(label, subject_iri)`, capped at `limit`.
-    /// Unlike the planner accessors, this **faults the pyramid** (where the index
-    /// lives) on the lazy path — a prefix search is an explicit read, not a free
-    /// estimate. Returns an empty vec when the file carries no label index.
+    /// Whether the file carries a LABEL_INDEX section (kind 8). Header only.
+    pub fn has_label_index(&self) -> bool {
+        self.header.label_index_section().is_some()
+    }
+
+    /// The LABEL_INDEX section, faulting its head in on the lazy path.
+    pub fn label_index_section(&self) -> Option<&crate::label_index::LabelIndex> {
+        self.labels.get()
+    }
+
+    /// Prefix-search the labels: the subjects whose label starts with `prefix`
+    /// (case-insensitive), as `(label, subject term)`, capped at `limit`.
+    /// Reads the LABEL_INDEX section when the file has one (every labelled
+    /// subject, no dictionary read); otherwise the legacy pyramid-meta block,
+    /// which **faults the pyramid** on the lazy path. Empty when the file
+    /// carries neither.
     pub fn prefix_search(&self, prefix: &str, limit: usize) -> Vec<(String, String)> {
+        if let Some(li) = self.labels.get() {
+            return li.prefix_search(prefix, limit);
+        }
         let Some(pyr) = self.pyramid() else {
             return Vec::new();
         };
@@ -4013,6 +4445,13 @@ impl Rete {
             None
         };
         let text_index = resident_text_index_slot(text_index_bytes.as_deref(), header.block_codec)?;
+        // LABEL_INDEX and SCHEMA: one range read each, held resident like the
+        // other sections of this opener.
+        let labels = SectionSlot::Resident(header.label_index_section().and_then(|s| {
+            let b = reader.read_at(s.offset, s.length).ok()?;
+            crate::label_index::LabelIndex::from_section(&b, header.block_codec).ok()
+        }));
+        let schema = SectionSlot::Resident(read_schema_with_header(reader, &header));
 
         let named_graphs = NamedGraphsSlot::Resident(if header.named_graphs_len > 0 {
             let nb = reader.read_at(header.named_graphs_offset, header.named_graphs_len)?;
@@ -4034,6 +4473,8 @@ impl Rete {
             tile_ranges,
             pyramid,
             text_index,
+            labels,
+            schema,
             named_graphs,
             metadata: Vec::new(),
             service_client: None,
@@ -4107,6 +4548,12 @@ impl Rete {
         // postings blob. A SPARQL query, which never searches, pays nothing.
         let text_index = ranged_text_index_slot(&reader, &header);
 
+        // LABEL_INDEX: the first prefix search reads its head and walks down.
+        // SCHEMA: read once, on first use — a stats question, or the planner
+        // ordering a join that needs a measured selectivity.
+        let labels = ranged_label_slot(&reader, &header);
+        let schema = ranged_schema_slot(&reader, &header);
+
         // Named graphs are the last eagerly-fetched section standing on this
         // path — and on a many-graph file they dwarf everything else (67 MB
         // fetched and ~32k graph indexes decoded before the first query, on a
@@ -4137,6 +4584,8 @@ impl Rete {
             tile_ranges,
             pyramid,
             text_index,
+            labels,
+            schema,
             named_graphs,
             metadata: Vec::new(),
             service_client: None,
@@ -4948,17 +5397,24 @@ fn text_search_in(
 /// TEXT_INDEX and pyramid, so it pays only for what it reads: the token table
 /// on the first search, then one range per posting list and per dictionary
 /// chunk holding a matched subject. This is what backs `rete search-url`.
+///
+/// On a file with a LABEL_INDEX section (kind 8) the dictionary is not opened
+/// at all until a full-text search needs it: the section stores each subject's
+/// term, so a prefix search costs the header, the section head, one directory
+/// node per level and one data block.
 pub struct SearchView {
     header: Header,
-    dict: Dictionary,
+    dict: SectionSlot<Dictionary>,
     pyramid: PyramidSlot,
     text_index: TextIndexSlot,
+    labels: SectionSlot<crate::label_index::LabelIndex>,
 }
 
 impl SearchView {
     /// Open for search over any [`RangeReader`] (HTTP or local): header +
-    /// dictionary chunk directories only, with the text index and pyramid
-    /// faulting in on first use.
+    /// dictionary chunk directories only (none at all on a file with a
+    /// LABEL_INDEX, until a text search needs them), with the text index,
+    /// label index and pyramid faulting in on first use.
     pub fn open_ranged<R: RangeReader + Send + Sync + 'static>(
         reader: R,
     ) -> Result<Self, FileError> {
@@ -4968,15 +5424,43 @@ impl SearchView {
         // Sections 0 (shared) and 1 (subject-only) are the only ones a search
         // resolves — both modes return subject IRIs. Skipping 2 and 3 is what
         // makes this open cheap where a full one is not.
-        let dict = ranged_chunked_dictionary(&reader, &header, [true, true, false, false])?;
+        let dict = if header.label_index_section().is_some() {
+            let (r, h) = (reader.clone(), header.clone());
+            SectionSlot::Lazy {
+                loader: Box::new(move || {
+                    ranged_chunked_dictionary(&r, &h, [true, true, false, false]).ok()
+                }),
+                cell: std::sync::OnceLock::new(),
+            }
+        } else {
+            SectionSlot::Resident(Some(ranged_chunked_dictionary(
+                &reader,
+                &header,
+                [true, true, false, false],
+            )?))
+        };
         let pyramid = ranged_pyramid_slot(&reader, &header);
         let text_index = ranged_text_index_slot(&reader, &header);
+        let labels = ranged_label_slot(&reader, &header);
         Ok(Self {
             header,
             dict,
             pyramid,
             text_index,
+            labels,
         })
+    }
+
+    /// Whether the file can answer a prefix search: it carries a LABEL_INDEX
+    /// section or a pyramid (whose meta may hold the legacy label block). A
+    /// header read, no fault.
+    pub fn has_labels(&self) -> bool {
+        self.header.label_index_section().is_some() || self.header.pyramid_meta_len > 0
+    }
+
+    /// Whether the file carries a LABEL_INDEX section (kind 8).
+    pub fn has_label_index(&self) -> bool {
+        self.header.label_index_section().is_some()
     }
 
     /// The file header (already fetched by [`open_ranged`](Self::open_ranged)).
@@ -4998,7 +5482,10 @@ impl SearchView {
     /// Full-text search — see [`Rete::text_search`] for the semantics. Faults
     /// the token table on the first call, then only the queried postings.
     pub fn text_search(&self, words: &[&str], prefix: Option<&str>, limit: usize) -> Vec<String> {
-        text_search_in(self.text_index.index(), &self.dict, words, prefix, limit)
+        let Some(dict) = self.dict.get() else {
+            return Vec::new();
+        };
+        text_search_in(self.text_index.index(), dict, words, prefix, limit)
     }
 
     /// What that first search will cost — see
@@ -5008,21 +5495,24 @@ impl SearchView {
         self.text_index.token_table_len()
     }
 
-    /// Label-prefix search — see [`Rete::prefix_search`]. Faults the pyramid
-    /// (which carries the label index), so it is the pricier of the two.
+    /// Label-prefix search — see [`Rete::prefix_search`]. Reads the
+    /// LABEL_INDEX section when the file has one; otherwise faults the pyramid
+    /// (which carries the legacy label block), the pricier path.
     pub fn prefix_search(&self, prefix: &str, limit: usize) -> Vec<(String, String)> {
+        if let Some(li) = self.labels.get() {
+            return li.prefix_search(prefix, limit);
+        }
         let pyr = match &self.pyramid {
             PyramidSlot::Resident(p) => p.as_ref(),
             PyramidSlot::Lazy { loader, cell } => cell.get_or_init(loader).as_ref(),
         };
-        let Some(pyr) = pyr else {
+        let (Some(pyr), Some(dict)) = (pyr, self.dict.get()) else {
             return Vec::new();
         };
         pyr.prefix_search(prefix, limit)
             .into_iter()
             .filter_map(|e| {
-                self.dict
-                    .subject_term(e.subject)
+                dict.subject_term(e.subject)
                     .map(|iri| (e.label.clone(), iri))
             })
             .collect()
@@ -5067,8 +5557,18 @@ impl SummaryView {
         let dict = decode_dictionary_container(&dict_bytes, header.dict_codec)?;
 
         let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
-        let meta =
+        let mut meta =
             PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
+        // A file whose schema moved to its own section (kind 9) keeps only the
+        // community material here: take the schema fields from that section.
+        if let Some(s) = read_schema_with_header(reader, &header) {
+            meta.class_hierarchy = s.class_hierarchy;
+            meta.level_rollups = s.level_rollups;
+            meta.level_links = s.level_links;
+            meta.subclass_cycles = s.subclass_cycles;
+            meta.disjoint_pairs = s.disjoint_pairs;
+            meta.equivalent_pairs = s.equivalent_pairs;
+        }
 
         Ok(Some(SummaryView {
             round: meta.round,
@@ -5080,6 +5580,34 @@ impl SummaryView {
             subclass_cycles: meta.subclass_cycles,
             disjoint_pairs: meta.disjoint_pairs,
             equivalent_pairs: meta.equivalent_pairs,
+            dict,
+        }))
+    }
+
+    /// A schema-only view of a file **without a pyramid**, from its SCHEMA
+    /// section (kind 9): the hierarchy, levels and axioms, with an empty
+    /// community summary. Reads the header and the SCHEMA section only — the
+    /// section carries its own class and predicate strings, so no dictionary.
+    /// `Ok(None)` when the file has no SCHEMA section. Callers that need the
+    /// summary (`cost`, federation source selection, progressive queries) use
+    /// [`open_ranged`](Self::open_ranged), which keeps requiring a pyramid.
+    pub fn open_schema_ranged<R: RangeReader>(reader: &R) -> Result<Option<Self>, FileError> {
+        let head = reader.read_at(0, HEADER_LEN as u64)?;
+        let header = Header::from_bytes(&head)?;
+        let Some(s) = read_schema_with_header(reader, &header) else {
+            return Ok(None);
+        };
+        let dict = crate::DictionaryBuilder::new().build();
+        Ok(Some(SummaryView {
+            round: 0,
+            summary: Vec::new(),
+            class_hierarchy: s.class_hierarchy,
+            level_rollups: s.level_rollups,
+            level_links: s.level_links,
+            descriptors: Vec::new(),
+            subclass_cycles: s.subclass_cycles,
+            disjoint_pairs: s.disjoint_pairs,
+            equivalent_pairs: s.equivalent_pairs,
             dict,
         }))
     }
@@ -5272,6 +5800,15 @@ pub fn read_schema_coherence_ranged<R: RangeReader>(
 ) -> Result<Option<Vec<crate::reason::Inconsistency>>, FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
+    // The SCHEMA section (kind 9) first: one range, and no pyramid needed.
+    if let Some(s) = read_schema_with_header(reader, &header) {
+        return Ok(Some(schema_coherence(
+            &s.class_hierarchy,
+            &s.subclass_cycles,
+            &s.disjoint_pairs,
+            &s.equivalent_pairs,
+        )));
+    }
     if header.pyramid_meta_len == 0 {
         return Ok(None);
     }
@@ -5316,21 +5853,34 @@ pub fn read_schema_summary_ranged<R: RangeReader>(
 ) -> Result<Option<(Vec<(String, u64)>, Vec<(String, String, String, u64)>)>, FileError> {
     let head = reader.read_at(0, HEADER_LEN as u64)?;
     let header = Header::from_bytes(&head)?;
-    if header.pyramid_meta_len == 0 {
-        return Ok(None);
-    }
-    if header.schema_meta_len > 0 && (header.schema_meta_len as u64) <= header.pyramid_meta_len {
-        let off =
-            header.pyramid_meta_offset + header.pyramid_meta_len - header.schema_meta_len as u64;
-        let block = reader.read_at(off, header.schema_meta_len as u64)?;
-        let summary = crate::meta::decode_schema_block_summary(&block)
-            .map_err(|_| FileError::Container("malformed schema block"))?;
-        return Ok(Some(summary));
-    }
-    // Fallback (pre-v0.2.1 files): decode the whole pyramid-meta, pull finest levels.
-    let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
-    let meta =
-        PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?;
+    // The SCHEMA section (kind 9) first: one range, and no pyramid needed.
+    let meta = if let Some(s) = read_schema_with_header(reader, &header) {
+        PyramidMeta::new(0, Vec::new(), &[]).with_schema(
+            Vec::new(),
+            s.level_rollups,
+            s.level_links,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    } else {
+        if header.pyramid_meta_len == 0 {
+            return Ok(None);
+        }
+        if header.schema_meta_len > 0 && (header.schema_meta_len as u64) <= header.pyramid_meta_len
+        {
+            let off = header.pyramid_meta_offset + header.pyramid_meta_len
+                - header.schema_meta_len as u64;
+            let block = reader.read_at(off, header.schema_meta_len as u64)?;
+            let summary = crate::meta::decode_schema_block_summary(&block)
+                .map_err(|_| FileError::Container("malformed schema block"))?;
+            return Ok(Some(summary));
+        }
+        // Fallback (pre-v0.2.1 files): decode the whole pyramid-meta, pull finest levels.
+        let mb = reader.read_at(header.pyramid_meta_offset, header.pyramid_meta_len)?;
+        PyramidMeta::decode(&mb).map_err(|_| FileError::Container("malformed pyramid meta"))?
+    };
     if meta.level_rollups.is_empty() && meta.level_links.is_empty() {
         return Ok(None);
     }

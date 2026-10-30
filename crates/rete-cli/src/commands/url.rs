@@ -107,14 +107,14 @@ pub(crate) fn search_url(
         }
         return Ok(());
     }
-    if !full_text && !view.has_pyramid() {
+    if !full_text && !view.has_labels() {
         if json {
             println!(
                 "{{\"schemaVersion\":{},\"matches\":[]}}",
                 crate::JSON_SCHEMA_VERSION
             );
         } else {
-            eprintln!("(this file has no label index — rebuild with a recent `rete build`)");
+            eprintln!("(this file has no label index — rebuild with `rete build --label-index`)");
         }
         return Ok(());
     }

@@ -25,8 +25,10 @@ pub(crate) fn info(file: &str) -> anyhow::Result<()> {
     // than of anything the card claims.
     let permutations = crate::commands::card::PermutationsSignal::probe(&header);
     println!("permutations: {}", permutations.describe());
+    let label_index = crate::commands::card::LabelIndexSignal::probe(&reader, &header);
     if let Some(mut card) = crate::commands::card::load_card_ranged(&reader)? {
         card.observe_text_index(text_index);
+        card.observe_label_index(label_index);
         card.observe_permutations(permutations);
         println!();
         println!(
@@ -223,7 +225,16 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
         }
     }
 
-    // Label index: how many entries are searchable by prefix (`rete search`).
+    // Label index: how many entries are searchable by prefix (`rete search`) —
+    // the LABEL_INDEX section, else the legacy pyramid-meta block.
+    if let Some(li) = rete.label_index_section() {
+        println!(
+            "  label index: {} labels, {} bytes (LABEL_INDEX — `rete search {} <prefix>`)",
+            li.entry_count(),
+            li.section_len(),
+            file
+        );
+    }
     let labels = rete.label_index();
     if !labels.is_empty() {
         println!(
@@ -244,8 +255,9 @@ pub(crate) fn stats(file: &str) -> anyhow::Result<()> {
 }
 
 /// Prefix-search the label index: print the subjects whose label starts with
-/// `prefix` (case-insensitive), as `label  <iri>`. Reads the bounded label-index
-/// block in the pyramid-meta — no literal scan. `--json` emits a versioned
+/// `prefix` (case-insensitive), as `label  <iri>`. Reads the LABEL_INDEX section
+/// (or, on an older file, the bounded label block of the pyramid-meta) — no
+/// literal scan. `--json` emits a versioned
 /// `{schemaVersion, matches:[{label, subject}]}` envelope.
 pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyhow::Result<()> {
     let rete = open_local(file)?;
@@ -269,8 +281,8 @@ pub(crate) fn search(file: &str, prefix: &str, limit: usize, json: bool) -> anyh
         return Ok(());
     }
     if hits.is_empty() {
-        if rete.label_index().is_empty() {
-            eprintln!("(this file has no label index — rebuild with a recent `rete build`)");
+        if !rete.has_label_index() && rete.label_index().is_empty() {
+            eprintln!("(this file has no label index — rebuild with `rete build --label-index`)");
         } else {
             println!("(no labels match \"{prefix}\")");
         }
@@ -376,7 +388,9 @@ pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
         println!("OK — content hash matches");
         Ok(())
     } else {
-        anyhow::bail!("FAILED — content hash mismatch (file corrupted or truncated)");
+        anyhow::bail!(
+            "FAILED — content hash mismatch, or a section digest mismatch (file corrupted or truncated)"
+        );
     }
 }
 
@@ -386,8 +400,19 @@ pub(crate) fn verify_cmd(file: &str) -> anyhow::Result<()> {
 /// via [`SummaryView`]. With `--level k`, print just level `k`'s type histogram.
 pub(crate) fn summary(file: &str, level: Option<usize>) -> anyhow::Result<()> {
     // Positional reads of the sections the view needs, not the whole file.
-    let Some(view) = SummaryView::open_ranged(&LocalRangeReader::open(file)?)? else {
-        eprintln!("file has no pyramid");
+    let reader = LocalRangeReader::open(file)?;
+    let Some(view) = SummaryView::open_ranged(&reader)? else {
+        // No pyramid: the schema may still have its own section (kind 9).
+        match SummaryView::open_schema_ranged(&reader)? {
+            Some(view) => {
+                if let Some(k) = level {
+                    return render_schema_level(&view, k);
+                }
+                println!("file has no pyramid; its SCHEMA section:");
+                render_schema_overview(&view);
+            }
+            None => eprintln!("file has no pyramid"),
+        }
         return Ok(());
     };
 
