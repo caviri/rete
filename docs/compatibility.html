@@ -733,6 +733,7 @@ each:</p>
 <tr><td>N-Triples / N-Quads <strong>in</strong></td><td>yes</td><td>yes (always — that reader is rete's own)</td></tr>
 <tr><td>Turtle / TriG <strong>in</strong></td><td><code>rete build --quoted-triple-syntax rdf-star</code> (<strong>default</strong>)</td><td><code>--quoted-triple-syntax rdf12</code></td></tr>
 <tr><td>N-Quads / Turtle / TriG <strong>out</strong></td><td><code>rete export --quoted-triple-syntax rdf-star</code></td><td><code>--quoted-triple-syntax rdf12</code> (<strong>default</strong>)</td></tr>
+<tr><td>SPARQL <strong>query</strong></td><td><code>&lt;&lt; s p o &gt;&gt;</code>: a quoted triple, unless the query declares <code>VERSION "1.2"</code></td><td><code>&lt;&lt;( s p o )&gt;&gt;</code>: a triple term, always; under <code>VERSION "1.2"</code>, <code>&lt;&lt; s p o &gt;&gt;</code> is a reified triple (<code>?r rdf:reifies &lt;&lt;( s p o )&gt;&gt;</code>)</td></tr>
 </tbody></table>
 <p>The two input defaults look inconsistent and are not: <code>&lt;&lt;( … )&gt;&gt;</code> is
 unambiguous, so reading an RDF 1.2 file as RDF-star fails loudly, whereas
@@ -753,7 +754,8 @@ an exported quoted triple comes back as <code>&lt;&lt;( s p o )&gt;&gt;</code>, 
 <p><strong>Base-direction language strings</strong> (<code>"…"@lang--dir</code>, RDF 1.2's
 <code>rdf:dirLangString</code>) are modelled — <code>DATATYPE</code> reports <code>rdf:dirLangString</code> and
 <code>LANG</code> returns the language subtag — and a leading SPARQL 1.2 <code>VERSION "1.2"</code>
-declaration is accepted; <code>--quoted-triple-syntax rdf12</code> is also what lets the
+declaration is accepted (it switches <code>&lt;&lt; … &gt;&gt;</code> in the query to the SPARQL 1.2
+reified triple; see <a href="sparql.html#rdf-star">SPARQL 1.2 triple terms</a>); <code>--quoted-triple-syntax rdf12</code> is also what lets the
 Turtle reader <em>parse</em> the <code>@lang--dir</code> form. Not yet: the new SPARQL 1.2
 direction <em>functions</em> (<code>LANGDIR</code>…). The RDF 1.2 Turtle/TriG reader runs in the
 browser too: the in-browser builder's <strong>Quoted triples: RDF 1.2</strong> choice reads

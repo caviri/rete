@@ -881,10 +881,13 @@ the corresponding signal is non-empty:</p>
 <tr><td><code>qt-coverage</code></td><td>Of the statements that get annotated most, how many actually carry an annotation?</td><td>the witnessed pair</td></tr>
 <tr><td><code>qt-quoted-object</code></td><td>Which statements are referenced as the value of another statement?</td><td>a quoting predicate</td></tr>
 </tbody></table>
-<p>The bodies are written in the <strong>RDF-star</strong> surface <code>&lt;&lt; s p o &gt;&gt;</code>, because that
-is what the query parser accepts (<a href="sparql.html#rdf-star">SPARQL-star</a>). The
-ratified RDF 1.2 spelling <code>&lt;&lt;( s p o )&gt;&gt;</code> is an <em>export</em> surface: a query body
-written in it does not parse, which is the worst content a card can carry.</p>
+<p>The bodies are written in the <strong>RDF-star</strong> surface <code>&lt;&lt; s p o &gt;&gt;</code>, which every
+rete reader parses as a quoted triple (<a href="sparql.html#rdf-star">SPARQL-star</a>). Since
+0.4.0 rete also parses the ratified RDF 1.2 spelling <code>&lt;&lt;( s p o )&gt;&gt;</code>, which is
+what a SPARQL 1.2 engine needs (it reads <code>&lt;&lt; s p o &gt;&gt;</code> as a <em>reifier</em>, and
+returns nothing for these bodies); a reader older than 0.4.0 does not parse it,
+which is the worst content a card can carry, so the generated bodies keep the
+RDF-star surface.</p>
 <h3 id="where-to-get-theme-iris">Where to get <code>theme</code> IRIs</h3>
 <p><code>theme</code> rejects free text, which is only helpful if you know where an IRI
 comes from. Pick a <strong>published concept scheme</strong> and copy the concept's IRI —

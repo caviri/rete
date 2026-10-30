@@ -808,6 +808,13 @@ spaces. This is what <code>dictionary.rs</code> builds on top of the §5.1 secti
 <p>Literals carry datatype IRI (as a dictionary ID) and optional language tag.</p>
 </li>
 <li>
+<p>A string literal is stored in its <strong>canonical</strong> spelling <code>"x"</code>, never
+<code>"x"^^xsd:string</code> (one RDF 1.1 term). Writers since 0.4.0 canonicalize at
+ingest; a reader also accepts a file written earlier that stores the typed
+spelling, by looking a string literal up under its other spelling when its
+own misses. No format change: the bytes of both kinds of file are valid.</p>
+</li>
+<li>
 <p><strong>RDF-star quoted triples</strong> (<code>&lt;&lt; s p o &gt;&gt;</code>) are stored as ordinary terms: a
 quoted triple is interned by its canonical N-Triples-star surface, exactly like
 an IRI or literal, so the dictionary, the permutation indexes, and this layout
@@ -1262,7 +1269,8 @@ path.)</li>
 <li><strong>Rust core</strong>, compiled to both <strong>native</strong> (CLI, server-side) and <strong>WASM</strong>
 (browser client) — identical query code in both.</li>
 <li>Crates to lean on: <code>oxrdf</code> / <code>oxttl</code> / <code>spargebra</code> (RDF + SPARQL), <code>ureq</code>
-(CLI HTTP range reads), <code>zstd</code>/<code>ruzstd</code>, <code>blake3</code>, <code>regex-lite</code>, <code>serde_json</code>,
+(CLI HTTP range reads), <code>zstd</code>/<code>ruzstd</code>, <code>blake3</code>, <code>regex</code> (native, Unicode) /
+<code>regex-lite</code> (wasm), <code>serde_json</code>,
 <code>rayon</code> behind native-only feature gates, and Louvain-style community
 detection.</li>
 <li><strong>Everything runs in Docker dev containers.</strong> No host execution. The container
