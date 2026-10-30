@@ -46,10 +46,13 @@ other pattern goes to a regex engine, and which one depends on the build:
 | Build | Engine | `\b` `\w` `\d` and the `i` flag |
 |---|---|---|
 | native — the CLI, `rete serve`, Python, R, the File Explorer | `regex` (feature `unicode-regex`, on by default) | Unicode: `REGEX(?name, "\\bsvobodová\\b", "i")` finds "Jitka Svobodová" and "SVOBODOVÁ" |
-| browser / Node (`rete-wasm`) | `regex-lite`, unless built with `--features unicode-regex` | ASCII only: no boundary after "á", so the same pattern misses both names (and finds one *inside* "Svobodováová"); `(?i)` does not fold "Á" |
+| the npm package `rete-graph` (`rete-wasm`, built by `clients/js/build-wasm.sh`) and the Claude Desktop extension `rete.mcpb` built on it | `regex` (`rete-wasm` built with `--features unicode-regex`) | Unicode, as native |
+| the browser playground and the other packages `scripts/build_wasm.sh` builds (`docs/engine/`, `web/pkg*`, the release's browser bundle) | `regex-lite` (`rete-wasm`'s default) | ASCII only: no boundary after "á", so the same pattern misses both names (and finds one *inside* "Svobodováová"); `(?i)` does not fold "Á" |
 
-The browser engine keeps `regex-lite` for its size: the Unicode engine adds
-about 489 KB to the 4.74 MB wasm module (162 KB of its 1.33 MB gzipped).
+The playground's engine keeps `regex-lite` for its size: the Unicode engine adds
+about 489 KB to the 4.74 MB wasm module (162 KB of its 1.33 MB gzipped), which
+every visitor downloads. The npm package and the extension run mostly in Node,
+where that size matters less than an answer that agrees with the CLI.
 Neither engine knows `\p{…}` classes. XPath regular expressions, which SPARQL
 names, have no `\b` at all; rete follows the Perl meaning, as Oxigraph does.
 
