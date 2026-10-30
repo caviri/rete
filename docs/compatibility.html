@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -815,6 +815,22 @@ in place). Both are invisible to older readers: verified with the released
 0.3.7 binary on the OpenCitations development sample built both ways, <code>card</code>
 prints its known subset with no warning and <code>verify</code> passes (the section is
 outside the content hash).</p>
+<h3 id="a-card-after-the-data">A card after the data</h3>
+<p>The memory-bounded build, <code>rete merge</code> and <code>rete recard --in-place</code> write the
+Dataset Card (and the build record beside it) <strong>after every other section</strong>
+instead of between the header and the dictionary
+(<a href="SPEC.html#41-header-1024-bytes-little-endian">SPEC §4.1</a>).
+Nothing about the format changes: the header has always been the directory,
+every reader has always located the card through it, and the content hash folds
+the card first wherever it lies — the same card on the same data hashes the same
+in either place. A file re-carded in place also keeps its old card, build record
+and footer as bytes no section points at, which every reader ignores.</p>
+<p>Verified on a carded fixture (default graph, a named graph, <code>--label-index</code>,
+<code>--text-index</code>) written both ways and re-carded in place, with the released
+0.3.7 and 0.4.0 CLIs (<code>verify</code>, <code>card</code>, <code>sparql</code>, and <code>card-url</code> against an
+nginx range server: the same 3–4 range requests as a card at the front), and the
+0.4.0 <code>rete-graph</code> Python and JavaScript packages, each opening the files locally
+and over HTTP: same card, same rows, same content hash.</p>
 <h2 id="is-it-compatible-with-rdf">Is it compatible with RDF?</h2>
 <p><strong>Yes — <code>rete</code> is RDF.</strong> It is not a new graph model; it's a storage + query
 format <em>for</em> RDF, built on the standard Rust RDF stack

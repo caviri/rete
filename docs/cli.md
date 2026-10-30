@@ -114,12 +114,27 @@ statements, 186 chunks at 400 MiB) peak at 391 MiB, where 0.4.0 needed
 1,084 MiB. The spill peaks at the end of the dictionary merge, while every
 chunk's statements are still on disk; `--label-index` adds nothing to it,
 because the label pass works on ids and reads its strings back from the
-finished file. The
-file is byte-identical to the in-RAM `--no-pyramid` build of the same input,
-except for the card, which carries counts only (`rete recard` writes a full
-one). Up to 0.4.0 the merge also kept every chunk's id remap table until the
-last chunk was rewritten, 4 B per chunk-local term: 15.0 GB for half of
-OpenCitations Meta, which is why that graph had to be split.
+finished file. Up to 0.4.0 the merge also kept every chunk's id remap table
+until the last chunk was rewritten, 4 B per chunk-local term: 15.0 GB for half
+of OpenCitations Meta, which is why that graph had to be split.
+
+Its sections are byte-identical to the in-RAM `--no-pyramid` build's of the same
+input. With a card (`--card`, `--card-file`, a curated flag) it writes the
+**full** card — the derived profile and the starter queries, not counts alone:
+once the index sections are on disk, it streams them into the profile and runs
+every starter query against the file, exactly as
+[`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
+does (one derivation, so the two write the same card for the same file), inside
+the same `--memory-budget-mb` (one byte per subject for the class map, the rest
+for the reader's caches). `--no-card-costs` skips the queries. The card and the
+build record are then written **after the data** rather than copied in front of
+it, which only means one more read of the file to fold the content hash (the card
+is hashed first wherever it lies; on input with no duplicate statements and no
+multi-typed subjects the card, and so the hash, is the in-RAM build's). The
+derivation's time and peak RSS are the `card_derive` and
+`starter_queries` phases of the build record, and the hash pass its
+`content_hash`. On the OpenCitations sample: see
+[Maintaining a published card](dataset-cards.md#which-re-card-path).
 
 `--strict` refuses input carrying an IRI that the N-Triples/N-Quads `IRIREF`
 grammar and RFC 3987 disallow. It is **off** by default and the build only
@@ -217,7 +232,7 @@ engines must read.
 The flag exists on `build` only. The two commands that re-assemble an existing
 file do not re-decide how it was built: [`repyramid`](#rete-repyramid-file--o-outrete---type-predicate-iri---pyramid-algo-louvaintypes---text-index---label-index---card-)
 **preserves its input's set** (and says so on stderr when that set is not the
-default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card-)
+default six), and [`merge`](#rete-merge-inputs--o-outrete---memory-budget-mb-n---tmp-dir-dir---card----no-card-costs)
 writes the **union** of its inputs' sets — one full shard is enough to keep the
 merge-join orders its queries relied on. To change a file's set, rebuild it from
 its RDF source.
@@ -347,7 +362,7 @@ size**, which lets zstd use its small-input parameters: at the same level the
 four measured datasets came out 0.7–7.0% smaller, and the build used less CPU. `RETE_ZSTD_FRAME=stream` writes
 the streaming frames of 0.3 instead, byte for byte.
 
-### `rete recard <file> -o <out.rete> [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]`
+### `rete recard <file> (-o <out.rete> | --in-place) [--card-file F | --keep-curated] [--title …] [--no-card-costs] [--memory-budget-mb N] [--verify]`
 Give a finished `.rete` a new Dataset Card **without rebuilding it** — the
 re-card path for a file of any size.
 
@@ -359,41 +374,63 @@ of each predicate that uses it. Every tally is kept per *vocabulary* term
 (predicates, classes, datatypes, languages, namespaces), never per statement;
 the one per-term structure is a class code per subject id — **one byte per
 subject** below 255 classes, two above. Memory is that plus the reader's caches
-(`--memory-budget-mb`, default 1024), not the statement count.
+(`--memory-budget-mb`, default 1024), not the statement count. The
+memory-bounded `rete build` runs this same derivation for its own card, so a
+re-card of its output writes the card it already has.
 
 Then the starter queries are generated, each is run against the file inside the
 starter byte budget (64 MiB past the open, see [Dataset Cards](dataset-cards.md#bounded-by-construction)),
-the ones that do not answer within it are dropped and recorded, and the file is
-**rewritten with only the card (metadata section) and the build record
-(build-info section) replaced**: every other section — dictionary, index,
-pyramid, named graphs, text index, any section kind this binary does not know —
-is copied byte for byte, the header's offsets are fixed, and the content hash is
-recomputed while the bytes go past (the card is inside it). One read of the file
-to derive, one to copy; `--verify` adds a third to check the written hash before
-the file is moved into place.
+and the ones that do not answer within it are dropped and recorded. With
+`-o`, the file is **rewritten with only the card (metadata section) and the
+build record (build-info section) replaced**: every other section — dictionary,
+index, pyramid, named graphs, text index, any section kind this binary does not
+know — is copied byte for byte, in its place in the file order, the header's
+offsets are fixed, and the content hash is recomputed while the bytes go past
+(the card is inside it). One read of the file to derive, one to copy;
+`--verify` adds a third to check the written hash before the file is moved into
+place. The output must not exist: a re-card writes a new file and never over
+its input.
+
+**`--in-place`** skips the copy. The new card and build record are written
+**after the file's last section**, followed by a new footer; the file is
+synced; only then is its 1 KiB header rewritten to point at them, with the new
+content hash, and synced again. That costs one read of the hashed sections (the
+card is hashed first, so the hash can only be folded once it exists) and a few
+KB of writes, instead of a second copy of the file. Nothing the old header
+points at is written over, so a crash before the header write leaves the old
+file exactly as it was, readable by every reader, plus bytes past its end that
+the next run overwrites; a crash after it leaves the new one. The old card,
+build record and footer stay in the file as **dead bytes** — a few KB, more on a
+card with large curated fields — that no section points at; every reader
+ignores them, and a re-card with `-o` drops them. `--verify` re-reads the file
+after the header write. A file re-carded in place, or built memory-bounded with
+a card, keeps its card after the data; [every reader](compatibility.md#a-card-after-the-data)
+since the format froze finds it there.
 
 The curated half comes from `--card-file` and the curated flags exactly as
 `rete build --card-file` takes them, or with `--keep-curated` from the input's
 card, **verbatim** — description, example queries and `extra` bag included. With
 neither, an input card that carries curated fields is **refused** rather than
-silently stripped (the defect of a bare `repyramid --card`). The output must not
-exist: a re-card writes a new file and never over its input.
+silently stripped (the defect of a bare `repyramid --card`).
 
 The build record keeps the original build's timestamp, builder and parameters —
 the sections they describe were copied, not rebuilt — and gains a `recarded`
 entry (`at`, `by`, `from_content_hash`, and the re-card's own `engine`, `host`,
-`input` by file name, `params` and `run`); its `query_costs` and
-`dropped_queries` are the re-card's own measurement.
+`input` by file name, `params` — with `in_place` — and `run`); its
+`query_costs` and `dropped_queries` are the re-card's own measurement. In place,
+the record is sealed before the final write, so its `run` covers everything but
+those few KB.
 
-Two differences from the card a build derives, both because a finished file is
-read rather than its input: counts are over the **deduplicated** statements the
-file holds, and a subject typed more than once is classified by its class with
-the highest dictionary id (index order). On input with neither, the two cards
-are identical, byte for byte.
+Two differences from the card an in-RAM build derives, both because a finished
+file is read rather than its input: counts are over the **deduplicated**
+statements the file holds, and a subject typed more than once is classified by
+its class with the highest dictionary id (index order). On input with neither,
+the two cards are identical, byte for byte.
 
 ```sh
 rete recard old.rete -o new.rete --keep-curated --verify
 rete recard old.rete -o new.rete --card-file curated.json     # curated fields from a document
+rete recard big.rete --in-place --keep-curated                # no copy: card appended, header last
 bash scripts/recard/recard.sh --source /work/old.rete --out /work/new.rete   # with both proofs
 ```
 
@@ -413,7 +450,7 @@ defaults to `louvain` rather than to whatever the file was built with.
 
 It loads and materializes every quad, so its RAM tracks the **statement count**
 (~350–700 B each), not the file size — roughly **80 M statements** on a 48 GB
-machine. **To change only the card, use [`rete recard`](#rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)**,
+machine. **To change only the card, use [`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)**,
 which copies every other section instead of rebuilding it and has no such
 ceiling; `repyramid` is for when the pyramid or the text index must change too.
 See [Maintaining a published card](dataset-cards.md#maintaining-a-published-card).
@@ -439,7 +476,7 @@ writes. The named-graph layout is kept the same way: a quad-index input
 (`--named-graphs quad`) comes out as a quad-index file, and `merge` writes one
 when any of its inputs is one.
 
-### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …]`
+### `rete merge <inputs…> -o <out.rete> [--memory-budget-mb N] [--tmp-dir dir] [--card …] [--no-card-costs]`
 Fold several `.rete` files into one without going back through text — the way to
 consolidate a sharded dataset when the original RDF is gone or expensive to
 re-emit. It reads the **shards** (dictionary-encoded and compressed, roughly a
@@ -455,16 +492,54 @@ memory-bounded external builder `rete build --memory-budget-mb` uses, which
 chunks and spills under this command's own `--memory-budget-mb` (default 4096)
 into `--tmp-dir`. Shards carrying **named graphs** fold like any other: the
 builder puts the graph in its sort key, so each graph comes back out of the
-merge as one contiguous run. Card flags match `rete build`.
+merge as one contiguous run.
 
 The merged file carries the **union** of its inputs' permutation sets — an
 all-lean merge stays lean, and one six-permutation input is enough to keep the
 merge-join orders. Like `repyramid`, it has no `--permutations` flag: it
 consolidates shards, it does not re-decide how they were built.
 
+**The card.** Card flags match `rete build` (`--card`, `--card-file`, the
+curated flags, `--no-card-costs`). With one, the merged file gets the **full**
+card — the derived profile and the starter queries — exactly as the
+memory-bounded `rete build` writes it: once the merged file's index sections are
+on disk they are streamed into the profile and every starter query is run
+against the file, by the derivation
+[`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
+runs (so a re-card of the merged file writes the same card, byte for byte),
+inside this command's `--memory-budget-mb`; the card and the build record are
+then written **after the data**. The data sections are the same bytes as
+without a card, and the same as `rete build --memory-budget-mb` writes for the
+union of the shards' statements. Up to 0.4.0 a merged card carried counts only
+and the full one took a `rete recard` afterwards; on two halves of the
+OpenCitations sample the one pass costs what the merge alone did (see
+[Maintaining a published card](dataset-cards.md#which-re-card-path)).
+
+The budget bounds the builder, not the merge's walk of its inputs: on that
+sample the merge peaked about 1 GiB over `--memory-budget-mb` (3,025 MiB at
+2,000), card or no card, so leave that much headroom under a container's limit.
+
+The build record names what was merged: each input's file name, size and
+BLAKE3 (one sequential read of each shard before the merge, the record's `read`
+phase — a shard is otherwise read by range, in index order, and cannot be
+hashed on the way), the effective flags (`command: merge`, the permutation set
+and named-graph layout it chose, the budget, the `--card-file` digest), the
+counts — `statements_read` counts a statement once for every shard that holds
+it, so `duplicates_dropped` is the shards' overlap — the spill, and the time of
+every phase, the card's own (`card_derive`, `starter_queries`,
+`content_hash`) with their own peak RSS.
+
+**The inputs' own cards are not carried.** The merged card's curated half comes
+from `--card-file` and the curated flags alone: a shard's title, licence,
+description, example queries and coherence verdict describe that shard, and
+neither one of them nor a blend of them describes the merge. When an input's
+card carries curated fields, `merge` says so on stderr; without any card flag
+the merged file has no card at all, whatever its inputs carry. To point at the
+shards as published files, list them in the card file's `derived_from`.
+
 ```sh
 rete merge shard-*.rete -o all.rete --memory-budget-mb 8192 --tmp-dir /spill \
-  --card --card-file curated.json
+  --card-file curated.json
 ```
 
 ## Validating
@@ -1607,7 +1682,7 @@ by rename, but it is still one full pass of I/O and — for a published file —
 full re-upload.
 
 Where that is worth it: when the queries answer and only the record is
-missing. When they do not, re-card instead — [`rete recard`](#rete-recard-file--o-outrete---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
+missing. When they do not, re-card instead — [`rete recard`](#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify)
 is the same single rewrite with a new card in it, at any size.
 
 **The RAM goes into the measurement, not the rewrite**: the engine evaluates

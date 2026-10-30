@@ -2376,14 +2376,16 @@ pub fn read_build_info(bytes: &[u8]) -> Result<Option<Vec<u8>>, FileError> {
 /// **without holding the file in memory**: the rewritten header, where the
 /// section goes, and where the bytes that do not move resume.
 ///
-/// See [`plan_build_info`] for what the fields mean together; the layout is
-/// always `[header][metadata][build info][everything else, verbatim]`.
+/// See [`plan_build_info`] for what the fields mean together: the build-info
+/// section always follows the metadata section, so the layout is
+/// `[header][metadata][build info][everything else, verbatim]` — or, for a
+/// card placed after the data, `[header][data…][metadata][build info][footer]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildInfoPlan {
     /// The header bytes to write at offset 0.
     pub header: [u8; HEADER_LEN],
-    /// Offset the new section is written at — equivalently, the length of the
-    /// unchanged `[header][metadata]` prefix.
+    /// Offset the new section is written at: the end of the metadata section
+    /// (the length of the unchanged prefix up to and including the card).
     pub insert: u64,
     /// Offset in the **old** file where the bytes that do not move resume. The
     /// span `insert..tail_start` is the old build-info section, if any, and is
@@ -2420,9 +2422,21 @@ pub fn plan_build_info(
     info_len: u64,
 ) -> Result<BuildInfoPlan, FileError> {
     let mut header = Header::from_bytes(head)?;
-    // The insert point: immediately after the metadata section. The writers in
-    // this crate always place metadata (when present) at HEADER_LEN.
-    let insert = HEADER_LEN as u64 + header.metadata_len;
+    // The insert point: immediately after the metadata section, wherever it
+    // lies — at HEADER_LEN as the in-RAM writers place it, or after the data
+    // where the memory-bounded build and `recard --in-place` put it
+    // (`crate::recard::plan_card_append`). No card: right after the header.
+    let insert = if header.metadata_len > 0 {
+        header
+            .metadata_offset
+            .checked_add(header.metadata_len)
+            .filter(|&end| header.metadata_offset >= HEADER_LEN as u64 && end <= file_len)
+            .ok_or(FileError::Container(
+                "the metadata section lies outside the file",
+            ))?
+    } else {
+        HEADER_LEN as u64
+    };
     let old_len = header.build_info_len;
     if old_len > 0 && header.build_info_offset != insert {
         return Err(FileError::Container(

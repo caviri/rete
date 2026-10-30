@@ -236,6 +236,25 @@ in place). Both are invisible to older readers: verified with the released
 prints its known subset with no warning and `verify` passes (the section is
 outside the content hash).
 
+### A card after the data
+
+The memory-bounded build, `rete merge` and `rete recard --in-place` write the
+Dataset Card (and the build record beside it) **after every other section**
+instead of between the header and the dictionary
+([SPEC §4.1](SPEC.md#41-header-1024-bytes-little-endian)).
+Nothing about the format changes: the header has always been the directory,
+every reader has always located the card through it, and the content hash folds
+the card first wherever it lies — the same card on the same data hashes the same
+in either place. A file re-carded in place also keeps its old card, build record
+and footer as bytes no section points at, which every reader ignores.
+
+Verified on a carded fixture (default graph, a named graph, `--label-index`,
+`--text-index`) written both ways and re-carded in place, with the released
+0.3.7 and 0.4.0 CLIs (`verify`, `card`, `sparql`, and `card-url` against an
+nginx range server: the same 3–4 range requests as a card at the front), and the
+0.4.0 `rete-graph` Python and JavaScript packages, each opening the files locally
+and over HTTP: same card, same rows, same content hash.
+
 ## Is it compatible with RDF?
 
 **Yes — `rete` is RDF.** It is not a new graph model; it's a storage + query

@@ -138,7 +138,7 @@ pub(crate) struct RecordFlags<'a> {
 
 impl RecordFlags<'_> {
     /// The record's `params`. `codec` is the finished file's own.
-    fn params(&self, codec: Option<u8>) -> buildinfo::BuildParams {
+    pub(crate) fn params(&self, codec: Option<u8>) -> buildinfo::BuildParams {
         let mut params = buildinfo::BuildParams {
             command: Some(self.command.to_string()),
             format: self.format.map(str::to_string),
@@ -156,7 +156,7 @@ impl RecordFlags<'_> {
             }),
             memory_budget_mb: self.memory_budget_mb,
             codec: codec.map(|c| buildinfo::codec_name(c).to_string()),
-            card_top_n: (self.memory_budget_mb.is_none()).then_some(card::CARD_TOP_N as u32),
+            card_top_n: Some(card::CARD_TOP_N as u32),
             write: buildinfo::write_record(),
             permutations: Some(self.perms.len() as u8),
             named_graphs: Some(
@@ -176,14 +176,13 @@ impl RecordFlags<'_> {
                 .to_string(),
             ),
             type_predicate: self.type_predicate.map(str::to_string),
-            // The memory-bounded card has no starter queries to run.
-            card_costs: (self.memory_budget_mb.is_none()).then_some(self.measure_costs),
+            card_costs: Some(self.measure_costs),
             card_file: card::card_file_digest(self.card_args),
             ..Default::default()
         };
         params.set_text_index(self.text_index);
-        if self.command == "repyramid" {
-            // It re-assembles an existing file: these flags do not exist there,
+        if matches!(self.command, "repyramid" | "merge") {
+            // They re-assemble existing files: these flags do not exist there,
             // and "false" would claim a choice nobody made.
             params.collapse_graphs = None;
             params.strict = None;
@@ -821,10 +820,10 @@ pub(crate) fn build(
 
 /// `rete build --memory-budget-mb <N>`: the **memory-bounded external build** —
 /// chunk the input to disk, merge, and stream the final file, holding roughly the
-/// budget in RAM regardless of graph size (`rete_core::extbuild`). Output is
-/// byte-identical to a standard `--no-pyramid` build of the same input, the
-/// SCHEMA section and `--label-index` included (their passes are external sorts
-/// sized from the same budget).
+/// budget in RAM regardless of graph size (`rete_core::extbuild`). Its sections
+/// are byte-identical to a standard `--no-pyramid` build's of the same input,
+/// the SCHEMA section and `--label-index` included (their passes are external
+/// sorts sized from the same budget).
 ///
 /// Named graphs are supported: the graph ordinal leads the external sort key, so
 /// each graph comes out as one contiguous run and is indexed from that run alone
@@ -835,10 +834,19 @@ pub(crate) fn build(
 /// words, inside the same budget, and writes the same TEXT_INDEX bytes as the
 /// in-RAM build (`rete_core::text_index_spill`).
 ///
-/// Constraints (explicit errors): no pyramid, no reasoning.
-/// `--card` embeds curated fields + counts (the derived profile lists need
-/// unbounded RAM, so they are omitted here). Every input syntax streams,
-/// including gzipped ones, so the source never has to be decompressed to disk.
+/// Constraints (explicit errors): no pyramid, no reasoning. Every input syntax
+/// streams, including gzipped ones, so the source never has to be decompressed
+/// to disk.
+///
+/// A card is the **full** card, derived the way `rete recard` derives it: once
+/// the file is written, its sorted sections are streamed into the profile and
+/// the starter queries are run against it ([`card::derive_full_card`], inside
+/// the same budget), and the card and the build record are written **after the
+/// data** ([`card::append_card`]) — the header is the directory, so a card need
+/// not sit at the front, and putting it there would mean copying the file. The
+/// content hash is the one the same card at the front would give: the hash
+/// folds the card first, wherever it lies, so finishing it costs one read of
+/// the file.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_external_cmd(
     inputs: &[String],
@@ -851,6 +859,7 @@ pub(crate) fn build_external_cmd(
     text_index: Option<TextIndexScope>,
     collapse_graphs: bool,
     card_args: CardArgs,
+    measure_costs: bool,
     perms: rete_core::PermSet,
     graphs: rete_core::GraphLayout,
     strict: bool,
@@ -902,13 +911,10 @@ pub(crate) fn build_external_cmd(
     } else {
         None
     };
-    // Build conditions for the external build. The section is written natively
-    // during the stream, before the inputs have been read to the end, so what is
-    // known up front goes in now and the section is sized for the widest record
-    // the run can produce ([`buildinfo::BuildInfo::widest`]); the measured half
-    // — digests, counts, spill, timings — is patched into it in place once the
-    // file is complete. (There are no starter queries to measure: the external
-    // card has no derived profile.)
+    // Build conditions for the external build. What is known up front goes in
+    // now; the rest — digests, counts, spill, the card's costs, timings — once
+    // the file is complete. The record is written after the data with the
+    // card, sealed, so nothing is reserved during the stream.
     let flags = RecordFlags {
         command: "build --memory-budget-mb",
         format,
@@ -924,7 +930,7 @@ pub(crate) fn build_external_cmd(
         strict,
         surface,
         type_predicate,
-        measure_costs: false,
+        measure_costs,
         memory_budget_mb: Some(memory_budget_mb),
         card_args: &card_args,
     };
@@ -933,11 +939,6 @@ pub(crate) fn build_external_cmd(
         rec.begin(&mut info);
         info
     });
-    let build_info = info
-        .as_ref()
-        .map(|i| i.reserve_bytes(buildinfo::Pending::Everything, &rec))
-        .unwrap_or_default();
-    let build_info_len = build_info.len();
     let out_path = std::path::Path::new(output).to_path_buf();
     // The external build reads its input exactly once, so — unlike the two-pass
     // streaming assembler — the audit needs no pass guard.
@@ -984,20 +985,10 @@ pub(crate) fn build_external_cmd(
         rete_core::extbuild::ExternalBuildOptions {
             memory_budget: memory_budget_mb.saturating_mul(1 << 20),
             tmp_dir: tmp_dir.map(std::path::PathBuf::from),
-            metadata: Box::new(move |stats| match curated {
-                Some(curated) => {
-                    let blob = card::curated_counts_card(
-                        stats.statements as u64,
-                        stats.terms as u64,
-                        curated,
-                    )
-                    .to_json_bytes();
-                    eprintln!("embedded dataset card ({} bytes of metadata)", blob.len());
-                    blob
-                }
-                None => Vec::new(),
-            }),
-            build_info,
+            // The card is derived from the finished file and appended after
+            // it (below), so the stream writes neither a card nor a record.
+            metadata: Box::new(|_| Vec::new()),
+            build_info: Vec::new(),
             perms,
             label_index: sections.label_index,
             schema: sections.schema,
@@ -1011,33 +1002,96 @@ pub(crate) fn build_external_cmd(
         other => anyhow::anyhow!("{other}"),
     })?;
     let audit = audit.into_inner();
-    if let Some(info) = info.as_mut() {
-        let codec = {
-            use std::io::Read;
-            let mut head = vec![0u8; rete_core::format::HEADER_LEN];
-            std::fs::File::open(&out_path)?.read_exact(&mut head)?;
-            rete_core::Header::from_bytes(&head)?.dict_codec
-        };
-        info.params.codec = Some(buildinfo::codec_name(codec).to_string());
-        info.counts = Some(buildinfo::counts(
+    if let (Some(info), Some(curated)) = (info.as_mut(), curated) {
+        append_full_card(
+            output,
+            info,
+            curated,
+            measure_costs,
+            memory_budget_mb,
             &stats,
-            rec.statements_read.get(),
-            None,
             &audit.report,
-        ));
-        info.spill = Some(rec.spill());
-        rec.seal(info);
-        let blob = info.to_json_bytes();
-        buildinfo::patch_build_info(&out_path, &blob)?;
-        eprintln!(
-            "embedded build info ({} bytes in a {}-byte section, outside the content hash)",
-            blob.len(),
-            build_info_len
-        );
+            &rec,
+            "build",
+        )?;
     }
     let byte_len = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) as usize;
     print_build_summary(output, &stats, byte_len);
     crate::commands::iri_report::warn_after_build(&audit.report);
+    Ok(())
+}
+
+/// Give the file the memory-bounded external builder has just written at
+/// `output` its **full** card, and its build record: what `rete build
+/// --memory-budget-mb` and `rete merge` both do once their stream is on disk.
+///
+/// `info` is the record begun before the stream ([`buildinfo::Recorder::begin`]);
+/// this adds what only the finished file knows — its codec, the counts
+/// (`stats`, the statements the stream read, the IRI audit), the spill — then
+/// derives the card from the file exactly as `rete recard` does
+/// ([`card::derive_full_card`], inside `memory_budget_mb` all told), runs and
+/// records its starter queries unless `!measure_costs`, and writes the card
+/// and the sealed record after the data ([`card::append_card`]). `who`
+/// prefixes the progress lines.
+///
+/// A failure past the stream leaves a complete, cardless file; the error says
+/// how to card it without a second build.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn append_full_card(
+    output: &str,
+    info: &mut buildinfo::BuildInfo,
+    curated: card::CardInput,
+    measure_costs: bool,
+    memory_budget_mb: u64,
+    stats: &ingest::BuildStats,
+    iri: &rete_core::IriReport,
+    rec: &buildinfo::Recorder,
+    who: &str,
+) -> anyhow::Result<()> {
+    let codec = {
+        use std::io::Read;
+        let mut head = vec![0u8; rete_core::format::HEADER_LEN];
+        std::fs::File::open(output)?.read_exact(&mut head)?;
+        rete_core::Header::from_bytes(&head)?.dict_codec
+    };
+    info.params.codec = Some(buildinfo::codec_name(codec).to_string());
+    info.counts = Some(buildinfo::counts(
+        stats,
+        rec.statements_read.get(),
+        None,
+        iri,
+    ));
+    info.spill = Some(rec.spill());
+    let unfinished = |e: anyhow::Error| {
+        anyhow::anyhow!(
+            "{e}\n{output} is complete but has no card; `rete recard {output} --in-place \
+             --card-file …` gives it one without rebuilding"
+        )
+    };
+    let full = card::derive_full_card(
+        output,
+        curated,
+        None,
+        measure_costs,
+        card::DeriveMemory::Total(memory_budget_mb.saturating_mul(1 << 20)),
+        rec,
+        who,
+    )
+    .map_err(unfinished)?;
+    info.query_costs = full.query_costs;
+    info.dropped_queries = full.dropped;
+    let meta = full.card.to_json_bytes();
+    let (_, _) = card::append_card(output, &meta, false, rec, who, || {
+        rec.seal(info);
+        info.to_json_bytes()
+    })
+    .map_err(unfinished)?;
+    eprintln!(
+        "embedded dataset card ({} bytes of metadata) and build info ({} bytes, outside the \
+         content hash) after the data",
+        meta.len(),
+        info.to_json_bytes().len()
+    );
     Ok(())
 }
 
@@ -1680,6 +1734,7 @@ mod tests {
                     enabled: true,
                     ..CardArgs::default()
                 },
+                true,
                 rete_core::PermSet::ALL,
                 rete_core::GraphLayout::PerGraph,
                 false,

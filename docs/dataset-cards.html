@@ -536,7 +536,7 @@ footer { width:min(1320px,100%); margin:0 auto; padding:1rem 2.2rem 3rem; color:
   <nav class="sidebar">
     <a class="brand" href="index.html">rete</a>
     <p class="tagline">Cloud-native, range-queryable RDF graph files</p>
-    <p class="meta"><span class="ver">v0.4.0</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
+    <p class="meta"><span class="ver">v0.4.1</span> <a href="https://github.com/caviri/rete">caviri/rete</a></p>
     <ul>
         <li class="nav-h">Start here</li>
         <li><a href="index.html">Overview</a></li>
@@ -1244,7 +1244,8 @@ and dictionary-chunk size, zstd level and frame shape, frequent objects),
 the section <code>codec</code>, <code>card_costs</code> (not <code>--no-card-costs</code>), the card's
 <code>card_top_n</code> cap, and <code>card_file</code> — its <strong>file name</strong> and BLAKE3, never its
 path.</li>
-<li><code>inputs</code> — each input by <strong>file name only</strong> (<code>stdin</code> for <code>-</code>), its <code>format</code>,
+<li><code>inputs</code> — each input by <strong>file name only</strong> (<code>stdin</code> for <code>-</code>), its <code>format</code>
+(<code>rete</code> for the shards of a <code>rete merge</code> and the input of <code>repyramid</code>),
 <code>compression</code> (<code>gzip</code>, detected from the bytes), <code>bytes</code> as stored, and the
 <code>blake3</code> of exactly those bytes (below). A build over more than 64 inputs
 lists the first 64 and counts the rest in <code>inputs_omitted</code>.</li>
@@ -1257,10 +1258,11 @@ parse stored verbatim (a <code>--strict</code> build that finished had none).</l
 time per phase, below), <code>peak_rss_bytes</code> (<code>VmHWM</code>; <code>null</code> off Linux),
 <code>memory_limit_bytes</code> (the process's cgroup limit; <code>null</code> when none) and
 <code>cpus</code> (logical CPUs available to the process).</li>
-<li><code>spill</code> — the memory-bounded build only: <code>chunks</code>, <code>merge_passes</code> (k-way
-merges over spilled files), <code>sort_runs</code> (the files those merges read) and
-<code>scratch_peak_bytes</code> (the spill directory at its fullest, sampled at phase
-boundaries and after each sort writes its runs — a lower bound).</li>
+<li><code>spill</code> — the memory-bounded build and <code>rete merge</code> only: <code>chunks</code>,
+<code>merge_passes</code> (k-way merges over spilled files), <code>sort_runs</code> (the files
+those merges read) and <code>scratch_peak_bytes</code> (the spill directory at its
+fullest, sampled at phase boundaries and after each sort writes its runs — a
+lower bound).</li>
 <li><code>query_costs</code> — measured cost figures for every starter query (below).</li>
 <li><code>dropped_queries</code> — starter queries this build generated, <strong>ran</strong>, and then
 refused to ship (below). Absent on a healthy build.</li>
@@ -1286,25 +1288,39 @@ container by a development binary of 0.4.0, which still called itself 0.3.7:</p>
                     labels+schema 279 ms · dictionary_section 86 ms · index_permutations 689 ms · serialize 134 ms
                     starter_queries 3.9 s · write 20 ms
 </code></pre>
-<p>The same input through <code>--memory-budget-mb 1536</code> adds what its spill did:</p>
-<pre><code class="language-text">      phases      : parse+chunk 11.4 s · dictionary 625 ms · encode 52 ms · index_permutations 453 ms
-                    named_graphs 1.1 s · card_derive 0 ms · write 19 ms · labels+schema 1 ms
-      spill       : 2 chunk(s); 15 k-way merge(s) over 18 sorted run(s); scratch peak 210.7 MiB
+<p>The same input through <code>--memory-budget-mb 1536</code> adds what its spill did, and
+derives its card from the written file at the end, each card phase with its own
+peak RSS (below):</p>
+<pre><code class="language-text">      phases      : parse+chunk 12.2 s · dictionary 701 ms · encode 68 ms · index_permutations 505 ms
+                    named_graphs 1.2 s · write 18 ms · labels+schema 184 ms · card_derive 157 ms (peak 105.5 MiB)
+                    starter_queries 4.1 s (peak 353.6 MiB) · content_hash 10 ms
+      spill       : 2 chunk(s); 15 k-way merge(s) over 18 sorted run(s); scratch peak 208.0 MiB
 </code></pre>
 <p><code>--json</code> carries the whole record under <code>build</code>.</p>
 <h3 id="phases">Phases</h3>
 <p>The builders time themselves with a lap timer (<code>rete_core::build_trace</code>): each
 phase is charged the wall-clock time since the previous one ended, so the
 phases <strong>partition</strong> the run and never overlap. Their names are a closed set:
-<code>read</code> (<code>repyramid</code>/<code>recard</code> reading the input file), <code>parse</code> and <code>reason</code> (the
+<code>read</code> (<code>repyramid</code>/<code>recard</code> reading the input file, <code>merge</code> hashing its
+shards), <code>parse</code> and <code>reason</code> (the
 in-RAM text path), <code>parse+dictionary</code> and <code>parse+encode</code> (the two passes of
 the streaming in-RAM build, where parsing cannot be told apart from what it
 feeds), <code>parse+chunk</code>, <code>dictionary</code>, <code>encode</code> and <code>named_graphs</code> (the
-memory-bounded build), <code>card_derive</code>, <code>pyramid</code>, <code>text_index</code>,
+memory-bounded build and <code>merge</code>), <code>card_derive</code>, <code>pyramid</code>, <code>text_index</code>,
 <code>labels+schema</code>, <code>dictionary_section</code>, <code>index_permutations</code>, <code>serialize</code>,
-<code>starter_queries</code> and <code>write</code>. In the memory-bounded build the SCHEMA pass is
+<code>starter_queries</code>, <code>write</code> and <code>content_hash</code> (the read of every hashed section
+that places a card after the data needs: the memory-bounded build, <code>merge</code> and
+<code>recard --in-place</code>). In the memory-bounded build the SCHEMA pass is
 fed from the remap and permutation merges, so part of its cost sits in
 <code>encode</code> and <code>index_permutations</code>; <code>labels+schema</code> is only its finish.</p>
+<p>Where a phase is a card's own work — <code>card_derive</code> and <code>starter_queries</code> in the
+memory-bounded build, <code>rete merge</code> and <code>rete recard</code> — it also records its
+<strong>own peak RSS</strong> (<code>peak_rss_bytes</code> on the phase, shown as <code>(peak …)</code>), beside the run's:
+the derivation runs after the build's heavy phases, so the run's peak says
+nothing about it. It is the kernel's high-water mark when the phase raised it,
+and otherwise the highest <code>VmRSS</code> a sampler read every 10 ms during the phase.
+The high-water mark itself is never reset, so <code>/usr/bin/time</code> and the run's
+<code>peak_rss_bytes</code> still see the process's true peak.</p>
 <h3 id="inputs-names-never-paths-digests-in-the-same-pass">Inputs: names, never paths; digests in the same pass</h3>
 <p>An input is recorded by its last path component. A directory can name a user,
 a machine or a project layout, and a published file carries its record to
@@ -1320,18 +1336,26 @@ cache took 0.05 s and reading and hashing it 0.12 s (read and hash together
 ran at about 8 GB/s, on one core), so the digest added 0.07 s to a 51.5 s in-RAM
 build (0.1%) and a 13.7 s memory-bounded one (0.5%). There is no switch to
 skip it. A cardless build has no record and hashes nothing.</p>
+<p><code>rete merge</code> is the exception to "no second pass": it reads its shards by range,
+in index order, so it hashes each one in a sequential read of its own before
+the merge starts — timed as the record's <code>read</code> phase. That is one read of
+every shard, against the merge's own walk of their dictionaries and index;
+a merge without a card does not hash.</p>
 <h3 id="written-last-in-place">Written last, in place</h3>
-<p>Most of the record is only known at the end — the memory-bounded build writes
-the section before it has read its input, and every build's last phase is
-writing the file. So the section is written with the record's <strong>widest</strong>
-form: every figure not yet measured at its largest serialization (each is a
-<code>u64</code>, a phase name from the closed set above, or a 64-digit digest, so the
-bound is exact). Once the file is complete, the sealed record is written over
-that reservation <strong>in place</strong>, padded with spaces — JSON allows trailing
-whitespace, and every reader of the section (serde, <code>JSON.parse</code>, Python's
-<code>json</code>) accepts it. Nothing else in the file moves; the wall time and peak RSS
-cover the final write. The padding is a few hundred bytes for an in-RAM build
-and about a kilobyte for a memory-bounded one.</p>
+<p>Most of the record is only known at the end — every build's last phase is
+writing the file. So an in-RAM build (and a copying re-card) writes the
+section with the record's <strong>widest</strong> form: every figure not yet measured at its
+largest serialization (each is a <code>u64</code> or a phase name from the closed set
+above, so the bound is exact). Once the file is complete, the sealed record is
+written over that reservation <strong>in place</strong>, padded with spaces — JSON allows
+trailing whitespace, and every reader of the section (serde, <code>JSON.parse</code>,
+Python's <code>json</code>) accepts it. Nothing else in the file moves; the wall time and
+peak RSS cover the final write. The padding is a few hundred bytes.</p>
+<p>The memory-bounded build reserves nothing, and neither does <code>rete merge</code>: the
+card and record are written
+together <strong>after the data</strong>, once everything they describe is on disk, and the
+record is sealed just before that write — its run covers every phase, the
+content hash included, but not the last few KB written.</p>
 <h3 id="reproducible-records">Reproducible records</h3>
 <p>Without help, two builds of the same input differ in this section — the
 timestamps, the wall times, the peak RSS — and only here: the comparison to
@@ -1389,9 +1413,9 @@ debug reference, never a guarantee — and is stored <strong>with its context</s
 quoted bare. The pairing is what makes it interpretable: "12 ms for 24 KB in
 9 requests" survives being read elsewhere; "12 ms" does not.</li>
 </ul>
-<p>The memory-bounded external build and <code>rete merge</code> record
-timestamp/builder/params but no costs (their cards carry no derived starter
-queries to measure).</p>
+<p>The memory-bounded build and <code>rete merge</code> measure their starter queries
+against the file they have just written, as <code>rete recard</code> does. (Up to 0.4.0
+both wrote a counts-only card with no starter queries, and so no costs.)</p>
 <h3 id="a-build-does-not-ship-a-query-it-just-measured-at-zero-rows">A build does not ship a query it just measured at zero rows</h3>
 <p>The run above is not only a costing. It is the moment a carded build stops
 <em>reasoning</em> about whether its starter queries answer and simply <strong>observes</strong> it
@@ -1443,8 +1467,8 @@ measurement is deterministic), and a build with nothing to drop is byte-identica
 to one that never measured at all.</p>
 <p><strong>Measurement versus the static machinery.</strong> They are not redundant. The
 generator's <code>NonEmpty</code> claims and <code>provably_empty</code> hooks act at <em>generation</em>
-time, before any measurement exists, and they carry every card built without a
-build record (external builds, <code>merge</code>, and every file published before build
+time, before any measurement exists, and they carry every card whose queries
+were never run (<code>--no-card-costs</code>, and every file published before build
 records). Where both speak, the measurement wins. Where they <em>disagree</em> — a
 template that declares its query cannot come back empty, and then it does —
 that is a defect in the rule, not a fact about the dataset: the build says so
@@ -1677,9 +1701,9 @@ named graphs included), and is the place to add curated fields or your own
 <pre><code class="language-sh">rete export catalog.rete --format nq &gt; catalog.nq
 rete build catalog.nq -o catalog-fixed.rete --card-file card.json
 </code></pre>
-<p>Either way the <strong>file is rewritten</strong> — the card is folded into the <code>blake3</code>
-content hash, so there is deliberately no in-place patch — and the fixed file
-replaces the published one. On a named-graph-only input, every query in the
+<p>Either way the <strong>file changes identity</strong> — the card is folded into the <code>blake3</code>
+content hash — and the fixed file replaces the published one (<code>rete recard --in-place</code> changes the local file itself, appending the new card instead of
+copying; the published copy still has to be replaced). On a named-graph-only input, every query in the
 new card is <code>GRAPH</code>-scoped and returns rows; for example <code>ov-triples</code> becomes:</p>
 <pre><code class="language-sparql">SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }
 </code></pre>
@@ -1691,8 +1715,9 @@ published file.</strong> It fixes the <em>next</em> build. A <code>.rete</code> 
 bucket keeps the card its builder could write on the day it was built —
 starter queries, profile caps, missing build record and all — until somebody
 deliberately re-cards it. And because the card is inside the <code>blake3</code> content
-hash there is no in-place patch: either the file is rewritten, or nothing
-changes.</p>
+hash, a new card is a new file identity: the local file is rewritten (or, with
+<code>rete recard --in-place</code>, appended to and its header rewritten), and the
+published copy replaced — or nothing changes.</p>
 <p>So the work splits in two: <strong>find out which files need it</strong> (cheap, and there
 is a tool for exactly that), then <strong>pick a command that can actually do it at
 that file's size</strong> (not cheap, and the ceiling is real).</p>
@@ -1766,10 +1791,14 @@ rewrites the file with only the card and the build record replaced: every other
 section copied byte for byte, the offsets fixed, the content hash recomputed.
 Nothing is rebuilt, so nothing about the data can change, and the proof of that
 is byte identity of every data section (<code>card_tools.py sections-equal</code>), not a
-comparison of N-Quads exports.</p>
+comparison of N-Quads exports. <strong><code>--in-place</code></strong> does the same without the copy:
+the new card and build record are appended after the data and the header is
+rewritten last, so a crash leaves either the old file or the new one, and the
+only writes are a few KB (<a href="cli.html#rete-recard-file--o-outrete----in-place---card-file-f----keep-curated---title----no-card-costs---memory-budget-mb-n---verify">cli.md</a>).</p>
 <table><thead><tr><th>the file's problem</th><th>command</th><th>ceiling</th></tr></thead><tbody>
 <tr><td>only the build record is missing; the queries answer</td><td><code>rete card-audit &lt;file&gt; --measure --write-costs</code></td><td>none from the rewrite — but an old card's <em>queries</em> need the RAM (below)</td></tr>
 <tr><td>the card is stale or its queries are broken</td><td><code>rete recard &lt;in&gt; -o &lt;out&gt; --keep-curated</code> (or <code>--card-file &lt;curated&gt;</code>)</td><td><strong>none from the statement count</strong>: memory is ~1 B per subject + <code>--memory-budget-mb</code> (1 GiB)</td></tr>
+<tr><td>same, on a file too big to copy</td><td><code>rete recard &lt;file&gt; --in-place --keep-curated</code></td><td>the same memory; disk: a few KB, plus the old card left behind as dead bytes</td></tr>
 <tr><td>the card <em>and</em> the pyramid or text index must change</td><td><code>rete repyramid &lt;in&gt; -o &lt;out&gt; --card --card-file &lt;curated&gt;</code></td><td><strong>~80 M statements</strong> (~70–100 M; ≈ 2 GB of a typically dense <code>.rete</code>)</td></tr>
 <tr><td>same, but past that</td><td><code>rete export &lt;in&gt; --format nq</code> → <code>rete build … --card-file &lt;curated&gt;</code></td><td><strong>~150 M statements</strong>, at ~2.5× the wall clock and 9–15× the <code>.rete</code> in staged text on disk</td></tr>
 </tbody></table>
@@ -1777,7 +1806,14 @@ comparison of N-Quads exports.</p>
 978,932,751 terms, built by the memory-bounded external build with a
 counts-only card — <code>rete recard</code> derived the full profile and wrote the new
 file inside a 4 GiB container: <strong>19 min 27 s end to end at a peak of 1.78 GiB RSS</strong> — 8 min 49 s to derive the profile (724,122,750 subjects, a 690 MiB class map, 196,602,045 literal objects decoded once), about 4 s to run its 10 starter queries (each ~44 MB, nearly all of it the open of a 26 GB file), 7 min 9 s to copy 26.5 GB while folding the new content hash, and the rest <code>--verify</code> re-reading it. The rebuild it replaces
-takes about 3 hours and 15 GB per part.</p>
+takes about 3 hours and 15 GB per part. <code>rete recard --in-place</code> on the same
+part, in a 4 GiB container reading it from the same disk: <strong>7 min 38 s at
+1.81 GiB</strong>, nothing written but the new card, its record and the header — 5 min
+4 s to derive (the 8 min 49 s above was another run, days earlier: compare the
+copy, not the derivation), 4 s for the starter queries, and 2 min 30 s to read
+the 26.5 GB back and fold the hash, against 7 min 9 s to copy them; no second
+26.5 GB file. (Measured with the part mounted read-only, so the run stopped at
+the commit: a few KB.)</p>
 <p>The rest of this section is about the two rebuild paths, which remain the tools
 when more than the card has to change.</p>
 <p><code>repyramid</code> materializes <strong>every quad as owned strings</strong> before re-assembling,
@@ -1796,15 +1832,57 @@ whether it is producing 679 MB or 6.88 GB of N-Quads. What it buys with that is
 disk — the staged text runs <strong>9–15× the <code>.rete</code></strong> — and the two paths land in
 the same place: on <code>nkod</code> they produce the <strong>same content hash</strong>, differing only
 in the four unhashed bytes that say <code>repyramid</code> rather than <code>build</code>.</p>
-<p><strong><code>rete build --memory-budget-mb</code> writes a counts-only card</strong>, roughly a
-hundred bytes of <code>triple_count</code> / <code>quad_count</code> / <code>term_count</code> /
-<code>named_graph_count</code> with no profile and <strong>no starter queries</strong>, because deriving
-the profile lists from unsorted input needs unbounded RAM. Ten of the largest
-published datasets — <code>crossref</code>, <code>datacite</code>, <code>dblp</code>, <code>deps-dev</code>, <code>epfl-graph</code>,
-<code>gharchive</code>, <code>gharchive-2026-06</code>, <code>opencitations</code>, <code>orcid</code>, <code>wikiart</code> — carry
-exactly that, and report <code>0 starter queries</code> in the survey. The file it writes
-is sorted, though, and that is all <code>rete recard</code> needs: build memory-bounded,
-then re-card the result to give it a full card.</p>
+<p><strong><code>rete build --memory-budget-mb</code> writes the full card.</strong> Up to 0.4.0 it wrote
+a counts-only card — roughly a hundred bytes of <code>triple_count</code> / <code>quad_count</code> /
+<code>term_count</code> / <code>named_graph_count</code>, no profile and <strong>no starter queries</strong> —
+because the profile cannot be derived from unsorted input in bounded RAM. Ten
+of the largest published datasets — <code>crossref</code>, <code>datacite</code>, <code>dblp</code>,
+<code>deps-dev</code>, <code>epfl-graph</code>, <code>gharchive</code>, <code>gharchive-2026-06</code>, <code>opencitations</code>,
+<code>orcid</code>, <code>wikiart</code> — carry exactly that, and report <code>0 starter queries</code> in the
+survey; <code>rete recard</code> (<code>--in-place</code> for the big ones) gives them a full card.
+The file the build writes is sorted, though, and that is all the derivation
+needs, so the build now runs it itself once its index sections are on disk —
+<code>rete recard</code>'s own code, inside the build's <code>--memory-budget-mb</code> (the class
+map's byte per subject, the rest for the reader's caches) — runs the starter
+queries against the file, and appends the card and the build record <strong>after
+the data</strong>, where reading them costs what it always did: one header read and
+one coalesced range (<a href="compatibility.html#a-card-after-the-data">compatibility</a>).
+The card is byte for byte the one <code>rete recard</code> writes for the same file; on
+input with no duplicates and no multi-typed subjects it is also the in-RAM
+build's, so the two builds share their content hash. Its price is the
+derivation, the queries and one more read of the file to fold the hash:</p>
+<table><thead><tr><th>OpenCitations sample, 4 GiB container</th><th>one pass (full card)</th><th>build, then <code>recard -o</code></th><th>build, then <code>recard --in-place</code></th></tr></thead><tbody>
+<tr><td>M=1200: 18.9 M statements, 204.6 MB</td><td>61.9 s · 2,329 MiB · 1.0 GiB</td><td>59.3 s + 1.7 s · 2,329 MiB · 1.0 GiB, then + 204.6 MB for the copy</td><td>59.3 s + 1.6 s · + 62 KB</td></tr>
+<tr><td>data parts: 66.1 M statements, 830.5 MB</td><td>213.6 s · 2,333 MiB · 2.7 GiB</td><td>203.6 s + 8.5 s · 2,338 MiB · 2.7 GiB, then + 830.5 MB for the copy</td><td>203.6 s + 8.4 s · + 59 KB</td></tr>
+</tbody></table>
+<p>(wall time · peak RSS of the process · peak disk of the build, spill and
+output; at a budget of 3,000 MiB, <code>--named-graphs quad --text-index --label-index</code>, the second with <code>--text-index-exclude</code> on the literal values of
+identifiers, as OpenCitations Meta is built.) In the one-pass build of the
+second file the derivation took 5.7 s at a phase peak of 830 MiB, the 12
+starter queries 2.1 s (756 MiB), the hash 0.2 s — the same file through
+<code>recard --in-place</code> took 5.8 s (542 MiB), 2.3 s (562 MiB) and 0.2 s. The three
+cards are the same bytes and the three files have the same content hash. At
+this size the time is the same either way and the build's spill sets the disk
+peak; what the one pass saves is the second command and, on a file too big to
+copy, the copy — 7 min of the 19 min 27 s above, and a second 26.5 GB file.</p>
+<p><strong><code>rete merge</code> writes its card the same way</strong> — it runs on the same builder,
+and finishes with the same step — so a sharded dataset folded into one file no
+longer needs a <code>recard</code> either. Two halves of the M=1200 sample (its first and
+last 9,434,621 lines, each built memory-bounded with <code>--named-graphs quad --label-index</code>: 94.4 and 102.2 MB) merged in a 4 GiB container at a budget of
+2,000 MiB:</p>
+<table><thead><tr><th>two halves of the M=1200 sample</th><th>one pass (full card)</th><th>merge (counts-only card), then <code>recard -o</code></th><th>merge, then <code>recard --in-place</code></th></tr></thead><tbody>
+<tr><td>wall time</td><td>66.7 s</td><td>66.6 s + 1.6 s</td><td>66.6 s + 1.5 s</td></tr>
+<tr><td>peak RSS</td><td>3,025 MiB</td><td>3,052 MiB, then 173 MiB</td><td>3,052 MiB, then 175 MiB</td></tr>
+<tr><td>written past the merged file</td><td>—</td><td>a second 194.4 MB file</td><td>15 KB of dead bytes (the old card and record)</td></tr>
+</tbody></table>
+<p>In the one pass, <code>read</code> (hashing both shards for the record) took 0.4 s,
+<code>card_derive</code> 0.6 s at a phase peak of 244 MiB, the 16 starter queries 0.8 s
+(198 MiB, none dropped) and <code>content_hash</code> 37 ms. The four cards are the same
+59,740 bytes and the four files have the same content hash; the data sections of
+the two merges are the same bytes. The peak is the merge's own, not the card's:
+its walk of the shards is not counted in <code>--memory-budget-mb</code>, so here it runs
+about 1 GiB over the budget, and at 3,000 MiB the merge does not fit a 4 GiB
+container — with a card or without, and in 0.4.0 too.</p>
 <p><strong>Measurement RAM is in the queries, not in the file.</strong> Attaching costs to an
 existing file rewrites it through a bounded buffer, but running the starter
 queries to get those costs does not: the engine evaluates eagerly, so a query
