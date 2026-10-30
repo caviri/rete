@@ -35,6 +35,8 @@ pub mod dict;
 pub mod dictionary;
 #[doc(hidden)]
 pub mod extbuild;
+mod extbuild_sections;
+mod extsort;
 #[doc(hidden)]
 pub mod file;
 #[doc(hidden)]
@@ -47,6 +49,7 @@ pub mod index;
 
 pub mod ingest;
 pub mod iri;
+pub mod label_index;
 pub mod manifest;
 #[doc(hidden)]
 pub mod meta;
@@ -67,6 +70,7 @@ pub mod results;
 mod row;
 #[doc(hidden)]
 pub mod schema_pyramid;
+pub mod schema_section;
 #[doc(hidden)]
 pub mod service;
 #[doc(hidden)]
@@ -87,9 +91,7 @@ pub mod varint;
 /// Stable file-format, reader, and in-memory build API.
 pub mod format {
     pub use crate::file::{
-        attach_build_info, content_hash_parts, plan_build_info, read_build_info, replace_metadata,
-        verify, BuildInfoPlan, ByteRange, DumpPlan, FileError, LayoutSegment, Rete, TermTriple,
-        TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE,
+        attach_build_info, content_hash_parts, plan_build_info, read_build_info, replace_metadata, verify, BuildInfoPlan, ByteRange, DumpPlan, FileError, LayoutSegment, Rete, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, RDF_TYPE, append_sections, PyramidLayout,
     };
     pub use crate::header::{
         Header, HeaderError, Section, SectionKind, CURRENT_FORMAT_VERSION, HEADER_LEN, MAGIC,
@@ -126,11 +128,7 @@ pub mod format {
 /// spends that pass unless the caller asks for a card.
 pub mod card {
     pub use crate::card_derive::{
-        curated_counts_card, derive_card, derive_card_encoded, derive_card_from,
-        derive_card_streaming, load_card, CardInput, CardTripleSource, ClassLink, Coherence,
-        Creator, DatasetCard, ExampleQuery, PermutationsSignal, Publisher, QuotedTriplesSignal,
-        Signals, StreamReport, TextIndexSignal, Tier, CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY,
-        O_LITERAL, QUOTED_TRIPLE_SURFACE_RDF12, QUOTED_TRIPLE_SURFACE_RDF_STAR,
+        curated_counts_card, derive_card, derive_card_encoded, derive_card_from, derive_card_streaming, load_card, CardInput, CardTripleSource, ClassLink, Coherence, Creator, DatasetCard, ExampleQuery, PermutationsSignal, Publisher, QuotedTriplesSignal, Signals, StreamReport, TextIndexSignal, Tier, CARD_TOP_N, GEO_ASWKT, GEO_HASGEOMETRY, O_LITERAL, QUOTED_TRIPLE_SURFACE_RDF12, QUOTED_TRIPLE_SURFACE_RDF_STAR, LabelIndexSignal,
     };
     pub use crate::card_input::{
         canonicalize_json, check_description_len, compose_curated_card, json_depth,
@@ -168,8 +166,9 @@ pub mod range {
     pub use crate::block_cache::{auto_block, BlockCacheReader, DEFAULT_BLOCK, DEFAULT_CACHE_CAP};
     pub use crate::file::{
         read_card_and_build_info_ranged, read_card_and_build_info_with_header,
-        read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged,
-        read_text_index_token_table_len_ranged, ByteRange, LayoutSegment, SearchView, SummaryView,
+        read_metadata_ranged, read_schema_coherence_ranged, read_schema_ranged,
+        read_schema_summary_ranged, read_text_index_token_table_len_ranged, ByteRange,
+        LayoutSegment, SearchView, SummaryView,
     };
     pub use crate::reader::{
         detect_polyglot_base, CountingReader, OffsetReader, RangeReader, SliceReader,
@@ -205,15 +204,7 @@ pub use dict::{DictSection, DictSectionBuilder};
 pub use dictionary::{Dictionary, DictionaryBuilder};
 #[doc(hidden)]
 pub use file::{
-    attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with,
-    compute_text_index, plan_build_info, read_build_info, read_card_and_build_info_ranged,
-    read_card_and_build_info_with_header, read_metadata_ranged, read_schema_coherence_ranged,
-    read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata,
-    schema_classes, schema_coherence, schema_summary, spill_threshold_for, split_memory_budget,
-    verify, verify_ranged, write_dataset, write_dataset_with_metadata, write_file, BuildInfoPlan,
-    ByteRange, DumpPlan, FixedOverhead, LayoutSegment, MemoryBudget, Rete, SearchView, SummaryView,
-    TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_EXPORT_BUDGET_MB,
-    DEFAULT_QUERY_BUDGET_MB, DEFAULT_TILE_BUDGET, RDF_TYPE,
+        attach_build_info, build_pyramid_meta, build_pyramid_meta_algo, build_pyramid_meta_with, compute_text_index, plan_build_info, read_build_info, read_card_and_build_info_ranged, read_card_and_build_info_with_header, read_metadata_ranged, read_schema_coherence_ranged, read_schema_summary_ranged, read_text_index_token_table_len_ranged, replace_metadata, schema_classes, schema_coherence, schema_summary, spill_threshold_for, split_memory_budget, verify, verify_ranged, write_dataset, write_dataset_with_metadata, write_file, BuildInfoPlan, ByteRange, DumpPlan, FixedOverhead, LayoutSegment, MemoryBudget, Rete, SearchView, SummaryView, TermTriple, TripleProvenance, CODEC_NONE, CODEC_ZSTD, DEFAULT_EXPORT_BUDGET_MB, DEFAULT_QUERY_BUDGET_MB, DEFAULT_TILE_BUDGET, RDF_TYPE, append_sections, build_pyramid_meta_layout, read_schema_ranged, PyramidLayout,
 };
 #[doc(hidden)]
 pub use header::{
@@ -225,6 +216,8 @@ pub use index::{GraphIndex, GraphIndexBuilder, IndexPermutation, Pattern, PermSe
 pub use iri::{
     iri_content_defect, sanitize_iri_content, sanitize_term, term_defect, IriDefect, IriReport,
 };
+#[doc(hidden)]
+pub use label_index::{read_label_index_entries_ranged, LabelIndex};
 #[doc(hidden)]
 pub use meta::{
     CharSet, ClassNode, ClassRelation, CommunityDescriptor, LabelEntry, LevelLinks, LevelRollup,
@@ -248,6 +241,8 @@ pub use reason::{reason, Inconsistency, Reasoning, REASON_RULESET};
 pub use results::{push_json_string, results_envelope_json};
 #[doc(hidden)]
 pub use schema_pyramid::build_schema_pyramid;
+#[doc(hidden)]
+pub use schema_section::SchemaMeta;
 #[doc(hidden)]
 pub use service::{parse_sparql_json_results, sparql_json_ask, sparql_json_results, ServiceClient};
 #[doc(hidden)]

@@ -263,42 +263,6 @@ pub fn build_schema_pyramid_with(
     };
     let disjoint_pairs = pair_set(dict.predicate_id(OWL_DISJOINT_WITH));
     let equivalent_pairs = pair_set(dict.predicate_id(OWL_EQUIVALENT_CLASS));
-    let subclass_cycles = subclass_cycles_of(&parents, &self_loops);
-    // Canonical single parent (smallest) for the deterministic depth/rollup tree.
-    let canonical: BTreeMap<String, String> = parents
-        .iter()
-        .filter_map(|(c, ps)| ps.iter().next().map(|p| (c.clone(), p.clone())))
-        .collect();
-
-    // All classes: instantiated ∪ every class named in subClassOf.
-    let mut classes: std::collections::BTreeSet<String> = instance_counts.keys().cloned().collect();
-    for (c, ps) in &parents {
-        classes.insert(c.clone());
-        for p in ps {
-            classes.insert(p.clone());
-        }
-    }
-
-    let depth: BTreeMap<String, u16> = classes
-        .iter()
-        .map(|c| (c.clone(), depth_of(c, &canonical)))
-        .collect();
-    let max_depth = depth.values().copied().max().unwrap_or(0);
-
-    // --- class hierarchy (non-exclusive: all parents kept; sorted, capped) ---
-    let mut class_hierarchy: Vec<ClassNode> = classes
-        .iter()
-        .map(|c| ClassNode {
-            class: c.clone(),
-            parents: parents
-                .get(c)
-                .map(|ps| ps.iter().cloned().collect())
-                .unwrap_or_default(),
-            depth: depth.get(c).copied().unwrap_or(0),
-        })
-        .collect();
-    class_hierarchy.sort_by(|a, b| a.depth.cmp(&b.depth).then_with(|| a.class.cmp(&b.class)));
-    class_hierarchy.truncate(MAX_HIERARCHY);
 
     // --- leaf class-relation graph (the lateral, non-is-a connections) ---
     // (s_class, predicate, o_class) over the non-type triples, the same quotient
@@ -336,9 +300,145 @@ pub fn build_schema_pyramid_with(
         *leaf_links.entry((sc, pred, oc)).or_default() += 1;
     }
 
+    // Align level i with a dendrogram round. Convention (pyramid.rs): round 0
+    // is the FINEST grouping, the last round the COARSEST — so the abstract
+    // level i=0 maps to the highest (coarsest) round. Informational only.
+    let dend_rounds = dend.rounds();
+    let round_align = |i: usize, n_levels: usize| -> u32 {
+        if dend_rounds > 1 && n_levels > 1 {
+            (((n_levels - 1 - i) * (dend_rounds - 1)) / (n_levels - 1)) as u32
+        } else {
+            round as u32
+        }
+    };
+    let core = assemble_schema(
+        &instance_counts,
+        &parents,
+        &self_loops,
+        &leaf_links,
+        &round_align,
+    );
+
+    let descriptors = build_descriptors(
+        dict,
+        triples,
+        dend,
+        round,
+        &subject_class,
+        lat_pid,
+        long_pid,
+        type_pid,
+    );
+
+    SchemaPyramid {
+        class_hierarchy: core.class_hierarchy,
+        level_rollups: core.level_rollups,
+        level_links: core.level_links,
+        descriptors,
+        subclass_cycles: core.subclass_cycles,
+        disjoint_pairs,
+        equivalent_pairs,
+    }
+}
+
+/// Only the per-community descriptors of [`build_schema_pyramid_with`] — the
+/// part of the schema pyramid that needs the partition, and all a
+/// community-only pyramid-meta keeps (the rest lives in the SCHEMA section).
+/// Identical to that function's `descriptors`, without computing the rest.
+pub(crate) fn build_community_descriptors(
+    dict: &Dictionary,
+    triples: &[(u32, u32, u32)],
+    dend: &Dendrogram,
+    round: usize,
+    type_override: Option<&str>,
+) -> Vec<CommunityDescriptor> {
+    let Some(type_pid) = pick_type_predicate(dict, triples, type_override) else {
+        return Vec::new();
+    };
+    let mut subject_class: BTreeMap<u32, String> = BTreeMap::new();
+    for &(s, p, o) in triples {
+        if p == type_pid {
+            if let Some(class) = dict.object_term(o) {
+                subject_class.entry(s).or_insert(class);
+            }
+        }
+    }
+    if subject_class.is_empty() {
+        return Vec::new();
+    }
+    build_descriptors(
+        dict,
+        triples,
+        dend,
+        round,
+        &subject_class,
+        dict.predicate_id(WGS_LAT),
+        dict.predicate_id(WGS_LONG),
+        type_pid,
+    )
+}
+
+/// The dendrogram-free part of a schema: the class hierarchy, the per-level
+/// type rollups and lateral links, and the `subClassOf` cycles.
+pub(crate) struct SchemaCore {
+    pub class_hierarchy: Vec<ClassNode>,
+    pub level_rollups: Vec<LevelRollup>,
+    pub level_links: Vec<LevelLinks>,
+    pub subclass_cycles: Vec<Vec<String>>,
+}
+
+/// Fold the schema facts — per-class instance counts, the `subClassOf` DAG
+/// (all parents per child, self-loops apart), and the leaf class-relation
+/// counts `(s_class, predicate, o_class)` — into the shipped hierarchy and
+/// per-level rollups. Shared by the pyramid's schema block and the SCHEMA
+/// section (kind 9); `round_align(level, n_levels)` fills the informational
+/// `round` of each level (a dendrogram alignment, or 0 without one).
+pub(crate) fn assemble_schema(
+    instance_counts: &BTreeMap<String, u64>,
+    parents: &BTreeMap<String, std::collections::BTreeSet<String>>,
+    self_loops: &std::collections::BTreeSet<String>,
+    leaf_links: &BTreeMap<(String, String, String), u64>,
+    round_align: &dyn Fn(usize, usize) -> u32,
+) -> SchemaCore {
+    let subclass_cycles = subclass_cycles_of(parents, self_loops);
+    // Canonical single parent (smallest) for the deterministic depth/rollup tree.
+    let canonical: BTreeMap<String, String> = parents
+        .iter()
+        .filter_map(|(c, ps)| ps.iter().next().map(|p| (c.clone(), p.clone())))
+        .collect();
+
+    // All classes: instantiated ∪ every class named in subClassOf.
+    let mut classes: std::collections::BTreeSet<String> = instance_counts.keys().cloned().collect();
+    for (c, ps) in parents {
+        classes.insert(c.clone());
+        for p in ps {
+            classes.insert(p.clone());
+        }
+    }
+
+    let depth: BTreeMap<String, u16> = classes
+        .iter()
+        .map(|c| (c.clone(), depth_of(c, &canonical)))
+        .collect();
+    let max_depth = depth.values().copied().max().unwrap_or(0);
+
+    // --- class hierarchy (non-exclusive: all parents kept; sorted, capped) ---
+    let mut class_hierarchy: Vec<ClassNode> = classes
+        .iter()
+        .map(|c| ClassNode {
+            class: c.clone(),
+            parents: parents
+                .get(c)
+                .map(|ps| ps.iter().cloned().collect())
+                .unwrap_or_default(),
+            depth: depth.get(c).copied().unwrap_or(0),
+        })
+        .collect();
+    class_hierarchy.sort_by(|a, b| a.depth.cmp(&b.depth).then_with(|| a.class.cmp(&b.class)));
+    class_hierarchy.truncate(MAX_HIERARCHY);
+
     // --- per-level rollups: type histogram + lateral relation graph at each depth ---
     let n_levels = (max_depth as usize + 1).clamp(1, MAX_LEVELS);
-    let dend_rounds = dend.rounds();
     let mut level_rollups = Vec::with_capacity(n_levels);
     let mut level_links = Vec::with_capacity(n_levels);
     for i in 0..n_levels {
@@ -348,18 +448,11 @@ pub fn build_schema_pyramid_with(
         } else {
             ((i * max_depth as usize) / (n_levels - 1)) as u16
         };
-        // Align level i with a dendrogram round. Convention (pyramid.rs): round 0
-        // is the FINEST grouping, the last round the COARSEST — so the abstract
-        // level i=0 maps to the highest (coarsest) round. Informational only.
-        let round_align = if dend_rounds > 1 && n_levels > 1 {
-            (((n_levels - 1 - i) * (dend_rounds - 1)) / (n_levels - 1)) as u32
-        } else {
-            round as u32
-        };
+        let round_align = round_align(i, n_levels);
 
         // Type histogram rolled up to this depth.
         let mut roll: BTreeMap<String, u64> = BTreeMap::new();
-        for (class, &count) in &instance_counts {
+        for (class, &count) in instance_counts {
             *roll
                 .entry(ancestor_at(class, target_depth, &depth, &canonical))
                 .or_default() += count;
@@ -375,7 +468,7 @@ pub fn build_schema_pyramid_with(
 
         // Lateral relations rolled up to this depth (sentinels pass through).
         let mut rel: BTreeMap<(String, String, String), u64> = BTreeMap::new();
-        for ((sc, pred, oc), &count) in &leaf_links {
+        for ((sc, pred, oc), &count) in leaf_links {
             let sa = ancestor_at(sc, target_depth, &depth, &canonical);
             let oa = ancestor_at(oc, target_depth, &depth, &canonical);
             *rel.entry((sa, pred.clone(), oa)).or_default() += count;
@@ -404,25 +497,11 @@ pub fn build_schema_pyramid_with(
         });
     }
 
-    let descriptors = build_descriptors(
-        dict,
-        triples,
-        dend,
-        round,
-        &subject_class,
-        lat_pid,
-        long_pid,
-        type_pid,
-    );
-
-    SchemaPyramid {
+    SchemaCore {
         class_hierarchy,
         level_rollups,
         level_links,
-        descriptors,
         subclass_cycles,
-        disjoint_pairs,
-        equivalent_pairs,
     }
 }
 
@@ -980,6 +1059,11 @@ mod tests {
             .collect();
         let (dict, ids, dend) = build(&refs);
         let descriptors = build_schema_pyramid(&dict, &ids, &dend, 0).descriptors;
+        // The community-only pyramid-meta computes exactly these, alone.
+        assert_eq!(
+            build_community_descriptors(&dict, &ids, &dend, 0, None),
+            descriptors
+        );
 
         // Independently recompute typed members per community.
         let type_pid = dict.predicate_id(RDF_TYPE).unwrap();

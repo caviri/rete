@@ -63,6 +63,7 @@ use std::path::{Path, PathBuf};
 
 use crate::dict::env_restart_interval;
 
+use crate::extbuild_sections::{ExtLabels, ExtSchema};
 use crate::index::{GroupSizer, INDEX_TILE_BUDGET};
 use crate::ingest::{BuildStats, IngestError, RawQuad};
 use crate::triples::TripleBlockBuilder;
@@ -108,6 +109,12 @@ pub struct ExternalBuildOptions {
     /// section on disk, so this is the single biggest lever on both build time
     /// and file size that does not touch the data.
     pub perms: crate::index::PermSet,
+    /// Write the LABEL_INDEX section (kind 8). See `extbuild_sections.rs`.
+    pub label_index: bool,
+    /// Write the SCHEMA section (kind 9). See `extbuild_sections.rs`.
+    pub schema: bool,
+    /// The schema's type predicate; `rdf:type` when `None`.
+    pub type_override: Option<String>,
 }
 
 impl Default for ExternalBuildOptions {
@@ -118,6 +125,9 @@ impl Default for ExternalBuildOptions {
             metadata: Box::new(|_| Vec::new()),
             build_info: Vec::new(),
             perms: crate::index::PermSet::ALL,
+            label_index: false,
+            schema: false,
+            type_override: None,
         }
     }
 }
@@ -184,8 +194,25 @@ where
         chunk_budget >> 20
     );
     let mut chunker = Chunker::new(&tmp, chunk_budget);
+    // LABEL_INDEX / SCHEMA (kinds 8, 9): the passes live in extbuild_sections;
+    // each phase below calls one hook. A sort run gets an eighth of the budget
+    // while chunks are resident, a quarter afterwards.
+    chunker.labels = opts
+        .label_index
+        .then(|| ExtLabels::new(&tmp.dir, (budget / 8) as usize));
+    let mut ext_schema = opts.schema.then(|| {
+        ExtSchema::new(
+            &tmp.dir,
+            (budget / 8) as usize,
+            opts.type_override.as_deref(),
+        )
+    });
     stream(&mut |q: RawQuad| chunker.push(q))?;
-    let chunks = chunker.finish()?;
+    let (chunks, labels) = chunker.finish_all()?;
+    let label_section = match labels {
+        Some(l) => l.finish(crate::file::writer_codec())?,
+        None => None,
+    };
     let statements: u64 = chunks
         .iter()
         .map(|c| c.triple_count + c.quad_count)
@@ -198,7 +225,11 @@ where
     );
 
     // ---- Phase 2: merge chunk dictionaries into the global dictionary -------
-    let mut merged = merge_dictionaries(&tmp, &chunks)?;
+    let schema_preds = crate::extbuild_sections::schema_predicates(opts.type_override.as_deref());
+    let mut merged = merge_dictionaries_with(&tmp, &chunks, &schema_preds)?;
+    if let Some(x) = ext_schema.as_mut() {
+        x.set_merge_facts(&merged.schema_facts);
+    }
     eprintln!(
         "extbuild: merged dictionary — {} term(s)",
         merged.term_count
@@ -240,6 +271,9 @@ where
                 out.write_all(&gs.to_le_bytes())?;
                 out.write_all(&gp.to_le_bytes())?;
                 out.write_all(&go.to_le_bytes())?;
+                if let Some(x) = ext_schema.as_mut() {
+                    x.tee(gs, gp, go)?;
+                }
             }
             let _ = std::fs::remove_file(tmp.path(&format!("c{ci}.tri")));
             if chunk.quad_count > 0 {
@@ -279,8 +313,30 @@ where
     let run_len = ((budget / 2) / 24).clamp(1 << 16, u32::MAX as u64) as usize;
     let mut perm_sections: Vec<SectionFile> = Vec::with_capacity(opts.perms.len());
     let mut deduped_count: Option<u64> = None;
+    if let Some(x) = ext_schema.as_mut() {
+        x.begin_spo()?;
+    }
     for perm in opts.perms.iter() {
-        let (section, n) = build_permutation_section(&tmp, &global_tri, perm, run_len, codec, "")?;
+        // The schema pass reads the deduplicated SPO and POS merge streams.
+        let mut observe = |t: IdTriple| -> std::io::Result<()> {
+            match (ext_schema.as_mut(), perm) {
+                (Some(x), crate::index::IndexPermutation::Spo) => x.observe_spo(t),
+                (Some(x), crate::index::IndexPermutation::Pos) => {
+                    x.observe_pos(t);
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
+        };
+        let (section, n) = build_permutation_section_observed(
+            &tmp,
+            &global_tri,
+            perm,
+            run_len,
+            codec,
+            "",
+            &mut observe,
+        )?;
         // every permutation dedups the same multiset — counts must agree
         if let Some(prev) = deduped_count {
             if prev != n {
@@ -297,6 +353,9 @@ where
     }
     let _ = std::fs::remove_file(&global_tri);
     let default_count = deduped_count.unwrap_or(0);
+    if let Some(x) = ext_schema.as_mut() {
+        x.finish_links()?;
+    }
 
     // ---- Phase 4b: one index container per named graph ----------------------
     // The graph ordinal leads the sort key, so the merge hands back one
@@ -364,6 +423,38 @@ where
         opts.perms,
     )?;
     stats.pyramid_levels = 0;
+
+    // ---- Phase 6: LABEL_INDEX / SCHEMA, appended (outside the content hash) --
+    let schema_section = match ext_schema {
+        Some(x) => x
+            .finish(output)
+            .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?,
+        None => Vec::new(),
+    };
+    if label_section.is_some() || !schema_section.is_empty() {
+        use crate::file::PayloadPart;
+        use crate::header::SectionKind;
+        let mut sections: Vec<(SectionKind, Vec<PayloadPart<'_>>)> = Vec::new();
+        if let Some(l) = &label_section {
+            sections.push((
+                SectionKind::LabelIndex,
+                vec![
+                    PayloadPart::Bytes(&l.digest_and_head),
+                    PayloadPart::File(&l.body),
+                ],
+            ));
+            eprintln!("extbuild: label index — {} entries", l.entries);
+        }
+        if !schema_section.is_empty() {
+            sections.push((
+                SectionKind::Schema,
+                vec![PayloadPart::Bytes(&schema_section)],
+            ));
+            eprintln!("extbuild: schema section — {} bytes", schema_section.len());
+        }
+        crate::file::append_sections_to_file(output, &sections)
+            .map_err(|e| ExtBuildError::Io(std::io::Error::other(e.to_string())))?;
+    }
     Ok(stats)
 }
 
@@ -425,6 +516,8 @@ struct Chunker<'a> {
     graph_ids: std::collections::BTreeMap<String, u32>,
     chunks: Vec<ChunkInfo>,
     has_quoted: bool,
+    /// The LABEL_INDEX pass, fed each chunk's default-graph quads at seal.
+    labels: Option<ExtLabels>,
 }
 
 impl<'a> Chunker<'a> {
@@ -438,6 +531,7 @@ impl<'a> Chunker<'a> {
             graph_ids: std::collections::BTreeMap::new(),
             chunks: Vec::new(),
             has_quoted: false,
+            labels: None,
         }
     }
 
@@ -507,6 +601,9 @@ impl<'a> Chunker<'a> {
         }
         tri.flush()?;
         let triple_count = quads.len() as u64;
+        if let Some(l) = self.labels.as_mut() {
+            l.observe_chunk(&quads)?;
+        }
         drop(quads);
 
         // Named quads: the chunk-local graph id is the name's RANK in this
@@ -586,6 +683,13 @@ impl<'a> Chunker<'a> {
         Ok(())
     }
 
+    /// [`finish`](Self::finish), handing back the label pass too.
+    fn finish_all(mut self) -> Result<(Vec<ChunkInfo>, Option<ExtLabels>), ExtBuildError> {
+        self.seal()?;
+        let labels = self.labels.take();
+        Ok((self.finish()?, labels))
+    }
+
     fn finish(mut self) -> Result<Vec<ChunkInfo>, ExtBuildError> {
         self.seal()?;
         if self.chunks.is_empty() {
@@ -631,6 +735,8 @@ struct MergedDict {
     /// no named graphs.
     graph_names: Option<PathBuf>,
     graph_count: u32,
+    /// What the SCHEMA pass needs from the merge.
+    schema_facts: crate::extbuild_sections::MergeFacts,
 }
 
 /// A finished section payload living in a tmp file.
@@ -814,8 +920,24 @@ const CLASS_SUBJ_ONLY: u32 = 0b01 << 30;
 const CLASS_OBJ_ONLY: u32 = 0b10 << 30;
 const CLASS_MASK: u32 = 0b11 << 30;
 
+#[cfg(test)]
 fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, ExtBuildError> {
+    merge_dictionaries_with(tmp, chunks, &[])
+}
+
+/// [`merge_dictionaries`], also recording what the SCHEMA pass needs: the
+/// global ids of `schema_preds`, the shared-term count and the literal
+/// prefixes of the shared and object-only sections.
+fn merge_dictionaries_with(
+    tmp: &TmpDir,
+    chunks: &[ChunkInfo],
+    schema_preds: &[String],
+) -> Result<MergedDict, ExtBuildError> {
     let k = chunks.len();
+    let mut schema_facts = crate::extbuild_sections::MergeFacts {
+        pred_ids: vec![None; schema_preds.len()],
+        ..Default::default()
+    };
 
     // remap tables, sized by each chunk's spaces
     let mut remaps: Vec<ChunkRemap> = chunks
@@ -884,6 +1006,9 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
                     remaps[ci].obj[(lid - 1) as usize] = enc;
                 }
                 has_quoted |= term.starts_with("<<");
+                if term.starts_with('"') {
+                    schema_facts.shared_literals += 1;
+                }
                 shared_sec.push(&term)?;
                 ranks[0] += 1;
                 s_item = subjects.next()?;
@@ -907,6 +1032,9 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
                     remaps[ci].obj[(lid - 1) as usize] = enc;
                 }
                 has_quoted |= term.starts_with("<<");
+                if term.starts_with('"') {
+                    schema_facts.objonly_literals += 1;
+                }
                 obj_sec.push(&term)?;
                 ranks[2] += 1;
                 o_item = objects.next()?;
@@ -914,6 +1042,7 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
         }
     }
     let (n_shared, n_subj, n_obj) = (ranks[0], ranks[1], ranks[2]);
+    schema_facts.n_shared = n_shared;
 
     // predicates: plain k-way merge over the pred term files
     let mut pred_sec = RawSectionWriter::create(tmp.path("g.pred.raw"))?;
@@ -939,6 +1068,9 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
         while let Some((term, carriers)) = kway.next()? {
             for (ci, lid) in carriers {
                 remaps[ci].pred[(lid - 1) as usize] = rank + 1; // pred ids are final now
+            }
+            if let Some(i) = schema_preds.iter().position(|w| *w == term) {
+                schema_facts.pred_ids[i] = Some(rank + 1);
             }
             pred_sec.push(&term)?;
             rank += 1;
@@ -1036,6 +1168,7 @@ fn merge_dictionaries(tmp: &TmpDir, chunks: &[ChunkInfo]) -> Result<MergedDict, 
         remaps,
         graph_names,
         graph_count,
+        schema_facts,
     })
 }
 
@@ -1240,6 +1373,22 @@ fn build_permutation_section(
     codec: u8,
     prefix: &str,
 ) -> Result<(SectionFile, u64), ExtBuildError> {
+    build_permutation_section_observed(tmp, global_tri, perm, run_len, codec, prefix, &mut |_| {
+        Ok(())
+    })
+}
+
+/// [`build_permutation_section`], handing every deduplicated triple of the
+/// merge, in this permutation's order, to `observe` (the SCHEMA pass).
+fn build_permutation_section_observed(
+    tmp: &TmpDir,
+    global_tri: &Path,
+    perm: crate::index::IndexPermutation,
+    run_len: usize,
+    codec: u8,
+    prefix: &str,
+    observe: &mut dyn FnMut(IdTriple) -> std::io::Result<()>,
+) -> Result<(SectionFile, u64), ExtBuildError> {
     // 1. sorted runs
     let mut runs: Vec<PathBuf> = Vec::new();
     {
@@ -1297,6 +1446,7 @@ fn build_permutation_section(
                 heap.push(std::cmp::Reverse((n, i)));
             }
             if last != Some(t) {
+                observe(t)?;
                 tiler.push(t)?;
                 last = Some(t);
             }
@@ -2126,6 +2276,7 @@ mod tests {
                 metadata: Box::new(|_| Vec::new()),
                 build_info: Vec::new(),
                 perms: crate::index::PermSet::ALL,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2160,6 +2311,7 @@ mod tests {
                 metadata: Box::new(|_| Vec::new()),
                 build_info: info.clone(),
                 perms: crate::index::PermSet::ALL,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2505,6 +2657,7 @@ mod tests {
             remaps: Vec::new(),
             graph_names: None,
             graph_count: 0,
+            schema_facts: Default::default(),
         };
         let tmp = TmpDir { dir: spill.clone() };
         let global_tri = spill.join("global.tri");

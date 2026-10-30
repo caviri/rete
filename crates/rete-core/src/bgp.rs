@@ -488,6 +488,25 @@ fn tile_estimates(
     let dict = ctx.rete.dictionary();
     let total = ctx.rete.header().quad_count;
     let seeded = |x: &SlotTerm| matches!(x, SlotTerm::Var(v) if seed.contains(v));
+    // A seeded subject/object of a constant predicate takes that predicate's
+    // MEASURED selectivity from `query_stats` (the SCHEMA section, kind 9, or
+    // a resident pyramid-meta) instead of the fixed default. The tile
+    // directory cannot see a value that only exists at run time, so this is
+    // the one estimate here the statistics improve. They are read only when
+    // some pattern needs them: one small range, once per session, on a lazy
+    // open — never for a query whose patterns have no seeded position.
+    let needs_stats = lowered
+        .iter()
+        .any(|t| matches!(t.1, SlotTerm::Pred(_)) && (seeded(&t.0) || seeded(&t.2)));
+    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> = if needs_stats {
+        ctx.rete
+            .planner_stats(true)
+            .iter()
+            .map(|s| (s.predicate, s))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
     lowered
         .iter()
         .map(|t| {
@@ -502,14 +521,24 @@ fn tile_estimates(
             if est == 0.0 {
                 return 0.0;
             }
+            let st = match t.1 {
+                SlotTerm::Pred(pid) => stats.get(&pid).copied(),
+                _ => None,
+            };
             if seeded(&t.0) {
-                est *= SEL_SUBJECT;
+                est *= match st {
+                    Some(st) if st.distinct_subjects > 0 => 1.0 / st.distinct_subjects as f64,
+                    _ => SEL_SUBJECT,
+                };
             }
             if seeded(&t.1) {
                 est *= SEL_PREDICATE;
             }
             if seeded(&t.2) {
-                est *= SEL_OBJECT;
+                est *= match st {
+                    Some(st) if st.distinct_objects > 0 => 1.0 / st.distinct_objects as f64,
+                    _ => SEL_OBJECT,
+                };
             }
             est.max(1.0)
         })
@@ -722,10 +751,15 @@ fn pattern_estimates(
     for e in &pyr.summary {
         *pred.entry(e.predicate).or_insert(0) += e.count as u64;
     }
-    // Measured per-predicate distinct subjects/objects (query_stats block; empty
-    // on files built before it existed → fall back to the default selectivities).
-    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> = pyr
-        .predicate_stats
+    // Measured per-predicate distinct subjects/objects: the SCHEMA section
+    // (kind 9) — where a file built since it existed keeps them, its
+    // pyramid-meta holding only the community summary — else the pyramid-meta's
+    // query-stats block; empty on files built before either → the default
+    // selectivities. The pyramid is resident here, so the (small) section is
+    // too on a resident open, and costs one range once on a lazy one.
+    let stats: std::collections::HashMap<u32, &crate::meta::PredStat> = ctx
+        .rete
+        .planner_stats(true)
         .iter()
         .map(|s| (s.predicate, s))
         .collect();

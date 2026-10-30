@@ -18,10 +18,7 @@
 //! feature (e.g. on wasm) sections are written with the `NONE` codec — larger
 //! files, byte-compatible readers.
 
-use crate::{
-    build_pyramid_meta_algo, Dictionary, DictionaryBuilder, GraphIndexBuilder, PyramidAlgo,
-    DEFAULT_TILE_BUDGET,
-};
+use crate::{Dictionary, DictionaryBuilder, GraphIndexBuilder, PyramidAlgo, DEFAULT_TILE_BUDGET};
 
 /// A parsed triple as three canonical term tokens.
 pub type RawTriple = (String, String, String);
@@ -1079,6 +1076,76 @@ pub fn assemble_dataset_with_perms<M: IntoMetadata>(
     perms: crate::index::PermSet,
     metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
 ) -> (Vec<u8>, BuildStats) {
+    let opts = AssembleOptions {
+        with_pyramid,
+        with_text_index,
+        type_override,
+        algo,
+        perms,
+        ..AssembleOptions::legacy()
+    };
+    assemble_dataset_opts(quads, &opts, metadata)
+}
+
+/// Everything an in-memory build decides besides its input. The fields the
+/// older `assemble_*` entry points take positionally, plus the sections added
+/// after the generation-1 freeze.
+#[derive(Debug, Clone, Copy)]
+pub struct AssembleOptions<'a> {
+    /// Build the community pyramid (kind 4).
+    pub with_pyramid: bool,
+    /// Build the full-text index (kind 6).
+    pub with_text_index: bool,
+    /// The type predicate for the schema (e.g. `wdt:P31`); `rdf:type` if `None`.
+    pub type_override: Option<&'a str>,
+    /// The community algorithm of the pyramid.
+    pub algo: PyramidAlgo,
+    /// Which index permutations to write.
+    pub perms: crate::index::PermSet,
+    /// What the pyramid-meta carries besides the summary.
+    pub pyramid_layout: crate::file::PyramidLayout,
+    /// Write the LABEL_INDEX section (kind 8, `rete build --label-index`).
+    pub label_index: bool,
+    /// Write the SCHEMA section (kind 9; `rete build` writes it unless
+    /// `--no-schema`).
+    pub schema: bool,
+}
+
+impl AssembleOptions<'_> {
+    /// What every `assemble_*` entry point wrote before kinds 8 and 9 existed:
+    /// a Louvain pyramid with the combined pyramid-meta, no text index, all six
+    /// permutations, no LABEL_INDEX or SCHEMA section.
+    pub fn legacy() -> Self {
+        AssembleOptions {
+            with_pyramid: true,
+            with_text_index: false,
+            type_override: None,
+            algo: PyramidAlgo::Louvain,
+            perms: crate::index::PermSet::ALL,
+            pyramid_layout: crate::file::PyramidLayout::Combined,
+            label_index: false,
+            schema: false,
+        }
+    }
+
+    /// What `rete build` writes: the pyramid-meta carries only the community
+    /// material, the schema has its own section, and the label index is
+    /// opt-in.
+    pub fn sectioned() -> Self {
+        AssembleOptions {
+            pyramid_layout: crate::file::PyramidLayout::CommunityOnly,
+            schema: true,
+            ..Self::legacy()
+        }
+    }
+}
+
+/// Assemble a file image from parsed quads under explicit [`AssembleOptions`].
+pub fn assemble_dataset_opts<M: IntoMetadata>(
+    quads: Vec<RawQuad>,
+    opts: &AssembleOptions<'_>,
+    metadata: impl FnOnce(&BuildStats, &[RawQuad]) -> M,
+) -> (Vec<u8>, BuildStats) {
     use std::collections::BTreeMap;
 
     let mut db = DictionaryBuilder::new();
@@ -1115,18 +1182,7 @@ pub fn assemble_dataset_with_perms<M: IntoMetadata>(
     let pending = metadata(&stats, &quads);
     drop(quads);
 
-    finish_assembly(
-        dict,
-        default_triples,
-        named,
-        with_pyramid,
-        with_text_index,
-        type_override,
-        algo,
-        perms,
-        pending,
-        stats,
-    )
+    finish_assembly(dict, default_triples, named, opts, pending, stats)
 }
 
 /// **Two-pass, low-RAM** assembly: build a `.rete` by **streaming** the input(s)
@@ -1192,12 +1248,32 @@ where
 /// `perms` — the two-pass low-RAM twin of [`assemble_dataset_with_perms`].
 #[allow(clippy::too_many_arguments)]
 pub fn assemble_dataset_streaming_with_perms<S, M: IntoMetadata>(
-    mut stream: S,
+    stream: S,
     with_pyramid: bool,
     with_text_index: bool,
     type_override: Option<&str>,
     algo: PyramidAlgo,
     perms: crate::index::PermSet,
+    metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
+) -> Result<(Vec<u8>, BuildStats), IngestError>
+where
+    S: FnMut(&mut dyn FnMut(RawQuad)) -> Result<(), IngestError>,
+{
+    let opts = AssembleOptions {
+        with_pyramid,
+        with_text_index,
+        type_override,
+        algo,
+        perms,
+        ..AssembleOptions::legacy()
+    };
+    assemble_dataset_streaming_opts(stream, &opts, metadata)
+}
+
+/// The two-pass low-RAM twin of [`assemble_dataset_opts`].
+pub fn assemble_dataset_streaming_opts<S, M: IntoMetadata>(
+    mut stream: S,
+    opts: &AssembleOptions<'_>,
     metadata: impl FnOnce(&BuildStats, &Dictionary, &[(u32, u32, u32)]) -> M,
 ) -> Result<(Vec<u8>, BuildStats), IngestError>
 where
@@ -1235,11 +1311,7 @@ where
         dict,
         default_triples,
         named,
-        with_pyramid,
-        with_text_index,
-        type_override,
-        algo,
-        perms,
+        opts,
         pending,
         stats,
     ))
@@ -1249,41 +1321,64 @@ where
 /// id-triples (default graph + named), build the community pyramid, the optional
 /// full-text index, the permutation indexes, and serialize the file image. Takes
 /// the id-triples **by value** so they are freed as the permutations consume them.
-#[allow(clippy::too_many_arguments)]
 fn finish_assembly<M: IntoMetadata>(
     dict: Dictionary,
-    default_triples: Vec<(u32, u32, u32)>,
+    mut default_triples: Vec<(u32, u32, u32)>,
     named: std::collections::BTreeMap<String, Vec<(u32, u32, u32)>>,
-    with_pyramid: bool,
-    with_text_index: bool,
-    type_override: Option<&str>,
-    algo: PyramidAlgo,
-    perms: crate::index::PermSet,
+    opts: &AssembleOptions<'_>,
     pending: M,
     mut stats: BuildStats,
 ) -> (Vec<u8>, BuildStats) {
     let has_named = !named.is_empty();
+    let perms = opts.perms;
 
     // The pyramid and the full-text index are built FIRST, while the dictionary and
     // the default id-triples are both still resident — both need the two together.
-    let (meta, levels) = if with_pyramid {
-        build_pyramid_meta_algo(
+    // The pyramid sees the triples in input order (Louvain is order-sensitive).
+    let (meta, levels) = if opts.with_pyramid {
+        crate::file::build_pyramid_meta_layout(
             &dict,
             &default_triples,
             DEFAULT_TILE_BUDGET,
-            type_override,
-            algo,
+            opts.type_override,
+            opts.algo,
+            opts.pyramid_layout,
         )
     } else {
         (Vec::new(), 0)
     };
     stats.pyramid_levels = levels;
 
-    let text_index = if with_text_index {
+    let text_index = if opts.with_text_index {
         crate::file::compute_text_index(&dict, &default_triples)
     } else {
         Vec::new()
     };
+
+    // The LABEL_INDEX and SCHEMA sections are computed over the DEDUPLICATED
+    // default graph in SPO order (and the schema's second pass in POS order),
+    // the order every index build re-sorts into anyway — which is what lets
+    // the memory-bounded build, reading its sorted permutation streams, write
+    // the very same bytes. Both need the dictionary, so they run before it is
+    // dropped. Without either section the triples stay in input order.
+    let mut label_section = Vec::new();
+    let mut schema_section = Vec::new();
+    if opts.label_index || opts.schema {
+        crate::schema_section::sort_dedup_spo(&mut default_triples);
+        if opts.label_index {
+            let entries = crate::label_index::entries_from_sorted_triples(&dict, &default_triples);
+            label_section =
+                crate::label_index::encode_section(&entries, crate::file::writer_codec());
+        }
+        if opts.schema {
+            schema_section = crate::schema_section::compute_in_memory(
+                &dict,
+                &mut default_triples,
+                opts.type_override,
+            )
+            .encode();
+        }
+    }
 
     // From here the dictionary is only needed for its own serialized bytes. Encode
     // it, capture the header term count, then DROP it before building the
@@ -1350,6 +1445,20 @@ fn finish_assembly<M: IntoMetadata>(
         &text_index,
         codec,
     );
+    // Kinds 8 and 9 go after everything else: they are outside the content
+    // hash, so appending them moves nothing and changes no hash.
+    let bytes = if label_section.is_empty() && schema_section.is_empty() {
+        bytes
+    } else {
+        crate::file::append_sections(
+            &bytes,
+            &[
+                (crate::header::SectionKind::LabelIndex, &label_section),
+                (crate::header::SectionKind::Schema, &schema_section),
+            ],
+        )
+        .expect("appending to an image this function just wrote")
+    };
     (bytes, stats)
 }
 

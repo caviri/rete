@@ -91,6 +91,18 @@ pub enum SectionKind {
     /// section is exactly the per-build facts (when, by which binary, how fast)
     /// that differ between them. `verify` therefore does not cover it.
     BuildInfo,
+    /// The range-readable **label index** (`rete build --label-index`): every
+    /// labelled subject's display label, sorted for prefix search, as a
+    /// multi-level table a reader walks with a few small range reads. See
+    /// [`crate::label_index`]. Optional; outside the content hash and
+    /// self-digested (SPEC §6.4).
+    LabelIndex,
+    /// The **schema** section: the class hierarchy, the per-level type rollups
+    /// and lateral class links, the coherence axioms, the planner's
+    /// `query_stats` and the characteristic sets — computed without the
+    /// community dendrogram. See [`crate::schema_section`]. Optional; outside
+    /// the content hash and self-digested (SPEC §7.5).
+    Schema,
     /// A section kind this build doesn't know — preserved verbatim on round-trip
     /// so a newer writer's sections survive an older reader.
     Unknown(u16),
@@ -106,6 +118,8 @@ impl SectionKind {
             SectionKind::NamedGraphs => 5,
             SectionKind::TextIndex => 6,
             SectionKind::BuildInfo => 7,
+            SectionKind::LabelIndex => 8,
+            SectionKind::Schema => 9,
             SectionKind::Unknown(k) => k,
         }
     }
@@ -119,6 +133,8 @@ impl SectionKind {
             5 => SectionKind::NamedGraphs,
             6 => SectionKind::TextIndex,
             7 => SectionKind::BuildInfo,
+            8 => SectionKind::LabelIndex,
+            9 => SectionKind::Schema,
             other => SectionKind::Unknown(other),
         }
     }
@@ -203,8 +219,10 @@ pub struct Header {
     ///
     /// [`PermSet::ALL`]: crate::index::PermSet::ALL
     pub perms: crate::index::PermSet,
-    /// Directory entries whose [`SectionKind`] this build doesn't recognize,
-    /// preserved verbatim. Empty for a file this crate wrote.
+    /// Directory entries of the kinds added after the generation-1 freeze —
+    /// [`SectionKind::LabelIndex`] (8), [`SectionKind::Schema`] (9) — and of
+    /// any kind this build doesn't recognize, preserved verbatim in directory
+    /// order. None of them is covered by the header content hash.
     pub extra_sections: Vec<Section>,
 }
 
@@ -391,15 +409,28 @@ impl Header {
                     h.build_info_offset = offset;
                     h.build_info_len = length;
                 }
-                SectionKind::Unknown(_) => h.extra_sections.push(Section {
-                    kind,
-                    flags: u16_at(p + 2),
-                    offset,
-                    length,
-                }),
+                SectionKind::LabelIndex | SectionKind::Schema | SectionKind::Unknown(_) => {
+                    h.extra_sections.push(Section {
+                        kind,
+                        flags: u16_at(p + 2),
+                        offset,
+                        length,
+                    })
+                }
             }
         }
         Ok(h)
+    }
+
+    /// The LABEL_INDEX section (kind 8), if the file carries a non-empty one.
+    pub fn label_index_section(&self) -> Option<Section> {
+        self.section(SectionKind::LabelIndex)
+            .filter(|s| s.length > 0)
+    }
+
+    /// The SCHEMA section (kind 9), if the file carries a non-empty one.
+    pub fn schema_section(&self) -> Option<Section> {
+        self.section(SectionKind::Schema).filter(|s| s.length > 0)
     }
 
     pub fn has_quads(&self) -> bool {
@@ -465,7 +496,7 @@ impl Header {
             SectionKind::NamedGraphs => (self.named_graphs_offset, self.named_graphs_len),
             SectionKind::TextIndex => (self.text_index_offset, self.text_index_len),
             SectionKind::BuildInfo => (self.build_info_offset, self.build_info_len),
-            SectionKind::Unknown(_) => {
+            SectionKind::LabelIndex | SectionKind::Schema | SectionKind::Unknown(_) => {
                 return self.extra_sections.iter().find(|s| s.kind == kind).copied()
             }
         };
@@ -509,6 +540,21 @@ impl Header {
             SectionKind::BuildInfo => {
                 self.build_info_offset = offset;
                 self.build_info_len = length;
+            }
+            SectionKind::LabelIndex | SectionKind::Schema => {
+                // A known post-freeze kind appears at most once: overwrite.
+                match self.extra_sections.iter_mut().find(|s| s.kind == kind) {
+                    Some(s) => {
+                        s.offset = offset;
+                        s.length = length;
+                    }
+                    None => self.extra_sections.push(Section {
+                        kind,
+                        flags: 0,
+                        offset,
+                        length,
+                    }),
+                }
             }
             SectionKind::Unknown(_) => self.extra_sections.push(Section {
                 kind,
@@ -736,6 +782,46 @@ mod tests {
         // And it extends the expected file length like any other section.
         let far = sample().with_section(SectionKind::BuildInfo, 1 << 21, 128);
         assert_eq!(far.expected_file_len(), Some((1 << 21) + 128 + 4));
+    }
+
+    #[test]
+    fn label_index_and_schema_sections_are_known_extras() {
+        // Absent: the directory is unchanged (5 entries), so a file without
+        // them is byte-identical to one built before they existed.
+        assert!(sample().label_index_section().is_none());
+        assert!(sample().schema_section().is_none());
+
+        let h = sample()
+            .with_section(SectionKind::LabelIndex, 8000, 300)
+            .with_section(SectionKind::Schema, 8300, 40);
+        let bytes = h.to_bytes();
+        assert_eq!(u16::from_le_bytes(bytes[44..46].try_into().unwrap()), 7);
+        // entries 5 and 6 carry kinds 8 and 9 at the directory's byte layout
+        assert_eq!(
+            u16::from_le_bytes(bytes[64 + 5 * 24..][..2].try_into().unwrap()),
+            8
+        );
+        assert_eq!(
+            u16::from_le_bytes(bytes[64 + 6 * 24..][..2].try_into().unwrap()),
+            9
+        );
+        let back = Header::from_bytes(&bytes).unwrap();
+        assert_eq!(h, back);
+        assert_eq!(back.extra_sections.len(), 2, "stored with the extras");
+        let l = back.label_index_section().unwrap();
+        assert_eq!((l.offset, l.length), (8000, 300));
+        let s = back.schema_section().unwrap();
+        assert_eq!((s.offset, s.length), (8300, 40));
+        assert_eq!(back.expected_file_len(), Some(8340 + 4));
+
+        // A known post-freeze kind is overwritten, never duplicated.
+        let again = back.with_section(SectionKind::Schema, 9000, 10);
+        assert_eq!(again.extra_sections.len(), 2);
+        assert_eq!(again.schema_section().unwrap().offset, 9000);
+
+        // A zero-length entry reads as absent.
+        let empty = sample().with_section(SectionKind::LabelIndex, 0, 0);
+        assert!(empty.label_index_section().is_none());
     }
 
     #[test]
